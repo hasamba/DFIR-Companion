@@ -80,7 +80,12 @@ describe("normalizeReportTemplate", () => {
   });
 
   it("normalizes a malformed payload instead of throwing", () => {
-    const t = normalizeReportTemplate({ name: "  My T  ", accentColor: "nope", sections: "bad", showLogo: "yes" });
+    const t = normalizeReportTemplate({
+      name: "  My T  ",
+      accentColor: "nope",
+      sections: "bad",
+      showLogo: "yes",
+    });
     expect(t.name).toBe("My T");
     expect(t.accentColor).toBe(DEFAULT_ACCENT);
     expect(t.sections.length).toBe(ALL_SECTION_KEYS.length);
@@ -170,7 +175,10 @@ describe("renderTemplateString", () => {
   });
 
   it("does not re-scan substituted values for template syntax (no injection)", () => {
-    const out = renderTemplateString("{{organization}}", { organization: "{{incidentId}}", incidentId: "SECRET" });
+    const out = renderTemplateString("{{organization}}", {
+      organization: "{{incidentId}}",
+      incidentId: "SECRET",
+    });
     expect(out).toBe("{{incidentId}}"); // literal, not expanded to SECRET
   });
 

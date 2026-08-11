@@ -3,11 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { storeFilePath } from "../storage/safeStoreId.js";
-import {
-  BUILT_IN_REPORT_TEMPLATES,
-  normalizeReportTemplate,
-  type ReportTemplate,
-} from "./reportTemplate.js";
+import { BUILT_IN_REPORT_TEMPLATES, normalizeReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 
 // Persistence for report templates (issue #60). Templates are GLOBAL — shared across cases, like
 // case templates and triage bundles — so a firm authors its branded layout once and applies it to
@@ -78,9 +74,11 @@ export class ReportTemplateStore {
     const out: StoredReportTemplate[] = [];
     for (const t of BUILT_IN_REPORT_TEMPLATES) {
       const override = saved.get(t.id);
-      out.push(override
-        ? { ...override, id: t.id, builtIn: true, customized: true }
-        : { ...t, builtIn: true, customized: false });
+      out.push(
+        override
+          ? { ...override, id: t.id, builtIn: true, customized: true }
+          : { ...t, builtIn: true, customized: false },
+      );
     }
     for (const [id, t] of saved) {
       if (this.isBuiltIn(id)) continue; // already merged above as an override

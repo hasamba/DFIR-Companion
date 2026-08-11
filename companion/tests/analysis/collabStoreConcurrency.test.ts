@@ -85,8 +85,12 @@ describe("collaboration store concurrency (#216)", () => {
     await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
     const store = new CommentsStore(cases);
     await Promise.all([
-      ...Array.from({ length: 6 }, (_, i) => store.add(CASE, { targetType: "event", targetId: "e", author: "a", text: `c1-${i}` })),
-      ...Array.from({ length: 6 }, (_, i) => store.add("c2", { targetType: "event", targetId: "e", author: "a", text: `c2-${i}` })),
+      ...Array.from({ length: 6 }, (_, i) =>
+        store.add(CASE, { targetType: "event", targetId: "e", author: "a", text: `c1-${i}` }),
+      ),
+      ...Array.from({ length: 6 }, (_, i) =>
+        store.add("c2", { targetType: "event", targetId: "e", author: "a", text: `c2-${i}` }),
+      ),
     ]);
     expect(await store.load(CASE)).toHaveLength(6);
     expect(await store.load("c2")).toHaveLength(6);

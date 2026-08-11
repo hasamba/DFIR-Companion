@@ -19,9 +19,9 @@ export interface HuntPollDeps {
 }
 
 export type HuntPollOutcome =
-  | { action: "reschedule"; job: VeloHuntJob }   // still running (or recovered from unreachable) — poll again later
-  | { action: "collect"; job: VeloHuntJob }      // Velociraptor reports STOPPED/ARCHIVED — collect now, stop polling
-  | { action: "stop"; job: VeloHuntJob };         // deleted, or already terminal — stop polling, nothing more to do
+  | { action: "reschedule"; job: VeloHuntJob } // still running (or recovered from unreachable) — poll again later
+  | { action: "collect"; job: VeloHuntJob } // Velociraptor reports STOPPED/ARCHIVED — collect now, stop polling
+  | { action: "stop"; job: VeloHuntJob }; // deleted, or already terminal — stop polling, nothing more to do
 
 // A job in any of these statuses owns its own next transition elsewhere (an import in flight, or
 // already finished/failed/confirmed-gone) — the status poller has nothing useful left to check.
@@ -41,7 +41,11 @@ const EARLY_STOP_GRACE_MS = 60_000;
 // after) that time; a hunt an analyst stopped or deleted partway through reports terminal well BEFORE
 // it. Used at collect time (not inside pollHuntStatusOnce) so every entry point — the status poller,
 // the fixed-delay auto-collect timer, and a manual "Collect now" — gets the same signal.
-export function isHuntStoppedEarly(result: { state: string; expires?: string } | null, nowMs: number, graceMs: number = EARLY_STOP_GRACE_MS): boolean {
+export function isHuntStoppedEarly(
+  result: { state: string; expires?: string } | null,
+  nowMs: number,
+  graceMs: number = EARLY_STOP_GRACE_MS,
+): boolean {
   if (!result || !result.expires) return false;
   if (!DONE_STATES.has(result.state.toUpperCase())) return false;
   const expiresMs = new Date(result.expires).getTime();
@@ -62,7 +66,9 @@ export async function pollHuntStatusOnce(job: VeloHuntJob, deps: HuntPollDeps): 
     const state = result.state.toUpperCase();
     if (DONE_STATES.has(state)) return { action: "collect", job };
     if (state !== "RUNNING" && state !== "PAUSED") {
-      deps.log?.(`[velo-hunt-status] hunt ${job.huntId} reported unrecognized state "${result.state}" — treating as still running`);
+      deps.log?.(
+        `[velo-hunt-status] hunt ${job.huntId} reported unrecognized state "${result.state}" — treating as still running`,
+      );
     }
     return { action: "reschedule", job: { ...job, status: "running" } };
   } catch (err) {

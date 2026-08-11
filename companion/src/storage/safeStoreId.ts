@@ -34,7 +34,10 @@ export function assertSafeStoreId(id: string): string {
   const trimmed = id.trim();
   if (!trimmed) throw new UnsafeStoreIdError(id, "must not be empty");
   if (!SAFE_ID.test(trimmed)) {
-    throw new UnsafeStoreIdError(id, "may contain only letters, digits, dot, dash and underscore, and must start with a letter or digit");
+    throw new UnsafeStoreIdError(
+      id,
+      "may contain only letters, digits, dot, dash and underscore, and must start with a letter or digit",
+    );
   }
   return trimmed;
 }

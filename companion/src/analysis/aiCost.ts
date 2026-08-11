@@ -56,8 +56,12 @@ export type AiCostState = z.infer<typeof aiCostStateSchema>;
 
 function emptyBucket(): AiCostBucket {
   return {
-    totalCalls: 0, totalCostUSD: 0, hasCost: false,
-    totalInputTokens: 0, totalOutputTokens: 0, hasTokens: false,
+    totalCalls: 0,
+    totalCostUSD: 0,
+    hasCost: false,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    hasTokens: false,
     byModel: {},
   };
 }

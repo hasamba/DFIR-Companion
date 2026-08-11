@@ -26,11 +26,16 @@ export interface JiraExportStoreLike {
 // Map Companion severity to Jira priority names.
 function jiraPriority(severity: string): string | undefined {
   switch (severity.toLowerCase()) {
-    case "critical": return "Highest";
-    case "high": return "High";
-    case "medium": return "Medium";
-    case "low": return "Low";
-    default: return undefined;
+    case "critical":
+      return "Highest";
+    case "high":
+      return "High";
+    case "medium":
+      return "Medium";
+    case "low":
+      return "Low";
+    default:
+      return undefined;
   }
 }
 
@@ -104,7 +109,7 @@ export interface JiraBulkPushResult {
   updated: number;
   skipped: number;
   issues: Array<JiraIssueRef & { findingId: string }>;
-  issueUrl?: string;          // first issue url, for an "Open in Jira" link on the batch
+  issueUrl?: string; // first issue url, for an "Open in Jira" link on the batch
   warnings: string[];
 }
 
@@ -119,7 +124,9 @@ export async function pushFindingsToJira(
 ): Promise<JiraBulkPushResult> {
   const warnings: string[] = [];
   const issues: Array<JiraIssueRef & { findingId: string }> = [];
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0,
+    updated = 0,
+    skipped = 0;
   let issueUrl: string | undefined;
 
   for (const finding of input.findings) {
@@ -130,7 +137,8 @@ export async function pushFindingsToJira(
         issueType: input.issueType,
         finding,
       });
-      if (result.created) created += 1; else updated += 1;
+      if (result.created) created += 1;
+      else updated += 1;
       issues.push({ ...result.issue, findingId: finding.id });
       issueUrl ??= result.issue.url;
       warnings.push(...result.warnings);

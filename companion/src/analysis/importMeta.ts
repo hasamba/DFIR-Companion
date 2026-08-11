@@ -28,57 +28,81 @@ export const importMetaSchema = z.object({
   lastImportKind: z.string().catch(""),
   lastImportFile: z.string().catch(""),
   // Forensic-timeline diff (events the import added / correlation absorbed).
-  addedCount: z.number().catch(0),     // true total added (the detail list may be capped)
+  addedCount: z.number().catch(0), // true total added (the detail list may be capped)
   // Actual rows appended to the super-timeline after its own id/content deduplication.
   // Keep this optional: older metadata cannot truthfully reconstruct the historical count.
   superTimelineAddedCount: z.number().optional().catch(undefined),
-  removedCount: z.number().catch(0),   // true total absorbed/merged by correlation
-  lastDiff: z.object({
-    added: z.array(diffEventSchema).catch([]),
-    removed: z.array(diffEventSchema).catch([]),
-  }).nullable().catch(null),
+  removedCount: z.number().catch(0), // true total absorbed/merged by correlation
+  lastDiff: z
+    .object({
+      added: z.array(diffEventSchema).catch([]),
+      removed: z.array(diffEventSchema).catch([]),
+    })
+    .nullable()
+    .catch(null),
   // IOC diff (indicators the import added). Older import-meta.json files predate these — the
   // .catch defaults make them load cleanly as "no IOC change".
   iocsAddedCount: z.number().catch(0),
   iocsRemovedCount: z.number().catch(0),
-  iocsDiff: z.object({
-    added: z.array(diffIocSchema).catch([]),
-    removed: z.array(diffIocSchema).catch([]),
-  }).nullable().catch(null),
+  iocsDiff: z
+    .object({
+      added: z.array(diffIocSchema).catch([]),
+      removed: z.array(diffIocSchema).catch([]),
+    })
+    .nullable()
+    .catch(null),
   // Source-yield instrumentation (investigation-guidance #10): the RAW input size and which extraction
   // path ran, so a big file that produced ZERO events via AI triage (northpeak's 27,290-line proxy log,
   // silently read as "clean") can be flagged instead of shown as a bland "+0 events". Optional/lenient —
   // older import-meta.json files load with linesIn 0 / path "" and simply never trip the check.
-  linesIn: z.number().catch(0),                                  // raw input lines/rows the import read
-  path: z.enum(["deterministic", "ai", ""]).catch(""),           // "ai" = the log/CSV AI-triage path; "" = unknown/legacy
+  linesIn: z.number().catch(0), // raw input lines/rows the import read
+  path: z.enum(["deterministic", "ai", ""]).catch(""), // "ai" = the log/CSV AI-triage path; "" = unknown/legacy
   // Cap-hit truncation (investigation-guidance #10, trigger b): the log-aggregation cap dropped distinct
   // patterns the AI never saw — a coverage blind spot, not a clean import. Optional/lenient; absent when
   // nothing was truncated. keptTemplates of distinctTemplates were triaged.
-  truncation: z.object({
-    distinctTemplates: z.number().catch(0),
-    keptTemplates: z.number().catch(0),
-  }).nullable().optional().catch(undefined),
+  truncation: z
+    .object({
+      distinctTemplates: z.number().catch(0),
+      keptTemplates: z.number().catch(0),
+    })
+    .nullable()
+    .optional()
+    .catch(undefined),
   // Proactive FP-pattern propagation (investigation-guidance #15b): new events from THIS import that
   // reproduce a known false-positive pattern, surfaced as a one-click "review & bulk-mark" banner
   // suggestion (never auto-applied). Optional/lenient; absent on older files and imports with no match.
-  fpPropagation: z.array(z.object({
-    markerId: z.string().catch(""),
-    ref: z.string().catch(""),
-    note: z.string().catch(""),
-    patternFingerprint: z.string().catch(""),
-    count: z.number().catch(0),
-    matchedEventIds: z.array(z.string()).catch([]),
-    sampleLabel: z.string().catch(""),
-  })).catch([]),
+  fpPropagation: z
+    .array(
+      z.object({
+        markerId: z.string().catch(""),
+        ref: z.string().catch(""),
+        note: z.string().catch(""),
+        patternFingerprint: z.string().catch(""),
+        count: z.number().catch(0),
+        matchedEventIds: z.array(z.string()).catch([]),
+        sampleLabel: z.string().catch(""),
+      }),
+    )
+    .catch([]),
 });
 
 export type ImportMeta = z.infer<typeof importMetaSchema>;
 
 const EMPTY: ImportMeta = {
-  lastImportedAt: "", lastImportKind: "", lastImportFile: "",
-  addedCount: 0, superTimelineAddedCount: 0, removedCount: 0, lastDiff: null,
-  iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
-  linesIn: 0, path: "", fpPropagation: [], truncation: null,
+  lastImportedAt: "",
+  lastImportKind: "",
+  lastImportFile: "",
+  addedCount: 0,
+  superTimelineAddedCount: 0,
+  removedCount: 0,
+  lastDiff: null,
+  iocsAddedCount: 0,
+  iocsRemovedCount: 0,
+  iocsDiff: null,
+  linesIn: 0,
+  path: "",
+  fpPropagation: [],
+  truncation: null,
 };
 
 // Cap how many added/removed events we store in the detail list — a single import can add
@@ -87,15 +111,15 @@ const EMPTY: ImportMeta = {
 const MAX_LISTED = 500;
 
 export interface ImportRecord {
-  kind: string;   // detected import kind: "thor" | "siem" | "chainsaw" | ...
-  file: string;   // stored filename of the imported evidence
-  diff: TimelineDiff;   // forensic-timeline diff
+  kind: string; // detected import kind: "thor" | "siem" | "chainsaw" | ...
+  file: string; // stored filename of the imported evidence
+  diff: TimelineDiff; // forensic-timeline diff
   superTimelineAddedCount?: number; // rows actually appended to the super-timeline
-  iocsDiff: IocsDiff;   // IOC diff
-  linesIn?: number;                          // raw input lines/rows the import read (#10)
-  path?: "deterministic" | "ai";             // which extraction path ran (#10)
+  iocsDiff: IocsDiff; // IOC diff
+  linesIn?: number; // raw input lines/rows the import read (#10)
+  path?: "deterministic" | "ai"; // which extraction path ran (#10)
   fpPropagation?: ImportMeta["fpPropagation"]; // FP-pattern propagation suggestions (#15b)
-  truncation?: ImportMeta["truncation"];     // cap-hit template truncation (#10 trigger b)
+  truncation?: ImportMeta["truncation"]; // cap-hit template truncation (#10 trigger b)
 }
 
 export class ImportMetaStore {
@@ -115,7 +139,11 @@ export class ImportMetaStore {
   }
 
   // Record a completed import: stamp the time, the kind/file, and the (capped) timeline diff.
-  async record(caseId: string, rec: ImportRecord, at: string = new Date().toISOString()): Promise<ImportMeta> {
+  async record(
+    caseId: string,
+    rec: ImportRecord,
+    at: string = new Date().toISOString(),
+  ): Promise<ImportMeta> {
     const meta: ImportMeta = {
       lastImportedAt: at,
       lastImportKind: rec.kind,
@@ -160,8 +188,8 @@ export interface ImportYieldWarning {
   file: string;
   kind: string;
   linesIn: number;
-  message: string;            // directive next-action for the analyst
-  inferredPhases: string[];   // ATT&CK phases this source type would have evidenced (for the gap panel)
+  message: string; // directive next-action for the analyst
+  inferredPhases: string[]; // ATT&CK phases this source type would have evidenced (for the gap panel)
 }
 
 export const ZERO_YIELD_MIN_LINES_DEFAULT = 500;
@@ -170,7 +198,8 @@ export const ZERO_YIELD_MIN_LINES_DEFAULT = 500;
 // becomes "you may be missing Discovery / C2 / Exfiltration", not just "0 events". Best-effort by name.
 function inferPhasesFromSource(kind: string, file: string): string[] {
   const t = `${kind} ${file}`.toLowerCase();
-  if (/proxy|squid|bluecoat|web[_-]?access|http/.test(t)) return ["Discovery", "Command and Control", "Exfiltration"];
+  if (/proxy|squid|bluecoat|web[_-]?access|http/.test(t))
+    return ["Discovery", "Command and Control", "Exfiltration"];
   if (/\bdns\b/.test(t)) return ["Command and Control", "Exfiltration"];
   if (/firewall|fw|netflow|flow|zeek|bro|conn/.test(t)) return ["Command and Control", "Exfiltration"];
   if (/vpn|auth|radius|okta|sso/.test(t)) return ["Initial Access", "Lateral Movement"];
@@ -179,7 +208,10 @@ function inferPhasesFromSource(kind: string, file: string): string[] {
 }
 
 export function classifyImportYield(
-  meta: Pick<ImportMeta, "path" | "addedCount" | "linesIn" | "lastImportKind" | "lastImportFile" | "truncation">,
+  meta: Pick<
+    ImportMeta,
+    "path" | "addedCount" | "linesIn" | "lastImportKind" | "lastImportFile" | "truncation"
+  >,
   opts: { minLines?: number } = {},
 ): ImportYieldWarning | null {
   const minLines = opts.minLines ?? ZERO_YIELD_MIN_LINES_DEFAULT;

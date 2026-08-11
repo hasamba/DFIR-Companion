@@ -14,7 +14,13 @@
 
 import type { Severity } from "./stateTypes.js";
 import {
-  aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+  aggregateEvents,
+  addIoc,
+  cleanIp,
+  oneLine,
+  type MappedEvent,
+  type SiemIoc,
+  type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 
@@ -37,7 +43,11 @@ const ALERT_LINE = /^\s*\d{1,2}\/\d{1,2}-\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+\[\*\*\]\
 // Is this text a Snort/Suricata fast-alert log? True when a meaningful share of the first non-blank
 // lines match the alert shape (so a stray mention in another log doesn't trip it). Pure.
 export function looksLikeSnort(text: string): boolean {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 50);
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 50);
   if (!lines.length) return false;
   const hits = lines.filter((l) => ALERT_LINE.test(l)).length;
   return hits >= 1 && hits >= lines.length * 0.5;
@@ -96,10 +106,14 @@ export function mapSnortLine(line: string, year: number, sink: Map<string, SiemI
 
   for (const ip of [srcIp, dstIp]) if (ip && !isPrivateIp(ip)) addIoc(sink, "ip", ip);
 
-  const flowStr = flow ? ` ${srcIp}${srcPort ? `:${srcPort}` : ""} → ${dstIp}${dstPort ? `:${dstPort}` : ""}` : "";
-  const description = `Snort IDS: ${message}` +
+  const flowStr = flow
+    ? ` ${srcIp}${srcPort ? `:${srcPort}` : ""} → ${dstIp}${dstPort ? `:${dstPort}` : ""}`
+    : "";
+  const description =
+    `Snort IDS: ${message}` +
     (sid ? ` (SID ${sid}${cls ? `, ${cls}` : ""})` : cls ? ` (${cls})` : "") +
-    (proto ? ` [${proto}]` : "") + flowStr;
+    (proto ? ` [${proto}]` : "") +
+    flowStr;
 
   const port = dstPort && /^\d+$/.test(dstPort) ? Number(dstPort) : undefined;
   return {
@@ -127,7 +141,10 @@ export function parseSnortLog(text: string, opts: SnortImportOptions = {}): Snor
     const line = raw.trim();
     if (!line) continue;
     const m = mapSnortLine(line, year, sink);
-    if (m) { total++; mapped.push(m); }
+    if (m) {
+      total++;
+      mapped.push(m);
+    }
   }
 
   const { events, groups } = aggregateEvents(mapped, {

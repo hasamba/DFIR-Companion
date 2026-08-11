@@ -33,17 +33,17 @@ const WEBHOOK_FORMATTERS: Partial<Record<NotificationChannelType, (e: Notificati
 
 export interface NotifyTransport {
   fetchFn: FetchFn;
-  smtpConnect?: SmtpConnect;     // absent → email channels are skipped with a clear reason
+  smtpConnect?: SmtpConnect; // absent → email channels are skipped with a clear reason
   timeoutMs?: number;
   now?: () => string;
 }
 
 export interface ChannelResult {
   channelId: string;
-  channel: string;               // display name
+  channel: string; // display name
   type: NotificationChannelType;
   ok: boolean;
-  skipped: boolean;              // filtered out by shouldNotify (not an error)
+  skipped: boolean; // filtered out by shouldNotify (not an error)
   error?: string;
 }
 
@@ -68,7 +68,12 @@ async function sendToChannel(
     const formatter = WEBHOOK_FORMATTERS[channel.type];
     if (formatter) {
       if (!channel.webhookUrl) return { ...base, ok: false, error: "no webhook URL configured" };
-      const r = await postWebhook(transport.fetchFn, channel.webhookUrl, formatter(event), transport.timeoutMs);
+      const r = await postWebhook(
+        transport.fetchFn,
+        channel.webhookUrl,
+        formatter(event),
+        transport.timeoutMs,
+      );
       return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     }
     if (channel.type === "telegram") {
@@ -80,7 +85,8 @@ async function sendToChannel(
     }
     // email
     if (!channel.smtp) return { ...base, ok: false, error: "no SMTP config" };
-    if (!transport.smtpConnect) return { ...base, ok: false, error: "SMTP transport not available on this server" };
+    if (!transport.smtpConnect)
+      return { ...base, ok: false, error: "SMTP transport not available on this server" };
     const content = formatEmail(event);
     const raw = buildRfc822Message({
       from: channel.smtp.from,
@@ -100,7 +106,7 @@ async function sendToChannel(
 // ── Server-facing notifier ───────────────────────────────────────────────────────────────────
 
 export interface NotifierDeps {
-  store?: NotificationConfigStore;   // absent → notifier is a no-op (notifications not configured)
+  store?: NotificationConfigStore; // absent → notifier is a no-op (notifications not configured)
   fetchFn: FetchFn;
   smtpConnect?: SmtpConnect;
   timeoutMs?: number;
@@ -116,7 +122,11 @@ export interface Notifier {
 }
 
 export function createNotifier(deps: NotifierDeps): Notifier {
-  const transport: NotifyTransport = { fetchFn: deps.fetchFn, smtpConnect: deps.smtpConnect, timeoutMs: deps.timeoutMs };
+  const transport: NotifyTransport = {
+    fetchFn: deps.fetchFn,
+    smtpConnect: deps.smtpConnect,
+    timeoutMs: deps.timeoutMs,
+  };
 
   async function dispatch(event: NotificationEvent): Promise<ChannelResult[]> {
     if (!deps.store) return [];

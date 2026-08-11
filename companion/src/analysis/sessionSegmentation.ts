@@ -28,14 +28,14 @@ import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 export const UNKNOWN_HOST = "(unknown host)";
 
 export interface Session {
-  id: string;                    // stable per-timeline id: "session-1", "session-2", …
-  host: string;                   // the asset this session occurred on, or UNKNOWN_HOST when unrecorded
-  startTime: string;              // first event's timestamp in the session
-  endTime: string;                // last event's timestamp (uses endTimestamp for aggregated rows)
-  eventCount: number;             // events in the session (sums aggregated `count` where present)
-  severityRange: Severity[];      // distinct severities observed, worst-first
-  dominantTactic: IrisTactic | undefined;  // most common ATT&CK tactic across the session's events
-  label: string;                  // auto-generated: "{dominantTactic} {host} → {startTime}-{endTime}, {eventCount} events"
+  id: string; // stable per-timeline id: "session-1", "session-2", …
+  host: string; // the asset this session occurred on, or UNKNOWN_HOST when unrecorded
+  startTime: string; // first event's timestamp in the session
+  endTime: string; // last event's timestamp (uses endTimestamp for aggregated rows)
+  eventCount: number; // events in the session (sums aggregated `count` where present)
+  severityRange: Severity[]; // distinct severities observed, worst-first
+  dominantTactic: IrisTactic | undefined; // most common ATT&CK tactic across the session's events
+  label: string; // auto-generated: "{dominantTactic} {host} → {startTime}-{endTime}, {eventCount} events"
   // The account this session ran under, when a logon row inside it named one (#344). Absent when no
   // logon was observed — most sessions have no account signal at all, so this is a bonus, not a key.
   account?: string;
@@ -72,9 +72,18 @@ const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Lo
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a session reads as the stage it leads with).
 const CHAIN_ORDER: IrisTactic[] = [
-  "Initial Access", "Execution", "Persistence", "Privilege Escalation",
-  "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
-  "Collection", "Command and Control", "Exfiltration", "Impact",
+  "Initial Access",
+  "Execution",
+  "Persistence",
+  "Privilege Escalation",
+  "Defense Evasion",
+  "Credential Access",
+  "Discovery",
+  "Lateral Movement",
+  "Collection",
+  "Command and Control",
+  "Exfiltration",
+  "Impact",
 ];
 
 // The most common ATT&CK tactic across the session's events, with ties broken toward the
@@ -88,9 +97,13 @@ function dominantTactic(events: ForensicEvent[]): IrisTactic | undefined {
   }
   let best: IrisTactic | undefined;
   let bestCount = 0;
-  for (const tac of CHAIN_ORDER) {                 // iterate in chain order so the earliest stage wins ties
+  for (const tac of CHAIN_ORDER) {
+    // iterate in chain order so the earliest stage wins ties
     const c = counts.get(tac) ?? 0;
-    if (c > bestCount) { best = tac; bestCount = c; }
+    if (c > bestCount) {
+      best = tac;
+      bestCount = c;
+    }
   }
   return best;
 }
@@ -140,7 +153,10 @@ function summarizeSession(index: number, host: string, events: ForensicEvent[]):
     sevSet.add(e.severity);
     count += e.count && e.count > 1 ? e.count : 1;
     const ms = eventEndMs(e);
-    if (ms > endMs) { endMs = ms; endTs = e.endTimestamp || e.timestamp; }
+    if (ms > endMs) {
+      endMs = ms;
+      endTs = e.endTimestamp || e.timestamp;
+    }
     // First successful logon in the session names it; the splitter guarantees a session never spans
     // two different accounts, so there is no "last one wins" ambiguity to resolve here.
     account ??= accountEstablishedBy(e);
@@ -181,9 +197,7 @@ export function segmentSessions(events: ForensicEvent[], opts: SessionOptions = 
   const gapMs = Math.max(0, (opts.gapSeconds ?? DEFAULT_SESSION_GAP_SECONDS) * 1000);
   // Grace below 1 would make a shared indicator SHORTEN the allowed gap, which is backwards.
   const graceMs = gapMs * Math.max(1, opts.iocGraceFactor ?? DEFAULT_IOC_GRACE_FACTOR);
-  const dated = events
-    .filter((e) => !Number.isNaN(Date.parse(e.timestamp)))
-    .sort(byEventTime);
+  const dated = events.filter((e) => !Number.isNaN(Date.parse(e.timestamp))).sort(byEventTime);
   if (dated.length === 0) return [];
 
   // Partition by host first so a back-to-back cross-host run never joins the same session.
@@ -222,7 +236,10 @@ export function segmentSessions(events: ForensicEvent[], opts: SessionOptions = 
       // point is that two accounts on one host in the same minute are two stories. Checked BEFORE
       // the gap so it cannot be masked by the IOC grace below.
       const established = accountEstablishedBy(e);
-      if (established && account && established !== account) { startNew(e); continue; }
+      if (established && account && established !== account) {
+        startNew(e);
+        continue;
+      }
 
       // (1) Gap is measured from the END of the running session so a long aggregated event doesn't
       // spuriously split from a follow-on that overlaps it. A shared concrete indicator means the
@@ -230,7 +247,10 @@ export function segmentSessions(events: ForensicEvent[], opts: SessionOptions = 
       // grace window — but only up to it, or a single recurring path would fuse the whole timeline.
       const gap = startMs - prevEndMs;
       const shares = keys.some((k) => seenIocs.has(k));
-      if (gap > (shares ? graceMs : gapMs)) { startNew(e); continue; }
+      if (gap > (shares ? graceMs : gapMs)) {
+        startNew(e);
+        continue;
+      }
 
       current.push(e);
       prevEndMs = Math.max(prevEndMs, eventEndMs(e));
@@ -245,7 +265,7 @@ export function segmentSessions(events: ForensicEvent[], opts: SessionOptions = 
   // order, so re-number after the sort to keep them stable and human-readable.
   sessions.sort((a, b) => {
     const t = Date.parse(a.startTime) - Date.parse(b.startTime);
-    return t !== 0 ? t : (a.host < b.host ? -1 : a.host > b.host ? 1 : 0);
+    return t !== 0 ? t : a.host < b.host ? -1 : a.host > b.host ? 1 : 0;
   });
   for (let i = 0; i < sessions.length; i++) {
     sessions[i] = { ...sessions[i], id: `session-${i + 1}` };

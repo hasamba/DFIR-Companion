@@ -35,7 +35,9 @@ describe("case password lifecycle", () => {
   });
 
   it("POST /cases and PATCH .../status also never leak the password hash", async () => {
-    const created = await request(app).post("/cases").send({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
+    const created = await request(app)
+      .post("/cases")
+      .send({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
     expect(created.body.password).toBeUndefined();
     expect(created.body.hasPassword).toBe(false);
     const patched = await request(app).patch("/cases/c2/status").send({ status: "closed" });
@@ -71,13 +73,17 @@ describe("case password lifecycle", () => {
 
   it("without remember, the unlock cookie has no Max-Age (browser-session only)", async () => {
     await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
-    const res = await request(app).post("/cases/c1/unlock").send({ password: "correct horse", remember: false });
+    const res = await request(app)
+      .post("/cases/c1/unlock")
+      .send({ password: "correct horse", remember: false });
     expect(res.headers["set-cookie"][0]).not.toMatch(/Max-Age/i);
   });
 
   it("with remember, the unlock cookie carries a long Max-Age", async () => {
     await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
-    const res = await request(app).post("/cases/c1/unlock").send({ password: "correct horse", remember: true });
+    const res = await request(app)
+      .post("/cases/c1/unlock")
+      .send({ password: "correct horse", remember: true });
     expect(res.headers["set-cookie"][0]).toMatch(/Max-Age/i);
   });
 
@@ -174,11 +180,19 @@ describe("case password lifecycle", () => {
 
     const notRemembered = request.agent(app);
     await notRemembered.post("/cases/c1/unlock").send({ password: "correct horse", remember: false });
-    expect((await notRemembered.get("/cases/c1/lock-status")).body).toEqual({ hasPassword: true, unlocked: true, remembered: false });
+    expect((await notRemembered.get("/cases/c1/lock-status")).body).toEqual({
+      hasPassword: true,
+      unlocked: true,
+      remembered: false,
+    });
 
     const remembered = request.agent(app);
     await remembered.post("/cases/c1/unlock").send({ password: "correct horse", remember: true });
-    expect((await remembered.get("/cases/c1/lock-status")).body).toEqual({ hasPassword: true, unlocked: true, remembered: true });
+    expect((await remembered.get("/cases/c1/lock-status")).body).toEqual({
+      hasPassword: true,
+      unlocked: true,
+      remembered: true,
+    });
   });
 
   it("POST /cases/:id/lock forgets THIS browser's unlock without touching the password", async () => {
@@ -203,12 +217,16 @@ describe("case password lifecycle", () => {
   it("404s for an unknown case on lock-status / unlock / password", async () => {
     expect((await request(app).get("/cases/nope/lock-status")).status).toBe(404);
     expect((await request(app).post("/cases/nope/unlock").send({ password: "x" })).status).toBe(404);
-    expect((await request(app).post("/cases/nope/password").send({ newPassword: "correct horse" })).status).toBe(404);
+    expect(
+      (await request(app).post("/cases/nope/password").send({ newPassword: "correct horse" })).status,
+    ).toBe(404);
   });
 
   it("400s on a path-traversal caseId for lock-status / unlock, matching the password routes", async () => {
     const traversalId = "..%2f..%2fetc";
     expect((await request(app).get(`/cases/${traversalId}/lock-status`)).status).toBe(400);
-    expect((await request(app).post(`/cases/${traversalId}/unlock`).send({ password: "x" })).status).toBe(400);
+    expect((await request(app).post(`/cases/${traversalId}/unlock`).send({ password: "x" })).status).toBe(
+      400,
+    );
   });
 });

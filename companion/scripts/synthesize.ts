@@ -26,7 +26,9 @@ import { visionEnv } from "../src/config/aiEnv.js";
 
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
-  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--")
+    ? process.argv[i + 1]
+    : undefined;
 }
 
 async function main(): Promise<void> {
@@ -34,14 +36,18 @@ async function main(): Promise<void> {
 
   // Synthesis prefers the dedicated synth model. Precedence: CLI flag >
   // DFIR_AI_SYNTH_* > the main extraction model in .env.
-  const provName = strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER");
+  const provName =
+    strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER");
   const model = strOpt("model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL");
   const apiKey = strOpt("key") ?? process.env.DFIR_AI_SYNTH_KEY ?? visionEnv(process.env, "KEY");
-  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL");
+  const baseUrl =
+    strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL");
   const imageDetail = visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined;
   const provider = buildProviderFrom({ provider: provName, model, apiKey, baseUrl, imageDetail });
   if (!provider) {
-    console.error("No AI provider configured (DFIR_AI_SYNTH_PROVIDER / DFIR_VISION_PROVIDER / --provider). Aborting.");
+    console.error(
+      "No AI provider configured (DFIR_AI_SYNTH_PROVIDER / DFIR_VISION_PROVIDER / --provider). Aborting.",
+    );
     process.exit(1);
   }
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
@@ -50,17 +56,32 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, stateStore, falsePositiveStore: new FalsePositiveStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store) });
+  const pipeline = new AnalysisPipeline({
+    provider,
+    stateStore,
+    falsePositiveStore: new FalsePositiveStore(store),
+    scopeStore: new ScopeStore(store),
+    imageLoader: makeImageLoader(store),
+    anonStore: new AnonControlStore(store),
+    customEntitiesStore: new CustomEntitiesStore(store),
+    discoveredStore: new DiscoveredEntitiesStore(store),
+    synthMetaStore: new SynthMetaStore(store),
+    hypothesisStore: new HypothesisStore(store),
+  });
 
   const before = await stateStore.load(caseId);
-  console.log(`Synthesizing "${caseId}" from ${before.forensicTimeline.length} forensic events (provider=${provider.name} model=${model})…`);
+  console.log(
+    `Synthesizing "${caseId}" from ${before.forensicTimeline.length} forensic events (provider=${provider.name} model=${model})…`,
+  );
   if (before.forensicTimeline.length === 0) {
     console.log("No forensic timeline yet — run `npm run reanalyze -- " + caseId + "` first.");
     return;
   }
 
   const state = await pipeline.synthesize(caseId);
-  console.log(`\nDone. findings=${state.findings.length} iocs=${state.iocs.length} mitreTechniques=${state.mitreTechniques.length}`);
+  console.log(
+    `\nDone. findings=${state.findings.length} iocs=${state.iocs.length} mitreTechniques=${state.mitreTechniques.length}`,
+  );
   console.log(`attackerPath: ${state.attackerPath ? state.attackerPath.slice(0, 200) : "(empty)"}`);
   console.log(`Open the dashboard and connect to "${caseId}", or run: npm run coverage -- ${caseId}`);
 }

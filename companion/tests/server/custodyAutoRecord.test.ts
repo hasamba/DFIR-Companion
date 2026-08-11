@@ -14,7 +14,9 @@ let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
 
 async function pngBase64(): Promise<string> {
-  const buf = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
+  const buf = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 1, g: 2, b: 3 } } })
+    .png()
+    .toBuffer();
   return buf.toString("base64");
 }
 
@@ -91,6 +93,8 @@ describe("automatic custody recording", () => {
 
     await expect(other.saveImport("c1", "0001_evidence.csv", "data")).resolves.toBeTruthy();
 
-    await expect(readFile(join(other.metadataDir("c1"), "custody.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(other.metadataDir("c1"), "custody.jsonl"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

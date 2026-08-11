@@ -14,14 +14,14 @@ import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 // kill-chain view (which tactic). Pure, deterministic, NO AI call — a time-gap algorithm.
 
 export interface AttackPhase {
-  id: string;                    // stable per-timeline id: "phase-1", "phase-2", …
-  label: string;                 // inferred phase name — an ATT&CK tactic, or "Activity burst" when undetermined
-  startTimestamp: string;        // first event's time in the burst
-  endTimestamp: string;          // last event's time in the burst (uses endTimestamp for aggregated rows)
-  eventIds: string[];            // forensic-event ids in this phase, chronological
-  inferredTechniques: string[];  // distinct MITRE technique ids across the burst, sorted
-  eventCount: number;            // events in the burst (sums aggregated `count` where present)
-  maxSeverity: Severity;         // worst severity observed in the burst
+  id: string; // stable per-timeline id: "phase-1", "phase-2", …
+  label: string; // inferred phase name — an ATT&CK tactic, or "Activity burst" when undetermined
+  startTimestamp: string; // first event's time in the burst
+  endTimestamp: string; // last event's time in the burst (uses endTimestamp for aggregated rows)
+  eventIds: string[]; // forensic-event ids in this phase, chronological
+  inferredTechniques: string[]; // distinct MITRE technique ids across the burst, sorted
+  eventCount: number; // events in the burst (sums aggregated `count` where present)
+  maxSeverity: Severity; // worst severity observed in the burst
 }
 
 export interface BurstOptions {
@@ -39,9 +39,18 @@ function worse(a: Severity, b: Severity): Severity {
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a phase reads as the stage it leads with).
 const CHAIN_ORDER: IrisTactic[] = [
-  "Initial Access", "Execution", "Persistence", "Privilege Escalation",
-  "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
-  "Collection", "Command and Control", "Exfiltration", "Impact",
+  "Initial Access",
+  "Execution",
+  "Persistence",
+  "Privilege Escalation",
+  "Defense Evasion",
+  "Credential Access",
+  "Discovery",
+  "Lateral Movement",
+  "Collection",
+  "Command and Control",
+  "Exfiltration",
+  "Impact",
 ];
 
 // Pick the phase label from the tactics of its events: the most frequent tactic wins; ties break
@@ -54,9 +63,13 @@ function dominantTactic(events: ForensicEvent[]): IrisTactic | undefined {
   }
   let best: IrisTactic | undefined;
   let bestCount = 0;
-  for (const tac of CHAIN_ORDER) {                 // iterate in chain order so the earliest stage wins ties
+  for (const tac of CHAIN_ORDER) {
+    // iterate in chain order so the earliest stage wins ties
     const c = counts.get(tac) ?? 0;
-    if (c > bestCount) { best = tac; bestCount = c; }
+    if (c > bestCount) {
+      best = tac;
+      bestCount = c;
+    }
   }
   return best;
 }
@@ -89,7 +102,10 @@ function summarizePhase(index: number, events: ForensicEvent[]): AttackPhase {
     count += e.count && e.count > 1 ? e.count : 1;
     maxSeverity = worse(maxSeverity, e.severity);
     const ms = eventEndMs(e);
-    if (ms > endMs) { endMs = ms; endTs = eventEndTsStr(e); }
+    if (ms > endMs) {
+      endMs = ms;
+      endTs = eventEndTsStr(e);
+    }
   }
   return {
     id: `phase-${index + 1}`,
@@ -108,9 +124,7 @@ function summarizePhase(index: number, events: ForensicEvent[]): AttackPhase {
 // order; an empty or fully-undated timeline yields no phases.
 export function buildAttackPhases(events: ForensicEvent[], opts: BurstOptions = {}): AttackPhase[] {
   const gapMs = Math.max(0, (opts.gapSeconds ?? DEFAULT_GAP_SECONDS) * 1000);
-  const dated = events
-    .filter((e) => !Number.isNaN(Date.parse(e.timestamp)))
-    .sort(byEventTime);
+  const dated = events.filter((e) => !Number.isNaN(Date.parse(e.timestamp))).sort(byEventTime);
   if (dated.length === 0) return [];
 
   const phases: AttackPhase[] = [];

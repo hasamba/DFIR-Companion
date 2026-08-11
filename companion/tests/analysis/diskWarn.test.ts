@@ -107,16 +107,16 @@ describe("diskWarnEnvThresholds", () => {
     process.env.DFIR_DISK_WARN_PCT = "80";
     const t = diskWarnEnvThresholds();
     expect(t.dangerPct).toBe(80);
-    expect(t.warnPct).toBe(65);      // 80 - 15
-    expect(t.criticalPct).toBe(90);  // 80 + 10
+    expect(t.warnPct).toBe(65); // 80 - 15
+    expect(t.criticalPct).toBe(90); // 80 + 10
     delete process.env.DFIR_DISK_WARN_PCT;
   });
 
   it("clamps criticalPct to max 99 and warnPct to min 1", () => {
     process.env.DFIR_DISK_WARN_PCT = "95";
     const t = diskWarnEnvThresholds();
-    expect(t.criticalPct).toBe(99);  // 95 + 10 = 105 → clamped to 99
-    expect(t.warnPct).toBe(80);      // 95 - 15 = 80
+    expect(t.criticalPct).toBe(99); // 95 + 10 = 105 → clamped to 99
+    expect(t.warnPct).toBe(80); // 95 - 15 = 80
     delete process.env.DFIR_DISK_WARN_PCT;
   });
 

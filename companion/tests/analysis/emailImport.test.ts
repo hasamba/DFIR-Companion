@@ -88,9 +88,9 @@ describe("parseEmail — event + IOCs + severity", () => {
     const { iocs } = parseEmail(phishingEml());
     expect(hasIoc(iocs, "url", "http://phish.evil.example/login")).toBe(true);
     expect(hasIoc(iocs, "domain", "phish.evil.example")).toBe(true);
-    expect(hasIoc(iocs, "domain", "evil.example")).toBe(true);     // sender domain
-    expect(hasIoc(iocs, "domain", "scammer.test")).toBe(true);     // reply-to domain
-    expect(hasIoc(iocs, "ip", "198.51.100.23")).toBe(true);        // X-Originating-IP
+    expect(hasIoc(iocs, "domain", "evil.example")).toBe(true); // sender domain
+    expect(hasIoc(iocs, "domain", "scammer.test")).toBe(true); // reply-to domain
+    expect(hasIoc(iocs, "ip", "198.51.100.23")).toBe(true); // X-Originating-IP
     expect(hasIoc(iocs, "file", "invoice.pdf")).toBe(true);
     // The victim's own recipient domain is NOT turned into an IOC.
     expect(hasIoc(iocs, "domain", "victim.com")).toBe(false);
@@ -113,7 +113,10 @@ describe("parseEmail — severity heuristics", () => {
     ].join("\n");
 
   it("clean (spf/dkim/dmarc pass, no red flags) → Info", () => {
-    const eml = base(["Authentication-Results: mx; spf=pass; dkim=pass; dmarc=pass"], "see https://trusted.com/news");
+    const eml = base(
+      ["Authentication-Results: mx; spf=pass; dkim=pass; dmarc=pass"],
+      "see https://trusted.com/news",
+    );
     const ev = only(parseEmail(eml).events);
     expect(ev.severity).toBe("Info");
     expect(ev.mitreTechniques).toEqual(["T1566", "T1566.002"]);
@@ -180,7 +183,14 @@ describe("parseEmail — body decoding + edges", () => {
   });
 
   it("decodes an RFC 2047 Q-encoded subject (underscore → space)", () => {
-    const eml = ["From: a@b.com", "Subject: =?UTF-8?Q?Hello_World?=", "Date: Mon, 02 Jan 2023 10:00:00 +0000", "Message-ID: <6@b.com>", "", "x"].join("\n");
+    const eml = [
+      "From: a@b.com",
+      "Subject: =?UTF-8?Q?Hello_World?=",
+      "Date: Mon, 02 Jan 2023 10:00:00 +0000",
+      "Message-ID: <6@b.com>",
+      "",
+      "x",
+    ].join("\n");
     expect(parseMimeEmail(eml).subject).toBe("Hello World");
   });
 
@@ -196,7 +206,8 @@ describe("parseEmail — best-effort .msg recovery", () => {
   // Simulate an Outlook .msg as it arrives through File.text(): OLE/MAPI stream markers survive as
   // ASCII, the embedded transport-headers stream carries the RFC 822 headers.
   function fakeMsg(): string {
-    return "���__substg1.0_007D001E" +
+    return (
+      "���__substg1.0_007D001E" +
       [
         "Received: from mx.evil.example (mx.evil.example [203.0.113.7]) by victim",
         "From: attacker@evil.example",
@@ -205,7 +216,8 @@ describe("parseEmail — best-effort .msg recovery", () => {
         "Date: Tue, 01 Dec 2017 08:00:00 +0000",
         "Authentication-Results: victim; spf=fail; dmarc=fail",
       ].join("\r\n") +
-      "\r\n\r\n�binary junk pay here http://evil.example/pay �\x00\x00";
+      "\r\n\r\n�binary junk pay here http://evil.example/pay �\x00\x00"
+    );
   }
 
   it("detects a .msg by its MAPI markers", () => {

@@ -26,9 +26,7 @@ const imageFor = (i: number): string =>
 
 describe("capture sequence allocation (#214)", () => {
   it("hands out a unique sequence number to every concurrent capture", async () => {
-    const seqs = await Promise.all(
-      Array.from({ length: CONCURRENT }, () => store.nextSequenceNumber(CASE)),
-    );
+    const seqs = await Promise.all(Array.from({ length: CONCURRENT }, () => store.nextSequenceNumber(CASE)));
     expect(new Set(seqs).size).toBe(CONCURRENT);
   });
 
@@ -86,8 +84,13 @@ describe("import sequence allocation (#214)", () => {
     expect(second).toBeGreaterThan(first);
 
     await store.appendImport(CASE, {
-      caseId: CASE, sequenceNumber: first, importedAt: new Date().toISOString(),
-      filename: "0001_a.csv", originalName: "a.csv", rows: 0, bytes: 0,
+      caseId: CASE,
+      sequenceNumber: first,
+      importedAt: new Date().toISOString(),
+      filename: "0001_a.csv",
+      originalName: "a.csv",
+      rows: 0,
+      bytes: 0,
     });
     const third = await store.nextImportSeq(CASE);
     expect(third).toBeGreaterThan(second);

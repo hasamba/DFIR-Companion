@@ -9,17 +9,17 @@ import spawn from "cross-spawn";
 // Result of one Codex CLI invocation. Process-level failures (missing binary, timeout/abort) come
 // back as fields rather than rejections, so the provider maps them to ProviderError uniformly.
 export interface CodexRunResult {
-  code: number | null;                 // exit code; null when the process was killed
+  code: number | null; // exit code; null when the process was killed
   stdout: string;
   stderr: string;
-  spawnError?: NodeJS.ErrnoException;  // set when the process could not be spawned (e.g. ENOENT)
-  timedOut?: boolean;                  // true when killed by the timeout or the external signal
+  spawnError?: NodeJS.ErrnoException; // set when the process could not be spawned (e.g. ENOENT)
+  timedOut?: boolean; // true when killed by the timeout or the external signal
 }
 
 export interface CodexRunOptions {
   bin: string;
   args: string[];
-  stdin: string;         // the prompt, written to the child's stdin and then closed (see below)
+  stdin: string; // the prompt, written to the child's stdin and then closed (see below)
   timeoutMs: number;
   signal?: AbortSignal; // external cancellation
   cwd?: string;
@@ -45,8 +45,14 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
 
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, opts.timeoutMs);
-    const onAbort = () => { timedOut = true; child.kill("SIGKILL"); };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, opts.timeoutMs);
+    const onAbort = () => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    };
     if (opts.signal) {
       if (opts.signal.aborted) onAbort();
       else opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -55,7 +61,13 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
       clearTimeout(timer);
       if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
     };
-    const done = (r: CodexRunResult) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
+    const done = (r: CodexRunResult) => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(r);
+      }
+    };
 
     child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
     // Non-null: stdio: ["pipe", "pipe", "pipe"] above guarantees these pipes exist; cross-spawn's
@@ -65,10 +77,16 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     // instead of decoding to two unrecoverable U+FFFDs (#515).
     child.stdout!.setEncoding("utf8");
     child.stderr!.setEncoding("utf8");
-    child.stdout!.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr!.on("data", (chunk: string) => { stderr += chunk; });
+    child.stdout!.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr!.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
     child.on("close", (code) => done({ code, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) }));
 
-    child.stdin!.on("error", () => { /* ignore EPIPE if the child exits before we finish writing */ });
+    child.stdin!.on("error", () => {
+      /* ignore EPIPE if the child exits before we finish writing */
+    });
     child.stdin!.end(opts.stdin);
   });

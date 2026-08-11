@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { pollHuntStatusOnce, isHuntStoppedEarly, type HuntPollDeps } from "../../src/integrations/velociraptor/huntStatusPoller.js";
+import {
+  pollHuntStatusOnce,
+  isHuntStoppedEarly,
+  type HuntPollDeps,
+} from "../../src/integrations/velociraptor/huntStatusPoller.js";
 import type { VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 
 function job(over: Partial<VeloHuntJob> = {}): VeloHuntJob {
@@ -33,7 +37,12 @@ describe("pollHuntStatusOnce", () => {
 
   it("reschedules as running but logs when Velociraptor reports an unrecognized state", async () => {
     let logged = "";
-    const deps: HuntPollDeps = { getState: async () => ({ state: "UNKNOWN_STATE" }), log: (m) => { logged = m; } };
+    const deps: HuntPollDeps = {
+      getState: async () => ({ state: "UNKNOWN_STATE" }),
+      log: (m) => {
+        logged = m;
+      },
+    };
     const out = await pollHuntStatusOnce(job(), deps);
     expect(out.action).toBe("reschedule");
     expect(out.job.status).toBe("running");
@@ -67,7 +76,14 @@ describe("pollHuntStatusOnce", () => {
 
   it("marks the job unreachable and reschedules when the query throws", async () => {
     let logged = "";
-    const deps: HuntPollDeps = { getState: async () => { throw new Error("velo down"); }, log: (m) => { logged = m; } };
+    const deps: HuntPollDeps = {
+      getState: async () => {
+        throw new Error("velo down");
+      },
+      log: (m) => {
+        logged = m;
+      },
+    };
     const out = await pollHuntStatusOnce(job(), deps);
     expect(out.action).toBe("reschedule");
     expect(out.job.status).toBe("unreachable");
@@ -84,10 +100,14 @@ describe("pollHuntStatusOnce", () => {
   it("never polls a job already in a terminal status (defensive, caller-level guard duplicated here)", async () => {
     for (const status of ["collecting", "imported", "error", "deleted"] as const) {
       const j = job({ status });
-      const deps: HuntPollDeps = { getState: async () => { throw new Error("should not be called"); } };
+      const deps: HuntPollDeps = {
+        getState: async () => {
+          throw new Error("should not be called");
+        },
+      };
       const out = await pollHuntStatusOnce(j, deps);
       expect(out.action).toBe("stop");
-      expect(out.job).toBe(j);   // untouched, same reference
+      expect(out.job).toBe(j); // untouched, same reference
     }
   });
 });

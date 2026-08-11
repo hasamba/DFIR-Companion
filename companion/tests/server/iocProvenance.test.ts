@@ -42,7 +42,10 @@ async function makeApp() {
   const stateStore = new StateStore(store);
   const superTimelineStore = new SuperTimelineStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, superTimelineStore });

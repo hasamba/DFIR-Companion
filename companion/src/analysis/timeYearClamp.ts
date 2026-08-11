@@ -22,7 +22,7 @@ const YEAR_CLAMP_MIN_EVENTS = 12;
 
 export interface YearClampOptions {
   dominantFraction?: number; // fraction of dated events one year must hold to be the anchor. Default 0.9.
-  minEvents?: number;        // minimum dated events before clamping applies. Default 12.
+  minEvents?: number; // minimum dated events before clamping applies. Default 12.
 }
 
 // Year of an ISO timestamp in UTC, or null when unparseable/empty.
@@ -38,10 +38,17 @@ function setYear(ts: string, year: number): string {
   const ms = Date.parse(ts);
   if (Number.isNaN(ms)) return ts;
   const d = new Date(ms);
-  return new Date(Date.UTC(
-    year, d.getUTCMonth(), d.getUTCDate(),
-    d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds(),
-  )).toISOString();
+  return new Date(
+    Date.UTC(
+      year,
+      d.getUTCMonth(),
+      d.getUTCDate(),
+      d.getUTCHours(),
+      d.getUTCMinutes(),
+      d.getUTCSeconds(),
+      d.getUTCMilliseconds(),
+    ),
+  ).toISOString();
 }
 
 // The modal (most frequent) year among an event array's DATED timestamps, or null when none are dated.
@@ -60,14 +67,21 @@ function modalYear(events: readonly ForensicEvent[]): { year: number; count: num
   if (dated === 0) return null;
   let year = 0;
   let count = -1;
-  for (const [y, c] of byYear) if (c > count) { year = y; count = c; }
+  for (const [y, c] of byYear)
+    if (c > count) {
+      year = y;
+      count = c;
+    }
   return { year, count, dated };
 }
 
 // Re-anchor events whose year is an outlier onto the timeline's dominant year (see module header).
 // Returns a new array; events already on the dominant year (or undated) pass through unchanged. When no
 // year dominates, or the timeline is too small, the input is returned as-is.
-export function clampOutlierYears(events: readonly ForensicEvent[], opts: YearClampOptions = {}): ForensicEvent[] {
+export function clampOutlierYears(
+  events: readonly ForensicEvent[],
+  opts: YearClampOptions = {},
+): ForensicEvent[] {
   const dominantFraction = opts.dominantFraction ?? DEFAULT_YEAR_CLAMP_DOMINANT_FRACTION;
   const minEvents = opts.minEvents ?? YEAR_CLAMP_MIN_EVENTS;
 

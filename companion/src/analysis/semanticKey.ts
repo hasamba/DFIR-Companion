@@ -14,13 +14,66 @@ import type { Finding } from "./stateTypes.js";
 // discriminating meaning, so removing them lets equivalent titles converge on the same phrase.
 const STOPWORDS = new Set<string>([
   // grammatical
-  "a", "an", "the", "of", "to", "in", "on", "for", "and", "or", "with", "via", "by", "from", "at",
-  "as", "is", "was", "were", "be", "into", "over", "this", "that", "these", "those",
+  "a",
+  "an",
+  "the",
+  "of",
+  "to",
+  "in",
+  "on",
+  "for",
+  "and",
+  "or",
+  "with",
+  "via",
+  "by",
+  "from",
+  "at",
+  "as",
+  "is",
+  "was",
+  "were",
+  "be",
+  "into",
+  "over",
+  "this",
+  "that",
+  "these",
+  "those",
   // generic security / DFIR filler
-  "detected", "detection", "suspicious", "possible", "potential", "likely", "observed", "activity",
-  "attempt", "attempted", "execution", "executed", "command", "commands", "behavior", "behaviour",
-  "event", "events", "alert", "alerts", "indicator", "indicators", "evidence", "use", "usage",
-  "using", "seen", "found", "multiple", "unusual", "anomalous", "malicious", "unknown",
+  "detected",
+  "detection",
+  "suspicious",
+  "possible",
+  "potential",
+  "likely",
+  "observed",
+  "activity",
+  "attempt",
+  "attempted",
+  "execution",
+  "executed",
+  "command",
+  "commands",
+  "behavior",
+  "behaviour",
+  "event",
+  "events",
+  "alert",
+  "alerts",
+  "indicator",
+  "indicators",
+  "evidence",
+  "use",
+  "usage",
+  "using",
+  "seen",
+  "found",
+  "multiple",
+  "unusual",
+  "anomalous",
+  "malicious",
+  "unknown",
 ]);
 
 // Max salient tokens kept in the phrase — bounds key length and, combined with sorting, keeps the
@@ -29,13 +82,18 @@ const MAX_TOKENS = 4;
 
 const TECHNIQUE_RE = /^T\d{4}(?:\.\d{3})?$/;
 
-const lower = (s: string): string => String(s ?? "").trim().toLowerCase();
+const lower = (s: string): string =>
+  String(s ?? "")
+    .trim()
+    .toLowerCase();
 
 // The dominant technique = the first well-formed ATT&CK id on the finding (synthesis lists the
 // primary technique first). "" when the finding maps none.
 function dominantTechnique(mitreTechniques: readonly string[] | undefined): string {
   for (const raw of mitreTechniques ?? []) {
-    const id = String(raw ?? "").trim().toUpperCase();
+    const id = String(raw ?? "")
+      .trim()
+      .toUpperCase();
     if (TECHNIQUE_RE.test(id)) return id;
   }
   return "";
@@ -49,7 +107,7 @@ function dominantTechnique(mitreTechniques: readonly string[] | undefined): stri
 // which erase the real subject and collapse genuinely-different findings that share an IP (#69 live).
 // Short tokens like "dc01"/"web01"/"c2"/"svchost32" keep their letters and survive.
 function isDescriptive(token: string): boolean {
-  if (!/[a-z]/.test(token)) return false;             // pure-numeric → drop
+  if (!/[a-z]/.test(token)) return false; // pure-numeric → drop
   if (token.length >= 16 && /^[0-9a-f]+$/.test(token)) return false; // hash/hex blob → drop
   return true;
 }
@@ -67,7 +125,9 @@ export function nounPhrase(title: string): string {
   const salient = [...new Set(tokens)].sort().slice(0, MAX_TOKENS);
   const phrase = salient.join("_");
   if (phrase) return phrase;
-  return lower(title).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return lower(title)
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 // Derive the stable semanticKey for a finding: `${dominantTechnique}:${nounPhrase}` when a technique

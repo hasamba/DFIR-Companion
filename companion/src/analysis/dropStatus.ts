@@ -39,7 +39,13 @@ export type PendingRawInput = z.infer<typeof pendingRawSchema>;
 export type DropStatus = z.infer<typeof dropStatusSchema>;
 
 const EMPTY: DropStatus = {
-  lastSweepAt: "", dropPath: "", importedCount: 0, failedCount: 0, imported: [], failed: [], pendingRawInputs: [],
+  lastSweepAt: "",
+  dropPath: "",
+  importedCount: 0,
+  failedCount: 0,
+  imported: [],
+  failed: [],
+  pendingRawInputs: [],
 };
 
 // One sweep can drop hundreds of files; cap the detail lists (the counts stay exact).
@@ -47,8 +53,8 @@ const MAX_LISTED = 200;
 
 export interface DropSweep {
   dropPath: string;
-  imported: string[];               // relpaths imported OK this sweep
-  failed: DropFailure[];            // relpaths that failed + the reason
+  imported: string[]; // relpaths imported OK this sweep
+  failed: DropFailure[]; // relpaths that failed + the reason
   pendingRawInputs?: PendingRawInput[]; // raw EVTX/PCAP awaiting an external tool run
 }
 

@@ -30,7 +30,12 @@ let delivered: Array<{ url: string; body: unknown }>;
 const fakePipeline = {
   ask: async (caseId: string, question: string) => {
     asked.push({ caseId, question });
-    return { answer: `answer for ${caseId}`, status: "answered", pointer: "collect the prefetch dir", relatedEventIds: [] };
+    return {
+      answer: `answer for ${caseId}`,
+      status: "answered",
+      pointer: "collect the prefetch dir",
+      relatedEventIds: [],
+    };
   },
 } as unknown as import("../../src/analysis/pipeline.js").AnalysisPipeline;
 
@@ -81,7 +86,11 @@ afterEach(() => {
 
 function slack(text: string, extra: Record<string, string> = {}) {
   const raw = new URLSearchParams({
-    channel_id: "C1", user_id: "U1", text, response_url: "https://hooks.slack.com/commands/T1/1/x", ...extra,
+    channel_id: "C1",
+    user_id: "U1",
+    text,
+    response_url: "https://hooks.slack.com/commands/T1/1/x",
+    ...extra,
   }).toString();
   const ts = String(Math.floor(Date.now() / 1000));
   const sig = "v0=" + createHmac("sha256", SLACK_SECRET).update(`v0:${ts}:${raw}`).digest("hex");
@@ -97,7 +106,13 @@ function teams(text: string, extra: Record<string, unknown> = {}) {
   return request(app)
     .post("/integrations/teams/command")
     .set("authorization", `Bearer ${TEAMS_TOKEN}`)
-    .send({ channel: { id: "T-CH" }, from: { id: "U1" }, text, responseUrl: "https://outlook.webhook.office.com/x", ...extra });
+    .send({
+      channel: { id: "T-CH" },
+      from: { id: "U1" },
+      text,
+      responseUrl: "https://outlook.webhook.office.com/x",
+      ...extra,
+    });
 }
 
 function telegram(text: string, extra: Record<string, unknown> = {}) {
@@ -133,13 +148,35 @@ describe("authentication", () => {
   });
 
   it("rejects a Teams request with a wrong or missing bearer token", async () => {
-    expect((await request(app).post("/integrations/teams/command").set("authorization", "Bearer nope").send({ text: "status c1" })).status).toBe(401);
-    expect((await request(app).post("/integrations/teams/command").send({ text: "status c1" })).status).toBe(401);
+    expect(
+      (
+        await request(app)
+          .post("/integrations/teams/command")
+          .set("authorization", "Bearer nope")
+          .send({ text: "status c1" })
+      ).status,
+    ).toBe(401);
+    expect((await request(app).post("/integrations/teams/command").send({ text: "status c1" })).status).toBe(
+      401,
+    );
   });
 
   it("rejects a Telegram update with a wrong or missing secret token", async () => {
-    expect((await request(app).post("/integrations/telegram/command").set("x-telegram-bot-api-secret-token", "nope").send({ message: { chat: { id: 1 }, text: "/status c1" } })).status).toBe(401);
-    expect((await request(app).post("/integrations/telegram/command").send({ message: { chat: { id: 1 }, text: "/status c1" } })).status).toBe(401);
+    expect(
+      (
+        await request(app)
+          .post("/integrations/telegram/command")
+          .set("x-telegram-bot-api-secret-token", "nope")
+          .send({ message: { chat: { id: 1 }, text: "/status c1" } })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await request(app)
+          .post("/integrations/telegram/command")
+          .send({ message: { chat: { id: 1 }, text: "/status c1" } })
+      ).status,
+    ).toBe(401);
   });
 
   it("refuses every platform when its secret is not configured", async () => {

@@ -27,7 +27,8 @@ const YARA_OUT = "EvilRule /x/a.bin\n0x10:$s: 4d 5a";
 /** A Claude Code that reports whatever the tool "returned". */
 function fakeClaude(opts: { text?: string } = {}): ClaudeRunner {
   return async () => ({
-    code: 0, stderr: "",
+    code: 0,
+    stderr: "",
     stdout: JSON.stringify({ type: "result", subtype: "success", result: opts.text ?? YARA_OUT }) + "\n",
   });
 }
@@ -37,7 +38,10 @@ async function harness(opts: { text?: string } = {}) {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const mcpServerStore = new McpServerStore(join(root, "mcp-servers.json"));
@@ -51,9 +55,14 @@ async function harness(opts: { text?: string } = {}) {
   };
 
   const app = createApp(store, {
-    pipeline, stateStore, importUndoStore,
-    mcpServerStore, custodyStore, jobManager,
-    mcpClaudeRunner: fakeClaude(opts), mcpTransferRunner,
+    pipeline,
+    stateStore,
+    importUndoStore,
+    mcpServerStore,
+    custodyStore,
+    jobManager,
+    mcpClaudeRunner: fakeClaude(opts),
+    mcpTransferRunner,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
@@ -62,12 +71,23 @@ async function harness(opts: { text?: string } = {}) {
 
   await mcpServerStore.add({
     id: "sift-mcp",
-    allowedTools: ["run_command"], allowedCommands: ["vol.py"],
+    allowedTools: ["run_command"],
+    allowedCommands: ["vol.py"],
     delivery: { mode: "scp", host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" },
   });
 
-  return { app, store, mcpServerStore, custodyStore, jobManager, transfers,
-           pipeline, stateStore, importUndoStore, mcpTransferRunner };
+  return {
+    app,
+    store,
+    mcpServerStore,
+    custodyStore,
+    jobManager,
+    transfers,
+    pipeline,
+    stateStore,
+    importUndoStore,
+    mcpTransferRunner,
+  };
 }
 
 /**
@@ -86,7 +106,9 @@ async function settle(jobManager: JobManager, jobId: string) {
       const job = jobManager.get(jobId);
       if (!job) return undefined;
       last = job.status;
-      return job.status === "succeeded" || job.status === "failed" || job.status === "cancelled" ? job : undefined;
+      return job.status === "succeeded" || job.status === "failed" || job.status === "cancelled"
+        ? job
+        : undefined;
     },
   );
 }
@@ -135,7 +157,12 @@ describe("POST /cases/:id/mcp/:serverId/run", { timeout: MCP_TEST_TIMEOUT }, () 
     const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     const job = jobManager.get(res.body.jobId);
 
-    expect(job).toMatchObject({ kind: "mcp", caseId: "c1", cancellable: true, label: "sift-mcp/run_command" });
+    expect(job).toMatchObject({
+      kind: "mcp",
+      caseId: "c1",
+      cancellable: true,
+      label: "sift-mcp/run_command",
+    });
     await settle(jobManager, res.body.jobId);
   });
 
@@ -165,7 +192,8 @@ describe("POST /cases/:id/mcp/:serverId/run", { timeout: MCP_TEST_TIMEOUT }, () 
 
   it("400s a target path outside the case directory", async () => {
     const { app } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run")
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
       .send({ ...RUN_BODY, targetPath: "../../../etc/passwd" });
 
     expect(res.status).toBe(400);
@@ -175,7 +203,8 @@ describe("POST /cases/:id/mcp/:serverId/run", { timeout: MCP_TEST_TIMEOUT }, () 
   // The harness server opts into a command allowlist, so the narrowing applies.
   it("400s a command the server is not allowed to run", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run")
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
       .send({ ...RUN_BODY, args: { command: ["curl", "http://x", "<target>"] } });
 
     // The guard runs inside the job, so the refusal lands there — and nothing was transferred.
@@ -210,7 +239,9 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
   it("fetches the output without touching the case", async () => {
     const { app, jobManager } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     expect(res.body.preview).toBe(true);
     const job = await settle(jobManager, res.body.jobId);
     expect(job.status).toBe("succeeded");
@@ -222,26 +253,38 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
 
   it("labels the job as a preview", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     expect(jobManager.get(res.body.jobId)?.label).toBe("sift-mcp/run_command (preview)");
     await settle(jobManager, res.body.jobId);
   });
 
   it("returns the output and the kind it would import as", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
     expect(p.status).toBe(200);
-    expect(p.body).toMatchObject({ server: "sift-mcp", tool: "run_command", kind: "yara", bytes: YARA_OUT.length, truncated: false });
+    expect(p.body).toMatchObject({
+      server: "sift-mcp",
+      tool: "run_command",
+      kind: "yara",
+      bytes: YARA_OUT.length,
+      truncated: false,
+    });
     expect(p.body.text).toBe(YARA_OUT);
   });
 
   it("caps a large body so the point is the shape, not the volume", async () => {
     const big = "EvilRule /x/a.bin\n" + "0x10:$s: 4d 5a\n".repeat(2000);
     const { app, jobManager } = await harness({ text: big });
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
@@ -252,7 +295,9 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
 
   it("imports exactly the fetched bytes on approval, without re-running the tool", async () => {
     const { app, jobManager, transfers } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
     const transfersAfterPreview = transfers.length;
 
@@ -268,7 +313,9 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
 
   it("makes an approved import undoable", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
     await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
 
@@ -278,7 +325,9 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
 
   it("retains an approved preview as a read-only imported analysis", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const imported = await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
@@ -298,7 +347,9 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
 
   it("discards a preview and leaves the case untouched", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const del = await request(app).delete(`/cases/c1/mcp/preview/${res.body.jobId}`);
@@ -324,9 +375,11 @@ describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
 });
 
 describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
-  const AGENT_JSON = '{"findings":[{"title":"Injected process","description":"malfind hit","severity":"High"}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
+  const AGENT_JSON =
+    '{"findings":[{"title":"Injected process","description":"malfind hit","severity":"High"}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
   const agentRunner: ClaudeRunner = async () => ({
-    code: 0, stderr: "",
+    code: 0,
+    stderr: "",
     stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n",
   });
 
@@ -335,9 +388,15 @@ describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
     await h.mcpServerStore.update("sift-mcp", { agentEnabled: opts.agentEnabled ?? true });
     // Rebuild the app so it picks up the injected agent runner.
     const app = createApp(h.store, {
-      pipeline: h.pipeline, stateStore: h.stateStore, importUndoStore: h.importUndoStore,
-      mcpServerStore: h.mcpServerStore, custodyStore: h.custodyStore, jobManager: h.jobManager,
-      mcpClaudeRunner: fakeClaude(), mcpTransferRunner: h.mcpTransferRunner, mcpAgentRunner: opts.runner ?? agentRunner,
+      pipeline: h.pipeline,
+      stateStore: h.stateStore,
+      importUndoStore: h.importUndoStore,
+      mcpServerStore: h.mcpServerStore,
+      custodyStore: h.custodyStore,
+      jobManager: h.jobManager,
+      mcpClaudeRunner: fakeClaude(),
+      mcpTransferRunner: h.mcpTransferRunner,
+      mcpAgentRunner: opts.runner ?? agentRunner,
     });
     return { ...h, app };
   }
@@ -369,14 +428,31 @@ describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
 
   it("publishes live sanitized tool activity on the background job", async () => {
     let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const runner: ClaudeRunner = async (run) => {
-      run.onStdout?.(JSON.stringify({
-        type: "assistant",
-        message: { content: [{ type: "tool_use", id: "t1", name: "mcp__sift-mcp__windows.pslist", input: { path: "secret" } }] },
-      }) + "\n");
+      run.onStdout?.(
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "t1",
+                name: "mcp__sift-mcp__windows.pslist",
+                input: { path: "secret" },
+              },
+            ],
+          },
+        }) + "\n",
+      );
       await gate;
-      return { code: 0, stderr: "", stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n" };
+      return {
+        code: 0,
+        stderr: "",
+        stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n",
+      };
     };
     const { app, jobManager } = await agentHarness({ runner });
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
@@ -457,15 +533,21 @@ describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
     const runner: ClaudeRunner = async (run) => {
       const line = JSON.parse(run.stdin.trim()) as { message: { content: Array<{ text: string }> } };
       prompt = line.message.content[0].text;
-      return { code: 0, stderr: "", stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n" };
+      return {
+        code: 0,
+        stderr: "",
+        stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n",
+      };
     };
     const { app, jobManager, transfers, custodyStore } = await agentHarness({ runner });
 
-    const res = await request(app).post("/cases/c1/mcp/agent").send({
-      prompt: "Investigate this RAM dump",
-      servers: ["sift-mcp"],
-      targetPath: "imports/mem.raw",
-    });
+    const res = await request(app)
+      .post("/cases/c1/mcp/agent")
+      .send({
+        prompt: "Investigate this RAM dump",
+        servers: ["sift-mcp"],
+        targetPath: "imports/mem.raw",
+      });
     expect(res.status).toBe(202);
     expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
     expect(prompt).toContain("Investigate this RAM dump");
@@ -477,17 +559,24 @@ describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
   it("stages a browser-selected file for a plain-English investigation", async () => {
     let prompt = "";
     const runner: ClaudeRunner = async (run) => {
-      prompt = (JSON.parse(run.stdin.trim()) as { message: { content: Array<{ text: string }> } }).message.content[0].text;
-      return { code: 0, stderr: "", stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n" };
+      prompt = (JSON.parse(run.stdin.trim()) as { message: { content: Array<{ text: string }> } }).message
+        .content[0].text;
+      return {
+        code: 0,
+        stderr: "",
+        stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n",
+      };
     };
     const { app, jobManager, transfers } = await agentHarness({ runner });
-    const res = await request(app).post("/cases/c1/mcp/agent-upload").send({
-      prompt: "Analyze this binary with REMnux",
-      servers: ["sift-mcp"],
-      filename: "sample.exe",
-      dataBase64: Buffer.from("MZ\x90\x00").toString("base64"),
-      preview: true,
-    });
+    const res = await request(app)
+      .post("/cases/c1/mcp/agent-upload")
+      .send({
+        prompt: "Analyze this binary with REMnux",
+        servers: ["sift-mcp"],
+        filename: "sample.exe",
+        dataBase64: Buffer.from("MZ\x90\x00").toString("base64"),
+        preview: true,
+      });
     expect(res.status).toBe(202);
     expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
     expect(prompt).toContain("/cases/incoming/sample.exe");
@@ -499,12 +588,14 @@ describe("POST /cases/:id/mcp/:serverId/run-upload", { timeout: MCP_TEST_TIMEOUT
   it("stages uploaded bytes, runs against them, and ingests", async () => {
     const { app, jobManager, transfers } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run-upload").send({
-      ...RUN_BODY,
-      targetPath: undefined,
-      filename: "sample.bin",
-      dataBase64: Buffer.from("MZ\x90\x00").toString("base64"),
-    });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run-upload")
+      .send({
+        ...RUN_BODY,
+        targetPath: undefined,
+        filename: "sample.bin",
+        dataBase64: Buffer.from("MZ\x90\x00").toString("base64"),
+      });
 
     expect(res.status).toBe(202);
     const job = await settle(jobManager, res.body.jobId);
@@ -515,7 +606,9 @@ describe("POST /cases/:id/mcp/:serverId/run-upload", { timeout: MCP_TEST_TIMEOUT
 
   it("400s without filename or bytes", async () => {
     const { app } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run-upload").send({ ...RUN_BODY, filename: "x.bin" });
+    const res = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run-upload")
+      .send({ ...RUN_BODY, filename: "x.bin" });
     expect(res.status).toBe(400);
   });
 });

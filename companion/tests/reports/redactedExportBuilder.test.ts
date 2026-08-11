@@ -11,7 +11,13 @@ function fakeState(): InvestigationState {
   return {
     summary: "",
     forensicTimeline: [
-      { eventId: "e1", timestamp: "2026-01-01T00:00:00Z", description: "VICTIM-PC ran 10.0.0.5", severity: "High", asset: "VICTIM-PC" },
+      {
+        eventId: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: "VICTIM-PC ran 10.0.0.5",
+        severity: "High",
+        asset: "VICTIM-PC",
+      },
     ],
     findings: [],
     iocs: [],
@@ -29,7 +35,9 @@ function deps(overrides: Partial<RedactedExportDeps> = {}): RedactedExportDeps {
     store: {} as RedactedExportDeps["store"],
     stateStore: { load: async () => fakeState() } as unknown as RedactedExportDeps["stateStore"],
     customEntities: { load: async () => [] } as unknown as RedactedExportDeps["customEntities"],
-    discoveredEntities: { load: async () => ({ discovered: [], suppressed: [] }) } as unknown as RedactedExportDeps["discoveredEntities"],
+    discoveredEntities: {
+      load: async () => ({ discovered: [], suppressed: [] }),
+    } as unknown as RedactedExportDeps["discoveredEntities"],
     ocrRunner: { recognize: async () => [] },
     reportWriter: {
       // Echo back which redactions the anonymizer applies so the test can assert tokenization ran.
@@ -43,7 +51,8 @@ function deps(overrides: Partial<RedactedExportDeps> = {}): RedactedExportDeps {
         stateJson: "{}",
       }),
     },
-    listScreenshots: async () => ["shot-001.png", "shot-002.png", "notes.txt"].filter((f) => /\.png$/.test(f)),
+    listScreenshots: async () =>
+      ["shot-001.png", "shot-002.png", "notes.txt"].filter((f) => /\.png$/.test(f)),
     readScreenshot: async (_id: string, file: string) => Buffer.from(`raw-${file}`),
     redactImage: async (buf: Buffer): Promise<ScreenshotRedactResult> => ({
       buffer: Buffer.concat([Buffer.from("REDACTED:"), buf]),
@@ -83,7 +92,10 @@ describe("buildRedactedExport", () => {
         return { buffer: buf, blurred: false, redactionCount: 0, metadataStripped: true };
       },
     });
-    const { zip, summary } = await buildRedactedExport(d, "INC-1", { ...DEFAULT_REDACTED_EXPORT_OPTIONS, includeScreenshots: false });
+    const { zip, summary } = await buildRedactedExport(d, "INC-1", {
+      ...DEFAULT_REDACTED_EXPORT_OPTIONS,
+      includeScreenshots: false,
+    });
     const paths = readZip(zip).map((e) => e.path);
     expect(paths.some((p) => p.startsWith("screenshots/"))).toBe(false);
     expect(called).toBe(0);
@@ -92,11 +104,18 @@ describe("buildRedactedExport", () => {
 
   it("tokenizes victim-org domains from the customer store even when absent from the timeline", async () => {
     const d = deps({
-      customerStore: { load: async () => ({ domains: ["victimcorp.com"], emails: ["ceo@victimcorp.com"] }) } as unknown as RedactedExportDeps["customerStore"],
+      customerStore: {
+        load: async () => ({ domains: ["victimcorp.com"], emails: ["ceo@victimcorp.com"] }),
+      } as unknown as RedactedExportDeps["customerStore"],
       reportWriter: {
         redactedReportContents: async (_caseId: string, redact: (s: string) => string) => ({
           markdown: redact("breach at victimcorp.com affecting ceo@victimcorp.com"),
-          html: "<h1>r</h1>", findingsCsv: "f", iocsCsv: "i", timelineCsv: "t", forensicTimelineCsv: "ft", stateJson: "{}",
+          html: "<h1>r</h1>",
+          findingsCsv: "f",
+          iocsCsv: "i",
+          timelineCsv: "t",
+          forensicTimelineCsv: "ft",
+          stateJson: "{}",
         }),
       },
     });
@@ -109,10 +128,21 @@ describe("buildRedactedExport", () => {
 
   it("includes only the report markdown/html when CSVs, state, and screenshots are excluded", async () => {
     const { zip } = await buildRedactedExport(deps(), "INC-1", {
-      includeReport: true, includeCsvs: false, includeStateJson: false, includeScreenshots: false, blurScreenshots: false,
+      includeReport: true,
+      includeCsvs: false,
+      includeStateJson: false,
+      includeScreenshots: false,
+      blurScreenshots: false,
     });
-    const paths = readZip(zip).map((e) => e.path).sort();
-    expect(paths).toEqual(["REDACTION-NOTES.txt", "export-manifest.json", "report/report.html", "report/report.md"]);
+    const paths = readZip(zip)
+      .map((e) => e.path)
+      .sort();
+    expect(paths).toEqual([
+      "REDACTION-NOTES.txt",
+      "export-manifest.json",
+      "report/report.html",
+      "report/report.md",
+    ]);
   });
 
   it("#13: tokenizes the victim org NAME (from report-meta) as ANON_OTHER_n, not just its domains", async () => {
@@ -124,7 +154,12 @@ describe("buildRedactedExport", () => {
       reportWriter: {
         redactedReportContents: async (_caseId: string, redact: (s: string) => string) => ({
           markdown: redact("Incident at GlobalTech Industries involving GlobalTech Industries servers"),
-          html: "<h1>r</h1>", findingsCsv: "f", iocsCsv: "i", timelineCsv: "t", forensicTimelineCsv: "ft", stateJson: "{}",
+          html: "<h1>r</h1>",
+          findingsCsv: "f",
+          iocsCsv: "i",
+          timelineCsv: "t",
+          forensicTimelineCsv: "ft",
+          stateJson: "{}",
         }),
       },
     });
@@ -142,7 +177,7 @@ describe("buildRedactedExport", () => {
     const manifest = JSON.parse(manifestEntry!.data.toString("utf8"));
 
     expect(manifest.caseId).toBe("INC-1");
-    expect(typeof manifest.exportedAt).toBe("string");    // live wall-clock from the orchestrator
+    expect(typeof manifest.exportedAt).toBe("string"); // live wall-clock from the orchestrator
     expect(new Date(manifest.exportedAt).toString()).not.toBe("Invalid Date");
     expect(typeof manifest.generatedBy).toBe("string");
     expect(manifest.generatedBy.length).toBeGreaterThan(0);
@@ -173,15 +208,21 @@ describe("buildRedactedExport — custody manifest (#362 follow-up)", () => {
     signature: { algorithm: "HMAC-SHA256" as const, value: "d".repeat(64) },
   };
 
-  const withManifest = () => deps({
-    reportWriter: {
-      redactedReportContents: async () => ({
-        markdown: "r", html: "<h1>r</h1>", findingsCsv: "f", iocsCsv: "i",
-        timelineCsv: "t", forensicTimelineCsv: "ft", stateJson: "{}",
-        custodyManifest: manifest,
-      }),
-    } as unknown as RedactedExportDeps["reportWriter"],
-  });
+  const withManifest = () =>
+    deps({
+      reportWriter: {
+        redactedReportContents: async () => ({
+          markdown: "r",
+          html: "<h1>r</h1>",
+          findingsCsv: "f",
+          iocsCsv: "i",
+          timelineCsv: "t",
+          forensicTimelineCsv: "ft",
+          stateJson: "{}",
+          custodyManifest: manifest,
+        }),
+      } as unknown as RedactedExportDeps["reportWriter"],
+    });
 
   it("ships custody-manifest.json inside the package", async () => {
     const { zip } = await buildRedactedExport(withManifest(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
@@ -196,7 +237,9 @@ describe("buildRedactedExport — custody manifest (#362 follow-up)", () => {
     const { zip } = await buildRedactedExport(withManifest(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
 
     const files = readZip(zip);
-    const pkg = JSON.parse(files.find((f) => f.path === "export-manifest.json")!.data.toString("utf8")) as { files: { path: string; sha256: string }[] };
+    const pkg = JSON.parse(files.find((f) => f.path === "export-manifest.json")!.data.toString("utf8")) as {
+      files: { path: string; sha256: string }[];
+    };
     const row = pkg.files.find((f) => f.path === "custody-manifest.json");
     const raw = files.find((f) => f.path === "custody-manifest.json")!.data;
     expect(row).toBeDefined();

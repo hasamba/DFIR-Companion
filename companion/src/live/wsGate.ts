@@ -24,9 +24,7 @@ import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js"
  *   - The case-password middleware is mounted on `/cases/:id` and never sees `/ws`.
  */
 
-export type WsUpgradeDecision =
-  | { ok: true; caseId: string }
-  | { ok: false; reason: string };
+export type WsUpgradeDecision = { ok: true; caseId: string } | { ok: false; reason: string };
 
 export interface WsUpgradeRequest {
   url: string | undefined;
@@ -45,7 +43,10 @@ export interface WsUpgradeDeps extends GuardConfig {
 const SAFE_CASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /** Decide whether this upgrade may subscribe, and to which case. Never throws. */
-export async function authorizeWsUpgrade(req: WsUpgradeRequest, deps: WsUpgradeDeps): Promise<WsUpgradeDecision> {
+export async function authorizeWsUpgrade(
+  req: WsUpgradeRequest,
+  deps: WsUpgradeDeps,
+): Promise<WsUpgradeDecision> {
   const { headers } = req;
 
   const decision = isRequestAllowed({ origin: headers.origin, host: headers.host }, deps);
@@ -141,17 +142,31 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
           // half-open peer, a protocol/RST error) would throw "Unhandled 'error' event" and
           // kill the process. Contain it: log + drop from the hub so we stop broadcasting to it.
           ws.on("error", () => {
-            void deps.operationalMetrics?.record({ type: "websocket", event: "error", durationMs: Date.now() - connectedAt });
-            try { ws.terminate(); } catch { /* already gone */ }
+            void deps.operationalMetrics?.record({
+              type: "websocket",
+              event: "error",
+              durationMs: Date.now() - connectedAt,
+            });
+            try {
+              ws.terminate();
+            } catch {
+              /* already gone */
+            }
             hub.unsubscribe(caseId, sock);
           });
           // pong handler: mark alive so the next reaper sweep doesn't terminate us.
-          ws.on("pong", () => { sock.isAlive = true; });
+          ws.on("pong", () => {
+            sock.isAlive = true;
+          });
           hub.subscribe(caseId, sock);
           ws.on("close", () => {
             hub.unsubscribe(caseId, sock);
             lastDisconnectAt = Date.now();
-            void deps.operationalMetrics?.record({ type: "websocket", event: "disconnect", durationMs: Date.now() - connectedAt });
+            void deps.operationalMetrics?.record({
+              type: "websocket",
+              event: "disconnect",
+              durationMs: Date.now() - connectedAt,
+            });
           });
           wss.emit("connection", ws, req);
         });

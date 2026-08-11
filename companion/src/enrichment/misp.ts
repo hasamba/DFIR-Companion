@@ -1,15 +1,25 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
-import { MISP_PING_PATH, mispPingStatusMessage, mispTransportMessage } from "../integrations/misp/mispConnectivity.js";
+import {
+  MISP_PING_PATH,
+  mispPingStatusMessage,
+  mispTransportMessage,
+} from "../integrations/misp/mispConnectivity.js";
 
 export interface MispOptions {
-  baseUrl: string;   // your MISP instance, e.g. https://misp.example.org
-  apiKey: string;    // MISP Auth Key (Authorization header)
+  baseUrl: string; // your MISP instance, e.g. https://misp.example.org
+  apiKey: string; // MISP Auth Key (Authorization header)
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
 
-interface MispEvent { id?: string; info?: string; threat_level_id?: string }
-interface MispTag { name?: string }
+interface MispEvent {
+  id?: string;
+  info?: string;
+  threat_level_id?: string;
+}
+interface MispTag {
+  name?: string;
+}
 interface MispAttribute {
   type?: string;
   value?: string;
@@ -24,14 +34,14 @@ interface MispAttribute {
 function verdictFor(attrs: MispAttribute[]): Verdict {
   if (attrs.length === 0) return "unknown";
   const high = attrs.some((a) => a.to_ids === true || a.Event?.threat_level_id === "1");
-  return high ? "malicious" : "suspicious";   // present in MISP = at least suspicious
+  return high ? "malicious" : "suspicious"; // present in MISP = at least suspicious
 }
 
 // MISP (Malware Information Sharing Platform). Searches your instance's attributes for
 // the indicator value; a hit means the IOC is known threat intel shared on that instance.
 export class MispProvider implements EnrichmentProvider {
   readonly name = "MISP";
-  readonly scope = "local" as const;     // your own instance — OPSEC-safe
+  readonly scope = "local" as const; // your own instance — OPSEC-safe
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   constructor(private readonly opts: MispOptions) {
@@ -39,7 +49,9 @@ export class MispProvider implements EnrichmentProvider {
     this.base = opts.baseUrl.replace(/\/+$/, "");
   }
 
-  supports(kind: IocKind): boolean { return kind !== "process"; } // attribute values: hash/ip/domain/url (not bare process names)
+  supports(kind: IocKind): boolean {
+    return kind !== "process";
+  } // attribute values: hash/ip/domain/url (not bare process names)
 
   // Cheap reachability + auth check: GET /servers/getVersion (a tiny authenticated endpoint),
   // so we never blast a down instance with one restSearch per IOC. A dead server (connection
@@ -80,7 +92,7 @@ export class MispProvider implements EnrichmentProvider {
 
     const json = (await res.json()) as { response?: { Attribute?: MispAttribute[] } };
     const attrs = json.response?.Attribute ?? [];
-    if (attrs.length === 0) return null;                       // not present on this instance
+    if (attrs.length === 0) return null; // not present on this instance
 
     const events = new Map<string, MispEvent>();
     const tags = new Set<string>();
@@ -98,7 +110,9 @@ export class MispProvider implements EnrichmentProvider {
       score: `${attrs.length} attribute(s) in ${events.size || 1} event(s)${eventInfo ? `: ${eventInfo.slice(0, 80)}` : ""}`,
       detections: attrs.length,
       tags: [...tags].slice(0, 6),
-      link: firstEventId ? `${this.base}/events/view/${encodeURIComponent(firstEventId)}` : `${this.base}/attributes/index`,
+      link: firstEventId
+        ? `${this.base}/events/view/${encodeURIComponent(firstEventId)}`
+        : `${this.base}/attributes/index`,
     };
   }
 }

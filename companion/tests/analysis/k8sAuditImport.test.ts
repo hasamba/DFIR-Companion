@@ -25,7 +25,14 @@ function ndjson(...evs: object[]): string {
 
 describe("parseK8sAudit — verdict-derived severity", () => {
   it("grades pod exec/attach as High (T1609 container administration command)", () => {
-    const r = parseK8sAudit(ndjson(event({ verb: "create", objectRef: { resource: "pods", subresource: "exec", namespace: "prod", name: "api-7" } })));
+    const r = parseK8sAudit(
+      ndjson(
+        event({
+          verb: "create",
+          objectRef: { resource: "pods", subresource: "exec", namespace: "prod", name: "api-7" },
+        }),
+      ),
+    );
     expect(r.format).toBe("k8s-audit");
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].mitreTechniques).toContain("T1609");
@@ -34,10 +41,12 @@ describe("parseK8sAudit — verdict-derived severity", () => {
   });
 
   it("grades secret list as High and a single secret get as Medium (T1552.007)", () => {
-    const r = parseK8sAudit(ndjson(
-      event({ verb: "list", objectRef: { resource: "secrets", namespace: "kube-system" } }),
-      event({ verb: "get", objectRef: { resource: "secrets", namespace: "default", name: "db-cred" } }),
-    ));
+    const r = parseK8sAudit(
+      ndjson(
+        event({ verb: "list", objectRef: { resource: "secrets", namespace: "kube-system" } }),
+        event({ verb: "get", objectRef: { resource: "secrets", namespace: "default", name: "db-cred" } }),
+      ),
+    );
     const byVerb = Object.fromEntries(r.events.map((e) => [e.description.match(/K8s (\w+)/)![1], e]));
     expect(byVerb["list"].severity).toBe("High");
     expect(byVerb["get"].severity).toBe("Medium");
@@ -45,10 +54,12 @@ describe("parseK8sAudit — verdict-derived severity", () => {
   });
 
   it("grades a cluster RBAC binding write as Critical and a namespaced one as High (T1098)", () => {
-    const r = parseK8sAudit(ndjson(
-      event({ verb: "create", objectRef: { resource: "clusterrolebindings", name: "pwn" } }),
-      event({ verb: "patch", objectRef: { resource: "rolebindings", namespace: "team-a", name: "edit" } }),
-    ));
+    const r = parseK8sAudit(
+      ndjson(
+        event({ verb: "create", objectRef: { resource: "clusterrolebindings", name: "pwn" } }),
+        event({ verb: "patch", objectRef: { resource: "rolebindings", namespace: "team-a", name: "edit" } }),
+      ),
+    );
     const byRes = Object.fromEntries(r.events.map((e) => [e.description.match(/K8s \w+ (\S+)/)![1], e]));
     expect(byRes["clusterrolebindings"].severity).toBe("Critical");
     expect(byRes["rolebindings"].severity).toBe("High");
@@ -61,7 +72,11 @@ describe("parseK8sAudit — verdict-derived severity", () => {
       objectRef: { resource: "pods", namespace: "default", name: "escape" },
       requestObject: { spec: { containers: [{ name: "c", securityContext: { privileged: true } }] } },
     });
-    const normal = event({ verb: "create", objectRef: { resource: "pods", namespace: "default", name: "plain" }, requestObject: { spec: { containers: [{ name: "c" }] } } });
+    const normal = event({
+      verb: "create",
+      objectRef: { resource: "pods", namespace: "default", name: "plain" },
+      requestObject: { spec: { containers: [{ name: "c" }] } },
+    });
     const r = parseK8sAudit(ndjson(priv, normal));
     const byName = Object.fromEntries(r.events.map((e) => [e.description.match(/"([^"]+)"/)![1], e]));
     expect(byName["escape"].severity).toBe("High");
@@ -70,10 +85,22 @@ describe("parseK8sAudit — verdict-derived severity", () => {
   });
 
   it("flags successful anonymous API access as High (T1078), denied anonymous as Low", () => {
-    const r = parseK8sAudit(ndjson(
-      event({ user: { username: "system:anonymous" }, verb: "get", objectRef: { resource: "pods", namespace: "kube-system" }, responseStatus: { code: 200 } }),
-      event({ user: { username: "system:anonymous" }, verb: "list", objectRef: { resource: "nodes" }, responseStatus: { code: 403, reason: "Forbidden" } }),
-    ));
+    const r = parseK8sAudit(
+      ndjson(
+        event({
+          user: { username: "system:anonymous" },
+          verb: "get",
+          objectRef: { resource: "pods", namespace: "kube-system" },
+          responseStatus: { code: 200 },
+        }),
+        event({
+          user: { username: "system:anonymous" },
+          verb: "list",
+          objectRef: { resource: "nodes" },
+          responseStatus: { code: 403, reason: "Forbidden" },
+        }),
+      ),
+    );
     const byCode = Object.fromEntries(r.events.map((e) => [/\[40/.test(e.description) ? "denied" : "ok", e]));
     expect(byCode["ok"].severity).toBe("High");
     expect(byCode["ok"].mitreTechniques).toContain("T1078");
@@ -88,7 +115,11 @@ describe("parseK8sAudit — verdict-derived severity", () => {
   });
 
   it("reads an EventList batch and an empty input", () => {
-    const batch = JSON.stringify({ kind: "EventList", apiVersion: "audit.k8s.io/v1", items: [event({}), event({ verb: "delete", objectRef: { resource: "secrets", namespace: "x" } })] });
+    const batch = JSON.stringify({
+      kind: "EventList",
+      apiVersion: "audit.k8s.io/v1",
+      items: [event({}), event({ verb: "delete", objectRef: { resource: "secrets", namespace: "x" } })],
+    });
     expect(parseK8sAudit(batch).events.length).toBe(2);
     expect(parseK8sAudit("").format).toBe("empty");
   });

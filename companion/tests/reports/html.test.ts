@@ -15,7 +15,7 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("<title>Incident Report — c1</title>");
     expect(html).toContain("<h1>Incident Investigation Report</h1>");
     expect(html).toContain("Host compromised via phishing.");
-    expect(html).toContain("<table>");        // the IOC markdown table is converted to HTML
+    expect(html).toContain("<table>"); // the IOC markdown table is converted to HTML
     expect(html).toContain("10.0.0.5");
     expect(html).toContain(`<style nonce="${CSP_NONCE_PLACEHOLDER}">`);
     expect(html).not.toMatch(/\sstyle\s*=/i);
@@ -30,7 +30,8 @@ describe("renderHtmlReport", () => {
   });
 
   it("embeds the company logo as an <img> with the data URI preserved", () => {
-    const logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const logo =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
     const meta = emptyReportMeta();
     meta.companyName = "Acme DFIR";
     meta.companyLogo = logo;
@@ -42,21 +43,35 @@ describe("renderHtmlReport", () => {
   it("escapes raw HTML from untrusted investigation text so it can't become live markup", () => {
     const state = emptyState("c1");
     state.findings.push({
-      id: "f1", severity: "High", title: "XSS attempt",
+      id: "f1",
+      severity: "High",
+      title: "XSS attempt",
       description: "<script>alert(document.cookie)</script>",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
     });
     const html = renderHtmlReport(state);
-    expect(html).not.toContain("<script>");        // the document contains no real <script> tag
-    expect(html).toContain("&lt;script&gt;");       // the attacker-controlled text is rendered inert
+    expect(html).not.toContain("<script>"); // the document contains no real <script> tag
+    expect(html).toContain("&lt;script&gt;"); // the attacker-controlled text is rendered inert
   });
 
   it("does not render unsafe markdown links from untrusted investigation text", () => {
     const state = emptyState("c1");
     state.findings.push({
-      id: "f1", severity: "High", title: "Unsafe markdown",
+      id: "f1",
+      severity: "High",
+      title: "Unsafe markdown",
       description: "[open](javascript:alert(1)) ![pixel](javascript:alert(2))",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
     });
     const html = renderHtmlReport(state);
     expect(html).not.toContain("javascript:");
@@ -74,13 +89,25 @@ describe("renderHtmlReport", () => {
     const state = emptyState("c1");
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "" });
     state.findings.push({
-      id: "f1", severity: "High", title: "Beacon",
-      description: "beacon", relatedIocs: ["i1"],
-      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+      id: "f1",
+      severity: "High",
+      title: "Beacon",
+      description: "beacon",
+      relatedIocs: ["i1"],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
     });
     state.forensicTimeline.push({
-      id: "e1", timestamp: "2026-05-01T00:00:00Z", description: "bad.exe on WIN-01",
-      severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [],
+      id: "e1",
+      timestamp: "2026-05-01T00:00:00Z",
+      description: "bad.exe on WIN-01",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
       asset: "WIN-01",
     });
     const html = renderHtmlReport(state);

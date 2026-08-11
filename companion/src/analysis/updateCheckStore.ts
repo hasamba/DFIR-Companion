@@ -9,8 +9,8 @@ import type { UpdateResult } from "./updateCheck.js";
 // version + "is a newer release out?" are environment-level, like NSRL / KEV / the IOC whitelist.
 // File: updates/update-check.json in a SUBDIR beside cases/ (drive-root-safe). Atomic writes.
 export interface UpdateCheckRecord {
-  enabled?: boolean;       // the Settings toggle (undefined = analyst hasn't set it)
-  result?: UpdateResult;   // the last cached check result
+  enabled?: boolean; // the Settings toggle (undefined = analyst hasn't set it)
+  result?: UpdateResult; // the last cached check result
 }
 
 export class UpdateCheckStore {
@@ -21,7 +21,7 @@ export class UpdateCheckStore {
     if (this.cache) return this.cache;
     try {
       const raw = JSON.parse(await readFile(this.file, "utf8")) as unknown;
-      this.cache = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw) : {};
+      this.cache = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") this.cache = {};
       else throw err;

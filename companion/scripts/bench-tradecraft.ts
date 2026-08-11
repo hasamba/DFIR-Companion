@@ -22,7 +22,11 @@ type Sev = "Info" | "Low" | "Medium" | "High" | "Critical";
 const RANK: Record<Sev, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 const worst = (a: Sev, b: Sev): Sev => (RANK[a] >= RANK[b] ? a : b);
 
-interface Pair { image: string; cmd: string; source: string; }
+interface Pair {
+  image: string;
+  cmd: string;
+  source: string;
+}
 
 function walk(dir: string, hits: string[]): void {
   for (const name of readdirSync(dir)) {
@@ -35,8 +39,11 @@ function walk(dir: string, hits: string[]): void {
 
 function decodeXml(s: string): string {
   return s
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d))
     .replace(/&amp;/g, "&");
 }
 
@@ -49,12 +56,20 @@ function extractPairs(file: string): Pair[] {
     const records: unknown[] = [];
     const trimmed = text.trim();
     if (trimmed.startsWith("[")) {
-      try { records.push(...(JSON.parse(trimmed) as unknown[])); } catch { /* skip */ }
+      try {
+        records.push(...(JSON.parse(trimmed) as unknown[]));
+      } catch {
+        /* skip */
+      }
     } else {
       for (const line of text.split(/\r?\n/)) {
         const t = line.trim();
         if (!t) continue;
-        try { records.push(JSON.parse(t)); } catch { /* skip */ }
+        try {
+          records.push(JSON.parse(t));
+        } catch {
+          /* skip */
+        }
       }
     }
     for (const r of records) {
@@ -99,10 +114,11 @@ function benchDataset(dir: string): void {
   walk(dir, files);
   // Dedup (image, cmd) so a command repeated across thousands of telemetry rows counts once.
   const seen = new Map<string, Pair>();
-  for (const f of files) for (const p of extractPairs(f)) {
-    const key = `${p.image} ${p.cmd}`;
-    if (!seen.has(key)) seen.set(key, p);
-  }
+  for (const f of files)
+    for (const p of extractPairs(f)) {
+      const key = `${p.image} ${p.cmd}`;
+      if (!seen.has(key)) seen.set(key, p);
+    }
   const pairs = [...seen.values()].filter((p) => p.cmd || p.image);
 
   const dist = { before: { Medium: 0, High: 0 }, after: { Medium: 0, High: 0 } };
@@ -123,9 +139,16 @@ function benchDataset(dir: string): void {
 
   console.log(`\n${"=".repeat(78)}\nDATASET  ${dir.split(/[\\/]/).slice(-1)[0]}`);
   console.log(`files: ${files.length}   unique (image,cmd) pairs: ${pairs.length}`);
-  console.log(`severity  before -> after   Medium: ${dist.before.Medium} -> ${dist.after.Medium}   High: ${dist.before.High} -> ${dist.after.High}`);
-  console.log(`new ATT&CK techniques introduced: ${newTechniques.size ? [...newTechniques].map((t) => `${t} ${techniqueName(t)}`).join(", ") : "(none)"}`);
-  if (!escalations.length) { console.log("changed commands: (none)"); return; }
+  console.log(
+    `severity  before -> after   Medium: ${dist.before.Medium} -> ${dist.after.Medium}   High: ${dist.before.High} -> ${dist.after.High}`,
+  );
+  console.log(
+    `new ATT&CK techniques introduced: ${newTechniques.size ? [...newTechniques].map((t) => `${t} ${techniqueName(t)}`).join(", ") : "(none)"}`,
+  );
+  if (!escalations.length) {
+    console.log("changed commands: (none)");
+    return;
+  }
   console.log(`changed commands (${escalations.length}):`);
   for (const e of escalations.sort((x, y) => RANK[y.to] - RANK[x.to])) {
     const sev = e.from === e.to ? `${e.to}` : `${e.from}->${e.to}`;

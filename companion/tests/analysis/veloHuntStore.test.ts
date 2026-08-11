@@ -48,7 +48,7 @@ describe("VeloHuntStore", () => {
     const ids = (await store.list("c1")).map((j) => j.huntId);
     expect(ids).toContain("H.AAA");
     expect(ids).toContain("H.BBB");
-    expect(ids[0]).toBe("H.BBB");   // newest prepended
+    expect(ids[0]).toBe("H.BBB"); // newest prepended
   });
 
   it("updates an existing job in place (matched by huntId, order preserved)", async () => {
@@ -58,7 +58,7 @@ describe("VeloHuntStore", () => {
     await store.upsert("c1", b);
     await store.upsert("c1", { ...a, status: "imported", addedEvents: 42 });
     const list = await store.list("c1");
-    expect(list.map((j) => j.huntId)).toEqual(["H.BBB", "H.AAA"]);   // order unchanged
+    expect(list.map((j) => j.huntId)).toEqual(["H.BBB", "H.AAA"]); // order unchanged
     expect((await store.get("c1", "H.AAA"))!.status).toBe("imported");
     expect((await store.get("c1", "H.AAA"))!.addedEvents).toBe(42);
   });

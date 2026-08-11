@@ -47,14 +47,43 @@ export interface NetworkImportOptions {
 }
 
 const ZEEK_STREAMS = [
-  "conn", "dns", "http", "ssl", "x509", "files", "notice", "weird", "dhcp", "smtp",
-  "ftp", "ssh", "dce_rpc", "kerberos", "ntlm", "rdp", "snmp", "sip", "dnp3", "modbus",
-  "radius", "syslog", "tunnel", "irc", "mysql", "pe", "socks", "ntp", "ocsp",
+  "conn",
+  "dns",
+  "http",
+  "ssl",
+  "x509",
+  "files",
+  "notice",
+  "weird",
+  "dhcp",
+  "smtp",
+  "ftp",
+  "ssh",
+  "dce_rpc",
+  "kerberos",
+  "ntlm",
+  "rdp",
+  "snmp",
+  "sip",
+  "dnp3",
+  "modbus",
+  "radius",
+  "syslog",
+  "tunnel",
+  "irc",
+  "mysql",
+  "pe",
+  "socks",
+  "ntp",
+  "ocsp",
 ];
 
 // Derive the Zeek stream from a (possibly seq-prefixed) filename: "0004_conn.json" → "conn".
 export function zeekStreamFromName(name: string): string {
-  const base = name.toLowerCase().replace(/^.*[\\/]/, "").replace(/\.(json|log|ndjson|jsonl|gz)$/g, "");
+  const base = name
+    .toLowerCase()
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.(json|log|ndjson|jsonl|gz)$/g, "");
   const m = base.match(new RegExp(`(?:^|[._-])(${ZEEK_STREAMS.join("|")})(?:[._-]|$)`));
   return m ? m[1] : "";
 }
@@ -63,9 +92,14 @@ export function zeekStreamFromName(name: string): string {
 export function inferZeekStream(row: Row): string {
   if (getCI(row, "query") != null || getCI(row, "qtype_name") != null) return "dns";
   if (getCI(row, "uri") != null || getCI(row, "method") != null) return "http";
-  if (getCI(row, "server_name") != null || getCI(row, "cipher") != null || getCI(row, "ssl_history") != null) return "ssl";
-  if (getCI(row, "san.dns") != null || getCI(row, "fingerprint") != null ||
-      Object.keys(row).some((k) => k.startsWith("certificate."))) return "x509";
+  if (getCI(row, "server_name") != null || getCI(row, "cipher") != null || getCI(row, "ssl_history") != null)
+    return "ssl";
+  if (
+    getCI(row, "san.dns") != null ||
+    getCI(row, "fingerprint") != null ||
+    Object.keys(row).some((k) => k.startsWith("certificate."))
+  )
+    return "x509";
   if (getCI(row, "fuid") != null || getCI(row, "mime_type") != null) return "files";
   if (getCI(row, "note") != null) return "notice";
   return "conn"; // id.orig_h + conn_state → pure flow telemetry (no IOC, no timeline event)
@@ -74,12 +108,12 @@ export function inferZeekStream(row: Row): string {
 export interface NetworkParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;     // records found
-  kept: number;      // events emitted (after aggregation + cap)
-  dropped: number;   // records not turned into events (telemetry / below floor / capped)
-  groups: number;    // distinct event groups before the cap
-  alerts: number;    // detection records (Suricata alert + Zeek notice) seen
-  format: string;    // "suricata" | "zeek" | "mixed" | "empty"
+  total: number; // records found
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // records not turned into events (telemetry / below floor / capped)
+  groups: number; // distinct event groups before the cap
+  alerts: number; // detection records (Suricata alert + Zeek notice) seen
+  format: string; // "suricata" | "zeek" | "mixed" | "empty"
   hostname: string;
 }
 
@@ -147,16 +181,26 @@ function addFile(sink: Map<string, SiemIoc>, v: unknown): void {
 // Extract IOCs from a Suricata record (any event_type): the flow IPs (alerts only — telemetry
 // IPs are too voluminous), plus any app-layer domain/URL/hash carried in the record.
 function suricataIocs(row: Row, etype: string, sink: Map<string, SiemIoc>): void {
-  if (etype === "alert") { addIp(sink, getCI(row, "src_ip")); addIp(sink, getCI(row, "dest_ip")); }
+  if (etype === "alert") {
+    addIp(sink, getCI(row, "src_ip"));
+    addIp(sink, getCI(row, "dest_ip"));
+  }
 
   const dns = getCI(row, "dns");
   if (isObject(dns)) addDomain(sink, getCI(dns, "rrname"));
   const http = getCI(row, "http");
-  if (isObject(http)) { addDomain(sink, getCI(http, "hostname")); addUrl(sink, getCI(http, "url")); }
+  if (isObject(http)) {
+    addDomain(sink, getCI(http, "hostname"));
+    addUrl(sink, getCI(http, "url"));
+  }
   const tls = getCI(row, "tls");
   if (isObject(tls)) addDomain(sink, getCI(tls, "sni"));
   const fi = getCI(row, "fileinfo");
-  if (isObject(fi)) { addHash(sink, getCI(fi, "sha256")); addHash(sink, getCI(fi, "md5")); addFile(sink, getCI(fi, "filename")); }
+  if (isObject(fi)) {
+    addHash(sink, getCI(fi, "sha256"));
+    addHash(sink, getCI(fi, "md5"));
+    addFile(sink, getCI(fi, "filename"));
+  }
 }
 
 function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, recordIndex = 0): MappedEvent {
@@ -166,13 +210,16 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, re
   const severity = suricataSeverity(Number(getPath(row, "alert.severity")) || undefined);
   const mitre = mitreFromText(flatStr(getPath(row, "alert.metadata")));
 
-  const src = str(getCI(row, "src_ip")), sp = str(getCI(row, "src_port"));
-  const dst = str(getCI(row, "dest_ip")), dp = str(getCI(row, "dest_port"));
+  const src = str(getCI(row, "src_ip")),
+    sp = str(getCI(row, "src_port"));
+  const dst = str(getCI(row, "dest_ip")),
+    dp = str(getCI(row, "dest_port"));
   const proto = str(getCI(row, "proto"));
 
   let description = `Suricata alert: ${sig}`;
   if (category) description += ` [${category}]`;
-  if (src && dst) description += ` - ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}${proto ? ` ${proto}` : ""}`;
+  if (src && dst)
+    description += ` - ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}${proto ? ` ${proto}` : ""}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
   const sourcePort = Number(sp);
@@ -182,29 +229,43 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, re
   const canonical = createCanonicalEvent({
     event: { category: "network", type: "alert", action: sig },
     ...(src ? { actor: { kind: "network", address: src } } : {}),
-    ...(dst ? { target: { kind: "network", address: dst, ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}) } } : {}),
+    ...(dst
+      ? {
+          target: {
+            kind: "network",
+            address: dst,
+            ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+          },
+        }
+      : {}),
     network: {
-      ...(src ? {
-        source: {
-          address: src,
-          ...(Number.isInteger(sourcePort) && sourcePort > 0 ? { port: sourcePort } : {}),
-        },
-      } : {}),
-      ...(dst ? {
-        destination: {
-          address: dst,
-          ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
-        },
-      } : {}),
+      ...(src
+        ? {
+            source: {
+              address: src,
+              ...(Number.isInteger(sourcePort) && sourcePort > 0 ? { port: sourcePort } : {}),
+            },
+          }
+        : {}),
+      ...(dst
+        ? {
+            destination: {
+              address: dst,
+              ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+            },
+          }
+        : {}),
       ...(proto ? { protocol: proto } : {}),
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {
-      rawRecords: [{
-        source: "suricata-eve",
-        locator: `record:${recordIndex}`,
-        ...(str(getCI(row, "flow_id")).trim() ? { recordId: str(getCI(row, "flow_id")).trim() } : {}),
-      }],
+      rawRecords: [
+        {
+          source: "suricata-eve",
+          locator: `record:${recordIndex}`,
+          ...(str(getCI(row, "flow_id")).trim() ? { recordId: str(getCI(row, "flow_id")).trim() } : {}),
+        },
+      ],
     },
     producer: {
       importer: "network",
@@ -218,10 +279,12 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, re
       ...(src ? { "actor.address": ["src_ip"], "network.source.address": ["src_ip"] } : {}),
       ...(dst ? { "target.address": ["dest_ip"], "network.destination.address": ["dest_ip"] } : {}),
       ...(Number.isInteger(sourcePort) && sourcePort > 0 ? { "network.source.port": ["src_port"] } : {}),
-      ...(Number.isInteger(destinationPort) && destinationPort > 0 ? {
-        "target.port": ["dest_port"],
-        "network.destination.port": ["dest_port"],
-      } : {}),
+      ...(Number.isInteger(destinationPort) && destinationPort > 0
+        ? {
+            "target.port": ["dest_port"],
+            "network.destination.port": ["dest_port"],
+          }
+        : {}),
       ...(proto ? { "network.protocol": ["proto"] } : {}),
     },
   });
@@ -245,9 +308,16 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, re
 
 function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
   switch (path) {
-    case "dns": addDomain(sink, getCI(row, "query")); break;
-    case "http": addDomain(sink, getCI(row, "host")); addUrl(sink, getCI(row, "uri")); break;
-    case "ssl": addDomain(sink, getCI(row, "server_name")); break;
+    case "dns":
+      addDomain(sink, getCI(row, "query"));
+      break;
+    case "http":
+      addDomain(sink, getCI(row, "host"));
+      addUrl(sink, getCI(row, "uri"));
+      break;
+    case "ssl":
+      addDomain(sink, getCI(row, "server_name"));
+      break;
     case "x509": {
       // x509 records name the cert host in `san.dns` (string or array), not `server_name`.
       addDomain(sink, getCI(row, "server_name"));
@@ -257,14 +327,19 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
       break;
     }
     case "files":
-      addHash(sink, getCI(row, "sha256")); addHash(sink, getCI(row, "sha1")); addHash(sink, getCI(row, "md5"));
+      addHash(sink, getCI(row, "sha256"));
+      addHash(sink, getCI(row, "sha1"));
+      addHash(sink, getCI(row, "md5"));
       addFile(sink, getCI(row, "filename"));
       break;
     case "notice":
-      addIp(sink, getCI(row, "src")); addIp(sink, getCI(row, "dst"));
-      addDomain(sink, getCI(row, "host")); addHash(sink, getCI(row, "sha256"));
+      addIp(sink, getCI(row, "src"));
+      addIp(sink, getCI(row, "dst"));
+      addDomain(sink, getCI(row, "host"));
+      addHash(sink, getCI(row, "sha256"));
       break;
-    default: break; // conn / weird / dhcp / … → no IOCs (pure telemetry)
+    default:
+      break; // conn / weird / dhcp / … → no IOCs (pure telemetry)
   }
 }
 
@@ -272,7 +347,8 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>, recor
   const note = str(getCI(row, "note")) || "notice";
   const msg = str(getCI(row, "msg"));
   const sub = str(getCI(row, "sub"));
-  const src = str(getCI(row, "src")), dst = str(getCI(row, "dst"));
+  const src = str(getCI(row, "src")),
+    dst = str(getCI(row, "dst"));
 
   let description = `Zeek notice: ${note}`;
   if (msg) description += ` - ${msg}`;
@@ -292,11 +368,13 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>, recor
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {
-      rawRecords: [{
-        source: "zeek-notice",
-        locator: `record:${recordIndex}`,
-        ...(str(getCI(row, "uid")).trim() ? { recordId: str(getCI(row, "uid")).trim() } : {}),
-      }],
+      rawRecords: [
+        {
+          source: "zeek-notice",
+          locator: `record:${recordIndex}`,
+          ...(str(getCI(row, "uid")).trim() ? { recordId: str(getCI(row, "uid")).trim() } : {}),
+        },
+      ],
     },
     producer: { importer: "network", parserVersion: "1", mappingVersion: "zeek-notice-v1" },
     rawFieldMap: {
@@ -331,11 +409,20 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>, recor
 // exactly that: peers, connection count, byte totals.
 
 interface FlowAgg {
-  src: string; dst: string; port: string; proto: string; service: string;
-  count: number; origBytes: number; respBytes: number; firstTs: string;
+  src: string;
+  dst: string;
+  port: string;
+  proto: string;
+  service: string;
+  count: number;
+  origBytes: number;
+  respBytes: number;
+  firstTs: string;
 }
 
-const KB = 1024, MB = KB * 1024, GB = MB * 1024;
+const KB = 1024,
+  MB = KB * 1024,
+  GB = MB * 1024;
 function humanBytes(n: number): string {
   if (n >= GB) return `${(n / GB).toFixed(1)} GB`;
   if (n >= MB) return `${(n / MB).toFixed(1)} MB`;
@@ -345,8 +432,10 @@ function humanBytes(n: number): string {
 
 function flowKey(row: Row): string {
   return [
-    str(getCI(row, "id.orig_h")), str(getCI(row, "id.resp_h")),
-    str(getCI(row, "id.resp_p")), str(getCI(row, "proto")),
+    str(getCI(row, "id.orig_h")),
+    str(getCI(row, "id.resp_h")),
+    str(getCI(row, "id.resp_p")),
+    str(getCI(row, "proto")),
   ].join("|");
 }
 
@@ -366,17 +455,23 @@ function tallyFlow(row: Row, sink: Map<string, FlowAgg>): void {
     return;
   }
   sink.set(key, {
-    src: str(getCI(row, "id.orig_h")), dst: str(getCI(row, "id.resp_h")),
-    port: str(getCI(row, "id.resp_p")), proto: str(getCI(row, "proto")),
+    src: str(getCI(row, "id.orig_h")),
+    dst: str(getCI(row, "id.resp_h")),
+    port: str(getCI(row, "id.resp_p")),
+    proto: str(getCI(row, "proto")),
     service: str(getCI(row, "service")),
-    count: 1, origBytes: orig, respBytes: resp, firstTs: ts,
+    count: 1,
+    origBytes: orig,
+    respBytes: resp,
+    firstTs: ts,
   });
 }
 
 function mapFlow(f: FlowAgg, host: string): MappedEvent {
   const peer = `${f.src} → ${f.dst}${f.port ? `:${f.port}` : ""}`;
   const proto = [f.proto, f.service].filter(Boolean).join("/");
-  let description = `Flow: ${peer}${proto ? ` (${proto})` : ""}` +
+  let description =
+    `Flow: ${peer}${proto ? ` (${proto})` : ""}` +
     ` — ${f.count} connection${f.count === 1 ? "" : "s"},` +
     ` ${humanBytes(f.origBytes)} sent, ${humanBytes(f.respBytes)} received`;
   if (host) description += ` @ ${host}`;
@@ -384,21 +479,25 @@ function mapFlow(f: FlowAgg, host: string): MappedEvent {
   const canonical = createCanonicalEvent({
     event: { category: "network", type: "flow", action: "connect" },
     ...(f.src ? { actor: { kind: "network", address: f.src } } : {}),
-    ...(f.dst ? {
-      target: {
-        kind: "network",
-        address: f.dst,
-        ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
-      },
-    } : {}),
+    ...(f.dst
+      ? {
+          target: {
+            kind: "network",
+            address: f.dst,
+            ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+          },
+        }
+      : {}),
     network: {
       ...(f.src ? { source: { address: f.src } } : {}),
-      ...(f.dst ? {
-        destination: {
-          address: f.dst,
-          ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
-        },
-      } : {}),
+      ...(f.dst
+        ? {
+            destination: {
+              address: f.dst,
+              ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+            },
+          }
+        : {}),
       ...(f.proto ? { protocol: f.proto } : {}),
     },
     time: { observed: f.firstTs, normalized: f.firstTs },
@@ -410,10 +509,12 @@ function mapFlow(f: FlowAgg, host: string): MappedEvent {
       "time.observed": ["ts"],
       ...(f.src ? { "actor.address": ["id.orig_h"], "network.source.address": ["id.orig_h"] } : {}),
       ...(f.dst ? { "target.address": ["id.resp_h"], "network.destination.address": ["id.resp_h"] } : {}),
-      ...(Number.isInteger(destinationPort) && destinationPort > 0 ? {
-        "target.port": ["id.resp_p"],
-        "network.destination.port": ["id.resp_p"],
-      } : {}),
+      ...(Number.isInteger(destinationPort) && destinationPort > 0
+        ? {
+            "target.port": ["id.resp_p"],
+            "network.destination.port": ["id.resp_p"],
+          }
+        : {}),
       ...(f.proto ? { "network.protocol": ["proto"] } : {}),
     },
   });
@@ -452,7 +553,17 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, alerts: 0, format: "empty", hostname: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      alerts: 0,
+      format: "empty",
+      hostname: "",
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();
@@ -461,7 +572,8 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const flowSink = new Map<string, FlowAgg>();
   let flowHost = "";
   let alerts = 0;
-  let sawSuricata = false, sawZeek = false;
+  let sawSuricata = false,
+    sawZeek = false;
   // Per-stream Zeek JSON (no `_path`): the filename is the authoritative stream for the whole file.
   const fileStream = opts.filename ? zeekStreamFromName(opts.filename) : "";
 
@@ -497,7 +609,10 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
       } else {
         // conn is folded per-flow (see tallyFlow) and emitted once after the loop, so the byte
         // totals can be summed across every record in the group.
-        if (zstream === "conn") { tallyFlow(row, flowSink); if (!flowHost && host) flowHost = host; }
+        if (zstream === "conn") {
+          tallyFlow(row, flowSink);
+          if (!flowHost && host) flowHost = host;
+        }
         mergeRowIocs(iocSink, rowSink);
       }
     }
@@ -511,7 +626,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   // the entire reason to carry flow rows at all.
   const flowBudget = opts.maxEvents ?? maxEventsDefault();
   const flows = [...flowSink.values()]
-    .sort((a, b) => (b.origBytes + b.respBytes) - (a.origBytes + a.respBytes))
+    .sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes))
     .slice(0, flowBudget);
   for (const f of flows) mapped.push(mapFlow(f, flowHost));
 

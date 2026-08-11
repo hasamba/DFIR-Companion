@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { AttemptLimiter, SlidingWindowLimiter, resetLimiters, getUnlockLimiter, getAiLimiter } from "../../src/http/rateLimiter.js";
+import {
+  AttemptLimiter,
+  SlidingWindowLimiter,
+  resetLimiters,
+  getUnlockLimiter,
+  getAiLimiter,
+} from "../../src/http/rateLimiter.js";
 
 describe("AttemptLimiter", () => {
   let limiter: AttemptLimiter;
@@ -25,7 +31,8 @@ describe("AttemptLimiter", () => {
 
   it("doubles the lockout on each SINGLE subsequent failure once already locked out once", () => {
     // First lockout requires the full maxAttempts (3) failures: 1s
-    limiter.recordFailure("k"); limiter.recordFailure("k");
+    limiter.recordFailure("k");
+    limiter.recordFailure("k");
     let lock = limiter.recordFailure("k");
     expect(lock).toBe(1000);
     // After the first lockout, a SINGLE further failure immediately re-locks — no free guesses —
@@ -49,7 +56,10 @@ describe("AttemptLimiter", () => {
     const lockouts: number[] = [];
     for (let i = 0; i < 15; i++) {
       const remaining = lim.remainingLockout("c1", now);
-      if (remaining > 0) { now += remaining; continue; }
+      if (remaining > 0) {
+        now += remaining;
+        continue;
+      }
       const lockout = lim.recordFailure("c1", now);
       if (lockout > 0) lockouts.push(lockout);
     }
@@ -101,7 +111,8 @@ describe("AttemptLimiter", () => {
     });
 
     it("keeps a recently-active entry, including one still mid-lockout", () => {
-      limiter.recordFailure("k", 0); limiter.recordFailure("k", 0);
+      limiter.recordFailure("k", 0);
+      limiter.recordFailure("k", 0);
       limiter.recordFailure("k", 0); // 3rd failure, locks for 1000ms starting at t=0
       const removed = limiter.sweep(500, 3_600_000); // mid-lockout, well within the idle window too
       expect(removed).toBe(0);
@@ -131,14 +142,17 @@ describe("SlidingWindowLimiter", () => {
 
   it("rejects requests past the cap", () => {
     const lim = new SlidingWindowLimiter(3, 10_000);
-    lim.tryAcquire("k"); lim.tryAcquire("k"); lim.tryAcquire("k");
+    lim.tryAcquire("k");
+    lim.tryAcquire("k");
+    lim.tryAcquire("k");
     expect(lim.tryAcquire("k")).toBe(false);
   });
 
   it("resets after the window expires", () => {
     const lim = new SlidingWindowLimiter(2, 100);
     const now = Date.now();
-    lim.tryAcquire("k", now); lim.tryAcquire("k", now);
+    lim.tryAcquire("k", now);
+    lim.tryAcquire("k", now);
     expect(lim.tryAcquire("k", now)).toBe(false);
     // After the window, it should reset
     expect(lim.tryAcquire("k", now + 200)).toBe(true);
@@ -168,8 +182,10 @@ describe("SlidingWindowLimiter", () => {
       const removed = lim.sweep(500); // still within the window
       expect(removed).toBe(0);
       // proves it wasn't swept: the count is still tracked, not reset to a fresh window of 1
-      lim.tryAcquire("active", 500); lim.tryAcquire("active", 500);
-      lim.tryAcquire("active", 500); lim.tryAcquire("active", 500);
+      lim.tryAcquire("active", 500);
+      lim.tryAcquire("active", 500);
+      lim.tryAcquire("active", 500);
+      lim.tryAcquire("active", 500);
       expect(lim.tryAcquire("active", 500)).toBe(false); // 6th request in the SAME window over cap 5
     });
   });

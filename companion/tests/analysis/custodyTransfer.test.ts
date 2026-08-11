@@ -16,8 +16,13 @@ const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("
 async function collect(path: string, text: string): Promise<void> {
   await writeFile(path, text, "utf8");
   await store.record("c1", {
-    artifactPath: path, sha256: sha(text), collectedBy: "alice",
-    collectedAt: "2026-07-28T10:00:00.000Z", source: "host-a", trigger: "import", caseId: "c1",
+    artifactPath: path,
+    sha256: sha(text),
+    collectedBy: "alice",
+    collectedAt: "2026-07-28T10:00:00.000Z",
+    source: "host-a",
+    trigger: "import",
+    caseId: "c1",
   });
 }
 
@@ -36,7 +41,9 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(two, "second\n");
 
     const written = await store.recordTransfer("c1", {
-      artifactPaths: [one, two], transferredBy: "alice", destination: "sift.lab.local:/cases/incoming",
+      artifactPaths: [one, two],
+      transferredBy: "alice",
+      destination: "sift.lab.local:/cases/incoming",
     });
 
     expect(written.map((r) => r.artifactPath)).toEqual([one, two]);
@@ -52,7 +59,9 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(two, "second\n");
 
     const written = await store.recordTransfer("c1", {
-      artifactPaths: [two], transferredBy: "alice", destination: "remnux.lab.local",
+      artifactPaths: [two],
+      transferredBy: "alice",
+      destination: "remnux.lab.local",
     });
 
     expect(written.map((r) => r.artifactPath)).toEqual([two]);
@@ -67,21 +76,28 @@ describe("CustodyStore.recordTransfer", () => {
     await writeFile(one, "amended\n", "utf8");
 
     const [record] = await store.recordTransfer("c1", {
-      artifactPaths: [one], transferredBy: "alice", destination: "sift.lab.local",
+      artifactPaths: [one],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
     });
 
     expect(record.sha256).toBe(sha("amended\n"));
   });
 
-  it("defaults the trigger to \"transfer\" and keeps a caller-supplied one", async () => {
+  it('defaults the trigger to "transfer" and keeps a caller-supplied one', async () => {
     await collect(one, "first\n");
     await collect(two, "second\n");
 
     const [plain] = await store.recordTransfer("c1", {
-      artifactPaths: [one], transferredBy: "alice", destination: "sift.lab.local",
+      artifactPaths: [one],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
     });
     const [tagged] = await store.recordTransfer("c1", {
-      artifactPaths: [two], transferredBy: "alice", destination: "sift.lab.local", trigger: "mcp:sift-mcp",
+      artifactPaths: [two],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
+      trigger: "mcp:sift-mcp",
     });
 
     expect(plain.trigger).toBe("transfer");
@@ -92,7 +108,9 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(one, "first\n");
 
     const written = await store.recordTransfer("c1", {
-      artifactPaths: [one, one, one], transferredBy: "alice", destination: "sift.lab.local",
+      artifactPaths: [one, one, one],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
     });
 
     expect(written).toHaveLength(1);
@@ -104,9 +122,13 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(one, "first\n");
     const missing = join(cases.importsDir("c1"), "gone.raw");
 
-    await expect(store.recordTransfer("c1", {
-      artifactPaths: [one, missing], transferredBy: "alice", destination: "sift.lab.local",
-    })).rejects.toThrow(/cannot record transfer of .*gone\.raw/);
+    await expect(
+      store.recordTransfer("c1", {
+        artifactPaths: [one, missing],
+        transferredBy: "alice",
+        destination: "sift.lab.local",
+      }),
+    ).rejects.toThrow(/cannot record transfer of .*gone\.raw/);
   });
 
   it("appends nothing at all when one artifact in the batch is unreadable", async () => {
@@ -114,9 +136,15 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(two, "second\n");
     await rm(two);
 
-    await store.recordTransfer("c1", {
-      artifactPaths: [one, two], transferredBy: "alice", destination: "sift.lab.local",
-    }).catch(() => { /* asserted above; here we care about what landed */ });
+    await store
+      .recordTransfer("c1", {
+        artifactPaths: [one, two],
+        transferredBy: "alice",
+        destination: "sift.lab.local",
+      })
+      .catch(() => {
+        /* asserted above; here we care about what landed */
+      });
 
     // The two collections, and not a transfer for `one` — which hashed fine before `two` failed.
     const records = await store.load("c1");
@@ -124,9 +152,13 @@ describe("CustodyStore.recordTransfer", () => {
   });
 
   it("writes nothing when no artifacts are named", async () => {
-    expect(await store.recordTransfer("c1", {
-      artifactPaths: [], transferredBy: "alice", destination: "sift.lab.local",
-    })).toEqual([]);
+    expect(
+      await store.recordTransfer("c1", {
+        artifactPaths: [],
+        transferredBy: "alice",
+        destination: "sift.lab.local",
+      }),
+    ).toEqual([]);
     await expect(readFile(cases.custodyLogPath("c1"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -137,7 +169,9 @@ describe("CustodyStore.recordTransfer", () => {
     await writeFile(one, "first\n", "utf8");
 
     const [record] = await store.recordTransfer("c1", {
-      artifactPaths: [one], transferredBy: "alice", destination: "sift.lab.local",
+      artifactPaths: [one],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
     });
 
     expect(record.event).toBe("transferred");
@@ -149,7 +183,9 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(two, "second\n");
 
     await store.recordTransfer("c1", {
-      artifactPaths: [one, two], transferredBy: "alice", destination: "sift.lab.local",
+      artifactPaths: [one, two],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
     });
 
     expect(await store.verifyChain("c1")).toEqual([]);
@@ -163,7 +199,9 @@ describe("CustodyStore.recordTransfer", () => {
     await collect(one, "first\n");
 
     await store.recordTransfer("c1", {
-      artifactPaths: [one], transferredBy: "alice", destination: "sift.lab.local",
+      artifactPaths: [one],
+      transferredBy: "alice",
+      destination: "sift.lab.local",
     });
 
     const raw = await readFile(cases.custodyLogPath("c1"), "utf8");

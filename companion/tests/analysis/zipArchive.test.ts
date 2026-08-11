@@ -77,8 +77,9 @@ describe("readZip — zip-bomb guard (#247)", () => {
 
   it("rejects an entry whose inflated size exceeds the per-entry cap — without fully inflating it", () => {
     const archive = createZip([{ path: "bomb.bin", data: bomb(10 * 1024 * 1024) }]); // 10MB of zeros
-    expect(() => readZip(archive, { maxEntryBytes: 1024 * 1024, maxTotalBytes: 1024 * 1024 * 1024 }))
-      .toThrow(/possible zip bomb/i);
+    expect(() => readZip(archive, { maxEntryBytes: 1024 * 1024, maxTotalBytes: 1024 * 1024 * 1024 })).toThrow(
+      /possible zip bomb/i,
+    );
   });
 
   it("allows an entry within the cap", () => {
@@ -92,8 +93,9 @@ describe("readZip — zip-bomb guard (#247)", () => {
       { path: "b.bin", data: bomb(6000) },
     ]);
     // Each entry (6000) is under maxEntryBytes (10000), but together they exceed maxTotalBytes (10000).
-    expect(() => readZip(archive, { maxEntryBytes: 10_000, maxTotalBytes: 10_000 }))
-      .toThrow(/possible zip bomb/i);
+    expect(() => readZip(archive, { maxEntryBytes: 10_000, maxTotalBytes: 10_000 })).toThrow(
+      /possible zip bomb/i,
+    );
   });
 
   it("uses the real (512 MB / 2 GB) production defaults when no override is given", () => {
@@ -163,20 +165,24 @@ describe("readZip with encrypted entries", () => {
       const archive = Buffer.from(b64, "base64");
       let eocd = -1;
       for (let i = archive.length - 22; i >= 0; i--) {
-        if (archive.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
+        if (archive.readUInt32LE(i) === EOCD_SIG) {
+          eocd = i;
+          break;
+        }
       }
       const central = archive.readUInt32LE(eocd + 16);
       const localOffset = archive.readUInt32LE(central + 42);
-      const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
-      const AES256_SALT = 16, PW_VERIFY = 2;
-      const target = dataStart + AES256_SALT + PW_VERIFY + 5;   // 6th ciphertext byte
-      archive[target] ^= 0x20;   // one bit — enough to rewrite a character of the plaintext
+      const dataStart =
+        localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+      const AES256_SALT = 16,
+        PW_VERIFY = 2;
+      const target = dataStart + AES256_SALT + PW_VERIFY + 5; // 6th ciphertext byte
+      archive[target] ^= 0x20; // one bit — enough to rewrite a character of the plaintext
       return archive;
     }
 
     it("rejects an AE-2 entry whose ciphertext was altered after creation", () => {
-      expect(() => readZip(tamper(AES_ZIP_B64), { password: "infected" }))
-        .toThrow(ZipAuthenticationError);
+      expect(() => readZip(tamper(AES_ZIP_B64), { password: "infected" })).toThrow(ZipAuthenticationError);
     });
 
     it("reports tampering distinctly from a wrong password", () => {
@@ -199,13 +205,21 @@ describe("readZip with encrypted entries", () => {
       const archive = tamper(AES_ZIP_B64);
       let eocd = -1;
       for (let i = archive.length - 22; i >= 0; i--) {
-        if (archive.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
+        if (archive.readUInt32LE(i) === EOCD_SIG) {
+          eocd = i;
+          break;
+        }
       }
       const central = archive.readUInt32LE(eocd + 16);
       const compSize = archive.readUInt32LE(central + 20);
       const localOffset = archive.readUInt32LE(central + 42);
-      const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
-      const { plaintext, macOk } = aesDecrypt(archive.subarray(dataStart, dataStart + compSize), "infected", 3);
+      const dataStart =
+        localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+      const { plaintext, macOk } = aesDecrypt(
+        archive.subarray(dataStart, dataStart + compSize),
+        "infected",
+        3,
+      );
       expect(macOk).toBe(false);
       expect(plaintext.toString("utf8")).not.toBe("MZ fake sample payload\n");
       // One bit flipped in the ciphertext → exactly one character changed in the evidence.

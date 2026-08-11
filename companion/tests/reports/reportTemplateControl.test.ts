@@ -3,7 +3,10 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { ReportTemplateControlStore, DEFAULT_REPORT_TEMPLATE_CONTROL } from "../../src/reports/reportTemplateControl.js";
+import {
+  ReportTemplateControlStore,
+  DEFAULT_REPORT_TEMPLATE_CONTROL,
+} from "../../src/reports/reportTemplateControl.js";
 
 describe("ReportTemplateControlStore", () => {
   let store: ReportTemplateControlStore;

@@ -17,16 +17,26 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 // (ids, timestamps, screenshot refs and nested objects are intentionally omitted). Extending the
 // event model with a new content field is the one reason to touch this list.
 const STRING_FIELDS = [
-  "description", "message", "asset", "path", "artifactName",
-  "processName", "parentName", "sha256", "md5", "srcIp", "dstIp", "veloUrl", "severity", "action",
+  "description",
+  "message",
+  "asset",
+  "path",
+  "artifactName",
+  "processName",
+  "parentName",
+  "sha256",
+  "md5",
+  "srcIp",
+  "dstIp",
+  "veloUrl",
+  "severity",
+  "action",
 ] as const;
 const ARRAY_FIELDS = ["sources", "mitreTechniques", "relatedFindingIds", "provenance"] as const;
 const NUMBER_FIELDS = ["port", "pid", "count"] as const;
 
 /** Every field a tagger condition may reference. An unknown field fails validation. */
-export const MATCHABLE_FIELDS: readonly string[] = [
-  ...STRING_FIELDS, ...ARRAY_FIELDS, ...NUMBER_FIELDS,
-];
+export const MATCHABLE_FIELDS: readonly string[] = [...STRING_FIELDS, ...ARRAY_FIELDS, ...NUMBER_FIELDS];
 const MATCHABLE_SET = new Set(MATCHABLE_FIELDS);
 const ARRAY_SET = new Set<string>(ARRAY_FIELDS);
 const NUMBER_SET = new Set<string>(NUMBER_FIELDS);
@@ -59,7 +69,9 @@ const rawConditionSchema = z
         message: `unknown field "${c.field}" — matchable fields: ${MATCHABLE_FIELDS.join(", ")}`,
       });
     }
-    const ops = ["contains", "equals", "regex", "exists"].filter((k) => (c as Record<string, unknown>)[k] !== undefined);
+    const ops = ["contains", "equals", "regex", "exists"].filter(
+      (k) => (c as Record<string, unknown>)[k] !== undefined,
+    );
     if (ops.length !== 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -93,11 +105,20 @@ const rawRuleSchema = z
   .superRefine((r, ctx) => {
     const hasCondition = (r.any?.length ?? 0) + (r.all?.length ?? 0) + (r.none?.length ?? 0) > 0;
     if (!hasCondition) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "rule needs at least one condition (any | all | none)" });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "rule needs at least one condition (any | all | none)",
+      });
     }
-    const hasAction = (r.tags?.length ?? 0) + (r.mitre?.length ?? 0) > 0 || r.severity !== undefined || (r.view?.length ?? 0) > 0;
+    const hasAction =
+      (r.tags?.length ?? 0) + (r.mitre?.length ?? 0) > 0 ||
+      r.severity !== undefined ||
+      (r.view?.length ?? 0) > 0;
     if (!hasAction) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "rule needs at least one action (tags | mitre | severity | view)" });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "rule needs at least one action (tags | mitre | severity | view)",
+      });
     }
   });
 
@@ -108,8 +129,8 @@ export type RawRuleset = z.infer<typeof rawRulesetSchema>;
 
 // ── Compiled form ────────────────────────────────────────────────────────────────────────────
 type Operator =
-  | { kind: "contains"; needles: string[] }        // lowercased
-  | { kind: "equals"; needles: string[] }           // lowercased
+  | { kind: "contains"; needles: string[] } // lowercased
+  | { kind: "equals"; needles: string[] } // lowercased
   | { kind: "regex"; re: RegExp }
   | { kind: "exists"; want: boolean };
 
@@ -140,8 +161,10 @@ function asList(v: string | string[]): string[] {
 
 function compileCondition(c: z.infer<typeof rawConditionSchema>): CompiledCondition {
   let op: Operator;
-  if (c.contains !== undefined) op = { kind: "contains", needles: asList(c.contains).map((s) => s.toLowerCase()) };
-  else if (c.equals !== undefined) op = { kind: "equals", needles: asList(c.equals).map((s) => s.toLowerCase()) };
+  if (c.contains !== undefined)
+    op = { kind: "contains", needles: asList(c.contains).map((s) => s.toLowerCase()) };
+  else if (c.equals !== undefined)
+    op = { kind: "equals", needles: asList(c.equals).map((s) => s.toLowerCase()) };
   else if (c.regex !== undefined) op = { kind: "regex", re: new RegExp(c.regex, c.flags) };
   else op = { kind: "exists", want: c.exists ?? true };
   return { field: c.field, op };
@@ -202,11 +225,17 @@ function conditionMatches(event: ForensicEvent, cond: CompiledCondition): boolea
       return cond.op.want ? values.length > 0 : values.length === 0;
     case "contains": {
       const needles = cond.op.needles;
-      return values.some((v) => { const lv = v.toLowerCase(); return needles.some((n) => lv.includes(n)); });
+      return values.some((v) => {
+        const lv = v.toLowerCase();
+        return needles.some((n) => lv.includes(n));
+      });
     }
     case "equals": {
       const needles = cond.op.needles;
-      return values.some((v) => { const lv = v.toLowerCase(); return needles.some((n) => lv === n); });
+      return values.some((v) => {
+        const lv = v.toLowerCase();
+        return needles.some((n) => lv === n);
+      });
     }
     case "regex": {
       const re = cond.op.re;

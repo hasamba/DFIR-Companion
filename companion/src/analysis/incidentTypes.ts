@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { InvestigationState, InvestigationQuestion, NextStep } from "./stateTypes.js";
-import {
-  buildInitialQuestions,
-  buildInitialNextSteps,
-  type CaseTemplate,
-} from "./templateStore.js";
+import { buildInitialQuestions, buildInitialNextSteps, type CaseTemplate } from "./templateStore.js";
 
 // Incident-type auto-playbooks (#236). A richer CaseTemplate: the template carries the GENERIC case
 // skeleton (questions, next steps, recommended imports, hunt platforms); an IncidentType extends it
@@ -60,9 +56,9 @@ export const BUILT_IN_INCIDENT_TYPE_IDS: readonly IncidentTypeId[] = [
 
 // An incident type IS a case template plus the type-specific guidance fields.
 export interface IncidentType extends CaseTemplate {
-  recommendedImportOrder: string[];   // ordered collection-plan step ids (#347)
-  findingsSeeds: string[];            // expected finding categories, pre-seeded as open questions
-  synthesisHint: string;              // one-line context for the synthesis prompt
+  recommendedImportOrder: string[]; // ordered collection-plan step ids (#347)
+  findingsSeeds: string[]; // expected finding categories, pre-seeded as open questions
+  synthesisHint: string; // one-line context for the synthesis prompt
 }
 
 const severitySchema = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
@@ -79,12 +75,16 @@ export const incidentTypeSchema = z.object({
   builtIn: z.boolean().catch(false),
   recommendedImports: z.array(z.string()).catch([]),
   initialKeyQuestions: z.array(z.string()).catch([]),
-  initialNextSteps: z.array(z.object({
-    action: z.string(),
-    priority: prioritySchema,
-    rationale: z.string().catch(""),
-    pointer: z.string().catch(""),
-  })).catch([]),
+  initialNextSteps: z
+    .array(
+      z.object({
+        action: z.string(),
+        priority: prioritySchema,
+        rationale: z.string().catch(""),
+        pointer: z.string().catch(""),
+      }),
+    )
+    .catch([]),
   severityFloor: severitySchema.nullable().catch(null),
   huntPlatforms: z.array(z.string()).catch([]),
   recommendedImportOrder: z.array(z.string()).catch([]),
@@ -96,7 +96,7 @@ export const incidentTypeSchema = z.object({
 // analyst-editable files and must never crash the whole listing over a single bad one.
 export function parseIncidentType(raw: unknown): IncidentType | null {
   const parsed = incidentTypeSchema.safeParse(raw);
-  return parsed.success ? (parsed.data) : null;
+  return parsed.success ? parsed.data : null;
 }
 
 // The prefix that marks a key question as seeded by an incident type rather than written by the

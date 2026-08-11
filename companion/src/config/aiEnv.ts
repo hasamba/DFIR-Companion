@@ -14,7 +14,11 @@ export type EnvSource = Record<string, string | undefined>;
 
 /** The five vision-config suffixes, in .env declaration order. */
 export const VISION_ENV_SUFFIXES: readonly VisionEnvSuffix[] = [
-  "PROVIDER", "MODEL", "KEY", "BASE_URL", "IMAGE_DETAIL",
+  "PROVIDER",
+  "MODEL",
+  "KEY",
+  "BASE_URL",
+  "IMAGE_DETAIL",
 ];
 
 /** New DFIR_VISION_<suffix> wins; legacy DFIR_AI_<suffix> is the deprecated fallback. */

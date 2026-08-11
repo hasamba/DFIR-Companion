@@ -35,8 +35,21 @@ const custodyOnly = normalizeReportTemplate({
 
 const render = (custody?: CustodyRecord[]): string =>
   renderMarkdownReport(
-    emptyState("INC-1"), emptyReportMeta(), undefined, undefined, undefined, undefined,
-    custodyOnly, undefined, undefined, [], null, undefined, null, undefined, custody,
+    emptyState("INC-1"),
+    emptyReportMeta(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    custodyOnly,
+    undefined,
+    undefined,
+    [],
+    null,
+    undefined,
+    null,
+    undefined,
+    custody,
   );
 
 describe("chain of custody appendix", () => {
@@ -55,8 +68,20 @@ describe("chain of custody appendix", () => {
   it("lists every event that touched an artifact, in order", () => {
     const text = render([
       record(),
-      record({ event: "transferred", collectedBy: "bob", collectedAt: "2026-07-28T11:00:00.000Z", source: "lab-3", seq: 2 }),
-      record({ event: "exported", collectedBy: "alice", collectedAt: "2026-07-28T12:00:00.000Z", source: "encrypted archive", seq: 3 }),
+      record({
+        event: "transferred",
+        collectedBy: "bob",
+        collectedAt: "2026-07-28T11:00:00.000Z",
+        source: "lab-3",
+        seq: 2,
+      }),
+      record({
+        event: "exported",
+        collectedBy: "alice",
+        collectedAt: "2026-07-28T12:00:00.000Z",
+        source: "encrypted archive",
+        seq: 3,
+      }),
     ]);
 
     expect(text.indexOf("collected")).toBeLessThan(text.indexOf("transferred"));
@@ -91,8 +116,21 @@ describe("chain of custody appendix", () => {
     });
 
     const text = renderMarkdownReport(
-      emptyState("INC-1"), emptyReportMeta(), undefined, undefined, undefined, undefined,
-      withoutCustody, undefined, undefined, [], null, undefined, null, undefined, [record()],
+      emptyState("INC-1"),
+      emptyReportMeta(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      withoutCustody,
+      undefined,
+      undefined,
+      [],
+      null,
+      undefined,
+      null,
+      undefined,
+      [record()],
     );
 
     expect(text).not.toContain("Chain of Custody");

@@ -43,7 +43,12 @@ function defaultCandidatePaths(): string[] {
 }
 
 async function exists(path: string): Promise<boolean> {
-  try { await access(path); return true; } catch { return false; }
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Append `_2`, `_3`, … to `base` until it is not in `taken`. */
@@ -73,7 +78,12 @@ export class TaggerStore {
 
   private resolveDefaultPath(): string | undefined {
     for (const p of this.defaultPaths) {
-      try { readFileSync(p); return p; } catch { /* next candidate */ }
+      try {
+        readFileSync(p);
+        return p;
+      } catch {
+        /* next candidate */
+      }
     }
     return undefined;
   }

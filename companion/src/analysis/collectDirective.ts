@@ -12,7 +12,7 @@ export function collectSummary(c: CollectDirective | undefined): string {
   const artifactSuffix = c.logSource && c.artifact && c.artifact !== c.logSource ? ` (${c.artifact})` : "";
   const from = c.host ? ` from ${c.host}` : "";
   const expected = c.expectedOutcome ? ` — expected: ${c.expectedOutcome}` : "";
-  const lead = what ? `collect ${what}${artifactSuffix}` : (c.host ? "collect from" : "");
+  const lead = what ? `collect ${what}${artifactSuffix}` : c.host ? "collect from" : "";
   const text = `${lead}${from}${expected}`.trim();
   return text;
 }

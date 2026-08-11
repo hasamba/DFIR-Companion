@@ -3,7 +3,14 @@ import { deriveIocProvenance } from "../../src/analysis/iocProvenance.js";
 import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string; severity: ForensicEvent["severity"] }): ForensicEvent {
-  return { timestamp: "t", description: "", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    timestamp: "t",
+    description: "",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 const ioc = (id: string, type: IOC["type"], value: string): IOC => ({ id, type, value, firstSeen: "" });
 
@@ -17,7 +24,10 @@ describe("deriveIocProvenance", () => {
     expect(deriveIocProvenance([ioc("i1", "ip", "8.8.8.8")], events)).toEqual({ i1: "telemetry" });
   });
   it("takes the max severity across events (detection wins)", () => {
-    const events = [ev({ id: "e1", severity: "Info", dstIp: "8.8.8.8" }), ev({ id: "e2", severity: "Medium", dstIp: "8.8.8.8" })];
+    const events = [
+      ev({ id: "e1", severity: "Info", dstIp: "8.8.8.8" }),
+      ev({ id: "e2", severity: "Medium", dstIp: "8.8.8.8" }),
+    ];
     expect(deriveIocProvenance([ioc("i1", "ip", "8.8.8.8")], events)).toEqual({ i1: "detection" });
   });
   it("is boundary-safe (10.0.0.1 does not match 10.0.0.10)", () => {

@@ -7,7 +7,15 @@ import { inScope, filterEventsByScope, ScopeStore, NO_SCOPE } from "../../src/an
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string): ForensicEvent {
-  return { id, timestamp, description: id, severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+  return {
+    id,
+    timestamp,
+    description: id,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 describe("scope filtering", () => {
@@ -16,7 +24,7 @@ describe("scope filtering", () => {
     expect(inScope("2026-01-15T12:00:00Z", scope)).toBe(true);
     expect(inScope("2025-12-31T23:59:59Z", scope)).toBe(false); // before window
     expect(inScope("2026-02-01T00:00:00Z", scope)).toBe(false); // after window
-    expect(inScope("", scope)).toBe(true);                       // undated kept
+    expect(inScope("", scope)).toBe(true); // undated kept
     expect(inScope("2025-01-01T00:00:00Z", NO_SCOPE)).toBe(true); // no scope = all
   });
 

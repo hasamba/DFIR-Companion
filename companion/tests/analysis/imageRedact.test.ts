@@ -9,7 +9,19 @@ const POLICY: AnonPolicy = {
   // Every category ON. CARD/PHONE/NATID were missing here — no test file was type-checked, so
   // Record<AnonCategory, boolean> never caught it and those three detectors were silently OFF in
   // every screenshot-redaction test. See tsconfig.test.json.
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
+  categories: {
+    IP: true,
+    EMAIL: true,
+    USER: true,
+    HOST: true,
+    DOMAIN: true,
+    PATH: true,
+    CMD: true,
+    REG: true,
+    CARD: true,
+    PHONE: true,
+    NATID: true,
+  },
   redactSecrets: true,
   maskPublicIps: true, // AI-wire screenshot pass — matches the AI-wire policy this always runs under
 };
@@ -31,7 +43,12 @@ describe("redactScreenshot", () => {
     const input = await whiteJpegWithExif();
     expect((await sharp(input).metadata()).exif).toBeDefined(); // sanity: input carries EXIF
 
-    const result = await redactScreenshot(input, { policy: POLICY, known: KNOWN, runner: runnerReturning([]), blur: false });
+    const result = await redactScreenshot(input, {
+      policy: POLICY,
+      known: KNOWN,
+      runner: runnerReturning([]),
+      blur: false,
+    });
 
     expect(result.blurred).toBe(false);
     expect(result.redactionCount).toBe(0);

@@ -34,7 +34,7 @@ export interface CustomToolInput {
   binary: string;
   runArgs?: string;
   updateCommand?: string;
-  extensions?: string[] | string;   // array or a comma/space-separated string
+  extensions?: string[] | string; // array or a comma/space-separated string
   autoRun?: boolean;
   timeoutMs?: number;
   maxOutputBytes?: number;
@@ -42,20 +42,32 @@ export interface CustomToolInput {
 
 // Normalize a file extension: lowercase, single leading dot, alnum only (drops junk / injection chars).
 export function normalizeExt(raw: string): string {
-  const e = String(raw ?? "").trim().toLowerCase().replace(/^\.+/, "").replace(/[^a-z0-9]/g, "");
+  const e = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, "")
+    .replace(/[^a-z0-9]/g, "");
   return e ? `.${e}` : "";
 }
 
 function normalizeExts(input: string[] | string | undefined): string[] {
   const parts = Array.isArray(input) ? input : String(input ?? "").split(/[,\s]+/);
   const out: string[] = [];
-  for (const p of parts) { const e = normalizeExt(p); if (e && !out.includes(e)) out.push(e); }
+  for (const p of parts) {
+    const e = normalizeExt(p);
+    if (e && !out.includes(e)) out.push(e);
+  }
   return out;
 }
 
 // Stable slug id from the tool name (so a re-add of the same name updates rather than duplicates).
 export function slugifyToolName(name: string): string {
-  const s = String(name ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  const s = String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
   return s ? `custom-${s}` : `custom-${randomUUID().slice(0, 8)}`;
 }
 
@@ -66,7 +78,7 @@ export function customToolToConfig(t: CustomTool): ToolConfig {
   return {
     id: t.id,
     binary: t.binary,
-    transport: "spawn",   // a custom tool is always a local binary; HTTP tools are built-in only
+    transport: "spawn", // a custom tool is always a local binary; HTTP tools are built-in only
     runArgs: t.runArgs,
     updateCommand: t.updateCommand && t.updateCommand.trim() ? t.updateCommand.trim() : undefined,
     importKind: "auto",
@@ -82,10 +94,15 @@ export function customToolToConfig(t: CustomTool): ToolConfig {
 function fromInput(input: CustomToolInput, id: string): CustomTool {
   return {
     id,
-    name: String(input.name ?? "").trim().slice(0, 120),
+    name: String(input.name ?? "")
+      .trim()
+      .slice(0, 120),
     binary: String(input.binary ?? "").trim(),
     runArgs: String(input.runArgs ?? "").trim() || "<target>",
-    updateCommand: input.updateCommand && String(input.updateCommand).trim() ? String(input.updateCommand).trim() : undefined,
+    updateCommand:
+      input.updateCommand && String(input.updateCommand).trim()
+        ? String(input.updateCommand).trim()
+        : undefined,
     extensions: normalizeExts(input.extensions),
     autoRun: input.autoRun === true,
     timeoutMs: Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : 300_000,
@@ -102,7 +119,10 @@ export class CustomToolStore {
       if (!Array.isArray(raw)) return [];
       // Re-validate on read so a hand-edited file can't inject a malformed tool into the runner.
       return raw
-        .map((r) => { const p = customToolSchema.safeParse(r); return p.success ? p.data : null; })
+        .map((r) => {
+          const p = customToolSchema.safeParse(r);
+          return p.success ? p.data : null;
+        })
         .filter((t): t is CustomTool => t !== null && !!t.id && !!t.name && !!t.binary);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -126,9 +146,7 @@ export class CustomToolStore {
     const id = slugifyToolName(name);
     const tool = fromInput(input, id);
     const list = await this.load();
-    const next = list.some((t) => t.id === id)
-      ? list.map((t) => (t.id === id ? tool : t))
-      : [...list, tool];
+    const next = list.some((t) => t.id === id) ? list.map((t) => (t.id === id ? tool : t)) : [...list, tool];
     await this.save(next);
     return tool;
   }
@@ -137,16 +155,19 @@ export class CustomToolStore {
     const list = await this.load();
     const cur = list.find((t) => t.id === id);
     if (!cur) return null;
-    const merged = fromInput({
-      name: patch.name ?? cur.name,
-      binary: patch.binary ?? cur.binary,
-      runArgs: patch.runArgs ?? cur.runArgs,
-      updateCommand: patch.updateCommand ?? cur.updateCommand,
-      extensions: patch.extensions ?? cur.extensions,
-      autoRun: patch.autoRun ?? cur.autoRun,
-      timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
-      maxOutputBytes: patch.maxOutputBytes ?? cur.maxOutputBytes,
-    }, id);   // keep the same id (name change does not re-slug an existing tool)
+    const merged = fromInput(
+      {
+        name: patch.name ?? cur.name,
+        binary: patch.binary ?? cur.binary,
+        runArgs: patch.runArgs ?? cur.runArgs,
+        updateCommand: patch.updateCommand ?? cur.updateCommand,
+        extensions: patch.extensions ?? cur.extensions,
+        autoRun: patch.autoRun ?? cur.autoRun,
+        timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
+        maxOutputBytes: patch.maxOutputBytes ?? cur.maxOutputBytes,
+      },
+      id,
+    ); // keep the same id (name change does not re-slug an existing tool)
     await this.save(list.map((t) => (t.id === id ? merged : t)));
     return merged;
   }

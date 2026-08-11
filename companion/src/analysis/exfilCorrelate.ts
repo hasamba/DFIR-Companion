@@ -16,7 +16,9 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-function worst(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+function worst(a: Severity, b: Severity): Severity {
+  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+}
 
 const MARKER = "[confirmed exfiltration:";
 // Ransomware crews typically upload within minutes to a few hours of staging (the Meridian ground
@@ -28,7 +30,10 @@ export interface ExfilCorrelateOptions {
   windowMinutes?: number;
 }
 
-export function linkArchiveToExfil(events: ForensicEvent[], opts: ExfilCorrelateOptions = {}): ForensicEvent[] {
+export function linkArchiveToExfil(
+  events: ForensicEvent[],
+  opts: ExfilCorrelateOptions = {},
+): ForensicEvent[] {
   const windowMs = (opts.windowMinutes ?? DEFAULT_WINDOW_MINUTES) * 60_000;
 
   // Earliest archive-staging time per host.
@@ -52,7 +57,10 @@ export function linkArchiveToExfil(events: ForensicEvent[], opts: ExfilCorrelate
     return {
       ...e,
       severity: worst(e.severity, "High"),
-      description: `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}]`.slice(0, 600),
+      description: `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}]`.slice(
+        0,
+        600,
+      ),
     };
   });
 }

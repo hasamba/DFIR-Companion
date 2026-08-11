@@ -114,7 +114,11 @@ export interface RouteContext {
   // as the Import button). A hoisted async function in createApp shared by the /import, /tools and
   // Velociraptor ingest paths (still there); graduated for routes/pushNotify.ts's POST /cases/:id/push.
   ingestStreamed(
-    caseId: string, kind: string, text: string, originalName: string, minSeverity?: Severity,
+    caseId: string,
+    kind: string,
+    text: string,
+    originalName: string,
+    minSeverity?: Severity,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   // External-tool runner machinery shared between the drop-folder auto-run path + the drop batch route
   // (both still in createApp) and routes/tools.ts. Stable (hoisted function declarations bound at
@@ -123,7 +127,10 @@ export interface RouteContext {
   //                      through the same chain as the Import button (with an optional undo checkpoint).
   //   reloadCustomTools — refresh the in-memory custom-tool list after a custom-tool CRUD mutation.
   runToolAndIngest(
-    caseId: string, toolId: string, targetPath: string, opts?: { undoLabel?: string },
+    caseId: string,
+    toolId: string,
+    targetPath: string,
+    opts?: { undoLabel?: string },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   reloadCustomTools(): Promise<void>;
   // Submit a file to SO-CRATES and start background polling. Zips are extracted first (SO-CRATES
@@ -140,7 +147,11 @@ export interface RouteContext {
   // Returns true when the work is ASYNCHRONOUS (handed off, not finished), so the caller logs
   // SUBMITTED instead of claiming an import that has not happened yet.
   runDropToolAndIngest(
-    caseId: string, toolId: string, fullPath: string, name: string, dropRelpath?: string,
+    caseId: string,
+    toolId: string,
+    fullPath: string,
+    name: string,
+    dropRelpath?: string,
   ): Promise<boolean>;
   // Import machinery shared between routes/import.ts and the createApp import seams that stay
   // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,
@@ -209,7 +220,14 @@ export interface RouteContext {
   ingestVeloArtifactMap(
     caseId: string,
     mapJson: string,
-    opts: { label: string; idBase: string; superOnly?: boolean; minSeverity?: Severity; hostFallback?: string; veloUrl?: string },
+    opts: {
+      label: string;
+      idBase: string;
+      superOnly?: boolean;
+      minSeverity?: Severity;
+      hostFallback?: string;
+      veloUrl?: string;
+    },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
   ingestVeloUploads(
     caseId: string,
@@ -218,7 +236,14 @@ export interface RouteContext {
   ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }>;
   createVeloMonitor(
     caseId: string,
-    spec: { clientId: string; artifact: string; pollSeconds: number; hostname?: string; minSeverity?: Severity; allClients?: boolean },
+    spec: {
+      clientId: string;
+      artifact: string;
+      pollSeconds: number;
+      hostname?: string;
+      minSeverity?: Severity;
+      allClients?: boolean;
+    },
   ): Promise<VeloMonitor>;
   recordHuntDeploy(caseId: string, input: HuntDeployInput): Promise<void>;
   // Playbook derivation helpers (routes/playbookHunts.ts). Both are SHARED with createApp code that

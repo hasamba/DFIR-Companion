@@ -31,17 +31,17 @@ import { byEventTime } from "./forensicSort.js";
 // confirm against the collection scope before concluding tampering.
 
 export interface TimelineGap {
-  id: string;                  // stable per-result id: "gap-1", "gap-2", … assigned worst-first
-  startTimestamp: string;      // when activity stopped — the end of the last event before the silence
-  endTimestamp: string;        // when activity resumed — the first event after the silence
-  durationSeconds: number;     // length of the silence (seconds)
-  durationLabel: string;       // human-readable duration, e.g. "2h 15m"
-  severity: Severity;          // High when ALL sources went silent (complete), else Medium (partial)
-  complete: boolean;           // true when the WHOLE environment went dark (no source logged at all)
-  silentSources: string[];     // sources that produced no events during the window (sorted)
-  activeSources: string[];     // sources that DID keep logging during the window (sorted; empty when complete)
-  beforeEventId: string;       // forensic-event id bounding the start of the gap (last activity before)
-  afterEventId: string;        // forensic-event id bounding the end of the gap (first activity after)
+  id: string; // stable per-result id: "gap-1", "gap-2", … assigned worst-first
+  startTimestamp: string; // when activity stopped — the end of the last event before the silence
+  endTimestamp: string; // when activity resumed — the first event after the silence
+  durationSeconds: number; // length of the silence (seconds)
+  durationLabel: string; // human-readable duration, e.g. "2h 15m"
+  severity: Severity; // High when ALL sources went silent (complete), else Medium (partial)
+  complete: boolean; // true when the WHOLE environment went dark (no source logged at all)
+  silentSources: string[]; // sources that produced no events during the window (sorted)
+  activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
+  beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
+  afterEventId: string; // forensic-event id bounding the end of the gap (first activity after)
 }
 
 export interface GapOptions {
@@ -179,8 +179,7 @@ function overlapsActiveHours(fromMs: number, toMs: number, hours: { start: numbe
   const start = ((Math.trunc(hours.start) % 24) + 24) % 24;
   const end = ((Math.trunc(hours.end) % 24) + 24) % 24;
   if (start === end) return true; // degenerate band = all day
-  const inBand = (h: number) =>
-    start < end ? h >= start && h < end : h >= start || h < end; // wrap-around band (e.g. 22→06)
+  const inBand = (h: number) => (start < end ? h >= start && h < end : h >= start || h < end); // wrap-around band (e.g. 22→06)
   const firstHour = Math.floor(fromMs / MS_PER_HOUR);
   const lastHour = Math.floor((toMs - 1) / MS_PER_HOUR); // -1: the resume instant itself isn't silent
   for (let h = firstHour; h <= lastHour; h++) {
@@ -253,10 +252,18 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
     let maxDark = -1;
     let prev = fromMs;
     for (const t of times) {
-      if (t - prev > maxDark) { maxDark = t - prev; darkFrom = prev; darkTo = t; }
+      if (t - prev > maxDark) {
+        maxDark = t - prev;
+        darkFrom = prev;
+        darkTo = t;
+      }
       prev = t;
     }
-    if (toMs - prev > maxDark) { maxDark = toMs - prev; darkFrom = prev; darkTo = toMs; }
+    if (toMs - prev > maxDark) {
+      maxDark = toMs - prev;
+      darkFrom = prev;
+      darkTo = toMs;
+    }
     return { active: [...set].sort(), any: times.length > 0, darkFrom, darkTo };
   };
 
@@ -288,7 +295,11 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
       });
     }
     const eEnd = endMs(e);
-    if (eEnd >= prevEndMs) { prevEndMs = eEnd; prevEndTs = endTsStr(e); prevId = e.id; }
+    if (eEnd >= prevEndMs) {
+      prevEndMs = eEnd;
+      prevEndTs = endTsStr(e);
+      prevId = e.id;
+    }
   }
 
   // Pass B — PARTIAL silence per source. Only meaningful with ≥2 named sources (with one source every
@@ -334,7 +345,9 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
       Date.parse(x.startTimestamp) - Date.parse(y.startTimestamp) ||
       x.beforeEventId.localeCompare(y.beforeEventId),
   );
-  gaps.forEach((g, i) => { g.id = `gap-${i + 1}`; });
+  gaps.forEach((g, i) => {
+    g.id = `gap-${i + 1}`;
+  });
   return gaps;
 }
 

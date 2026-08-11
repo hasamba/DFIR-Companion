@@ -10,7 +10,16 @@ import type { TimelineGap } from "../../src/analysis/gapDetect.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, asset?: string): ForensicEvent {
-  return { id, timestamp: "2026-05-20T08:00:00Z", description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset };
+  return {
+    id,
+    timestamp: "2026-05-20T08:00:00Z",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset,
+  };
 }
 
 function gap(over: Partial<TimelineGap> = {}): TimelineGap {
@@ -65,7 +74,13 @@ describe("shadowArtifactById", () => {
 
 describe("gapAffectedAssets", () => {
   it("dedupes, sorts, and ignores blank assets", () => {
-    const hosts = gapAffectedAssets([ev("e1", "WEB01"), ev("e2", "DC01"), ev("e3", "WEB01"), ev("e4", "  "), ev("e5")]);
+    const hosts = gapAffectedAssets([
+      ev("e1", "WEB01"),
+      ev("e2", "DC01"),
+      ev("e3", "WEB01"),
+      ev("e4", "  "),
+      ev("e5"),
+    ]);
     expect(hosts).toEqual(["DC01", "WEB01"]);
   });
 

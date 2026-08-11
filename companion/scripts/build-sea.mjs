@@ -105,9 +105,9 @@ async function bundleServer() {
     // the bundle reaches for them, so external sharp `require()`s succeed at runtime.
     banner: {
       js: [
-        "\"use strict\";",
+        '"use strict";',
         "var __sea_require = require;",
-        "if (typeof require === \"undefined\") { var require = __sea_require; }",
+        'if (typeof require === "undefined") { var require = __sea_require; }',
       ].join("\n"),
     },
     define: {
@@ -168,8 +168,8 @@ async function injectBlob() {
     if (major >= 23) {
       throw new Error(
         `${err?.message ?? err}\n` +
-        `[sea] HINT: postject couldn't inject into a Node ${process.version} binary — SEA ` +
-        `packaging needs Node 22.5+. Switch (e.g. \`nvm use 22\`) and re-run; CI pins Node 22.`,
+          `[sea] HINT: postject couldn't inject into a Node ${process.version} binary — SEA ` +
+          `packaging needs Node 22.5+. Switch (e.g. \`nvm use 22\`) and re-run; CI pins Node 22.`,
       );
     }
     throw err;
@@ -183,18 +183,15 @@ async function injectBlob() {
 // already picks up. Listing the retired packages here is not harmless: each one that goes missing
 // prints a warning on every SEA build, which is how a real missing dependency stops being noticed.
 const SHARP_RUNTIME_DEPS = [
-  "detect-libc",   // sharp direct dep
-  "semver",        // sharp direct dep
+  "detect-libc", // sharp direct dep
+  "semver", // sharp direct dep
 ];
 
 async function findSharpRoots() {
   // Locate the sharp package + its @img/* prebuilt-binary siblings + all transitive runtime
   // deps. They might live in companion/node_modules or be hoisted to repo-root node_modules
   // — check both.
-  const roots = [
-    join(COMPANION_DIR, "node_modules"),
-    join(REPO_DIR, "node_modules"),
-  ];
+  const roots = [join(COMPANION_DIR, "node_modules"), join(REPO_DIR, "node_modules")];
   for (const root of roots) {
     const sharpPath = join(root, "sharp");
     if (!existsSync(sharpPath)) continue;
@@ -233,14 +230,14 @@ function buildIco(frames) {
     const { size, data } = frames[i];
     const w = size >= 256 ? 0 : size; // 0 encodes as 256 in ICO spec
     const e = 6 + i * 16;
-    header.writeUInt8(w, e);           // width
-    header.writeUInt8(w, e + 1);       // height
-    header.writeUInt8(0, e + 2);       // color count (0 = truecolor)
-    header.writeUInt8(0, e + 3);       // reserved
-    header.writeUInt16LE(0, e + 4);    // planes
-    header.writeUInt16LE(32, e + 6);   // bits per pixel
-    header.writeUInt32LE(data.length, e + 8);  // size in bytes
-    header.writeUInt32LE(offset, e + 12);       // file offset
+    header.writeUInt8(w, e); // width
+    header.writeUInt8(w, e + 1); // height
+    header.writeUInt8(0, e + 2); // color count (0 = truecolor)
+    header.writeUInt8(0, e + 3); // reserved
+    header.writeUInt16LE(0, e + 4); // planes
+    header.writeUInt16LE(32, e + 6); // bits per pixel
+    header.writeUInt32LE(data.length, e + 8); // size in bytes
+    header.writeUInt32LE(offset, e + 12); // file offset
     parts.push(data);
     offset += data.length;
   }
@@ -260,29 +257,44 @@ async function createIco() {
   const isBg = (i) => buf[i] > 185 && buf[i + 1] > 185 && buf[i + 2] > 185;
   const visited = new Uint8Array(W * H);
   const stack = [];
-  const seed = (x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) stack.push(y * W + x); };
-  for (let x = 0; x < W; x++) { seed(x, 0); seed(x, H - 1); }
-  for (let y = 0; y < H; y++) { seed(0, y); seed(W - 1, y); }
+  const seed = (x, y) => {
+    if (x >= 0 && y >= 0 && x < W && y < H) stack.push(y * W + x);
+  };
+  for (let x = 0; x < W; x++) {
+    seed(x, 0);
+    seed(x, H - 1);
+  }
+  for (let y = 0; y < H; y++) {
+    seed(0, y);
+    seed(W - 1, y);
+  }
   while (stack.length) {
     const p = stack.pop();
     if (visited[p]) continue;
     visited[p] = 1;
     if (!isBg(p * 4)) continue;
     buf[p * 4 + 3] = 0;
-    const x = p % W, y = (p / W) | 0;
-    seed(x + 1, y); seed(x - 1, y); seed(x, y + 1); seed(x, y - 1);
+    const x = p % W,
+      y = (p / W) | 0;
+    seed(x + 1, y);
+    seed(x - 1, y);
+    seed(x, y + 1);
+    seed(x, y - 1);
   }
   const emblem = sharp(buf, { raw: { width: W, height: H, channels: 4 } });
 
   const SIZES = [16, 32, 48, 256];
-  const frames = await Promise.all(SIZES.map(async (size) => {
-    const data = await emblem.clone()
-      .trim({ threshold: 10 })
-      .resize(size, size, { fit: "cover", kernel: "lanczos3" })
-      .png({ compressionLevel: 9 })
-      .toBuffer();
-    return { size, data };
-  }));
+  const frames = await Promise.all(
+    SIZES.map(async (size) => {
+      const data = await emblem
+        .clone()
+        .trim({ threshold: 10 })
+        .resize(size, size, { fit: "cover", kernel: "lanczos3" })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+      return { size, data };
+    }),
+  );
 
   await writeFile(icoPath, buildIco(frames));
   return icoPath;

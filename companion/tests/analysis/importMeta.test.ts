@@ -16,7 +16,10 @@ const DIFF: TimelineDiff = {
 };
 
 const IOCS: IocsDiff = {
-  added: [{ value: "evil.com", type: "domain" }, { value: "1.2.3.4", type: "ip" }],
+  added: [
+    { value: "evil.com", type: "domain" },
+    { value: "1.2.3.4", type: "ip" },
+  ],
   removed: [],
 };
 const NO_IOCS: IocsDiff = { added: [], removed: [] };
@@ -32,26 +35,42 @@ describe("ImportMetaStore", () => {
 
   it("returns an empty meta when none exists", async () => {
     expect(await store.load("c1")).toEqual({
-      lastImportedAt: "", lastImportKind: "", lastImportFile: "",
-      addedCount: 0, superTimelineAddedCount: 0, removedCount: 0, lastDiff: null,
-      iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
-      linesIn: 0, path: "", fpPropagation: [], truncation: null,
+      lastImportedAt: "",
+      lastImportKind: "",
+      lastImportFile: "",
+      addedCount: 0,
+      superTimelineAddedCount: 0,
+      removedCount: 0,
+      lastDiff: null,
+      iocsAddedCount: 0,
+      iocsRemovedCount: 0,
+      iocsDiff: null,
+      linesIn: 0,
+      path: "",
+      fpPropagation: [],
+      truncation: null,
     });
   });
 
   it("keeps the super-timeline count unknown when loading legacy metadata", () => {
-    expect(importMetaSchema.parse({ lastImportedAt: "2026-06-01T00:00:00.000Z" }).superTimelineAddedCount).toBeUndefined();
+    expect(
+      importMetaSchema.parse({ lastImportedAt: "2026-06-01T00:00:00.000Z" }).superTimelineAddedCount,
+    ).toBeUndefined();
   });
 
   it("records an import (time + kind/file + timeline & IOC diff) and loads it back", async () => {
     const at = "2026-06-06T12:00:00.000Z";
-    await store.record("c1", {
-      kind: "thor",
-      file: "0003_thor.json",
-      diff: DIFF,
-      iocsDiff: IOCS,
-      superTimelineAddedCount: 7,
-    }, at);
+    await store.record(
+      "c1",
+      {
+        kind: "thor",
+        file: "0003_thor.json",
+        diff: DIFF,
+        iocsDiff: IOCS,
+        superTimelineAddedCount: 7,
+      },
+      at,
+    );
     const meta = await store.load("c1");
     expect(meta.lastImportedAt).toBe(at);
     expect(meta.lastImportKind).toBe("thor");
@@ -66,9 +85,17 @@ describe("ImportMetaStore", () => {
   });
 
   it("overwrites the previous record on the next import", async () => {
-    await store.record("c1", { kind: "thor", file: "a", diff: DIFF, iocsDiff: IOCS }, "2026-06-06T12:00:00.000Z");
+    await store.record(
+      "c1",
+      { kind: "thor", file: "a", diff: DIFF, iocsDiff: IOCS },
+      "2026-06-06T12:00:00.000Z",
+    );
     const empty: TimelineDiff = { added: [], removed: [] };
-    await store.record("c1", { kind: "siem", file: "b", diff: empty, iocsDiff: NO_IOCS }, "2026-06-06T13:00:00.000Z");
+    await store.record(
+      "c1",
+      { kind: "siem", file: "b", diff: empty, iocsDiff: NO_IOCS },
+      "2026-06-06T13:00:00.000Z",
+    );
     const meta = await store.load("c1");
     expect(meta.lastImportedAt).toBe("2026-06-06T13:00:00.000Z");
     expect(meta.lastImportKind).toBe("siem");
@@ -79,19 +106,37 @@ describe("ImportMetaStore", () => {
   });
 
   it("clear() resets the record to empty (used when an import is undone, #76)", async () => {
-    await store.record("c1", { kind: "thor", file: "a", diff: DIFF, iocsDiff: IOCS }, "2026-06-06T12:00:00.000Z");
+    await store.record(
+      "c1",
+      { kind: "thor", file: "a", diff: DIFF, iocsDiff: IOCS },
+      "2026-06-06T12:00:00.000Z",
+    );
     await store.clear("c1");
     expect(await store.load("c1")).toEqual({
-      lastImportedAt: "", lastImportKind: "", lastImportFile: "",
-      addedCount: 0, superTimelineAddedCount: 0, removedCount: 0, lastDiff: null,
-      iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
-      linesIn: 0, path: "", fpPropagation: [], truncation: null,
+      lastImportedAt: "",
+      lastImportKind: "",
+      lastImportFile: "",
+      addedCount: 0,
+      superTimelineAddedCount: 0,
+      removedCount: 0,
+      lastDiff: null,
+      iocsAddedCount: 0,
+      iocsRemovedCount: 0,
+      iocsDiff: null,
+      linesIn: 0,
+      path: "",
+      fpPropagation: [],
+      truncation: null,
     });
   });
 
   it("caps the stored detail lists but keeps the true totals in the counts", async () => {
     const many: TimelineDiff = {
-      added: Array.from({ length: 800 }, (_, i) => ({ timestamp: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}Z`, description: `evt ${i}`, severity: "Info" as const })),
+      added: Array.from({ length: 800 }, (_, i) => ({
+        timestamp: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}Z`,
+        description: `evt ${i}`,
+        severity: "Info" as const,
+      })),
       removed: [],
     };
     const manyIocs: IocsDiff = {
@@ -100,9 +145,9 @@ describe("ImportMetaStore", () => {
     };
     await store.record("c1", { kind: "plaso", file: "big.csv", diff: many, iocsDiff: manyIocs });
     const meta = await store.load("c1");
-    expect(meta.addedCount).toBe(800);                 // true total preserved
-    expect(meta.lastDiff?.added.length).toBe(500);     // list capped
-    expect(meta.iocsAddedCount).toBe(700);             // true total preserved
-    expect(meta.iocsDiff?.added.length).toBe(500);     // list capped
+    expect(meta.addedCount).toBe(800); // true total preserved
+    expect(meta.lastDiff?.added.length).toBe(500); // list capped
+    expect(meta.iocsAddedCount).toBe(700); // true total preserved
+    expect(meta.iocsDiff?.added.length).toBe(500); // list capped
   });
 });

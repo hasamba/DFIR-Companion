@@ -6,18 +6,48 @@ import type { Finding, ForensicEvent, IOC, IocEnrichment } from "../../src/analy
 const hostNames = new Set(["db-01"]);
 
 function ioc(p: Partial<IOC>): IOC {
-  return { id: p.id ?? "i1", type: p.type ?? "domain", value: p.value ?? "evil.example", firstSeen: "", ...p };
+  return {
+    id: p.id ?? "i1",
+    type: p.type ?? "domain",
+    value: p.value ?? "evil.example",
+    firstSeen: "",
+    ...p,
+  };
 }
 function enr(p: Partial<IocEnrichment>): IocEnrichment {
-  return { source: p.provider ?? "VirusTotal", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z", ...p };
+  return {
+    source: p.provider ?? "VirusTotal",
+    verdict: "malicious",
+    fetchedAt: "2026-01-01T00:00:00Z",
+    ...p,
+  };
 }
 function ev(p: Partial<ForensicEvent>): ForensicEvent {
-  return { id: p.id ?? "e1", timestamp: "2026-01-01T00:00:00Z", description: p.description ?? "x", severity: p.severity ?? "High",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    id: p.id ?? "e1",
+    timestamp: "2026-01-01T00:00:00Z",
+    description: p.description ?? "x",
+    severity: p.severity ?? "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 function f(p: Partial<Finding>): Finding {
-  return { id: p.id ?? "f1", severity: p.severity ?? "Critical", title: p.title ?? "C2 via malicious domain", description: "",
-    relatedIocs: p.relatedIocs ?? [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "", lastUpdated: "", status: "open", ...p };
+  return {
+    id: p.id ?? "f1",
+    severity: p.severity ?? "Critical",
+    title: p.title ?? "C2 via malicious domain",
+    description: "",
+    relatedIocs: p.relatedIocs ?? [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "",
+    lastUpdated: "",
+    status: "open",
+    ...p,
+  };
 }
 
 describe("isInternalAddress", () => {
@@ -35,29 +65,58 @@ describe("isInternalAddress", () => {
 describe("classifyVerdict", () => {
   const vt = enr({ source: "VirusTotal", verdict: "malicious" });
   it("flags a verdict on the case's own host asset as conflicted", () => {
-    const c = classifyVerdict(ioc({ value: "db-01.corp.local", enrichments: [enr({ source: "OpenCTI", verdict: "suspicious" })] }), { hasBehavioralEvent: false, hostNames });
+    const c = classifyVerdict(
+      ioc({ value: "db-01.corp.local", enrichments: [enr({ source: "OpenCTI", verdict: "suspicious" })] }),
+      { hasBehavioralEvent: false, hostNames },
+    );
     expect(c).toBe("conflicted");
   });
   it("flags a verdict on an internal IP as conflicted", () => {
-    expect(classifyVerdict(ioc({ value: "10.0.0.5", enrichments: [enr({ source: "X", verdict: "malicious" })] }), { hasBehavioralEvent: true, hostNames })).toBe("conflicted");
+    expect(
+      classifyVerdict(ioc({ value: "10.0.0.5", enrichments: [enr({ source: "X", verdict: "malicious" })] }), {
+        hasBehavioralEvent: true,
+        hostNames,
+      }),
+    ).toBe("conflicted");
   });
   it("is corroborated with two distinct providers", () => {
-    expect(classifyVerdict(ioc({ enrichments: [enr({ provider: "A", verdict: "malicious" }), enr({ provider: "B", verdict: "suspicious" })] }), { hasBehavioralEvent: false, hostNames })).toBe("corroborated");
+    expect(
+      classifyVerdict(
+        ioc({
+          enrichments: [
+            enr({ provider: "A", verdict: "malicious" }),
+            enr({ provider: "B", verdict: "suspicious" }),
+          ],
+        }),
+        { hasBehavioralEvent: false, hostNames },
+      ),
+    ).toBe("corroborated");
   });
   it("is corroborated with one provider PLUS a behavioral event", () => {
-    expect(classifyVerdict(ioc({ enrichments: [vt] }), { hasBehavioralEvent: true, hostNames })).toBe("corroborated");
+    expect(classifyVerdict(ioc({ enrichments: [vt] }), { hasBehavioralEvent: true, hostNames })).toBe(
+      "corroborated",
+    );
   });
   it("is lone-intel with one provider and no behavioral event", () => {
-    expect(classifyVerdict(ioc({ enrichments: [vt] }), { hasBehavioralEvent: false, hostNames })).toBe("lone-intel");
+    expect(classifyVerdict(ioc({ enrichments: [vt] }), { hasBehavioralEvent: false, hostNames })).toBe(
+      "lone-intel",
+    );
   });
   it("is none with no malicious/suspicious verdict", () => {
-    expect(classifyVerdict(ioc({ enrichments: [enr({ source: "X", verdict: "harmless" })] }), { hasBehavioralEvent: false, hostNames })).toBe("none");
+    expect(
+      classifyVerdict(ioc({ enrichments: [enr({ source: "X", verdict: "harmless" })] }), {
+        hasBehavioralEvent: false,
+        hostNames,
+      }),
+    ).toBe("none");
   });
 });
 
 describe("iocHasBehavioralEvent", () => {
   it("matches a value in a High-severity event's structured field or description", () => {
-    expect(iocHasBehavioralEvent("evil.exe", [ev({ severity: "Critical", description: "ran evil.exe" })])).toBe(true);
+    expect(
+      iocHasBehavioralEvent("evil.exe", [ev({ severity: "Critical", description: "ran evil.exe" })]),
+    ).toBe(true);
     expect(iocHasBehavioralEvent("1.2.3.4", [ev({ severity: "Medium", dstIp: "1.2.3.4" })])).toBe(true);
   });
   it("ignores Low/Info events (not behavioral corroboration)", () => {
@@ -67,12 +126,33 @@ describe("iocHasBehavioralEvent", () => {
 
 describe("capIntelOnlyFindings — northpeak class", () => {
   it("floors a Critical finding driven only by a conflicted (own-server) verdict", () => {
-    const events = [ev({ id: "e1", severity: "Info", description: "connection to db-01.corp.local", asset: "db-01.corp.local", dstIp: "db-01.corp.local" })];
-    const finding = f({ id: "f1", severity: "Critical", confidence: 92, relatedIocs: ["i1"], corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 1, graphLinked: false } });
+    const events = [
+      ev({
+        id: "e1",
+        severity: "Info",
+        description: "connection to db-01.corp.local",
+        asset: "db-01.corp.local",
+        dstIp: "db-01.corp.local",
+      }),
+    ];
+    const finding = f({
+      id: "f1",
+      severity: "Critical",
+      confidence: 92,
+      relatedIocs: ["i1"],
+      corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 1, graphLinked: false },
+    });
     const out = capIntelOnlyFindings({
       findings: [finding],
-      iocs: [ioc({ id: "i1", value: "db-01.corp.local", enrichments: [enr({ source: "OpenCTI", verdict: "suspicious" })] })],
-      scopedEvents: events, hostNames,
+      iocs: [
+        ioc({
+          id: "i1",
+          value: "db-01.corp.local",
+          enrichments: [enr({ source: "OpenCTI", verdict: "suspicious" })],
+        }),
+      ],
+      scopedEvents: events,
+      hostNames,
     });
     expect(out[0].severity).toBe("Medium");
     expect(out[0].confidence).toBe(60);
@@ -80,32 +160,57 @@ describe("capIntelOnlyFindings — northpeak class", () => {
   });
 
   it("does NOT floor a finding with behavioral corroboration (2 tools)", () => {
-    const finding = f({ id: "f1", severity: "Critical", confidence: 95, relatedIocs: ["i1"], corroboration: { distinctTools: 2, distinctHosts: 1, intelSources: 1, graphLinked: false } });
+    const finding = f({
+      id: "f1",
+      severity: "Critical",
+      confidence: 95,
+      relatedIocs: ["i1"],
+      corroboration: { distinctTools: 2, distinctHosts: 1, intelSources: 1, graphLinked: false },
+    });
     const out = capIntelOnlyFindings({
       findings: [finding],
-      iocs: [ioc({ id: "i1", value: "evil.example", enrichments: [enr({ source: "VT", verdict: "malicious" })] })],
-      scopedEvents: [], hostNames,
+      iocs: [
+        ioc({ id: "i1", value: "evil.example", enrichments: [enr({ source: "VT", verdict: "malicious" })] }),
+      ],
+      scopedEvents: [],
+      hostNames,
     });
     expect(out[0].severity).toBe("Critical");
     expect(out[0].confidence).toBe(95);
   });
 
   it("does NOT floor a finding not driven by intel at all", () => {
-    const finding = f({ id: "f1", severity: "High", confidence: 88, relatedIocs: ["i1"], corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false } });
+    const finding = f({
+      id: "f1",
+      severity: "High",
+      confidence: 88,
+      relatedIocs: ["i1"],
+      corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false },
+    });
     const out = capIntelOnlyFindings({
       findings: [finding],
       iocs: [ioc({ id: "i1", value: "plain.example", enrichments: [] })],
-      scopedEvents: [], hostNames,
+      scopedEvents: [],
+      hostNames,
     });
     expect(out[0].severity).toBe("High");
   });
 
   it("floors a lone-intel-only High finding to Medium/60", () => {
-    const finding = f({ id: "f1", severity: "High", confidence: 80, relatedIocs: ["i1"], corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 1, graphLinked: false } });
+    const finding = f({
+      id: "f1",
+      severity: "High",
+      confidence: 80,
+      relatedIocs: ["i1"],
+      corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 1, graphLinked: false },
+    });
     const out = capIntelOnlyFindings({
       findings: [finding],
-      iocs: [ioc({ id: "i1", value: "lone.example", enrichments: [enr({ source: "VT", verdict: "malicious" })] })],
-      scopedEvents: [], hostNames,
+      iocs: [
+        ioc({ id: "i1", value: "lone.example", enrichments: [enr({ source: "VT", verdict: "malicious" })] }),
+      ],
+      scopedEvents: [],
+      hostNames,
     });
     expect(out[0].severity).toBe("Medium");
     expect(out[0].confidence).toBe(60);

@@ -20,16 +20,7 @@ import type { Finding, InvestigationState, Severity } from "./stateTypes.js";
 //   /dfir help                             → usage
 
 export type SlashCommandName =
-  | "ask"
-  | "findings"
-  | "finding"
-  | "iocs"
-  | "hunt"
-  | "status"
-  | "synthesize"
-  | "bind"
-  | "unbind"
-  | "help";
+  "ask" | "findings" | "finding" | "iocs" | "hunt" | "status" | "synthesize" | "bind" | "unbind" | "help";
 
 export interface ParsedSlashCommand {
   name: SlashCommandName;
@@ -82,10 +73,10 @@ export interface ChannelBinding {
 
 export interface ResolvedSlashCommand {
   name: SlashCommandName;
-  caseId: string;                            // "" when the command takes none / none could be found
-  arg: string;                               // the question / technique / finding id
+  caseId: string; // "" when the command takes none / none could be found
+  arg: string; // the question / technique / finding id
   iocFilter?: "flagged" | "malicious";
-  usedBinding: boolean;                      // true when the caseId came from the channel binding
+  usedBinding: boolean; // true when the caseId came from the channel binding
   raw: string;
 }
 
@@ -132,7 +123,7 @@ export function resolveCommand(
   const firstIsCaseId =
     first !== undefined &&
     (FREEFORM_ARG_COMMANDS.includes(name)
-      ? firstTokenIsKnownCase           // ambiguous — only a real case id wins
+      ? firstTokenIsKnownCase // ambiguous — only a real case id wins
       : name !== "iocs" || !IOC_FILTERS.has(first)); // unambiguous — anything but a filter word
 
   let caseId: string;
@@ -177,7 +168,10 @@ const SEVERITY_ORDER: Record<Severity, number> = { Critical: 5, High: 4, Medium:
 function topFindings(state: InvestigationState, limit: number): Finding[] {
   return [...state.findings]
     .filter((f) => f.status !== "dismissed")
-    .sort((a, b) => (SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity]) || (b.confidence ?? 0) - (a.confidence ?? 0))
+    .sort(
+      (a, b) =>
+        SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || (b.confidence ?? 0) - (a.confidence ?? 0),
+    )
     .slice(0, limit);
 }
 
@@ -197,10 +191,17 @@ export function formatFindingsCommand(state: InvestigationState, limit = 5): Sla
 export function formatFindingCommand(state: InvestigationState, findingId: string): SlashCommandResponse {
   const wanted = findingId.trim();
   if (!wanted) {
-    return { title: "Which finding?", lines: ["Usage: /dfir finding <id> — run /dfir findings to list them."] };
+    return {
+      title: "Which finding?",
+      lines: ["Usage: /dfir finding <id> — run /dfir findings to list them."],
+    };
   }
   const f = state.findings.find((x) => x.id === wanted || x.semanticKey === wanted);
-  if (!f) return { title: `Finding ${wanted} not found`, lines: [`Case ${state.caseId} has no finding with id/semanticKey "${wanted}".`] };
+  if (!f)
+    return {
+      title: `Finding ${wanted} not found`,
+      lines: [`Case ${state.caseId} has no finding with id/semanticKey "${wanted}".`],
+    };
   const lines = [
     `Severity: ${f.severity}${f.confidence !== undefined ? ` (confidence ${f.confidence}%)` : ""}`,
     `Status: ${f.status}`,
@@ -221,23 +222,33 @@ export function formatIocsCommand(
   if (filter === "malicious") {
     iocs = iocs.filter((ioc) => (ioc.enrichments ?? []).some((e) => e.verdict === "malicious"));
   } else if (filter === "flagged") {
-    iocs = iocs.filter((ioc) => (ioc.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"));
+    iocs = iocs.filter((ioc) =>
+      (ioc.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"),
+    );
   }
   if (iocs.length === 0) {
-    return { title: `IOCs for ${state.caseId}${filter ? ` (${filter})` : ""}`, lines: ["No IOCs match this filter."] };
+    return {
+      title: `IOCs for ${state.caseId}${filter ? ` (${filter})` : ""}`,
+      lines: ["No IOCs match this filter."],
+    };
   }
   const top = iocs.slice(0, limit);
   const lines = top.map((ioc) => {
     const verdicts = (ioc.enrichments ?? []).map((e) => `${e.source}:${e.verdict}`).join(", ");
     return `${ioc.type} · ${ioc.value}${verdicts ? ` — ${verdicts}` : ""}`;
   });
-  return { title: `${iocs.length} IOC(s)${filter ? ` (${filter})` : ""} — showing top ${top.length} for ${state.caseId}`, lines };
+  return {
+    title: `${iocs.length} IOC(s)${filter ? ` (${filter})` : ""} — showing top ${top.length} for ${state.caseId}`,
+    lines,
+  };
 }
 
 export function formatStatusCommand(state: InvestigationState): SlashCommandResponse {
   const openFindings = state.findings.filter((f) => f.status === "open").length;
   const confirmed = state.findings.filter((f) => f.status === "confirmed").length;
-  const maliciousIocs = state.iocs.filter((ioc) => (ioc.enrichments ?? []).some((e) => e.verdict === "malicious")).length;
+  const maliciousIocs = state.iocs.filter((ioc) =>
+    (ioc.enrichments ?? []).some((e) => e.verdict === "malicious"),
+  ).length;
   const openHypotheses = (state as { hypotheses?: unknown[] }).hypotheses;
   const lines = [
     `Events: ${state.forensicTimeline.length}`,

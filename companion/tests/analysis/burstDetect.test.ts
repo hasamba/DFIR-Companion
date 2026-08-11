@@ -58,14 +58,12 @@ describe("buildAttackPhases", () => {
       ev("e3", "2026-05-20T14:02:30Z", { mitreTechniques: ["T1059"], description: "powershell" }),
     ]);
     expect(phases).toHaveLength(1);
-    expect(phases[0].label).toBe("Initial Access");           // 2× Initial Access beats 1× Execution
+    expect(phases[0].label).toBe("Initial Access"); // 2× Initial Access beats 1× Execution
     expect(phases[0].inferredTechniques).toEqual(["T1059", "T1566", "T1566.001"]);
   });
 
   it("falls back to 'Activity burst' when no tactic can be inferred", () => {
-    const phases = buildAttackPhases([
-      ev("e1", "2026-05-20T14:01:00Z", { description: "benign file read" }),
-    ]);
+    const phases = buildAttackPhases([ev("e1", "2026-05-20T14:01:00Z", { description: "benign file read" })]);
     expect(phases[0].label).toBe("Activity burst");
   });
 
@@ -80,7 +78,7 @@ describe("buildAttackPhases", () => {
   it("honors a custom gapSeconds threshold", () => {
     const events = [
       ev("e1", "2026-05-20T14:00:00Z"),
-      ev("e2", "2026-05-20T14:00:30Z"),   // 30s apart
+      ev("e2", "2026-05-20T14:00:30Z"), // 30s apart
     ];
     expect(buildAttackPhases(events, { gapSeconds: 10 })).toHaveLength(2); // 30s > 10s → split
     expect(buildAttackPhases(events, { gapSeconds: 60 })).toHaveLength(1); // 30s ≤ 60s → one phase
@@ -93,7 +91,7 @@ describe("buildAttackPhases", () => {
       ev("e2", "2026-05-20T14:05:00Z"),
     ]);
     expect(phases).toHaveLength(1);
-    expect(phases[0].eventCount).toBe(21);                    // 20 (aggregated) + 1
+    expect(phases[0].eventCount).toBe(21); // 20 (aggregated) + 1
     expect(phases[0].endTimestamp).toBe("2026-05-20T14:05:00Z");
   });
 

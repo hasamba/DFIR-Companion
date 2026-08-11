@@ -12,7 +12,8 @@ import { archiveCase } from "../analysis/caseArchive.js";
 import {
   exportEncryptedCase,
   MIN_PASSWORD_LENGTH,
-  dfircaseFilename, attachmentContentDisposition,
+  dfircaseFilename,
+  attachmentContentDisposition,
 } from "../analysis/caseExportArchive.js";
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
 import { registerCasePushRoutes } from "./casePush.js";
@@ -24,13 +25,18 @@ import { byEventTime } from "../analysis/forensicSort.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
-import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, validateEnvUpdates } from "../settings/envManager.js";
+import {
+  getEnvForSettings,
+  updateEnv as updateEnvFile,
+  reloadEnvPrefix,
+  validateEnvUpdates,
+} from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
-import type {  IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
+import type { IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -75,8 +81,15 @@ import type { RouteContext } from "./context.js";
  */
 export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): void {
   const {
-    store, options, serverLogger, hasAiProvider, instanceSecret,
-    dispatchNotify, ensureDropFolders, runStateExclusive, resynthesizeInBackground,
+    store,
+    options,
+    serverLogger,
+    hasAiProvider,
+    instanceSecret,
+    dispatchNotify,
+    ensureDropFolders,
+    runStateExclusive,
+    resynthesizeInBackground,
     reloadImporters,
   } = ctx;
   // Module-private wrappers mirroring createApp's logLine/errLine (serverLogger.info/error) so the
@@ -87,7 +100,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try {
       const listed = await store.listCases();
       const visible = options.teamAuth?.visibleCaseIds(req);
-      return res.status(200).json(listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta));
+      return res
+        .status(200)
+        .json(listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -102,10 +117,20 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try {
       const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
       if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
-      if (typeof caseId !== "string" || !isValidCaseId(caseId)) return res.status(400).json({ error: "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal" });
-      if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
+      if (typeof caseId !== "string" || !isValidCaseId(caseId))
+        return res
+          .status(400)
+          .json({
+            error:
+              "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal",
+          });
+      if (await store.caseExists(caseId))
+        return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
-        caseId, name, investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown", aiProvider: aiProvider ?? null,
+        caseId,
+        name,
+        investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown",
+        aiProvider: aiProvider ?? null,
       });
       options.teamAuth?.grantCreator(req, caseId);
       if (templateId && options.templateStore && options.stateStore) {
@@ -134,9 +159,18 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           await options.incidentTypeStore.saveRecord(caseId, String(incidentTypeId));
         }
       }
-      dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));
+      dispatchNotify(
+        milestoneEvent(
+          caseId,
+          `Investigation opened: ${name}`,
+          [`Investigator: ${investigator ?? "unknown"}`],
+          new Date().toISOString(),
+        ),
+      );
       // Create the evidence drop folder for every new case (best-effort — never block case creation).
-      await ensureDropFolders(caseId).catch(() => { /* the watcher re-ensures on its next poll */ });
+      await ensureDropFolders(caseId).catch(() => {
+        /* the watcher re-ensures on its next poll */
+      });
       return res.status(201).json(sanitizeCaseMeta(meta));
     } catch (err) {
       if (err instanceof CaseAlreadyExistsError) return res.status(409).json({ error: err.message });
@@ -153,9 +187,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
-      if (!await store.caseExists(id)) return res.status(404).json({ error: `case ${id} not found` });
+      if (!(await store.caseExists(id))) return res.status(404).json({ error: `case ${id} not found` });
       const { status } = req.body ?? {};
-      if (status !== "open" && status !== "closed") return res.status(400).json({ error: "status must be 'open' or 'closed'" });
+      if (status !== "open" && status !== "closed")
+        return res.status(400).json({ error: "status must be 'open' or 'closed'" });
       const updated = await store.updateCaseMeta(id, { status });
       logLine(`[lifecycle] case=${id} status=${status}`);
       return res.status(200).json(sanitizeCaseMeta(updated));
@@ -193,16 +228,22 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
-      if (meta.status === "archived") return res.status(400).json({ error: `case ${id} is already archived` });
+      if (meta.status === "archived")
+        return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       logLine(`[archive] starting archive for case=${id}`);
       const result = await archiveCase(store.casesRoot, id, {}, meta.name, store.caseDir(id));
-      logLine(`[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`);
+      logLine(
+        `[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`,
+      );
       // Evidence just left the instance, so every artifact under custody gets an `exported` event
       // (#231). Recorded only after the archive exists — a failed export must never log one that
       // happened — and before removeFromList, though either order works: custody paths are stored
       // relative to the case dir, so the move to _archived/ does not disturb them.
-      await options.custodyStore?.recordExport(id, { exportedBy: meta.investigator || "analyst", destination: `zip archive: ${result.archivePath}` });
+      await options.custodyStore?.recordExport(id, {
+        exportedBy: meta.investigator || "analyst",
+        destination: `zip archive: ${result.archivePath}`,
+      });
       let removedFromList = false;
       let removeFromListError: string | undefined;
       if (removeFromList) {
@@ -242,7 +283,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   });
 
   // Delete only after building an archive; revoke roles and service identities only after success.
-  async function deleteCaseFolderBestEffort(id: string, actor?: AuthIdentity): Promise<{ deleted: boolean; error?: string }> {
+  async function deleteCaseFolderBestEffort(
+    id: string,
+    actor?: AuthIdentity,
+  ): Promise<{ deleted: boolean; error?: string }> {
     try {
       await store.deleteCaseFolder(id);
       options.teamAuth?.store.deleteCaseAccess(id, actor);
@@ -274,7 +318,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       if (meta.status !== "closed" && meta.status !== "archived") {
-        return res.status(400).json({ error: `case ${id} must be closed or archived before it can be deleted` });
+        return res
+          .status(400)
+          .json({ error: `case ${id} must be closed or archived before it can be deleted` });
       }
       const body = (req.body ?? {}) as { archiveFirst?: unknown; password?: unknown };
       const archiveFirst = body.archiveFirst;
@@ -285,7 +331,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (archiveFirst === "encrypted") {
         const password = body.password;
         if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
-          return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+          return res
+            .status(400)
+            .json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
         }
         const archive = await exportEncryptedCase(store, id, password);
         const filename = dfircaseFilename(id, meta.name);
@@ -303,12 +351,17 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         logLine(`[delete] case=${id} archived to ZIP before deletion: ${archiveResult.archivePath}`);
       }
 
-      const { deleted, error: deleteError } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
+      const { deleted, error: deleteError } = await deleteCaseFolderBestEffort(
+        id,
+        requestAuthentication(req)?.identity,
+      );
 
       return res.status(200).json({
         deleted,
         ...(deleteError ? { deleteError } : {}),
-        ...(archiveResult ? { archivePath: archiveResult.archivePath, manifest: archiveResult.manifest } : {}),
+        ...(archiveResult
+          ? { archivePath: archiveResult.archivePath, manifest: archiveResult.manifest }
+          : {}),
       });
     } catch (err) {
       if ((err as Error).message.includes("does not exist")) {
@@ -367,9 +420,15 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         for (const line of log.split("\n")) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          try { importLog.push(JSON.parse(trimmed) as ImportMetadata); } catch { /* skip a malformed audit line */ }
+          try {
+            importLog.push(JSON.parse(trimmed) as ImportMetadata);
+          } catch {
+            /* skip a malformed audit line */
+          }
         }
-      } catch { /* no imports for this case yet */ }
+      } catch {
+        /* no imports for this case yet */
+      }
       return res.status(200).json(computeCaseStats(state, importLog));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -397,7 +456,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       opts.minSeverity = minSeverity as Severity;
     }
     if (typeof types === "string" && types) {
-      opts.types = types.split(",").filter((t): t is BlocklistIocType => VALID_TYPES.includes(t as BlocklistIocType));
+      opts.types = types
+        .split(",")
+        .filter((t): t is BlocklistIocType => VALID_TYPES.includes(t as BlocklistIocType));
     }
     if (verdictOnly === "true") opts.verdictOnly = true;
     try {
@@ -436,20 +497,35 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       }
       const meta = await store.getCaseMeta(id);
-      if (meta?.status === "archived") return res.status(400).json({ error: `case ${id} is already archived` });
+      if (meta?.status === "archived")
+        return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       // The signed custody manifest travels inside the archive, so the recipient can verify the
       // chain — including its length, which the log alone cannot vouch for (#231).
       const custodyManifest = options.custodyStore
-        ? [{
-            path: CUSTODY_MANIFEST_FILENAME,
-            data: Buffer.from(JSON.stringify(await buildCustodyManifest(store, options.custodyStore, id, instanceSecret), null, 2), "utf8"),
-          }]
+        ? [
+            {
+              path: CUSTODY_MANIFEST_FILENAME,
+              data: Buffer.from(
+                JSON.stringify(
+                  await buildCustodyManifest(store, options.custodyStore, id, instanceSecret),
+                  null,
+                  2,
+                ),
+                "utf8",
+              ),
+            },
+          ]
         : [];
-      const archive = await exportEncryptedCase(store, id, password, custodyManifest, { runExclusive: ctx.runStateExclusive });
+      const archive = await exportEncryptedCase(store, id, password, custodyManifest, {
+        runExclusive: ctx.runStateExclusive,
+      });
       const filename = dfircaseFilename(id, meta?.name);
       // Same as the ZIP path: the evidence is leaving, so the chain records it (#231).
-      await options.custodyStore?.recordExport(id, { exportedBy: meta?.investigator || "analyst", destination: `encrypted archive: ${filename}` });
+      await options.custodyStore?.recordExport(id, {
+        exportedBy: meta?.investigator || "analyst",
+        destination: `encrypted archive: ${filename}`,
+      });
       let removedFromList = false;
       if (removeFromList) {
         const outcome = await removeCaseFromActiveListBestEffort(id, "[export]");
@@ -479,9 +555,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // Both 404 when backupManager is absent (opt-in feature).
 
   app.get("/cases/:id/backups", async (req: Request, res: Response) => {
-    if (!options.backupManager) return res.status(404).json({ error: "backup not configured — restart the server" });
+    if (!options.backupManager)
+      return res.status(404).json({ error: "backup not configured — restart the server" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     try {
       const [backups, summary] = await Promise.all([
         options.backupManager.listBackups(caseId),
@@ -494,9 +572,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   });
 
   app.post("/cases/:id/restore-backup", async (req: Request, res: Response) => {
-    if (!options.backupManager) return res.status(404).json({ error: "backup not configured — restart the server" });
+    if (!options.backupManager)
+      return res.status(404).json({ error: "backup not configured — restart the server" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     const filename = (req.body as { filename?: unknown })?.filename;
     if (typeof filename !== "string" || !filename.trim()) {
       return res.status(400).json({ error: "filename is required" });
@@ -511,11 +591,14 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       //     clobbered by the job's next save. No lock can serialize against that, so refuse while
       //     any job is in flight for this case and let the operator cancel it or wait it out.
       //     Every kind writes case state, hence the check is on all of them, not just synthesis.
-      const outcome = await runStateExclusive(caseId, async (): Promise<{ busy: Job } | { restored: string[] }> => {
-        const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
-        if (busy) return { busy };
-        return await options.backupManager!.restoreBackup(caseId, filename.trim());
-      });
+      const outcome = await runStateExclusive(
+        caseId,
+        async (): Promise<{ busy: Job } | { restored: string[] }> => {
+          const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
+          if (busy) return { busy };
+          return await options.backupManager!.restoreBackup(caseId, filename.trim());
+        },
+      );
       if ("busy" in outcome) {
         const { kind, id, label } = outcome.busy;
         return res.status(409).json({
@@ -557,7 +640,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       logLine(`[manual] ${caseId} added event ${event.id} (${event.severity})`);
       return res.status(201).json(event);
     } catch (err) {
-      if (err instanceof ZodError) return res.status(400).json({ error: err.issues.map((i) => i.message).join("; ") });
+      if (err instanceof ZodError)
+        return res.status(400).json({ error: err.issues.map((i) => i.message).join("; ") });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -566,8 +650,15 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // 501 on writes. A save/delete/reload re-reads the on-disk registry (reloadImporters) so the in-
   // memory copy + the detection seam (resolveImportKind) stay current without the #1-gotcha restart.
   app.get("/importers", async (_req: Request, res: Response) => {
-    if (!options.importerStore) return res.status(200).json({ importers: [], precedence: "builtin-first", errors: [] });
-    return res.status(200).json({ importers: ctx.importerRegistry().meta, precedence: ctx.importerPrecedence(), errors: ctx.importerRegistry().errors });
+    if (!options.importerStore)
+      return res.status(200).json({ importers: [], precedence: "builtin-first", errors: [] });
+    return res
+      .status(200)
+      .json({
+        importers: ctx.importerRegistry().meta,
+        precedence: ctx.importerPrecedence(),
+        errors: ctx.importerRegistry().errors,
+      });
   });
 
   app.get("/importers/prompt", (_req: Request, res: Response) => {
@@ -584,7 +675,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       await options.importerStore.save(parsed.spec);
       await reloadImporters();
       return res.status(201).json({ id: parsed.spec.id });
-    } catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   app.delete("/importers/:id", async (req: Request, res: Response) => {
@@ -594,21 +687,36 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!removed) return res.status(404).json({ error: "importer not found" });
       await reloadImporters();
       return res.status(200).json({ removed: true });
-    } catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   app.post("/importers/reload", async (_req: Request, res: Response) => {
     if (!options.importerStore) return res.status(501).json({ error: "custom importers not configured" });
-    try { await reloadImporters(); return res.status(200).json({ importers: ctx.importerRegistry().meta, errors: ctx.importerRegistry().errors }); }
-    catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+    try {
+      await reloadImporters();
+      return res
+        .status(200)
+        .json({ importers: ctx.importerRegistry().meta, errors: ctx.importerRegistry().errors });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   app.put("/importers/precedence", async (req: Request, res: Response) => {
     if (!options.importerStore) return res.status(501).json({ error: "custom importers not configured" });
     const p = req.body?.precedence;
-    if (p !== "builtin-first" && p !== "external-first") return res.status(400).json({ error: "precedence must be 'builtin-first' or 'external-first'" });
-    try { await options.importerStore.setPrecedence(p); ctx.setImporterPrecedence(p); options.onImporters?.(); return res.status(200).json({ precedence: p }); }
-    catch (err) { return res.status(500).json({ error: (err as Error).message }); }
+    if (p !== "builtin-first" && p !== "external-first")
+      return res.status(400).json({ error: "precedence must be 'builtin-first' or 'external-first'" });
+    try {
+      await options.importerStore.setPrecedence(p);
+      ctx.setImporterPrecedence(p);
+      options.onImporters?.();
+      return res.status(200).json({ precedence: p });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
   });
   // Per-case investigation activity log (#238): every security-relevant action taken on this
   // case, newest first. Filter by category; cap by limit (default 200, so a long-lived case
@@ -616,7 +724,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/activity-log", async (req: Request, res: Response) => {
     if (!options.activityLogStore) return res.status(501).json({ error: "activity log not configured" });
     const rawCategory = typeof req.query.category === "string" ? req.query.category : "";
-    const category = (ACTIVITY_CATEGORIES as readonly string[]).includes(rawCategory) ? (rawCategory as ActivityCategory) : undefined;
+    const category = (ACTIVITY_CATEGORIES as readonly string[]).includes(rawCategory)
+      ? (rawCategory as ActivityCategory)
+      : undefined;
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(1000, Math.floor(rawLimit)) : 200;
     try {
@@ -641,12 +751,16 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
       }
-      const rejected = validateEnvUpdates(updates as Record<string, unknown>);   // values are as untrusted as keys (#422)
+      const rejected = validateEnvUpdates(updates as Record<string, unknown>); // values are as untrusted as keys (#422)
       if (rejected.length > 0) {
         // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
         // allowlisted), and with the 400 shown only in a corner of the modal it left no trace at all.
-        errLine(`POST /settings/env rejected ${rejected.length} key(s) not on the writable allowlist: ${rejected.join(", ")}`);
-        return res.status(400).json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
+        errLine(
+          `POST /settings/env rejected ${rejected.length} key(s) not on the writable allowlist: ${rejected.join(", ")}`,
+        );
+        return res
+          .status(400)
+          .json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
       }
       await updateEnvFile(updates as Record<string, string>);
       return res.json({ ok: true });
@@ -665,7 +779,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       // Reload BOTH the vision family (renamed DFIR_VISION_*) and the legacy DFIR_AI_* prefix (still
       // honored as a fallback, and covers DFIR_AI_SYNTH_*/VELO/SECOND_OPINION), so the wizard's
       // save → reload → ai-test flow sees new config under either naming without a restart.
-      const applied = [...await reloadEnvPrefix("DFIR_VISION_"), ...await reloadEnvPrefix("DFIR_AI_")];
+      const applied = [...(await reloadEnvPrefix("DFIR_VISION_")), ...(await reloadEnvPrefix("DFIR_AI_"))];
       return res.json({ ok: true, applied });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -684,10 +798,30 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // `rebuilt` names the components actually swapped; it is empty for a prefix with nothing to rebuild
   // (DFIR_TOOL_ and friends — see rebuildForPrefix in server.ts for why each is excluded).
   const RELOADABLE_PREFIXES = new Set([
-    "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
-    "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
-    "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
-    "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
+    "DFIR_VISION_",
+    "DFIR_AI_",
+    "DFIR_IRIS_",
+    "DFIR_VELOCIRAPTOR_",
+    "DFIR_TIMESKETCH_",
+    "DFIR_NOTION_",
+    "DFIR_CLICKUP_",
+    "DFIR_VT_",
+    "DFIR_ABUSEIPDB_",
+    "DFIR_HUNTINGCH_",
+    "DFIR_MB_",
+    "DFIR_CROWDSTRIKE_",
+    "DFIR_SHODAN_",
+    "DFIR_MISP_",
+    "DFIR_YETI_",
+    "DFIR_OPENCTI_",
+    "DFIR_ROCKYRACCOON_",
+    "DFIR_GEOIP_",
+    "DFIR_LEAKCHECK_",
+    "DFIR_HIBP_",
+    "DFIR_DEHASHED_",
+    "DFIR_PUSH_TOKEN",
+    "DFIR_NSRL_",
+    "DFIR_TOOL_",
   ]);
   app.post("/settings/reload", async (req: Request, res: Response) => {
     try {
@@ -714,7 +848,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
       velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
       iris: !!ctx.irisClient() || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
-      timesketch: !!options.timesketchClient || (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),
+      timesketch:
+        !!options.timesketchClient ||
+        (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),
       notion: !!options.notionClient || has("DFIR_NOTION_TOKEN"),
       clickup: !!options.clickupClient || has("DFIR_CLICKUP_TOKEN"),
       push: !!options.pushTokenStore || has("DFIR_PUSH_TOKEN"),
@@ -775,7 +911,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const js = await readPublicAsset("sw.js", "utf8");
       // no-cache + a same-origin allowed scope so the SW can control /mobile even if it's
       // ever moved into a subdirectory; browsers re-check sw.js on every navigation anyway.
-      res.type("application/javascript").set("Cache-Control", "no-cache").set("Service-Worker-Allowed", "/").send(js);
+      res
+        .type("application/javascript")
+        .set("Cache-Control", "no-cache")
+        .set("Service-Worker-Allowed", "/")
+        .send(js);
     } catch {
       res.status(404).end();
     }

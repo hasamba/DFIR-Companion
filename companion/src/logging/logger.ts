@@ -34,7 +34,11 @@ export function shouldLog(threshold: LogLevel, msgLevel: LogLevel): boolean {
 }
 
 // Format one log line. Stable + greppable: "<iso-ts> <LEVEL> [<caseId>] <message>".
-export function formatLogLine(level: LogLevel, message: string, opts: { at: string; caseId?: string }): string {
+export function formatLogLine(
+  level: LogLevel,
+  message: string,
+  opts: { at: string; caseId?: string },
+): string {
   const lvl = level.toUpperCase().padEnd(5);
   const scope = opts.caseId ? ` [${opts.caseId}]` : "";
   return `${opts.at} ${lvl}${scope} ${message}`;

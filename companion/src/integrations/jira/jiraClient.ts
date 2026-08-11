@@ -6,11 +6,11 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 
 export interface JiraClientOptions {
-  baseUrl: string;          // e.g. https://your-domain.atlassian.net
-  user: string;             // email (Cloud) or username (Server)
-  token: string;            // API token (Cloud) or password (Server)
-  projectKey: string;       // default project key, e.g. IR
-  issueType?: string;       // default issue type name, e.g. "Bug" or "Task"
+  baseUrl: string; // e.g. https://your-domain.atlassian.net
+  user: string; // email (Cloud) or username (Server)
+  token: string; // API token (Cloud) or password (Server)
+  projectKey: string; // default project key, e.g. IR
+  issueType?: string; // default issue type name, e.g. "Bug" or "Task"
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
@@ -20,11 +20,15 @@ export interface JiraIssueBody {
   summary: string;
   description?: string;
   issueType?: string;
-  priority?: string;        // e.g. "Highest", "High", "Medium", "Low", "Lowest"
+  priority?: string; // e.g. "Highest", "High", "Medium", "Low", "Lowest"
   labels?: string[];
 }
 
-export interface JiraIssueRef { id: string; key: string; url?: string }
+export interface JiraIssueRef {
+  id: string;
+  key: string;
+  url?: string;
+}
 
 // Structural subset used by jiraPush.ts so tests can pass a lightweight mock.
 export interface JiraClientLike {
@@ -44,7 +48,10 @@ export class JiraApiError extends Error {
   }
 }
 
-interface JiraErrorEnvelope { errorMessages?: string[]; errors?: Record<string, string> }
+interface JiraErrorEnvelope {
+  errorMessages?: string[];
+  errors?: Record<string, string>;
+}
 
 function jiraBaseUrl(raw: string): string {
   return raw.replace(/\/+$/, "");
@@ -86,7 +93,12 @@ export class JiraClient {
       const env = (await res.json().catch(() => ({}))) as JiraErrorEnvelope;
       const detail = env.errorMessages?.join("; ") || Object.values(env.errors || {}).join("; ");
       const suffix = detail ? `: ${detail}` : "";
-      if (res.status === 401) throw new JiraApiError(`Jira auth failed (check DFIR_JIRA_USER and DFIR_JIRA_TOKEN)${suffix}`, 401, "auth");
+      if (res.status === 401)
+        throw new JiraApiError(
+          `Jira auth failed (check DFIR_JIRA_USER and DFIR_JIRA_TOKEN)${suffix}`,
+          401,
+          "auth",
+        );
       if (res.status === 403) throw new JiraApiError(`Jira permission denied${suffix}`, 403, "permission");
       if (res.status === 404) throw new JiraApiError(`Jira resource not found${suffix}`, 404, "notfound");
       if (res.status === 429) throw new JiraApiError(`Jira rate limit hit${suffix}`, 429, "ratelimit");
@@ -97,7 +109,10 @@ export class JiraClient {
   }
 
   async me(): Promise<{ id?: string; displayName?: string }> {
-    const data = await this.request<{ accountId?: string; displayName?: string }>("GET", "/rest/api/3/myself");
+    const data = await this.request<{ accountId?: string; displayName?: string }>(
+      "GET",
+      "/rest/api/3/myself",
+    );
     return { id: data.accountId, displayName: data.displayName };
   }
 
@@ -105,12 +120,22 @@ export class JiraClient {
   // update, and an issue-type change needs a separate transition on many workflows.
   private issueFields(body: JiraIssueBody, forUpdate: boolean): Record<string, unknown> {
     return {
-      ...(forUpdate ? {} : {
-        project: { key: body.projectKey },
-        issuetype: { name: body.issueType || this.opts.issueType || "Task" },
-      }),
+      ...(forUpdate
+        ? {}
+        : {
+            project: { key: body.projectKey },
+            issuetype: { name: body.issueType || this.opts.issueType || "Task" },
+          }),
       summary: body.summary,
-      ...(body.description ? { description: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: body.description }] }] } } : {}),
+      ...(body.description
+        ? {
+            description: {
+              type: "doc",
+              version: 1,
+              content: [{ type: "paragraph", content: [{ type: "text", text: body.description }] }],
+            },
+          }
+        : {}),
       ...(body.priority ? { priority: { name: body.priority } } : {}),
       ...(body.labels?.length ? { labels: body.labels } : {}),
     };
@@ -123,7 +148,9 @@ export class JiraClient {
   }
 
   async createIssue(body: JiraIssueBody): Promise<JiraIssueRef> {
-    const data = await this.request<{ id?: string; key?: string }>("POST", "/rest/api/3/issue", { fields: this.issueFields(body, false) });
+    const data = await this.request<{ id?: string; key?: string }>("POST", "/rest/api/3/issue", {
+      fields: this.issueFields(body, false),
+    });
     const key = String(data.key ?? "");
     return { id: String(data.id ?? ""), key, url: this.browseUrl(key) };
   }
@@ -131,7 +158,11 @@ export class JiraClient {
   // Jira answers a successful edit with 204 No Content, so the ref is rebuilt from what we already
   // knew (the caller merges it over the remembered ref to keep the id/url).
   async updateIssue(idOrKey: string, body: JiraIssueBody): Promise<JiraIssueRef> {
-    const data = await this.request<{ id?: string; key?: string }>("PUT", `/rest/api/3/issue/${encodeURIComponent(idOrKey)}`, { fields: this.issueFields(body, true) });
+    const data = await this.request<{ id?: string; key?: string }>(
+      "PUT",
+      `/rest/api/3/issue/${encodeURIComponent(idOrKey)}`,
+      { fields: this.issueFields(body, true) },
+    );
     const key = String(data.key ?? idOrKey);
     return { id: String(data.id ?? ""), key, url: this.browseUrl(key) };
   }

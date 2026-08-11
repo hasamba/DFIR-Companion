@@ -6,7 +6,15 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
-import { BackupManager, resolveBackupConfig, RETAIN_FALLBACK_CAP, DEFAULT_MAX_BYTES, type BackupConfig, type BackupManagerDeps, type BackupTrigger } from "../../src/storage/backupManager.js";
+import {
+  BackupManager,
+  resolveBackupConfig,
+  RETAIN_FALLBACK_CAP,
+  DEFAULT_MAX_BYTES,
+  type BackupConfig,
+  type BackupManagerDeps,
+  type BackupTrigger,
+} from "../../src/storage/backupManager.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
@@ -35,7 +43,10 @@ describe("resolveBackupConfig", () => {
   });
 
   it("clamps negative values to 0", () => {
-    const cfg = resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "-5", DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "-1" });
+    const cfg = resolveBackupConfig({
+      DFIR_STATE_BACKUP_RETAIN: "-5",
+      DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "-1",
+    });
     // A negative retain is an unlimited request, so it lands on the fallback cap, never 0 (#251).
     expect(cfg.retain).toBe(RETAIN_FALLBACK_CAP);
     expect(cfg.preSynthRetain).toBe(0);
@@ -87,7 +98,9 @@ function memoryFs(): Required<BackupManagerDeps> {
     Object.assign(new Error(`ENOENT: no such file or directory, open '${path}'`), { code: "ENOENT" });
   return {
     mkdir: async () => undefined,
-    atomicWrite: async (path, content) => { files.set(path, content); },
+    atomicWrite: async (path, content) => {
+      files.set(path, content);
+    },
     readFile: async (path) => {
       const content = files.get(path);
       if (content === undefined) throw enoent(path);
@@ -99,7 +112,7 @@ function memoryFs(): Required<BackupManagerDeps> {
       for (const path of files.keys()) {
         if (!path.startsWith(prefix)) continue;
         const rest = path.slice(prefix.length);
-        if (!rest.includes(sep)) names.add(rest);   // immediate children only
+        if (!rest.includes(sep)) names.add(rest); // immediate children only
       }
       return [...names];
     },
@@ -108,7 +121,9 @@ function memoryFs(): Required<BackupManagerDeps> {
       if (content === undefined) throw enoent(path);
       return { size: Buffer.byteLength(content, "utf8"), mtimeMs: 0 };
     },
-    unlink: async (path) => { files.delete(path); },
+    unlink: async (path) => {
+      files.delete(path);
+    },
   };
 }
 
@@ -156,7 +171,9 @@ async function makeByteCapManager(
   return { mgr: new BackupManager(new CaseStore(root), cfg, fs), fs };
 }
 
-async function makeManager(config: Partial<BackupConfig> = {}): Promise<{ mgr: BackupManager; store: CaseStore; root: string }> {
+async function makeManager(
+  config: Partial<BackupConfig> = {},
+): Promise<{ mgr: BackupManager; store: CaseStore; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "dfir-backup-"));
   const store = new CaseStore(root);
   const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 3_600_000, maxBytes: 0, ...config };
@@ -222,7 +239,7 @@ describe("BackupManager.listBackups", () => {
     const caseId = await makeCase(store);
 
     await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T10:00:00.000Z");
-    await mgr.createBackup(caseId, "scheduled",     "2026-06-28T11:00:00.000Z");
+    await mgr.createBackup(caseId, "scheduled", "2026-06-28T11:00:00.000Z");
     await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T12:00:00.000Z");
 
     const list = await mgr.listBackups(caseId);
@@ -249,7 +266,10 @@ describe("BackupManager.restoreBackup", () => {
     expect(restored).toContain("investigation.json");
 
     const { readFile } = await import("node:fs/promises");
-    const after = JSON.parse(await readFile(join(stateDir, "investigation.json"), "utf8")) as Record<string, unknown>;
+    const after = JSON.parse(await readFile(join(stateDir, "investigation.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect(after["corrupted"]).toBeUndefined();
     expect(after["forensicTimeline"]).toBeDefined();
     expect((await stateStore.load(caseId)).lastSummary).toBe("");
@@ -264,7 +284,9 @@ describe("BackupManager.restoreBackup", () => {
   it("throws when backup file does not exist", async () => {
     const { mgr, store } = await makeManager();
     const caseId = await makeCase(store);
-    await expect(mgr.restoreBackup(caseId, "2026-06-28T10-00-00-000Z_pre-synthesis.json")).rejects.toThrow("backup not found");
+    await expect(mgr.restoreBackup(caseId, "2026-06-28T10-00-00-000Z_pre-synthesis.json")).rejects.toThrow(
+      "backup not found",
+    );
   });
 
   it("snapshots and restores the SQLite case store without base64-loading it into the manifest", async () => {
@@ -276,9 +298,10 @@ describe("BackupManager.restoreBackup", () => {
     await stateStore.save(before);
 
     const info = await mgr.createBackup(caseId, "pre-synthesis", "2026-07-30T10:00:00.000Z");
-    const manifest = JSON.parse(
-      await readFile(join(mgr.backupDir(caseId), info.filename), "utf8"),
-    ) as { files?: Record<string, unknown>; binaryFiles?: Record<string, string> };
+    const manifest = JSON.parse(await readFile(join(mgr.backupDir(caseId), info.filename), "utf8")) as {
+      files?: Record<string, unknown>;
+      binaryFiles?: Record<string, string>;
+    };
     expect(manifest.binaryFiles?.["investigation.sqlite"]).toMatch(/investigation\.sqlite$/);
     expect(manifest.files?.["investigation.json"]).toBeUndefined();
     expect(JSON.stringify(manifest)).not.toContain("SQLite format 3");
@@ -311,10 +334,10 @@ describe("BackupManager.pruneBackups", () => {
     // 2 pre-synth + 4 scheduled = 6 total; retain=3 means we prune 3
     await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T01:00:00.000Z");
     await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T02:00:00.000Z");
-    await mgr.createBackup(caseId, "scheduled",     "2026-06-28T03:00:00.000Z");
-    await mgr.createBackup(caseId, "scheduled",     "2026-06-28T04:00:00.000Z");
-    await mgr.createBackup(caseId, "scheduled",     "2026-06-28T05:00:00.000Z");
-    await mgr.createBackup(caseId, "scheduled",     "2026-06-28T06:00:00.000Z");
+    await mgr.createBackup(caseId, "scheduled", "2026-06-28T03:00:00.000Z");
+    await mgr.createBackup(caseId, "scheduled", "2026-06-28T04:00:00.000Z");
+    await mgr.createBackup(caseId, "scheduled", "2026-06-28T05:00:00.000Z");
+    await mgr.createBackup(caseId, "scheduled", "2026-06-28T06:00:00.000Z");
 
     const list = await mgr.listBackups(caseId);
     const preSynth = list.filter((b) => b.trigger === "pre-synthesis");
@@ -326,7 +349,10 @@ describe("BackupManager.pruneBackups", () => {
 
   it("still prunes when the operator asks for unlimited retention (#251)", async () => {
     // Built through resolveBackupConfig so the test covers the real env → config → prune path.
-    const cfg = resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "0", DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "0" });
+    const cfg = resolveBackupConfig({
+      DFIR_STATE_BACKUP_RETAIN: "0",
+      DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "0",
+    });
     const root = await mkdtemp(join(tmpdir(), "dfir-backup-"));
     const store = new CaseStore(root);
     // In-memory fs for this one case. What is under test is the PRUNE ARITHMETIC over 105
@@ -357,8 +383,11 @@ describe("BackupManager.pruneBackups byte cap (#295)", () => {
   it("evicts oldest-first until the total fits the budget", async () => {
     const { mgr, fs } = await makeByteCapManager(250 * MB, () => 100 * MB);
     await seedBackups(fs, mgr, CASE, [
-      ["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"],
-      ["04", "scheduled"], ["05", "scheduled"],
+      ["01", "scheduled"],
+      ["02", "scheduled"],
+      ["03", "scheduled"],
+      ["04", "scheduled"],
+      ["05", "scheduled"],
     ]);
 
     const result = await mgr.pruneBackups(CASE);
@@ -376,7 +405,11 @@ describe("BackupManager.pruneBackups byte cap (#295)", () => {
     // Regression guard: the count pass used to return early whenever list.length <= retain, which
     // would skip the byte pass entirely for exactly the case it exists to catch — few, huge backups.
     const { mgr, fs } = await makeByteCapManager(150 * MB, () => 100 * MB, { retain: 24 });
-    await seedBackups(fs, mgr, CASE, [["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"]]);
+    await seedBackups(fs, mgr, CASE, [
+      ["01", "scheduled"],
+      ["02", "scheduled"],
+      ["03", "scheduled"],
+    ]);
 
     await mgr.pruneBackups(CASE);
 
@@ -387,7 +420,11 @@ describe("BackupManager.pruneBackups byte cap (#295)", () => {
     // Deleting it would leave the case with no recovery point at all, which is worse than the
     // overrun; the operator gets told instead.
     const { mgr, fs } = await makeByteCapManager(250 * MB, () => 500 * MB);
-    await seedBackups(fs, mgr, CASE, [["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"]]);
+    await seedBackups(fs, mgr, CASE, [
+      ["01", "scheduled"],
+      ["02", "scheduled"],
+      ["03", "scheduled"],
+    ]);
 
     const result = await mgr.pruneBackups(CASE);
 
@@ -411,7 +448,9 @@ describe("BackupManager.pruneBackups byte cap (#295)", () => {
     // evicts the older one, otherwise 10 large pre-synth snapshots could blow the cap on their own.
     const { mgr, fs } = await makeByteCapManager(150 * MB, () => 100 * MB, { preSynthRetain: 10 });
     await seedBackups(fs, mgr, CASE, [
-      ["01", "pre-synthesis"], ["02", "pre-synthesis"], ["03", "scheduled"],
+      ["01", "pre-synthesis"],
+      ["02", "pre-synthesis"],
+      ["03", "scheduled"],
     ]);
 
     const result = await mgr.pruneBackups(CASE);
@@ -427,7 +466,9 @@ describe("BackupManager.pruneBackups byte cap (#295)", () => {
   it("leaves every backup in place when the byte cap is off", async () => {
     const { mgr, fs } = await makeByteCapManager(0, () => 500 * MB, { retain: 24 });
     await seedBackups(fs, mgr, CASE, [
-      ["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"],
+      ["01", "scheduled"],
+      ["02", "scheduled"],
+      ["03", "scheduled"],
     ]);
 
     const result = await mgr.pruneBackups(CASE);
@@ -449,7 +490,7 @@ describe("BackupManager.summary", () => {
     const { mgr, store } = await makeManager();
     const caseId = await makeCase(store);
     await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T10:00:00.000Z");
-    await mgr.createBackup(caseId, "scheduled",     "2026-06-28T11:00:00.000Z");
+    await mgr.createBackup(caseId, "scheduled", "2026-06-28T11:00:00.000Z");
     const s = await mgr.summary(caseId);
     expect(s.count).toBe(2);
     expect(s.newestAt).toBe("2026-06-28T11:00:00.000Z");
@@ -482,7 +523,10 @@ async function seedRestorable(store: CaseStore): Promise<{ caseId: string; filen
 }
 
 async function readState(store: CaseStore, caseId: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(join(store.stateDir(caseId), "investigation.json"), "utf8")) as Record<string, unknown>;
+  return JSON.parse(await readFile(join(store.stateDir(caseId), "investigation.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
 }
 
 describe("GET /cases/:id/backups", () => {
@@ -536,9 +580,7 @@ describe("POST /cases/:id/restore-backup", () => {
     // Corrupt the state
     await writeFile(join(store.stateDir(caseId), "investigation.json"), '{"corrupted":true}');
 
-    const res = await request(app)
-      .post(`/cases/${caseId}/restore-backup`)
-      .send({ filename: info.filename });
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename: info.filename });
     expect(res.status).toBe(200);
     expect(res.body.restored).toContain("investigation.json");
   });
@@ -549,7 +591,12 @@ describe("POST /cases/:id/restore-backup", () => {
     const { app, store } = await makeAppWithBackup({}, { jobManager });
     const { caseId, filename } = await seedRestorable(store);
 
-    const { jobId } = jobManager.register({ caseId, kind: "synthesis", label: "re-synthesis", cancellable: true });
+    const { jobId } = jobManager.register({
+      caseId,
+      kind: "synthesis",
+      label: "re-synthesis",
+      cancellable: true,
+    });
 
     const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
     expect(res.status).toBe(409);
@@ -603,7 +650,9 @@ describe("POST /cases/:id/restore-backup", () => {
 
     // Hold the case's lock the way a manual event/IOC add does, and don't let go yet.
     let release!: () => void;
-    const held = new Promise<void>((r) => { release = r; });
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
     const critical = stateLock.runExclusive(caseId, () => held);
 
     const pending = request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });

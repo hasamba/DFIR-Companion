@@ -48,7 +48,8 @@ const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
 
 export class TelegramPoller {
-  private readonly opts: Required<Pick<TelegramPollerOptions, "apiBase" | "pollTimeoutSeconds">> & TelegramPollerOptions;
+  private readonly opts: Required<Pick<TelegramPollerOptions, "apiBase" | "pollTimeoutSeconds">> &
+    TelegramPollerOptions;
   private readonly fetchFn: typeof fetch;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private stopped = false;
@@ -152,7 +153,9 @@ export class TelegramPoller {
     } else if (err instanceof TelegramApiError && err.status === 401) {
       this.opts.log.error(`[telegram] ${err.message} — DFIR_TELEGRAM_BOT_TOKEN is wrong or revoked.`);
     } else {
-      this.opts.log.warn(`[telegram] poll failed (${err.message}); retrying in ${Math.round(this.backoffMs / 1000)}s`);
+      this.opts.log.warn(
+        `[telegram] poll failed (${err.message}); retrying in ${Math.round(this.backoffMs / 1000)}s`,
+      );
     }
     await this.sleepFn(this.backoffMs);
     this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);
@@ -160,7 +163,10 @@ export class TelegramPoller {
 }
 
 export class TelegramApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
     super(message);
     this.name = "TelegramApiError";
   }

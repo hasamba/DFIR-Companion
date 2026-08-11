@@ -1,19 +1,31 @@
 import { describe, it, expect } from "vitest";
 import {
-  looksLikeSyslog, parseSyslogLine, mapSyslogLine, parseSyslog,
+  looksLikeSyslog,
+  parseSyslogLine,
+  mapSyslogLine,
+  parseSyslog,
 } from "../../src/analysis/syslogImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
 // RFC 5424 lines straight from the spillage-full-matrix fixture (the two syslog spills + benign chatter).
 // The fake Slack token is assembled at runtime so the literal `xoxb-…` string never appears in source —
 // it's synthetic EvidenceForge test data, but secret scanners (GitHub push protection) match on shape.
-const SLACK_TOKEN = ["xoxb", "32926872419", "2302548692720", "EvidenceForgeFakeNgxR2jaCkfeCIUn3GZNVGjPU"].join("-");
+const SLACK_TOKEN = [
+  "xoxb",
+  "32926872419",
+  "2302548692720",
+  "EvidenceForgeFakeNgxR2jaCkfeCIUn3GZNVGjPU",
+].join("-");
 const SLACK = `<30>1 2024-05-16T13:40:26.263976Z APP-MTX-01 app - - - alertbot: posting to slack with token ${SLACK_TOKEN}`;
-const PASSWD = "<30>1 2024-05-16T13:45:20.917698Z APP-MTX-01 app - - - app: loaded shared secret EvidenceForgeFake-wPndDbHjZm! from /etc/users/secret.conf";
-const ACCEPT = "<86>1 2024-05-16T13:09:55.931460Z APP-MTX-01 sshd 161779 - - Accepted password for jordan.lee from 10.66.10.23 port 58209 ssh2";
-const NOISE = "<30>1 2024-05-16T13:01:44.688858Z APP-MTX-01 irqbalance 3122 - - NUMA node 0: balancing pass complete, 2 IRQs moved";
+const PASSWD =
+  "<30>1 2024-05-16T13:45:20.917698Z APP-MTX-01 app - - - app: loaded shared secret EvidenceForgeFake-wPndDbHjZm! from /etc/users/secret.conf";
+const ACCEPT =
+  "<86>1 2024-05-16T13:09:55.931460Z APP-MTX-01 sshd 161779 - - Accepted password for jordan.lee from 10.66.10.23 port 58209 ssh2";
+const NOISE =
+  "<30>1 2024-05-16T13:01:44.688858Z APP-MTX-01 irqbalance 3122 - - NUMA node 0: balancing pass complete, 2 IRQs moved";
 // RFC 3164 (year-less) auth failure with a PUBLIC source IP, and a crit-PRI kernel line.
-const FAIL3164 = "May 16 13:40:26 app01 sshd[1234]: Failed password for invalid user admin from 203.0.113.9 port 41022 ssh2";
+const FAIL3164 =
+  "May 16 13:40:26 app01 sshd[1234]: Failed password for invalid user admin from 203.0.113.9 port 41022 ssh2";
 const CRIT = "<2>1 2024-05-16T14:00:00.000000Z app01 kernel - - - thermal zone tripped, shutting down";
 
 describe("looksLikeSyslog", () => {
@@ -108,9 +120,13 @@ describe("parseSyslog", () => {
     const lines: string[] = [];
     for (let i = 0; i < 6; i++) {
       const ss = String(10 + i).padStart(2, "0");
-      lines.push(`May 16 13:40:${ss} web01 sshd[900${i}]: Failed password for invalid user admin from 203.0.113.9 port 4100${i} ssh2`);
+      lines.push(
+        `May 16 13:40:${ss} web01 sshd[900${i}]: Failed password for invalid user admin from 203.0.113.9 port 4100${i} ssh2`,
+      );
     }
-    lines.push("May 16 13:41:00 web01 sshd[9100]: Accepted password for admin from 203.0.113.9 port 41099 ssh2");
+    lines.push(
+      "May 16 13:41:00 web01 sshd[9100]: Accepted password for admin from 203.0.113.9 port 41099 ssh2",
+    );
     const r = parseSyslog(lines.join("\n"), { assumeYear: 2024 });
     const success = r.events.find((e) => e.mitreTechniques.includes("T1110.001"));
     expect(success, "expected a brute-force-success event").toBeTruthy();

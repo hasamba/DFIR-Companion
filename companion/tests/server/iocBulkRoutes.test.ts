@@ -43,42 +43,58 @@ const threeIpState = (caseId: string) => ({
 });
 
 describe("POST /cases/:id/iocs/bulk-enrich", () => {
-  it("enriches only the selected subset and leaves the rest untouched", async () => {
-    const store = await freshStore();
-    const stateStore = new StateStore(store);
-    const seen: string[] = [];
-    const app = createApp(store, { stateStore, enrichmentProviders: [recordingProvider(seen)], enrichDelayMs: 0 });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    await stateStore.save(threeIpState("c1"));
+  it(
+    "enriches only the selected subset and leaves the rest untouched",
+    async () => {
+      const store = await freshStore();
+      const stateStore = new StateStore(store);
+      const seen: string[] = [];
+      const app = createApp(store, {
+        stateStore,
+        enrichmentProviders: [recordingProvider(seen)],
+        enrichDelayMs: 0,
+      });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await stateStore.save(threeIpState("c1"));
 
-    const res = await request(app).post("/cases/c1/iocs/bulk-enrich").send({ iocIds: ["i1", "i3"] });
-    expect(res.status).toBe(202);
-    expect(res.body.accepted).toBe(true);
-    expect(res.body.iocCount).toBe(2);
+      const res = await request(app)
+        .post("/cases/c1/iocs/bulk-enrich")
+        .send({ iocIds: ["i1", "i3"] });
+      expect(res.status).toBe(202);
+      expect(res.body.accepted).toBe(true);
+      expect(res.body.iocCount).toBe(2);
 
-    // Enrichment runs in the background; poll until the two selected IOCs are marked checked.
-    // Waits on BOTH selected ids, not just i1 — and on a wall-clock budget, so a wait that runs out
-    // says so instead of falling through to `expected undefined to contain "MockLocal"` (issue #408).
-    let pending = SELECTED;
-    const iocs = await pollFor(
-      () => `the bulk enrich to mark i1 and i3 enriched, still unenriched [${pending.join(", ")}]`,
-      async () => {
-        const current = (await stateStore.load("c1")).iocs;
-        pending = SELECTED.filter((id) => !current.find((i) => i.id === id)?.enrichedBy);
-        return pending.length === 0 ? current : undefined;
-      },
-    );
-    const byId = Object.fromEntries(iocs.map((i) => [i.id, i]));
-    expect(byId.i1.enrichedBy).toContain("MockLocal");
-    expect(byId.i3.enrichedBy).toContain("MockLocal");
-    expect(byId.i2.enrichedBy).toBeUndefined();             // not selected → untouched
-    expect(seen.sort()).toEqual(["1.1.1.1", "3.3.3.3"]);    // only the selected values were queried
-  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
+      // Enrichment runs in the background; poll until the two selected IOCs are marked checked.
+      // Waits on BOTH selected ids, not just i1 — and on a wall-clock budget, so a wait that runs out
+      // says so instead of falling through to `expected undefined to contain "MockLocal"` (issue #408).
+      let pending = SELECTED;
+      const iocs = await pollFor(
+        () => `the bulk enrich to mark i1 and i3 enriched, still unenriched [${pending.join(", ")}]`,
+        async () => {
+          const current = (await stateStore.load("c1")).iocs;
+          pending = SELECTED.filter((id) => !current.find((i) => i.id === id)?.enrichedBy);
+          return pending.length === 0 ? current : undefined;
+        },
+      );
+      const byId = Object.fromEntries(iocs.map((i) => [i.id, i]));
+      expect(byId.i1.enrichedBy).toContain("MockLocal");
+      expect(byId.i3.enrichedBy).toContain("MockLocal");
+      expect(byId.i2.enrichedBy).toBeUndefined(); // not selected → untouched
+      expect(seen.sort()).toEqual(["1.1.1.1", "3.3.3.3"]); // only the selected values were queried
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one poll budget, doubled to leave room for setup + assertions
 
   it("returns 400 when iocIds is empty", async () => {
     const store = await freshStore();
     const stateStore = new StateStore(store);
-    const app = createApp(store, { stateStore, enrichmentProviders: [recordingProvider([])], enrichDelayMs: 0 });
+    const app = createApp(store, {
+      stateStore,
+      enrichmentProviders: [recordingProvider([])],
+      enrichDelayMs: 0,
+    });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(threeIpState("c1"));
     const res = await request(app).post("/cases/c1/iocs/bulk-enrich").send({ iocIds: [] });
@@ -88,10 +104,16 @@ describe("POST /cases/:id/iocs/bulk-enrich", () => {
   it("returns 404 when none of the ids match a case IOC", async () => {
     const store = await freshStore();
     const stateStore = new StateStore(store);
-    const app = createApp(store, { stateStore, enrichmentProviders: [recordingProvider([])], enrichDelayMs: 0 });
+    const app = createApp(store, {
+      stateStore,
+      enrichmentProviders: [recordingProvider([])],
+      enrichDelayMs: 0,
+    });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(threeIpState("c1"));
-    const res = await request(app).post("/cases/c1/iocs/bulk-enrich").send({ iocIds: ["ghost"] });
+    const res = await request(app)
+      .post("/cases/c1/iocs/bulk-enrich")
+      .send({ iocIds: ["ghost"] });
     expect(res.status).toBe(404);
   });
 
@@ -101,7 +123,9 @@ describe("POST /cases/:id/iocs/bulk-enrich", () => {
     const app = createApp(store, { stateStore });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(threeIpState("c1"));
-    const res = await request(app).post("/cases/c1/iocs/bulk-enrich").send({ iocIds: ["i1"] });
+    const res = await request(app)
+      .post("/cases/c1/iocs/bulk-enrich")
+      .send({ iocIds: ["i1"] });
     expect(res.status).toBe(501);
   });
 });
@@ -128,7 +152,9 @@ describe("POST /cases/:id/iocs/bulk-tag", () => {
     const store = await freshStore();
     const app = createApp(store, { tagsStore: new TagsStore(store) });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    const res = await request(app).post("/cases/c1/iocs/bulk-tag").send({ iocIds: ["i1"], label: "  " });
+    const res = await request(app)
+      .post("/cases/c1/iocs/bulk-tag")
+      .send({ iocIds: ["i1"], label: "  " });
     expect(res.status).toBe(400);
   });
 
@@ -144,7 +170,9 @@ describe("POST /cases/:id/iocs/bulk-tag", () => {
     const store = await freshStore();
     const app = createApp(store);
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    const res = await request(app).post("/cases/c1/iocs/bulk-tag").send({ iocIds: ["i1"], label: "x" });
+    const res = await request(app)
+      .post("/cases/c1/iocs/bulk-tag")
+      .send({ iocIds: ["i1"], label: "x" });
     expect(res.status).toBe(501);
   });
 });

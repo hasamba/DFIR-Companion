@@ -10,9 +10,16 @@ import {
 import type { IOC } from "../../src/analysis/stateTypes.js";
 
 const rule = (over: Partial<IocExcludeRule> & Pick<IocExcludeRule, "match" | "pattern">): IocExcludeRule => ({
-  id: "r1", addedAt: "2026-01-01T00:00:00Z", ...over,
+  id: "r1",
+  addedAt: "2026-01-01T00:00:00Z",
+  ...over,
 });
-const ioc = (type: IOC["type"], value: string): IOC => ({ id: "i", type, value, firstSeen: "2026-01-01T00:00:00Z" });
+const ioc = (type: IOC["type"], value: string): IOC => ({
+  id: "i",
+  type,
+  value,
+  firstSeen: "2026-01-01T00:00:00Z",
+});
 
 describe("normalizeSuffixPattern", () => {
   it("adds a leading dot when missing, leaves it alone otherwise", () => {
@@ -59,7 +66,9 @@ describe("matchIocToExclude / excludeMatches", () => {
   });
   it("collects every matching IOC", () => {
     const iocs = [ioc("domain", "client01.lan"), ioc("domain", "fine.com"), ioc("domain", "badsite.com")];
-    const matched = excludeMatches(iocs, rules).map((i) => i.value).sort();
+    const matched = excludeMatches(iocs, rules)
+      .map((i) => i.value)
+      .sort();
     expect(matched).toEqual(["badsite.com", "client01.lan"]);
   });
   it("returns nothing when there are no rules", () => {
@@ -69,8 +78,9 @@ describe("matchIocToExclude / excludeMatches", () => {
 
 describe("sanitizeExcludeRuleInput", () => {
   it("accepts a valid rule and normalizes the mode/type/suffix pattern", () => {
-    expect(sanitizeExcludeRuleInput({ match: "SUFFIX", pattern: "lan", iocType: "DOMAIN", note: " internal " }))
-      .toEqual({ match: "suffix", pattern: ".lan", iocType: "domain", note: "internal" });
+    expect(
+      sanitizeExcludeRuleInput({ match: "SUFFIX", pattern: "lan", iocType: "DOMAIN", note: " internal " }),
+    ).toEqual({ match: "suffix", pattern: ".lan", iocType: "domain", note: "internal" });
   });
   it("rejects an unknown match mode, empty pattern, bad regex", () => {
     expect(sanitizeExcludeRuleInput({ match: "nope", pattern: "x" })).toBeNull();
@@ -78,7 +88,9 @@ describe("sanitizeExcludeRuleInput", () => {
     expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "(" })).toBeNull();
   });
   it("drops an unknown iocType rather than rejecting the rule", () => {
-    expect(sanitizeExcludeRuleInput({ match: "exact", pattern: "x", iocType: "banana" }))
-      .toEqual({ match: "exact", pattern: "x" });
+    expect(sanitizeExcludeRuleInput({ match: "exact", pattern: "x", iocType: "banana" })).toEqual({
+      match: "exact",
+      pattern: "x",
+    });
   });
 });

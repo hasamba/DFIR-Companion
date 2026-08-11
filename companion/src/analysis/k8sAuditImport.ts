@@ -52,7 +52,9 @@ const RBAC_RESOURCES = new Set(["clusterroles", "clusterrolebindings", "roles", 
 const ANON_USERS = new Set(["system:anonymous", "system:unauthenticated"]);
 const WRITE_VERBS = new Set(["create", "update", "patch", "delete", "deletecollection"]);
 
-function truthy(v: unknown): boolean { return v === true || /^(true|1|yes)$/i.test(str(v).trim()); }
+function truthy(v: unknown): boolean {
+  return v === true || /^(true|1|yes)$/i.test(str(v).trim());
+}
 
 // k8s audit timestamps are RFC3339 with MICROSECOND precision (`…000000Z`); normalize to the
 // millisecond ISO the rest of the timeline uses so ordering/rendering stays consistent.
@@ -67,15 +69,25 @@ function isoTime(raw: string): string {
 function isPrivilegedPodSpec(reqObj: unknown): boolean {
   const spec = isObject(reqObj) ? getCI(reqObj, "spec") : undefined;
   if (!isObject(spec)) return false;
-  if (truthy(getCI(spec, "hostPID")) || truthy(getCI(spec, "hostNetwork")) || truthy(getCI(spec, "hostIPC"))) return true;
-  const groups = [getCI(spec, "containers"), getCI(spec, "initContainers"), getCI(spec, "ephemeralContainers")];
+  if (truthy(getCI(spec, "hostPID")) || truthy(getCI(spec, "hostNetwork")) || truthy(getCI(spec, "hostIPC")))
+    return true;
+  const groups = [
+    getCI(spec, "containers"),
+    getCI(spec, "initContainers"),
+    getCI(spec, "ephemeralContainers"),
+  ];
   for (const g of groups) {
     if (!Array.isArray(g)) continue;
     for (const c of g) {
       const sc = isObject(c) ? getCI(c, "securityContext") : undefined;
-      if (isObject(sc) && (truthy(getCI(sc, "privileged")) || truthy(getPath(sc, "allowPrivilegeEscalation")))) return true;
+      if (
+        isObject(sc) &&
+        (truthy(getCI(sc, "privileged")) || truthy(getPath(sc, "allowPrivilegeEscalation")))
+      )
+        return true;
       const caps = isObject(sc) ? getPath(sc, "capabilities.add") : undefined;
-      if (Array.isArray(caps) && caps.some((x) => /^(sys_admin|all|net_admin|sys_ptrace)$/i.test(str(x)))) return true;
+      if (Array.isArray(caps) && caps.some((x) => /^(sys_admin|all|net_admin|sys_ptrace)$/i.test(str(x))))
+        return true;
     }
   }
   const volumes = getCI(spec, "volumes");
@@ -105,7 +117,7 @@ function classify(
   if (sub === "exec" || sub === "attach") return { severity: "High", mitre: ["T1609"] };
   // Cluster secret access — T1552.007. Bulk (list) / destructive (delete) rank above a single read.
   if (r === "secrets") {
-    return (v === "list" || v === "delete" || v === "watch")
+    return v === "list" || v === "delete" || v === "watch"
       ? { severity: "High", mitre: ["T1552.007"] }
       : { severity: "Medium", mitre: ["T1552.007"] };
   }
@@ -146,7 +158,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
 
   if (ip) addIoc(sink, "ip", ip);
 
-  const resLabel = subresource ? `${resource}/${subresource}` : (resource || "?");
+  const resLabel = subresource ? `${resource}/${subresource}` : resource || "?";
   let description = `K8s ${verb} ${resLabel}`;
   if (objName) description += ` "${objName}"`;
   if (namespace) description += ` in ${namespace}`;
@@ -157,7 +169,9 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
 
   return {
     timestamp: isoTime(str(getCI(rec, "requestReceivedTimestamp")) || str(getCI(rec, "stageTimestamp"))),
-    description, severity, mitre,
+    description,
+    severity,
+    mitre,
     // Include the object name so distinct objects (a privileged vs a normal pod) stay separate rows;
     // repeated identical requests against the SAME object still aggregate.
     aggKey: `k8s|${verb}|${resLabel}|${namespace}|${objName}|${username}|${code}`.toLowerCase().slice(0, 400),

@@ -16,8 +16,13 @@ const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("
 async function collect(path: string, text: string): Promise<void> {
   await writeFile(path, text, "utf8");
   await store.record("c1", {
-    artifactPath: path, sha256: sha(text), collectedBy: "alice",
-    collectedAt: "2026-07-28T10:00:00.000Z", source: "host-a", trigger: "import", caseId: "c1",
+    artifactPath: path,
+    sha256: sha(text),
+    collectedBy: "alice",
+    collectedAt: "2026-07-28T10:00:00.000Z",
+    source: "host-a",
+    trigger: "import",
+    caseId: "c1",
   });
 }
 
@@ -45,8 +50,14 @@ describe("CustodyStore.recordExport", () => {
   it("records one event per artifact however many prior records it has", async () => {
     await collect(one, "first\n");
     await store.record("c1", {
-      artifactPath: one, sha256: sha("first\n"), collectedBy: "bob",
-      collectedAt: "2026-07-28T11:00:00.000Z", source: "lab-3", trigger: "manual", caseId: "c1", event: "transferred",
+      artifactPath: one,
+      sha256: sha("first\n"),
+      collectedBy: "bob",
+      collectedAt: "2026-07-28T11:00:00.000Z",
+      source: "lab-3",
+      trigger: "manual",
+      caseId: "c1",
+      event: "transferred",
     });
 
     const written = await store.recordExport("c1", { exportedBy: "alice", destination: "zip" });

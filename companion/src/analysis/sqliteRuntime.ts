@@ -24,7 +24,8 @@ let cached: DatabaseSyncCtor | null = null;
 // floor rather than merely an optional NSRL feature.
 export function loadDatabaseSync(): DatabaseSyncCtor {
   if (cached) return cached;
-  const getBuiltinModule = (process as unknown as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
+  const getBuiltinModule = (process as unknown as { getBuiltinModule?: (id: string) => unknown })
+    .getBuiltinModule;
   const mod = getBuiltinModule?.("node:sqlite") as { DatabaseSync?: DatabaseSyncCtor } | undefined;
   if (!mod?.DatabaseSync) {
     throw new Error(

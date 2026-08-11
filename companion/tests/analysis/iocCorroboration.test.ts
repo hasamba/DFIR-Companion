@@ -2,10 +2,20 @@ import { describe, it, expect } from "vitest";
 import { deriveIocSources, corroboratedIocSources } from "../../src/analysis/iocCorroboration.js";
 import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
-const ioc = (id: string, type: IOC["type"], value: string): IOC => ({ id, type, value, firstSeen: "2026-01-01T00:00:00Z" });
+const ioc = (id: string, type: IOC["type"], value: string): IOC => ({
+  id,
+  type,
+  value,
+  firstSeen: "2026-01-01T00:00:00Z",
+});
 
 const ev = (over: Partial<ForensicEvent> & Pick<ForensicEvent, "id" | "description">): ForensicEvent => ({
-  timestamp: "2026-01-01T00:00:00Z", severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over,
+  timestamp: "2026-01-01T00:00:00Z",
+  severity: "Medium",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+  ...over,
 });
 
 describe("deriveIocSources", () => {
@@ -45,7 +55,7 @@ describe("deriveIocSources", () => {
     const iocs = [ioc("i1", "hash", "deadbeef")];
     const events = [
       ev({ id: "e1", description: "x", sha256: "deadbeef", sources: ["unknown source"] }),
-      ev({ id: "e2", description: "x", sha256: "deadbeef" }),                       // no sources
+      ev({ id: "e2", description: "x", sha256: "deadbeef" }), // no sources
       ev({ id: "e3", description: "x", sha256: "deadbeef", sources: ["THOR"] }),
     ];
     expect(deriveIocSources(iocs, events)).toEqual({ i1: ["THOR"] });
@@ -69,7 +79,7 @@ describe("corroboratedIocSources", () => {
     const events = [
       ev({ id: "e1", description: "x", sha256: "deadbeef", sources: ["THOR"] }),
       ev({ id: "e2", description: "x", sha256: "deadbeef", sources: ["Velociraptor"] }),
-      ev({ id: "e3", description: "x", sha256: "cafebabe", sources: ["THOR"] }),       // single tool → dropped
+      ev({ id: "e3", description: "x", sha256: "cafebabe", sources: ["THOR"] }), // single tool → dropped
     ];
     const out = corroboratedIocSources(iocs, events);
     expect(out).toEqual({ i1: ["THOR", "Velociraptor"] });

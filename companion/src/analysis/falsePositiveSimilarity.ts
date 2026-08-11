@@ -10,17 +10,25 @@ import type { ForensicEvent, Finding } from "./stateTypes.js";
 export interface FalsePositiveCandidate {
   id: string;
   kind: "finding" | "event";
-  label: string;      // title (finding) or description (event), for display
+  label: string; // title (finding) or description (event), for display
   score: number;
-  reasons: string[];  // human-readable matched signals, e.g. "same MITRE T1569.002"
+  reasons: string[]; // human-readable matched signals, e.g. "same MITRE T1569.002"
 }
 
 export interface SimilarityOptions {
-  minScore?: number;   // default 2 — a single weak signal alone won't surface a candidate
+  minScore?: number; // default 2 — a single weak signal alone won't surface a candidate
   maxResults?: number; // default 20
 }
 
-const WEIGHT = { mitre: 2, processName: 2, hash: 3, source: 1, asset: 1, relatedIoc: 1, titleWords: 1 } as const;
+const WEIGHT = {
+  mitre: 2,
+  processName: 2,
+  hash: 3,
+  source: 1,
+  asset: 1,
+  relatedIoc: 1,
+  titleWords: 1,
+} as const;
 const DEFAULT_MIN_SCORE = 2;
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -45,9 +53,16 @@ export function findSimilarEvents(
     const reasons: string[] = [];
 
     const mitre = sharedTechniques(anchor.mitreTechniques ?? [], c.mitreTechniques ?? []);
-    if (mitre.length) { score += WEIGHT.mitre; reasons.push(`same MITRE ${mitre.join(", ")}`); }
+    if (mitre.length) {
+      score += WEIGHT.mitre;
+      reasons.push(`same MITRE ${mitre.join(", ")}`);
+    }
 
-    if (anchor.processName && c.processName && anchor.processName.toLowerCase() === c.processName.toLowerCase()) {
+    if (
+      anchor.processName &&
+      c.processName &&
+      anchor.processName.toLowerCase() === c.processName.toLowerCase()
+    ) {
       score += WEIGHT.processName;
       reasons.push(`same process ${c.processName}`);
     }
@@ -80,7 +95,12 @@ export function findSimilarEvents(
 const STOPWORD_MIN_LEN = 4; // skip short/common words so title overlap needs real shared terms
 
 function titleWords(title: string): Set<string> {
-  return new Set(title.toLowerCase().split(/\W+/).filter((w) => w.length >= STOPWORD_MIN_LEN));
+  return new Set(
+    title
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((w) => w.length >= STOPWORD_MIN_LEN),
+  );
 }
 
 export function findSimilarFindings(
@@ -100,7 +120,10 @@ export function findSimilarFindings(
     const reasons: string[] = [];
 
     const mitre = sharedTechniques(anchor.mitreTechniques ?? [], c.mitreTechniques ?? []);
-    if (mitre.length) { score += WEIGHT.mitre; reasons.push(`same MITRE ${mitre.join(", ")}`); }
+    if (mitre.length) {
+      score += WEIGHT.mitre;
+      reasons.push(`same MITRE ${mitre.join(", ")}`);
+    }
 
     const sharedIocs = (c.relatedIocs ?? []).filter((i) => anchorIocs.has(i));
     if (sharedIocs.length) {

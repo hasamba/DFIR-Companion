@@ -67,9 +67,10 @@ export function encryptBuffer(data: Buffer, password: string): Buffer {
  * isn't a .dfircase container (including one written by a NEWER build — an unknown version is
  * reported as such rather than as a wrong password). */
 export function decryptBuffer(container: Buffer, password: string): Buffer {
-  const format = container.length >= HEADER_LEN
-    ? FORMATS.find((f) => container.subarray(0, MAGIC_LEN).equals(f.magic))
-    : undefined;
+  const format =
+    container.length >= HEADER_LEN
+      ? FORMATS.find((f) => container.subarray(0, MAGIC_LEN).equals(f.magic))
+      : undefined;
   if (!format) throw new DecryptionError("not a valid .dfircase archive");
   let offset = MAGIC_LEN;
   const salt = container.subarray(offset, offset + SALT_LEN);

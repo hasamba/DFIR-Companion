@@ -15,8 +15,20 @@
 import type { InvestigationState } from "../../analysis/stateTypes.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import { emptyReportMeta } from "../../reports/reportMeta.js";
-import { buildCompanionBlocks, batchBlocks, toggle, DEFAULT_CONTAINER_TITLE, type NotionBlock } from "./notionBlocks.js";
-import { NotionApiError, type NotionParent, type NotionPageRef, type NotionBlockRef, type NotionBotUser } from "./notionClient.js";
+import {
+  buildCompanionBlocks,
+  batchBlocks,
+  toggle,
+  DEFAULT_CONTAINER_TITLE,
+  type NotionBlock,
+} from "./notionBlocks.js";
+import {
+  NotionApiError,
+  type NotionParent,
+  type NotionPageRef,
+  type NotionBlockRef,
+  type NotionBotUser,
+} from "./notionClient.js";
 import type { NotionExport } from "./notionExportStore.js";
 
 // Structural subset of NotionClient used here — lets tests pass a lightweight mock.
@@ -37,7 +49,7 @@ export interface NotionExportStoreLike {
 }
 
 export interface NotionPushInput {
-  caseName: string;            // = the Companion case id (used as the page title)
+  caseName: string; // = the Companion case id (used as the page title)
   state: InvestigationState;
   meta?: ReportMeta;
 }
@@ -45,23 +57,23 @@ export interface NotionPushInput {
 // Where to export — chosen by the analyst in the dashboard modal / CLI.
 export interface NotionPushTarget {
   mode: "new" | "existing";
-  pageId?: string;             // existing: the page to write into (already parsed to a dashed UUID)
-  parentPageId?: string;       // new: create the page under this parent page
-  databaseId?: string;         // new: create the page as a row in this database (preferred)
+  pageId?: string; // existing: the page to write into (already parsed to a dashed UUID)
+  parentPageId?: string; // new: create the page under this parent page
+  databaseId?: string; // new: create the page as a row in this database (preferred)
 }
 
 export interface NotionPushOptions {
-  baseUrl?: string;            // notion.so base, for a fallback page link
-  parentPageId?: string;       // default parent page for "new" exports (DFIR_NOTION_PARENT_PAGE_ID)
-  databaseId?: string;         // default database for "new" exports (DFIR_NOTION_DATABASE_ID)
-  containerTitle?: string;     // managed container title (default DEFAULT_CONTAINER_TITLE)
-  maxTimelineRows?: number;    // cap timeline rows written to Notion
-  exportedAt?: string;         // ISO stamp (injectable for deterministic tests)
+  baseUrl?: string; // notion.so base, for a fallback page link
+  parentPageId?: string; // default parent page for "new" exports (DFIR_NOTION_PARENT_PAGE_ID)
+  databaseId?: string; // default database for "new" exports (DFIR_NOTION_DATABASE_ID)
+  containerTitle?: string; // managed container title (default DEFAULT_CONTAINER_TITLE)
+  maxTimelineRows?: number; // cap timeline rows written to Notion
+  exportedAt?: string; // ISO stamp (injectable for deterministic tests)
   sleep?: (ms: number) => Promise<void>; // inter-batch pacing (injectable; tests pass a no-op)
 }
 
 export interface NotionPushResult {
-  created: boolean;            // true = a new page was created
+  created: boolean; // true = a new page was created
   pageId: string;
   pageUrl?: string;
   containerBlockId: string;
@@ -149,7 +161,9 @@ export async function pushCaseToNotion(
       page = await client.createPage({ page_id: parent }, title);
       parentPageId = parent;
     } else {
-      throw new Error("no parent for the new page — set DFIR_NOTION_DATABASE_ID or DFIR_NOTION_PARENT_PAGE_ID, or pass a parent/database");
+      throw new Error(
+        "no parent for the new page — set DFIR_NOTION_DATABASE_ID or DFIR_NOTION_PARENT_PAGE_ID, or pass a parent/database",
+      );
     }
     pageId = page.id;
     pageUrl = page.url;

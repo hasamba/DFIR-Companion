@@ -77,7 +77,13 @@ describe("buildSecondLookRequests", () => {
   it("mines open hypotheses (ioc values + tokens), skipping non-open ones", () => {
     const requests = buildSecondLookRequests({
       hypotheses: [
-        hyp({ id: "h_a", title: "Data staged before exfil", expectedOutcome: "an archive to nfs-01 via rsync", relatedIocIds: ["i1"], status: "open" }),
+        hyp({
+          id: "h_a",
+          title: "Data staged before exfil",
+          expectedOutcome: "an archive to nfs-01 via rsync",
+          relatedIocIds: ["i1"],
+          status: "open",
+        }),
         hyp({ id: "h_b", title: "Refuted theory", status: "refuted" }),
       ],
       iocValueById: new Map([["i1", "evil.com"]]),
@@ -92,20 +98,41 @@ describe("buildSecondLookRequests", () => {
 
   it("mines unknown/partial questions that carry a collect target, with host", () => {
     const questions: InvestigationQuestion[] = [
-      { id: "q1", question: "Was there exfil?", status: "unknown", answer: "", pointer: "",
-        collect: { host: "FS01.corp.local", artifact: "Windows.EventLogs.Evtx", logSource: "proxy access logs", expectedOutcome: "large POST to megaupload" } },
+      {
+        id: "q1",
+        question: "Was there exfil?",
+        status: "unknown",
+        answer: "",
+        pointer: "",
+        collect: {
+          host: "FS01.corp.local",
+          artifact: "Windows.EventLogs.Evtx",
+          logSource: "proxy access logs",
+          expectedOutcome: "large POST to megaupload",
+        },
+      },
       { id: "q2", question: "answered one", status: "answered", answer: "yes", pointer: "" },
     ];
     const requests = buildSecondLookRequests({ keyQuestions: questions });
     expect(requests).toHaveLength(1);
     expect(requests[0].source).toBe("question");
-    expect(requests[0].host).toBe("fs01");             // shortHost of FS01.corp.local (lowercased)
+    expect(requests[0].host).toBe("fs01"); // shortHost of FS01.corp.local (lowercased)
     expect(requests[0].keywords).toEqual(expect.arrayContaining(["megaupload"]));
   });
 
   it("turns top connective IOCs into per-value requests", () => {
     const anchors: IocAnchor[] = [
-      { value: "10.10.10.10", type: "ip", hosts: ["a", "b"], accounts: [], tools: ["zeek"], malicious: true, suspicious: false, internalConflict: false, score: 12 },
+      {
+        value: "10.10.10.10",
+        type: "ip",
+        hosts: ["a", "b"],
+        accounts: [],
+        tools: ["zeek"],
+        malicious: true,
+        suspicious: false,
+        internalConflict: false,
+        score: 12,
+      },
     ];
     const requests = buildSecondLookRequests({ connectiveIocs: anchors });
     expect(requests).toHaveLength(1);
@@ -116,12 +143,19 @@ describe("buildSecondLookRequests", () => {
   it("honors model requests with their own time window overriding the active one", () => {
     const requests = buildSecondLookRequests({
       window: { from: "2026-01-01T00:00:00Z", to: "2026-01-31T00:00:00Z" },
-      modelRequests: [{ host: "DC01", keywords: ["kerberoast", "spn"], reason: "check for kerberoasting", timeWindow: { from: "2026-01-10T00:00:00Z" } }],
+      modelRequests: [
+        {
+          host: "DC01",
+          keywords: ["kerberoast", "spn"],
+          reason: "check for kerberoasting",
+          timeWindow: { from: "2026-01-10T00:00:00Z" },
+        },
+      ],
     });
     expect(requests).toHaveLength(1);
     expect(requests[0].source).toBe("model");
-    expect(requests[0].from).toBe("2026-01-10T00:00:00Z");   // model window wins
-    expect(requests[0].to).toBe("2026-01-31T00:00:00Z");     // inherits active upper bound
+    expect(requests[0].from).toBe("2026-01-10T00:00:00Z"); // model window wins
+    expect(requests[0].to).toBe("2026-01-31T00:00:00Z"); // inherits active upper bound
     expect(requests[0].host).toBe("dc01");
   });
 
@@ -129,8 +163,28 @@ describe("buildSecondLookRequests", () => {
     const requests = buildSecondLookRequests({
       hypotheses: [hyp({ id: "h_empty", title: "the and for", expectedOutcome: "with that this" })], // all stopwords → no keywords
       connectiveIocs: [
-        { value: "evil.com", type: "domain", hosts: ["a"], accounts: [], tools: ["t"], malicious: true, suspicious: false, internalConflict: false, score: 5 },
-        { value: "evil.com", type: "domain", hosts: ["a"], accounts: [], tools: ["t"], malicious: true, suspicious: false, internalConflict: false, score: 5 },
+        {
+          value: "evil.com",
+          type: "domain",
+          hosts: ["a"],
+          accounts: [],
+          tools: ["t"],
+          malicious: true,
+          suspicious: false,
+          internalConflict: false,
+          score: 5,
+        },
+        {
+          value: "evil.com",
+          type: "domain",
+          hosts: ["a"],
+          accounts: [],
+          tools: ["t"],
+          malicious: true,
+          suspicious: false,
+          internalConflict: false,
+          score: 5,
+        },
       ],
     });
     // hypothesis produced no keywords → dropped; two identical IOC requests → deduped to one
@@ -141,8 +195,13 @@ describe("buildSecondLookRequests", () => {
 
 describe("resolveSecondLookRequests", () => {
   const req: SecondLookRequest = {
-    source: "hypothesis", tag: "[second-look: h1]", label: "h1", keywords: ["rsync", "nfs-01"],
-    from: "2026-01-01T00:00:00Z", to: "2026-01-31T00:00:00Z", reason: "staging",
+    source: "hypothesis",
+    tag: "[second-look: h1]",
+    label: "h1",
+    keywords: ["rsync", "nfs-01"],
+    from: "2026-01-01T00:00:00Z",
+    to: "2026-01-31T00:00:00Z",
+    reason: "staging",
   };
 
   it("matches ANY keyword across broad fields and separates promotable (not-yet-in-timeline) events", () => {
@@ -161,9 +220,9 @@ describe("resolveSecondLookRequests", () => {
     const hostReq: SecondLookRequest = { ...req, host: "FS01", keywords: ["exfil"] };
     const candidates = [
       ev({ id: "a", description: "exfil", asset: "FS01.corp", timestamp: "2026-01-10T00:00:00Z" }),
-      ev({ id: "b", description: "exfil", asset: "DC01", timestamp: "2026-01-10T00:00:00Z" }),   // wrong host
-      ev({ id: "c", description: "exfil", asset: "FS01", timestamp: "2020-01-10T00:00:00Z" }),   // out of window
-      ev({ id: "d", description: "exfil", asset: "FS01", timestamp: "not-a-date" }),             // undated → kept
+      ev({ id: "b", description: "exfil", asset: "DC01", timestamp: "2026-01-10T00:00:00Z" }), // wrong host
+      ev({ id: "c", description: "exfil", asset: "FS01", timestamp: "2020-01-10T00:00:00Z" }), // out of window
+      ev({ id: "d", description: "exfil", asset: "FS01", timestamp: "not-a-date" }), // undated → kept
     ];
     const [res] = resolveSecondLookRequests([hostReq], candidates, new Set());
     expect(res.promotable.map((e) => e.id).sort()).toEqual(["a", "d"]);
@@ -171,7 +230,8 @@ describe("resolveSecondLookRequests", () => {
 
   it("caps matches per request", () => {
     const candidates = Array.from({ length: 10 }, (_, i) =>
-      ev({ id: `s${i}`, description: "rsync", timestamp: `2026-01-05T00:00:0${i}Z` }));
+      ev({ id: `s${i}`, description: "rsync", timestamp: `2026-01-05T00:00:0${i}Z` }),
+    );
     const [res] = resolveSecondLookRequests([req], candidates, new Set(), { perTerm: 3 });
     expect(res.promotable).toHaveLength(3);
   });
@@ -181,10 +241,28 @@ describe("buildSecondLookPlan", () => {
   it("dedupes promoted events across requests, unions tags, and enforces the sweep cap", () => {
     const shared = ev({ id: "s1", description: "rsync nfs-01" });
     const resolutions = [
-      { request: { source: "hypothesis", tag: "[second-look: h1]", label: "", keywords: ["rsync"], reason: "" } as SecondLookRequest,
-        matchedEventIds: ["s1", "s2"], promotable: [shared, ev({ id: "s2" })] },
-      { request: { source: "question", tag: "[second-look: q1]", label: "", keywords: ["nfs-01"], reason: "" } as SecondLookRequest,
-        matchedEventIds: ["s1", "s3"], promotable: [shared, ev({ id: "s3" })] },
+      {
+        request: {
+          source: "hypothesis",
+          tag: "[second-look: h1]",
+          label: "",
+          keywords: ["rsync"],
+          reason: "",
+        } as SecondLookRequest,
+        matchedEventIds: ["s1", "s2"],
+        promotable: [shared, ev({ id: "s2" })],
+      },
+      {
+        request: {
+          source: "question",
+          tag: "[second-look: q1]",
+          label: "",
+          keywords: ["nfs-01"],
+          reason: "",
+        } as SecondLookRequest,
+        matchedEventIds: ["s1", "s3"],
+        promotable: [shared, ev({ id: "s3" })],
+      },
     ];
     const plan = buildSecondLookPlan(resolutions, { sweep: 2 });
     expect(plan.promotions.map((e) => e.id)).toEqual(["s1", "s2"]); // s3 dropped by sweep cap
@@ -194,8 +272,17 @@ describe("buildSecondLookPlan", () => {
 
   it("surfaces zero-match requests as collection leads", () => {
     const resolutions = [
-      { request: { source: "model", tag: "[second-look: model1]", label: "", keywords: ["kerberoast"], reason: "check kerberoasting" } as SecondLookRequest,
-        matchedEventIds: [], promotable: [] },
+      {
+        request: {
+          source: "model",
+          tag: "[second-look: model1]",
+          label: "",
+          keywords: ["kerberoast"],
+          reason: "check kerberoasting",
+        } as SecondLookRequest,
+        matchedEventIds: [],
+        promotable: [],
+      },
     ];
     const plan = buildSecondLookPlan(resolutions);
     expect(plan.promotions).toHaveLength(0);
@@ -207,8 +294,17 @@ describe("buildSecondLookPlan", () => {
 describe("summarizeSecondLook", () => {
   it("summarizes promotions with per-request tallies", () => {
     const plan = buildSecondLookPlan([
-      { request: { source: "hypothesis", tag: "[second-look: h2]", label: "", keywords: ["rsync", "nfs-01"], reason: "" },
-        matchedEventIds: ["s1"], promotable: [ev({ id: "s1" }), ev({ id: "s2" })] },
+      {
+        request: {
+          source: "hypothesis",
+          tag: "[second-look: h2]",
+          label: "",
+          keywords: ["rsync", "nfs-01"],
+          reason: "",
+        },
+        matchedEventIds: ["s1"],
+        promotable: [ev({ id: "s1" }), ev({ id: "s2" })],
+      },
     ]);
     const line = summarizeSecondLook(plan);
     expect(line).toContain("2 raw event(s) promoted");
@@ -217,8 +313,11 @@ describe("summarizeSecondLook", () => {
 
   it("reports leads when nothing was promoted", () => {
     const plan = buildSecondLookPlan([
-      { request: { source: "model", tag: "[second-look: model1]", label: "", keywords: ["x"], reason: "r" },
-        matchedEventIds: [], promotable: [] },
+      {
+        request: { source: "model", tag: "[second-look: model1]", label: "", keywords: ["x"], reason: "r" },
+        matchedEventIds: [],
+        promotable: [],
+      },
     ]);
     expect(summarizeSecondLook(plan)).toContain("collection lead");
   });

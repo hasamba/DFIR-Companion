@@ -6,11 +6,16 @@ function suricataAlert(): object {
   return {
     timestamp: "2017-12-01T08:00:00.123456+0000",
     event_type: "alert",
-    src_ip: "10.0.0.5", src_port: 51000, dest_ip: "203.0.113.9", dest_port: 443, proto: "TCP",
+    src_ip: "10.0.0.5",
+    src_port: 51000,
+    dest_ip: "203.0.113.9",
+    dest_port: 443,
+    proto: "TCP",
     alert: {
       signature: "ET MALWARE Cobalt Strike Beacon",
       category: "A Network Trojan was detected",
-      signature_id: 2027000, severity: 1,
+      signature_id: 2027000,
+      severity: 1,
       metadata: { mitre_technique_id: ["T1071.001"], mitre_tactic_id: ["TA0011"] },
     },
   };
@@ -19,7 +24,8 @@ function suricataDns(): object {
   return {
     timestamp: "2017-12-01T08:00:01+0000",
     event_type: "dns",
-    src_ip: "10.0.0.5", dest_ip: "10.0.0.1",
+    src_ip: "10.0.0.5",
+    dest_ip: "10.0.0.1",
     dns: { type: "query", rrname: "evil-c2.example.com", rrtype: "A" },
   };
 }
@@ -27,7 +33,11 @@ function suricataFileinfo(): object {
   return {
     timestamp: "2017-12-01T08:00:02+0000",
     event_type: "fileinfo",
-    fileinfo: { filename: "/payload.exe", sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899", size: 1024 },
+    fileinfo: {
+      filename: "/payload.exe",
+      sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      size: 1024,
+    },
   };
 }
 
@@ -38,14 +48,28 @@ function zeekNotice(): object {
     _path: "notice",
     note: "Scan::Port_Scan",
     msg: "203.0.113.9 scanned 20 ports of 10.0.0.5",
-    src: "203.0.113.9", dst: "10.0.0.5",
+    src: "203.0.113.9",
+    dst: "10.0.0.5",
   };
 }
 function zeekDns(): object {
-  return { ts: 1512115201, _path: "dns", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.1", query: "bad-domain.test", qtype_name: "A" };
+  return {
+    ts: 1512115201,
+    _path: "dns",
+    "id.orig_h": "10.0.0.5",
+    "id.resp_h": "10.0.0.1",
+    query: "bad-domain.test",
+    qtype_name: "A",
+  };
 }
 function zeekFiles(): object {
-  return { ts: 1512115202, _path: "files", mime_type: "application/x-dosexec", filename: "x.exe", sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" };
+  return {
+    ts: 1512115202,
+    _path: "files",
+    mime_type: "application/x-dosexec",
+    filename: "x.exe",
+    sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  };
 }
 
 describe("parseNetworkLogs — Suricata eve.json", () => {
@@ -57,7 +81,7 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
     const e = r.events[0];
     expect(e.description).toContain("Suricata alert: ET MALWARE Cobalt Strike Beacon");
     expect(e.description).toContain("10.0.0.5:51000 → 203.0.113.9:443");
-    expect(e.severity).toBe("High");              // Suricata priority 1
+    expect(e.severity).toBe("High"); // Suricata priority 1
     expect(e.mitreTechniques).toContain("T1071.001");
     expect(e.sources).toEqual(["Suricata"]);
     expect(e.timestamp).toBe("2017-12-01T08:00:00.123456Z"); // offset → UTC, microseconds preserved
@@ -67,7 +91,7 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
 
   it("does NOT create timeline events for telemetry, but extracts its IOCs", () => {
     const r = parseNetworkLogs(JSON.stringify([suricataDns(), suricataFileinfo()]));
-    expect(r.events).toHaveLength(0);             // dns + fileinfo are telemetry
+    expect(r.events).toHaveLength(0); // dns + fileinfo are telemetry
     expect(r.alerts).toBe(0);
     expect(r.iocs.find((i) => i.type === "domain")?.value).toBe("evil-c2.example.com");
     expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
@@ -75,10 +99,12 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
   });
 
   it("reads NDJSON (the native eve.json form) and mixes alert + telemetry", () => {
-    const text = [suricataAlert(), suricataDns(), suricataFileinfo()].map((o) => JSON.stringify(o)).join("\n");
+    const text = [suricataAlert(), suricataDns(), suricataFileinfo()]
+      .map((o) => JSON.stringify(o))
+      .join("\n");
     const r = parseNetworkLogs(text);
     expect(r.format).toBe("suricata");
-    expect(r.events).toHaveLength(1);                       // only the alert
+    expect(r.events).toHaveLength(1); // only the alert
     expect(r.iocs.some((i) => i.type === "domain")).toBe(true);
     expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
   });
@@ -89,14 +115,14 @@ describe("parseNetworkLogs — Zeek JSON", () => {
     const text = [zeekNotice(), zeekDns(), zeekFiles()].map((o) => JSON.stringify(o)).join("\n");
     const r = parseNetworkLogs(text);
     expect(r.format).toBe("zeek");
-    expect(r.events).toHaveLength(1);                       // only the notice
+    expect(r.events).toHaveLength(1); // only the notice
     const e = r.events[0];
     expect(e.description).toContain("Zeek notice: Scan::Port_Scan");
     expect(e.severity).toBe("Medium");
     expect(e.sources).toEqual(["Zeek"]);
-    expect(e.timestamp).toBe("2017-12-01T08:00:00.000Z");  // epoch seconds → UTC
+    expect(e.timestamp).toBe("2017-12-01T08:00:00.000Z"); // epoch seconds → UTC
     expect(r.iocs.find((i) => i.type === "domain")?.value).toBe("bad-domain.test"); // from dns.log
-    expect(r.iocs.some((i) => i.type === "hash")).toBe(true);                       // from files.log
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(true); // from files.log
   });
 });
 
@@ -108,10 +134,13 @@ describe("parseNetworkLogs — options & edges", () => {
   });
 
   it("severity floor drops low alert events but keeps telemetry IOCs", () => {
-    const lowAlert = { ...suricataAlert(), alert: { signature: "ET INFO low", category: "Misc", signature_id: 1, severity: 3 } };
+    const lowAlert = {
+      ...suricataAlert(),
+      alert: { signature: "ET INFO low", category: "Misc", signature_id: 1, severity: 3 },
+    };
     const text = [lowAlert, suricataDns()].map((o) => JSON.stringify(o)).join("\n");
     const r = parseNetworkLogs(text, { minSeverity: "Medium" });
-    expect(r.events).toHaveLength(0);                        // the Low alert dropped
+    expect(r.events).toHaveLength(0); // the Low alert dropped
     expect(r.iocs.some((i) => i.type === "domain")).toBe(true); // dns IOC still kept
   });
 
@@ -130,11 +159,44 @@ describe("parseNetworkLogs — options & edges", () => {
 
 // ── Zeek PER-STREAM JSON (no `_path` — the filename names the stream) — #197 ─────────────────
 describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
-  const dns = { ts: 1512115201, uid: "C1", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.1", query: "evil-c2.example.com", qtype_name: "A" };
-  const http = { ts: 1512115202, uid: "C2", "id.orig_h": "10.0.0.5", method: "GET", host: "download.bad.test", uri: "/x.exe" };
-  const files = { ts: 1512115203, fuid: "F1", mime_type: "application/x-dosexec", filename: "x.exe", sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" };
-  const x509 = { ts: 1512115204, id: "C3", fingerprint: "ab:cd", "certificate.serial": "01", "san.dns": ["cert.bad.test", "alt.bad.test"] };
-  const conn = { ts: 1512115205, uid: "C4", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.9", proto: "tcp", conn_state: "S0" };
+  const dns = {
+    ts: 1512115201,
+    uid: "C1",
+    "id.orig_h": "10.0.0.5",
+    "id.resp_h": "10.0.0.1",
+    query: "evil-c2.example.com",
+    qtype_name: "A",
+  };
+  const http = {
+    ts: 1512115202,
+    uid: "C2",
+    "id.orig_h": "10.0.0.5",
+    method: "GET",
+    host: "download.bad.test",
+    uri: "/x.exe",
+  };
+  const files = {
+    ts: 1512115203,
+    fuid: "F1",
+    mime_type: "application/x-dosexec",
+    filename: "x.exe",
+    sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  };
+  const x509 = {
+    ts: 1512115204,
+    id: "C3",
+    fingerprint: "ab:cd",
+    "certificate.serial": "01",
+    "san.dns": ["cert.bad.test", "alt.bad.test"],
+  };
+  const conn = {
+    ts: 1512115205,
+    uid: "C4",
+    "id.orig_h": "10.0.0.5",
+    "id.resp_h": "10.0.0.9",
+    proto: "tcp",
+    conn_state: "S0",
+  };
 
   it("extracts the DNS query as a domain IOC using the filename hint, no timeline event", () => {
     const r = parseNetworkLogs(JSON.stringify(dns), { filename: "0004_dns.json" });
@@ -177,13 +239,13 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     ];
     const r = parseNetworkLogs(rows.map((o) => JSON.stringify(o)).join("\n"), { filename: "conn.json" });
     expect(r.format).toBe("zeek");
-    expect(r.events).toHaveLength(2);                       // :443 folded from 2 rows, :22 alone
+    expect(r.events).toHaveLength(2); // :443 folded from 2 rows, :22 alone
     const https = r.events.find((e) => /:443/.test(e.description));
     expect(https?.description).toMatch(/10\.0\.0\.5/);
     expect(https?.description).toMatch(/10\.0\.0\.9/);
     expect(https?.description).toMatch(/2 connection/);
-    expect(https?.description).toMatch(/300 B sent/);        // 100 + 200 origin bytes
-    expect(https?.description).toMatch(/1\.7 KB received/);  // 900 + 800 = 1700 responder bytes
+    expect(https?.description).toMatch(/300 B sent/); // 100 + 200 origin bytes
+    expect(https?.description).toMatch(/1\.7 KB received/); // 900 + 800 = 1700 responder bytes
     // Info: pure telemetry. The forensic gate demotes it to the analyst-only super-timeline, so a
     // busy sensor cannot flood the AI prompt — it becomes searchable, not synthesized.
     expect(https?.severity).toBe("Info");
@@ -195,7 +257,9 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     // The benchmark's conn.json alone holds 3,710 distinct external responder IPs. Promoting those
     // to IOCs buries the handful that matter (see the "IOC/MITRE not discriminative" problem);
     // real destination IOCs come from dns/http/ssl and the firewall/proxy importers.
-    const r = parseNetworkLogs(JSON.stringify({ ...conn, "id.resp_h": "203.0.113.9" }), { filename: "conn.json" });
+    const r = parseNetworkLogs(JSON.stringify({ ...conn, "id.resp_h": "203.0.113.9" }), {
+      filename: "conn.json",
+    });
     expect(r.iocs).toHaveLength(0);
   });
 
@@ -208,12 +272,22 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     const rows = [
       { ...conn, ts: 1512115200, "id.resp_h": "10.0.0.1", "id.resp_p": 80, orig_bytes: 1, resp_bytes: 1 },
       { ...conn, ts: 1512115300, "id.resp_h": "10.0.0.3", "id.resp_p": 80, orig_bytes: 2, resp_bytes: 2 },
-      { ...conn, ts: 1512119999, "id.resp_h": "10.0.0.2", "id.resp_p": 80, orig_bytes: 5_000_000, resp_bytes: 5_000_000 },
+      {
+        ...conn,
+        ts: 1512119999,
+        "id.resp_h": "10.0.0.2",
+        "id.resp_p": 80,
+        orig_bytes: 5_000_000,
+        resp_bytes: 5_000_000,
+      },
     ];
-    const r = parseNetworkLogs(rows.map((o) => JSON.stringify(o)).join("\n"), { filename: "conn.json", maxEvents: 1 });
+    const r = parseNetworkLogs(rows.map((o) => JSON.stringify(o)).join("\n"), {
+      filename: "conn.json",
+      maxEvents: 1,
+    });
     expect(r.events).toHaveLength(1);
     expect(r.events[0]?.description).toMatch(/10\.0\.0\.2/);
-    expect(r.events[0]?.description).toMatch(/4\.8 MB received/);   // 5,000,000 B
+    expect(r.events[0]?.description).toMatch(/4\.8 MB received/); // 5,000,000 B
   });
 
   it("zeekStreamFromName strips seq prefix + extension", () => {
@@ -235,9 +309,19 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
 describe("parseNetworkLogs — IOC provenance", () => {
   it("tags a Suricata alert's domain IOC with the alert event's aggKey", () => {
     const row = {
-      event_type: "alert", timestamp: "2017-12-01T08:00:00.123456+0000",
-      src_ip: "10.0.0.5", src_port: 51000, dest_ip: "203.0.113.9", dest_port: 443, proto: "TCP",
-      alert: { signature: "ET MALWARE C2 beacon", category: "A Network Trojan was detected", signature_id: 2027000, severity: 1 },
+      event_type: "alert",
+      timestamp: "2017-12-01T08:00:00.123456+0000",
+      src_ip: "10.0.0.5",
+      src_port: 51000,
+      dest_ip: "203.0.113.9",
+      dest_port: 443,
+      proto: "TCP",
+      alert: {
+        signature: "ET MALWARE C2 beacon",
+        category: "A Network Trojan was detected",
+        signature_id: 2027000,
+        severity: 1,
+      },
       dns: { type: "query", rrname: "evil.example.com", rrtype: "A" },
     };
     const parsed = parseNetworkLogs(JSON.stringify(row));
@@ -248,8 +332,10 @@ describe("parseNetworkLogs — IOC provenance", () => {
 
   it("leaves sourceAggKeys unset for an IOC from a non-alert row (no event produced)", () => {
     const row = {
-      event_type: "dns", timestamp: "2017-12-01T08:00:01+0000",
-      src_ip: "10.0.0.5", dest_ip: "10.0.0.1",
+      event_type: "dns",
+      timestamp: "2017-12-01T08:00:01+0000",
+      src_ip: "10.0.0.5",
+      dest_ip: "10.0.0.1",
       dns: { type: "query", rrname: "benign.example.com", rrtype: "A" },
     };
     const parsed = parseNetworkLogs(JSON.stringify(row));
@@ -261,15 +347,35 @@ describe("parseNetworkLogs — IOC provenance", () => {
 
   it("tags two alert rows' domain IOCs with their own distinct aggKeys", () => {
     const rowA = {
-      event_type: "alert", timestamp: "2017-12-01T08:00:00.123456+0000",
-      src_ip: "10.0.0.5", src_port: 51000, dest_ip: "203.0.113.9", dest_port: 443, proto: "TCP",
-      alert: { signature: "ET MALWARE C2 beacon A", category: "A Network Trojan was detected", signature_id: 1001, severity: 1 },
+      event_type: "alert",
+      timestamp: "2017-12-01T08:00:00.123456+0000",
+      src_ip: "10.0.0.5",
+      src_port: 51000,
+      dest_ip: "203.0.113.9",
+      dest_port: 443,
+      proto: "TCP",
+      alert: {
+        signature: "ET MALWARE C2 beacon A",
+        category: "A Network Trojan was detected",
+        signature_id: 1001,
+        severity: 1,
+      },
       dns: { rrname: "evil-a.example.com" },
     };
     const rowB = {
-      event_type: "alert", timestamp: "2017-12-01T08:05:00.123456+0000",
-      src_ip: "10.0.0.6", src_port: 51001, dest_ip: "203.0.113.10", dest_port: 443, proto: "TCP",
-      alert: { signature: "ET MALWARE C2 beacon B", category: "A Network Trojan was detected", signature_id: 1002, severity: 1 },
+      event_type: "alert",
+      timestamp: "2017-12-01T08:05:00.123456+0000",
+      src_ip: "10.0.0.6",
+      src_port: 51001,
+      dest_ip: "203.0.113.10",
+      dest_port: 443,
+      proto: "TCP",
+      alert: {
+        signature: "ET MALWARE C2 beacon B",
+        category: "A Network Trojan was detected",
+        signature_id: 1002,
+        severity: 1,
+      },
       dns: { rrname: "evil-b.example.com" },
     };
     const parsed = parseNetworkLogs(`${JSON.stringify(rowA)}\n${JSON.stringify(rowB)}`);

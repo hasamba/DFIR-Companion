@@ -16,19 +16,19 @@ import type { FalsePositiveReason } from "./falsePositive.js";
 // FalsePositiveReason taxonomy rather than inventing a parallel dismissalReason field.
 
 export interface LearnedPattern {
-  id: string;                 // stable key = fingerprint of (signature + reason)
-  signature: string;          // normalized dismissed text (finding title / event label)
+  id: string; // stable key = fingerprint of (signature + reason)
+  signature: string; // normalized dismissed text (finding title / event label)
   reason: FalsePositiveReason;
-  count: number;              // times a matching item was dismissed — the recurrence weight
-  examples: string[];         // sample dismissed titles (capped), for display + prompt colour
+  count: number; // times a matching item was dismissed — the recurrence weight
+  examples: string[]; // sample dismissed titles (capped), for display + prompt colour
   firstSeen: string;
   lastSeen: string;
 }
 
 export interface LearnedPatternInput {
-  text: string;               // the finding title / event label the analyst just dismissed
+  text: string; // the finding title / event label the analyst just dismissed
   reason: FalsePositiveReason;
-  example?: string;           // concrete example to remember (defaults to `text`)
+  example?: string; // concrete example to remember (defaults to `text`)
 }
 
 export interface MergeLearnedPatternResult {
@@ -36,16 +36,19 @@ export interface MergeLearnedPatternResult {
   changed: boolean;
 }
 
-const MIN_SIGNATURE_LEN = 4;   // below this the text is an opaque id / too generic to generalize from
+const MIN_SIGNATURE_LEN = 4; // below this the text is an opaque id / too generic to generalize from
 const MAX_SIGNATURE_LEN = 200;
 const MAX_EXAMPLES = 5;
-export const LEARNED_PATTERN_MAX = 100;      // per-case ledger cap
-export const LEARNED_PATTERN_MIN_COUNT = 1;  // default: every reasoned dismissal is a caution (soft, non-excluding)
+export const LEARNED_PATTERN_MAX = 100; // per-case ledger cap
+export const LEARNED_PATTERN_MIN_COUNT = 1; // default: every reasoned dismissal is a caution (soft, non-excluding)
 
 // Whitespace-collapse + lowercase so two formattings of the same title fingerprint identically (prose,
 // like a hypothesis title — case is not significant). Mirrors hypothesis.ts normalizeTitle.
 export function normalizeSignature(text: string): string {
-  return String(text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 // The learnable signature for a dismissed item, or "" when the text is too short/opaque to generalize
@@ -78,19 +81,26 @@ export function mergeLearnedPattern(
   const signature = deriveSignature(input.text);
   if (!signature) return { patterns: [...existing], changed: false };
   const id = learnedPatternKey(signature, input.reason);
-  const example = String(input.example ?? input.text ?? "").trim().slice(0, MAX_SIGNATURE_LEN);
+  const example = String(input.example ?? input.text ?? "")
+    .trim()
+    .slice(0, MAX_SIGNATURE_LEN);
   const patterns = existing.map((p) => ({ ...p, examples: [...p.examples] }));
   const cur = patterns.find((p) => p.id === id);
   if (cur) {
     cur.count += 1;
     cur.lastSeen = now;
-    if (example && !cur.examples.includes(example)) cur.examples = [...cur.examples, example].slice(-MAX_EXAMPLES);
+    if (example && !cur.examples.includes(example))
+      cur.examples = [...cur.examples, example].slice(-MAX_EXAMPLES);
     return { patterns, changed: true };
   }
   patterns.push({
-    id, signature, reason: input.reason, count: 1,
+    id,
+    signature,
+    reason: input.reason,
+    count: 1,
     examples: example ? [example] : [],
-    firstSeen: now, lastSeen: now,
+    firstSeen: now,
+    lastSeen: now,
   });
   // Cap the ledger: keep the most recently-seen patterns (drop stale one-offs first).
   if (patterns.length > LEARNED_PATTERN_MAX) {
@@ -103,7 +113,10 @@ export function mergeLearnedPattern(
 // The learned patterns a NEW finding title matches — bidirectional substring on the normalized signature
 // (same match semantics as applyFalsePositive's finding match). Used for display/highlighting; synthesis
 // down-weighting is done by the model via the rendered block below.
-export function matchLearnedPatterns(findingTitle: string, patterns: readonly LearnedPattern[]): LearnedPattern[] {
+export function matchLearnedPatterns(
+  findingTitle: string,
+  patterns: readonly LearnedPattern[],
+): LearnedPattern[] {
   const title = normalizeSignature(findingTitle);
   if (!title) return [];
   return patterns.filter((p) => p.signature && (title.includes(p.signature) || p.signature.includes(title)));
@@ -127,7 +140,10 @@ export function buildLearnedPatternsBlock(
     .slice(0, Math.max(0, max));
   if (!shown.length) return "";
   const lines = shown
-    .map((p) => `- "${p.signature}" [${p.reason}] — dismissed ${p.count}×${p.examples.length ? ` (e.g. ${p.examples[0]})` : ""}`)
+    .map(
+      (p) =>
+        `- "${p.signature}" [${p.reason}] — dismissed ${p.count}×${p.examples.length ? ` (e.g. ${p.examples[0]})` : ""}`,
+    )
     .join("\n");
   return (
     "PREVIOUSLY DISMISSED PATTERNS (the analyst has repeatedly ruled these out on THIS case). For NEW " +

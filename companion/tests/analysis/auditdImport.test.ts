@@ -45,7 +45,7 @@ describe("parseAuditdLog — USER_* records with a nested msg='…' blob", () =>
   it("parses the inner op/acct/addr/res and flags a failed SSH login (T1110)", () => {
     const log =
       "type=USER_LOGIN msg=audit(1490451300.123:300): pid=1027 uid=0 auid=4294967295 ses=4294967295 " +
-      "msg='op=login acct=\"root\" exe=\"/usr/sbin/sshd\" hostname=evil.example addr=203.0.113.9 terminal=ssh res=failed'";
+      'msg=\'op=login acct="root" exe="/usr/sbin/sshd" hostname=evil.example addr=203.0.113.9 terminal=ssh res=failed\'';
     const r = parseAuditdLog(log);
     const e = r.events[0];
     expect(e.description).toContain("User login (USER_LOGIN)");

@@ -13,9 +13,16 @@ describe("OllamaCloudProvider", () => {
   });
 
   it("honours DFIR_AI_BASE_URL to hit a LOCAL Ollama daemon, no proxy", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: '{"summary":"ok"}' } }] }));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({ choices: [{ message: { content: '{"summary":"ok"}' } }] }),
+    );
     // This is exactly what DFIR_AI_BASE_URL=http://localhost:11434/v1 threads into the provider.
-    const p = new OllamaCloudProvider({ apiKey: "", model: "llama3.2-vision", baseUrl: "http://localhost:11434/v1", fetchFn });
+    const p = new OllamaCloudProvider({
+      apiKey: "",
+      model: "llama3.2-vision",
+      baseUrl: "http://localhost:11434/v1",
+      fetchFn,
+    });
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(result.rawText).toBe('{"summary":"ok"}');
     expect(fetchFn.mock.calls[0][0]).toBe("http://localhost:11434/v1/chat/completions");
@@ -30,7 +37,12 @@ describe("OllamaCloudProvider", () => {
 
   it("labels its errors 'Ollama', not 'OpenAI'", async () => {
     const fetchFn = fetchMock(async () => jsonResponse({ error: "model not found" }, 404));
-    const p = new OllamaCloudProvider({ apiKey: "", model: "nope", baseUrl: "http://localhost:11434/v1", fetchFn });
+    const p = new OllamaCloudProvider({
+      apiKey: "",
+      model: "nope",
+      baseUrl: "http://localhost:11434/v1",
+      fetchFn,
+    });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: Error) => {
       expect(e.message).toContain("Ollama");
       expect(e.message).not.toContain("OpenAI");
@@ -40,7 +52,11 @@ describe("OllamaCloudProvider", () => {
 
 describe("buildProviderFrom — ollama base-URL wiring", () => {
   it("resolves the ollama provider by name (DFIR_AI_BASE_URL is threaded through this path)", () => {
-    const p = buildProviderFrom({ provider: "ollama", model: "llama3.2-vision", baseUrl: "http://localhost:11434/v1" });
+    const p = buildProviderFrom({
+      provider: "ollama",
+      model: "llama3.2-vision",
+      baseUrl: "http://localhost:11434/v1",
+    });
     expect(p?.name).toBe("ollama");
   });
 });

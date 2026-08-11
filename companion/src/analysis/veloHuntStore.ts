@@ -22,26 +22,26 @@ export interface VeloHuntJob {
   dwellWindowId?: string;
   bundleName: string;
   artifacts: string[];
-  sources?: string[];     // named sources for a single-artifact fleet-hunt (Companion launchHunt → Pivot0…); collect reads `artifact/source`
+  sources?: string[]; // named sources for a single-artifact fleet-hunt (Companion launchHunt → Pivot0…); collect reads `artifact/source`
   huntId: string;
   guiUrl?: string;
-  launchedAt: string;     // ISO
+  launchedAt: string; // ISO
   waitMinutes: number;
-  collectAt: string;      // ISO — launchedAt + waitMinutes; when the auto-collect fires
+  collectAt: string; // ISO — launchedAt + waitMinutes; when the auto-collect fires
   status: VeloHuntStatus;
   target?: HuntTarget;
-  minSeverity?: Severity;     // optional import floor chosen at run time (keeps low-value items out)
-  timeoutSeconds?: number;    // optional per-collection timeout used for this hunt (Velociraptor default 600s)
-  expirySeconds?: number;     // relative hunt expiry used at launch (seconds); default one hour
-  filters?: Record<string, string>;   // per-artifact VQL WHERE filters snapshotted from the bundle (applied at collect)
+  minSeverity?: Severity; // optional import floor chosen at run time (keeps low-value items out)
+  timeoutSeconds?: number; // optional per-collection timeout used for this hunt (Velociraptor default 600s)
+  expirySeconds?: number; // relative hunt expiry used at launch (seconds); default one hour
+  filters?: Record<string, string>; // per-artifact VQL WHERE filters snapshotted from the bundle (applied at collect)
   // The COLLECTION window this hunt was launched with, when the analyst scoped it. Forensically load-
   // bearing: it tells a later reader that silence outside these bounds is a collection boundary, not an
   // absence of activity. `end` is absent for a relative preset (the hunt keeps collecting forward).
   timeScope?: {
-    start: string;            // ISO
-    end?: string;             // ISO
-    scopedArtifacts: number;  // how many artifacts actually received the window
-    totalArtifacts: number;   // how many were launched
+    start: string; // ISO
+    end?: string; // ISO
+    scopedArtifacts: number; // how many artifacts actually received the window
+    totalArtifacts: number; // how many were launched
     // true = the server reported no parameter metadata for this bundle's artifacts (the catalog fetch
     // failed or came back empty), so the bounded/unbounded split above could NOT be verified — it may
     // understate what actually got scoped. Distinguishes "this bundle genuinely has no date-parameterized
@@ -55,14 +55,14 @@ export interface VeloHuntJob {
   // generic "no new results collected yet — collect again later", which is misleading for a hunt that
   // will never produce anything again.
   stoppedEarly?: boolean;
-  importedAt?: string;    // ISO — when results were collected + imported
-  importFile?: string;    // stored evidence filename
+  importedAt?: string; // ISO — when results were collected + imported
+  importFile?: string; // stored evidence filename
   addedEvents?: number;
   addedIocs?: number;
   // Per-artifact collection accounting from the last collect, so "N artifacts, +X events" doesn't read
   // as "only one artifact collected" when the rest simply had nothing to report vs. actually failed.
-  skippedArtifacts?: SkippedArtifact[];   // fetch FAILED (oversized/timeout/error) — see the reason
-  emptyArtifacts?: string[];              // fetched cleanly, zero rows — nothing to report, not an error
+  skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
+  emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
 }
 
 // Cap retained jobs per case (newest first) so the side file stays small — old terminal jobs drop off.
@@ -81,7 +81,8 @@ export class VeloHuntStore {
     try {
       const parsed = JSON.parse(await readFile(this.path(caseId), "utf8")) as unknown;
       if (Array.isArray(parsed)) return parsed as VeloHuntJob[];
-      if (parsed && typeof parsed === "object" && typeof (parsed as VeloHuntJob).huntId === "string") return [parsed as VeloHuntJob];
+      if (parsed && typeof parsed === "object" && typeof (parsed as VeloHuntJob).huntId === "string")
+        return [parsed as VeloHuntJob];
       return [];
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];

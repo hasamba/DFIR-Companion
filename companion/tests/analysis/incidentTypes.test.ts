@@ -7,10 +7,7 @@ import {
   TYPE_SEED_PREFIX,
   type IncidentType,
 } from "../../src/analysis/incidentTypes.js";
-import {
-  loadBuiltInIncidentTypes,
-  getBuiltInIncidentType,
-} from "../../src/analysis/incidentTypesData.js";
+import { loadBuiltInIncidentTypes, getBuiltInIncidentType } from "../../src/analysis/incidentTypesData.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const ransomware = getBuiltInIncidentType("ransomware")!;
@@ -23,7 +20,9 @@ function customType(over: Partial<IncidentType> = {}): IncidentType {
     builtIn: false,
     recommendedImports: ["edr"],
     initialKeyQuestions: ["What was the entry point?"],
-    initialNextSteps: [{ action: "Isolate host", priority: "critical", rationale: "contain", pointer: "EDR" }],
+    initialNextSteps: [
+      { action: "Isolate host", priority: "critical", rationale: "contain", pointer: "EDR" },
+    ],
     severityFloor: "High",
     huntPlatforms: ["Velociraptor"],
     recommendedImportOrder: ["edr"],
@@ -75,7 +74,8 @@ describe("parseIncidentType", () => {
 
   it("keeps a definition whose optional fields are malformed, defaulting just those", () => {
     const parsed = parseIncidentType({
-      id: "minimal", name: "Minimal",
+      id: "minimal",
+      name: "Minimal",
       findingsSeeds: "not-an-array",
     });
     expect(parsed?.id).toBe("minimal");
@@ -85,9 +85,11 @@ describe("parseIncidentType", () => {
 
 describe("applyIncidentTypeToState", () => {
   it("populates key questions and next steps on an empty state", () => {
-    const { state: next, questionsAdded, nextStepsAdded } = applyIncidentTypeToState(
-      emptyState("c1"), ransomware, { now: () => "2026-07-25T00:00:00Z" },
-    );
+    const {
+      state: next,
+      questionsAdded,
+      nextStepsAdded,
+    } = applyIncidentTypeToState(emptyState("c1"), ransomware, { now: () => "2026-07-25T00:00:00Z" });
     const expectedQuestions = ransomware.initialKeyQuestions.length + ransomware.findingsSeeds.length;
     expect(questionsAdded).toBe(expectedQuestions);
     expect(nextStepsAdded).toBe(ransomware.initialNextSteps.length);
@@ -105,7 +107,9 @@ describe("applyIncidentTypeToState", () => {
     expect(JSON.stringify(fromEmpty)).not.toContain("T1486");
 
     const written = { ...emptyState("c1"), lastSummary: "Analyst wrote this summary." };
-    expect(applyIncidentTypeToState(written, ransomware).state.lastSummary).toBe("Analyst wrote this summary.");
+    expect(applyIncidentTypeToState(written, ransomware).state.lastSummary).toBe(
+      "Analyst wrote this summary.",
+    );
   });
 
   it("seeds findings as pinned confirm/deny questions with a [type-seed] prefix", () => {
@@ -113,14 +117,31 @@ describe("applyIncidentTypeToState", () => {
     const seedQs = next.keyQuestions.filter((q) => q.question.startsWith(TYPE_SEED_PREFIX));
     expect(seedQs.length).toBe(ransomware.findingsSeeds.length);
     expect(seedQs.every((q) => q.status === "unknown" && q.pinned && q.answer === "")).toBe(true);
-    expect(new Set(seedQs.map((q) => q.id)).size).toBe(seedQs.length);   // ids are unique
+    expect(new Set(seedQs.map((q) => q.id)).size).toBe(seedQs.length); // ids are unique
   });
 
   it("merges by default — preserves analyst entries and skips seeds already present", () => {
     const state = {
       ...emptyState("c1"),
-      keyQuestions: [{ id: "q1", question: "Analyst's own question", status: "unknown" as const, answer: "", pointer: "", pinned: false }],
-      nextSteps: [{ id: "s1", priority: "high" as const, action: ransomware.initialNextSteps[0].action, rationale: "x", pointer: "y" }],
+      keyQuestions: [
+        {
+          id: "q1",
+          question: "Analyst's own question",
+          status: "unknown" as const,
+          answer: "",
+          pointer: "",
+          pinned: false,
+        },
+      ],
+      nextSteps: [
+        {
+          id: "s1",
+          priority: "high" as const,
+          action: ransomware.initialNextSteps[0].action,
+          rationale: "x",
+          pointer: "y",
+        },
+      ],
     };
     const { state: next, questionsAdded, nextStepsAdded } = applyIncidentTypeToState(state, ransomware);
     expect(next.keyQuestions.some((q) => q.question === "Analyst's own question")).toBe(true);
@@ -141,13 +162,19 @@ describe("applyIncidentTypeToState", () => {
   it("replace mode overwrites existing questions and next steps", () => {
     const state = {
       ...emptyState("c1"),
-      keyQuestions: [{ id: "old", question: "old", status: "unknown" as const, answer: "", pointer: "", pinned: false }],
-      nextSteps: [{ id: "old", priority: "low" as const, action: "old action", rationale: "x", pointer: "y" }],
+      keyQuestions: [
+        { id: "old", question: "old", status: "unknown" as const, answer: "", pointer: "", pinned: false },
+      ],
+      nextSteps: [
+        { id: "old", priority: "low" as const, action: "old action", rationale: "x", pointer: "y" },
+      ],
     };
     const { state: next } = applyIncidentTypeToState(state, ransomware, { replace: true });
     expect(next.keyQuestions.some((q) => q.question === "old")).toBe(false);
     expect(next.nextSteps.some((s) => s.action === "old action")).toBe(false);
-    expect(next.keyQuestions.length).toBe(ransomware.initialKeyQuestions.length + ransomware.findingsSeeds.length);
+    expect(next.keyQuestions.length).toBe(
+      ransomware.initialKeyQuestions.length + ransomware.findingsSeeds.length,
+    );
   });
 
   it("is pure — does not mutate the input state", () => {

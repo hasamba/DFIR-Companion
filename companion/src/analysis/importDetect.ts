@@ -22,9 +22,41 @@ import { looksLikeSyslog } from "./syslogImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 
 export type ImportKind =
-  | "thor" | "siem" | "evtxxml" | "chainsaw" | "hayabusa" | "ecar" | "velociraptor" | "securityonion" | "socrates" | "network"
-  | "kape" | "cybertriage" | "m365" | "aws" | "cloud" | "k8s" | "osquery" | "plaso" | "sandbox" | "memory" | "email"
-  | "auditd" | "journald" | "sysdig" | "wazuh" | "thehive" | "bashhistory" | "snort" | "yara" | "combinedlog" | "asa" | "syslog" | "csv" | "log" | "unknown";
+  | "thor"
+  | "siem"
+  | "evtxxml"
+  | "chainsaw"
+  | "hayabusa"
+  | "ecar"
+  | "velociraptor"
+  | "securityonion"
+  | "socrates"
+  | "network"
+  | "kape"
+  | "cybertriage"
+  | "m365"
+  | "aws"
+  | "cloud"
+  | "k8s"
+  | "osquery"
+  | "plaso"
+  | "sandbox"
+  | "memory"
+  | "email"
+  | "auditd"
+  | "journald"
+  | "sysdig"
+  | "wazuh"
+  | "thehive"
+  | "bashhistory"
+  | "snort"
+  | "yara"
+  | "combinedlog"
+  | "asa"
+  | "syslog"
+  | "csv"
+  | "log"
+  | "unknown";
 
 type Row = Record<string, unknown>;
 
@@ -40,14 +72,23 @@ function jsonSample(text: string): { root: unknown; sample: Row | null } {
   const t = text.trim();
   let root: unknown;
   if (t[0] === "{" || t[0] === "[") {
-    try { root = JSON.parse(t); } catch { root = undefined; }
+    try {
+      root = JSON.parse(t);
+    } catch {
+      root = undefined;
+    }
   }
   if (root === undefined) {
     // NDJSON: first parseable object line.
     for (const line of t.split(/\r\n|\r|\n/)) {
       const l = line.trim();
       if (!l || (l[0] !== "{" && l[0] !== "[")) continue;
-      try { root = JSON.parse(l); break; } catch { /* keep scanning */ }
+      try {
+        root = JSON.parse(l);
+        break;
+      } catch {
+        /* keep scanning */
+      }
     }
   }
   if (root === undefined && (t[0] === "{" || t[0] === "[")) {
@@ -70,9 +111,16 @@ function jsonSample(text: string): { root: unknown; sample: Row | null } {
 // ───────────────────────────── JSON record signatures (ordered) ─────────────────────────────
 
 function isSandbox(s: Row): boolean {
-  return (!!getCI(s, "info") && (!!getCI(s, "signatures") || !!getCI(s, "target"))) ||
-    (getCI(s, "verdict") != null && (getCI(s, "threat_score") != null || !!getCI(s, "mitre_attcks") || !!getCI(s, "vx_family") || !!getCI(s, "submit_name"))) ||
-    !!getCI(s, "CAPE") || getCI(s, "malscore") != null;
+  return (
+    (!!getCI(s, "info") && (!!getCI(s, "signatures") || !!getCI(s, "target"))) ||
+    (getCI(s, "verdict") != null &&
+      (getCI(s, "threat_score") != null ||
+        !!getCI(s, "mitre_attcks") ||
+        !!getCI(s, "vx_family") ||
+        !!getCI(s, "submit_name"))) ||
+    !!getCI(s, "CAPE") ||
+    getCI(s, "malscore") != null
+  );
 }
 function isAws(s: Row): boolean {
   return !!getCI(s, "eventName") && !!getCI(s, "eventSource");
@@ -81,41 +129,71 @@ function isGcp(s: Row): boolean {
   return !!getCI(s, "protoPayload") || /cloudaudit/i.test(str(getCI(s, "logName")));
 }
 function isAzure(s: Row): boolean {
-  return (!!getCI(s, "operationName") || !!getCI(s, "OperationNameValue") || !!getCI(s, "OperationName")) &&
-    (!!getCI(s, "caller") || !!getCI(s, "Caller") || !!getCI(s, "resourceId") || !!getCI(s, "ResourceId") || !!getCI(s, "correlationId"));
+  return (
+    (!!getCI(s, "operationName") || !!getCI(s, "OperationNameValue") || !!getCI(s, "OperationName")) &&
+    (!!getCI(s, "caller") ||
+      !!getCI(s, "Caller") ||
+      !!getCI(s, "resourceId") ||
+      !!getCI(s, "ResourceId") ||
+      !!getCI(s, "correlationId"))
+  );
 }
 // Kubernetes API-server audit Event (`audit.k8s.io`): the strong tell is the apiVersion; failing
 // that, a `verb` + `objectRef` + the audit-specific `requestReceivedTimestamp`/`stage` fields (which
 // no other JSON feed carries). Claimed ahead of the SIEM/Velociraptor catch-alls.
 function isK8sAudit(s: Row): boolean {
   if (/audit\.k8s\.io/i.test(str(getCI(s, "apiVersion")))) return true;
-  return !!getCI(s, "verb") && isObject(getCI(s, "objectRef")) &&
-    (getCI(s, "requestReceivedTimestamp") != null || getCI(s, "stageTimestamp") != null ||
-      (getCI(s, "stage") != null && isObject(getCI(s, "user"))));
+  return (
+    !!getCI(s, "verb") &&
+    isObject(getCI(s, "objectRef")) &&
+    (getCI(s, "requestReceivedTimestamp") != null ||
+      getCI(s, "stageTimestamp") != null ||
+      (getCI(s, "stage") != null && isObject(getCI(s, "user"))))
+  );
 }
 // osquery scheduled-query result log: a `name` (query/pack) + a result payload (`columns` object or
 // `snapshot` array) + an osquery-specific marker (`action` added/removed/snapshot, or hostIdentifier/
 // calendarTime/unixTime). Distinctive enough to claim ahead of the SIEM catch-all.
 function isOsquery(s: Row): boolean {
-  if (!getCI(s, "name") || !(isObject(getCI(s, "columns")) || Array.isArray(getCI(s, "snapshot")))) return false;
+  if (!getCI(s, "name") || !(isObject(getCI(s, "columns")) || Array.isArray(getCI(s, "snapshot"))))
+    return false;
   const action = str(getCI(s, "action")).toLowerCase();
-  return action === "added" || action === "removed" || action === "snapshot" ||
-    getCI(s, "hostIdentifier") != null || getCI(s, "calendarTime") != null || getCI(s, "unixTime") != null;
+  return (
+    action === "added" ||
+    action === "removed" ||
+    action === "snapshot" ||
+    getCI(s, "hostIdentifier") != null ||
+    getCI(s, "calendarTime") != null ||
+    getCI(s, "unixTime") != null
+  );
 }
 function isM365(s: Row): boolean {
-  return !!getCI(s, "Operation") || !!getCI(s, "Operations") || !!getCI(s, "AuditData") ||
-    (!!getCI(s, "userPrincipalName") && (!!getCI(s, "riskState") || !!getCI(s, "riskLevelDuringSignIn") || !!getCI(s, "status"))) ||
-    (!!getCI(s, "activityDisplayName") && (!!getCI(s, "initiatedBy") || !!getCI(s, "targetResources")));
+  return (
+    !!getCI(s, "Operation") ||
+    !!getCI(s, "Operations") ||
+    !!getCI(s, "AuditData") ||
+    (!!getCI(s, "userPrincipalName") &&
+      (!!getCI(s, "riskState") || !!getCI(s, "riskLevelDuringSignIn") || !!getCI(s, "status"))) ||
+    (!!getCI(s, "activityDisplayName") && (!!getCI(s, "initiatedBy") || !!getCI(s, "targetResources")))
+  );
 }
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
-  if (!!getCI(s, "document") || !!getCI(s, "documents") ||
-    (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")))) return true;
+  if (
+    !!getCI(s, "document") ||
+    !!getCI(s, "documents") ||
+    (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")))
+  )
+    return true;
   // Chainsaw's flattened Sigma-mapping JSON (e.g. a Velociraptor artifact that shells out to
   // Chainsaw): verdict at the top level (Detection/Severity) instead of a nested rule{}
   // object, alongside an already-flat EventID/Channel/SystemData instead of Event.System.
-  return typeof getCI(s, "Detection") === "string" && typeof getCI(s, "Severity") === "string" &&
-    getCI(s, "EventID") != null && (!!getCI(s, "Channel") || isObject(getCI(s, "SystemData")));
+  return (
+    typeof getCI(s, "Detection") === "string" &&
+    typeof getCI(s, "Severity") === "string" &&
+    getCI(s, "EventID") != null &&
+    (!!getCI(s, "Channel") || isObject(getCI(s, "SystemData")))
+  );
 }
 function isVelociraptor(s: Row, root: unknown): boolean {
   if (!!getCI(s, "_Source") || !!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
@@ -125,7 +203,8 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   if (/^artifact[_-]/i.test(str(getCI(s, "_index")))) return true;
   if (Object.keys(s).some((k) => k === "Artifact" || /^(?:Artifact|Detection|_Event)\./.test(k))) return true;
   const rule = getCI(s, "Rule");
-  if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace"))) return true;
+  if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace")))
+    return true;
   if (isObject(getCI(s, "System")) && !!getCI(s, "EventData")) return true; // VR parsed-evtx (no Event wrapper)
   // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist
   // artifact family and absent from Windows event logs / SIEM exports.
@@ -137,8 +216,13 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   // artifactName stamped) instead of falling through to the SIEM catch-all (Problem 1 — MFT/USN were
   // mis-detected as SIEM). Kept conservative (distinctive columns only) so genuine SIEM rows aren't claimed.
   // Windows.NTFS.MFT: OSPath + an NTFS $STANDARD_INFO/$FILE_NAME timestamp column (Created0x10/…).
-  if (getCI(s, "OSPath") != null &&
-    (getCI(s, "Created0x10") != null || getCI(s, "LastModified0x10") != null || getCI(s, "Created0x30") != null)) return true;
+  if (
+    getCI(s, "OSPath") != null &&
+    (getCI(s, "Created0x10") != null ||
+      getCI(s, "LastModified0x10") != null ||
+      getCI(s, "Created0x30") != null)
+  )
+    return true;
   // Windows.Forensics.Usn (journal): Usn record number + Reason bitmask are unique to the USN journal.
   if (getCI(s, "Usn") != null && getCI(s, "Reason") != null) return true;
   return isArtifactMap(root);
@@ -146,9 +230,11 @@ function isVelociraptor(s: Row, root: unknown): boolean {
 function isArtifactMap(root: unknown): boolean {
   if (!isObject(root) || Array.isArray(root)) return false;
   const entries = Object.entries(root);
-  return entries.length > 0 &&
+  return (
+    entries.length > 0 &&
     entries.every(([k, v]) => Array.isArray(v) && !CONTAINER_KEYS.includes(k.toLowerCase())) &&
-    entries.some(([, v]) => (v as unknown[]).some(isObject));
+    entries.some(([, v]) => (v as unknown[]).some(isObject))
+  );
 }
 // Security Onion Console events (Alerts / Hunt), as the browser extension pushes them or as a raw
 // SOC API export. Claimed BEFORE isVelociraptor: the extension stamps `_Source` on every row, and
@@ -161,8 +247,10 @@ function isSecurityOnion(s: Row): boolean {
   // `event.severity_label` is a Security Onion convention — standard ECS carries only the numeric
   // `event.severity`, and Elastic Security alerts use `kibana.alert.severity`. Paired with a
   // rule/module/dataset, it's an SO alert. Claimed here so its label-severity isn't lost to SIEM.
-  if (getCI(s, "event.severity_label") != null &&
-    (getCI(s, "rule.name") != null || getCI(s, "event.module") != null || getCI(s, "event.dataset") != null)) {
+  if (
+    getCI(s, "event.severity_label") != null &&
+    (getCI(s, "rule.name") != null || getCI(s, "event.module") != null || getCI(s, "event.dataset") != null)
+  ) {
     return true;
   }
   // (3) Raw SOC API export / Kibana doc on a Security Onion data-stream index
@@ -171,8 +259,12 @@ function isSecurityOnion(s: Row): boolean {
   const soIndex = /^so:/i.test(idx) || /(?:^|[.\-_])logs-[a-z0-9_]+-so[.\-]/i.test(idx);
   if (!soIndex) return false;
   // Require an SO/ECS alert signal so an arbitrary doc on an SO-named index isn't claimed.
-  return getCI(s, "event.module") != null || getCI(s, "rule.name") != null ||
-    getCI(s, "event.severity_label") != null || getCI(s, "event.dataset") != null;
+  return (
+    getCI(s, "event.module") != null ||
+    getCI(s, "rule.name") != null ||
+    getCI(s, "event.severity_label") != null ||
+    getCI(s, "event.dataset") != null
+  );
 }
 // SO-CRATES (dougburks/so-crates) data, as the browser extension pushes it or as a raw export.
 // Claimed BEFORE isVelociraptor: the extension stamps `_Source: "SO-CRATES"` on every row, and
@@ -182,7 +274,8 @@ function isSecurityOnion(s: Row): boolean {
 // to isNetwork on purpose.
 function isSocrates(s: Row): boolean {
   if (/^so-crates\b/i.test(str(getCI(s, "_Source")))) return true;
-  if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || isObject(getCI(s, "filealerts"))) return true;
+  if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || isObject(getCI(s, "filealerts")))
+    return true;
   if (!!getCI(s, "rule_title") && !!getCI(s, "rule_id")) return true;
   return false;
 }
@@ -194,8 +287,12 @@ function isHayabusaJson(s: Row): boolean {
   // carries no Mitre columns). A raw SIEM event has no rule `Title`, so this is specific enough to
   // claim here — ahead of the `Channel`-based `isSiem` catch-all — and the Hayabusa importer maps
   // it verdict-first instead of mislabeling each row "SIEM event:".
-  if (!!getCI(s, "Title") && !!getCI(s, "Level") &&
-      (!!getCI(s, "Channel") || getCI(s, "EID") != null || getCI(s, "RecordID") != null)) return true;
+  if (
+    !!getCI(s, "Title") &&
+    !!getCI(s, "Level") &&
+    (!!getCI(s, "Channel") || getCI(s, "EID") != null || getCI(s, "RecordID") != null)
+  )
+    return true;
   return false;
 }
 // Zeek logs exported as PER-STREAM JSON (one file per log type: conn.json, dns.json, http.json,
@@ -218,9 +315,11 @@ function isNetwork(s: Row): boolean {
 // `timestamp_description`) + `message`, with a Cyber Triage `score`/`scoreDescription` verdict.
 // Specific enough to claim ahead of the `message`-based SIEM catch-all.
 function isCybertriage(s: Row): boolean {
-  return getCI(s, "epoch_timestamp") != null &&
+  return (
+    getCI(s, "epoch_timestamp") != null &&
     (getCI(s, "timestamp_desc") != null || getCI(s, "timestamp_description") != null) &&
-    (getCI(s, "message") != null || getCI(s, "score") != null || getCI(s, "scoreDescription") != null);
+    (getCI(s, "message") != null || getCI(s, "score") != null || getCI(s, "scoreDescription") != null)
+  );
 }
 function isWazuh(s: Row, root: unknown): boolean {
   // Wazuh alert: requires rule.level + rule.description + agent.name.
@@ -248,9 +347,17 @@ function isThor(s: Row): boolean {
   return !!getCI(s, "module") && !!getCI(s, "message") && !!getCI(s, "level");
 }
 function isSiem(s: Row): boolean {
-  return !!getCI(s, "event_id") || !!getCI(s, "EventID") || !!getCI(s, "winlog") ||
-    !!getCI(s, "log_name") || !!getCI(s, "Channel") || !!getCI(s, "channel") ||
-    !!getCI(s, "@timestamp") || !!getCI(s, "message") || !!getCI(s, "_source");
+  return (
+    !!getCI(s, "event_id") ||
+    !!getCI(s, "EventID") ||
+    !!getCI(s, "winlog") ||
+    !!getCI(s, "log_name") ||
+    !!getCI(s, "Channel") ||
+    !!getCI(s, "channel") ||
+    !!getCI(s, "@timestamp") ||
+    !!getCI(s, "message") ||
+    !!getCI(s, "_source")
+  );
 }
 // Volatility 3 JSON renderer rows: the TreeGrid tags every node with `__children`, and the columns
 // are distinctive (ImageFileName+PID+PPID = pslist/psscan/pstree; LocalAddr+ForeignAddr = netscan;
@@ -258,11 +365,19 @@ function isSiem(s: Row): boolean {
 // fallback (a memory dump has no @timestamp/message/channel, so isSiem misses it).
 function isVolatility(s: Row): boolean {
   const hasChildren = Object.prototype.hasOwnProperty.call(s, "__children");
-  if (hasChildren && (getCI(s, "PID") != null || getCI(s, "ImageFileName") != null || getCI(s, "Process") != null)) return true;
+  if (
+    hasChildren &&
+    (getCI(s, "PID") != null || getCI(s, "ImageFileName") != null || getCI(s, "Process") != null)
+  )
+    return true;
   if (getCI(s, "ImageFileName") != null && getCI(s, "PID") != null && getCI(s, "PPID") != null) return true;
   if (getCI(s, "LocalAddr") != null && getCI(s, "ForeignAddr") != null) return true;
-  if (getCI(s, "Protection") != null && getCI(s, "PID") != null &&
-      (getCI(s, "Tag") != null || getCI(s, "Disasm") != null || getCI(s, "Hexdump") != null)) return true;
+  if (
+    getCI(s, "Protection") != null &&
+    getCI(s, "PID") != null &&
+    (getCI(s, "Tag") != null || getCI(s, "Disasm") != null || getCI(s, "Hexdump") != null)
+  )
+    return true;
   return false;
 }
 // A combined Volatility export `{ "windows.pslist.PsList": [rows], … }` — every value an array, a
@@ -271,9 +386,11 @@ function isVolatility(s: Row): boolean {
 function isVolatilityMap(root: unknown): boolean {
   if (!isObject(root) || Array.isArray(root)) return false;
   const entries = Object.entries(root);
-  return entries.length > 0 &&
+  return (
+    entries.length > 0 &&
     entries.every(([, v]) => Array.isArray(v)) &&
-    entries.some(([k]) => /^(windows|linux|mac)\.[a-z]/.test(k));
+    entries.some(([k]) => /^(windows|linux|mac)\.[a-z]/.test(k))
+  );
 }
 
 // TheHive 5 case/alert export: a record with `_type: "case"` or `_type: "alert"`, OR an array
@@ -286,7 +403,13 @@ function looksLikeTheHive(s: Row, root: unknown): boolean {
   // Observable array: every record has `dataType` + `data` (and no `_type` on the wrapper itself)
   if (Array.isArray(root)) {
     const first = root.find(isObject);
-    if (first && getCI(first, "dataType") != null && getCI(first, "data") != null && getCI(first, "_source") == null) return true;
+    if (
+      first &&
+      getCI(first, "dataType") != null &&
+      getCI(first, "data") != null &&
+      getCI(first, "_source") == null
+    )
+      return true;
   }
   return false;
 }
@@ -330,8 +453,10 @@ function m365CsvSig(h: Set<string>): boolean {
   return h.has("auditdata") || (h.has("operations") && h.has("recordtype"));
 }
 function plasoSig(h: Set<string>): boolean {
-  return (h.has("datetime") && h.has("message")) ||
-    (h.has("date") && h.has("time") && h.has("timezone") && (h.has("desc") || h.has("short")));
+  return (
+    (h.has("datetime") && h.has("message")) ||
+    (h.has("date") && h.has("time") && h.has("timezone") && (h.has("desc") || h.has("short")))
+  );
 }
 function hayabusaCsvSig(h: Set<string>): boolean {
   return (h.has("ruletitle") || h.has("rule title")) && h.has("level");
@@ -346,34 +471,57 @@ function memprocfsTimelineCsvSig(h: Set<string>): boolean {
 }
 function memprocfsFindevilCsvSig(h: Set<string>): boolean {
   // findevil.csv: PID,ProcessName,Type,Address,Description — MemProcFS finding report as CSV.
-  return h.has("pid") && h.has("processname") && h.has("type") && h.has("address") && h.has("description")
-    && !h.has("matchindex"); // guard against YARA CSV which also has these columns
+  return (
+    h.has("pid") &&
+    h.has("processname") &&
+    h.has("type") &&
+    h.has("address") &&
+    h.has("description") &&
+    !h.has("matchindex")
+  ); // guard against YARA CSV which also has these columns
 }
 function memprocfsYaraCsvSig(h: Set<string>): boolean {
   // yara.csv: MatchIndex,…,MemoryType,MemoryTag,MemoryBaseAddress,…,ProcessName,…
-  return h.has("matchindex") && h.has("memorytype") && h.has("memorytag") && h.has("processname") && h.has("memorybaseaddress");
+  return (
+    h.has("matchindex") &&
+    h.has("memorytype") &&
+    h.has("memorytag") &&
+    h.has("processname") &&
+    h.has("memorybaseaddress")
+  );
 }
 // Velociraptor/DetectRaptor data exported from Elastic Discover as CSV: dotted columns + `.keyword`
 // multi-fields, the artifact in `_index`/`_Source`/`Artifact`. Requires an Elastic marker AND a
 // Velociraptor-specific column so an arbitrary Elastic CSV (e.g. MemProcFS mp_timeline) isn't claimed.
 function velociraptorElasticCsvSig(h: Set<string>): boolean {
   const elastic = h.has("_index") || h.has("_source") || h.has("_source.keyword");
-  const velo = h.has("artifact") || h.has("artifact.keyword") ||
-    h.has("detection.name") || h.has("detection.name.keyword") || h.has("detection.stringhit");
+  const velo =
+    h.has("artifact") ||
+    h.has("artifact.keyword") ||
+    h.has("detection.name") ||
+    h.has("detection.name.keyword") ||
+    h.has("detection.stringhit");
   return elastic && velo;
 }
 function kapeSig(h: Set<string>): boolean {
-  return has(h, "executablename", "runcount") || has(h, "fullpath", "sha1") || has(h, "fullpath", "filekeylastwritetimestamp") ||
+  return (
+    has(h, "executablename", "runcount") ||
+    has(h, "fullpath", "sha1") ||
+    has(h, "fullpath", "filekeylastwritetimestamp") ||
     // ShimCache: require the executed/cacheentryposition discriminator the real ShimCache PROFILE
     // match in kapeImport.ts needs. Without it, a generic CSV with just path + lastmodifiedtimeutc
     // (common column names) was claimed as KAPE, dispatched to parseKapeCsv, found NO matching
     // profile, and returned 0 events — silently dropping every row. It never reached the AI CSV
     // analyzer (the `csv` fallback) because `kape` is a "confident" deterministic kind (#28).
-    (h.has("path") && h.has("lastmodifiedtimeutc") && (h.has("executed") || h.has("cacheentryposition"))) || has(h, "updatereasons", "updatetimestamp") ||
+    (h.has("path") && h.has("lastmodifiedtimeutc") && (h.has("executed") || h.has("cacheentryposition"))) ||
+    has(h, "updatereasons", "updatetimestamp") ||
     (has(h, "parentpath", "filename") && (h.has("created0x10") || h.has("lastmodified0x10"))) ||
-    has(h, "bytessent", "bytesreceived") || has(h, "deletedon", "filename") ||
+    has(h, "bytessent", "bytesreceived") ||
+    has(h, "deletedon", "filename") ||
     (h.has("absolutepath") && (h.has("lastinteracted") || h.has("firstinteracted"))) ||
-    has(h, "targetcreated", "arguments") || (h.has("appid") && h.has("path") && h.has("targetcreated"));
+    has(h, "targetcreated", "arguments") ||
+    (h.has("appid") && h.has("path") && h.has("targetcreated"))
+  );
 }
 
 function detectCsv(text: string): ImportKind {
@@ -398,15 +546,20 @@ function detectCsv(text: string): ImportKind {
 
 // Header names that are essentially email-only as a line-start — they never lead a line in a
 // CSV/syslog/generic log, so one is enough to claim an .eml ahead of the generic log fallback.
-const EMAIL_SPECIFIC = /^(message-id|mime-version|dkim-signature|authentication-results|return-path|delivered-to|x-originating-ip|received-spf):/i;
+const EMAIL_SPECIFIC =
+  /^(message-id|mime-version|dkim-signature|authentication-results|return-path|delivered-to|x-originating-ip|received-spf):/i;
 // A header-shaped line ("Name: value" — printable name, no spaces).
 const HEADER_LINE = /^[\x21-\x39\x3b-\x7e]+:(\s|$)/;
 
 // A `.msg` file forced through UTF-8 text decoding keeps its MAPI stream-name markers as ASCII;
 // the filename is a strong secondary hint (its binary body sniffs as nothing else).
 function looksLikeMsg(filename: string, text: string): boolean {
-  return /\.msg$/i.test(filename) ||
-    text.includes("__substg1.0_") || text.includes("__properties_version1.0") || text.includes("__nameid_version1.0");
+  return (
+    /\.msg$/i.test(filename) ||
+    text.includes("__substg1.0_") ||
+    text.includes("__properties_version1.0") ||
+    text.includes("__nameid_version1.0")
+  );
 }
 
 // An .eml is a leading RFC 822 header block: ≥2 header-shaped lines including ≥1 email-only header.
@@ -416,8 +569,11 @@ function isEmail(filename: string, text: string): boolean {
   let headers = 0;
   let hasSpecific = false;
   for (const line of head) {
-    if (line.trim() === "") { if (headers > 0) break; else continue; } // blank ends the header block
-    if (/^[ \t]/.test(line)) continue;                                 // folded continuation
+    if (line.trim() === "") {
+      if (headers > 0) break;
+      else continue;
+    } // blank ends the header block
+    if (/^[ \t]/.test(line)) continue; // folded continuation
     if (HEADER_LINE.test(line)) {
       headers++;
       if (EMAIL_SPECIFIC.test(line)) hasSpecific = true;
@@ -432,7 +588,8 @@ function isEmail(filename: string, text: string): boolean {
 // content signature, so they sniff as the generic SIEM fallback. When the FILENAME marks a
 // Velociraptor export we route those to the Velociraptor importer instead — it reads each
 // artifact's own columns and tags the source, rather than mislabeling rows "SIEM event:".
-const VR_ARTIFACT = /\b(?:Windows|Linux|MacOS|Generic|Custom|Server|Exchange|Admin|Network)\.[A-Za-z]\w*(?:\.\w+)+/;
+const VR_ARTIFACT =
+  /\b(?:Windows|Linux|MacOS|Generic|Custom|Server|Exchange|Admin|Network)\.[A-Za-z]\w*(?:\.\w+)+/;
 function looksLikeVelociraptorFile(filename: string): boolean {
   const n = filename ?? "";
   return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
@@ -551,17 +708,24 @@ export function buildDetectContext(filename: string, text: string): DetectContex
   let sample: Row | null = null;
   if (t[0] === "{" || t[0] === "[") {
     const s = jsonSample(t);
-    root = s.root; sample = s.sample;
+    root = s.root;
+    sample = s.sample;
   } else {
     const firstLine = t.split(/\r\n|\r|\n/, 1)[0]?.trim() ?? "";
-    if (firstLine[0] === "{") { const s = jsonSample(t); root = s.root; sample = s.sample; }
+    if (firstLine[0] === "{") {
+      const s = jsonSample(t);
+      root = s.root;
+      sample = s.sample;
+    }
   }
   let csvHeaders: Set<string> | null = null;
   if (!sample) {
     try {
       const { headers } = parseCsv(t);
       if (headers.length) csvHeaders = new Set(headers.map((h) => h.trim().toLowerCase()));
-    } catch { /* not CSV */ }
+    } catch {
+      /* not CSV */
+    }
   }
   return { filename, text: t, root, sample, csvHeaders };
 }
@@ -591,7 +755,13 @@ export function detectImportWithCustom(
     if (importers.size === 0) return null;
     const ctx = buildDetectContext(filename, text);
     const ordered = [...importers.values()].sort((a, b) => a.priority - b.priority);
-    for (const imp of ordered) { try { if (imp.detect(ctx)) return imp.id; } catch { /* skip a throwing importer */ } }
+    for (const imp of ordered) {
+      try {
+        if (imp.detect(ctx)) return imp.id;
+      } catch {
+        /* skip a throwing importer */
+      }
+    }
     return null;
   };
 
@@ -599,6 +769,6 @@ export function detectImportWithCustom(
     return tryCustom() ?? detectImportKind(filename, text);
   }
   const { kind, confident } = detectImportKindEx(filename, text);
-  if (confident) return kind;            // a specific built-in wins
-  return tryCustom() ?? kind;            // else custom fills the gap, else the generic fallback
+  if (confident) return kind; // a specific built-in wins
+  return tryCustom() ?? kind; // else custom fills the gap, else the generic fallback
 }

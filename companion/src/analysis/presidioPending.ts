@@ -26,7 +26,10 @@ export class PresidioPendingStore {
   }
 
   async save(caseId: string, entities: CustomEntity[]): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify({ pending: sanitizeCustomEntities(entities) }, null, 2));
+    await atomicWrite(
+      this.path(caseId),
+      JSON.stringify({ pending: sanitizeCustomEntities(entities) }, null, 2),
+    );
   }
 
   async clear(caseId: string): Promise<void> {

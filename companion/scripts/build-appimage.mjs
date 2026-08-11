@@ -21,19 +21,24 @@ const OUT_FILE = join(OUT_DIR, "DFIR-Companion-x86_64.AppImage");
 const APPIMAGETOOL = join(BUILD_DIR, "appimagetool-x86_64.AppImage");
 // "continuous" is appimagetool's rolling latest — there is no stable release tag to pin to
 // (this is what AppImage's own docs recommend for CI).
-const APPIMAGETOOL_URL = "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage";
+const APPIMAGETOOL_URL =
+  "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage";
 
 function run(cmd, args, opts = {}) {
   return new Promise((res, rej) => {
     const child = spawn(cmd, args, { stdio: "inherit", ...opts });
     child.on("error", rej);
-    child.on("exit", (code) => (code === 0 ? res(undefined) : rej(new Error(`${cmd} ${args.join(" ")} exited with ${code}`))));
+    child.on("exit", (code) =>
+      code === 0 ? res(undefined) : rej(new Error(`${cmd} ${args.join(" ")} exited with ${code}`)),
+    );
   });
 }
 
 async function main() {
   if (platform() !== "linux") {
-    throw new Error(`AppImage builds run on Linux only (this is ${platform()}-${arch()}). Use CI or a Linux box.`);
+    throw new Error(
+      `AppImage builds run on Linux only (this is ${platform()}-${arch()}). Use CI or a Linux box.`,
+    );
   }
   // 1. Ensure the Linux SEA exists.
   if (!existsSync(join(DIST_SEA, "dfir-companion"))) {
@@ -51,10 +56,20 @@ async function main() {
   await copyFile(icon, join(APPDIR, "dfir-companion.png"));
   await copyFile(icon, join(APPDIR, ".DirIcon"));
 
-  await writeFile(join(APPDIR, "dfir-companion.desktop"),
-    ["[Desktop Entry]", "Type=Application", "Name=DFIR Companion",
-     "Exec=dfir-companion", "Icon=dfir-companion", "Categories=Utility;Security;",
-     "Terminal=true", "Comment=Post-detection DFIR analysis companion", ""].join("\n"));
+  await writeFile(
+    join(APPDIR, "dfir-companion.desktop"),
+    [
+      "[Desktop Entry]",
+      "Type=Application",
+      "Name=DFIR Companion",
+      "Exec=dfir-companion",
+      "Icon=dfir-companion",
+      "Categories=Utility;Security;",
+      "Terminal=true",
+      "Comment=Post-detection DFIR analysis companion",
+      "",
+    ].join("\n"),
+  );
 
   const appRun = [
     "#!/bin/sh",
@@ -80,10 +95,16 @@ async function main() {
 
   // 4. Build the AppImage (extract-and-run avoids the FUSE requirement on CI runners).
   await mkdir(OUT_DIR, { recursive: true });
-  await run(APPIMAGETOOL, ["--appimage-extract-and-run", APPDIR, OUT_FILE], { cwd: BUILD_DIR, env: { ...process.env, ARCH: "x86_64" } });
+  await run(APPIMAGETOOL, ["--appimage-extract-and-run", APPDIR, OUT_FILE], {
+    cwd: BUILD_DIR,
+    env: { ...process.env, ARCH: "x86_64" },
+  });
 
   const s = await stat(OUT_FILE);
   console.log(`[appimage] done → ${OUT_FILE} (${(s.size / (1024 * 1024)).toFixed(1)} MiB)`);
 }
 
-main().catch((err) => { console.error("[appimage] FAILED:", err.message ?? err); process.exit(1); });
+main().catch((err) => {
+  console.error("[appimage] FAILED:", err.message ?? err);
+  process.exit(1);
+});

@@ -19,11 +19,11 @@ function arg(name: string): string | undefined {
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : undefined;
 }
 
-const caseId     = arg("case-id") ?? DEMO_CASE_ID_DEFAULT;
-const force      = process.argv.includes("--force");
+const caseId = arg("case-id") ?? DEMO_CASE_ID_DEFAULT;
+const force = process.argv.includes("--force");
 const companionDir = fileURLToPath(new URL("../", import.meta.url));
-const rawRoot    = process.env.DFIR_CASES_ROOT ?? "cases";
-const casesRoot  = isAbsolute(rawRoot) ? rawRoot : resolve(companionDir, rawRoot);
+const rawRoot = process.env.DFIR_CASES_ROOT ?? "cases";
+const casesRoot = isAbsolute(rawRoot) ? rawRoot : resolve(companionDir, rawRoot);
 
 seedDemoCase(casesRoot, { caseId, force })
   .then(({ caseId: id, caseDir, stats }) => {
@@ -45,4 +45,3 @@ seedDemoCase(casesRoot, { caseId, force })
     }
     process.exit(1);
   });
-

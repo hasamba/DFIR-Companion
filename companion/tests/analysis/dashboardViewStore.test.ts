@@ -39,7 +39,10 @@ describe("DashboardViewStore", () => {
 
   describe("save()", () => {
     it("assigns an id to a new custom view and drops invalid section ids", async () => {
-      const saved = await store.save({ name: "Triage-ish", sections: ["sec-findings", "not-a-section", "sec-iocs"] });
+      const saved = await store.save({
+        name: "Triage-ish",
+        sections: ["sec-findings", "not-a-section", "sec-iocs"],
+      });
       expect(saved.id).toBeTruthy();
       expect(saved.builtIn).toBe(false);
       expect(saved.sections).toEqual(["sec-findings", "sec-iocs"]); // bogus id filtered out

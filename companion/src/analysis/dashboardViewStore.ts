@@ -3,11 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { storeFilePath } from "../storage/safeStoreId.js";
-import {
-  BUILT_IN_DASHBOARD_VIEWS,
-  normalizeDashboardView,
-  type DashboardView,
-} from "./dashboardViews.js";
+import { BUILT_IN_DASHBOARD_VIEWS, normalizeDashboardView, type DashboardView } from "./dashboardViews.js";
 
 // Persistence for dashboard view presets (#142). Views are GLOBAL — shared across cases, like report
 // templates / case templates / triage bundles — so an analyst authors a custom layout once and uses it
@@ -77,9 +73,11 @@ export class DashboardViewStore {
     const out: StoredDashboardView[] = [];
     for (const v of BUILT_IN_DASHBOARD_VIEWS) {
       const override = saved.get(v.id);
-      out.push(override
-        ? { ...override, id: v.id, builtIn: true, customized: true }
-        : { ...v, builtIn: true, customized: false });
+      out.push(
+        override
+          ? { ...override, id: v.id, builtIn: true, customized: true }
+          : { ...v, builtIn: true, customized: false },
+      );
     }
     for (const [id, v] of saved) {
       if (this.isBuiltIn(id)) continue; // already merged above as an override

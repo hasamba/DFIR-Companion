@@ -3,7 +3,12 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { SynthMetaStore, buildSynthesisCoverage, coverageLabel, modelPerfLabel } from "../../src/analysis/synthMeta.js";
+import {
+  SynthMetaStore,
+  buildSynthesisCoverage,
+  coverageLabel,
+  modelPerfLabel,
+} from "../../src/analysis/synthMeta.js";
 import type { FindingsDiff } from "../../src/analysis/findingsDiff.js";
 
 const DIFF: FindingsDiff = {
@@ -60,8 +65,20 @@ describe("SynthMetaStore", () => {
   });
 
   it("stores and loads a synthesis-coverage snapshot", async () => {
-    const coverage = buildSynthesisCoverage({ totalEvents: 412, inWindow: 412, scoped: 407, considered: 287, omittedHighSeverity: 8, promptTokensEstimate: 61000 });
-    await store.record("c1", DIFF, "2026-07-14T10:00:00.000Z", { durationMs: 1, eventCount: 287, iocCount: 3, coverage });
+    const coverage = buildSynthesisCoverage({
+      totalEvents: 412,
+      inWindow: 412,
+      scoped: 407,
+      considered: 287,
+      omittedHighSeverity: 8,
+      promptTokensEstimate: 61000,
+    });
+    await store.record("c1", DIFF, "2026-07-14T10:00:00.000Z", {
+      durationMs: 1,
+      eventCount: 287,
+      iocCount: 3,
+      coverage,
+    });
     const meta = await store.load("c1");
     expect(meta.coverage).toEqual(coverage);
   });
@@ -69,7 +86,9 @@ describe("SynthMetaStore", () => {
   // Per-model quality telemetry (issue #74).
   it("stores and loads per-model quality fields", async () => {
     await store.record("c1", DIFF, "2026-07-18T10:00:00.000Z", {
-      durationMs: 1, eventCount: 287, iocCount: 3,
+      durationMs: 1,
+      eventCount: 287,
+      iocCount: 3,
       synthModel: "anthropic/claude-sonnet-5",
       findingsCount: 12,
       highSeverityBackfillCount: 2,
@@ -93,8 +112,20 @@ describe("SynthMetaStore", () => {
   });
 
   it("records a second-opinion agreement snapshot without disturbing the rest of the meta", async () => {
-    await store.record("c1", DIFF, "2026-07-18T10:00:00.000Z", { durationMs: 1, eventCount: 287, iocCount: 3, synthModel: "anthropic/claude-sonnet-5" });
-    const perf = { modelA: "anthropic/claude-sonnet-5", modelB: "openai/gpt-5", agreementCount: 8, deltaCount: 2, agreementRate: 0.8, at: "2026-07-18T10:05:00.000Z" };
+    await store.record("c1", DIFF, "2026-07-18T10:00:00.000Z", {
+      durationMs: 1,
+      eventCount: 287,
+      iocCount: 3,
+      synthModel: "anthropic/claude-sonnet-5",
+    });
+    const perf = {
+      modelA: "anthropic/claude-sonnet-5",
+      modelB: "openai/gpt-5",
+      agreementCount: 8,
+      deltaCount: 2,
+      agreementRate: 0.8,
+      at: "2026-07-18T10:05:00.000Z",
+    };
     await store.recordSecondOpinionPerf("c1", perf);
     const meta = await store.load("c1");
     expect(meta.secondOpinionPerf).toEqual(perf);
@@ -102,7 +133,14 @@ describe("SynthMetaStore", () => {
   });
 
   it("clears the second-opinion snapshot with null", async () => {
-    const perf = { modelA: "a", modelB: "b", agreementCount: 1, deltaCount: 1, agreementRate: 0.5, at: "2026-07-18T10:05:00.000Z" };
+    const perf = {
+      modelA: "a",
+      modelB: "b",
+      agreementCount: 1,
+      deltaCount: 1,
+      agreementRate: 0.5,
+      at: "2026-07-18T10:05:00.000Z",
+    };
     await store.recordSecondOpinionPerf("c1", perf);
     await store.recordSecondOpinionPerf("c1", null);
     const meta = await store.load("c1");
@@ -110,7 +148,14 @@ describe("SynthMetaStore", () => {
   });
 
   it("a plain record() wipes a previously-recorded second-opinion snapshot (same posture as secondLook)", async () => {
-    const perf = { modelA: "a", modelB: "b", agreementCount: 1, deltaCount: 1, agreementRate: 0.5, at: "2026-07-18T10:05:00.000Z" };
+    const perf = {
+      modelA: "a",
+      modelB: "b",
+      agreementCount: 1,
+      deltaCount: 1,
+      agreementRate: 0.5,
+      at: "2026-07-18T10:05:00.000Z",
+    };
     await store.recordSecondOpinionPerf("c1", perf);
     await store.record("c1", DIFF, "2026-07-18T11:00:00.000Z", { durationMs: 1, eventCount: 1, iocCount: 0 });
     const meta = await store.load("c1");
@@ -124,7 +169,12 @@ describe("modelPerfLabel", () => {
   });
 
   it("describes the synthesis model, findings, and backfill/retry counts", () => {
-    const label = modelPerfLabel({ synthModel: "anthropic/claude-sonnet-5", findingsCount: 12, highSeverityBackfillCount: 2, parseRetries: 1 });
+    const label = modelPerfLabel({
+      synthModel: "anthropic/claude-sonnet-5",
+      findingsCount: 12,
+      highSeverityBackfillCount: 2,
+      parseRetries: 1,
+    });
     expect(label).toMatch(/anthropic\/claude-sonnet-5/);
     expect(label).toMatch(/12 finding/);
     expect(label).toMatch(/2 recovered by the high-severity safety net/);
@@ -132,14 +182,26 @@ describe("modelPerfLabel", () => {
   });
 
   it("omits the backfill/retry clauses when zero", () => {
-    const label = modelPerfLabel({ synthModel: "anthropic/claude-sonnet-5", findingsCount: 12, highSeverityBackfillCount: 0, parseRetries: 0 });
+    const label = modelPerfLabel({
+      synthModel: "anthropic/claude-sonnet-5",
+      findingsCount: 12,
+      highSeverityBackfillCount: 0,
+      parseRetries: 0,
+    });
     expect(label).not.toMatch(/safety net/);
     expect(label).not.toMatch(/retry/);
   });
 
   it("adds a second-opinion agreement clause", () => {
     const label = modelPerfLabel({
-      secondOpinionPerf: { modelA: "anthropic/claude-sonnet-5", modelB: "openai/gpt-5", agreementCount: 8, deltaCount: 2, agreementRate: 0.8, at: "2026-07-18T10:05:00.000Z" },
+      secondOpinionPerf: {
+        modelA: "anthropic/claude-sonnet-5",
+        modelB: "openai/gpt-5",
+        agreementCount: 8,
+        deltaCount: 2,
+        agreementRate: 0.8,
+        at: "2026-07-18T10:05:00.000Z",
+      },
     });
     expect(label).toMatch(/openai\/gpt-5/);
     expect(label).toMatch(/anthropic\/claude-sonnet-5/);
@@ -151,18 +213,32 @@ describe("modelPerfLabel", () => {
 
 describe("buildSynthesisCoverage", () => {
   it("splits omissions into scope / legitimate / budget and clamps to non-negative", () => {
-    const c = buildSynthesisCoverage({ totalEvents: 500, inWindow: 412, scoped: 407, considered: 287, omittedHighSeverity: 8, promptTokensEstimate: 61000 });
+    const c = buildSynthesisCoverage({
+      totalEvents: 500,
+      inWindow: 412,
+      scoped: 407,
+      considered: 287,
+      omittedHighSeverity: 8,
+      promptTokensEstimate: 61000,
+    });
     expect(c.inWindow).toBe(412);
     expect(c.considered).toBe(287);
-    expect(c.omittedScope).toBe(88);         // 500 - 412
-    expect(c.omittedLegitimate).toBe(5);     // 412 - 407
-    expect(c.omittedBudget).toBe(120);       // 407 - 287
+    expect(c.omittedScope).toBe(88); // 500 - 412
+    expect(c.omittedLegitimate).toBe(5); // 412 - 407
+    expect(c.omittedBudget).toBe(120); // 407 - 287
     expect(c.omittedHighSeverity).toBe(8);
     expect(c.promptTokensEstimate).toBe(61000);
   });
 
   it("never goes negative when everything fit", () => {
-    const c = buildSynthesisCoverage({ totalEvents: 10, inWindow: 10, scoped: 10, considered: 10, omittedHighSeverity: 0, promptTokensEstimate: 500 });
+    const c = buildSynthesisCoverage({
+      totalEvents: 10,
+      inWindow: 10,
+      scoped: 10,
+      considered: 10,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 500,
+    });
     expect(c.omittedScope).toBe(0);
     expect(c.omittedLegitimate).toBe(0);
     expect(c.omittedBudget).toBe(0);
@@ -171,7 +247,16 @@ describe("buildSynthesisCoverage", () => {
 
 describe("coverageLabel", () => {
   it("reads 'considered N of M' and breaks omissions down", () => {
-    const label = coverageLabel(buildSynthesisCoverage({ totalEvents: 412, inWindow: 412, scoped: 407, considered: 287, omittedHighSeverity: 8, promptTokensEstimate: 61000 }));
+    const label = coverageLabel(
+      buildSynthesisCoverage({
+        totalEvents: 412,
+        inWindow: 412,
+        scoped: 407,
+        considered: 287,
+        omittedHighSeverity: 8,
+        promptTokensEstimate: 61000,
+      }),
+    );
     expect(label).toMatch(/considered 287 of 412/i);
     expect(label).toMatch(/120 size/i);
     expect(label).toMatch(/5 filtered/i);
@@ -179,7 +264,16 @@ describe("coverageLabel", () => {
   });
 
   it("omits the breakdown when nothing was left out", () => {
-    const label = coverageLabel(buildSynthesisCoverage({ totalEvents: 10, inWindow: 10, scoped: 10, considered: 10, omittedHighSeverity: 0, promptTokensEstimate: 500 }));
+    const label = coverageLabel(
+      buildSynthesisCoverage({
+        totalEvents: 10,
+        inWindow: 10,
+        scoped: 10,
+        considered: 10,
+        omittedHighSeverity: 0,
+        promptTokensEstimate: 500,
+      }),
+    );
     expect(label).toMatch(/considered 10 of 10/i);
     expect(label).not.toMatch(/omitted/i);
   });
@@ -221,7 +315,7 @@ describe("coverage with grouped detections", () => {
       promptTokensEstimate: 49_000,
     });
     expect(c.omittedInfo).toBe(213);
-    expect(c.omittedBudget).toBe(0);            // nothing was lost to the cap
+    expect(c.omittedBudget).toBe(0); // nothing was lost to the cap
     const label = coverageLabel(c);
     expect(label).toContain("213 Info");
     expect(label).not.toContain("size limit");
@@ -238,7 +332,7 @@ describe("coverage with grouped detections", () => {
       promptTokensEstimate: 49_000,
     });
     expect(c.omittedInfo).toBe(213);
-    expect(c.omittedBudget).toBe(89);           // 1302 - 1000 - 213
+    expect(c.omittedBudget).toBe(89); // 1302 - 1000 - 213
     expect(coverageLabel(c)).toContain("89 size limit");
   });
 

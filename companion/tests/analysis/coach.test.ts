@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import type { InvestigationState, Finding, IOC, ForensicEvent, InvestigationQuestion, NextStep } from "../../src/analysis/stateTypes.js";
+import type {
+  InvestigationState,
+  Finding,
+  IOC,
+  ForensicEvent,
+  InvestigationQuestion,
+  NextStep,
+} from "../../src/analysis/stateTypes.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { PlaybookTask } from "../../src/analysis/playbook.js";
 import type { EnrichmentProvider } from "../../src/enrichment/provider.js";
@@ -185,7 +192,10 @@ describe("recommendNextActions — next-step progress", () => {
   });
 
   it("drops the card once every next-step task is done or skipped", () => {
-    const state = makeState({ forensicTimeline: [event()], nextSteps: [nextStep({ id: "s1" }), nextStep({ id: "s2" })] });
+    const state = makeState({
+      forensicTimeline: [event()],
+      nextSteps: [nextStep({ id: "s1" }), nextStep({ id: "s2" })],
+    });
     const recs = recommendNextActions(state, {
       playbookTasks: [
         task({ id: "next_step:s1", status: "done" }),
@@ -214,10 +224,12 @@ describe("recommendNextActions — next-step progress", () => {
       forensicTimeline: [event()],
       nextSteps: [nextStep({ id: "s1" }), nextStep({ id: "s2", staleReSynth: true })],
     });
-    expect(recommendNextActions(state).find((r) => r.id === "run-next-steps")?.action)
-      .toBe("Run 2 recommended next steps");
-    expect(recommendNextActions(state, { playbookTasks: [] }).find((r) => r.id === "run-next-steps")?.action)
-      .toBe("Run 2 recommended next steps");
+    expect(recommendNextActions(state).find((r) => r.id === "run-next-steps")?.action).toBe(
+      "Run 2 recommended next steps",
+    );
+    expect(
+      recommendNextActions(state, { playbookTasks: [] }).find((r) => r.id === "run-next-steps")?.action,
+    ).toBe("Run 2 recommended next steps");
   });
 });
 
@@ -261,17 +273,27 @@ describe("recommendNextActions — enrichment work comes from the engine", () =>
   it("does not chase an internal target the SSRF guard holds back", () => {
     const state = makeState({
       forensicTimeline: [event()],
-      iocs: [ioc({ id: "i1", type: "ip", value: "10.10.20.15" }), ioc({ id: "i2", type: "url", value: "http://169.254.169.254/latest/meta-data/" })],
+      iocs: [
+        ioc({ id: "i1", type: "ip", value: "10.10.20.15" }),
+        ioc({ id: "i2", type: "url", value: "http://169.254.169.254/latest/meta-data/" }),
+      ],
     });
     const pendingEnrichmentIocs = countEnrichableWork(state.iocs, providers);
     expect(pendingEnrichmentIocs).toBe(0);
-    expect(recommendNextActions(state, { pendingEnrichmentIocs }).some((r) => r.id === "enrich-iocs")).toBe(false);
+    expect(recommendNextActions(state, { pendingEnrichmentIocs }).some((r) => r.id === "enrich-iocs")).toBe(
+      false,
+    );
   });
 
   it("says nothing about enrichment when no providers are enabled", () => {
-    const state = makeState({ forensicTimeline: [event()], iocs: [ioc(), ioc({ id: "i2", type: "hash", value: "abc" })] });
+    const state = makeState({
+      forensicTimeline: [event()],
+      iocs: [ioc(), ioc({ id: "i2", type: "hash", value: "abc" })],
+    });
     const pendingEnrichmentIocs = countEnrichableWork(state.iocs, []);
     expect(pendingEnrichmentIocs).toBe(0);
-    expect(recommendNextActions(state, { pendingEnrichmentIocs }).some((r) => r.id === "enrich-iocs")).toBe(false);
+    expect(recommendNextActions(state, { pendingEnrichmentIocs }).some((r) => r.id === "enrich-iocs")).toBe(
+      false,
+    );
   });
 });

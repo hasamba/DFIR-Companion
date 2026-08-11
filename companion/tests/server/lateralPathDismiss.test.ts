@@ -17,7 +17,15 @@ let store: CaseStore;
 let stateStore: StateStore;
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { timestamp: "", description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    timestamp: "",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 
 // A case whose timeline yields one chain: WS-01 → WS-02, from a tool in a writable location
@@ -57,7 +65,9 @@ describe("lateral path dismissal", () => {
     expect(before.body).toHaveLength(1);
     const hostIds = before.body[0].hostIds as string[];
 
-    const dismissed = await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds, note: "backup job" });
+    const dismissed = await request(app)
+      .post("/cases/c1/lateral-path-dismissals")
+      .send({ hostIds, note: "backup job" });
     expect(dismissed.status).toBe(201);
 
     const after = await request(app).get("/cases/c1/lateral-paths");
@@ -68,7 +78,9 @@ describe("lateral path dismissal", () => {
     await seedCaseWithOneChain("c1");
     const app = appWith(new LateralPathDismissStore(store));
     const paths = await request(app).get("/cases/c1/lateral-paths");
-    await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds: paths.body[0].hostIds, note: "" });
+    await request(app)
+      .post("/cases/c1/lateral-path-dismissals")
+      .send({ hostIds: paths.body[0].hostIds, note: "" });
 
     // The events that produced the chain are still in the case timeline.
     const state = await stateStore.load("c1");
@@ -79,7 +91,9 @@ describe("lateral path dismissal", () => {
     await seedCaseWithOneChain("c1");
     const app = appWith(new LateralPathDismissStore(store));
     const paths = await request(app).get("/cases/c1/lateral-paths");
-    await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds: paths.body[0].hostIds, note: "backup job" });
+    await request(app)
+      .post("/cases/c1/lateral-path-dismissals")
+      .send({ hostIds: paths.body[0].hostIds, note: "backup job" });
 
     const review = await request(app).get("/cases/c1/lateral-paths?includeDismissed=1");
     expect(review.body).toHaveLength(1);
@@ -95,7 +109,9 @@ describe("lateral path dismissal", () => {
     await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds, note: "" });
     expect((await request(app).get("/cases/c1/lateral-paths")).body).toEqual([]);
 
-    const del = await request(app).delete(`/cases/c1/lateral-path-dismissals/${encodeURIComponent(lateralPathKey(hostIds))}`);
+    const del = await request(app).delete(
+      `/cases/c1/lateral-path-dismissals/${encodeURIComponent(lateralPathKey(hostIds))}`,
+    );
     expect(del.status).toBe(204);
     expect((await request(app).get("/cases/c1/lateral-paths")).body).toHaveLength(1);
   });
@@ -105,7 +121,9 @@ describe("lateral path dismissal", () => {
     const dismissStore = new LateralPathDismissStore(store);
     const app = appWith(dismissStore);
     const paths = await request(app).get("/cases/c1/lateral-paths");
-    await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds: paths.body[0].hostIds, note: "" });
+    await request(app)
+      .post("/cases/c1/lateral-path-dismissals")
+      .send({ hostIds: paths.body[0].hostIds, note: "" });
 
     // A brand-new app instance (fresh stores, nothing cached) must honour the persisted dismissal.
     const reopened = appWith(new LateralPathDismissStore(store));
@@ -115,14 +133,18 @@ describe("lateral path dismissal", () => {
   it("lists dismissals and rejects a route that is not a chain", async () => {
     await seedCaseWithOneChain("c1");
     const app = appWith(new LateralPathDismissStore(store));
-    await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds: ["host:ws-01", "host:ws-02"], note: "n" });
+    await request(app)
+      .post("/cases/c1/lateral-path-dismissals")
+      .send({ hostIds: ["host:ws-01", "host:ws-02"], note: "n" });
 
     const list = await request(app).get("/cases/c1/lateral-path-dismissals");
     expect(list.status).toBe(200);
     expect(list.body).toHaveLength(1);
     expect(list.body[0].hostIds).toEqual(["host:ws-01", "host:ws-02"]);
 
-    const bad = await request(app).post("/cases/c1/lateral-path-dismissals").send({ hostIds: ["host:only-one"], note: "" });
+    const bad = await request(app)
+      .post("/cases/c1/lateral-path-dismissals")
+      .send({ hostIds: ["host:only-one"], note: "" });
     expect(bad.status).toBe(400);
   });
 

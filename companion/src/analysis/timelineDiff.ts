@@ -14,26 +14,34 @@ export interface DiffEvent {
 }
 
 export interface TimelineDiff {
-  added: DiffEvent[];     // events present after, not before (what the import brought in)
-  removed: DiffEvent[];   // events present before, not after (absorbed by correlation — rare)
+  added: DiffEvent[]; // events present after, not before (what the import brought in)
+  removed: DiffEvent[]; // events present before, not after (absorbed by correlation — rare)
 }
 
-const norm = (s: string): string => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-const keyOf = (e: { timestamp: string; description: string }): string => `${norm(e.timestamp)}|${norm(e.description)}`;
+const norm = (s: string): string =>
+  String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+const keyOf = (e: { timestamp: string; description: string }): string =>
+  `${norm(e.timestamp)}|${norm(e.description)}`;
 
 // First occurrence of each normalized key wins (keeps its displayed time/description/severity).
 function byKey(events: readonly ForensicEvent[]): Map<string, DiffEvent> {
   const map = new Map<string, DiffEvent>();
   for (const e of events) {
     const key = keyOf(e);
-    if (key === "|" || map.has(key)) continue;   // skip fully-empty rows; first occurrence wins
+    if (key === "|" || map.has(key)) continue; // skip fully-empty rows; first occurrence wins
     map.set(key, { timestamp: e.timestamp, description: e.description, severity: e.severity });
   }
   return map;
 }
 
 // Compute added / removed timeline events from `before` -> `after`.
-export function diffTimeline(before: readonly ForensicEvent[], after: readonly ForensicEvent[]): TimelineDiff {
+export function diffTimeline(
+  before: readonly ForensicEvent[],
+  after: readonly ForensicEvent[],
+): TimelineDiff {
   const a = byKey(before);
   const b = byKey(after);
   const added: DiffEvent[] = [];
@@ -60,7 +68,10 @@ export function addedForensicEvents(after: readonly ForensicEvent[], diff: Timel
   const out: ForensicEvent[] = [];
   for (const e of after) {
     const key = keyOf(e);
-    if (wanted.has(key) && !seen.has(key)) { seen.add(key); out.push(e); }
+    if (wanted.has(key) && !seen.has(key)) {
+      seen.add(key);
+      out.push(e);
+    }
   }
   return out;
 }

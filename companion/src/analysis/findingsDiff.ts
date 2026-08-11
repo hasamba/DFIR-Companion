@@ -12,9 +12,9 @@ export interface SeverityChange {
 }
 
 export interface FindingsDiff {
-  added: string[];                    // titles present after, not before
-  removed: string[];                  // titles present before, not after
-  severityChanged: SeverityChange[];  // same title, different severity
+  added: string[]; // titles present after, not before
+  removed: string[]; // titles present before, not after
+  severityChanged: SeverityChange[]; // same title, different severity
 }
 
 const norm = (title: string): string => String(title).trim().toLowerCase().replace(/\s+/g, " ");
@@ -41,7 +41,8 @@ export function diffFindings(before: readonly Finding[], after: readonly Finding
   for (const [key, cur] of b) {
     const prev = a.get(key);
     if (!prev) added.push(cur.title);
-    else if (prev.severity !== cur.severity) severityChanged.push({ title: cur.title, from: prev.severity, to: cur.severity });
+    else if (prev.severity !== cur.severity)
+      severityChanged.push({ title: cur.title, from: prev.severity, to: cur.severity });
   }
   for (const [key, prev] of a) {
     if (!b.has(key)) removed.push(prev.title);

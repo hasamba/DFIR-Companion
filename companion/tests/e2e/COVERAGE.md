@@ -12,17 +12,17 @@ These live in the browser add-on, not the dashboard. A Playwright run against th
 reach them; covering them would need a second harness that launches Chromium with the unpacked
 extension loaded. They run in the `extension` CI job today.
 
-| Story | Covered by |
-| --- | --- |
-| US-010 capture toggle | `extension/tests/captureController.test.ts` |
-| US-162 adapter auto-detection | `extension/tests/adapters.test.ts` |
-| US-163 manual adapter override | `extension/tests/override.test.ts` |
-| US-164 right-click send | `extension/src/contextMenuCapture.ts` (no dedicated spec) |
-| US-165 offline capture queue | `extension/tests/captureQueue.test.ts`, `captureQueuePermanentFailure.test.ts` |
-| US-166 draggable button position | `extension/tests/buttonPosition.test.ts` |
-| US-167 case attach/detach | `extension/tests/companionClient.test.ts` |
-| US-168 companion URL normalisation | `extension/tests/settings.test.ts` |
-| US-169 toolbar badge and hotkey | `extension/tests/manifest.test.ts`, `settings.test.ts` |
+| Story                              | Covered by                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| US-010 capture toggle              | `extension/tests/captureController.test.ts`                                    |
+| US-162 adapter auto-detection      | `extension/tests/adapters.test.ts`                                             |
+| US-163 manual adapter override     | `extension/tests/override.test.ts`                                             |
+| US-164 right-click send            | `extension/src/contextMenuCapture.ts` (no dedicated spec)                      |
+| US-165 offline capture queue       | `extension/tests/captureQueue.test.ts`, `captureQueuePermanentFailure.test.ts` |
+| US-166 draggable button position   | `extension/tests/buttonPosition.test.ts`                                       |
+| US-167 case attach/detach          | `extension/tests/companionClient.test.ts`                                      |
+| US-168 companion URL normalisation | `extension/tests/settings.test.ts`                                             |
+| US-169 toolbar badge and hotkey    | `extension/tests/manifest.test.ts`, `settings.test.ts`                         |
 
 ## 2. Derivation algorithms — unit-level by nature
 
@@ -56,7 +56,7 @@ be mocking the product rather than standing in for a provider.
 
 Covering these means letting the suite reach a real service, which it must never do — a run that
 pushed case data to a live MISP because someone's environment happened to be configured would be a
-genuinely bad outcome. The refusal paths *are* covered.
+genuinely bad outcome. The refusal paths _are_ covered.
 
 - **US-219** MISP forensic-timeline payload — needs a MISP to send to.
 - **US-204** comment mention notifications — dispatching one sends a real message.

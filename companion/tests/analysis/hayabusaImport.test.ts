@@ -16,7 +16,8 @@ function jsonProc(): object {
       Proc: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       CmdLine: "powershell.exe -nop -w hidden -enc SQBFAFgA",
       ParentProc: "C:\\Program Files\\Microsoft Office\\winword.exe",
-      Hashes: "SHA256=aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899,MD5=00112233445566778899aabbccddeeff",
+      Hashes:
+        "SHA256=aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899,MD5=00112233445566778899aabbccddeeff",
     },
     ExtraFieldInfo: { TgtIP: "10.0.0.9", User: "CORP\\bob" },
   };
@@ -24,7 +25,16 @@ function jsonProc(): object {
 
 // ── Build a Hayabusa csv-timeline (quoted Details cell with " ¦ " field separators).
 function csvTimeline(rows: string[][]): string {
-  const header = ["Timestamp", "Computer", "Channel", "EventID", "Level", "RuleTitle", "Details", "MitreTags"];
+  const header = [
+    "Timestamp",
+    "Computer",
+    "Channel",
+    "EventID",
+    "Level",
+    "RuleTitle",
+    "Details",
+    "MitreTags",
+  ];
   const esc = (v: string): string => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   return [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
 }
@@ -49,7 +59,7 @@ describe("parseHayabusaTimeline — json-timeline", () => {
 
   it("extracts IOCs (hash, ip, process) from the detail + extra fields", () => {
     const r = parseHayabusaTimeline(JSON.stringify([jsonProc()]));
-    expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("10.0.0.9");      // from ExtraFieldInfo TgtIP
+    expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("10.0.0.9"); // from ExtraFieldInfo TgtIP
     expect(r.iocs.find((i) => i.type === "process")?.value).toBe("powershell.exe");
     expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
   });
@@ -67,10 +77,10 @@ describe("parseHayabusaTimeline — json-timeline", () => {
   // "0 records / unrecognized". See parseConcatenatedJson in siemImport.
   it("reads concatenated pretty-printed objects (json-timeline default output)", () => {
     const pretty = JSON.stringify(jsonProc(), null, 4);
-    const text = `${pretty}\n${pretty}\n`;   // two multi-line objects back to back, no commas/array
+    const text = `${pretty}\n${pretty}\n`; // two multi-line objects back to back, no commas/array
     const r = parseHayabusaTimeline(text);
     expect(r.total).toBe(2);
-    expect(r.events).toHaveLength(1);          // identical records aggregate
+    expect(r.events).toHaveLength(1); // identical records aggregate
     expect(r.events[0].count).toBe(2);
     expect(r.events[0].description).toContain("Hayabusa: PowerShell Download Cradle");
     expect(r.events[0].severity).toBe("High");
@@ -80,7 +90,16 @@ describe("parseHayabusaTimeline — json-timeline", () => {
 describe("parseHayabusaTimeline — csv-timeline", () => {
   it("parses the CSV header + the ' ¦ '-separated Details cell", () => {
     const text = csvTimeline([
-      ["2021-12-12 09:00:00.000 +00:00", "WS02", "Sec", "4625", "medium", "Failed Logon", "SubjectUser: admin ¦ SrcIP: 192.168.1.50 ¦ LogonType: 3", "t1110"],
+      [
+        "2021-12-12 09:00:00.000 +00:00",
+        "WS02",
+        "Sec",
+        "4625",
+        "medium",
+        "Failed Logon",
+        "SubjectUser: admin ¦ SrcIP: 192.168.1.50 ¦ LogonType: 3",
+        "t1110",
+      ],
     ]);
     const r = parseHayabusaTimeline(text);
     expect(r.format).toBe("csv");
@@ -95,7 +114,16 @@ describe("parseHayabusaTimeline — csv-timeline", () => {
   });
 
   it("aggregates identical rows into a counted row", () => {
-    const row = ["2021-12-12 09:00:00.000 +00:00", "WS02", "Sec", "4625", "medium", "Failed Logon", "SrcIP: 192.168.1.50", "t1110"];
+    const row = [
+      "2021-12-12 09:00:00.000 +00:00",
+      "WS02",
+      "Sec",
+      "4625",
+      "medium",
+      "Failed Logon",
+      "SrcIP: 192.168.1.50",
+      "t1110",
+    ];
     const r = parseHayabusaTimeline(csvTimeline([row, row]));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
@@ -105,7 +133,16 @@ describe("parseHayabusaTimeline — csv-timeline", () => {
     // A shell pipeline in a CmdLine value: `echo hello | grep foo`. The previous regex `[¦|]`
     // split on the ASCII pipe too, truncating the command line and dropping IOCs in the tail.
     const text = csvTimeline([
-      ["2021-12-12 09:00:00.000 +00:00", "WS02", "Sec", "1", "high", "Pipe Test", "Cmd: ls ¦ Args: echo hello | grep foo", "t1059"],
+      [
+        "2021-12-12 09:00:00.000 +00:00",
+        "WS02",
+        "Sec",
+        "1",
+        "high",
+        "Pipe Test",
+        "Cmd: ls ¦ Args: echo hello | grep foo",
+        "t1059",
+      ],
     ]);
     const r = parseHayabusaTimeline(text);
     expect(r.events).toHaveLength(1);
@@ -122,8 +159,26 @@ describe("parseHayabusaTimeline — Velociraptor Windows.Hayabusa.Rules variant"
 
   it("maps Title/EID/string-Details rows verdict-first (never 'SIEM event')", () => {
     const text = [
-      vrRow({ Timestamp: "2026-06-03T08:27:33.651497602Z", Computer: "WIN11.windomain.local", Channel: "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational", EID: 21, Level: "informational", Title: "RDP Logon", RecordID: 123, Details: "TgtUser: WIN11\\vagrant ¦ SessID: 1 ¦ SrcIP: LOCAL" }),
-      vrRow({ Timestamp: "2026-06-03T08:41:00.000000000Z", Computer: "WIN11.windomain.local", Channel: "Microsoft-Windows-Sysmon/Operational", EID: 3, Level: "medium", Title: "Net Conn (Sysmon Alert)", RecordID: 200, Details: "Proc: C:\\Windows\\System32\\cmd.exe ¦ DstIP: 45.77.12.34 ¦ DstPort: 4444" }),
+      vrRow({
+        Timestamp: "2026-06-03T08:27:33.651497602Z",
+        Computer: "WIN11.windomain.local",
+        Channel: "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+        EID: 21,
+        Level: "informational",
+        Title: "RDP Logon",
+        RecordID: 123,
+        Details: "TgtUser: WIN11\\vagrant ¦ SessID: 1 ¦ SrcIP: LOCAL",
+      }),
+      vrRow({
+        Timestamp: "2026-06-03T08:41:00.000000000Z",
+        Computer: "WIN11.windomain.local",
+        Channel: "Microsoft-Windows-Sysmon/Operational",
+        EID: 3,
+        Level: "medium",
+        Title: "Net Conn (Sysmon Alert)",
+        RecordID: 200,
+        Details: "Proc: C:\\Windows\\System32\\cmd.exe ¦ DstIP: 45.77.12.34 ¦ DstPort: 4444",
+      }),
     ].join("\n");
     const r = parseHayabusaTimeline(text);
     expect(r.format).toBe("json");
@@ -132,15 +187,15 @@ describe("parseHayabusaTimeline — Velociraptor Windows.Hayabusa.Rules variant"
 
     const rdp = r.events.find((e) => e.description.includes("RDP Logon"))!;
     expect(rdp.description).toContain("Hayabusa: RDP Logon");
-    expect(rdp.description).toContain("(EID 21");            // EID read despite the `EID` (not `EventID`) key
-    expect(rdp.severity).toBe("Info");                       // from Level
+    expect(rdp.description).toContain("(EID 21"); // EID read despite the `EID` (not `EventID`) key
+    expect(rdp.severity).toBe("Info"); // from Level
     expect(rdp.sources).toEqual(["Hayabusa"]);
     expect(rdp.asset).toBe("WIN11.windomain.local");
     expect(rdp.timestamp).toMatch(/^2026-06-03T08:27:33/);
 
     const net = r.events.find((e) => e.description.includes("Net Conn"))!;
     expect(net.severity).toBe("Medium");
-    expect(net.processName).toBe("cmd.exe");                 // parsed out of the string Details cell
+    expect(net.processName).toBe("cmd.exe"); // parsed out of the string Details cell
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("45.77.12.34");
   });
 });
@@ -149,7 +204,8 @@ describe("parseHayabusaTimeline — levels, floor & edges", () => {
   it("accepts both abbreviated and spelled-out levels", () => {
     const mk = (level: string): object => ({ ...jsonProc(), Level: level, RuleTitle: `R-${level}` });
     const r = parseHayabusaTimeline(JSON.stringify([mk("crit"), mk("med"), mk("informational")]));
-    const sev = (t: string): string | undefined => r.events.find((e) => e.description.includes(`R-${t}`))?.severity;
+    const sev = (t: string): string | undefined =>
+      r.events.find((e) => e.description.includes(`R-${t}`))?.severity;
     expect(sev("crit")).toBe("Critical");
     expect(sev("med")).toBe("Medium");
     expect(sev("informational")).toBe("Info");

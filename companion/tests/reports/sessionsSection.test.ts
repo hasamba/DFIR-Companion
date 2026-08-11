@@ -15,11 +15,13 @@ import {
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
-    id, timestamp,
+    id,
+    timestamp,
     description: extra.description ?? "",
     severity: extra.severity ?? "Info",
     mitreTechniques: extra.mitreTechniques ?? [],
-    relatedFindingIds: [], sourceScreenshots: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...extra,
   };
 }
@@ -35,7 +37,10 @@ function render(forensicTimeline: ForensicEvent[], template = sessionsOnly) {
   return renderMarkdownReport(
     { ...emptyState("c1"), forensicTimeline },
     emptyReportMeta(),
-    undefined, undefined, undefined, undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
     template,
   );
 }
@@ -68,7 +73,7 @@ describe("Attacker Sessions report section", () => {
   });
 
   it("never presents the unknown-host bucket as a machine name", () => {
-    const md = render([ev("e1", "2026-05-20T14:00:00Z")]);   // no asset
+    const md = render([ev("e1", "2026-05-20T14:00:00Z")]); // no asset
 
     expect(md).toContain("_(host not recorded)_");
     expect(md).not.toContain("(unknown host)");
@@ -94,7 +99,8 @@ describe("Attacker Sessions report section", () => {
 
   it("is omitted entirely when the template disables it", () => {
     const off = normalizeReportTemplate({
-      id: "t", name: "no sessions",
+      id: "t",
+      name: "no sessions",
       sections: REPORT_SECTION_DEFS.map((s) => ({ key: s.key, enabled: s.key !== "sessions" })),
     });
     const md = render([ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01" })], off);

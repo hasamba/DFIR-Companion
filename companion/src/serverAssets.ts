@@ -23,11 +23,25 @@ function detectSea(): boolean {
   //    isn't injected (e.g. some bundlers wipe the global require).
   // 3. Dev / Docker (tsx, tsc) goes through `createRequire(import.meta.url)`.
   const candidates: Array<() => NodeRequire | null> = [
-    () => (typeof globalThis !== "undefined" && typeof (globalThis as { require?: NodeRequire }).require === "function"
-      ? (globalThis as { require: NodeRequire }).require
-      : null),
-    () => { try { return createRequire(process.execPath); } catch { return null; } },
-    () => { try { return import.meta.url ? createRequire(import.meta.url) : null; } catch { return null; } },
+    () =>
+      typeof globalThis !== "undefined" &&
+      typeof (globalThis as { require?: NodeRequire }).require === "function"
+        ? (globalThis as { require: NodeRequire }).require
+        : null,
+    () => {
+      try {
+        return createRequire(process.execPath);
+      } catch {
+        return null;
+      }
+    },
+    () => {
+      try {
+        return import.meta.url ? createRequire(import.meta.url) : null;
+      } catch {
+        return null;
+      }
+    },
   ];
   for (const get of candidates) {
     try {

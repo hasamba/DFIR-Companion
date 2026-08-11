@@ -73,7 +73,12 @@ describe("diffHuntRuns", () => {
 
   it("reports rows/hosts new since the previous run", () => {
     const prev = buildHuntRunSnapshot({ A: [{ Fqdn: "host-a", f: 1 }] });
-    const cur = buildHuntRunSnapshot({ A: [{ Fqdn: "host-a", f: 1 }, { Fqdn: "host-b", f: 2 }] });
+    const cur = buildHuntRunSnapshot({
+      A: [
+        { Fqdn: "host-a", f: 1 },
+        { Fqdn: "host-b", f: 2 },
+      ],
+    });
     const diff = diffHuntRuns(prev, cur);
     expect(diff.isFirstRun).toBe(false);
     expect(diff.addedRows).toBe(1);
@@ -120,7 +125,9 @@ describe("summarizeHuntRunDiff", () => {
 
   it("summarizes added rows and new hosts", () => {
     const prev = buildHuntRunSnapshot({ A: [{ Fqdn: "host-a" }] });
-    const cur = buildHuntRunSnapshot({ A: [{ Fqdn: "host-a" }, { Fqdn: "host-b" }, { Fqdn: "host-b", extra: 1 }] });
+    const cur = buildHuntRunSnapshot({
+      A: [{ Fqdn: "host-a" }, { Fqdn: "host-b" }, { Fqdn: "host-b", extra: 1 }],
+    });
     const diff = diffHuntRuns(prev, cur);
     expect(summarizeHuntRunDiff(diff)).toBe("+2 rows since last run, 1 new host");
   });

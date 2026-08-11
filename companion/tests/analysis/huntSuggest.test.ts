@@ -56,7 +56,7 @@ describe("huntSuggestionsResponseSchema", () => {
       suggestions: [{ title: "x", vql: "SELECT * FROM pslist()", severity: "Catastrophic" }],
     });
     expect(parsed.suggestions[0].severity).toBe("Medium"); // unknown enum → fallback
-    expect(parsed.suggestions[0].rationale).toBe("");        // missing → ""
+    expect(parsed.suggestions[0].rationale).toBe(""); // missing → ""
     expect(parsed.suggestions[0].mitreTechniques).toEqual([]);
   });
 
@@ -70,8 +70,8 @@ describe("sanitizeHuntSuggestions", () => {
   it("drops suggestions with no VQL or no title", () => {
     const out = sanitizeHuntSuggestions([
       suggestion(),
-      suggestion({ vql: "   " }),       // empty query → dropped
-      suggestion({ title: "" }),         // empty title → dropped
+      suggestion({ vql: "   " }), // empty query → dropped
+      suggestion({ title: "" }), // empty title → dropped
     ]);
     expect(out).toHaveLength(1);
   });
@@ -100,14 +100,19 @@ describe("sanitizeHuntSuggestions", () => {
   });
 
   it("truncates a runaway VQL blob", () => {
-    const out = sanitizeHuntSuggestions([suggestion({ vql: "SELECT * FROM scope() -- " + "x".repeat(8000) })]);
+    const out = sanitizeHuntSuggestions([
+      suggestion({ vql: "SELECT * FROM scope() -- " + "x".repeat(8000) }),
+    ]);
     expect(out[0].vql.length).toBeLessThanOrEqual(4000);
   });
 });
 
 describe("renderHuntFindings", () => {
   it("renders id, severity, MITRE and title for non-dismissed findings", () => {
-    const text = renderHuntFindings([finding(), finding({ id: "f2", status: "dismissed", title: "ruled out" })]);
+    const text = renderHuntFindings([
+      finding(),
+      finding({ id: "f2", status: "dismissed", title: "ruled out" }),
+    ]);
     expect(text).toContain("[f1]");
     expect(text).toContain("T1505.003");
     expect(text).toContain("Webshell");
@@ -149,7 +154,17 @@ describe("hasHuntMaterial", () => {
 
     const withEvent = {
       ...empty,
-      forensicTimeline: [{ id: "e1", timestamp: NOW, description: "x", severity: "High" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] }],
+      forensicTimeline: [
+        {
+          id: "e1",
+          timestamp: NOW,
+          description: "x",
+          severity: "High" as const,
+          mitreTechniques: [],
+          relatedFindingIds: [],
+          sourceScreenshots: [],
+        },
+      ],
     };
     expect(hasHuntMaterial(withEvent)).toBe(true);
   });

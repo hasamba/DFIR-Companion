@@ -30,9 +30,7 @@ export function registerPlaybookMatchRoutes(app: Express, ctx: RouteContext): vo
       const defaults = playbookMatchEnvOptions();
       const topN = Math.max(1, Math.floor(Number(req.query.topN) || defaults.topN));
       const rawMin = Number(req.query.minScore);
-      const minScore = Number.isFinite(rawMin)
-        ? Math.min(100, Math.max(0, rawMin))
-        : defaults.minScore;
+      const minScore = Number.isFinite(rawMin) ? Math.min(100, Math.max(0, rawMin)) : defaults.minScore;
       const result = buildPlaybookMatchResult(state.forensicTimeline, dataset, { topN, minScore });
       return res.status(200).json(result);
     } catch (err) {

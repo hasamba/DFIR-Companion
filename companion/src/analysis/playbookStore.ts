@@ -46,7 +46,7 @@ export interface PlaybookTaskPatch {
   assignee?: string;
   dueDate?: string;
   notes?: string;
-  dependsOn?: string[];   // task ids that must be "done" first (issue #81); [] clears all edges
+  dependsOn?: string[]; // task ids that must be "done" first (issue #81); [] clears all edges
 }
 
 function normalizeStatus(s: unknown): PlaybookStatus | undefined {
@@ -157,7 +157,10 @@ export class PlaybookStore {
       );
       await this.save(caseId, next);
     } else {
-      await this.save(caseId, tasks.filter((t) => t.id !== taskId));
+      await this.save(
+        caseId,
+        tasks.filter((t) => t.id !== taskId),
+      );
     }
     return true;
   }
@@ -171,7 +174,7 @@ export class PlaybookStore {
       .sort((a, b) => {
         const ai = pos.has(a.id) ? pos.get(a.id)! : Number.POSITIVE_INFINITY;
         const bi = pos.has(b.id) ? pos.get(b.id)! : Number.POSITIVE_INFINITY;
-        return (ai - bi) || (a.order - b.order);
+        return ai - bi || a.order - b.order;
       })
       .map((t, i) => ({ ...t, order: i }));
     await this.save(caseId, next);
@@ -183,7 +186,11 @@ export class PlaybookStore {
   // findings into IR-phase templates. Writes only when something changed.
   async sync(caseId: string, state: InvestigationState, opts: DeriveOptions = {}): Promise<PlaybookTask[]> {
     const existing = await this.load(caseId);
-    const { tasks, changed } = mergePlaybook(existing, derivePlaybookTasks(state, opts), new Date().toISOString());
+    const { tasks, changed } = mergePlaybook(
+      existing,
+      derivePlaybookTasks(state, opts),
+      new Date().toISOString(),
+    );
     if (changed) await this.save(caseId, tasks);
     return sortPlaybookTasks(tasks);
   }

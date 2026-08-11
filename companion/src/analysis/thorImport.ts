@@ -41,19 +41,19 @@ export interface ThorImportOptions {
 
 // A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
 export interface ThorEvent {
-  id: string;            // assigned by the caller's idPrefix; left as a stable local key here
+  id: string; // assigned by the caller's idPrefix; left as a stable local key here
   timestamp: string;
   description: string;
   severity: Severity;
   mitreTechniques: string[];
-  count?: number;        // when identical findings were collapsed
+  count?: number; // when identical findings were collapsed
   endTimestamp?: string;
-  sha256?: string;       // correlation keys — let the same artifact match across tools
+  sha256?: string; // correlation keys — let the same artifact match across tools
   md5?: string;
   path?: string;
-  asset?: string;        // the scanned host this finding came from
+  asset?: string; // the scanned host this finding came from
   sources?: string[];
-  processName?: string;  // for parent→child chain validation (ProcessCheck rows)
+  processName?: string; // for parent→child chain validation (ProcessCheck rows)
   parentName?: string;
 }
 
@@ -65,10 +65,10 @@ export interface ThorIoc {
 export interface ThorParseResult {
   events: ThorEvent[];
   iocs: ThorIoc[];
-  total: number;         // total JSON lines parsed
-  kept: number;          // findings kept after filtering
-  dropped: number;       // rows dropped (info / lifecycle / unparseable)
-  hostname: string;      // best-effort scanned host
+  total: number; // total JSON lines parsed
+  kept: number; // findings kept after filtering
+  dropped: number; // rows dropped (info / lifecycle / unparseable)
+  hostname: string; // best-effort scanned host
 }
 
 type Row = Record<string, unknown>;
@@ -93,7 +93,8 @@ function pickTimestamp(row: Row): string {
 // Pull MITRE technique ids out of THOR tag/class fields (e.g. "ATTACK.T1059").
 function pickTechniques(row: Row): string[] {
   const blob = [row.tags_1, row.tags_2, row.sigclass_1, row.sigclass_2, row.ref_1, row.ref_2]
-    .map(str).join(" ");
+    .map(str)
+    .join(" ");
   const ids = new Set<string>();
   for (const m of blob.matchAll(/\bT\d{4}(?:\.\d{3})?\b/gi)) ids.add(m[0].toUpperCase());
   return [...ids];
@@ -104,7 +105,15 @@ function describe(row: Row): string {
   const level = str(row.level) || "Finding";
   const module = str(row.module) || "THOR";
   const message = str(row.message) || "THOR finding";
-  const subject = firstStr(row, ["process_name", "image_file", "file", "filename", "path", "entry", "command"]);
+  const subject = firstStr(row, [
+    "process_name",
+    "image_file",
+    "file",
+    "filename",
+    "path",
+    "entry",
+    "command",
+  ]);
   const owner = firstStr(row, ["owner", "user", "image_owner"]);
   const reasons = [str(row.reason_1), str(row.reason_2)].filter(Boolean).join("; ");
   const rule = firstStr(row, ["rulename_1", "matched_1", "ref_1"]);
@@ -117,20 +126,41 @@ function describe(row: Row): string {
   return d.slice(0, 600);
 }
 
-const HASH_KEYS = ["sha256", "image_sha256", "archive_sha256", "sha1", "image_sha1", "md5", "image_md5",
-  "sha256_1", "sha256_2", "md5_1", "sha1_1"];
+const HASH_KEYS = [
+  "sha256",
+  "image_sha256",
+  "archive_sha256",
+  "sha1",
+  "image_sha1",
+  "md5",
+  "image_md5",
+  "sha256_1",
+  "sha256_2",
+  "md5_1",
+  "sha1_1",
+];
 const FILE_KEYS = ["file", "image_file", "filepath", "path", "image_path", "archive_file"];
 
 function collectIocs(row: Row, sink: Map<string, ThorIoc>): void {
   const add = (type: ThorIoc["type"], value: string) => {
     const v = value.trim();
-    if (v && !sink.has(`${type}:${v.toLowerCase()}`)) sink.set(`${type}:${v.toLowerCase()}`, { type, value: v });
+    if (v && !sink.has(`${type}:${v.toLowerCase()}`))
+      sink.set(`${type}:${v.toLowerCase()}`, { type, value: v });
   };
-  for (const k of HASH_KEYS) { const v = str(row[k]).trim(); if (/^[a-f0-9]{32,64}$/i.test(v)) add("hash", v); }
-  for (const k of FILE_KEYS) { const v = str(row[k]).trim(); if (v) add("file", v); }
+  for (const k of HASH_KEYS) {
+    const v = str(row[k]).trim();
+    if (/^[a-f0-9]{32,64}$/i.test(v)) add("hash", v);
+  }
+  for (const k of FILE_KEYS) {
+    const v = str(row[k]).trim();
+    if (v) add("file", v);
+  }
   const proc = str(row.process_name).trim();
   if (proc) add("process", proc);
-  for (const k of ["ip", "rip"]) { const v = str(row[k]).trim(); if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(v)) add("ip", v); }
+  for (const k of ["ip", "rip"]) {
+    const v = str(row[k]).trim();
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(v)) add("ip", v);
+  }
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -141,7 +171,10 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
   const dropLifecycle = opts.dropLifecycleModules ?? true;
   const maxEvents = opts.maxEvents ?? maxEventsDefault();
 
-  const lines = jsonText.split(/\r\n|\r|\n/).map((l) => l.trim()).filter(Boolean);
+  const lines = jsonText
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
   let total = 0;
   let dropped = 0;
   let hostname = "";
@@ -152,29 +185,54 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
 
   for (const line of lines) {
     let row: Row;
-    try { row = JSON.parse(line) as Row; } catch { dropped++; continue; }
+    try {
+      row = JSON.parse(line) as Row;
+    } catch {
+      dropped++;
+      continue;
+    }
     total++;
     if (!hostname) hostname = str(row.hostname);
 
     const level = str(row.level);
     const module = str(row.module);
-    if (dropInfo && level === "Info") { dropped++; continue; }
-    if (opts.minLevel && levelRank(level) < LEVEL_RANK[opts.minLevel]) { dropped++; continue; }
-    if (dropLifecycle && LIFECYCLE_MODULES.has(module)) { dropped++; continue; }
+    if (dropInfo && level === "Info") {
+      dropped++;
+      continue;
+    }
+    if (opts.minLevel && levelRank(level) < LEVEL_RANK[opts.minLevel]) {
+      dropped++;
+      continue;
+    }
+    if (dropLifecycle && LIFECYCLE_MODULES.has(module)) {
+      dropped++;
+      continue;
+    }
 
     const severity = LEVEL_SEVERITY[level] ?? "Medium";
     const timestamp = pickTimestamp(row);
     const description = describe(row);
-    const sig = [module, str(row.message), firstStr(row, ["process_name", "image_file", "file", "entry"]),
-      firstStr(row, ["rulename_1", "matched_1", "reason_1"])].join("|").toLowerCase();
+    const sig = [
+      module,
+      str(row.message),
+      firstStr(row, ["process_name", "image_file", "file", "entry"]),
+      firstStr(row, ["rulename_1", "matched_1", "reason_1"]),
+    ]
+      .join("|")
+      .toLowerCase();
 
-    const sha256 = firstStr(row, ["sha256", "image_sha256", "archive_sha256", "sha256_1"]).toLowerCase() || undefined;
+    const sha256 =
+      firstStr(row, ["sha256", "image_sha256", "archive_sha256", "sha256_1"]).toLowerCase() || undefined;
     const md5 = firstStr(row, ["md5", "image_md5", "archive_md5", "md5_1"]).toLowerCase() || undefined;
-    const path = (firstStr(row, ["file", "image_file", "image_path", "filepath", "path"]) || undefined)?.trim();
+    const path = (
+      firstStr(row, ["file", "image_file", "image_path", "filepath", "path"]) || undefined
+    )?.trim();
     // ProcessCheck rows carry the process + parent (a path) — capture both as basenames
     // so parent→child chain validation (RockyRaccoon) can run on the event.
     const baseName = (s: string): string => s.trim().split(/[\\/]/).pop() || s.trim();
-    const processName = firstStr(row, ["process_name", "image_name"]) ? baseName(firstStr(row, ["process_name", "image_name"])) : undefined;
+    const processName = firstStr(row, ["process_name", "image_name"])
+      ? baseName(firstStr(row, ["process_name", "image_name"]))
+      : undefined;
     const parentName = firstStr(row, ["parent"]) ? baseName(firstStr(row, ["parent"])) : undefined;
 
     const host = str(row.hostname).trim() || hostname;
@@ -182,12 +240,17 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
     const existing = bySig.get(sig);
     if (existing) {
       existing.count = (existing.count ?? 1) + 1;
-      if (timestamp && (!existing.endTimestamp || timestamp > existing.endTimestamp)) existing.endTimestamp = timestamp;
+      if (timestamp && (!existing.endTimestamp || timestamp > existing.endTimestamp))
+        existing.endTimestamp = timestamp;
       if (timestamp && timestamp < existing.timestamp) existing.timestamp = timestamp;
       if (!existing.asset && host) existing.asset = host;
     } else {
       bySig.set(sig, {
-        id: "", timestamp, description, severity, mitreTechniques: pickTechniques(row),
+        id: "",
+        timestamp,
+        description,
+        severity,
+        mitreTechniques: pickTechniques(row),
         ...(sha256 && /^[a-f0-9]{64}$/.test(sha256) ? { sha256 } : {}),
         ...(md5 && /^[a-f0-9]{32}$/.test(md5) ? { md5 } : {}),
         ...(path ? { path } : {}),

@@ -18,7 +18,15 @@ function ev(id: string, asset: string, sources: string[]): ForensicEvent {
 }
 
 function imp(caseId: string, seq: number, importedAt: string, rows: number): ImportMetadata {
-  return { caseId, sequenceNumber: seq, importedAt, filename: `f${seq}.csv`, originalName: `f${seq}.csv`, rows, bytes: rows * 100 };
+  return {
+    caseId,
+    sequenceNumber: seq,
+    importedAt,
+    filename: `f${seq}.csv`,
+    originalName: `f${seq}.csv`,
+    rows,
+    bytes: rows * 100,
+  };
 }
 
 describe("computeCaseStats (#241)", () => {
@@ -26,8 +34,16 @@ describe("computeCaseStats (#241)", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(ev("a1", "WS-01", ["Sysmon"]), ev("a2", "WS-02", ["Zeek"]));
     s.findings.push({
-      id: "f1", severity: "High", title: "t", description: "d", relatedIocs: [], sourceScreenshots: [],
-      mitreTechniques: [], firstSeen: "2024-03-18T15:24:38Z", lastUpdated: "2024-03-18T15:24:38Z", status: "open",
+      id: "f1",
+      severity: "High",
+      title: "t",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "2024-03-18T15:24:38Z",
+      lastUpdated: "2024-03-18T15:24:38Z",
+      status: "open",
     });
     s.iocs.push({ id: "i1", type: "ip", value: "1.2.3.4", firstSeen: "2024-03-18T15:24:38Z" });
 
@@ -40,7 +56,11 @@ describe("computeCaseStats (#241)", () => {
 
   it("groups events by source, counting an event once per source it carries", () => {
     const s = emptyState("c1");
-    s.forensicTimeline.push(ev("a1", "WS-01", ["Sysmon"]), ev("a2", "WS-01", ["Sysmon", "Zeek"]), ev("a3", "WS-01", ["Zeek"]));
+    s.forensicTimeline.push(
+      ev("a1", "WS-01", ["Sysmon"]),
+      ev("a2", "WS-01", ["Sysmon", "Zeek"]),
+      ev("a3", "WS-01", ["Zeek"]),
+    );
 
     const stats = computeCaseStats(s, []);
     expect(stats.bySource).toEqual([

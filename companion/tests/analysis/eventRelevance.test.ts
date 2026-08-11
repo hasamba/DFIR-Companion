@@ -99,7 +99,9 @@ describe("scoreEventRelevance vs. the budgeted selector's classes", () => {
     ];
     // Add enough Info noise so the selector actually has to budget rather than keep everything.
     for (let i = 0; i < 50; i++) {
-      events.push(ev(`noise${i}`, "Info", { timestamp: `2026-05-20T${String(i % 24).padStart(2, "0")}:30:00Z` }));
+      events.push(
+        ev(`noise${i}`, "Info", { timestamp: `2026-05-20T${String(i % 24).padStart(2, "0")}:30:00Z` }),
+      );
     }
 
     const { classOf } = selectSynthesisEventsAnnotated(events, 10);

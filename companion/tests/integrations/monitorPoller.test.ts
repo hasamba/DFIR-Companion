@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
-  toEpochSeconds, extractRowTime, computeWindow, nextCursor, monitorArtifactMap, pollMonitorOnce,
+  toEpochSeconds,
+  extractRowTime,
+  computeWindow,
+  nextCursor,
+  monitorArtifactMap,
+  pollMonitorOnce,
   type PollDeps,
 } from "../../src/integrations/velociraptor/monitorPoller.js";
 import type { VeloMonitor } from "../../src/analysis/veloMonitorStore.js";
@@ -21,7 +26,7 @@ function mon(over: Partial<VeloMonitor> = {}): VeloMonitor {
 describe("monitorPoller pure helpers", () => {
   it("toEpochSeconds normalizes seconds, millis, and ISO strings", () => {
     expect(toEpochSeconds(1_700_000_000)).toBe(1_700_000_000);
-    expect(toEpochSeconds(1_700_000_000_000)).toBe(1_700_000_000);   // millis → seconds
+    expect(toEpochSeconds(1_700_000_000_000)).toBe(1_700_000_000); // millis → seconds
     expect(toEpochSeconds("2021-11-14T22:13:20.000Z")).toBe(1_636_928_000);
     expect(toEpochSeconds("not a date")).toBeNull();
     expect(toEpochSeconds(null)).toBeNull();
@@ -67,14 +72,21 @@ describe("pollMonitorOnce", () => {
   it("advances the cursor + records stats on a successful poll with rows", async () => {
     let ingested: unknown[] = [];
     const deps = baseDeps({
-      read: async (_c, _a, start, end) => { expect(start).toBe(1000); expect(end).toBe(2000); return [{ _ts: 1500 }, { _ts: 1900 }]; },
-      ingest: async (_m, rows) => { ingested = rows; return rows.length; },
+      read: async (_c, _a, start, end) => {
+        expect(start).toBe(1000);
+        expect(end).toBe(2000);
+        return [{ _ts: 1500 }, { _ts: 1900 }];
+      },
+      ingest: async (_m, rows) => {
+        ingested = rows;
+        return rows.length;
+      },
     });
     const out = await pollMonitorOnce(mon({ cursor: 1000, addedEvents: 3, polls: 2 }), deps);
     expect(ingested).toHaveLength(2);
     expect(out.status).toBe("active");
-    expect(out.cursor).toBe(2000);          // advanced to window end
-    expect(out.addedEvents).toBe(5);        // 3 + 2
+    expect(out.cursor).toBe(2000); // advanced to window end
+    expect(out.addedEvents).toBe(5); // 3 + 2
     expect(out.polls).toBe(3);
     expect(out.lastEventAt).toBe(new Date(2000 * 1000).toISOString());
     expect(out.lastError).toBeUndefined();
@@ -82,7 +94,15 @@ describe("pollMonitorOnce", () => {
 
   it("does NOT call ingest when there are no rows, but still advances the cursor", async () => {
     let ingestCalls = 0;
-    const out = await pollMonitorOnce(mon({ cursor: 1000 }), baseDeps({ ingest: async () => { ingestCalls++; return 0; } }));
+    const out = await pollMonitorOnce(
+      mon({ cursor: 1000 }),
+      baseDeps({
+        ingest: async () => {
+          ingestCalls++;
+          return 0;
+        },
+      }),
+    );
     expect(ingestCalls).toBe(0);
     expect(out.cursor).toBe(2000);
     expect(out.lastEventAt).toBeUndefined();
@@ -90,17 +110,29 @@ describe("pollMonitorOnce", () => {
   });
 
   it("captures a read error WITHOUT advancing the cursor (retries next tick)", async () => {
-    const out = await pollMonitorOnce(mon({ cursor: 1000 }), baseDeps({ read: async () => { throw new Error("velo down"); } }));
+    const out = await pollMonitorOnce(
+      mon({ cursor: 1000 }),
+      baseDeps({
+        read: async () => {
+          throw new Error("velo down");
+        },
+      }),
+    );
     expect(out.status).toBe("error");
     expect(out.lastError).toBe("velo down");
-    expect(out.cursor).toBe(1000);          // unchanged
+    expect(out.cursor).toBe(1000); // unchanged
   });
 
   it("captures an ingest error WITHOUT advancing the cursor", async () => {
-    const out = await pollMonitorOnce(mon({ cursor: 1000 }), baseDeps({
-      read: async () => [{ _ts: 1500 }],
-      ingest: async () => { throw new Error("import failed"); },
-    }));
+    const out = await pollMonitorOnce(
+      mon({ cursor: 1000 }),
+      baseDeps({
+        read: async () => [{ _ts: 1500 }],
+        ingest: async () => {
+          throw new Error("import failed");
+        },
+      }),
+    );
     expect(out.status).toBe("error");
     expect(out.lastError).toBe("import failed");
     expect(out.cursor).toBe(1000);

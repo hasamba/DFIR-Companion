@@ -24,7 +24,10 @@ const HEX = /^[0-9a-f]+$/;
 // MD5 (32) / SHA-1 (40) / SHA-256 (64) hex chars. Anything else (CRC32, file sizes, names, IPv6) is
 // rejected → null, so parsing/matching never trips on non-hash tokens.
 export function normalizeHash(raw: string): string | null {
-  const v = String(raw ?? "").trim().toLowerCase().replace(/^0x/, "");
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/, "");
   if (v.length !== 32 && v.length !== 40 && v.length !== 64) return null;
   return HEX.test(v) ? v : null;
 }
@@ -51,7 +54,13 @@ export function parseNsrlText(text: string): string[] {
   if (firstLine.includes(",") && /sha-?(1|256)|md5|hash/i.test(firstLine)) {
     const { headers, rows } = parseCsv(t);
     const hashCols = headers
-      .map((h, i) => ({ i, key: h.trim().toLowerCase().replace(/[^a-z0-9]/g, "") }))
+      .map((h, i) => ({
+        i,
+        key: h
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, ""),
+      }))
       .filter((c) => HASH_HEADERS.has(c.key))
       .map((c) => c.i);
     if (hashCols.length > 0) {

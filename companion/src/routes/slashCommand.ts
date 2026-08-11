@@ -198,7 +198,9 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
   const botToken = (process.env.DFIR_TELEGRAM_BOT_TOKEN ?? "").trim();
   if (!channelStore) return undefined;
   if (!botToken) {
-    ctx.serverLogger.warn("[telegram] polling requested but DFIR_TELEGRAM_BOT_TOKEN is not set — not starting");
+    ctx.serverLogger.warn(
+      "[telegram] polling requested but DFIR_TELEGRAM_BOT_TOKEN is not set — not starting",
+    );
     return undefined;
   }
   const apiBase = (process.env.DFIR_TELEGRAM_API_BASE ?? "").trim() || undefined;
@@ -218,7 +220,9 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
       // construction, but a runaway script in one chat can still burn the AI budget.
       if (!limiter.tryAcquire(`telegram:${chatId}`)) {
         await sendTelegramMessage({
-          botToken, apiBase, chatId,
+          botToken,
+          apiBase,
+          chatId,
           text: "Rate limit exceeded — try again in a minute.",
           log: ctx.serverLogger,
         });
@@ -344,7 +348,10 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
     ephemeral,
   });
   const audit = (caseId: string, entry: Parameters<typeof logActivity>[3]): void => {
-    void logActivity(options.activityLogStore, options.onActivity, caseId, { actor: `${platform}:${userId}`, ...entry });
+    void logActivity(options.activityLogStore, options.onActivity, caseId, {
+      actor: `${platform}:${userId}`,
+      ...entry,
+    });
   };
 
   const parsed = parseSlashCommand(text);
@@ -370,7 +377,9 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
         detail: `${platform} channel ${channelId} unbound from case ${previous}`,
       });
     }
-    return reply(previous ? `Channel case binding cleared (was ${previous}).` : "This channel was not bound to a case.");
+    return reply(
+      previous ? `Channel case binding cleared (was ${previous}).` : "This channel was not bound to a case.",
+    );
   }
 
   // Permission gate before anything touches case data. Audited against the resolved case when that
@@ -386,8 +395,12 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
     if (bindGuard) return reply(bindGuard);
     // An unreadable bindings file (hand-edited into invalid JSON) must answer the analyst, not
     // reject into the terminal error handler with a bare 500 the chat client won't render.
-    const bound = await channelStore.bind(bindKey, cmd.caseId).then(() => true).catch(() => false);
-    if (!bound) return reply("Could not save the channel binding — check notifications/slash-command-bindings.json.");
+    const bound = await channelStore
+      .bind(bindKey, cmd.caseId)
+      .then(() => true)
+      .catch(() => false);
+    if (!bound)
+      return reply("Could not save the channel binding — check notifications/slash-command-bindings.json.");
     audit(cmd.caseId, {
       category: "collaboration",
       action: "slash-command-bind",
@@ -419,16 +432,27 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
     try {
       const state = await options.stateStore.load(cmd.caseId);
       switch (cmd.name) {
-        case "findings": r = formatFindingsCommand(state); break;
-        case "finding":  r = formatFindingCommand(state, cmd.arg); break;
-        case "iocs":     r = formatIocsCommand(state, cmd.iocFilter); break;
-        case "status":   r = formatStatusCommand(state); break;
-        default:         r = formatHelpCommand();
+        case "findings":
+          r = formatFindingsCommand(state);
+          break;
+        case "finding":
+          r = formatFindingCommand(state, cmd.arg);
+          break;
+        case "iocs":
+          r = formatIocsCommand(state, cmd.iocFilter);
+          break;
+        case "status":
+          r = formatStatusCommand(state);
+          break;
+        default:
+          r = formatHelpCommand();
       }
     } catch (err) {
       // Path-redacted: the app-wide res.json redaction only rewrites an `error` field, and this
       // message goes out as chat `text` — an fs error carries the full cases-root path.
-      return reply(`Error loading case ${cmd.caseId}: ${redactPaths((err as Error).message, [store.casesRoot])}`);
+      return reply(
+        `Error loading case ${cmd.caseId}: ${redactPaths((err as Error).message, [store.casesRoot])}`,
+      );
     }
     audit(cmd.caseId, {
       category: "collaboration",
@@ -468,7 +492,8 @@ async function guardCase(ctx: RouteContext, caseId: string): Promise<string> {
     return `Case ${caseId} could not be read.`;
   }
   if (!meta) return `No such case: ${caseId}.`;
-  if (meta.password) return `Case ${caseId} is password-protected and is not available over chat — use the dashboard.`;
+  if (meta.password)
+    return `Case ${caseId} is password-protected and is not available over chat — use the dashboard.`;
   return "";
 }
 
@@ -491,9 +516,13 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
   const { ctx, platform, userId } = input;
   const { options } = ctx;
   const audit = (entry: Parameters<typeof logActivity>[3]): void => {
-    void logActivity(options.activityLogStore, options.onActivity, cmd.caseId, { actor: `${platform}:${userId}`, ...entry });
+    void logActivity(options.activityLogStore, options.onActivity, cmd.caseId, {
+      actor: `${platform}:${userId}`,
+      ...entry,
+    });
   };
-  const send = (r: SlashCommandResponse, ephemeral = true): Promise<void> => deliverAsyncResult(input, r, ephemeral);
+  const send = (r: SlashCommandResponse, ephemeral = true): Promise<void> =>
+    deliverAsyncResult(input, r, ephemeral);
 
   if (cmd.name === "synthesize") {
     ctx.resynthesizeInBackground(cmd.caseId);
@@ -527,7 +556,10 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
         detail: `/dfir ask "${cmd.arg.slice(0, 120)}" → ${answer.status}`,
       });
     } catch (err) {
-      await send({ title: `AI ask failed: ${redactPaths((err as Error).message, [ctx.store.casesRoot])}`, lines: [] });
+      await send({
+        title: `AI ask failed: ${redactPaths((err as Error).message, [ctx.store.casesRoot])}`,
+        lines: [],
+      });
       audit({
         category: "ai",
         action: "slash-command-ask",
@@ -555,7 +587,10 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
 
 /** Flatten a card into the plain text every platform renders. */
 export function renderText(r: SlashCommandResponse): string {
-  const body = r.lines.filter(Boolean).map((l) => `• ${l}`).join("\n");
+  const body = r.lines
+    .filter(Boolean)
+    .map((l) => `• ${l}`)
+    .join("\n");
   return `${r.title}${body ? `\n${body}` : ""}`;
 }
 
@@ -575,7 +610,11 @@ function chatResponse(input: DispatchInput, r: SlashCommandResponse, ephemeral: 
 }
 
 /** Deliver a result that wasn't ready in time for the synchronous reply. */
-async function deliverAsyncResult(input: DispatchInput, r: SlashCommandResponse, ephemeral: boolean): Promise<void> {
+async function deliverAsyncResult(
+  input: DispatchInput,
+  r: SlashCommandResponse,
+  ephemeral: boolean,
+): Promise<void> {
   const { ctx, platform } = input;
   if (platform === "telegram") {
     const token = (process.env.DFIR_TELEGRAM_BOT_TOKEN ?? "").trim();
@@ -584,7 +623,10 @@ async function deliverAsyncResult(input: DispatchInput, r: SlashCommandResponse,
       return;
     }
     const base = (process.env.DFIR_TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/+$/, "");
-    await postJson(input, `${base}/bot${token}/sendMessage`, { chat_id: input.channelId, text: renderText(r) });
+    await postJson(input, `${base}/bot${token}/sendMessage`, {
+      chat_id: input.channelId,
+      text: renderText(r),
+    });
     return;
   }
 
@@ -616,8 +658,11 @@ async function postJson(input: DispatchInput, url: string, payload: unknown): Pr
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) input.ctx.serverLogger.warn(`[slash] result delivery to ${input.platform} returned ${res.status}`);
+    if (!res.ok)
+      input.ctx.serverLogger.warn(`[slash] result delivery to ${input.platform} returned ${res.status}`);
   } catch (err) {
-    input.ctx.serverLogger.warn(`[slash] result delivery to ${input.platform} failed: ${(err as Error).message}`);
+    input.ctx.serverLogger.warn(
+      `[slash] result delivery to ${input.platform} failed: ${(err as Error).message}`,
+    );
   }
 }

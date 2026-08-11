@@ -103,8 +103,6 @@ export function searchOcrIndex(
     });
   }
   // Most relevant first; tie-break by filename so the ordering is stable/deterministic.
-  hits.sort((a, b) =>
-    b.matchCount - a.matchCount || a.screenshotFile.localeCompare(b.screenshotFile),
-  );
+  hits.sort((a, b) => b.matchCount - a.matchCount || a.screenshotFile.localeCompare(b.screenshotFile));
   return hits;
 }

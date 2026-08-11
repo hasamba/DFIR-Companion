@@ -11,20 +11,35 @@ import { PlaybookHuntStore } from "../../src/analysis/playbookHuntStore.js";
 import { PlaybookControlStore } from "../../src/analysis/playbookControl.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
-import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import {
+  VelociraptorClient,
+  type VqlRunner,
+  type VelociraptorApiConfig,
+} from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
 
 // Canned model reply: one endpoint-related hunt for the finding-derived task, scoped to WEB01.
 const cannedPlaybookHunts = JSON.stringify({
   suggestions: [
-    { taskId: "finding:f1", endpointRelated: true, title: "Enumerate webshell on WEB01",
-      rationale: "collect web roots", vql: "SELECT FullPath FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx')",
-      targetHost: "WEB01", severity: "High", mitreTechniques: ["T1505.003"] },
+    {
+      taskId: "finding:f1",
+      endpointRelated: true,
+      title: "Enumerate webshell on WEB01",
+      rationale: "collect web roots",
+      vql: "SELECT FullPath FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx')",
+      targetHost: "WEB01",
+      severity: "High",
+      mitreTechniques: ["T1505.003"],
+    },
   ],
 });
 
 const veloCfg: VelociraptorApiConfig = {
-  apiConfigPath: "/x/api.yaml", binary: "velociraptor", timeoutMs: 5000, maxRows: 1000, maxOutputBytes: 1024 * 1024,
+  apiConfigPath: "/x/api.yaml",
+  binary: "velociraptor",
+  timeoutMs: 5000,
+  maxRows: 1000,
+  maxOutputBytes: 1024 * 1024,
   guiUrl: "https://velo.example/",
 };
 
@@ -34,11 +49,19 @@ const veloCfg: VelociraptorApiConfig = {
 const collectRunner: VqlRunner = async (statements) => {
   const p = statements[0];
   if (p.includes("collect_client(")) return { rows: [{ Flow: { flow_id: "F.123" } }], raw: "" };
-  if (p.includes("FROM clients(")) return { rows: [{ client_id: "C.web01", os_info: { hostname: "web01" } }], raw: "" };
+  if (p.includes("FROM clients("))
+    return { rows: [{ client_id: "C.web01", os_info: { hostname: "web01" } }], raw: "" };
   return { rows: [], raw: "" };
 };
 
-async function makeApp(opts: { provider?: MockProvider; velociraptorProvider?: MockProvider; velociraptorClient?: VelociraptorClient; velociraptorClientStore?: VelociraptorClientStore } = {}) {
+async function makeApp(
+  opts: {
+    provider?: MockProvider;
+    velociraptorProvider?: MockProvider;
+    velociraptorClient?: VelociraptorClient;
+    velociraptorClientStore?: VelociraptorClientStore;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-pbhunt-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -46,15 +69,26 @@ async function makeApp(opts: { provider?: MockProvider; velociraptorProvider?: M
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: opts.provider, synthesisProvider: opts.provider, velociraptorProvider: opts.velociraptorProvider, stateStore, store,
+    provider: opts.provider,
+    synthesisProvider: opts.provider,
+    velociraptorProvider: opts.velociraptorProvider,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
-    pipeline, stateStore, playbookStore, playbookHuntStore, playbookControlStore,
-    velociraptorClient: opts.velociraptorClient, velociraptorClientStore: opts.velociraptorClientStore,
+    pipeline,
+    stateStore,
+    playbookStore,
+    playbookHuntStore,
+    playbookControlStore,
+    velociraptorClient: opts.velociraptorClient,
+    velociraptorClientStore: opts.velociraptorClientStore,
     aiConfigured: Boolean(opts.provider),
   });
-  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: opts.provider ? "mock" : null });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: opts.provider ? "mock" : null });
   return { app, stateStore };
 }
 
@@ -62,11 +96,29 @@ async function makeApp(opts: { provider?: MockProvider; velociraptorProvider?: M
 // event on a host so the task resolves to a single observed endpoint.
 async function seed(stateStore: StateStore, withHostEvent: boolean) {
   const s = emptyState("c1");
-  s.findings.push({ id: "f1", severity: "Critical", title: "Webshell on WEB01", description: "ASPX webshell",
-    relatedIocs: [], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+  s.findings.push({
+    id: "f1",
+    severity: "Critical",
+    title: "Webshell on WEB01",
+    description: "ASPX webshell",
+    relatedIocs: [],
+    mitreTechniques: ["T1505.003"],
+    sourceScreenshots: [],
+    firstSeen: "",
+    lastUpdated: "",
+    status: "open",
+  });
   if (withHostEvent) {
-    const e: ForensicEvent = { id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "webshell write",
-      severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [], asset: "WEB01" };
+    const e: ForensicEvent = {
+      id: "e1",
+      timestamp: "2026-06-01T00:00:00Z",
+      description: "webshell write",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+      asset: "WEB01",
+    };
     s.forensicTimeline.push(e);
   }
   await stateStore.save(s);
@@ -75,7 +127,7 @@ async function seed(stateStore: StateStore, withHostEvent: boolean) {
 describe("POST /cases/:id/playbook/suggest-hunts", () => {
   it("deploys as a COLLECTION when the task is tied to one observed endpoint", async () => {
     const { app, stateStore } = await makeApp({ provider: new MockProvider("mock", cannedPlaybookHunts) });
-    await seed(stateStore, true);   // event on WEB01 → known endpoint
+    await seed(stateStore, true); // event on WEB01 → known endpoint
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(200);
     expect(res.body.suggestions).toHaveLength(1);
@@ -85,7 +137,7 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
 
   it("clamps to a fleet HUNT when the target host is not an observed endpoint", async () => {
     const { app, stateStore } = await makeApp({ provider: new MockProvider("mock", cannedPlaybookHunts) });
-    await seed(stateStore, false);  // no events → WEB01 is not a known endpoint
+    await seed(stateStore, false); // no events → WEB01 is not a known endpoint
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(200);
     expect(res.body.suggestions[0].mode).toBe("hunt");
@@ -94,7 +146,7 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
 
   it("returns [] (no AI spend) when the playbook is empty", async () => {
     const { app, stateStore } = await makeApp({ provider: new MockProvider("mock", cannedPlaybookHunts) });
-    await stateStore.save(emptyState("c1"));   // no findings → no tasks
+    await stateStore.save(emptyState("c1")); // no findings → no tasks
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(200);
     expect(res.body.suggestions).toEqual([]);
@@ -120,8 +172,18 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
 
     // Reword the finding → the derived task's text changes → the suggestion is now stale → dropped.
     const s = emptyState("c1");
-    s.findings.push({ id: "f1", severity: "Critical", title: "Webshell REWORDED on WEB02", description: "a different description",
-      relatedIocs: [], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    s.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Webshell REWORDED on WEB02",
+      description: "a different description",
+      relatedIocs: [],
+      mitreTechniques: ["T1505.003"],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
     await stateStore.save(s);
     const afterEdit = await request(app).get("/cases/c1/playbook");
     expect(afterEdit.body.huntSuggestions).toHaveLength(0);
@@ -140,11 +202,21 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
     expect(again.body.suggestions).toHaveLength(1);
     // Reword the finding → its task changes → that one is regenerated on the next press.
     const s = emptyState("c1");
-    s.findings.push({ id: "f1", severity: "Critical", title: "Webshell REWORDED", description: "new text",
-      relatedIocs: [], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    s.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Webshell REWORDED",
+      description: "new text",
+      relatedIocs: [],
+      mitreTechniques: ["T1505.003"],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
     await stateStore.save(s);
     const afterEdit = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
-    expect(afterEdit.body.generated).toBe(1);          // the changed task WAS regenerated
+    expect(afterEdit.body.generated).toBe(1); // the changed task WAS regenerated
     expect(afterEdit.body.suggestions).toHaveLength(1);
   });
 
@@ -153,40 +225,55 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
     await seed(stateStore, true);
     await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     const forced = await request(app).post("/cases/c1/playbook/suggest-hunts").send({ force: true });
-    expect(forced.body.generated).toBe(1);   // ignored the covered set, regenerated
+    expect(forced.body.generated).toBe(1); // ignored the covered set, regenerated
   });
 
   it("uses the dedicated Velociraptor provider over the synthesis model when set", async () => {
-    const veloReply = JSON.stringify({ suggestions: [
-      { taskId: "finding:f1", endpointRelated: true, title: "FROM VELO MODEL", rationale: "r", vql: "SELECT * FROM pslist()", targetHost: "", severity: "High", mitreTechniques: [] },
-    ] });
+    const veloReply = JSON.stringify({
+      suggestions: [
+        {
+          taskId: "finding:f1",
+          endpointRelated: true,
+          title: "FROM VELO MODEL",
+          rationale: "r",
+          vql: "SELECT * FROM pslist()",
+          targetHost: "",
+          severity: "High",
+          mitreTechniques: [],
+        },
+      ],
+    });
     const { app, stateStore } = await makeApp({
-      provider: new MockProvider("mock", cannedPlaybookHunts),          // synthesis/main model
-      velociraptorProvider: new MockProvider("velo", veloReply),        // dedicated VQL model
+      provider: new MockProvider("mock", cannedPlaybookHunts), // synthesis/main model
+      velociraptorProvider: new MockProvider("velo", veloReply), // dedicated VQL model
     });
     await seed(stateStore, true);
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(200);
-    expect(res.body.suggestions[0].title).toBe("FROM VELO MODEL");      // the velo model's output, not the synth one
+    expect(res.body.suggestions[0].title).toBe("FROM VELO MODEL"); // the velo model's output, not the synth one
   });
 
   it("refreshes the Velociraptor client inventory when generating suggestions (clients enrolled mid-investigation)", async () => {
     const file = join(await mkdtemp(join(tmpdir(), "dfir-pbinv-")), "velociraptor", "clients.json");
     const inventory = new VelociraptorClientStore(file);
     // The fleet now has a client that wasn't enrolled when the case started.
-    const runner: VqlRunner = async (s) => s[0].includes("FROM clients(")
-      ? { rows: [{ client_id: "C.web01", os_info: { hostname: "web01", fqdn: "web01.corp.local" } }], raw: "" }
-      : { rows: [], raw: "" };
+    const runner: VqlRunner = async (s) =>
+      s[0].includes("FROM clients(")
+        ? {
+            rows: [{ client_id: "C.web01", os_info: { hostname: "web01", fqdn: "web01.corp.local" } }],
+            raw: "",
+          }
+        : { rows: [], raw: "" };
     const { app, stateStore } = await makeApp({
       provider: new MockProvider("mock", cannedPlaybookHunts),
       velociraptorClient: new VelociraptorClient(veloCfg, runner),
       velociraptorClientStore: inventory,
     });
     await seed(stateStore, true);
-    expect((await inventory.load()).clients).toHaveLength(0);   // empty before
+    expect((await inventory.load()).clients).toHaveLength(0); // empty before
     const res = await request(app).post("/cases/c1/playbook/suggest-hunts").send({});
     expect(res.status).toBe(200);
-    const after = await inventory.load();                       // refreshed by the suggest call
+    const after = await inventory.load(); // refreshed by the suggest call
     expect(after.clients.map((c) => c.clientId)).toContain("C.web01");
   });
 });
@@ -194,7 +281,8 @@ describe("POST /cases/:id/playbook/suggest-hunts", () => {
 describe("POST /velociraptor/collect-host", () => {
   it("launches a single-endpoint collection and returns the flow + deep link", async () => {
     const { app } = await makeApp({ velociraptorClient: new VelociraptorClient(veloCfg, collectRunner) });
-    const res = await request(app).post("/velociraptor/collect-host")
+    const res = await request(app)
+      .post("/velociraptor/collect-host")
       .send({ hostname: "WEB01", vql: "SELECT 1", description: "collect" });
     expect(res.status).toBe(200);
     expect(res.body.flowId).toBe("F.123");
@@ -204,21 +292,29 @@ describe("POST /velociraptor/collect-host", () => {
 
   it("400s when hostname or vql is missing", async () => {
     const { app } = await makeApp({ velociraptorClient: new VelociraptorClient(veloCfg, collectRunner) });
-    expect((await request(app).post("/velociraptor/collect-host").send({ vql: "SELECT 1" })).status).toBe(400);
-    expect((await request(app).post("/velociraptor/collect-host").send({ hostname: "WEB01" })).status).toBe(400);
+    expect((await request(app).post("/velociraptor/collect-host").send({ vql: "SELECT 1" })).status).toBe(
+      400,
+    );
+    expect((await request(app).post("/velociraptor/collect-host").send({ hostname: "WEB01" })).status).toBe(
+      400,
+    );
   });
 
   it("502s when no client matches the host", async () => {
     const emptyRunner: VqlRunner = async () => ({ rows: [], raw: "" });
     const { app } = await makeApp({ velociraptorClient: new VelociraptorClient(veloCfg, emptyRunner) });
-    const res = await request(app).post("/velociraptor/collect-host").send({ hostname: "GHOST", vql: "SELECT 1", description: "x" });
+    const res = await request(app)
+      .post("/velociraptor/collect-host")
+      .send({ hostname: "GHOST", vql: "SELECT 1", description: "x" });
     expect(res.status).toBe(502);
     expect(res.body.error).toMatch(/No enrolled Velociraptor client/);
   });
 
   it("501s when the Velociraptor API is not configured", async () => {
     const { app } = await makeApp({});
-    const res = await request(app).post("/velociraptor/collect-host").send({ hostname: "WEB01", vql: "SELECT 1" });
+    const res = await request(app)
+      .post("/velociraptor/collect-host")
+      .send({ hostname: "WEB01", vql: "SELECT 1" });
     expect(res.status).toBe(501);
   });
 });

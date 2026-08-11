@@ -19,12 +19,16 @@ describe("mergeEnrichedSubset", () => {
     const iocB = base({ id: "b", value: "5.6.7.8" });
     const iocC = base({ id: "c", value: "evil.com" });
     const all = [iocA, iocB, iocC];
-    const enriched: IOC = { ...iocB, enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "t" }], enrichedBy: ["VirusTotal"] };
+    const enriched: IOC = {
+      ...iocB,
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "t" }],
+      enrichedBy: ["VirusTotal"],
+    };
     const result = mergeEnrichedSubset(all, [enriched]);
     expect(result).toHaveLength(3);
-    expect(result[0]).toBe(iocA);           // unchanged reference
-    expect(result[1]).toBe(enriched);        // replaced with enriched copy
-    expect(result[2]).toBe(iocC);           // unchanged reference
+    expect(result[0]).toBe(iocA); // unchanged reference
+    expect(result[1]).toBe(enriched); // replaced with enriched copy
+    expect(result[2]).toBe(iocC); // unchanged reference
   });
 
   it("handles multiple updated IOCs in the subset", () => {

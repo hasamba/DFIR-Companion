@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  mapFindings, PresidioApprovalRequired, HttpPresidioClient, resolvePresidioMinScore,
-  DEFAULT_PRESIDIO_MIN_SCORE, type PresidioFinding,
+  mapFindings,
+  PresidioApprovalRequired,
+  HttpPresidioClient,
+  resolvePresidioMinScore,
+  DEFAULT_PRESIDIO_MIN_SCORE,
+  type PresidioFinding,
 } from "../../src/analysis/presidio.js";
 
 function f(entityType: string, value: string, score = 0.9): PresidioFinding {
@@ -10,13 +14,16 @@ function f(entityType: string, value: string, score = 0.9): PresidioFinding {
 
 describe("mapFindings", () => {
   it("maps allow-listed entity types to anonymizer categories", () => {
-    const out = mapFindings([
-      f("PERSON", "Jane Doe"),
-      f("CREDIT_CARD", "4111111111111111"),
-      f("PHONE_NUMBER", "+972501234567"),
-      f("US_SSN", "078-05-1120"),
-      f("EMAIL_ADDRESS", "jane@example.com"),
-    ], 0.6);
+    const out = mapFindings(
+      [
+        f("PERSON", "Jane Doe"),
+        f("CREDIT_CARD", "4111111111111111"),
+        f("PHONE_NUMBER", "+972501234567"),
+        f("US_SSN", "078-05-1120"),
+        f("EMAIL_ADDRESS", "jane@example.com"),
+      ],
+      0.6,
+    );
     expect(out).toEqual([
       { value: "Jane Doe", category: "PERSON" },
       { value: "4111111111111111", category: "CARD" },
@@ -31,7 +38,10 @@ describe("mapFindings", () => {
   });
 
   it("drops other unlisted types rather than falling back to OTHER", () => {
-    const out = mapFindings([f("LOCATION", "Tel Aviv"), f("URL", "http://evil.test"), f("NRP", "Israeli")], 0.6);
+    const out = mapFindings(
+      [f("LOCATION", "Tel Aviv"), f("URL", "http://evil.test"), f("NRP", "Israeli")],
+      0.6,
+    );
     expect(out).toEqual([]);
   });
 

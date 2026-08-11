@@ -12,9 +12,12 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/custody/manifest", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     try {
-      return res.status(200).json(await buildCustodyManifest(store, options.custodyStore, caseId, instanceSecret));
+      return res
+        .status(200)
+        .json(await buildCustodyManifest(store, options.custodyStore, caseId, instanceSecret));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -23,7 +26,8 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/custody", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     try {
       const records = await options.custodyStore.load(caseId);
       return res.status(200).json({ records });
@@ -40,12 +44,15 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/custody", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     // Same write guard as the other evidence routes: a closed or archived case takes no new records.
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before recording custody` });
+      return res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before recording custody` });
     }
     const artifactPath = typeof req.body?.artifactPath === "string" ? req.body.artifactPath.trim() : "";
     if (!artifactPath) return res.status(400).json({ error: "artifactPath is required" });
@@ -77,7 +84,9 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
         event: rawEvent,
       });
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "triage", action: "custody-record", actor: collectedBy || "analyst",
+        category: "triage",
+        action: "custody-record",
+        actor: collectedBy || "analyst",
         detail: `recorded custody for ${artifactPath} (${sha256.slice(0, 12)}…)`,
       });
       return res.status(201).json({ ok: true, record });
@@ -90,17 +99,22 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   // (#231). Returns immediately: a case with a 40 GB image would otherwise hold the request open
   // for minutes. Throttled inside the monitor, so flipping between cases re-hashes nothing.
   app.post("/cases/:id/custody/verify", async (req: Request, res: Response) => {
-    if (!options.integrityMonitor) return res.status(501).json({ error: "evidence integrity monitor not configured" });
+    if (!options.integrityMonitor)
+      return res.status(501).json({ error: "evidence integrity monitor not configured" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
-    void options.integrityMonitor.verifyCaseIfStale(caseId).catch(() => { /* alerting happens inside the monitor */ });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
+    void options.integrityMonitor.verifyCaseIfStale(caseId).catch(() => {
+      /* alerting happens inside the monitor */
+    });
     return res.status(202).json({ started: true });
   });
 
   app.get("/cases/:id/custody/verify", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
     const caseId = req.params.id;
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     try {
       // Two independent questions: did the EVIDENCE change (re-hash each artifact), and did the LOG
       // change (walk the chain). Either alone misses a whole class of tampering — swapping a file
@@ -114,8 +128,10 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
         chainBreaks.length ? `${chainBreaks.length} chain break(s)` : "",
       ].filter(Boolean);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "triage", action: "custody-verify",
-        detail: problems.length === 0 ? "integrity verified — no mismatches, chain intact" : problems.join(", "),
+        category: "triage",
+        action: "custody-verify",
+        detail:
+          problems.length === 0 ? "integrity verified — no mismatches, chain intact" : problems.join(", "),
       });
       return res.status(200).json({ ok: problems.length === 0, mismatches, chainBreaks });
     } catch (err) {

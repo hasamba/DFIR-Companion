@@ -42,8 +42,12 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   // chosen groupBy axis (asset | severity | tactic). Derived on demand, no AI, same filtering.
   app.get("/cases/:id/swimlane", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    const groupBy = (req.query.groupBy as string) === "severity" ? "severity"
-      : (req.query.groupBy as string) === "tactic" ? "tactic" : "asset";
+    const groupBy =
+      (req.query.groupBy as string) === "severity"
+        ? "severity"
+        : (req.query.groupBy as string) === "tactic"
+          ? "tactic"
+          : "asset";
     try {
       return res.status(200).json(await options.reportWriter.swimlane(req.params.id, groupBy));
     } catch (err) {
@@ -71,12 +75,15 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   // collections for review, then deploys a chosen shadow-artifact collection via POST /velociraptor/hunt.
   // Needs an AI provider; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
   app.post("/cases/:id/timeline-gaps/hypothesize", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for gap hypotheses" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for gap hypotheses" });
     try {
       const result = await options.pipeline.hypothesizeGaps(req.params.id);
       logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "hypothesize-gaps", detail: `hypothesized ${result.hypotheses.length} timeline gap(s)`,
+        category: "ai",
+        action: "hypothesize-gaps",
+        detail: `hypothesized ${result.hypotheses.length} timeline gap(s)`,
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -132,8 +139,15 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   // raw host-triage artifacts routed here exclusively). Filter by time/origin/label + paginate.
   app.get("/cases/:id/super-timeline", async (req: Request, res: Response) => {
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
-    const csv = (v: unknown): string[] => String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    const num = (v: unknown): number | undefined => { const n = Number(v); return Number.isFinite(n) ? n : undefined; };
+    const csv = (v: unknown): string[] =>
+      String(v ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const num = (v: unknown): number | undefined => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
     try {
       // The Labels filter + labelsAvailable facet now come from the case's analyst TAGS (unifying the
       // super-timeline's per-row labelling with the forensic timeline's tags), not the legacy per-event
@@ -148,25 +162,32 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
           (tagLabelMap[t.targetId] ??= []).push(t.label);
         }
       }
-      const result = await options.superTimelineStore.query(req.params.id, {
-        from: typeof req.query.from === "string" && req.query.from ? req.query.from : undefined,
-        to: typeof req.query.to === "string" && req.query.to ? req.query.to : undefined,
-        origins: csv(req.query.origins),
-        exclude: csv(req.query.exclude),
-        excludeHosts: csv(req.query.excludeHosts),
-        labels: csv(req.query.labels),
-        taggedOnly: req.query.tagged === "1" || req.query.tagged === "true",
-        starred: req.query.starred === "1" || req.query.starred === "true",
-        search: typeof req.query.q === "string" ? req.query.q : undefined,
-        excludeText: csv(req.query.excludeText),
-        offset: num(req.query.offset),
-        limit: num(req.query.limit),
-      }, tagLabelMap);
+      const result = await options.superTimelineStore.query(
+        req.params.id,
+        {
+          from: typeof req.query.from === "string" && req.query.from ? req.query.from : undefined,
+          to: typeof req.query.to === "string" && req.query.to ? req.query.to : undefined,
+          origins: csv(req.query.origins),
+          exclude: csv(req.query.exclude),
+          excludeHosts: csv(req.query.excludeHosts),
+          labels: csv(req.query.labels),
+          taggedOnly: req.query.tagged === "1" || req.query.tagged === "true",
+          starred: req.query.starred === "1" || req.query.starred === "true",
+          search: typeof req.query.q === "string" ? req.query.q : undefined,
+          excludeText: csv(req.query.excludeText),
+          offset: num(req.query.offset),
+          limit: num(req.query.limit),
+        },
+        tagLabelMap,
+      );
       // Mark rows already pulled into the forensic timeline (promote's mergeDelta dedups by id, so
       // "promoted" means this event's id is already there) so the UI can show persistent state instead
       // of a fire-and-forget button that gives no lasting feedback.
       const promotedIds = options.stateStore
-        ? await options.stateStore.hasForensicEventIds(req.params.id, result.events.map((event) => event.id))
+        ? await options.stateStore.hasForensicEventIds(
+            req.params.id,
+            result.events.map((event) => event.id),
+          )
         : new Set<string>();
       const events = result.events.map((e) => ({ ...e, promoted: promotedIds.has(e.id) }));
       return res.status(200).json({ ...result, events });
@@ -234,7 +255,9 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
         if (e) events.push(e);
       }
       if (!events.length) return res.status(404).json({ error: "no matching super-timeline events" });
-      await options.pipeline.promoteSuperTimeline(req.params.id, events, { importedAt: new Date().toISOString() });
+      await options.pipeline.promoteSuperTimeline(req.params.id, events, {
+        importedAt: new Date().toISOString(),
+      });
       resynthesizeInBackground(req.params.id);
       return res.status(200).json({ promoted: events.length });
     } catch (err) {

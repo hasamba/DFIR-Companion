@@ -18,8 +18,15 @@ class StubProvider implements AIProvider {
     // this is ever parsed.
     return {
       rawText: JSON.stringify({
-        summary: "x", whyItMatters: "x", normalContext: "x", suspiciousIndicators: "x",
-        attackMapping: "x", pivotQueries: [], evidenceFor: "x", evidenceAgainst: "x", relatedEventIds: [],
+        summary: "x",
+        whyItMatters: "x",
+        normalContext: "x",
+        suspiciousIndicators: "x",
+        attackMapping: "x",
+        pivotQueries: [],
+        evidenceFor: "x",
+        evidenceAgainst: "x",
+        relatedEventIds: [],
       }),
     };
   }
@@ -43,8 +50,14 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
     const s = emptyState("c1");
     s.forensicTimeline.push({
-      id: "ev1", timestamp: "2026-06-01T10:00:00Z", description: "powershell.exe spawned",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS01",
+      id: "ev1",
+      timestamp: "2026-06-01T10:00:00Z",
+      description: "powershell.exe spawned",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WS01",
     });
     await stateStore.save(s);
 
@@ -96,8 +109,14 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
     const s = emptyState("c1");
     s.forensicTimeline.push({
-      id: "ev1", timestamp: "2026-06-01T10:00:00Z", description: "powershell.exe spawned",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS01",
+      id: "ev1",
+      timestamp: "2026-06-01T10:00:00Z",
+      description: "powershell.exe spawned",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WS01",
     });
     await stateStore.save(s);
 
@@ -151,8 +170,14 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
     const s = emptyState("c1");
     s.forensicTimeline.push({
-      id: "ev1", timestamp: "2026-06-01T10:00:00Z", description: "rdp session from DC01",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01",
+      id: "ev1",
+      timestamp: "2026-06-01T10:00:00Z",
+      description: "rdp session from DC01",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "DC01",
     });
     await stateStore.save(s);
 
@@ -198,8 +223,14 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
     const s = emptyState("c1");
     s.forensicTimeline.push({
-      id: "ev1", timestamp: "2026-06-01T10:00:00Z", description: "rdp session from DC01",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01",
+      id: "ev1",
+      timestamp: "2026-06-01T10:00:00Z",
+      description: "rdp session from DC01",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "DC01",
     });
     await stateStore.save(s);
 

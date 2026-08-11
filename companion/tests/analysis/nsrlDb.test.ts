@@ -33,14 +33,14 @@ async function buildRds(opts?: { lower?: boolean; sha1Only?: boolean }): Promise
 describe("NsrlDb", () => {
   it("opens a modern RDS, picks the METADATA base table, and reports its hash columns", async () => {
     const db = NsrlDb.open(await buildRds());
-    expect(db.table).toBe("METADATA");          // the table, not the FILE view
+    expect(db.table).toBe("METADATA"); // the table, not the FILE view
     expect(db.columns.sort()).toEqual(["md5", "sha256"]);
     db.close();
   });
 
   it("matches sha256 + md5 known-good hashes, case-insensitively, and misses unknowns", async () => {
     const db = NsrlDb.open(await buildRds());
-    expect(db.has(SHA256)).toBe(true);          // normalized (lowercase) input vs uppercase-stored
+    expect(db.has(SHA256)).toBe(true); // normalized (lowercase) input vs uppercase-stored
     expect(db.has(MD5)).toBe(true);
     expect(db.has("f".repeat(64))).toBe(false);
     expect(db.has("a".repeat(32))).toBe(false);
@@ -56,23 +56,27 @@ describe("NsrlDb", () => {
   });
 
   it("throws a clear error when there is no sha256/md5 column", async () => {
-    await expect(async () => NsrlDb.open(await buildRds({ sha1Only: true }))).rejects.toThrow(/sha256 or md5/);
+    await expect(async () => NsrlDb.open(await buildRds({ sha1Only: true }))).rejects.toThrow(
+      /sha256 or md5/,
+    );
   });
 
   it("throws when the file can't be opened", async () => {
-    await expect(async () => NsrlDb.open(join(tmpdir(), "does-not-exist-" + process.pid + ".db"))).rejects.toThrow();
+    await expect(async () =>
+      NsrlDb.open(join(tmpdir(), "does-not-exist-" + process.pid + ".db")),
+    ).rejects.toThrow();
   });
 });
 
 describe("NSRL DB path persistence", () => {
   it("saves, loads, and removes the configured DB path", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dfir-nsrldbcfg-"));
-    const file = join(dir, "nsrl", "db-path.txt");   // nested dir created on save
+    const file = join(dir, "nsrl", "db-path.txt"); // nested dir created on save
     expect(loadNsrlDbPath(file)).toBe("");
     await saveNsrlDbPath(file, "D:\\NSRL\\RDS.db");
     expect(loadNsrlDbPath(file)).toBe("D:\\NSRL\\RDS.db");
     await removeNsrlDbPath(file);
     expect(loadNsrlDbPath(file)).toBe("");
-    await removeNsrlDbPath(file);                     // idempotent
+    await removeNsrlDbPath(file); // idempotent
   });
 });

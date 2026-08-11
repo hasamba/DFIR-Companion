@@ -35,23 +35,27 @@ export interface LeakCheckRecord {
 export interface LeakCheckResult {
   success: boolean;
   found: number;
-  quota?: number;          // remaining lookups on the plan
+  quota?: number; // remaining lookups on the plan
   result: LeakCheckRecord[];
   error?: string;
 }
 
 export class LeakCheckError extends Error {
-  constructor(message: string, readonly status: number, readonly kind: "auth" | "permission" | "ratelimit" | "badrequest" | "http" | "api") {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly kind: "auth" | "permission" | "ratelimit" | "badrequest" | "http" | "api",
+  ) {
     super(message);
     this.name = "LeakCheckError";
   }
 }
 
 export interface LeakCheckClientOptions {
-  apiKey: string;          // LeakCheck Pro API key (>= 40 chars)
+  apiKey: string; // LeakCheck Pro API key (>= 40 chars)
   fetchFn?: FetchFn;
   timeoutMs?: number;
-  baseUrl?: string;        // default https://leakcheck.io/api/v2
+  baseUrl?: string; // default https://leakcheck.io/api/v2
 }
 
 export class LeakCheckClient {
@@ -65,7 +69,11 @@ export class LeakCheckClient {
     this.timeoutMs = opts.timeoutMs ?? 20_000;
   }
 
-  async query(query: string, type: LeakCheckType, opts: { limit?: number; offset?: number } = {}): Promise<LeakCheckResult> {
+  async query(
+    query: string,
+    type: LeakCheckType,
+    opts: { limit?: number; offset?: number } = {},
+  ): Promise<LeakCheckResult> {
     const params = new URLSearchParams({ type });
     if (opts.limit != null) params.set("limit", String(opts.limit));
     if (opts.offset != null) params.set("offset", String(opts.offset));
@@ -80,23 +88,43 @@ export class LeakCheckClient {
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       const reason = body.error ? ` — ${body.error}` : "";
-      if (res.status === 401) throw new LeakCheckError(`LeakCheck 401 (auth)${reason} — check DFIR_LEAKCHECK_KEY`, 401, "auth");
+      if (res.status === 401)
+        throw new LeakCheckError(`LeakCheck 401 (auth)${reason} — check DFIR_LEAKCHECK_KEY`, 401, "auth");
       if (res.status === 403) {
         throw new LeakCheckError(
-          `LeakCheck 403 (forbidden)${reason} — LeakCheck returns 403 only for "Active plan required" or `
-          + `"Limit reached": confirm DFIR_LEAKCHECK_KEY is the API key of your active (Enterprise) plan and the quota isn't exhausted`,
-          403, "permission");
+          `LeakCheck 403 (forbidden)${reason} — LeakCheck returns 403 only for "Active plan required" or ` +
+            `"Limit reached": confirm DFIR_LEAKCHECK_KEY is the API key of your active (Enterprise) plan and the quota isn't exhausted`,
+          403,
+          "permission",
+        );
       }
-      if (res.status === 429) throw new LeakCheckError(`LeakCheck rate limit${reason} (slow down DFIR_LEAKCHECK_DELAY_MS)`, 429, "ratelimit");
-      if (res.status === 400 || res.status === 422) throw new LeakCheckError(`LeakCheck ${res.status}${reason || `: ${res.status}`}`, res.status, "badrequest");
+      if (res.status === 429)
+        throw new LeakCheckError(
+          `LeakCheck rate limit${reason} (slow down DFIR_LEAKCHECK_DELAY_MS)`,
+          429,
+          "ratelimit",
+        );
+      if (res.status === 400 || res.status === 422)
+        throw new LeakCheckError(
+          `LeakCheck ${res.status}${reason || `: ${res.status}`}`,
+          res.status,
+          "badrequest",
+        );
       throw new LeakCheckError(`LeakCheck HTTP ${res.status}${reason}`, res.status, "http");
     }
 
     const json = (await res.json()) as Partial<LeakCheckResult>;
     // A genuine "no breaches" answer is success:true / found:0; success:false is an API-level error.
-    if (json.success === false) throw new LeakCheckError(`LeakCheck: ${json.error ?? "query failed"}`, 200, "api");
+    if (json.success === false)
+      throw new LeakCheckError(`LeakCheck: ${json.error ?? "query failed"}`, 200, "api");
     const result = Array.isArray(json.result) ? json.result : [];
-    return { success: true, found: json.found ?? result.length, quota: json.quota, result, error: json.error };
+    return {
+      success: true,
+      found: json.found ?? result.length,
+      quota: json.quota,
+      result,
+      error: json.error,
+    };
   }
 
   queryEmail(email: string): Promise<LeakCheckResult> {

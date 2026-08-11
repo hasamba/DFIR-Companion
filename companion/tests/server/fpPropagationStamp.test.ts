@@ -13,7 +13,15 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 // later import can recognize the same pattern re-arriving and suggest a bulk-mark.
 
 function ev(partial: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { timestamp: "2026-05-20T09:00:00Z", description: "", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...partial };
+  return {
+    timestamp: "2026-05-20T09:00:00Z",
+    description: "",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...partial,
+  };
 }
 
 describe("POST /cases/:id/false-positive stamps patternFingerprint (#15b)", () => {
@@ -23,19 +31,27 @@ describe("POST /cases/:id/false-positive stamps patternFingerprint (#15b)", () =
     const app = createApp(store, { stateStore });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
-    const anchor = ev({ id: "e1", processName: "robocopy.exe", description: "robocopy C:\\data\\1 \\\\srv\\bak /mir" });
+    const anchor = ev({
+      id: "e1",
+      processName: "robocopy.exe",
+      description: "robocopy C:\\data\\1 \\\\srv\\bak /mir",
+    });
     const state = emptyState("c1");
     state.forensicTimeline.push(anchor);
     await stateStore.save(state);
 
-    await request(app).post("/cases/c1/false-positive").send({ kind: "event", ref: "e1", reason: "duplicate" });
-    await request(app).post("/cases/c1/false-positive").send({ kind: "ioc", ref: "1.2.3.4", reason: "duplicate" });
+    await request(app)
+      .post("/cases/c1/false-positive")
+      .send({ kind: "event", ref: "e1", reason: "duplicate" });
+    await request(app)
+      .post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "1.2.3.4", reason: "duplicate" });
 
     const res = await request(app).get("/cases/c1/false-positive");
     const eventMarker = res.body.find((m: { kind: string }) => m.kind === "event");
     const iocMarker = res.body.find((m: { kind: string }) => m.kind === "ioc");
     expect(eventMarker.patternFingerprint).toBe(patternKey(anchor));
     expect(eventMarker.patternFingerprint).toMatch(/^proc:robocopy\.exe\|/);
-    expect(iocMarker.patternFingerprint).toBeUndefined();   // only event markers carry a fingerprint
+    expect(iocMarker.patternFingerprint).toBeUndefined(); // only event markers carry a fingerprint
   });
 });

@@ -11,7 +11,8 @@ let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
 let artifactPath: string;
 
-const custodyRecords = async () => (await request(app).get("/cases/c1/custody")).body.records as Array<Record<string, unknown>>;
+const custodyRecords = async () =>
+  (await request(app).get("/cases/c1/custody")).body.records as Array<Record<string, unknown>>;
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-custodyexportev-"));
@@ -33,7 +34,9 @@ describe("exported custody events", () => {
   });
 
   it("records an export when the case leaves as an encrypted archive", async () => {
-    const res = await request(app).post("/cases/c1/export/encrypted").send({ password: "a-long-enough-password" });
+    const res = await request(app)
+      .post("/cases/c1/export/encrypted")
+      .send({ password: "a-long-enough-password" });
     expect(res.status).toBe(200);
 
     const records = await custodyRecords();

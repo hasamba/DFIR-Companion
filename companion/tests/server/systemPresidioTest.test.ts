@@ -55,7 +55,9 @@ describe("POST /system/presidio-test", () => {
   // The binding requirement: a failed connection test is a normal outcome the panel renders,
   // not a server fault — so this must be 200, never 5xx, with the error carried in the body.
   it("returns 200 (NOT a 5xx) with an error string when the container is unreachable", async () => {
-    globalThis.fetch = async () => { throw new Error("fetch failed: ECONNREFUSED"); };
+    globalThis.fetch = async () => {
+      throw new Error("fetch failed: ECONNREFUSED");
+    };
     const res = await request(app).post("/system/presidio-test").send({ url: "http://localhost:5002" });
     expect(res.status).toBe(200);
     expect(res.body.sample).toBe(PRESIDIO_SAMPLE_TEXT);
@@ -64,7 +66,11 @@ describe("POST /system/presidio-test", () => {
   });
 
   it("returns 200 with an error string when Presidio responds with a non-ok HTTP status", async () => {
-    globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({}) })) as unknown as typeof fetch;
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    })) as unknown as typeof fetch;
     const res = await request(app).post("/system/presidio-test").send({ url: "http://localhost:5002" });
     expect(res.status).toBe(200);
     expect(res.body.error).toMatch(/500/);

@@ -28,7 +28,11 @@ const CHAINSAW_HUNT = [
             Computer: "WIN-DC01.corp.local",
             TimeCreated: { "#attributes": { SystemTime: "2023-01-02T10:00:00.000Z" } },
           },
-          EventData: { UtcTime: "2023-01-02 10:00:00.000", Image: "C:\\Windows\\System32\\cmd.exe", CommandLine: "cmd.exe /c whoami" },
+          EventData: {
+            UtcTime: "2023-01-02 10:00:00.000",
+            Image: "C:\\Windows\\System32\\cmd.exe",
+            CommandLine: "cmd.exe /c whoami",
+          },
         },
       },
     },
@@ -121,7 +125,10 @@ describe("GET /diagnostics", () => {
 // reintroduce the same gap, so /diagnostics reports the budget and who is breaching it.
 describe("GET /diagnostics backup byte budget (#295)", () => {
   const config = (maxBytes: number): BackupConfig => ({
-    retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes,
+    retain: 24,
+    preSynthRetain: 10,
+    intervalMs: 0,
+    maxBytes,
   });
 
   it("reports the byte budget and counts the cases over it", async () => {
@@ -214,7 +221,10 @@ describe("absolute paths in error responses", () => {
     await store.createCase({ caseId: "c1", name: "C", investigator: "x", aiProvider: null });
     const stateStore = new StateStore(store);
     const pipeline = buildRuntimePipeline({
-      provider: undefined, synthesisProvider: undefined, stateStore, store,
+      provider: undefined,
+      synthesisProvider: undefined,
+      stateStore,
+      store,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app = createApp(store, { pipeline, stateStore });
@@ -237,7 +247,10 @@ describe("absolute paths in error responses", () => {
     await store.createCase({ caseId: "c1", name: "C", investigator: "x", aiProvider: null });
     const stateStore = new StateStore(store);
     const pipeline = buildRuntimePipeline({
-      provider: undefined, synthesisProvider: undefined, stateStore, store,
+      provider: undefined,
+      synthesisProvider: undefined,
+      stateStore,
+      store,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app = createApp(store, { pipeline, stateStore });
@@ -278,7 +291,10 @@ describe("POST /diagnostics/ai-test", () => {
     const fake: AIProvider = {
       name: "fake",
       model: "mock-model",
-      analyze: async (req) => { seen = { systemPrompt: req.systemPrompt, userPrompt: req.userPrompt }; return { rawText: '{"ok":true}' }; },
+      analyze: async (req) => {
+        seen = { systemPrompt: req.systemPrompt, userPrompt: req.userPrompt };
+        return { rawText: '{"ok":true}' };
+      },
     };
     const app = createApp(store, { aiTestProvider: () => fake });
     const res = await request(app).post("/diagnostics/ai-test");
@@ -298,7 +314,9 @@ describe("POST /diagnostics/ai-test", () => {
     const fake: AIProvider = {
       name: "fake",
       model: "mock-model",
-      analyze: async () => { throw new ProviderError("bad key", "auth"); },
+      analyze: async () => {
+        throw new ProviderError("bad key", "auth");
+      },
     };
     const app = createApp(store, { aiTestProvider: () => fake });
     const res = await request(app).post("/diagnostics/ai-test");

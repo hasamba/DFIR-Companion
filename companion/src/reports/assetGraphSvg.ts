@@ -8,13 +8,13 @@ import { escapeHtml } from "./escapeHtml.js";
 const SVG_W = 700;
 const NODE_W = 230;
 const NODE_H = 28;
-const ROW_H = 36;        // NODE_H + 8 gap
-const TOP_PAD = 30;      // room for column headers
+const ROW_H = 36; // NODE_H + 8 gap
+const TOP_PAD = 30; // room for column headers
 const BOT_PAD = 10;
 const LEFT_X = 8;
-const RIGHT_X = SVG_W - 8 - NODE_W;  // 462
+const RIGHT_X = SVG_W - 8 - NODE_W; // 462
 const BADGE_W = 18;
-const LABEL_X = BADGE_W + 6;          // 24 — label left offset within the node
+const LABEL_X = BADGE_W + 6; // 24 — label left offset within the node
 const TRUNC = 26;
 const MAX_ITEMS = 30;
 
@@ -27,7 +27,13 @@ function trunc(s: string): string {
 }
 
 const IOC_BADGE: Record<string, string> = {
-  ip: "IP", domain: "DO", hash: "##", file: "FI", process: "PR", url: "UR", other: "OT",
+  ip: "IP",
+  domain: "DO",
+  hash: "##",
+  file: "FI",
+  process: "PR",
+  url: "UR",
+  other: "OT",
 };
 
 // Returns an inline SVG string for the asset ↔ IoC graph, or "" when there are no assets.
@@ -97,8 +103,10 @@ export function renderAssetGraphSvg(graph: AssetGraph): string {
     const y = iocY.get(ioc.id)!;
     const ty = y + NODE_H / 2 + 4;
 
-    const fill = ioc.verdict === "malicious" ? "#fef0e8" : ioc.verdict === "suspicious" ? "#fefce8" : "#f0f2f5";
-    const stroke = ioc.verdict === "malicious" ? "#d0511a" : ioc.verdict === "suspicious" ? "#b8860b" : "#8d9aac";
+    const fill =
+      ioc.verdict === "malicious" ? "#fef0e8" : ioc.verdict === "suspicious" ? "#fefce8" : "#f0f2f5";
+    const stroke =
+      ioc.verdict === "malicious" ? "#d0511a" : ioc.verdict === "suspicious" ? "#b8860b" : "#8d9aac";
     const badge = IOC_BADGE[ioc.type] ?? ioc.type.slice(0, 2).toUpperCase();
 
     parts.push(

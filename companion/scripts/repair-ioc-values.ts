@@ -40,14 +40,18 @@ async function main(): Promise<void> {
 
   for (const c of changed) {
     console.log(`  ${c.id}  ${short(c.before)}`);
-    console.log(`  ${" ".repeat(c.id.length)}  -> ${short(c.after)}${c.note ? `   note: ${short(c.note, 40)}` : ""}`);
+    console.log(
+      `  ${" ".repeat(c.id.length)}  -> ${short(c.after)}${c.note ? `   note: ${short(c.note, 40)}` : ""}`,
+    );
   }
 
   // Anything still malformed after repair is what an export (MISP push) will skip. Name it here so
   // the operator can fix or remove it deliberately rather than discovering it as a remote rejection.
   const unusable = repaired.iocs.filter((i) => !isWellFormedIocValue(i.type, i.value));
   if (unusable.length) {
-    console.log(`\n${unusable.length} IOC(s) are still not valid for their type and will be SKIPPED by strict exports:`);
+    console.log(
+      `\n${unusable.length} IOC(s) are still not valid for their type and will be SKIPPED by strict exports:`,
+    );
     for (const i of unusable) console.log(`  ${i.id}  [${i.type}]  ${short(i.value)}`);
   }
 

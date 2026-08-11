@@ -9,7 +9,9 @@ import type { JiraIssueRef } from "./jiraClient.js";
 // an existing issue instead of duplicating. Stored in `state/jira-export.json`.
 
 const jiraExportSchema = z.object({
-  issueRefs: z.record(z.string(), z.object({ id: z.string(), key: z.string(), url: z.string().optional() })).catch({}),
+  issueRefs: z
+    .record(z.string(), z.object({ id: z.string(), key: z.string(), url: z.string().optional() }))
+    .catch({}),
   lastExportedAt: z.string().catch(""),
 });
 

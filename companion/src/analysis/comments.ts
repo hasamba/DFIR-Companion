@@ -13,7 +13,7 @@ import { StateLock } from "./stateLock.js";
 
 export const commentSchema = z.object({
   id: z.string(),
-  targetType: z.string(),       // "event" | "finding" | "ioc" | "question" | "asset" | …
+  targetType: z.string(), // "event" | "finding" | "ioc" | "question" | "asset" | …
   targetId: z.string(),
   author: z.string(),
   text: z.string(),

@@ -30,7 +30,9 @@ describe("pinned-findings routes", () => {
 
   it("POST pins a finding, pings clients, and rejects a blank findingId", async () => {
     const { app, pinged } = await appWith();
-    const res = await request(app).post("/cases/c1/pinned-findings").send({ findingId: "f-1", pinnedBy: "Alice" });
+    const res = await request(app)
+      .post("/cases/c1/pinned-findings")
+      .send({ findingId: "f-1", pinnedBy: "Alice" });
     expect(res.status).toBe(201);
     expect(res.body.pins).toHaveLength(1);
     expect(res.body.pins[0]).toMatchObject({ findingId: "f-1", pinnedBy: "Alice" });
@@ -54,7 +56,9 @@ describe("pinned-findings routes", () => {
     for (const id of ["f-1", "f-2", "f-3"]) {
       await request(app).post("/cases/c1/pinned-findings").send({ findingId: id });
     }
-    const res = await request(app).put("/cases/c1/pinned-findings/order").send({ order: ["f-3", "f-1", "f-2"] });
+    const res = await request(app)
+      .put("/cases/c1/pinned-findings/order")
+      .send({ order: ["f-3", "f-1", "f-2"] });
     expect(res.status).toBe(200);
     expect(res.body.pins.map((p: { findingId: string }) => p.findingId)).toEqual(["f-3", "f-1", "f-2"]);
 

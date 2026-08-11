@@ -1,6 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { CaseStore } from "../storage/caseStore.js";
-import { toCaseRelative, type CustodyStore, type CustodyRecord, type CustodyChainBreak, type CustodyChainHead } from "./custody.js";
+import {
+  toCaseRelative,
+  type CustodyStore,
+  type CustodyRecord,
+  type CustodyChainBreak,
+  type CustodyChainHead,
+} from "./custody.js";
 import { getAppVersion } from "../version.js";
 
 /** Filename the manifest ships under, inside an export and in the case's reports dir. */
@@ -121,7 +127,8 @@ export function assembleCustodyManifest(input: {
  */
 export function verifyCustodyManifest(manifest: CustodyManifest, secret: Buffer): boolean {
   const { signature, ...unsigned } = manifest;
-  if (!signature || signature.algorithm !== "HMAC-SHA256" || typeof signature.value !== "string") return false;
+  if (!signature || signature.algorithm !== "HMAC-SHA256" || typeof signature.value !== "string")
+    return false;
   const expected = Buffer.from(sign(unsigned, secret), "hex");
   const actual = Buffer.from(signature.value, "hex");
   // Lengths differ on a malformed signature, where timingSafeEqual throws rather than returning false.

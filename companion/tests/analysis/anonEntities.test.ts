@@ -19,10 +19,10 @@ describe("sanitizeCustomEntities", () => {
   it("drops blanks, coerces unknown category to OTHER, dedupes case-insensitively", () => {
     const out = sanitizeCustomEntities([
       { value: "Host1", category: "HOST" },
-      { value: "  ", category: "HOST" },          // blank → dropped
-      { value: "host1", category: "USER" },        // dup of Host1 (ci) → dropped
-      { value: "Falcon", category: "bogus" },      // unknown cat → OTHER
-      { value: "x" },                              // missing cat → OTHER
+      { value: "  ", category: "HOST" }, // blank → dropped
+      { value: "host1", category: "USER" }, // dup of Host1 (ci) → dropped
+      { value: "Falcon", category: "bogus" }, // unknown cat → OTHER
+      { value: "x" }, // missing cat → OTHER
     ]);
     expect(out).toEqual([
       { value: "Host1", category: "HOST" },
@@ -40,7 +40,13 @@ describe("CustomEntitiesStore", () => {
     expect(await store.load("c1")).toEqual([]);
   });
   it("round-trips a saved (sanitized) list", async () => {
-    await store.save("c1", [{ value: "DC02", category: "HOST" }, { value: "ProjectX", category: "OTHER" }]);
-    expect(await store.load("c1")).toEqual([{ value: "DC02", category: "HOST" }, { value: "ProjectX", category: "OTHER" }]);
+    await store.save("c1", [
+      { value: "DC02", category: "HOST" },
+      { value: "ProjectX", category: "OTHER" },
+    ]);
+    expect(await store.load("c1")).toEqual([
+      { value: "DC02", category: "HOST" },
+      { value: "ProjectX", category: "OTHER" },
+    ]);
   });
 });

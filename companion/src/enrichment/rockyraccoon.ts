@@ -1,7 +1,15 @@
-import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
+import {
+  RateLimitError,
+  parseRetryAfterMs,
+  type EnrichmentProvider,
+  type EnrichmentResult,
+  type FetchFn,
+  type IocKind,
+  type Verdict,
+} from "./provider.js";
 
 export interface RockyRaccoonOptions {
-  apiKey: string;    // et_live_… (Authorization: Bearer)
+  apiKey: string; // et_live_… (Authorization: Bearer)
   fetchFn?: FetchFn;
   timeoutMs?: number;
   baseUrl?: string;
@@ -9,7 +17,13 @@ export interface RockyRaccoonOptions {
 
 interface ProcessProfile {
   process_name?: string;
-  classification?: { category?: string; publisher?: string; is_lolbin?: boolean; risk_level?: string; expected_parent?: string };
+  classification?: {
+    category?: string;
+    publisher?: string;
+    is_lolbin?: boolean;
+    risk_level?: string;
+    expected_parent?: string;
+  };
   intel?: { mitre_techniques?: string[]; suspicious_indicators?: string };
   executions?: { total?: number; confidence?: string };
 }
@@ -43,7 +57,9 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
     this.base = (opts.baseUrl ?? "https://api.rockyraccoon.io").replace(/\/+$/, "");
   }
 
-  supports(kind: IocKind): boolean { return kind === "process"; }
+  supports(kind: IocKind): boolean {
+    return kind === "process";
+  }
 
   private headers(): Record<string, string> {
     return { Authorization: `Bearer ${this.opts.apiKey}`, Accept: "application/json" };
@@ -51,7 +67,7 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "process") return null;
-    const name = value.trim().split(/[\\/]/).pop() || value;     // basename, in case a path slipped in
+    const name = value.trim().split(/[\\/]/).pop() || value; // basename, in case a path slipped in
     const res = await this.fetchFn(`${this.base}/v1/process/${encodeURIComponent(name)}`, {
       headers: this.headers(),
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
@@ -60,8 +76,13 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
       // Not in the dataset — uncommon. A real DFIR signal, but not an accusation.
       return { source: this.name, verdict: "unknown", score: "not seen in ~346M events (uncommon process)" };
     }
-    if (res.status === 401 || res.status === 403) throw new Error("RockyRaccoon auth/tier error (check DFIR_ROCKYRACCOON_KEY / plan)");
-    if (res.status === 429) throw new RateLimitError("RockyRaccoon rate/quota limit", parseRetryAfterMs(res.headers.get("retry-after")));
+    if (res.status === 401 || res.status === 403)
+      throw new Error("RockyRaccoon auth/tier error (check DFIR_ROCKYRACCOON_KEY / plan)");
+    if (res.status === 429)
+      throw new RateLimitError(
+        "RockyRaccoon rate/quota limit",
+        parseRetryAfterMs(res.headers.get("retry-after")),
+      );
     if (!res.ok) throw new Error(`RockyRaccoon HTTP ${res.status}`);
 
     const p = (await res.json()) as ProcessProfile;
@@ -69,8 +90,12 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
     const risk = (cls.risk_level ?? "").toLowerCase();
     // A process PROFILE describes the process TYPE, not whether this instance is evil:
     // flag LOLBINs and higher-risk types for scrutiny, mark common low-risk ones benign.
-    const verdict: Verdict = cls.is_lolbin || risk === "high" || risk === "medium" ? "suspicious"
-      : risk === "low" ? "harmless" : "unknown";
+    const verdict: Verdict =
+      cls.is_lolbin || risk === "high" || risk === "medium"
+        ? "suspicious"
+        : risk === "low"
+          ? "harmless"
+          : "unknown";
 
     const tags = new Set<string>();
     if (cls.category) tags.add(cls.category);
@@ -97,17 +122,40 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
     const c = child.trim().split(/[\\/]/).pop() || child;
     if (!p || !c) return null;
     const url = `${this.base}/v1/parent-child?parent=${encodeURIComponent(p)}&child=${encodeURIComponent(c)}`;
-    const res = await this.fetchFn(url, { headers: this.headers(), signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000) });
-    if (res.status === 404) return { observed: false, note: `${p} → ${c} not seen; child '${c}' is unknown to the dataset` };
+    const res = await this.fetchFn(url, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
+    });
+    if (res.status === 404)
+      return { observed: false, note: `${p} → ${c} not seen; child '${c}' is unknown to the dataset` };
     if (res.status === 401 || res.status === 403) throw new Error("RockyRaccoon auth/tier error");
-    if (res.status === 429) throw new RateLimitError("RockyRaccoon rate/quota limit", parseRetryAfterMs(res.headers.get("retry-after")));
+    if (res.status === 429)
+      throw new RateLimitError(
+        "RockyRaccoon rate/quota limit",
+        parseRetryAfterMs(res.headers.get("retry-after")),
+      );
     if (!res.ok) throw new Error(`RockyRaccoon HTTP ${res.status}`);
 
-    const j = (await res.json()) as { observed?: boolean; percentage?: number; common_parents?: Array<{ parent?: string; percentage?: number }> };
+    const j = (await res.json()) as {
+      observed?: boolean;
+      percentage?: number;
+      common_parents?: Array<{ parent?: string; percentage?: number }>;
+    };
     if (j.observed) {
-      return { observed: true, percentage: j.percentage, note: `${p} → ${c} observed (${(j.percentage ?? 0).toFixed(1)}% of ${c} executions)` };
+      return {
+        observed: true,
+        percentage: j.percentage,
+        note: `${p} → ${c} observed (${(j.percentage ?? 0).toFixed(1)}% of ${c} executions)`,
+      };
     }
-    const usual = (j.common_parents ?? []).slice(0, 2).map((x) => x.parent).filter(Boolean).join(", ");
-    return { observed: false, note: `${p} → ${c} NOT observed${usual ? `; ${c} usually spawned by ${usual}` : ""}` };
+    const usual = (j.common_parents ?? [])
+      .slice(0, 2)
+      .map((x) => x.parent)
+      .filter(Boolean)
+      .join(", ");
+    return {
+      observed: false,
+      note: `${p} → ${c} NOT observed${usual ? `; ${c} usually spawned by ${usual}` : ""}`,
+    };
   }
 }

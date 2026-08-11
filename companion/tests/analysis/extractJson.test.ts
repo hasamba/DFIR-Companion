@@ -8,22 +8,22 @@ describe("extractJsonText", () => {
   });
 
   it("strips a ```json fenced block (the real failure case)", () => {
-    const raw = "```json\n{\n  \"summary\": \"ok\"\n}\n```";
+    const raw = '```json\n{\n  "summary": "ok"\n}\n```';
     expect(JSON.parse(extractJsonText(raw))).toEqual({ summary: "ok" });
   });
 
   it("strips a bare ``` fence with no language tag", () => {
-    const raw = "```\n{\"x\": 1}\n```";
+    const raw = '```\n{"x": 1}\n```';
     expect(JSON.parse(extractJsonText(raw))).toEqual({ x: 1 });
   });
 
   it("extracts JSON from a fenced block surrounded by prose", () => {
-    const raw = "Here is the delta you asked for:\n```json\n{\"ok\":true}\n```\nLet me know if you need more.";
+    const raw = 'Here is the delta you asked for:\n```json\n{"ok":true}\n```\nLet me know if you need more.';
     expect(JSON.parse(extractJsonText(raw))).toEqual({ ok: true });
   });
 
   it("slices bare JSON out of leading/trailing prose when there is no fence", () => {
-    const raw = "Sure! {\"findings\": []} — hope that helps";
+    const raw = 'Sure! {"findings": []} — hope that helps';
     expect(JSON.parse(extractJsonText(raw))).toEqual({ findings: [] });
   });
 });
@@ -47,7 +47,9 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
     const truncated = '{"findings":[{"id":"f1","mitre":["T1"]},{"id":"f2","ev":{"x":1';
     const repaired = repairTruncatedJson(truncated);
     expect(() => JSON.parse(repaired)).not.toThrow();
-    expect((JSON.parse(repaired) as { findings: { id: string }[] }).findings.map((f) => f.id)).toEqual(["f1"]);
+    expect((JSON.parse(repaired) as { findings: { id: string }[] }).findings.map((f) => f.id)).toEqual([
+      "f1",
+    ]);
   });
 
   it("leaves valid JSON untouched", () => {
@@ -100,7 +102,8 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
   it("prefers whole-response JSON over a fence that only appears INSIDE a string value", () => {
     // A finding description quoting a fenced command block: fence-extraction would slice the
     // response apart mid-string and throw, even though the raw response is already valid JSON.
-    const raw = '{"findings":[{"id":"f1","description":"the operator ran ```powershell\\niex(...)``` on the host"}]}';
+    const raw =
+      '{"findings":[{"id":"f1","description":"the operator ran ```powershell\\niex(...)``` on the host"}]}';
     const parsed = parseJsonLoose(raw) as { findings: { id: string; description: string }[] };
     expect(parsed.findings[0].id).toBe("f1");
     expect(parsed.findings[0].description).toContain("powershell");
@@ -113,8 +116,12 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
     // escapeControlCharsInStrings on the trimmed text before fence extraction, recovering the
     // outer object. (Inner JSON quotes are escaped, as a model emitting valid JSON inside a
     // description string would do.)
-    const raw = '{"findings":[{"id":"f1","description":"cmd was:\n```json\\n{\\"cmd\\":\\"x\\"}\\n```\\ndone"}],"summary":"ok"}';
-    const parsed = parseJsonLoose(raw) as { findings: { id: string; description: string }[]; summary: string };
+    const raw =
+      '{"findings":[{"id":"f1","description":"cmd was:\n```json\\n{\\"cmd\\":\\"x\\"}\\n```\\ndone"}],"summary":"ok"}';
+    const parsed = parseJsonLoose(raw) as {
+      findings: { id: string; description: string }[];
+      summary: string;
+    };
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0].id).toBe("f1");
     expect(parsed.summary).toBe("ok");
@@ -128,7 +135,8 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
     // "Unterminated string" and the whole response was thrown away. The fix closes the open
     // string and appends structural closers, recovering the finding's id + title (and a truncated
     // description) — more useful than throwing the whole response away.
-    const truncated = '{"findings":[{"id":"f1","title":"Ransom","description":"Ransomware deployed at 10:20 on SRV-01 by js';
+    const truncated =
+      '{"findings":[{"id":"f1","title":"Ransom","description":"Ransomware deployed at 10:20 on SRV-01 by js';
     const repaired = repairTruncatedJson(truncated);
     const parsed = JSON.parse(repaired) as { findings: { id: string; title: string; description: string }[] };
     expect(parsed.findings).toHaveLength(1);
@@ -139,7 +147,8 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
   });
 
   it("#4: parseJsonLoose recovers a partial result from a first-object-string truncation", () => {
-    const raw = '{"findings":[{"id":"f1","title":"Ransom","description":"Ransomware deployed at 10:20 on SRV-01 by js';
+    const raw =
+      '{"findings":[{"id":"f1","title":"Ransom","description":"Ransomware deployed at 10:20 on SRV-01 by js';
     const parsed = parseJsonLoose(raw) as { findings: { id: string; title: string }[] };
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0].id).toBe("f1");

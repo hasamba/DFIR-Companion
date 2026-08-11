@@ -41,7 +41,18 @@ export const RAW_TOOL_EXTS = new Set([".evtx", ".evt", ".pcap", ".pcapng"]);
 // Text formats the Companion parses natively. The binary sniff must never override these — a .csv
 // with a stray NUL is still a CSV for the native importer, not a malware sample.
 const NATIVE_TEXT_EXTS = new Set([
-  ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".xml", ".log", ".txt", ".yaml", ".yml", ".md", ".html",
+  ".csv",
+  ".tsv",
+  ".json",
+  ".jsonl",
+  ".ndjson",
+  ".xml",
+  ".log",
+  ".txt",
+  ".yaml",
+  ".yml",
+  ".md",
+  ".html",
 ]);
 
 // How much of a file to look at, and how much non-printable content marks it binary.
@@ -55,7 +66,7 @@ const NON_PRINTABLE_RATIO = 0.3;
  */
 export function looksBinary(sample: Buffer): boolean {
   const view = sample.subarray(0, SNIFF_BYTES);
-  if (view.length === 0) return false;   // nothing to judge on
+  if (view.length === 0) return false; // nothing to judge on
   let nonPrintable = 0;
   for (const b of view) {
     if (b === 0) return true;

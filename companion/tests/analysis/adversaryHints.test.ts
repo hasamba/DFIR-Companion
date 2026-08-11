@@ -7,9 +7,19 @@ import {
   rankAdversaryGroups,
   type AdversaryGroup,
 } from "../../src/analysis/adversaryHints.js";
-import { emptyState, type InvestigationState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type InvestigationState,
+  type Finding,
+  type ForensicEvent,
+} from "../../src/analysis/stateTypes.js";
 
-const group = (id: string, name: string, techniques: string[], over: Partial<AdversaryGroup> = {}): AdversaryGroup => ({
+const group = (
+  id: string,
+  name: string,
+  techniques: string[],
+  over: Partial<AdversaryGroup> = {},
+): AdversaryGroup => ({
   id,
   name,
   aliases: [],
@@ -168,7 +178,12 @@ describe("rankAdversaryGroups", () => {
   it("carries group metadata and a working ATT&CK url through to the hint", () => {
     const [hint] = rankAdversaryGroups(
       caseTechs,
-      [group("G0016", "APT29", ["T1059", "T1566", "T1003"], { aliases: ["Cozy Bear"], description: "Russian SVR." })],
+      [
+        group("G0016", "APT29", ["T1059", "T1566", "T1003"], {
+          aliases: ["Cozy Bear"],
+          description: "Russian SVR.",
+        }),
+      ],
       { minOverlap: 3 },
     );
     expect(hint.name).toBe("APT29");

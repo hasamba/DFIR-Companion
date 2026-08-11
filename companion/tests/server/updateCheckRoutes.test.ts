@@ -10,15 +10,24 @@ import { UpdateCheckStore } from "../../src/analysis/updateCheckStore.js";
 
 async function makeStore() {
   const root = await mkdtemp(join(tmpdir(), "dfir-upd-"));
-  return { caseStore: new CaseStore(root), updateStore: new UpdateCheckStore(join(root, "updates", "u.json")) };
+  return {
+    caseStore: new CaseStore(root),
+    updateStore: new UpdateCheckStore(join(root, "updates", "u.json")),
+  };
 }
 
 // A fetch mock returning a GitHub releases/latest body.
 function fetchReturning(tag: string) {
-  return (async () => ({ ok: true, status: 200, json: async () => ({ tag_name: tag, html_url: "https://gh/rel", published_at: "2026-06-18T00:00:00Z" }) })) as unknown as typeof fetch;
+  return (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ tag_name: tag, html_url: "https://gh/rel", published_at: "2026-06-18T00:00:00Z" }),
+  })) as unknown as typeof fetch;
 }
 function fetchFailing() {
-  return (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
+  return (async () => {
+    throw new Error("network down");
+  }) as unknown as typeof fetch;
 }
 
 describe("/update-check", () => {
@@ -44,8 +53,10 @@ describe("/update-check", () => {
   it("POST /run fetches, caches, and reports a newer version", async () => {
     const { caseStore, updateStore } = await makeStore();
     const app = createApp(caseStore, {
-      updateCheckStore: updateStore, appVersion: "0.23.0",
-      updateCheckEnv: "1", updateFetch: fetchReturning("v0.24.0"),
+      updateCheckStore: updateStore,
+      appVersion: "0.23.0",
+      updateCheckEnv: "1",
+      updateFetch: fetchReturning("v0.24.0"),
     });
     const run = await request(app).post("/update-check/run");
     expect(run.status).toBe(200);
@@ -58,8 +69,10 @@ describe("/update-check", () => {
   it("POST /run records the error but does not 500 when the fetch fails", async () => {
     const { caseStore, updateStore } = await makeStore();
     const app = createApp(caseStore, {
-      updateCheckStore: updateStore, appVersion: "0.23.0",
-      updateCheckEnv: "1", updateFetch: fetchFailing(),
+      updateCheckStore: updateStore,
+      appVersion: "0.23.0",
+      updateCheckEnv: "1",
+      updateFetch: fetchFailing(),
     });
     const run = await request(app).post("/update-check/run");
     expect(run.status).toBe(200);
@@ -68,13 +81,21 @@ describe("/update-check", () => {
 
   it("POST /run is 400 when not enabled", async () => {
     const { caseStore, updateStore } = await makeStore();
-    const app = createApp(caseStore, { updateCheckStore: updateStore, appVersion: "0.23.0", updateFetch: fetchReturning("v9.9.9") });
+    const app = createApp(caseStore, {
+      updateCheckStore: updateStore,
+      appVersion: "0.23.0",
+      updateFetch: fetchReturning("v9.9.9"),
+    });
     expect((await request(app).post("/update-check/run")).status).toBe(400);
   });
 
   it("is locked when DFIR_UPDATE_CHECK=0: settings and run return 423, /health flags it", async () => {
     const { caseStore, updateStore } = await makeStore();
-    const app = createApp(caseStore, { updateCheckStore: updateStore, appVersion: "0.23.0", updateCheckEnv: "0" });
+    const app = createApp(caseStore, {
+      updateCheckStore: updateStore,
+      appVersion: "0.23.0",
+      updateCheckEnv: "0",
+    });
     expect((await request(app).post("/update-check/settings").send({ enabled: true })).status).toBe(423);
     expect((await request(app).post("/update-check/run")).status).toBe(423);
     expect((await request(app).get("/health")).body.updateCheckLocked).toBe(true);

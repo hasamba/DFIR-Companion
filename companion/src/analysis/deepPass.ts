@@ -30,14 +30,14 @@ export const FLOOR_CHOICES: readonly Severity[] = ["Critical", "High", "Medium",
 
 export interface FloorOption {
   floor: Severity;
-  events: number;                 // graded events at or above this floor
-  rows: number;                   // prompt rows after detection-burst grouping
-  batches: number;                // how many AI calls the batching stage would make
-  estimatedInputTokens: number;   // rendered timeline cost across all batches
+  events: number; // graded events at or above this floor
+  rows: number; // prompt rows after detection-burst grouping
+  batches: number; // how many AI calls the batching stage would make
+  estimatedInputTokens: number; // rendered timeline cost across all batches
 }
 
 export interface PreviewOptions {
-  cap?: number;                   // rows per batch; defaults to the synthesis event cap
+  cap?: number; // rows per batch; defaults to the synthesis event cap
   env?: NodeJS.ProcessEnv;
 }
 
@@ -53,13 +53,10 @@ function estimateRow(e: ForensicEvent): number {
  * grouping — the same sequence the run itself uses, so the preview cannot promise what the run will
  * not deliver.
  */
-export function previewFloors(
-  events: readonly ForensicEvent[],
-  opts: PreviewOptions = {},
-): FloorOption[] {
+export function previewFloors(events: readonly ForensicEvent[], opts: PreviewOptions = {}): FloorOption[] {
   const env = opts.env ?? process.env;
   const cap = Math.max(1, Math.floor(opts.cap ?? 0)) || 1;
-  const graded = promptCandidates(events, env);          // drops Info unless explicitly re-enabled
+  const graded = promptCandidates(events, env); // drops Info unless explicitly re-enabled
   return FLOOR_CHOICES.map((floor) => {
     const kept = applySeverityFloor([...graded], floor);
     const { events: rows } = collapseForPrompt(kept, groupEnvOptions(env));
@@ -144,7 +141,9 @@ export const deepPassCheckpointSchema: z.ZodType<DeepPassCheckpoint> = z.object(
 });
 
 function str(v: unknown, max: number): string {
-  return String(v ?? "").trim().slice(0, max);
+  return String(v ?? "")
+    .trim()
+    .slice(0, max);
 }
 
 function strList(v: unknown, max: number): string[] {

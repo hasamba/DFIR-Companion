@@ -42,7 +42,7 @@ export interface ImportedThemePalette {
 }
 
 export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
-  "catppuccin": {
+  catppuccin: {
     label: "Catppuccin",
     group: "dark",
     palette: {
@@ -104,7 +104,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#1e66f5",
     },
   },
-  "cga": {
+  cga: {
     label: "CGA",
     group: "fun",
     palette: {
@@ -135,7 +135,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#ffffff",
     },
   },
-  "ethereal": {
+  ethereal: {
     label: "Ethereal",
     group: "dark",
     palette: {
@@ -166,7 +166,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#7d82d9",
     },
   },
-  "everforest": {
+  everforest: {
     label: "Everforest",
     group: "dark",
     palette: {
@@ -197,7 +197,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#7fbbb3",
     },
   },
-  "gruvbox": {
+  gruvbox: {
     label: "Gruvbox",
     group: "dark",
     palette: {
@@ -228,7 +228,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#7daea3",
     },
   },
-  "hacker": {
+  hacker: {
     label: "Hacker",
     group: "fun",
     palette: {
@@ -259,7 +259,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#00ff41",
     },
   },
-  "hackerman": {
+  hackerman: {
     label: "Hackerman",
     group: "dark",
     palette: {
@@ -290,7 +290,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#82FB9C",
     },
   },
-  "kanagawa": {
+  kanagawa: {
     label: "Kanagawa",
     group: "dark",
     palette: {
@@ -321,7 +321,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#7e9cd8",
     },
   },
-  "lumon": {
+  lumon: {
     label: "Lumon",
     group: "dark",
     palette: {
@@ -383,7 +383,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#e68e0d",
     },
   },
-  "miasma": {
+  miasma: {
     label: "Miasma",
     group: "dark",
     palette: {
@@ -414,7 +414,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#78824b",
     },
   },
-  "nord": {
+  nord: {
     label: "Nord",
     group: "dark",
     palette: {
@@ -507,7 +507,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#faa968",
     },
   },
-  "ristretto": {
+  ristretto: {
     label: "Ristretto",
     group: "dark",
     palette: {
@@ -569,7 +569,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#56949f",
     },
   },
-  "sguil": {
+  sguil: {
     label: "Sguil",
     group: "fun",
     palette: {
@@ -631,7 +631,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#7aa2f7",
     },
   },
-  "vantablack": {
+  vantablack: {
     label: "Vantablack",
     group: "dark",
     palette: {
@@ -662,7 +662,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#8d8d8d",
     },
   },
-  "vaporwave": {
+  vaporwave: {
     label: "Vaporwave",
     group: "fun",
     palette: {
@@ -693,7 +693,7 @@ export const IMPORTED_THEMES: Record<string, ImportedThemePalette> = {
       "--help-icon-color": "#ffffff",
     },
   },
-  "white": {
+  white: {
     label: "White",
     group: "light",
     palette: {

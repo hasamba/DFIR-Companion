@@ -102,7 +102,10 @@ describe("GET /diagnostics/preflight", () => {
 
   it("includes reachable enrichment provider (non-critical)", async () => {
     const enrich = fakeEnrich("MISP", true);
-    const app = createApp(store, { aiTestProvider: () => fakeAi({ ok: true }), enrichmentProviders: [enrich] });
+    const app = createApp(store, {
+      aiTestProvider: () => fakeAi({ ok: true }),
+      enrichmentProviders: [enrich],
+    });
     const res = await request(app).get("/diagnostics/preflight");
     expect(res.status).toBe(200);
     const item = res.body.report.items.find((i: { name: string }) => i.name === "Enrichment: MISP");
@@ -114,7 +117,10 @@ describe("GET /diagnostics/preflight", () => {
   it("includes unreachable enrichment provider as non-critical failure", async () => {
     // AI passes so the only failure is the enrichment probe — anyCriticalFailed must stay false.
     const enrich = fakeEnrich("MISP", false);
-    const app = createApp(store, { aiTestProvider: () => fakeAi({ ok: true }), enrichmentProviders: [enrich] });
+    const app = createApp(store, {
+      aiTestProvider: () => fakeAi({ ok: true }),
+      enrichmentProviders: [enrich],
+    });
     const res = await request(app).get("/diagnostics/preflight");
     expect(res.status).toBe(200);
     const item = res.body.report.items.find((i: { name: string }) => i.name === "Enrichment: MISP");
@@ -129,7 +135,10 @@ describe("GET /diagnostics/preflight", () => {
     let looked = false;
     const vt = fakeExternalEnrich("VirusTotal");
     // Spy: lookup must NOT be invoked during preflight.
-    (vt as unknown as { lookup: () => Promise<null> }).lookup = async () => { looked = true; return null; };
+    (vt as unknown as { lookup: () => Promise<null> }).lookup = async () => {
+      looked = true;
+      return null;
+    };
     const app = createApp(store, { aiTestProvider: () => fakeAi({ ok: true }), enrichmentProviders: [vt] });
     const res = await request(app).get("/diagnostics/preflight");
     expect(res.status).toBe(200);

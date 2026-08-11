@@ -52,9 +52,27 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
   app.post("/templates", async (req: Request, res: Response) => {
     if (!options.templateStore) return res.status(501).json({ error: "template store not configured" });
     try {
-      const { name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor, huntPlatforms, id } = req.body ?? {};
+      const {
+        name,
+        description,
+        recommendedImports,
+        initialKeyQuestions,
+        initialNextSteps,
+        severityFloor,
+        huntPlatforms,
+        id,
+      } = req.body ?? {};
       if (!name) return res.status(400).json({ error: "name is required" });
-      const saved = await options.templateStore.save({ id, name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor: severityFloor ?? null, huntPlatforms });
+      const saved = await options.templateStore.save({
+        id,
+        name,
+        description,
+        recommendedImports,
+        initialKeyQuestions,
+        initialNextSteps,
+        severityFloor: severityFloor ?? null,
+        huntPlatforms,
+      });
       return res.status(201).json(saved);
     } catch (err) {
       return storeFailure(res, err);
@@ -68,7 +86,8 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       if (!found) return res.status(404).json({ error: `template "${req.params.id}" not found` });
       return res.status(204).send();
     } catch (err) {
-      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
+      if ((err as Error).message.includes("built-in"))
+        return res.status(400).json({ error: (err as Error).message });
       return storeFailure(res, err);
     }
   });
@@ -87,7 +106,8 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
   });
 
   app.get("/report-templates/:id", async (req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
+    if (!options.reportTemplateStore)
+      return res.status(501).json({ error: "report templates not configured" });
     try {
       const tpl = await options.reportTemplateStore.get(req.params.id);
       if (!tpl) return res.status(404).json({ error: `report template "${req.params.id}" not found` });
@@ -98,7 +118,8 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
   });
 
   app.post("/report-templates", async (req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
+    if (!options.reportTemplateStore)
+      return res.status(501).json({ error: "report templates not configured" });
     try {
       const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
       if (!name) return res.status(400).json({ error: "name is required" });
@@ -139,7 +160,8 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
       if (!name) return res.status(400).json({ error: "name is required" });
       const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];
-      if (!sections.length) return res.status(400).json({ error: "at least one visible section is required" });
+      if (!sections.length)
+        return res.status(400).json({ error: "at least one visible section is required" });
       const saved = await options.dashboardViewStore.save(req.body);
       return res.status(201).json(saved);
     } catch (err) {
@@ -165,7 +187,8 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
   // Delete a custom template, OR reset an edited built-in back to its shipped default (idempotent for
   // a pristine built-in). 404 only for an unknown non-built-in id.
   app.delete("/report-templates/:id", async (req: Request, res: Response) => {
-    if (!options.reportTemplateStore) return res.status(501).json({ error: "report templates not configured" });
+    if (!options.reportTemplateStore)
+      return res.status(501).json({ error: "report templates not configured" });
     try {
       const removed = await options.reportTemplateStore.delete(req.params.id);
       if (!removed && !options.reportTemplateStore.isBuiltIn(req.params.id)) {
@@ -192,20 +215,42 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
   app.post("/bundles", async (req: Request, res: Response) => {
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     try {
-      const { id, name, description, artifacts, defaultWaitMinutes,
-              timeoutSeconds, expirySeconds, params, filters, superTimelineOnly, timeScopeParamNames } = req.body ?? {};
+      const {
+        id,
+        name,
+        description,
+        artifacts,
+        defaultWaitMinutes,
+        timeoutSeconds,
+        expirySeconds,
+        params,
+        filters,
+        superTimelineOnly,
+        timeScopeParamNames,
+      } = req.body ?? {};
       if (!name) return res.status(400).json({ error: "name is required" });
-      if (!Array.isArray(artifacts) || artifacts.length === 0) return res.status(400).json({ error: "at least one artifact is required" });
+      if (!Array.isArray(artifacts) || artifacts.length === 0)
+        return res.status(400).json({ error: "at least one artifact is required" });
       // Forward EVERY field the store supports. Destructuring a subset here silently wiped a built-in's
       // superTimelineOnly/timeout/params/filters on every dashboard edit — the store's own sanitizers are
       // the validation layer, so passing them through is safe.
       const saved = await options.artifactBundleStore.save({
-        id, name, description, artifacts, defaultWaitMinutes,
-        timeoutSeconds, expirySeconds, params, filters, superTimelineOnly, timeScopeParamNames,
+        id,
+        name,
+        description,
+        artifacts,
+        defaultWaitMinutes,
+        timeoutSeconds,
+        expirySeconds,
+        params,
+        filters,
+        superTimelineOnly,
+        timeScopeParamNames,
       });
       return res.status(201).json(saved);
     } catch (err) {
-      if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
+      if ((err as Error).message.includes("built-in"))
+        return res.status(400).json({ error: (err as Error).message });
       return storeFailure(res, err);
     }
   });

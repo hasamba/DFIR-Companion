@@ -7,7 +7,9 @@ const ROOT = resolve("/tmp/dfir-store-root");
 describe("assertSafeStoreId", () => {
   it("accepts the id shapes the stores actually use", () => {
     // Server-generated UUIDs and the shipped built-in ids.
-    expect(assertSafeStoreId("6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8")).toBe("6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8");
+    expect(assertSafeStoreId("6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8")).toBe(
+      "6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8",
+    );
     expect(assertSafeStoreId("best-practice")).toBe("best-practice");
     expect(assertSafeStoreId("super-timeline-triage")).toBe("super-timeline-triage");
     expect(assertSafeStoreId("general-malware")).toBe("general-malware");
@@ -60,7 +62,9 @@ describe("assertSafeStoreId", () => {
 
   it("rejects a non-string id", () => {
     expect(() => assertSafeStoreId(undefined as unknown as string)).toThrow(UnsafeStoreIdError);
-    expect(() => assertSafeStoreId({ toString: () => "../evil" } as unknown as string)).toThrow(UnsafeStoreIdError);
+    expect(() => assertSafeStoreId({ toString: () => "../evil" } as unknown as string)).toThrow(
+      UnsafeStoreIdError,
+    );
   });
 });
 

@@ -19,19 +19,19 @@ import { isInternalIp } from "./anonymize.js";
 // the analyst confirms against the destination's reputation and the process that owns the socket.
 
 export interface BeaconCandidate {
-  id: string;                 // stable per-timeline id: "beacon-1", "beacon-2", …
-  source: string;             // the calling host (event.asset, falling back to srcIp), or "(unknown)"
-  destIp: string;             // the destination IP being contacted
-  destPort?: number;          // the destination port, when the events carried one
-  eventCount: number;         // number of connection events in the tuple (occurrences)
-  intervalSeconds: number;    // MEDIAN inter-arrival interval (seconds), rounded — the beacon period
-  jitterSeconds: number;      // median absolute deviation of the intervals (seconds), rounded
-  jitterPct: number;          // MAD / median × 100, rounded — the regularity score (lower = more beacon-like)
-  firstSeen: string;          // earliest event timestamp in the tuple
-  lastSeen: string;           // latest event timestamp in the tuple
-  severity: Severity;         // High when the destination is a public IP (likely external C2), else Medium
-  external: boolean;          // destination is a public (non-RFC1918/loopback/CGNAT) IP
-  eventIds: string[];         // backing forensic-event ids, chronological — for linking from the panel/report
+  id: string; // stable per-timeline id: "beacon-1", "beacon-2", …
+  source: string; // the calling host (event.asset, falling back to srcIp), or "(unknown)"
+  destIp: string; // the destination IP being contacted
+  destPort?: number; // the destination port, when the events carried one
+  eventCount: number; // number of connection events in the tuple (occurrences)
+  intervalSeconds: number; // MEDIAN inter-arrival interval (seconds), rounded — the beacon period
+  jitterSeconds: number; // median absolute deviation of the intervals (seconds), rounded
+  jitterPct: number; // MAD / median × 100, rounded — the regularity score (lower = more beacon-like)
+  firstSeen: string; // earliest event timestamp in the tuple
+  lastSeen: string; // latest event timestamp in the tuple
+  severity: Severity; // High when the destination is a public IP (likely external C2), else Medium
+  external: boolean; // destination is a public (non-RFC1918/loopback/CGNAT) IP
+  eventIds: string[]; // backing forensic-event ids, chronological — for linking from the panel/report
 }
 
 export interface BeaconOptions {
@@ -53,8 +53,8 @@ interface Conn {
   source: string;
   destIp: string;
   destPort?: number;
-  ms: number;        // event time in epoch ms
-  ts: string;        // original timestamp string
+  ms: number; // event time in epoch ms
+  ts: string; // original timestamp string
   id: string;
 }
 
@@ -167,7 +167,9 @@ export function detectBeacons(events: readonly ForensicEvent[], opts: BeaconOpti
       b.eventCount - a.eventCount ||
       a.destIp.localeCompare(b.destIp),
   );
-  candidates.forEach((c, i) => { c.id = `beacon-${i + 1}`; });
+  candidates.forEach((c, i) => {
+    c.id = `beacon-${i + 1}`;
+  });
   return candidates;
 }
 

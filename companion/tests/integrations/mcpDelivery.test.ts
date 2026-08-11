@@ -3,12 +3,25 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  deliver, rewriteToRemote, safeRemoteName, shellQuote,
-  type TransferRunner, type TransferResult,
+  deliver,
+  rewriteToRemote,
+  safeRemoteName,
+  shellQuote,
+  type TransferRunner,
+  type TransferResult,
 } from "../../src/integrations/mcp/mcpDelivery.js";
-import { DEFAULT_DELIVERY, type McpServer, type McpDelivery } from "../../src/integrations/mcp/mcpServerStore.js";
+import {
+  DEFAULT_DELIVERY,
+  type McpServer,
+  type McpDelivery,
+} from "../../src/integrations/mcp/mcpServerStore.js";
 
-interface Call { binary: string; args: string[]; timeoutMs: number; signal?: AbortSignal }
+interface Call {
+  binary: string;
+  args: string[];
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
 
 let calls: Call[];
 let nextResult: TransferResult;
@@ -19,8 +32,13 @@ const runner: TransferRunner = async (binary, args, opts) => {
 };
 
 const server = (delivery: Partial<McpDelivery> = {}): McpServer => ({
-  id: "sift-mcp", label: "SIFT", enabled: true,
-  allowedTools: [], allowedCommands: [], agentEnabled: false, timeoutMs: 300_000,
+  id: "sift-mcp",
+  label: "SIFT",
+  enabled: true,
+  allowedTools: [],
+  allowedCommands: [],
+  agentEnabled: false,
+  timeoutMs: 300_000,
   delivery: { ...DEFAULT_DELIVERY, ...delivery },
 });
 
@@ -99,7 +117,7 @@ describe("deliver — remote-path mode", () => {
 
     expect(target.remotePath).toBe("/mnt/dfir/c1/mem.raw");
     expect(calls).toHaveLength(0);
-    expect(target.cleanup).toBeUndefined();   // nothing was staged, so nothing to remove
+    expect(target.cleanup).toBeUndefined(); // nothing was staged, so nothing to remove
   });
 
   // Nothing moves, but the evidence is handed to another system to read.
@@ -107,7 +125,12 @@ describe("deliver — remote-path mode", () => {
     const seen: string[] = [];
     const s = server({ localPrefix: "/srv/cases", remotePrefix: "/mnt/dfir" });
 
-    await deliver(s, "/srv/cases/c1/mem.raw", { runner, recordTransfer: async (d) => { seen.push(d); } });
+    await deliver(s, "/srv/cases/c1/mem.raw", {
+      runner,
+      recordTransfer: async (d) => {
+        seen.push(d);
+      },
+    });
 
     expect(seen).toEqual(["SIFT (shared path /mnt/dfir/c1/mem.raw)"]);
   });
@@ -120,7 +143,11 @@ describe("deliver — scp mode", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].binary).toBe("scp");
     expect(calls[0].args).toEqual([
-      "-o", "BatchMode=yes", "--", "/cases/c1/imports/mem.raw", "analyst@sift.lab:/cases/incoming/mem.raw",
+      "-o",
+      "BatchMode=yes",
+      "--",
+      "/cases/c1/imports/mem.raw",
+      "analyst@sift.lab:/cases/incoming/mem.raw",
     ]);
     expect(target.remotePath).toBe("/cases/incoming/mem.raw");
     expect(target.destination).toBe("analyst@sift.lab:/cases/incoming/mem.raw");
@@ -136,10 +163,19 @@ describe("deliver — scp mode", () => {
   });
 
   it("passes an identity file and a non-default port", async () => {
-    await deliver(server({ ...SCP, identityFile: "/home/dfir/.ssh/lab", port: 2222 }), "/cases/c1/mem.raw", { runner });
+    await deliver(server({ ...SCP, identityFile: "/home/dfir/.ssh/lab", port: 2222 }), "/cases/c1/mem.raw", {
+      runner,
+    });
     expect(calls[0].args).toEqual([
-      "-o", "BatchMode=yes", "-i", "/home/dfir/.ssh/lab", "-P", "2222",
-      "--", "/cases/c1/mem.raw", "analyst@sift.lab:/cases/incoming/mem.raw",
+      "-o",
+      "BatchMode=yes",
+      "-i",
+      "/home/dfir/.ssh/lab",
+      "-P",
+      "2222",
+      "--",
+      "/cases/c1/mem.raw",
+      "analyst@sift.lab:/cases/incoming/mem.raw",
     ]);
   });
 
@@ -186,7 +222,9 @@ describe("deliver — scp mode", () => {
       await deliver(server(SCP), localPath, {
         runner: pollingRunner,
         progressIntervalMs: 5,
-        onProgress: (done, total) => { progress.push([done, total]); },
+        onProgress: (done, total) => {
+          progress.push([done, total]);
+        },
       });
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -201,13 +239,19 @@ describe("deliver — scp mode", () => {
   it("fails with what scp said when the copy fails", async () => {
     nextResult = { stdout: "", stderr: "Host key verification failed.\n", code: 1 };
 
-    await expect(deliver(server(SCP), "/cases/c1/mem.raw", { runner }))
-      .rejects.toThrow(/scp to analyst@sift\.lab:.*failed \(exit 1\): Host key verification failed\./);
+    await expect(deliver(server(SCP), "/cases/c1/mem.raw", { runner })).rejects.toThrow(
+      /scp to analyst@sift\.lab:.*failed \(exit 1\): Host key verification failed\./,
+    );
   });
 
   it("records a custody transfer naming where the bytes went", async () => {
     const seen: string[] = [];
-    await deliver(server(SCP), "/cases/c1/mem.raw", { runner, recordTransfer: async (d) => { seen.push(d); } });
+    await deliver(server(SCP), "/cases/c1/mem.raw", {
+      runner,
+      recordTransfer: async (d) => {
+        seen.push(d);
+      },
+    });
     expect(seen).toEqual(["analyst@sift.lab:/cases/incoming/mem.raw"]);
   });
 
@@ -216,8 +260,14 @@ describe("deliver — scp mode", () => {
     nextResult = { stdout: "", stderr: "no route to host", code: 255 };
     const seen: string[] = [];
 
-    await expect(deliver(server(SCP), "/cases/c1/mem.raw", { runner, recordTransfer: async (d) => { seen.push(d); } }))
-      .rejects.toThrow();
+    await expect(
+      deliver(server(SCP), "/cases/c1/mem.raw", {
+        runner,
+        recordTransfer: async (d) => {
+          seen.push(d);
+        },
+      }),
+    ).rejects.toThrow();
 
     expect(seen).toEqual([]);
   });
@@ -233,7 +283,13 @@ describe("deliver — scp cleanup", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].binary).toBe("ssh");
     expect(calls[0].args).toEqual([
-      "-o", "BatchMode=yes", "analyst@sift.lab", "rm", "-f", "--", "'/cases/incoming/mem.raw'",
+      "-o",
+      "BatchMode=yes",
+      "analyst@sift.lab",
+      "rm",
+      "-f",
+      "--",
+      "'/cases/incoming/mem.raw'",
     ]);
   });
 

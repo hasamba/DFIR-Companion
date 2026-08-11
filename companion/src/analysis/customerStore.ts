@@ -27,7 +27,9 @@ export function normalizeEmail(s: string): string | null {
 
 // Accept a bare domain, a URL, or a @domain — strip scheme / www / path and validate.
 export function normalizeDomain(s: string): string | null {
-  const d = s.trim().toLowerCase()
+  const d = s
+    .trim()
+    .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/^@/, "")
     .replace(/^www\./, "")
@@ -44,14 +46,32 @@ export function parseList(input: unknown): string[] {
 
 export function sanitizeTargets(raw: unknown): CustomerTargets {
   const r = (raw ?? {}) as { domains?: unknown; emails?: unknown; providers?: unknown };
-  const domains = [...new Set(parseList(r.domains).map(normalizeDomain).filter((x): x is string => Boolean(x)))];
-  const emails = [...new Set(parseList(r.emails).map(normalizeEmail).filter((x): x is string => Boolean(x)))];
+  const domains = [
+    ...new Set(
+      parseList(r.domains)
+        .map(normalizeDomain)
+        .filter((x): x is string => Boolean(x)),
+    ),
+  ];
+  const emails = [
+    ...new Set(
+      parseList(r.emails)
+        .map(normalizeEmail)
+        .filter((x): x is string => Boolean(x)),
+    ),
+  ];
   const out: CustomerTargets = { domains, emails };
   // Only carry a provider selection when one was explicitly provided (so older files without it
   // keep defaulting to "all"). Names are kept as-is (the route intersects them with the configured
   // providers); empty after sanitising means "all".
   if (r.providers !== undefined) {
-    out.providers = [...new Set(parseList(r.providers).map((s) => s.trim()).filter(Boolean))];
+    out.providers = [
+      ...new Set(
+        parseList(r.providers)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ];
   }
   return out;
 }

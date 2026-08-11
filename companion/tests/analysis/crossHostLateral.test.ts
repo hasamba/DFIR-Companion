@@ -8,9 +8,16 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 const SHA = "a".repeat(64);
 function ev(id: string, timestamp: string, asset: string, source: string): ForensicEvent {
   return {
-    id, timestamp, description: `beacon.exe dropped on ${asset}`, severity: "High",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
-    asset, sha256: SHA, sources: [source],
+    id,
+    timestamp,
+    description: `beacon.exe dropped on ${asset}`,
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset,
+    sha256: SHA,
+    sources: [source],
   };
 }
 const raw = [
@@ -18,8 +25,9 @@ const raw = [
   ev("e2", "2026-05-20T14:40:00Z", "SRV-02", "THOR"),
 ];
 const lateral = (timeline: ForensicEvent[]) =>
-  buildEvidenceGraph({ ...emptyState("c1"), forensicTimeline: timeline })
-    .edges.filter((e) => e.type === "lateral_move");
+  buildEvidenceGraph({ ...emptyState("c1"), forensicTimeline: timeline }).edges.filter(
+    (e) => e.type === "lateral_move",
+  );
 
 describe("cross-host lateral movement survives correlation (#345)", () => {
   it("is present on the raw timeline", () => {

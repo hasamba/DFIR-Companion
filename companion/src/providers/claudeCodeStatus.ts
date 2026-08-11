@@ -18,17 +18,27 @@ export async function getClaudeCodeStatus(
 ): Promise<ClaudeCodeStatus> {
   const bin = opts.bin?.trim() || "claude";
   const runner = opts.runner ?? defaultClaudeRunner;
-  const run = await runner({ bin, args: ["auth", "status", "--json"], stdin: "", timeoutMs: opts.timeoutMs ?? 15_000 });
+  const run = await runner({
+    bin,
+    args: ["auth", "status", "--json"],
+    stdin: "",
+    timeoutMs: opts.timeoutMs ?? 15_000,
+  });
 
   if (run.spawnError) {
-    const msg = run.spawnError.code === "ENOENT"
-      ? "Claude Code isn't installed on this machine. Install it from https://claude.com/claude-code, then click Re-check."
-      : `Claude Code could not be run: ${run.spawnError.message}`;
+    const msg =
+      run.spawnError.code === "ENOENT"
+        ? "Claude Code isn't installed on this machine. Install it from https://claude.com/claude-code, then click Re-check."
+        : `Claude Code could not be run: ${run.spawnError.message}`;
     return { state: "not_installed", message: msg };
   }
 
   let parsed: { loggedIn?: boolean; email?: string; subscriptionType?: string; authMethod?: string } = {};
-  try { parsed = JSON.parse(run.stdout.trim()) as typeof parsed; } catch { /* treat unparseable output as not connected */ }
+  try {
+    parsed = JSON.parse(run.stdout.trim()) as typeof parsed;
+  } catch {
+    /* treat unparseable output as not connected */
+  }
 
   if (parsed.loggedIn) {
     const tail = `${parsed.email ? ` as ${parsed.email}` : ""}${parsed.subscriptionType ? ` · ${parsed.subscriptionType} plan` : ""}`;
@@ -42,7 +52,8 @@ export async function getClaudeCodeStatus(
   }
   return {
     state: "not_connected",
-    message: "Claude Code is installed but not signed in. Run `claude auth login` on this machine (or `claude setup-token` for headless/Docker), then click Re-check.",
+    message:
+      "Claude Code is installed but not signed in. Run `claude auth login` on this machine (or `claude setup-token` for headless/Docker), then click Re-check.",
   };
 }
 
@@ -94,10 +105,18 @@ export async function startClaudeLogin(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ started: false, output, error: err.code === "ENOENT" ? "Claude Code CLI not found" : err.message });
+      resolve({
+        started: false,
+        output,
+        error: err.code === "ENOENT" ? "Claude Code CLI not found" : err.message,
+      });
     });
-    child.stdout?.on("data", (d) => { output += d.toString(); });
-    child.stderr?.on("data", (d) => { output += d.toString(); });
+    child.stdout?.on("data", (d) => {
+      output += d.toString();
+    });
+    child.stderr?.on("data", (d) => {
+      output += d.toString();
+    });
     child.on("close", finish);
   });
 }

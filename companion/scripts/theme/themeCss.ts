@@ -40,13 +40,7 @@ import {
   solveSeverityScale,
 } from "./severity.js";
 import { IMPORTED_THEMES } from "./vendor/themePalettes.js";
-import {
-  type RoleAssignment,
-  TIER_A,
-  TIER_A_UNMAPPED,
-  TIER_B,
-  TIER_C,
-} from "./roleMap.js";
+import { type RoleAssignment, TIER_A, TIER_A_UNMAPPED, TIER_B, TIER_C } from "./roleMap.js";
 
 export interface RoleValue {
   role: string;
@@ -82,9 +76,7 @@ export function resolveRoleValues(
     // A phantom has no light value — it was never in either palette block — so it must
     // not set a role's value while any declared member could. Declared first, then by
     // call-site count; ties break on declaration order so output is stable across runs.
-    const winner = [...members].sort(
-      (a, b) => Number(a.phantom) - Number(b.phantom) || b.uses - a.uses,
-    )[0];
+    const winner = [...members].sort((a, b) => Number(a.phantom) - Number(b.phantom) || b.uses - a.uses)[0];
     out.set(role, {
       role,
       dark: winner.dark,
@@ -179,10 +171,7 @@ function builtInSeverity(values: Map<string, RoleValue>, mode: "dark" | "light")
   for (const s of SEVERITY_ORDER) {
     candidates[s] = pick(`--sev-${s}`, pick(SEVERITY_FALLBACK[s], "#888888"));
   }
-  const surfaces = [
-    hexToRgb(pick("--bg-primary", "#000000")),
-    hexToRgb(pick("--bg-secondary", "#000000")),
-  ];
+  const surfaces = [hexToRgb(pick("--bg-primary", "#000000")), hexToRgb(pick("--bg-secondary", "#000000"))];
   return solveSeverityScale(candidates, surfaces);
 }
 
@@ -331,14 +320,13 @@ export function importedThemeBlocks(
     });
     const ramp = textRampSteps(palette);
     const severity = solveSeverityScale(
-      Object.fromEntries(
-        SEVERITY_ORDER.map((s) => [s, palette[SEVERITY_FALLBACK[s]]]),
-      ) as Record<Severity, string>,
+      Object.fromEntries(SEVERITY_ORDER.map((s) => [s, palette[SEVERITY_FALLBACK[s]]])) as Record<
+        Severity,
+        string
+      >,
       [hexToRgb(palette["--bg-primary"]), hexToRgb(palette["--bg-secondary"])],
     );
-    const sevLines = SEVERITY_ORDER.map(
-      (s) => `      ${pad(`--sev-${s}:`, 24)} ${severity.colors[s]};`,
-    );
+    const sevLines = SEVERITY_ORDER.map((s) => `      ${pad(`--sev-${s}:`, 24)} ${severity.colors[s]};`);
     blocks.push(
       `    /* ${label} — MIT (c) 2026 Security Onion Solutions, LLC */\n` +
         `    :root[data-theme="${name}"] {\n` +

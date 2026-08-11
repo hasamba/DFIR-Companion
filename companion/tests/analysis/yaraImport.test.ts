@@ -30,11 +30,7 @@ describe("parseYaraOutput", () => {
   });
 
   it("parses tags and attaches -s string lines to the header", () => {
-    const t = [
-      "EvilRule [apt,trojan] /tmp/a.bin",
-      "0x1a2b:$mz: 4d 5a 90 00",
-      "0x3c4d:$str: bad",
-    ].join("\n");
+    const t = ["EvilRule [apt,trojan] /tmp/a.bin", "0x1a2b:$mz: 4d 5a 90 00", "0x3c4d:$str: bad"].join("\n");
     const r = parseYaraOutput(t);
     expect(r.events).toHaveLength(1);
     expect(r.events[0].description).toMatch(/\[apt, trojan\]/);
@@ -42,20 +38,23 @@ describe("parseYaraOutput", () => {
   });
 
   it("extracts MITRE from tags/meta and hash from meta", () => {
-    const t = 'BadDoc [T1059] [author="me",sha256="AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899",description="drops T1204.002"] /x/doc.docm';
+    const t =
+      'BadDoc [T1059] [author="me",sha256="AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899",description="drops T1204.002"] /x/doc.docm';
     const r = parseYaraOutput(t);
     expect(r.events[0].mitreTechniques.sort()).toEqual(["T1059", "T1204.002"]);
     expect(r.events[0].sha256).toBe("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899");
-    expect(r.iocs.find((i) => i.type === "hash")?.value).toBe("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899");
+    expect(r.iocs.find((i) => i.type === "hash")?.value).toBe(
+      "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    );
     expect(r.iocs.find((i) => i.type === "file")?.value).toBe("/x/doc.docm");
   });
 
   it("bumps severity to High on score>=70 and Critical on score>=90 or threat_level", () => {
-    expect(parseYaraOutput('R1 [score=75] /a').events[0].severity).toBe("High");
-    expect(parseYaraOutput('R2 [score=95] /a').events[0].severity).toBe("Critical");
+    expect(parseYaraOutput("R1 [score=75] /a").events[0].severity).toBe("High");
+    expect(parseYaraOutput("R2 [score=95] /a").events[0].severity).toBe("Critical");
     expect(parseYaraOutput('R3 [threat_level="high"] /a').events[0].severity).toBe("High");
     expect(parseYaraOutput('R4 [severity="critical"] /a').events[0].severity).toBe("Critical");
-    expect(parseYaraOutput('R5 [score=10] /a').events[0].severity).toBe("Medium");
+    expect(parseYaraOutput("R5 [score=10] /a").events[0].severity).toBe("Medium");
   });
 
   it("handles a meta value containing a comma inside quotes", () => {

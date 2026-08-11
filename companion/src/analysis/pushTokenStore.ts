@@ -11,7 +11,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 
 export interface PushTokenRecord {
   token: string;
-  createdAt: string;   // ISO
+  createdAt: string; // ISO
 }
 
 // A URL-safe high-entropy token (32 hex chars = 128 bits). Standalone so the route can mint one and

@@ -5,18 +5,18 @@ import { HashlookupProvider } from "../../src/enrichment/hashlookup.js";
 // A real-ish CIRCL hashlookup record (NSRL-derived). Keys keep their wire names
 // (`hashlookup:trust`, `SHA-1`) so the parser must read them verbatim.
 const KNOWN_GOOD = {
-  "FileName": "kernel32.dll",
-  "FileSize": "1141248",
-  "MD5": "8ED4B4ED952526D89899E723F3488DE4",
+  FileName: "kernel32.dll",
+  FileSize: "1141248",
+  MD5: "8ED4B4ED952526D89899E723F3488DE4",
   "SHA-1": "FFFFFDAC1B1B4C513896C805C2C698D9688BE69F",
   "SHA-256": "301c9ec7a9aadee4d745e8fd4fa659dafbbcc6b75b9ff491d14cbbdd840814e9",
-  "source": "NSRL",
-  "db": "nsrl_modern_rds",
+  source: "NSRL",
+  db: "nsrl_modern_rds",
   "hashlookup:trust": 100,
 };
 
-const MD5 = "8ed4b4ed952526d89899e723f3488de4";                                   // 32 hex
-const SHA1 = "fffffdac1b1b4c513896c805c2c698d9688be69f";                          // 40 hex
+const MD5 = "8ed4b4ed952526d89899e723f3488de4"; // 32 hex
+const SHA1 = "fffffdac1b1b4c513896c805c2c698d9688be69f"; // 40 hex
 const SHA256 = "301c9ec7a9aadee4d745e8fd4fa659dafbbcc6b75b9ff491d14cbbdd840814e9"; // 64 hex
 
 describe("HashlookupProvider", () => {
@@ -52,7 +52,9 @@ describe("HashlookupProvider", () => {
   });
 
   it("treats a known file with low/missing trust as unknown (legitimacy not asserted)", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse({ FileName: "tool.exe", source: "hashlookup", "hashlookup:trust": 20 }));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({ FileName: "tool.exe", source: "hashlookup", "hashlookup:trust": 20 }),
+    );
     const hl = new HashlookupProvider({ fetchFn });
     const r = await hl.lookup("hash", SHA256);
     expect(r).toMatchObject({ source: "Hashlookup", verdict: "unknown" });
@@ -60,7 +62,14 @@ describe("HashlookupProvider", () => {
   });
 
   it("flags an explicitly known-malicious record as malicious", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse({ FileName: "evil.dll", source: "hashlookup-blocklist", KnownMalicious: "true", "hashlookup:trust": 0 }));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({
+        FileName: "evil.dll",
+        source: "hashlookup-blocklist",
+        KnownMalicious: "true",
+        "hashlookup:trust": 0,
+      }),
+    );
     const hl = new HashlookupProvider({ fetchFn });
     const r = await hl.lookup("hash", SHA256);
     expect(r).toMatchObject({ source: "Hashlookup", verdict: "malicious" });
@@ -89,7 +98,7 @@ describe("HashlookupProvider", () => {
     const fetchFn = fetchMock(async () => jsonResponse(KNOWN_GOOD));
     const hl = new HashlookupProvider({ fetchFn });
     expect(await hl.lookup("hash", "not-a-hash")).toBeNull();
-    expect(await hl.lookup("hash", "abc123")).toBeNull();         // too short
+    expect(await hl.lookup("hash", "abc123")).toBeNull(); // too short
     expect(fetchFn).not.toHaveBeenCalled();
   });
 

@@ -39,7 +39,13 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
       // central gate has already validated a case-scoped service identity, so a second secret
       // would add no authority and would make scoped-token rotation needlessly brittle.
       let caseToken: string | undefined;
-      if (options.pushTokenStore) { try { caseToken = (await options.pushTokenStore.get(caseId))?.token; } catch { /* none */ } }
+      if (options.pushTokenStore) {
+        try {
+          caseToken = (await options.pushTokenStore.get(caseId))?.token;
+        } catch {
+          /* none */
+        }
+      }
       const bearer = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
       const presented = String(req.get("x-dfir-key") || bearer || "");
       const auth = resolvePushAuth({ globalToken: options.pushToken, caseToken, presented });
@@ -53,21 +59,32 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before pushing evidence` });
+      return res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before pushing evidence` });
     }
 
     const { text, source, filename } = extractPushPayload(req.body);
     if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
     const kind = ctx.resolveImportKind()(filename, text);
-    if (kind === "unknown") return res.status(400).json({ error: "could not detect the payload type — not recognized as any supported import shape" });
-    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
+    if (kind === "unknown")
+      return res
+        .status(400)
+        .json({ error: "could not detect the payload type — not recognized as any supported import shape" });
+    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
 
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);
     res.status(202).json({ accepted: true, kind, source });
     // Import in the background; the 202 already went out.
-    ingestStreamed(caseId, kind, text, filename, minSeverity)
-      .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `push import failed: ${(err as Error).message}` }));
+    ingestStreamed(caseId, kind, text, filename, minSeverity).catch((err) =>
+      options.onAiStatus?.(caseId, {
+        status: "error",
+        at: new Date().toISOString(),
+        detail: `push import failed: ${(err as Error).message}`,
+      }),
+    );
   });
 
   // Per-case push token management (#84). GET returns the case token's existence (NOT the secret on a
@@ -77,11 +94,17 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     const caseId = req.params.id;
     const globalConfigured = !!(options.pushToken && options.pushToken.trim());
     let rec: { token: string; createdAt: string } | null = null;
-    if (options.pushTokenStore) { try { rec = await options.pushTokenStore.get(caseId); } catch { /* none */ } }
+    if (options.pushTokenStore) {
+      try {
+        rec = await options.pushTokenStore.get(caseId);
+      } catch {
+        /* none */
+      }
+    }
     const base = (options.dashboardBaseUrl || "").replace(/\/+$/, "");
     return res.status(200).json({
       configured: !!rec,
-      token: rec?.token ?? "",          // shown so Settings can display the active token + curl example
+      token: rec?.token ?? "", // shown so Settings can display the active token + curl example
       createdAt: rec?.createdAt ?? "",
       globalConfigured,
       storeAvailable: !!options.pushTokenStore,
@@ -120,7 +143,9 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
   // passwords) are REDACTED in every response — the browser only learns whether each is set.
 
   app.get("/notifications/status", (_req: Request, res: Response) => {
-    res.status(200).json({ configured: !!options.notificationStore, emailEnabled: !!options.notifyEmailEnabled });
+    res
+      .status(200)
+      .json({ configured: !!options.notificationStore, emailEnabled: !!options.notifyEmailEnabled });
   });
 
   app.get("/notifications", async (_req: Request, res: Response) => {
@@ -135,7 +160,8 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
   app.post("/notifications", async (req: Request, res: Response) => {
     if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
     const parsed = parseChannelInput(req.body);
-    if (!parsed.ok || !parsed.draft) return res.status(400).json({ error: parsed.error ?? "invalid channel" });
+    if (!parsed.ok || !parsed.draft)
+      return res.status(400).json({ error: parsed.error ?? "invalid channel" });
     try {
       const channel = await options.notificationStore.add(parsed.draft);
       logLine(`[notify] channel added: ${channel.type} "${channel.name}" (${channel.id})`);
@@ -152,7 +178,8 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
       if (!existing) return res.status(404).json({ error: "notification channel not found" });
       // Pass `existing` so a blank (redacted) webhook URL keeps the saved one.
       const parsed = parseChannelInput(req.body, existing);
-      if (!parsed.ok || !parsed.draft) return res.status(400).json({ error: parsed.error ?? "invalid channel" });
+      if (!parsed.ok || !parsed.draft)
+        return res.status(400).json({ error: parsed.error ?? "invalid channel" });
       const channel = await options.notificationStore.update(req.params.id, parsed.draft);
       if (!channel) return res.status(404).json({ error: "notification channel not found" });
       return res.status(200).json(redactChannel(channel));
@@ -175,7 +202,8 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
   // Send a test notification to one channel ({ channelId }) or all configured channels. Bypasses
   // the enable/threshold/kind filters so a disabled or high-threshold channel can be verified.
   app.post("/notifications/test", async (req: Request, res: Response) => {
-    if (!options.notificationStore || !options.notifier) return res.status(501).json({ error: "notifications not configured" });
+    if (!options.notificationStore || !options.notifier)
+      return res.status(501).json({ error: "notifications not configured" });
     try {
       const channelId = typeof req.body?.channelId === "string" ? req.body.channelId : undefined;
       const results = await options.notifier.test(channelId, new Date().toISOString());

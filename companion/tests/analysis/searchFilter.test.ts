@@ -12,21 +12,27 @@ import type { ForensicEvent, Finding, IOC } from "../../src/analysis/stateTypes.
 
 function mkEvent(overrides: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
-    id: "e1", timestamp: "2025-01-15T12:00:00Z",
+    id: "e1",
+    timestamp: "2025-01-15T12:00:00Z",
     description: "powershell.exe spawned encoded command",
-    severity: "High", mitreTechniques: ["T1059.001"],
-    relatedFindingIds: [], sourceScreenshots: [],
-    asset: "WORKSTATION01", sources: ["Velociraptor"],
+    severity: "High",
+    mitreTechniques: ["T1059.001"],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: "WORKSTATION01",
+    sources: ["Velociraptor"],
     ...overrides,
   };
 }
 
 function mkFinding(overrides: Partial<Finding> = {}): Finding {
   return {
-    id: "f1", severity: "High",
+    id: "f1",
+    severity: "High",
     title: "Powershell execution via encoded command",
     description: "Attacker used encoded powershell to evade detection",
-    relatedIocs: [], sourceScreenshots: [],
+    relatedIocs: [],
+    sourceScreenshots: [],
     mitreTechniques: ["T1059.001"],
     firstSeen: "2025-01-15T12:00:00Z",
     lastUpdated: "2025-01-15T12:00:00Z",
@@ -147,7 +153,9 @@ describe("eventMatchesTimeRange", () => {
     expect(eventMatchesTimeRange(mkEvent(), undefined, undefined)).toBe(true);
   });
   it("event within range matches", () => {
-    expect(eventMatchesTimeRange(mkEvent(), "2025-01-15T00:00:00.000Z", "2025-01-16T00:00:00.000Z")).toBe(true);
+    expect(eventMatchesTimeRange(mkEvent(), "2025-01-15T00:00:00.000Z", "2025-01-16T00:00:00.000Z")).toBe(
+      true,
+    );
   });
   it("event exactly on 'from' boundary matches", () => {
     expect(eventMatchesTimeRange(mkEvent(), "2025-01-15T12:00:00Z", null)).toBe(true);

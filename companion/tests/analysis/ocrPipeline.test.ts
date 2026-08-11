@@ -25,8 +25,14 @@ class CapturingProvider implements AIProvider {
     this.lastReq = req;
     return {
       rawText: JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        forensicEvents: [], timelineNote: "", summary: "",
+        findings: [],
+        iocs: [],
+        mitreTechniques: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        forensicEvents: [],
+        timelineNote: "",
+        summary: "",
       }),
     };
   }
@@ -34,17 +40,21 @@ class CapturingProvider implements AIProvider {
 
 // OCR "reads" one sensitive word (the known host) at a box that fits the test image.
 function hostRunner(): OcrRunner {
-  const words: OcrWord[] = [
-    { text: "ALCLIENT07", bbox: { x: 10, y: 10, w: 120, h: 24 }, confidence: 92 },
-  ];
+  const words: OcrWord[] = [{ text: "ALCLIENT07", bbox: { x: 10, y: 10, w: 120, h: 24 }, confidence: 92 }];
   return { recognize: async () => words };
 }
 
 function capture(seq: number): CaptureMetadata {
   return {
-    caseId: "c1", sequenceNumber: seq, timestamp: `2026-05-28T10:0${seq}:00.000Z`,
-    url: "https://velociraptor.local", tabTitle: "VR", triggerType: "timer",
-    contentHash: "0000000000000000", isDuplicate: false, screenshotFile: `00000${seq}_t.webp`,
+    caseId: "c1",
+    sequenceNumber: seq,
+    timestamp: `2026-05-28T10:0${seq}:00.000Z`,
+    url: "https://velociraptor.local",
+    tabTitle: "VR",
+    triggerType: "timer",
+    contentHash: "0000000000000000",
+    isDuplicate: false,
+    screenshotFile: `00000${seq}_t.webp`,
   };
 }
 
@@ -64,15 +74,26 @@ async function makePipeline(ocrRunner: OcrRunner, imageBase64: string) {
   const stateStore = new StateStore(cases);
   const s = emptyState("c1");
   // event.asset makes ALCLIENT07 a known host the anonymizer will flag.
-  s.forensicTimeline = [{
-    id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "process run on ALCLIENT07",
-    severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "ALCLIENT07",
-  }];
+  s.forensicTimeline = [
+    {
+      id: "e1",
+      timestamp: "2026-01-01T00:00:00Z",
+      description: "process run on ALCLIENT07",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "ALCLIENT07",
+    },
+  ];
   await stateStore.save(s);
   const provider = new CapturingProvider();
   const anonStore = new AnonControlStore(cases); // anonymization defaults ON
   const pipeline = new AnalysisPipeline({
-    provider, stateStore, anonStore, ocrRunner,
+    provider,
+    stateStore,
+    anonStore,
+    ocrRunner,
     imageLoader: async () => ({ base64: imageBase64, mimeType: "image/png" }),
   });
   return { pipeline, provider };

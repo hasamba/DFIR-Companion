@@ -29,7 +29,10 @@ function sleep(ms: number): Promise<void> {
 // can't reliably reproduce (two imports over a trivial in-memory/fast-disk case might
 // "accidentally" not interleave even when unlocked).
 class DelayedStateStore extends StateStore {
-  constructor(cases: CaseStore, private readonly delayMs: number) {
+  constructor(
+    cases: CaseStore,
+    private readonly delayMs: number,
+  ) {
     super(cases);
   }
 
@@ -77,10 +80,14 @@ describe("concurrent imports for the same case (race regression)", () => {
 
     const [stateA, stateB] = await Promise.all([
       pipeline.importSiem("c1", siemJsonFor("RaceServiceAlpha"), {
-        label: "alpha.json", idPrefix: "a", importedAt: "2026-07-06T10:00:00.000Z",
+        label: "alpha.json",
+        idPrefix: "a",
+        importedAt: "2026-07-06T10:00:00.000Z",
       }),
       pipeline.importSiem("c1", siemJsonFor("RaceServiceBravo"), {
-        label: "bravo.json", idPrefix: "b", importedAt: "2026-07-06T10:00:01.000Z",
+        label: "bravo.json",
+        idPrefix: "b",
+        importedAt: "2026-07-06T10:00:01.000Z",
       }),
     ]);
 
@@ -97,7 +104,9 @@ describe("concurrent imports for the same case (race regression)", () => {
     // once resolved (each import's callback reloads-then-merges under the lock, so by
     // the time the SECOND (serialized) import saves, its own load already sees the
     // first import's event).
-    void stateA; void stateB; void descriptions;
+    void stateA;
+    void stateB;
+    void descriptions;
   });
 
   it("loses an event without the lock (sanity check the harness actually races)", async () => {
@@ -113,10 +122,14 @@ describe("concurrent imports for the same case (race regression)", () => {
 
     await Promise.all([
       pipeline.importSiem("c1", siemJsonFor("RaceServiceAlpha"), {
-        label: "alpha.json", idPrefix: "a", importedAt: "2026-07-06T10:00:00.000Z",
+        label: "alpha.json",
+        idPrefix: "a",
+        importedAt: "2026-07-06T10:00:00.000Z",
       }),
       pipeline.importSiem("c1", siemJsonFor("RaceServiceBravo"), {
-        label: "bravo.json", idPrefix: "b", importedAt: "2026-07-06T10:00:01.000Z",
+        label: "bravo.json",
+        idPrefix: "b",
+        importedAt: "2026-07-06T10:00:01.000Z",
       }),
     ]);
 

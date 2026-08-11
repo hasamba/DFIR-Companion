@@ -16,7 +16,9 @@ import { getSystemPrompt } from "../src/analysis/pipeline.js";
 
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
-  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--")
+    ? process.argv[i + 1]
+    : undefined;
 }
 
 async function main(): Promise<void> {
@@ -44,7 +46,9 @@ async function main(): Promise<void> {
     const mid = Math.floor(all.length / 2);
     files = all.slice(mid, mid + 3);
   } catch {
-    console.log(`Case "${caseId}" not found under ${casesRoot}. Available: ${(await readdir(casesRoot).catch(() => [])).join(", ") || "(none)"}`);
+    console.log(
+      `Case "${caseId}" not found under ${casesRoot}. Available: ${(await readdir(casesRoot).catch(() => [])).join(", ") || "(none)"}`,
+    );
     return;
   }
   if (files.length === 0) {
@@ -71,7 +75,9 @@ async function main(): Promise<void> {
   console.log("\n--- After extractJsonText + schema parse ---");
   try {
     const delta = deltaSchema.parse(JSON.parse(extractJsonText(result.rawText)));
-    console.log(`PARSE OK ✓  findings=${delta.findings.length} iocs=${delta.iocs.length} forensicEvents=${(delta.forensicEvents ?? []).length}`);
+    console.log(
+      `PARSE OK ✓  findings=${delta.findings.length} iocs=${delta.iocs.length} forensicEvents=${(delta.forensicEvents ?? []).length}`,
+    );
     for (const e of delta.forensicEvents ?? []) {
       console.log(`    [event] ${e.timestamp} — ${e.description}`);
     }

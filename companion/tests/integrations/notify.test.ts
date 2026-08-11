@@ -16,7 +16,11 @@ import {
 } from "../../src/integrations/notify/smtpClient.js";
 import { dispatchEvent, createNotifier } from "../../src/integrations/notify/notifyDispatch.js";
 import { NotificationConfigStore } from "../../src/analysis/notificationStore.js";
-import { parseChannelInput, type NotificationChannel, type NotificationEvent } from "../../src/analysis/notifications.js";
+import {
+  parseChannelInput,
+  type NotificationChannel,
+  type NotificationEvent,
+} from "../../src/analysis/notifications.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,9 +41,16 @@ function event(over: Partial<NotificationEvent> = {}): NotificationEvent {
 
 function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
   return {
-    id: "c1", type: "slack", name: "SOC", enabled: true, minSeverity: "High",
+    id: "c1",
+    type: "slack",
+    name: "SOC",
+    enabled: true,
+    minSeverity: "High",
     events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
-    webhookUrl: "https://hooks.slack.com/services/x", createdAt: NOW, updatedAt: NOW, ...over,
+    webhookUrl: "https://hooks.slack.com/services/x",
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...over,
   };
 }
 
@@ -122,12 +133,26 @@ describe("slack/teams/email/telegram formatters", () => {
     const content = formatEmail(event());
     expect(content.subject).toBe("[DFIR Critical] New finding: Cobalt Strike beacon");
     expect(content.html).toContain("Cobalt Strike");
-    const raw = buildRfc822Message({ from: "a@b.c", to: ["x@y.z"], subject: content.subject, text: content.text, html: content.html, date: NOW });
+    const raw = buildRfc822Message({
+      from: "a@b.c",
+      to: ["x@y.z"],
+      subject: content.subject,
+      text: content.text,
+      html: content.html,
+      date: NOW,
+    });
     expect(raw).toContain("MIME-Version: 1.0");
     expect(raw).toContain("multipart/alternative");
     expect(raw.split("\r\n").length).toBeGreaterThan(5);
     // Deterministic: same inputs → identical bytes.
-    const raw2 = buildRfc822Message({ from: "a@b.c", to: ["x@y.z"], subject: content.subject, text: content.text, html: content.html, date: NOW });
+    const raw2 = buildRfc822Message({
+      from: "a@b.c",
+      to: ["x@y.z"],
+      subject: content.subject,
+      text: content.text,
+      html: content.html,
+      date: NOW,
+    });
     expect(raw2).toBe(raw);
     expect(raw).toContain("Date: Fri, 12 Jun 2026 10:00:00 +0000");
   });
@@ -135,12 +160,22 @@ describe("slack/teams/email/telegram formatters", () => {
 
 describe("postWebhook", () => {
   it("succeeds on 2xx and surfaces the body on failure", async () => {
-    const ok = await postWebhook((async () => new Response("ok", { status: 200 })), "https://x", { a: 1 });
+    const ok = await postWebhook(async () => new Response("ok", { status: 200 }), "https://x", { a: 1 });
     expect(ok.ok).toBe(true);
-    const bad = await postWebhook((async () => new Response("invalid_payload", { status: 400 })), "https://x", {});
+    const bad = await postWebhook(
+      async () => new Response("invalid_payload", { status: 400 }),
+      "https://x",
+      {},
+    );
     expect(bad.ok).toBe(false);
     expect(bad.error).toContain("invalid_payload");
-    const net = await postWebhook((async () => { throw new Error("boom"); }), "https://x", {});
+    const net = await postWebhook(
+      async () => {
+        throw new Error("boom");
+      },
+      "https://x",
+      {},
+    );
     expect(net.ok).toBe(false);
     expect(net.error).toContain("network error");
   });
@@ -148,39 +183,58 @@ describe("postWebhook", () => {
 
 describe("SMTP dialog (sendSmtp) with a scripted fake socket", () => {
   // A fake socket that records written commands and dispenses scripted replies in order.
-  function fakeSocket(replies: SmtpReply[], opts: { secure?: boolean } = {}): { sock: SmtpSocketLike; written: string[] } {
+  function fakeSocket(
+    replies: SmtpReply[],
+    opts: { secure?: boolean } = {},
+  ): { sock: SmtpSocketLike; written: string[] } {
     const written: string[] = [];
     let i = 0;
     let secure = opts.secure ?? false;
     const sock: SmtpSocketLike = {
-      get secure() { return secure; },
-      write(d: string) { written.push(d); },
+      get secure() {
+        return secure;
+      },
+      write(d: string) {
+        written.push(d);
+      },
       async readReply() {
         if (i >= replies.length) throw new Error("no more scripted replies");
         return replies[i++];
       },
-      async startTls() { secure = true; },
-      close() { /* no-op */ },
+      async startTls() {
+        secure = true;
+      },
+      close() {
+        /* no-op */
+      },
     };
     return { sock, written };
   }
 
-  const smtp = { host: "mx.example.com", port: 587, secure: false, from: "soc@corp", to: ["ir@corp"], username: "u", password: "p" };
+  const smtp = {
+    host: "mx.example.com",
+    port: 587,
+    secure: false,
+    from: "soc@corp",
+    to: ["ir@corp"],
+    username: "u",
+    password: "p",
+  };
 
   it("walks greeting → EHLO → STARTTLS → AUTH → MAIL/RCPT/DATA → QUIT", async () => {
     const replies: SmtpReply[] = [
       { code: 220, lines: ["mx ready"] },
       { code: 250, lines: ["mx", "STARTTLS", "AUTH LOGIN"] }, // EHLO
-      { code: 220, lines: ["go ahead"] },                      // STARTTLS
-      { code: 250, lines: ["mx", "AUTH LOGIN"] },              // EHLO after TLS
-      { code: 334, lines: ["VXNlcm5hbWU6"] },                  // AUTH LOGIN
-      { code: 334, lines: ["UGFzc3dvcmQ6"] },                  // username accepted
-      { code: 235, lines: ["auth ok"] },                       // password accepted
-      { code: 250, lines: ["sender ok"] },                     // MAIL FROM
-      { code: 250, lines: ["rcpt ok"] },                       // RCPT TO
-      { code: 354, lines: ["start mail input"] },              // DATA
-      { code: 250, lines: ["queued"] },                        // body
-      { code: 221, lines: ["bye"] },                           // QUIT
+      { code: 220, lines: ["go ahead"] }, // STARTTLS
+      { code: 250, lines: ["mx", "AUTH LOGIN"] }, // EHLO after TLS
+      { code: 334, lines: ["VXNlcm5hbWU6"] }, // AUTH LOGIN
+      { code: 334, lines: ["UGFzc3dvcmQ6"] }, // username accepted
+      { code: 235, lines: ["auth ok"] }, // password accepted
+      { code: 250, lines: ["sender ok"] }, // MAIL FROM
+      { code: 250, lines: ["rcpt ok"] }, // RCPT TO
+      { code: 354, lines: ["start mail input"] }, // DATA
+      { code: 250, lines: ["queued"] }, // body
+      { code: 221, lines: ["bye"] }, // QUIT
     ];
     const { sock, written } = fakeSocket(replies);
     const connect: SmtpConnect = async () => sock;
@@ -208,9 +262,9 @@ describe("SMTP dialog (sendSmtp) with a scripted fake socket", () => {
   it("throws SmtpError on a rejected recipient", async () => {
     const replies: SmtpReply[] = [
       { code: 220, lines: ["ready"] },
-      { code: 250, lines: ["mx"] },              // EHLO, no STARTTLS/AUTH
-      { code: 250, lines: ["sender ok"] },        // MAIL FROM
-      { code: 550, lines: ["no such user"] },     // RCPT TO
+      { code: 250, lines: ["mx"] }, // EHLO, no STARTTLS/AUTH
+      { code: 250, lines: ["sender ok"] }, // MAIL FROM
+      { code: 550, lines: ["no such user"] }, // RCPT TO
     ];
     const { sock } = fakeSocket(replies);
     const noAuth = { ...smtp, username: undefined, password: undefined, secure: true };
@@ -237,7 +291,10 @@ describe("SMTP helpers", () => {
 describe("dispatchEvent + createNotifier", () => {
   it("routes to matching channels only and records per-channel results", async () => {
     const sent: string[] = [];
-    const fetchFn = (async (url: string) => { sent.push(String(url)); return new Response("ok", { status: 200 }); }) as typeof fetch;
+    const fetchFn = (async (url: string) => {
+      sent.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
     const channels = [
       channel({ id: "slack1", type: "slack", webhookUrl: "https://slack" }),
       channel({ id: "teams1", type: "teams", webhookUrl: "https://teams" }),
@@ -277,8 +334,12 @@ describe("dispatchEvent + createNotifier", () => {
       sent.push({ url: String(url), body: JSON.parse((init?.body as string) ?? "{}") });
       return new Response("ok", { status: 200 });
     }) as typeof fetch;
-    const ch = channel({ id: "tg1", type: "telegram", webhookUrl: undefined,
-      telegram: { botToken: "123:TOKEN", chatId: "-1001234567890" } });
+    const ch = channel({
+      id: "tg1",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "123:TOKEN", chatId: "-1001234567890" },
+    });
     const results = await dispatchEvent([ch], event(), { fetchFn });
     expect(results).toHaveLength(1);
     expect(results[0].ok).toBe(true);
@@ -290,8 +351,12 @@ describe("dispatchEvent + createNotifier", () => {
 
   it("reports telegram channels as failed when no bot token is configured", async () => {
     const fetchFn = (async () => new Response("ok")) as typeof fetch;
-    const ch = channel({ id: "tg2", type: "telegram", webhookUrl: undefined,
-      telegram: { botToken: "", chatId: "-100" } });
+    const ch = channel({
+      id: "tg2",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "", chatId: "-100" },
+    });
     const [r] = await dispatchEvent([ch], event(), { fetchFn });
     expect(r.ok).toBe(false);
     expect(r.error).toContain("no bot token");
@@ -299,7 +364,12 @@ describe("dispatchEvent + createNotifier", () => {
 
   it("reports email channels as failed when no SMTP transport is available", async () => {
     const fetchFn = (async () => new Response("ok")) as typeof fetch;
-    const ch = channel({ id: "mail", type: "email", webhookUrl: undefined, smtp: { host: "mx", port: 587, secure: false, from: "a@b", to: ["c@d"] } });
+    const ch = channel({
+      id: "mail",
+      type: "email",
+      webhookUrl: undefined,
+      smtp: { host: "mx", port: 587, secure: false, from: "a@b", to: ["c@d"] },
+    });
     const [r] = await dispatchEvent([ch], event(), { fetchFn });
     expect(r.ok).toBe(false);
     expect(r.error).toContain("SMTP transport not available");
@@ -308,10 +378,16 @@ describe("dispatchEvent + createNotifier", () => {
   it("createNotifier loads channels from the store and a no-store notifier is a no-op", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dfir-notify-d-"));
     const store = new NotificationConfigStore(join(dir, "n", "config.json"));
-    await store.add(parseChannelInput({ type: "slack", webhookUrl: "https://hooks/x", minSeverity: "Info" }).draft!, NOW);
+    await store.add(
+      parseChannelInput({ type: "slack", webhookUrl: "https://hooks/x", minSeverity: "Info" }).draft!,
+      NOW,
+    );
 
     const calls: string[] = [];
-    const fetchFn = (async (u: string) => { calls.push(String(u)); return new Response("ok", { status: 200 }); }) as typeof fetch;
+    const fetchFn = (async (u: string) => {
+      calls.push(String(u));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
     const notifier = createNotifier({ store, fetchFn });
     const results = await notifier.dispatch(event({ severity: "Critical" }));
     expect(results).toHaveLength(1);
@@ -325,9 +401,20 @@ describe("dispatchEvent + createNotifier", () => {
   it("test() bypasses enable/threshold filters", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dfir-notify-t-"));
     const store = new NotificationConfigStore(join(dir, "n", "config.json"));
-    const added = await store.add(parseChannelInput({ type: "slack", enabled: false, minSeverity: "Critical", webhookUrl: "https://hooks/test" }).draft!, NOW);
+    const added = await store.add(
+      parseChannelInput({
+        type: "slack",
+        enabled: false,
+        minSeverity: "Critical",
+        webhookUrl: "https://hooks/test",
+      }).draft!,
+      NOW,
+    );
     const calls: string[] = [];
-    const fetchFn = (async (u: string) => { calls.push(String(u)); return new Response("ok", { status: 200 }); }) as typeof fetch;
+    const fetchFn = (async (u: string) => {
+      calls.push(String(u));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
     const notifier = createNotifier({ store, fetchFn });
     const results = await notifier.test(added.id, NOW);
     expect(results).toHaveLength(1);

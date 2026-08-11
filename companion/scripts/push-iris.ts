@@ -77,10 +77,16 @@ async function main(): Promise<void> {
   await irisExportStore.record(caseId, caseName);
 
   console.log(`\nIRIS case #${res.caseId} ${res.created ? "CREATED" : "UPDATED"} ("${res.caseName}")`);
-  console.log(`  assets:   +${res.assets.added}  (${res.assets.existing} existing, ${res.assets.skipped} skipped)`);
+  console.log(
+    `  assets:   +${res.assets.added}  (${res.assets.existing} existing, ${res.assets.skipped} skipped)`,
+  );
   console.log(`  iocs:     +${res.iocs.added}  (${res.iocs.existing} existing, ${res.iocs.skipped} skipped)`);
-  console.log(`  timeline: +${res.timeline.added}  (${res.timeline.existing} existing, ${res.timeline.skipped} skipped)`);
-  console.log(`  tasks:    +${res.tasks.added}  (${res.tasks.existing} existing, ${res.tasks.skipped} skipped)`);
+  console.log(
+    `  timeline: +${res.timeline.added}  (${res.timeline.existing} existing, ${res.timeline.skipped} skipped)`,
+  );
+  console.log(
+    `  tasks:    +${res.tasks.added}  (${res.tasks.existing} existing, ${res.tasks.skipped} skipped)`,
+  );
   console.log(`  notes:    ${res.notes}   summary: ${res.summaryUpdated ? "updated" : "not set"}`);
   if (res.caseUrl) console.log(`  open:     ${res.caseUrl}`);
   if (res.warnings.length) {
@@ -90,4 +96,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => { console.error("iris push error:", (e as Error).message); process.exit(1); });
+main().catch((e) => {
+  console.error("iris push error:", (e as Error).message);
+  process.exit(1);
+});

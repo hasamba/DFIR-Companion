@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { emptyState, type ForensicEvent, type IOC, type InvestigationState, type Severity } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type ForensicEvent,
+  type IOC,
+  type InvestigationState,
+  type Severity,
+} from "../../src/analysis/stateTypes.js";
 import { selectSynthesisEvents, buildSynthesisContext } from "../../src/analysis/synthSelect.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
 import { filterEventsByScope } from "../../src/analysis/scope.js";
@@ -43,10 +49,26 @@ const BASELINE_EVENT_COUNT = TARGET_EVENT_COUNT / GROWTH_FACTOR;
 const BASELINE_IOC_COUNT = Math.round(TARGET_IOC_COUNT / GROWTH_FACTOR);
 
 const HOSTS = [
-  "DC01.corp.local", "WEB01.corp.local", "SQL01.corp.local", "WKSTN-01", "WKSTN-02",
-  "WKSTN-03", "WKSTN-04", "WKSTN-05", "FILE01", "MAIL01",
-  "LAPTOP-ADMIN", "SRV-PROD-01", "SRV-PROD-02", "SRV-PROD-03", "SRV-PROD-04",
-  "SRV-PROD-05", "SRV-PROD-06", "SRV-PROD-07", "SRV-PROD-08", "SRV-PROD-09",
+  "DC01.corp.local",
+  "WEB01.corp.local",
+  "SQL01.corp.local",
+  "WKSTN-01",
+  "WKSTN-02",
+  "WKSTN-03",
+  "WKSTN-04",
+  "WKSTN-05",
+  "FILE01",
+  "MAIL01",
+  "LAPTOP-ADMIN",
+  "SRV-PROD-01",
+  "SRV-PROD-02",
+  "SRV-PROD-03",
+  "SRV-PROD-04",
+  "SRV-PROD-05",
+  "SRV-PROD-06",
+  "SRV-PROD-07",
+  "SRV-PROD-08",
+  "SRV-PROD-09",
 ];
 
 const SOURCES = ["THOR", "Velociraptor", "SIEM", "Hayabusa", "Chainsaw", "Suricata"];
@@ -55,14 +77,37 @@ const SEVERITIES: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
 const SEV_WEIGHTS = [0.02, 0.08, 0.2, 0.3, 0.4];
 
 const TECHNIQUES = [
-  "T1566.001", "T1566.002", "T1078", "T1059.001", "T1059.003", "T1053.005",
-  "T1547.001", "T1055", "T1003.001", "T1003.002", "T1021.002", "T1041",
-  "T1071.001", "T1105", "T1490", "T1486", "T1083", "T1218.011",
+  "T1566.001",
+  "T1566.002",
+  "T1078",
+  "T1059.001",
+  "T1059.003",
+  "T1053.005",
+  "T1547.001",
+  "T1055",
+  "T1003.001",
+  "T1003.002",
+  "T1021.002",
+  "T1041",
+  "T1071.001",
+  "T1105",
+  "T1490",
+  "T1486",
+  "T1083",
+  "T1218.011",
 ];
 
 const PROCESS_NAMES = [
-  "powershell.exe", "cmd.exe", "wscript.exe", "cscript.exe", "excel.exe",
-  "winword.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "schtasks.exe",
+  "powershell.exe",
+  "cmd.exe",
+  "wscript.exe",
+  "cscript.exe",
+  "excel.exe",
+  "winword.exe",
+  "mshta.exe",
+  "rundll32.exe",
+  "regsvr32.exe",
+  "schtasks.exe",
 ];
 
 const PATHS = [
@@ -77,18 +122,37 @@ const PATHS = [
 ];
 
 const DOMAINS = [
-  "evil-c2.example", "update-service.net", "cdn-analytics.io", "secure-login.org",
-  "file-dropper.xyz", "news-breach.info", "ms-office-update.com",
+  "evil-c2.example",
+  "update-service.net",
+  "cdn-analytics.io",
+  "secure-login.org",
+  "file-dropper.xyz",
+  "news-breach.info",
+  "ms-office-update.com",
 ];
 
 const EXTERNAL_IPS = [
-  "185.220.101.42", "45.142.212.89", "91.219.236.12", "198.51.100.7",
-  "203.0.113.55", "192.0.2.30", "104.21.32.11", "172.67.178.22",
+  "185.220.101.42",
+  "45.142.212.89",
+  "91.219.236.12",
+  "198.51.100.7",
+  "203.0.113.55",
+  "192.0.2.30",
+  "104.21.32.11",
+  "172.67.178.22",
 ];
 
 const INTERNAL_IPS = [
-  "10.0.0.10", "10.0.0.11", "10.0.0.12", "10.0.0.13", "10.0.0.14",
-  "10.0.0.15", "10.0.0.16", "10.0.0.17", "10.0.0.18", "10.0.0.19",
+  "10.0.0.10",
+  "10.0.0.11",
+  "10.0.0.12",
+  "10.0.0.13",
+  "10.0.0.14",
+  "10.0.0.15",
+  "10.0.0.16",
+  "10.0.0.17",
+  "10.0.0.18",
+  "10.0.0.19",
 ];
 
 function sha256FromSeed(seed: number): string {
@@ -101,7 +165,7 @@ function sha256FromSeed(seed: number): string {
 
 function pickWeighted<T>(items: T[], weights: number[], seed: number): T {
   const total = weights.reduce((a, b) => a + b, 0);
-  let r = (seed % 1000) / 1000 * total;
+  let r = ((seed % 1000) / 1000) * total;
   for (let i = 0; i < items.length; i++) {
     r -= weights[i];
     if (r <= 0) return items[i];
@@ -127,25 +191,45 @@ function buildSyntheticState(eventCount: number, iocCount: number): Investigatio
     const kind = i % 7;
     let type: IOC["type"];
     let value: string;
-    if (kind === 0) { type = "ip"; value = pick(EXTERNAL_IPS.concat(INTERNAL_IPS), seed); }
-    else if (kind === 1) { type = "domain"; value = pick(DOMAINS, seed); }
-    else if (kind === 2) { type = "hash"; value = sha256FromSeed(seed); }
-    else if (kind === 3) { type = "process"; value = pick(PROCESS_NAMES, seed); }
-    else if (kind === 4) { type = "file"; value = pick(PATHS, seed); }
-    else if (kind === 5) { type = "url"; value = `https://${pick(DOMAINS, seed)}/path${i % 20}`; }
-    else { type = "other"; value = `ioc-${i}`; }
+    if (kind === 0) {
+      type = "ip";
+      value = pick(EXTERNAL_IPS.concat(INTERNAL_IPS), seed);
+    } else if (kind === 1) {
+      type = "domain";
+      value = pick(DOMAINS, seed);
+    } else if (kind === 2) {
+      type = "hash";
+      value = sha256FromSeed(seed);
+    } else if (kind === 3) {
+      type = "process";
+      value = pick(PROCESS_NAMES, seed);
+    } else if (kind === 4) {
+      type = "file";
+      value = pick(PATHS, seed);
+    } else if (kind === 5) {
+      type = "url";
+      value = `https://${pick(DOMAINS, seed)}/path${i % 20}`;
+    } else {
+      type = "other";
+      value = `ioc-${i}`;
+    }
 
     state.iocs.push({
       id: `ioc-${i}`,
       type,
       value,
       firstSeen: isoAtMinutes(start, i),
-      enrichments: i % 5 === 0 ? [{
-        source: "VirusTotal",
-        verdict: i % 3 === 0 ? "malicious" : "suspicious",
-        score: `${(i % 50) + 1}/73`,
-        fetchedAt: isoAtMinutes(start, i),
-      }] : undefined,
+      enrichments:
+        i % 5 === 0
+          ? [
+              {
+                source: "VirusTotal",
+                verdict: i % 3 === 0 ? "malicious" : "suspicious",
+                score: `${(i % 50) + 1}/73`,
+                fetchedAt: isoAtMinutes(start, i),
+              },
+            ]
+          : undefined,
     });
   }
 
@@ -251,20 +335,41 @@ function buildSyntheticState(eventCount: number, iocCount: number): Investigatio
 
   // Add a couple of key questions / next steps so report sections render.
   state.keyQuestions.push(
-    { id: "q1", question: "What was the initial access vector?", status: "partial", answer: "Phishing suspected.", pointer: "evt-00000" },
-    { id: "q2", question: "Was data exfiltrated?", status: "unknown", answer: "", pointer: "Check proxy logs" },
+    {
+      id: "q1",
+      question: "What was the initial access vector?",
+      status: "partial",
+      answer: "Phishing suspected.",
+      pointer: "evt-00000",
+    },
+    {
+      id: "q2",
+      question: "Was data exfiltrated?",
+      status: "unknown",
+      answer: "",
+      pointer: "Check proxy logs",
+    },
   );
-  state.nextSteps.push(
-    { id: "s1", priority: "critical", action: "Isolate WKSTN-03", rationale: "C2 beaconing observed", pointer: "evt-00010" },
-  );
-  state.attackerPath = "Initial access via phishing → execution of malicious macro → PowerShell payload → lateral movement via SMB → data staging.";
-  state.lastSummary = "A multi-stage intrusion targeting the corporate workstation fleet; several hosts show beaconing and credential access activity.";
+  state.nextSteps.push({
+    id: "s1",
+    priority: "critical",
+    action: "Isolate WKSTN-03",
+    rationale: "C2 beaconing observed",
+    pointer: "evt-00010",
+  });
+  state.attackerPath =
+    "Initial access via phishing → execution of malicious macro → PowerShell payload → lateral movement via SMB → data staging.";
+  state.lastSummary =
+    "A multi-stage intrusion targeting the corporate workstation fleet; several hosts show beaconing and credential access activity.";
   state.updatedAt = isoAtMinutes(start, eventCount * 2);
 
   return state;
 }
 
-interface Measurement { ms: number; result: unknown }
+interface Measurement {
+  ms: number;
+  result: unknown;
+}
 
 // Best of N runs, measured in CPU time rather than wall clock.
 //
@@ -290,7 +395,7 @@ interface Measurement { ms: number; result: unknown }
 //
 // So time a BATCH of calls and divide. The window then clears the tick and the per-call figure is
 // honest on every platform. Every figure in the table below is per-call CPU-time.
-const MIN_SAMPLE_MS = 50;   // ~3 Windows ticks, so quantization error is well under 1%.
+const MIN_SAMPLE_MS = 50; // ~3 Windows ticks, so quantization error is well under 1%.
 // Backstop against a path so cheap it could never fill a window. Reaching it needs a call under
 // ~0.01ms, and at that size the full-size run is under a millisecond too — orders of magnitude
 // inside FLOOR_MS — so the assertion still cannot fail on an unresolved measurement.
@@ -314,7 +419,7 @@ function bestOf(fn: () => unknown, repeats: number): Measurement {
       const start = process.cpuUsage();
       for (let j = 0; j < batch; j++) result = fn();
       const { user, system } = process.cpuUsage(start);
-      const elapsed = (user + system) / 1000;   // microseconds → milliseconds
+      const elapsed = (user + system) / 1000; // microseconds → milliseconds
       if (elapsed >= MIN_SAMPLE_MS || batch >= MAX_BATCH) {
         const perCall = elapsed / batch;
         if (perCall < ms) ms = perCall;
@@ -349,7 +454,12 @@ const GROWTH_LIMIT = 32;
 // not blunt the check.
 const FLOOR_MS = 25;
 
-interface Growth { baseline: Measurement; full: Measurement; label: string; dimension: string }
+interface Growth {
+  baseline: Measurement;
+  full: Measurement;
+  label: string;
+  dimension: string;
+}
 
 // Measures one hot path at both input sizes. The full-size run happens FIRST as a discarded
 // warmup: V8 needs a few thousand iterations of the inner loops before it settles on
@@ -378,15 +488,17 @@ function expectSubQuadratic(measured: Growth): unknown {
     `(${growth} for ${GROWTH_FACTOR}x input)`;
   // Logged unconditionally so a slow-but-passing trend is still visible in the run output.
   console.log(`[load] ${detail}`);
-  expect(full.ms, `${detail} — expected under ${limit.toFixed(1)}ms; growth this steep means the path went super-linear`)
-    .toBeLessThan(limit);
+  expect(
+    full.ms,
+    `${detail} — expected under ${limit.toFixed(1)}ms; growth this steep means the path went super-linear`,
+  ).toBeLessThan(limit);
   return full.result;
 }
 
 describe("load test — 10k synthetic events", { timeout: 120_000 }, () => {
-  let state!: InvestigationState;       // full case: 10k events / 500 IOCs / 50 findings
+  let state!: InvestigationState; // full case: 10k events / 500 IOCs / 50 findings
   let fewerEvents!: InvestigationState; // same case with an eighth of the TIMELINE
-  let fewerIocs!: InvestigationState;   // same case with an eighth of the IOCS
+  let fewerIocs!: InvestigationState; // same case with an eighth of the IOCS
   beforeAll(() => {
     state = buildSyntheticState(TARGET_EVENT_COUNT, TARGET_IOC_COUNT);
     fewerEvents = buildSyntheticState(BASELINE_EVENT_COUNT, TARGET_IOC_COUNT);
@@ -425,8 +537,10 @@ describe("load test — 10k synthetic events", { timeout: 120_000 }, () => {
     // reintroduced quadratic on 10k events (seconds at least) still would.
     const measured = bestOf(() => selectSynthesisEvents(state.forensicTimeline, 300), 5);
     console.log(`[load] selectSynthesisEvents (${TARGET_EVENT_COUNT} events): ${measured.ms.toFixed(1)}ms`);
-    expect(measured.ms, `selectSynthesisEvents took ${measured.ms.toFixed(1)}ms on ${TARGET_EVENT_COUNT} events`)
-      .toBeLessThan(2000);
+    expect(
+      measured.ms,
+      `selectSynthesisEvents took ${measured.ms.toFixed(1)}ms on ${TARGET_EVENT_COUNT} events`,
+    ).toBeLessThan(2000);
 
     const selected = measured.result as ForensicEvent[];
     expect(selected.length).toBeLessThanOrEqual(300);
@@ -480,8 +594,28 @@ describe("load test — 10k synthetic events", { timeout: 120_000 }, () => {
     const tA = "2026-06-15T00:00:00.000Z";
     const tB = new Date(new Date(tA).getTime() + 1000).toISOString();
     const pair: ForensicEvent[] = [
-      { id: "c-a", timestamp: tA, description: "proc a", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: sharedHash, sources: ["THOR"] },
-      { id: "c-b", timestamp: tB, description: "proc b", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: sharedHash, sources: ["SIEM"] },
+      {
+        id: "c-a",
+        timestamp: tA,
+        description: "proc a",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sha256: sharedHash,
+        sources: ["THOR"],
+      },
+      {
+        id: "c-b",
+        timestamp: tB,
+        description: "proc b",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sha256: sharedHash,
+        sources: ["SIEM"],
+      },
     ];
     expect(correlateEvents(pair, { windowSeconds: 2 }).length).toBe(1);
   });
@@ -489,8 +623,24 @@ describe("load test — 10k synthetic events", { timeout: 120_000 }, () => {
   it("filterEventsByScope + applyFalsePositive scale sub-quadratically", () => {
     const scope = { start: "2026-06-15T06:00:00.000Z", end: "2026-06-15T18:00:00.000Z" };
     const markers: FalsePositiveMarker[] = [
-      { id: "ioc:10.0.0.10", kind: "ioc", ref: "10.0.0.10", reason: "other", note: "test", markedAt: "2026-06-15T00:00:00Z", markedBy: "anonymous" },
-      { id: "event:evt-00000", kind: "event", ref: "evt-00000", reason: "other", note: "test", markedAt: "2026-06-15T00:00:00Z", markedBy: "anonymous" },
+      {
+        id: "ioc:10.0.0.10",
+        kind: "ioc",
+        ref: "10.0.0.10",
+        reason: "other",
+        note: "test",
+        markedAt: "2026-06-15T00:00:00Z",
+        markedBy: "anonymous",
+      },
+      {
+        id: "event:evt-00000",
+        kind: "event",
+        ref: "evt-00000",
+        reason: "other",
+        note: "test",
+        markedAt: "2026-06-15T00:00:00Z",
+        markedBy: "anonymous",
+      },
     ];
 
     const scopeMeasured = measureGrowth(

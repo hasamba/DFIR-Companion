@@ -30,7 +30,8 @@ export function registerIncidentTypeRoutes(app: Express, ctx: RouteContext): voi
   });
 
   app.get("/incident-types/:id", async (req: Request, res: Response) => {
-    if (!options.incidentTypeStore) return res.status(404).json({ error: "incident-type store not configured" });
+    if (!options.incidentTypeStore)
+      return res.status(404).json({ error: "incident-type store not configured" });
     try {
       const type = await options.incidentTypeStore.get(req.params.id);
       if (!type) return res.status(404).json({ error: `incident type "${req.params.id}" not found` });
@@ -41,7 +42,8 @@ export function registerIncidentTypeRoutes(app: Express, ctx: RouteContext): voi
   });
 
   app.get("/cases/:id/incident-type", async (req: Request, res: Response) => {
-    if (!options.incidentTypeStore) return res.status(501).json({ error: "incident-type store not configured" });
+    if (!options.incidentTypeStore)
+      return res.status(501).json({ error: "incident-type store not configured" });
     try {
       const record = await options.incidentTypeStore.loadRecord(req.params.id);
       const type = record.typeId ? await options.incidentTypeStore.get(record.typeId) : null;
@@ -52,7 +54,8 @@ export function registerIncidentTypeRoutes(app: Express, ctx: RouteContext): voi
   });
 
   app.post("/cases/:id/incident-type", async (req: Request, res: Response) => {
-    if (!options.incidentTypeStore) return res.status(501).json({ error: "incident-type store not configured" });
+    if (!options.incidentTypeStore)
+      return res.status(501).json({ error: "incident-type store not configured" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const { typeId } = req.body ?? {};
     if (typeof typeId !== "string" || !typeId.trim()) {
@@ -63,7 +66,11 @@ export function registerIncidentTypeRoutes(app: Express, ctx: RouteContext): voi
       const type = await options.incidentTypeStore.get(typeId);
       if (!type) return res.status(404).json({ error: `incident type "${typeId}" not found` });
       const state = await options.stateStore.load(req.params.id);
-      const { state: next, questionsAdded, nextStepsAdded } = applyIncidentTypeToState(state, type, { replace });
+      const {
+        state: next,
+        questionsAdded,
+        nextStepsAdded,
+      } = applyIncidentTypeToState(state, type, { replace });
       await options.stateStore.save(next);
       const record = await options.incidentTypeStore.saveRecord(req.params.id, typeId);
       return res.status(200).json({ record, type, questionsAdded, nextStepsAdded });

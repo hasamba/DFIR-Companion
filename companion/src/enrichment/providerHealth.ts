@@ -10,15 +10,15 @@
 import type { EnrichmentProvider } from "./provider.js";
 
 export interface ProviderHealth {
-  ok: boolean;          // reachable + auth OK on the last probe
-  checkedAt: number;    // monotonic ms when last probed (for TTL math)
-  detail?: string;      // the error message when down (for the dashboard / logs)
+  ok: boolean; // reachable + auth OK on the last probe
+  checkedAt: number; // monotonic ms when last probed (for TTL math)
+  detail?: string; // the error message when down (for the dashboard / logs)
 }
 
 export interface HealthCacheOptions {
-  ttlMs?: number;                                            // trust a probe result this long (default 60_000)
-  monotonic?: () => number;                                  // injected ms clock (default Date.now)
-  onProbe?: (name: string, health: ProviderHealth) => void;  // fired only when a REAL probe runs (not a cache hit)
+  ttlMs?: number; // trust a probe result this long (default 60_000)
+  monotonic?: () => number; // injected ms clock (default Date.now)
+  onProbe?: (name: string, health: ProviderHealth) => void; // fired only when a REAL probe runs (not a cache hit)
 }
 
 export class ProviderHealthCache {
@@ -53,7 +53,11 @@ export class ProviderHealthCache {
         await provider.probe!();
         health = { ok: true, checkedAt: this.monotonic() };
       } catch (err) {
-        health = { ok: false, checkedAt: this.monotonic(), detail: err instanceof Error ? err.message : String(err) };
+        health = {
+          ok: false,
+          checkedAt: this.monotonic(),
+          detail: err instanceof Error ? err.message : String(err),
+        };
       }
       this.cache.set(provider.name, health);
       this.onProbe?.(provider.name, health);

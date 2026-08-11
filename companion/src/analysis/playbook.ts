@@ -25,18 +25,18 @@ const STEP_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 
 export const playbookTaskSchema = z.object({
   id: z.string(),
-  shortId: z.string().optional(),         // display ID like T001, T002 — assigned once, never changed
+  shortId: z.string().optional(), // display ID like T001, T002 — assigned once, never changed
   title: z.string(),
   description: z.string().catch(""),
   status: z.enum(PLAYBOOK_STATUSES).catch("todo" as PlaybookStatus),
   priority: z.enum(STEP_PRIORITIES).catch("medium" as StepPriority),
   source: z.enum(PLAYBOOK_SOURCES).catch("custom" as PlaybookSource),
-  sourceKey: z.string().optional(),       // stable derive key (absent for custom tasks)
+  sourceKey: z.string().optional(), // stable derive key (absent for custom tasks)
   relatedFindingId: z.string().optional(),
   assignee: z.string().optional(),
-  dueDate: z.string().optional(),         // free-form date, e.g. "2026-06-15"
+  dueDate: z.string().optional(), // free-form date, e.g. "2026-06-15"
   notes: z.string().optional(),
-  dependsOn: z.array(z.string()).optional(),   // ids of tasks that must be "done" first (issue #81)
+  dependsOn: z.array(z.string()).optional(), // ids of tasks that must be "done" first (issue #81)
   order: z.number().catch(0),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -99,31 +99,43 @@ export const IR_PHASES = ["contain", "investigate", "eradicate", "recover"] as c
 export type IrPhase = (typeof IR_PHASES)[number];
 
 const PHASE_LABEL: Record<IrPhase, string> = {
-  contain: "Contain", investigate: "Investigate", eradicate: "Eradicate", recover: "Recover",
+  contain: "Contain",
+  investigate: "Investigate",
+  eradicate: "Eradicate",
+  recover: "Recover",
 };
 
 // Generic per-phase IR guidance (NIST SP 800-61 / SANS phases).
 const PHASE_GUIDANCE: Record<IrPhase, string> = {
-  contain: "Isolate the affected host(s) from the network (capture volatile evidence first), block the related indicators at the firewall/EDR, and disable any implicated accounts or sessions.",
-  investigate: "Scope the activity: confirm the entry vector, build the timeline, and determine blast radius (which hosts, accounts, and data are involved). Pull supporting artifacts and correlate across tools.",
-  eradicate: "Remove the threat: terminate malicious processes, delete dropped artifacts, remove persistence (services / scheduled tasks / run keys / WMI), and reset compromised credentials. Close the exploited vector.",
-  recover: "Restore affected systems from known-good backups, re-enable services, validate integrity, and add detections/monitoring so a recurrence of these techniques is caught.",
+  contain:
+    "Isolate the affected host(s) from the network (capture volatile evidence first), block the related indicators at the firewall/EDR, and disable any implicated accounts or sessions.",
+  investigate:
+    "Scope the activity: confirm the entry vector, build the timeline, and determine blast radius (which hosts, accounts, and data are involved). Pull supporting artifacts and correlate across tools.",
+  eradicate:
+    "Remove the threat: terminate malicious processes, delete dropped artifacts, remove persistence (services / scheduled tasks / run keys / WMI), and reset compromised credentials. Close the exploited vector.",
+  recover:
+    "Restore affected systems from known-good backups, re-enable services, validate integrity, and add detections/monitoring so a recurrence of these techniques is caught.",
 };
 
 // Tactic-specific investigation focus, keyed by the finding's dominant ATT&CK tactic.
 const TACTIC_FOCUS: Record<IrisTactic, string> = {
-  "Initial Access": "Identify the delivery mechanism (phishing, exposed service, valid account) and confirm patient zero.",
-  "Execution": "Trace the parent→child process chain and command lines; establish what ran and under which account.",
-  "Persistence": "Enumerate autoruns, services, scheduled tasks, and WMI subscriptions the adversary left behind.",
+  "Initial Access":
+    "Identify the delivery mechanism (phishing, exposed service, valid account) and confirm patient zero.",
+  Execution:
+    "Trace the parent→child process chain and command lines; establish what ran and under which account.",
+  Persistence:
+    "Enumerate autoruns, services, scheduled tasks, and WMI subscriptions the adversary left behind.",
   "Privilege Escalation": "Determine how elevation was achieved and which accounts gained higher privileges.",
-  "Defense Evasion": "Check for cleared logs, disabled security tooling, and masqueraded or obfuscated binaries.",
+  "Defense Evasion":
+    "Check for cleared logs, disabled security tooling, and masqueraded or obfuscated binaries.",
   "Credential Access": "Identify which credentials were accessed or dumped and rotate them immediately.",
-  "Discovery": "Review what the adversary enumerated to gauge their knowledge of the environment.",
+  Discovery: "Review what the adversary enumerated to gauge their knowledge of the environment.",
   "Lateral Movement": "Map which hosts were reached and via what protocol and credentials.",
-  "Collection": "Determine what data was staged for exfiltration and from where.",
+  Collection: "Determine what data was staged for exfiltration and from where.",
   "Command and Control": "Identify and block the C2 infrastructure; hunt for additional beacons.",
-  "Exfiltration": "Quantify what data left the environment and through which channel.",
-  "Impact": "Assess the damage (encryption / destruction / disruption) and prioritize recovery of affected systems.",
+  Exfiltration: "Quantify what data left the environment and through which channel.",
+  Impact:
+    "Assess the damage (encryption / destruction / disruption) and prioritize recovery of affected systems.",
 };
 
 // Which IR phases each severity expands into. Critical → full cycle; High → investigate + contain.
@@ -166,7 +178,7 @@ function buildFindingTemplateSeeds(f: Finding): DerivedTaskSeed[] {
 
 // Sort: by analyst-controlled `order`, then by creation time as a stable tiebreaker.
 export function sortPlaybookTasks(tasks: PlaybookTask[]): PlaybookTask[] {
-  return [...tasks].sort((a, b) => (a.order - b.order) || a.createdAt.localeCompare(b.createdAt));
+  return [...tasks].sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt));
 }
 
 export interface DeriveOptions {
@@ -181,7 +193,10 @@ export interface DeriveOptions {
 // that's what the note is about), or the single finding seed otherwise.
 function appendFoldedNotes(seeds: DerivedTaskSeed[], notes: readonly string[]): void {
   if (!notes.length || !seeds.length) return;
-  const idx = Math.max(0, seeds.findIndex((s) => s.sourceKey.endsWith(":investigate")));
+  const idx = Math.max(
+    0,
+    seeds.findIndex((s) => s.sourceKey.endsWith(":investigate")),
+  );
   seeds[idx] = {
     ...seeds[idx],
     description: [seeds[idx].description, `Next step: ${notes.join("; ")}`].filter(Boolean).join("\n\n"),
@@ -249,15 +264,22 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
     const seedPriority = rabbitHole ? demotePriority(priority) : priority;
     const foldedNotes = foldedNotesByFindingId.get(f.id) ?? [];
     if (opts.useTemplates) {
-      const templateSeeds = buildFindingTemplateSeeds(f).map((t) => rabbitHole ? { ...t, priority: demotePriority(t.priority) } : t);
+      const templateSeeds = buildFindingTemplateSeeds(f).map((t) =>
+        rabbitHole ? { ...t, priority: demotePriority(t.priority) } : t,
+      );
       appendFoldedNotes(templateSeeds, foldedNotes);
       seeds.push(...templateSeeds);
     } else {
       const rabbitNote = rabbitHole
         ? `Possible rabbit hole — no causal link to the main attack path; verify before chasing.${f.relevanceDiscriminator ? ` (${f.relevanceDiscriminator})` : ""}`
         : "";
-      const description = [f.description, rabbitNote, foldedNotes.length ? `Next step: ${foldedNotes.join("; ")}` : ""]
-        .filter(Boolean).join("\n\n");
+      const description = [
+        f.description,
+        rabbitNote,
+        foldedNotes.length ? `Next step: ${foldedNotes.join("; ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       seeds.push({
         title: `${rabbitHole ? "Verify (possible rabbit hole)" : "Investigate & remediate"}: ${f.title}`,
         description,
@@ -278,7 +300,9 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
     const summary = collectSummary(q.collect);
     seeds.push({
       title: `Collect to answer: ${q.question}`,
-      description: [summary, q.collect.expectedOutcome ? `Expected: ${q.collect.expectedOutcome}` : ""].filter(Boolean).join("\n\n"),
+      description: [summary, q.collect.expectedOutcome ? `Expected: ${q.collect.expectedOutcome}` : ""]
+        .filter(Boolean)
+        .join("\n\n"),
       priority: "high",
       source: "question",
       sourceKey: `question:${q.id}`,
@@ -294,7 +318,10 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
     if (!dirs.length) continue;
     seeds.push({
       title: `Collect evidence for the unexplained phase: ${tactic}`,
-      description: dirs.map((d) => collectSummary(d)).filter(Boolean).join("\n"),
+      description: dirs
+        .map((d) => collectSummary(d))
+        .filter(Boolean)
+        .join("\n"),
       priority: "high",
       source: "known_unknown",
       sourceKey: `ku:${tactic.toLowerCase().replace(/\s+/g, "-")}`,
@@ -312,7 +339,15 @@ export interface MergeResult {
 // due date, notes, or dependency edges. Such a task may be safely pruned when its seed
 // disappears; anything the analyst touched is kept.
 function isPristineAuto(t: PlaybookTask): boolean {
-  return t.source !== "custom" && !!t.sourceKey && t.status === "todo" && !t.assignee && !t.dueDate && !t.notes && !t.dependsOn?.length;
+  return (
+    t.source !== "custom" &&
+    !!t.sourceKey &&
+    t.status === "todo" &&
+    !t.assignee &&
+    !t.dueDate &&
+    !t.notes &&
+    !t.dependsOn?.length
+  );
 }
 
 // Return the next sequential display ID (T001, T002, …) from the current task list.
@@ -354,7 +389,12 @@ export function mergePlaybook(existing: PlaybookTask[], seeds: DerivedTaskSeed[]
     const cur = byId.get(id);
     if (cur) {
       const findingChanged = (cur.relatedFindingId ?? "") !== (seed.relatedFindingId ?? "");
-      if (cur.title !== seed.title || cur.description !== seed.description || cur.priority !== seed.priority || findingChanged) {
+      if (
+        cur.title !== seed.title ||
+        cur.description !== seed.description ||
+        cur.priority !== seed.priority ||
+        findingChanged
+      ) {
         const idx = result.findIndex((t) => t.id === id);
         result[idx] = {
           ...result[idx],
@@ -414,9 +454,14 @@ export class PlaybookValidationError extends Error {}
 // DFS cycle check over the CURRENT edges, with `taskId`'s edges hypothetically replaced by
 // `newDependsOn` — used to reject an edit that would introduce a cycle (including a direct
 // self-dependency) BEFORE it's persisted.
-function wouldCreateCycle(tasks: readonly PlaybookTask[], taskId: string, newDependsOn: readonly string[]): boolean {
+function wouldCreateCycle(
+  tasks: readonly PlaybookTask[],
+  taskId: string,
+  newDependsOn: readonly string[],
+): boolean {
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
-  const edgesOf = (id: string): readonly string[] => (id === taskId ? newDependsOn : byId.get(id)?.dependsOn ?? []);
+  const edgesOf = (id: string): readonly string[] =>
+    id === taskId ? newDependsOn : (byId.get(id)?.dependsOn ?? []);
   const visiting = new Set<string>();
   const done = new Set<string>();
   const dfs = (id: string): boolean => {
@@ -442,18 +487,23 @@ export interface DependsOnValidation {
 // Validate a proposed dependsOn edit for `taskId`: every id must name a task that exists in
 // this playbook (self-references are dropped rather than rejected — harmless no-op), and the
 // resulting graph must stay acyclic. Returns the normalized (deduped) edge list on success.
-export function validateDependsOn(tasks: readonly PlaybookTask[], taskId: string, dependsOn: readonly string[]): DependsOnValidation {
+export function validateDependsOn(
+  tasks: readonly PlaybookTask[],
+  taskId: string,
+  dependsOn: readonly string[],
+): DependsOnValidation {
   const ids = Array.from(new Set(dependsOn.filter((id) => id !== taskId)));
   const known = new Set(tasks.map((t) => t.id));
   const unknown = ids.filter((id) => !known.has(id));
   if (unknown.length) return { ok: false, error: `unknown task id(s): ${unknown.join(", ")}` };
-  if (wouldCreateCycle(tasks, taskId, ids)) return { ok: false, error: "that dependency would create a cycle" };
+  if (wouldCreateCycle(tasks, taskId, ids))
+    return { ok: false, error: "that dependency would create a cycle" };
   return { ok: true, dependsOn: ids };
 }
 
 export interface PlaybookTaskWithGraph extends PlaybookTask {
   blocked: boolean;
-  blockedBy: string[];   // ids of unmet dependencies that still exist in this playbook
+  blockedBy: string[]; // ids of unmet dependencies that still exist in this playbook
 }
 
 // Attach derived blocked/ready state from each task's dependsOn edges — computed on read, never
@@ -471,7 +521,9 @@ const RESOLVED_STATUSES = new Set<PlaybookStatus>(["done", "skipped"]);
 export function withBlockedState(tasks: readonly PlaybookTask[]): PlaybookTaskWithGraph[] {
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
   return tasks.map((t) => {
-    const blockedBy = (t.dependsOn ?? []).filter((depId) => byId.get(depId)?.status !== "done" && byId.has(depId));
+    const blockedBy = (t.dependsOn ?? []).filter(
+      (depId) => byId.get(depId)?.status !== "done" && byId.has(depId),
+    );
     return { ...t, blocked: blockedBy.length > 0 && !RESOLVED_STATUSES.has(t.status), blockedBy };
   });
 }
@@ -480,9 +532,9 @@ export interface PlaybookStats {
   total: number;
   done: number;
   skipped: number;
-  open: number;            // todo + in_progress (still needs action)
+  open: number; // todo + in_progress (still needs action)
   inProgress: number;
-  completionPct: number;   // done / total, rounded
+  completionPct: number; // done / total, rounded
 }
 
 export function playbookStats(tasks: PlaybookTask[]): PlaybookStats {

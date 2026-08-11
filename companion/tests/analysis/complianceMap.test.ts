@@ -32,8 +32,16 @@ describe("complianceMap", () => {
     expect(ds.source.length).toBeGreaterThan(0);
     expect(ds.techniqueCount).toBe(10);
     const expected = [
-      "T1566.001", "T1059.001", "T1003.001", "T1486", "T1021.002",
-      "T1071.001", "T1562.001", "T1070.001", "T1048.002", "T1053.005",
+      "T1566.001",
+      "T1059.001",
+      "T1003.001",
+      "T1486",
+      "T1021.002",
+      "T1071.001",
+      "T1562.001",
+      "T1070.001",
+      "T1048.002",
+      "T1053.005",
     ];
     for (const t of expected) {
       expect(ds.map[t]).toBeDefined();
@@ -53,9 +61,7 @@ describe("complianceMap", () => {
     expect(ds.note).toMatch(/not legal advice/i);
 
     // Every framework named in the data must declare which edition its control ids came from.
-    const used = new Set(
-      Object.values(ds.map).flatMap((rows) => rows.map((r) => String(r.framework))),
-    );
+    const used = new Set(Object.values(ds.map).flatMap((rows) => rows.map((r) => String(r.framework))));
     for (const framework of used) {
       expect(ds.frameworkVersions[framework], `${framework} has no declared edition`).toBeTruthy();
     }
@@ -71,9 +77,7 @@ describe("complianceMap", () => {
       .filter((r) => r.framework === "ISO 27001");
     expect(iso.length).toBeGreaterThan(0);
     for (const row of iso) {
-      expect(row.control, `${row.control} is not 2022 Annex A numbering`).toMatch(
-        /^A\.[5-8]\.\d+$/,
-      );
+      expect(row.control, `${row.control} is not 2022 Annex A numbering`).toMatch(/^A\.[5-8]\.\d+$/);
     }
     expect(ds.frameworkVersions["ISO 27001"]).toContain("2022");
   });
@@ -102,9 +106,7 @@ describe("complianceMap", () => {
   });
 
   it("maps a confirmed finding's MITRE techniques to control failures + obligations", () => {
-    const results = mapFindings([
-      makeFinding({ id: "f1", mitreTechniques: ["T1486"], status: "confirmed" }),
-    ]);
+    const results = mapFindings([makeFinding({ id: "f1", mitreTechniques: ["T1486"], status: "confirmed" })]);
     expect(results).toHaveLength(1);
     expect(results[0].technique).toBe("T1486");
     expect(results[0].findingId).toBe("f1");

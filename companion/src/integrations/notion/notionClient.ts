@@ -19,21 +19,32 @@ export const NOTION_VERSION = "2022-06-28";
 const NOTION_BASE = "https://api.notion.com";
 
 export interface NotionClientOptions {
-  token: string;            // internal-integration secret (ntn_… / secret_…)
-  baseUrl?: string;         // default https://api.notion.com (override for tests/proxies)
-  notionVersion?: string;   // default NOTION_VERSION
-  fetchFn?: FetchFn;        // injectable transport (tests pass a mock; TLS-custom in prod)
-  timeoutMs?: number;       // per-request timeout (default 60s — appends can be large)
+  token: string; // internal-integration secret (ntn_… / secret_…)
+  baseUrl?: string; // default https://api.notion.com (override for tests/proxies)
+  notionVersion?: string; // default NOTION_VERSION
+  fetchFn?: FetchFn; // injectable transport (tests pass a mock; TLS-custom in prod)
+  timeoutMs?: number; // per-request timeout (default 60s — appends can be large)
 }
 
 // Parent for a newly-created page: either an existing page or a database row.
 export type NotionParent = { page_id: string } | { database_id: string };
 
-export interface NotionPageRef { id: string; url?: string }
-export interface NotionBotUser { id?: string; name?: string }
+export interface NotionPageRef {
+  id: string;
+  url?: string;
+}
+export interface NotionBotUser {
+  id?: string;
+  name?: string;
+}
 // A block as we read it back: id, its type, whether it's archived (trashed), and the plain
 // text of its label (for a toggle/heading — used to adopt a previous container by title).
-export interface NotionBlockRef { id: string; type?: string; archived?: boolean; plainText?: string }
+export interface NotionBlockRef {
+  id: string;
+  type?: string;
+  archived?: boolean;
+  plainText?: string;
+}
 
 export class NotionApiError extends Error {
   constructor(
@@ -46,7 +57,12 @@ export class NotionApiError extends Error {
   }
 }
 
-interface NotionErrorEnvelope { object?: string; status?: number; code?: string; message?: string }
+interface NotionErrorEnvelope {
+  object?: string;
+  status?: number;
+  code?: string;
+  message?: string;
+}
 
 // Pull the plain text out of a block's rich_text array (Notion nests it under the block's
 // own type key, e.g. block.toggle.rich_text). Used so we can recognize a previous managed
@@ -54,7 +70,8 @@ interface NotionErrorEnvelope { object?: string; status?: number; code?: string;
 function blockPlainText(block: Record<string, unknown>): string | undefined {
   const type = typeof block.type === "string" ? block.type : undefined;
   if (!type) return undefined;
-  const body = block[type] as { rich_text?: Array<{ plain_text?: string; text?: { content?: string } }> } | undefined;
+  const body = block[type] as
+    { rich_text?: Array<{ plain_text?: string; text?: { content?: string } }> } | undefined;
   const rich = body?.rich_text;
   if (!Array.isArray(rich)) return undefined;
   return rich.map((r) => r.plain_text ?? r.text?.content ?? "").join("");
@@ -119,11 +136,23 @@ export class NotionClient {
     if (!res.ok) {
       const env = (await res.json().catch(() => ({}))) as NotionErrorEnvelope;
       const detail = env.message ? `: ${env.message}` : "";
-      if (res.status === 401) throw new NotionApiError(`Notion auth failed (check DFIR_NOTION_TOKEN)${detail}`, 401, "auth");
-      if (res.status === 403) throw new NotionApiError(`Notion permission denied — share the page/database with the integration${detail}`, 403, "permission");
-      if (res.status === 404) throw new NotionApiError(`Notion not found — share the page/database with the integration${detail}`, 404, "notfound");
+      if (res.status === 401)
+        throw new NotionApiError(`Notion auth failed (check DFIR_NOTION_TOKEN)${detail}`, 401, "auth");
+      if (res.status === 403)
+        throw new NotionApiError(
+          `Notion permission denied — share the page/database with the integration${detail}`,
+          403,
+          "permission",
+        );
+      if (res.status === 404)
+        throw new NotionApiError(
+          `Notion not found — share the page/database with the integration${detail}`,
+          404,
+          "notfound",
+        );
       if (res.status === 429) throw new NotionApiError(`Notion rate limit hit${detail}`, 429, "ratelimit");
-      if (res.status === 400) throw new NotionApiError(`Notion rejected the request${detail}`, 400, "validation");
+      if (res.status === 400)
+        throw new NotionApiError(`Notion rejected the request${detail}`, 400, "validation");
       throw new NotionApiError(`Notion HTTP ${res.status} on ${path}${detail}`, res.status, "http");
     }
     return (await res.json().catch(() => ({}))) as T;
@@ -134,7 +163,10 @@ export class NotionClient {
   async me(): Promise<NotionBotUser> {
     const data = await this.request<Record<string, unknown>>("GET", "/v1/users/me");
     const bot = data.bot as { owner?: unknown } | undefined;
-    return { id: String(data.id ?? ""), name: typeof data.name === "string" ? data.name : (bot ? "integration" : undefined) };
+    return {
+      id: String(data.id ?? ""),
+      name: typeof data.name === "string" ? data.name : bot ? "integration" : undefined,
+    };
   }
 
   // ---- pages / databases ---------------------------------------------------
@@ -147,7 +179,10 @@ export class NotionClient {
   // The title-type property's NAME for a database (varies per DB — often "Name", but not
   // always). Needed to create a row, because the page's title goes under that property.
   async databaseTitleProp(databaseId: string): Promise<string> {
-    const data = await this.request<{ properties?: Record<string, { type?: string }> }>("GET", `/v1/databases/${databaseId}`);
+    const data = await this.request<{ properties?: Record<string, { type?: string }> }>(
+      "GET",
+      `/v1/databases/${databaseId}`,
+    );
     const props = data.properties ?? {};
     for (const [name, def] of Object.entries(props)) if (def?.type === "title") return name;
     return "Name"; // fall back to the Notion default if no title prop is reported
@@ -161,7 +196,9 @@ export class NotionClient {
     } else {
       properties = { title: { title: [{ text: { content: title } }] } };
     }
-    const data = await this.request<Record<string, unknown>>("POST", "/v1/pages", { body: { parent, properties } });
+    const data = await this.request<Record<string, unknown>>("POST", "/v1/pages", {
+      body: { parent, properties },
+    });
     return { id: String(data.id ?? ""), url: typeof data.url === "string" ? data.url : undefined };
   }
 
@@ -186,9 +223,11 @@ export class NotionClient {
     do {
       const query: Record<string, string> = { page_size: "100" };
       if (cursor) query.start_cursor = cursor;
-      const data = await this.request<{ results?: Array<Record<string, unknown>>; has_more?: boolean; next_cursor?: string | null }>(
-        "GET", `/v1/blocks/${blockId}/children`, { query },
-      );
+      const data = await this.request<{
+        results?: Array<Record<string, unknown>>;
+        has_more?: boolean;
+        next_cursor?: string | null;
+      }>("GET", `/v1/blocks/${blockId}/children`, { query });
       for (const r of data.results ?? []) out.push(toBlockRef(r));
       cursor = data.has_more ? (data.next_cursor ?? undefined) : undefined;
     } while (cursor);
@@ -198,7 +237,9 @@ export class NotionClient {
   // Append children to a block/page. Caller batches to ≤100 top-level blocks per call.
   async appendChildren(blockId: string, children: NotionBlock[]): Promise<NotionBlockRef[]> {
     const data = await this.request<{ results?: Array<Record<string, unknown>> }>(
-      "PATCH", `/v1/blocks/${blockId}/children`, { body: { children } },
+      "PATCH",
+      `/v1/blocks/${blockId}/children`,
+      { body: { children } },
     );
     return (data.results ?? []).map(toBlockRef);
   }

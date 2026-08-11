@@ -4,17 +4,29 @@ import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis
 
 function finding(overrides: Partial<Finding>): Finding {
   return {
-    id: "f1", severity: "High", title: "A finding", description: "d",
-    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-    firstSeen: "t0", lastUpdated: "t1", status: "open",
+    id: "f1",
+    severity: "High",
+    title: "A finding",
+    description: "d",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "t0",
+    lastUpdated: "t1",
+    status: "open",
     ...overrides,
   };
 }
 
 function event(overrides: Partial<ForensicEvent>): ForensicEvent {
   return {
-    id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "ev", severity: "Medium",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    id: "e1",
+    timestamp: "2026-05-20T09:00:00Z",
+    description: "ev",
+    severity: "Medium",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...overrides,
   };
 }
@@ -32,7 +44,9 @@ describe("buildAttackLayer", () => {
 
   it("maps a finding's techniques to colored, scored cells with the title as comment", () => {
     const state = emptyState("c1");
-    state.findings.push(finding({ severity: "Critical", title: "Ransomware deployed", mitreTechniques: ["T1486"] }));
+    state.findings.push(
+      finding({ severity: "Critical", title: "Ransomware deployed", mitreTechniques: ["T1486"] }),
+    );
     const layer = buildAttackLayer(state);
     const t = layer.techniques.find((x) => x.techniqueID === "T1486");
     expect(t).toBeDefined();

@@ -4,12 +4,12 @@ import type { PlaybookTask } from "./playbook.js";
 // A coach recommendation returned to the dashboard sidebar.
 export interface CoachRecommendation {
   id: string;
-  priority: number;        // higher = more important
-  action: string;          // short imperative title
-  rationale: string;       // one-sentence why this matters now
-  cta: string;             // button label, e.g. "Run enrichment"
-  route?: string;          // optional API route that performs the action
-  panel?: string;          // optional dashboard panel to open
+  priority: number; // higher = more important
+  action: string; // short imperative title
+  rationale: string; // one-sentence why this matters now
+  cta: string; // button label, e.g. "Run enrichment"
+  route?: string; // optional API route that performs the action
+  panel?: string; // optional dashboard panel to open
 }
 
 /**
@@ -33,7 +33,10 @@ export interface CoachInputs {
 
 // Stable heuristics that score what the analyst should do next. No AI calls here — only
 // deterministic reads of existing case state plus the two derived inputs above.
-export function recommendNextActions(state: InvestigationState, inputs: CoachInputs = {}): CoachRecommendation[] {
+export function recommendNextActions(
+  state: InvestigationState,
+  inputs: CoachInputs = {},
+): CoachRecommendation[] {
   const recs: CoachRecommendation[] = [];
 
   const openFindings = state.findings.filter((f) => !isConfirmedOrDismissed(f));
@@ -52,7 +55,8 @@ export function recommendNextActions(state: InvestigationState, inputs: CoachInp
       id: "import-evidence",
       priority: 100,
       action: "Import evidence",
-      rationale: "The case has no events, findings, or IOCs yet — start by importing logs, screenshots, or tool output.",
+      rationale:
+        "The case has no events, findings, or IOCs yet — start by importing logs, screenshots, or tool output.",
       cta: "Open import",
       panel: "import",
     });
@@ -136,7 +140,12 @@ export function recommendNextActions(state: InvestigationState, inputs: CoachInp
   }
 
   // 8. Export-ready cases.
-  if (state.findings.length > 0 && pendingEnrichmentIocs === 0 && openFindings.length === 0 && unansweredQuestions.length === 0) {
+  if (
+    state.findings.length > 0 &&
+    pendingEnrichmentIocs === 0 &&
+    openFindings.length === 0 &&
+    unansweredQuestions.length === 0
+  ) {
     recs.push({
       id: "generate-report",
       priority: 40,

@@ -12,12 +12,12 @@ export type SocratesJobStatus = "processing" | "importing" | "imported" | "error
 export interface SocratesJob {
   jobId: string;
   md5: string;
-  sourceName: string;     // the file the analyst submitted
-  zipEntry?: string;      // the entry inside that archive, when the source was a zip
+  sourceName: string; // the file the analyst submitted
+  zipEntry?: string; // the entry inside that archive, when the source was a zip
   status: SocratesJobStatus;
-  phase?: string;         // SO-CRATES analysis phase: network | logs | files
-  startedAt: string;      // ISO
-  finishedAt?: string;    // ISO
+  phase?: string; // SO-CRATES analysis phase: network | logs | files
+  startedAt: string; // ISO
+  finishedAt?: string; // ISO
   addedEvents?: number;
   addedIocs?: number;
   error?: string;
@@ -35,7 +35,7 @@ export class SocratesJobStore {
   async list(caseId: string): Promise<SocratesJob[]> {
     try {
       const parsed = JSON.parse(await readFile(this.path(caseId), "utf8")) as unknown;
-      return Array.isArray(parsed) ? parsed as SocratesJob[] : [];
+      return Array.isArray(parsed) ? (parsed as SocratesJob[]) : [];
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;

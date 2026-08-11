@@ -29,9 +29,7 @@ describe("CaseStore.createCase", () => {
       expect(s.isDirectory()).toBe(true);
     }
 
-    const written = JSON.parse(
-      await readFile(join(root, "case-001", "case.json"), "utf8"),
-    );
+    const written = JSON.parse(await readFile(join(root, "case-001", "case.json"), "utf8"));
     expect(written.name).toBe("Test Incident");
     expect(written.investigator).toBe("yaniv");
   });
@@ -89,9 +87,7 @@ describe("CaseStore.createCase", () => {
       store.createCase({ caseId: "arch-claim", name: "usurper", investigator: "j", aiProvider: null }),
     ).rejects.toBeInstanceOf(CaseAlreadyExistsError);
 
-    const written = JSON.parse(
-      await readFile(join(root, "_archived", "arch-claim", "case.json"), "utf8"),
-    );
+    const written = JSON.parse(await readFile(join(root, "_archived", "arch-claim", "case.json"), "utf8"));
     expect(written.name).toBe("original");
   });
 
@@ -151,9 +147,15 @@ describe("CaseStore evidence writes", () => {
 
     expect(await store.nextSequenceNumber("c3")).toBe(1);
     await store.appendCapture("c3", {
-      caseId: "c3", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "timer", contentHash: "0000000000000000", isDuplicate: false,
-      screenshotFile: "000001_t.webp", sequenceNumber: 1,
+      caseId: "c3",
+      timestamp: "2026-05-28T10:00:00.000Z",
+      url: "u",
+      tabTitle: "t",
+      triggerType: "timer",
+      contentHash: "0000000000000000",
+      isDuplicate: false,
+      screenshotFile: "000001_t.webp",
+      sequenceNumber: 1,
     });
     expect(await store.nextSequenceNumber("c3")).toBe(2);
   });
@@ -338,8 +340,13 @@ describe("CaseStore.nextImportSeq", () => {
     const store = new CaseStore(root);
     await store.createCase({ caseId: "seq-2", name: "n", investigator: "i", aiProvider: null });
     await store.appendImport("seq-2", {
-      caseId: "seq-2", sequenceNumber: 1, importedAt: new Date().toISOString(),
-      filename: "0001_a.log", originalName: "a.log", rows: 0, bytes: 1,
+      caseId: "seq-2",
+      sequenceNumber: 1,
+      importedAt: new Date().toISOString(),
+      filename: "0001_a.log",
+      originalName: "a.log",
+      rows: 0,
+      bytes: 1,
     });
     // A fresh store (server restart) must pick up where the log left off, not restart at 1.
     expect(await new CaseStore(root).nextImportSeq("seq-2")).toBe(2);

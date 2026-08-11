@@ -25,48 +25,161 @@ import { domainToUnicode } from "node:url";
 // never flagged.
 const DEFAULT_BRAND_DOMAINS = [
   // Microsoft / M365 estate
-  "microsoft.com", "microsoftonline.com", "office.com", "office365.com", "live.com", "outlook.com",
-  "sharepoint.com", "onedrive.com", "windows.com", "azure.com",
+  "microsoft.com",
+  "microsoftonline.com",
+  "office.com",
+  "office365.com",
+  "live.com",
+  "outlook.com",
+  "sharepoint.com",
+  "onedrive.com",
+  "windows.com",
+  "azure.com",
   // Google
-  "google.com", "gmail.com", "googlemail.com",
+  "google.com",
+  "gmail.com",
+  "googlemail.com",
   // Identity / collaboration / dev
-  "okta.com", "duosecurity.com", "onelogin.com", "auth0.com", "github.com", "gitlab.com",
-  "atlassian.com", "slack.com", "zoom.us", "webex.com", "docusign.com", "dropbox.com", "box.com",
-  "wetransfer.com", "adobe.com", "salesforce.com", "servicenow.com", "linkedin.com",
+  "okta.com",
+  "duosecurity.com",
+  "onelogin.com",
+  "auth0.com",
+  "github.com",
+  "gitlab.com",
+  "atlassian.com",
+  "slack.com",
+  "zoom.us",
+  "webex.com",
+  "docusign.com",
+  "dropbox.com",
+  "box.com",
+  "wetransfer.com",
+  "adobe.com",
+  "salesforce.com",
+  "servicenow.com",
+  "linkedin.com",
   // Consumer / cloud
-  "apple.com", "icloud.com", "amazon.com", "netflix.com", "facebook.com", "instagram.com",
-  "paypal.com", "stripe.com", "intuit.com",
+  "apple.com",
+  "icloud.com",
+  "amazon.com",
+  "netflix.com",
+  "facebook.com",
+  "instagram.com",
+  "paypal.com",
+  "stripe.com",
+  "intuit.com",
   // Banks
-  "chase.com", "bankofamerica.com", "wellsfargo.com", "citibank.com", "capitalone.com",
-  "hsbc.com", "barclays.co.uk", "santander.com", "lloydsbank.com",
+  "chase.com",
+  "bankofamerica.com",
+  "wellsfargo.com",
+  "citibank.com",
+  "capitalone.com",
+  "hsbc.com",
+  "barclays.co.uk",
+  "santander.com",
+  "lloydsbank.com",
   // Crypto
-  "coinbase.com", "binance.com", "kraken.com", "metamask.io", "ledger.com",
+  "coinbase.com",
+  "binance.com",
+  "kraken.com",
+  "metamask.io",
+  "ledger.com",
 ];
 
 // Multi-part public suffixes we recognise so registrable(host) takes 3 labels not 2 (barclays.co.uk,
 // not co.uk). Small practical set — not a full PSL; unknown TLDs fall back to the last two labels.
 const MULTIPART_SUFFIXES = new Set([
-  "co.uk", "org.uk", "gov.uk", "ac.uk", "co.jp", "com.au", "net.au", "org.au", "co.nz",
-  "com.br", "com.cn", "co.in", "co.za", "com.mx", "com.sg", "com.tr",
+  "co.uk",
+  "org.uk",
+  "gov.uk",
+  "ac.uk",
+  "co.jp",
+  "com.au",
+  "net.au",
+  "org.au",
+  "co.nz",
+  "com.br",
+  "com.cn",
+  "co.in",
+  "co.za",
+  "com.mx",
+  "com.sg",
+  "com.tr",
 ]);
 
 // Confusable / homoglyph folds → the ASCII letter they imitate. Covers the practical set seen in
 // real phishing: Latin diacritics, Cyrillic / Greek lookalikes, and ASCII digit / shape homoglyphs.
 const CONFUSABLES: Record<string, string> = {
   // Latin diacritics
-  "á": "a", "à": "a", "â": "a", "ä": "a", "ã": "a", "å": "a", "ā": "a",
-  "é": "e", "è": "e", "ê": "e", "ë": "e", "ē": "e",
-  "í": "i", "ì": "i", "î": "i", "ï": "i", "ī": "i",
-  "ó": "o", "ò": "o", "ô": "o", "ö": "o", "õ": "o", "ø": "o", "ō": "o",
-  "ú": "u", "ù": "u", "û": "u", "ü": "u", "ū": "u",
-  "ñ": "n", "ç": "c", "ý": "y",
+  á: "a",
+  à: "a",
+  â: "a",
+  ä: "a",
+  ã: "a",
+  å: "a",
+  ā: "a",
+  é: "e",
+  è: "e",
+  ê: "e",
+  ë: "e",
+  ē: "e",
+  í: "i",
+  ì: "i",
+  î: "i",
+  ï: "i",
+  ī: "i",
+  ó: "o",
+  ò: "o",
+  ô: "o",
+  ö: "o",
+  õ: "o",
+  ø: "o",
+  ō: "o",
+  ú: "u",
+  ù: "u",
+  û: "u",
+  ü: "u",
+  ū: "u",
+  ñ: "n",
+  ç: "c",
+  ý: "y",
   // Cyrillic lookalikes
-  "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y", "к": "k", "м": "m",
-  "н": "h", "т": "t", "в": "b", "і": "i", "ѕ": "s", "ј": "j", "ԁ": "d", "ɡ": "g",
+  а: "a",
+  е: "e",
+  о: "o",
+  р: "p",
+  с: "c",
+  х: "x",
+  у: "y",
+  к: "k",
+  м: "m",
+  н: "h",
+  т: "t",
+  в: "b",
+  і: "i",
+  ѕ: "s",
+  ј: "j",
+  ԁ: "d",
+  ɡ: "g",
   // Greek lookalikes
-  "α": "a", "ο": "o", "ρ": "p", "ν": "v", "τ": "t", "υ": "u", "κ": "k", "ι": "i",
+  α: "a",
+  ο: "o",
+  ρ: "p",
+  ν: "v",
+  τ: "t",
+  υ: "u",
+  κ: "k",
+  ι: "i",
   // ASCII digit / shape homoglyphs
-  "0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "6": "g", "7": "t", "8": "b", "9": "g",
+  "0": "o",
+  "1": "l",
+  "3": "e",
+  "4": "a",
+  "5": "s",
+  "6": "g",
+  "7": "t",
+  "8": "b",
+  "9": "g",
 };
 
 function stripWww(host: string): string {
@@ -110,7 +223,8 @@ export function skeleton(host: string): string {
 
 // Levenshtein edit distance, capped implicitly by string length (domains are short).
 function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
   let prev = Array.from({ length: n + 1 }, (_, i) => i);
@@ -129,21 +243,23 @@ function levenshtein(a: string, b: string): number {
 export type LookalikeKind = "homoglyph" | "typosquat" | "impersonation";
 
 export interface LookalikeVerdict {
-  brand: string;         // the impersonated registrable brand domain (e.g. "microsoft.com")
+  brand: string; // the impersonated registrable brand domain (e.g. "microsoft.com")
   kind: LookalikeKind;
-  distance: number;      // edit distance to the brand label (0 for homoglyph / impersonation)
-  note: string;          // human-readable summary
+  distance: number; // edit distance to the brand label (0 for homoglyph / impersonation)
+  note: string; // human-readable summary
 }
 
 export interface LookalikeOptions {
-  brands?: string[];     // override / extend the bundled brand list (registrable domains)
+  brands?: string[]; // override / extend the bundled brand list (registrable domains)
 }
 
 // Read the effective brand list: bundled defaults + DFIR_LOOKALIKE_EXTRA_DOMAINS (comma-separated),
 // deduped and normalised to registrable form. Read at call time so deployment/tests can set it.
 export function lookalikeBrands(extra?: string[]): string[] {
   const envExtra = (process.env.DFIR_LOOKALIKE_EXTRA_DOMAINS ?? "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const all = [...DEFAULT_BRAND_DOMAINS, ...envExtra, ...(extra ?? [])].map((d) => registrable(d));
   return [...new Set(all)].filter(Boolean);
 }
@@ -156,7 +272,12 @@ function isBrandOrSub(reg: string, brand: string): boolean {
 // Decide whether an observed domain is a lookalike of any watched brand. Returns the strongest match
 // (homoglyph > impersonation > typosquat) or null. `host` is a raw domain (may include subdomains).
 export function detectLookalike(host: string, opts: LookalikeOptions = {}): LookalikeVerdict | null {
-  const cleaned = stripWww(String(host || "").toLowerCase().trim().replace(/\.$/, ""));
+  const cleaned = stripWww(
+    String(host || "")
+      .toLowerCase()
+      .trim()
+      .replace(/\.$/, ""),
+  );
   if (!cleaned || !cleaned.includes(".")) return null;
   const reg = registrable(cleaned);
   const brands = opts.brands ? opts.brands.map((d) => registrable(d)) : lookalikeBrands();
@@ -171,7 +292,12 @@ export function detectLookalike(host: string, opts: LookalikeOptions = {}): Look
   let best: LookalikeVerdict | null = null;
   const rank: Record<LookalikeKind, number> = { homoglyph: 3, impersonation: 2, typosquat: 1 };
   const consider = (v: LookalikeVerdict): void => {
-    if (!best || rank[v.kind] > rank[best.kind] || (rank[v.kind] === rank[best.kind] && v.distance < best.distance)) best = v;
+    if (
+      !best ||
+      rank[v.kind] > rank[best.kind] ||
+      (rank[v.kind] === rank[best.kind] && v.distance < best.distance)
+    )
+      best = v;
   };
 
   for (const brand of brands) {
@@ -181,8 +307,12 @@ export function detectLookalike(host: string, opts: LookalikeOptions = {}): Look
 
     // 1. Homoglyph — identical skeletons, different real domains.
     if (regSkel && regSkel === skeleton(brand)) {
-      consider({ brand, kind: "homoglyph", distance: 0,
-        note: `Domain "${cleaned}" is a homoglyph of ${brand} (identical when confusable characters are normalised)` });
+      consider({
+        brand,
+        kind: "homoglyph",
+        distance: 0,
+        note: `Domain "${cleaned}" is a homoglyph of ${brand} (identical when confusable characters are normalised)`,
+      });
       continue;
     }
 
@@ -190,18 +320,28 @@ export function detectLookalike(host: string, opts: LookalikeOptions = {}): Look
     const dist = levenshtein(regLabel, brandLabel);
     const maxEdits = brandLabel.length >= 9 ? 2 : 1;
     if (dist > 0 && dist <= maxEdits && regLabel.length >= 4) {
-      consider({ brand, kind: "typosquat", distance: dist,
-        note: `Domain "${cleaned}" is ${dist} edit${dist === 1 ? "" : "s"} from ${brand} (possible typosquat)` });
+      consider({
+        brand,
+        kind: "typosquat",
+        distance: dist,
+        note: `Domain "${cleaned}" is ${dist} edit${dist === 1 ? "" : "s"} from ${brand} (possible typosquat)`,
+      });
       continue;
     }
 
     // 3. Impersonation — the brand label appears as a token in a different registrable domain.
     // Requires a boundary (separator or subdomain) so "amazon.com" doesn't match inside "amazonia".
     if (brandLabel.length >= 5) {
-      const tokenRe = new RegExp(`(^|[.\\-_])${brandLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([.\\-_]|$)`);
+      const tokenRe = new RegExp(
+        `(^|[.\\-_])${brandLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([.\\-_]|$)`,
+      );
       if (tokenRe.test(cleaned)) {
-        consider({ brand, kind: "impersonation", distance: 0,
-          note: `Domain "${cleaned}" embeds the ${brand} brand but is not ${brand} (possible impersonation)` });
+        consider({
+          brand,
+          kind: "impersonation",
+          distance: 0,
+          note: `Domain "${cleaned}" embeds the ${brand} brand but is not ${brand} (possible impersonation)`,
+        });
       }
     }
   }

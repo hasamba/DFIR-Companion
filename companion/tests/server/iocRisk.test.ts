@@ -11,14 +11,32 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
 const CRIT_EVENT: ForensicEvent = {
-  id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "C2 to 9.9.9.9", severity: "Critical",
-  mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], srcIp: "9.9.9.9", sources: ["EDR", "Firewall"],
+  id: "e1",
+  timestamp: "2026-06-01T00:00:00Z",
+  description: "C2 to 9.9.9.9",
+  severity: "Critical",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+  srcIp: "9.9.9.9",
+  sources: ["EDR", "Firewall"],
 };
-const MALICIOUS_IP: IOC = { id: "i-bad", type: "ip", value: "9.9.9.9", firstSeen: "2026-06-01T00:00:00Z", enrichments: [
-  { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
-  { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
-] };
-const WHITELISTED_DOMAIN: IOC = { id: "i-wl", type: "domain", value: "safe.example.com", firstSeen: "2026-06-01T00:00:00Z" };
+const MALICIOUS_IP: IOC = {
+  id: "i-bad",
+  type: "ip",
+  value: "9.9.9.9",
+  firstSeen: "2026-06-01T00:00:00Z",
+  enrichments: [
+    { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
+    { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
+  ],
+};
+const WHITELISTED_DOMAIN: IOC = {
+  id: "i-wl",
+  type: "domain",
+  value: "safe.example.com",
+  firstSeen: "2026-06-01T00:00:00Z",
+};
 
 async function makeApp() {
   const root = await mkdtemp(join(tmpdir(), "dfir-ioc-risk-"));
@@ -26,7 +44,10 @@ async function makeApp() {
   const stateStore = new StateStore(store);
   const iocWhitelistStore = new IocWhitelistStore(join(root, "whitelist.json"));
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, iocWhitelistStore });

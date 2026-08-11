@@ -15,8 +15,17 @@ export interface AnonControl {
 }
 
 const ALL_ON: Record<AnonCategory, boolean> = {
-  IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
-  CARD: true, PHONE: true, NATID: true,
+  IP: true,
+  EMAIL: true,
+  USER: true,
+  HOST: true,
+  DOMAIN: true,
+  PATH: true,
+  CMD: true,
+  REG: true,
+  CARD: true,
+  PHONE: true,
+  NATID: true,
 };
 
 function defaultControl(): AnonControl {
@@ -27,7 +36,8 @@ function defaultControl(): AnonControl {
 // Resolve a stored control (or null) into the policy the anonymizer consumes. A missing control
 // (store not wired) → disabled, so nothing is tokenized unless explicitly configured.
 export function toAnonPolicy(control: AnonControl | null): AnonPolicy {
-  if (!control) return { enabled: false, categories: { ...ALL_ON }, redactSecrets: true, maskPublicIps: true };
+  if (!control)
+    return { enabled: false, categories: { ...ALL_ON }, redactSecrets: true, maskPublicIps: true };
   return {
     enabled: control.enabled,
     categories: { ...ALL_ON, ...control.categories },

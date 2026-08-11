@@ -8,15 +8,15 @@
 // only" no longer holds. A configured-but-wrong/absent key is a 401.
 
 export interface PushAuthInput {
-  globalToken?: string;   // DFIR_PUSH_TOKEN (shared across cases)
-  caseToken?: string;     // per-case generated token (state/push-token.json)
-  presented?: string;     // the caller's X-DFIR-Key header
+  globalToken?: string; // DFIR_PUSH_TOKEN (shared across cases)
+  caseToken?: string; // per-case generated token (state/push-token.json)
+  presented?: string; // the caller's X-DFIR-Key header
 }
 
 export interface PushAuthResult {
   ok: boolean;
-  status: number;          // HTTP status to use when !ok (200 when ok)
-  error?: string;          // actionable message when !ok
+  status: number; // HTTP status to use when !ok (200 when ok)
+  error?: string; // actionable message when !ok
 }
 
 // Constant-time string compare — avoids leaking the token length/prefix through response timing. Both
@@ -44,7 +44,8 @@ export function resolvePushAuth(input: PushAuthInput): PushAuthResult {
     return {
       ok: false,
       status: 403,
-      error: "push ingest is disabled — set DFIR_PUSH_TOKEN or generate a per-case push token in Settings → Integrations",
+      error:
+        "push ingest is disabled — set DFIR_PUSH_TOKEN or generate a per-case push token in Settings → Integrations",
     };
   }
   if (!presented) {

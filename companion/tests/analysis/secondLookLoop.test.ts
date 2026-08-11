@@ -21,18 +21,54 @@ let superStore: SuperTimelineStore;
 let synthMetaStore: SynthMetaStore;
 
 function event(id: string, timestamp: string, description = "benign"): ForensicEvent {
-  return { id, timestamp, description, severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+  return {
+    id,
+    timestamp,
+    description,
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 // Synthesis delta with a model-issued evidenceRequest for "rsync" — the keyword the seeded raw
 // super-timeline row carries but the analyzed timeline does not.
 function deltaWithRequest(keyword: string): string {
   return JSON.stringify({
-    findings: [{ id: "f1", severity: "High", title: "PS abuse", description: "d", relatedIocs: [], mitreTechniques: ["T1059"], status: "open", relatedEventIds: ["e1"] }],
-    iocs: [], mitreTechniques: [{ id: "T1059", name: "Command Interpreter" }],
-    attackerPath: "p", summary: "s", forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-    hypotheses: [{ title: "Data was staged before exfil", expectedOutcome: "an archive written before transfer", status: "open", relatedTechniques: ["T1560"], relatedEventIds: [], relatedIocIds: [] }],
-    evidenceRequests: [{ keywords: [keyword], reason: "confirm the staging/exfil hypothesis with rows not shown" }],
+    findings: [
+      {
+        id: "f1",
+        severity: "High",
+        title: "PS abuse",
+        description: "d",
+        relatedIocs: [],
+        mitreTechniques: ["T1059"],
+        status: "open",
+        relatedEventIds: ["e1"],
+      },
+    ],
+    iocs: [],
+    mitreTechniques: [{ id: "T1059", name: "Command Interpreter" }],
+    attackerPath: "p",
+    summary: "s",
+    forensicEvents: [],
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: "",
+    hypotheses: [
+      {
+        title: "Data was staged before exfil",
+        expectedOutcome: "an archive written before transfer",
+        status: "open",
+        relatedTechniques: ["T1560"],
+        relatedEventIds: [],
+        relatedIocIds: [],
+      },
+    ],
+    evidenceRequests: [
+      { keywords: [keyword], reason: "confirm the staging/exfil hypothesis with rows not shown" },
+    ],
   });
 }
 
@@ -99,7 +135,7 @@ describe("second-look loop end-to-end (#11)", () => {
 
     const state = await stateStore.load("c1");
     expect(state.forensicTimeline.some((e) => e.id === "sraw1")).toBe(false); // nothing promoted
-    expect(analyze).toHaveBeenCalledTimes(1);                                 // no re-synthesis
+    expect(analyze).toHaveBeenCalledTimes(1); // no re-synthesis
 
     const meta = await synthMetaStore.load("c1");
     expect(meta.secondLook?.promoted).toBe(0);
@@ -109,7 +145,12 @@ describe("second-look loop end-to-end (#11)", () => {
   it("does not sweep when superTimelineStore is not wired", async () => {
     const provider = new MockProvider("mock", deltaWithRequest("rsync"));
     const analyze = vi.spyOn(provider, "analyze");
-    const pipeline = new AnalysisPipeline({ provider, stateStore, synthMetaStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      synthMetaStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
     await pipeline.synthesize("c1");
     expect(analyze).toHaveBeenCalledTimes(1); // no second-look pass at all
   });

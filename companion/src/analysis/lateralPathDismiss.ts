@@ -21,10 +21,10 @@ import type { LateralPath } from "./evidenceGraph.js";
 // underlying evidence after a re-import.
 export interface LateralPathDismissal {
   id: string;
-  key: string;          // ordered host sequence — the durable anchor (see lateralPathKey)
-  hostIds: string[];    // the route as dismissed, kept readable for the review/undo list
-  note: string;         // why the analyst rejected it (free text, may be empty)
-  dismissedAt: string;  // ISO timestamp
+  key: string; // ordered host sequence — the durable anchor (see lateralPathKey)
+  hostIds: string[]; // the route as dismissed, kept readable for the review/undo list
+  note: string; // why the analyst rejected it (free text, may be empty)
+  dismissedAt: string; // ISO timestamp
 }
 
 // A path annotated with its dismissal state, for the "show dismissed" review view.
@@ -70,7 +70,11 @@ export function annotateDismissedPaths(
 
 // Build a dismissal record for a route. Returns null when the route is not a chain (a path needs
 // at least two hosts), so a malformed request can't persist an anchor that matches nothing.
-export function buildDismissal(hostIds: readonly string[], note: string, now = new Date()): LateralPathDismissal | null {
+export function buildDismissal(
+  hostIds: readonly string[],
+  note: string,
+  now = new Date(),
+): LateralPathDismissal | null {
   const hosts = hostIds.map((h) => h.trim()).filter((h) => h.length > 0);
   if (hosts.length < 2) return null;
   return {

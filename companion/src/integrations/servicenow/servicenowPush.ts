@@ -20,27 +20,39 @@ export interface ServiceNowPushResult {
 }
 
 export interface ServiceNowExportStoreLike {
-  load(caseId: string): Promise<{ incidentRefs: Record<string, ServiceNowIncidentRef>; lastExportedAt: string }>;
+  load(
+    caseId: string,
+  ): Promise<{ incidentRefs: Record<string, ServiceNowIncidentRef>; lastExportedAt: string }>;
   save(caseId: string, refs: Record<string, ServiceNowIncidentRef>): Promise<void>;
 }
 
 function snowUrgency(severity: string): number | undefined {
   switch (severity.toLowerCase()) {
-    case "critical": return 1;
-    case "high": return 1;
-    case "medium": return 2;
-    case "low": return 3;
-    default: return undefined;
+    case "critical":
+      return 1;
+    case "high":
+      return 1;
+    case "medium":
+      return 2;
+    case "low":
+      return 3;
+    default:
+      return undefined;
   }
 }
 
 function snowImpact(severity: string): number | undefined {
   switch (severity.toLowerCase()) {
-    case "critical": return 1;
-    case "high": return 1;
-    case "medium": return 2;
-    case "low": return 3;
-    default: return undefined;
+    case "critical":
+      return 1;
+    case "high":
+      return 1;
+    case "medium":
+      return 2;
+    case "low":
+      return 3;
+    default:
+      return undefined;
   }
 }
 
@@ -113,7 +125,7 @@ export interface ServiceNowBulkPushResult {
   updated: number;
   skipped: number;
   incidents: Array<ServiceNowIncidentRef & { findingId: string }>;
-  incidentUrl?: string;       // first incident url, for an "Open in ServiceNow" link on the batch
+  incidentUrl?: string; // first incident url, for an "Open in ServiceNow" link on the batch
   warnings: string[];
 }
 
@@ -128,7 +140,9 @@ export async function pushFindingsToServiceNow(
 ): Promise<ServiceNowBulkPushResult> {
   const warnings: string[] = [];
   const incidents: Array<ServiceNowIncidentRef & { findingId: string }> = [];
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0,
+    updated = 0,
+    skipped = 0;
   let incidentUrl: string | undefined;
 
   for (const finding of input.findings) {
@@ -140,7 +154,8 @@ export async function pushFindingsToServiceNow(
         category: input.category,
         subcategory: input.subcategory,
       });
-      if (result.created) created += 1; else updated += 1;
+      if (result.created) created += 1;
+      else updated += 1;
       incidents.push({ ...result.incident, findingId: finding.id });
       incidentUrl ??= result.incident.url;
       warnings.push(...result.warnings);

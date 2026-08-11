@@ -25,21 +25,35 @@ const branding: PresentationBranding = {
 const baseOpts = (over: Partial<PresentationOptions> = {}): PresentationOptions => ({ branding, ...over });
 
 const finding = (over: Partial<Finding> & Pick<Finding, "id" | "severity">): Finding => ({
-  title: "t", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-  firstSeen: "2026-01-01T00:00:00Z", lastUpdated: "2026-01-01T00:00:00Z", status: "open", ...over,
+  title: "t",
+  description: "d",
+  relatedIocs: [],
+  sourceScreenshots: [],
+  mitreTechniques: [],
+  firstSeen: "2026-01-01T00:00:00Z",
+  lastUpdated: "2026-01-01T00:00:00Z",
+  status: "open",
+  ...over,
 });
 
 const ev = (over: Partial<ForensicEvent> & Pick<ForensicEvent, "id" | "severity">): ForensicEvent => ({
-  timestamp: "2026-01-01T00:00:00Z", description: "happened", mitreTechniques: [],
-  relatedFindingIds: [], sourceScreenshots: [], ...over,
+  timestamp: "2026-01-01T00:00:00Z",
+  description: "happened",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+  ...over,
 });
 
 const enrich = (verdict: IocEnrichment["verdict"]): IocEnrichment => ({
-  source: "VirusTotal", verdict, fetchedAt: "2026-01-01T00:00:00Z",
+  source: "VirusTotal",
+  verdict,
+  fetchedAt: "2026-01-01T00:00:00Z",
 });
 
 const ioc = (over: Partial<IOC> & Pick<IOC, "id" | "type" | "value">): IOC => ({
-  firstSeen: "2026-01-01T00:00:00Z", ...over,
+  firstSeen: "2026-01-01T00:00:00Z",
+  ...over,
 });
 
 function stateWith(over: Partial<InvestigationState>): InvestigationState {
@@ -65,13 +79,19 @@ describe("buildPresentationDeck", () => {
   });
 
   it("falls back to the caseId when no caseName/branding title is given", () => {
-    const deck = buildPresentationDeck(emptyState("CASE-EMPTY"), baseOpts({ branding: { ...branding, title: "  " } }));
+    const deck = buildPresentationDeck(
+      emptyState("CASE-EMPTY"),
+      baseOpts({ branding: { ...branding, title: "  " } }),
+    );
     expect(deck.caseName).toBe("CASE-EMPTY");
     expect(deck.slides[0].title).toBe("CASE-EMPTY");
   });
 
   it("stamps generatedAt and minSeverity from the options", () => {
-    const deck = buildPresentationDeck(emptyState("C"), baseOpts({ generatedAt: "2026-06-29T00:00:00Z", minSeverity: "High" }));
+    const deck = buildPresentationDeck(
+      emptyState("C"),
+      baseOpts({ generatedAt: "2026-06-29T00:00:00Z", minSeverity: "High" }),
+    );
     expect(deck.generatedAt).toBe("2026-06-29T00:00:00Z");
     expect(deck.minSeverity).toBe("High");
   });
@@ -134,7 +154,9 @@ describe("buildPresentationDeck", () => {
 
   it("treats an Info floor as no floor", () => {
     const deck = buildPresentationDeck(
-      stateWith({ forensicTimeline: [ev({ id: "e1", severity: "Info" }), ev({ id: "e2", severity: "Low" })] }),
+      stateWith({
+        forensicTimeline: [ev({ id: "e1", severity: "Info" }), ev({ id: "e2", severity: "Low" })],
+      }),
       baseOpts({ minSeverity: "Info" }),
     );
     expect(deck.minSeverity).toBeNull();
@@ -145,7 +167,12 @@ describe("buildPresentationDeck", () => {
     const deck = buildPresentationDeck(
       stateWith({
         forensicTimeline: [
-          ev({ id: "e1", severity: "High", description: "beacon to 10.0.0.1 and evil.com", srcIp: "10.0.0.1" }),
+          ev({
+            id: "e1",
+            severity: "High",
+            description: "beacon to 10.0.0.1 and evil.com",
+            srcIp: "10.0.0.1",
+          }),
         ],
         iocs: [
           ioc({ id: "i1", type: "ip", value: "10.0.0.1", enrichments: [enrich("suspicious")] }),
@@ -175,7 +202,11 @@ describe("buildPresentationDeck", () => {
     const deck = buildPresentationDeck(
       stateWith({
         findings: [finding({ id: "f1", severity: "High" }), finding({ id: "f2", severity: "High" })],
-        forensicTimeline: [ev({ id: "e1", severity: "High" }), ev({ id: "e2", severity: "High" }), ev({ id: "e3", severity: "High" })],
+        forensicTimeline: [
+          ev({ id: "e1", severity: "High" }),
+          ev({ id: "e2", severity: "High" }),
+          ev({ id: "e3", severity: "High" }),
+        ],
       }),
       baseOpts({ maxFindings: 1, maxEvents: 2 }),
     );

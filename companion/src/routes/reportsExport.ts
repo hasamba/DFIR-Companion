@@ -70,13 +70,31 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       // beside it — a report whose evidence provenance cannot be checked is the gap #231 exists to
       // close. Written after the report so a failed generation leaves no manifest claiming one.
       if (options.custodyStore) {
-        const manifest = await buildCustodyManifest(store, options.custodyStore, req.params.id, instanceSecret);
+        const manifest = await buildCustodyManifest(
+          store,
+          options.custodyStore,
+          req.params.id,
+          instanceSecret,
+        );
         await mkdir(store.reportsDir(req.params.id), { recursive: true });
-        await writeFile(join(store.reportsDir(req.params.id), CUSTODY_MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), "utf8");
+        await writeFile(
+          join(store.reportsDir(req.params.id), CUSTODY_MANIFEST_FILENAME),
+          JSON.stringify(manifest, null, 2),
+          "utf8",
+        );
       }
-      dispatchNotify(milestoneEvent(req.params.id, "Report generated", ["The case report (Markdown + HTML) was (re)generated."], new Date().toISOString()));
+      dispatchNotify(
+        milestoneEvent(
+          req.params.id,
+          "Report generated",
+          ["The case report (Markdown + HTML) was (re)generated."],
+          new Date().toISOString(),
+        ),
+      );
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "export", action: "report-generated", detail: "report (Markdown + HTML) regenerated",
+        category: "export",
+        action: "report-generated",
+        detail: "report (Markdown + HTML) regenerated",
       });
       return res.status(200).json(paths);
     } catch (err) {
@@ -180,7 +198,8 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   // Per-case selection of which report template renders the report. GET returns { templateId }
   // (default "standard"); PUT sets it and re-broadcasts so other dashboards refresh.
   app.get("/cases/:id/report-template", async (req: Request, res: Response) => {
-    if (!options.reportTemplateControlStore) return res.status(501).json({ error: "report templates not configured" });
+    if (!options.reportTemplateControlStore)
+      return res.status(501).json({ error: "report templates not configured" });
     try {
       return res.status(200).json(await options.reportTemplateControlStore.load(req.params.id));
     } catch (err) {
@@ -189,7 +208,8 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   });
 
   app.put("/cases/:id/report-template", async (req: Request, res: Response) => {
-    if (!options.reportTemplateControlStore) return res.status(501).json({ error: "report templates not configured" });
+    if (!options.reportTemplateControlStore)
+      return res.status(501).json({ error: "report templates not configured" });
     const templateId = typeof req.body?.templateId === "string" ? req.body.templateId : undefined;
     try {
       const saved = await options.reportTemplateControlStore.set(req.params.id, { templateId });
@@ -202,7 +222,12 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
 
   // Whether a DFIR-IRIS push/import target is configured (so the dashboard can show/hide the buttons).
   app.get("/iris/status", (_req: Request, res: Response) => {
-    res.status(200).json({ configured: !!ctx.irisClient(), baseUrl: process.env.DFIR_IRIS_URL || options.irisOptions?.baseUrl });
+    res
+      .status(200)
+      .json({
+        configured: !!ctx.irisClient(),
+        baseUrl: process.env.DFIR_IRIS_URL || options.irisOptions?.baseUrl,
+      });
   });
 
   // Re-read DFIR_IRIS_* from .env (settings saved via the dashboard only write the file), rebuild
@@ -214,12 +239,22 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       await reloadEnvPrefix("DFIR_IRIS_");
       const client = ctx.rebuildIrisClient();
       ctx.setIrisClient(client);
-      if (!client) return res.status(200).json({ configured: false, ok: false, error: "DFIR_IRIS_URL and DFIR_IRIS_KEY are not set" });
+      if (!client)
+        return res
+          .status(200)
+          .json({ configured: false, ok: false, error: "DFIR_IRIS_URL and DFIR_IRIS_KEY are not set" });
       try {
         await client.ping();
         return res.status(200).json({ configured: true, ok: true, baseUrl: process.env.DFIR_IRIS_URL });
       } catch (err) {
-        return res.status(200).json({ configured: true, ok: false, baseUrl: process.env.DFIR_IRIS_URL, error: (err as Error).message });
+        return res
+          .status(200)
+          .json({
+            configured: true,
+            ok: false,
+            baseUrl: process.env.DFIR_IRIS_URL,
+            error: (err as Error).message,
+          });
       }
     } catch (err) {
       return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
@@ -230,7 +265,10 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   // (issue #88). 501 when not configured. Errors map to 502 (the remote IRIS is unreachable).
   app.get("/iris/cases", async (_req: Request, res: Response) => {
     const irisClient = ctx.irisClient();
-    if (!irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!irisClient)
+      return res
+        .status(501)
+        .json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
     try {
       const cases = await irisClient.listCases();
       return res.status(200).json({ cases });
@@ -247,7 +285,9 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       const caseId = req.params.id;
       const saved = await options.irisExportStore.load(caseId);
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-      return res.status(200).json({ caseName: saved.caseName, defaultCaseName: defaultIrisCaseName(caseId, caseMeta?.name) });
+      return res
+        .status(200)
+        .json({ caseName: saved.caseName, defaultCaseName: defaultIrisCaseName(caseId, caseMeta?.name) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -260,7 +300,10 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   // "file" so the case keeps a faithful import audit row.
   app.post("/cases/:id/iris-import", async (req: Request, res: Response) => {
     const irisClient = ctx.irisClient();
-    if (!irisClient) return res.status(501).json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+    if (!irisClient)
+      return res
+        .status(501)
+        .json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     const irisCaseId = Number(req.body?.irisCaseId);
@@ -276,29 +319,47 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
         caseName: irisCaseName || undefined,
       });
       if (data.assets.length === 0 && data.iocs.length === 0 && data.timeline.length === 0) {
-        return res.status(400).json({ error: "the IRIS case has no assets, IOCs or timeline events to import" });
+        return res
+          .status(400)
+          .json({ error: "the IRIS case has no assets, IOCs or timeline events to import" });
       }
 
       const payload = JSON.stringify(data, null, 2);
       const seq = await store.nextImportSeq(caseId);
-      const safeBase = (data.caseName || `iris-case-${data.irisCaseId}`).replace(/[^\w.\-]+/g, "_").slice(0, 60) || "iris-case";
+      const safeBase =
+        (data.caseName || `iris-case-${data.irisCaseId}`).replace(/[^\w.\-]+/g, "_").slice(0, 60) ||
+        "iris-case";
       const storedName = `${String(seq).padStart(4, "0")}_${safeBase}.json`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, payload);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
         originalName: `DFIR-IRIS case ${data.caseName ?? `#${data.irisCaseId}`}`,
-        rows: data.timeline.length + data.assets.length, bytes: Buffer.byteLength(payload, "utf8"),
+        rows: data.timeline.length + data.assets.length,
+        bytes: Buffer.byteLength(payload, "utf8"),
       });
 
       res.status(202).json({
-        accepted: true, file: storedName,
-        irisCaseId: data.irisCaseId, caseName: data.caseName,
-        timeline: data.timeline.length, assets: data.assets.length, iocs: data.iocs.length,
+        accepted: true,
+        file: storedName,
+        irisCaseId: data.irisCaseId,
+        caseName: data.caseName,
+        timeline: data.timeline.length,
+        assets: data.assets.length,
+        iocs: data.iocs.length,
       });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing DFIR-IRIS case ${data.caseName ?? `#${data.irisCaseId}`}` });
-      void options.pipeline.importIris(caseId, data, { label: storedName, idPrefix: `iris${seq}`, importedAt })
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing DFIR-IRIS case ${data.caseName ?? `#${data.irisCaseId}`}`,
+      });
+      void options.pipeline
+        .importIris(caseId, data, { label: storedName, idPrefix: `iris${seq}`, importedAt })
         .then(() => {
           logLine(`[iris] ${caseId} import DONE (iris case ${data.caseName ?? `#${data.irisCaseId}`})`);
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
@@ -306,7 +367,11 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
         })
         .catch((err) => {
           logLine(`[iris] ${caseId} import ERROR: ${(err as Error).message}`);
-          options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          });
         });
       return;
     } catch (err) {

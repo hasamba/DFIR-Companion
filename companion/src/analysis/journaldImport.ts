@@ -50,51 +50,71 @@ export interface JournaldParseResult {
   kept: number;
   dropped: number;
   groups: number;
-  format: string;   // "journald" | "empty"
+  format: string; // "journald" | "empty"
   hostname: string;
 }
 
 const IPV4_G = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const URL_G = /\bhttps?:\/\/[^\s"'<>)\]]+/gi;
-const DOMAIN_G = /\b(?=[a-z0-9.-]{4,253}\b)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ru|cn|info|biz|top|xyz|co|de|uk|club|online|site|live|shop|tk|ml|ga|cf|gq)\b/gi;
+const DOMAIN_G =
+  /\b(?=[a-z0-9.-]{4,253}\b)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ru|cn|info|biz|top|xyz|co|de|uk|club|online|site|live|shop|tk|ml|ga|cf|gq)\b/gi;
 
 // syslog PRIORITY → severity. Conservative on the noisy middle (err→Medium, warning→Low); the
 // keyword bumps below escalate the genuinely security-relevant lines regardless of their priority.
 const PRIORITY_SEVERITY: Record<number, Severity> = {
   0: "Critical", // emerg
   1: "Critical", // alert
-  2: "High",     // crit
-  3: "Medium",   // err
-  4: "Low",      // warning
-  5: "Info",     // notice
-  6: "Info",     // info
-  7: "Info",     // debug
+  2: "High", // crit
+  3: "Medium", // err
+  4: "Low", // warning
+  5: "Info", // notice
+  6: "Info", // info
+  7: "Info", // debug
 };
 
 // MESSAGE / identifier tradecraft → severity floor + MITRE. First match wins for the label note.
 const BUMPS: { re: RegExp; severity: Severity; mitre: string[] }[] = [
-  { re: /failed password|authentication failure|invalid user|failed publickey|maximum authentication attempts|too many authentication failures/i, severity: "Medium", mitre: ["T1110"] },
-  { re: /accepted password|accepted publickey|session opened for user root|new session \d+ of user root/i, severity: "Low", mitre: ["T1078"] },
+  {
+    re: /failed password|authentication failure|invalid user|failed publickey|maximum authentication attempts|too many authentication failures/i,
+    severity: "Medium",
+    mitre: ["T1110"],
+  },
+  {
+    re: /accepted password|accepted publickey|session opened for user root|new session \d+ of user root/i,
+    severity: "Low",
+    mitre: ["T1078"],
+  },
   { re: /\buseradd\b|\bnew user\b|\badduser\b/i, severity: "High", mitre: ["T1136.001"] },
   { re: /\bnew group\b|\bgroupadd\b/i, severity: "Medium", mitre: ["T1136.002"] },
   { re: /\busermod\b|password changed for|\bpasswd\b.*changed/i, severity: "Medium", mitre: ["T1098"] },
-  { re: /\bsudo\b.*command=|sudo:session.*opened for user root|\bCOMMAND=/i, severity: "Medium", mitre: ["T1548.003"] },
+  {
+    re: /\bsudo\b.*command=|sudo:session.*opened for user root|\bCOMMAND=/i,
+    severity: "Medium",
+    mitre: ["T1548.003"],
+  },
   { re: /promiscuous mode|entered promiscuous/i, severity: "High", mitre: ["T1040"] },
   { re: /segfault|general protection|kernel panic|oom-killer|killed process/i, severity: "Low", mitre: [] },
-  { re: /possible break-in attempt|reverse mapping checking getaddrinfo/i, severity: "Medium", mitre: ["T1078"] },
+  {
+    re: /possible break-in attempt|reverse mapping checking getaddrinfo/i,
+    severity: "Medium",
+    mitre: ["T1078"],
+  },
   { re: /audit.*\bavc\b.*denied|apparmor=.?denied/i, severity: "Medium", mitre: ["T1562.001"] },
 ];
 
 // The service / program behind the entry, for the description prefix + aggregation.
 function identifier(rec: Row): string {
-  return firstStr(rec, ["SYSLOG_IDENTIFIER", "_SYSTEMD_UNIT", "_COMM", "UNIT", "_SYSTEMD_CGROUP"]) || "journal";
+  return (
+    firstStr(rec, ["SYSLOG_IDENTIFIER", "_SYSTEMD_UNIT", "_COMM", "UNIT", "_SYSTEMD_CGROUP"]) || "journal"
+  );
 }
 
 // journald MESSAGE may be a byte array (numbers) when the line isn't valid UTF-8. Render either.
 function messageOf(rec: Row): string {
   const m = getCI(rec, "MESSAGE");
   if (typeof m === "string") return m;
-  if (Array.isArray(m)) return m.map((b) => (typeof b === "number" ? String.fromCharCode(b) : str(b))).join("");
+  if (Array.isArray(m))
+    return m.map((b) => (typeof b === "number" ? String.fromCharCode(b) : str(b))).join("");
   return str(m);
 }
 
@@ -115,7 +135,10 @@ function priorityOf(rec: Row): number {
 
 function scrapeIocs(message: string, sink: Map<string, SiemIoc>): void {
   for (const m of message.matchAll(URL_G)) addIoc(sink, "url", m[0].slice(0, 300));
-  for (const m of message.matchAll(IPV4_G)) { const ip = cleanIp(m[0]); if (ip) addIoc(sink, "ip", ip); }
+  for (const m of message.matchAll(IPV4_G)) {
+    const ip = cleanIp(m[0]);
+    if (ip) addIoc(sink, "ip", ip);
+  }
   for (const m of message.matchAll(DOMAIN_G)) addIoc(sink, "domain", m[0].toLowerCase());
 }
 
@@ -139,8 +162,10 @@ function mapEntry(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent | null {
   }
 
   // IOCs.
-  if (exe && exe.includes("/")) { addIoc(iocSink, "file", exe.slice(0, 300)); addIoc(iocSink, "process", baseName(exe)); }
-  else if (comm) addIoc(iocSink, "process", comm);
+  if (exe && exe.includes("/")) {
+    addIoc(iocSink, "file", exe.slice(0, 300));
+    addIoc(iocSink, "process", baseName(exe));
+  } else if (comm) addIoc(iocSink, "process", comm);
   scrapeIocs(message, iocSink);
 
   let description = `journald [${ident}]: ${message || comm || exe}`;
@@ -153,7 +178,11 @@ function mapEntry(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent | null {
     description,
     severity,
     mitre,
-    aggKey: `journald|${ident}|${message}`.toLowerCase().replace(/\b\d+\b/g, "#").replace(/[0-9a-f]{2}(?::[0-9a-f]{2})+/gi, "<mac>").slice(0, 400),
+    aggKey: `journald|${ident}|${message}`
+      .toLowerCase()
+      .replace(/\b\d+\b/g, "#")
+      .replace(/[0-9a-f]{2}(?::[0-9a-f]{2})+/gi, "<mac>")
+      .slice(0, 400),
     sources: ["journald"],
     ...(host ? { asset: host } : {}),
     ...(exe && exe.includes("/") ? { path: exe } : {}),
@@ -163,9 +192,13 @@ function mapEntry(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent | null {
 
 // True when a record looks like a journald entry — leading-underscore trusted fields or a µs clock.
 export function looksLikeJournald(rec: Row): boolean {
-  return getCI(rec, "__REALTIME_TIMESTAMP") != null || getCI(rec, "__CURSOR") != null ||
-    getCI(rec, "_BOOT_ID") != null || getCI(rec, "_MACHINE_ID") != null ||
-    (getCI(rec, "MESSAGE") != null && getCI(rec, "PRIORITY") != null && getCI(rec, "_TRANSPORT") != null);
+  return (
+    getCI(rec, "__REALTIME_TIMESTAMP") != null ||
+    getCI(rec, "__CURSOR") != null ||
+    getCI(rec, "_BOOT_ID") != null ||
+    getCI(rec, "_MACHINE_ID") != null ||
+    (getCI(rec, "MESSAGE") != null && getCI(rec, "PRIORITY") != null && getCI(rec, "_TRANSPORT") != null)
+  );
 }
 
 export function parseJournald(text: string, opts: JournaldImportOptions = {}): JournaldParseResult {
@@ -173,7 +206,16 @@ export function parseJournald(text: string, opts: JournaldImportOptions = {}): J
   const { records } = extractRecords(text);
   const journal = records.filter((r) => isObject(r) && looksLikeJournald(r));
   if (journal.length === 0) {
-    return { events: [], iocs: [], total: records.length, kept: 0, dropped: records.length, groups: 0, format: "empty", hostname: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: records.length,
+      kept: 0,
+      dropped: records.length,
+      groups: 0,
+      format: "empty",
+      hostname: "",
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();

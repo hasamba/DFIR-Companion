@@ -29,9 +29,15 @@ describe("layoutOptions", () => {
 });
 
 describe("dimOpacity", () => {
-  it("returns full opacity at 0", () => { expect(dimOpacity(0)).toBe(1); });
-  it("returns ~0.1 at 90", () => { expect(dimOpacity(90)).toBeCloseTo(0.1, 5); });
-  it("clamps to a 0.05 floor at 100", () => { expect(dimOpacity(100)).toBe(0.05); });
+  it("returns full opacity at 0", () => {
+    expect(dimOpacity(0)).toBe(1);
+  });
+  it("returns ~0.1 at 90", () => {
+    expect(dimOpacity(90)).toBeCloseTo(0.1, 5);
+  });
+  it("clamps to a 0.05 floor at 100", () => {
+    expect(dimOpacity(100)).toBe(0.05);
+  });
 });
 
 describe("filterMatch", () => {

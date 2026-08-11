@@ -5,17 +5,41 @@ import type { FalsePositiveMarker } from "../../src/analysis/falsePositive.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(partial: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { timestamp: "2026-01-02T10:00:00.000Z", description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...partial };
+  return {
+    timestamp: "2026-01-02T10:00:00.000Z",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...partial,
+  };
 }
 function marker(partial: Partial<FalsePositiveMarker> & { ref: string }): FalsePositiveMarker {
-  return { id: `event:${partial.ref}`, kind: "event", reason: "duplicate", note: "", markedAt: "2026-01-01T00:00:00Z", markedBy: "a", ...partial };
+  return {
+    id: `event:${partial.ref}`,
+    kind: "event",
+    reason: "duplicate",
+    note: "",
+    markedAt: "2026-01-01T00:00:00Z",
+    markedBy: "a",
+    ...partial,
+  };
 }
 
 describe("matchFpPropagation (#15b)", () => {
   it("surfaces a pattern reproduced by ≥minMatches new events, sorted most-matched first", () => {
     // The FP marker's fingerprint is the anchor's pattern key.
-    const anchor = ev({ id: "old1", processName: "robocopy.exe", description: "robocopy C:\\data\\1 \\\\srv\\bak /mir" });
-    const m = marker({ ref: "old1", note: "nightly robocopy backup", patternFingerprint: patternKey(anchor) });
+    const anchor = ev({
+      id: "old1",
+      processName: "robocopy.exe",
+      description: "robocopy C:\\data\\1 \\\\srv\\bak /mir",
+    });
+    const m = marker({
+      ref: "old1",
+      note: "nightly robocopy backup",
+      patternFingerprint: patternKey(anchor),
+    });
 
     const newEvents = [
       ev({ id: "n1", processName: "robocopy.exe", description: "robocopy C:\\data\\2 \\\\srv\\bak /mir" }),
@@ -39,8 +63,12 @@ describe("matchFpPropagation (#15b)", () => {
   });
 
   it("ignores markers without a fingerprint and non-event markers", () => {
-    const newEvents = [ev({ id: "n1", description: "x pattern" }), ev({ id: "n2", description: "x pattern" }), ev({ id: "n3", description: "x pattern" })];
-    const noFp = marker({ ref: "old1" });                                   // event marker, no fingerprint
+    const newEvents = [
+      ev({ id: "n1", description: "x pattern" }),
+      ev({ id: "n2", description: "x pattern" }),
+      ev({ id: "n3", description: "x pattern" }),
+    ];
+    const noFp = marker({ ref: "old1" }); // event marker, no fingerprint
     const findingM = marker({ ref: "some finding", kind: "finding", patternFingerprint: "desc:x pattern" }); // wrong kind
     expect(matchFpPropagation(newEvents, [noFp, findingM], { minMatches: 1 })).toEqual([]);
   });

@@ -12,10 +12,19 @@ import {
 } from "../../src/analysis/iocWhitelist.js";
 import type { IOC } from "../../src/analysis/stateTypes.js";
 
-const rule = (over: Partial<IocWhitelistRule> & Pick<IocWhitelistRule, "match" | "pattern">): IocWhitelistRule => ({
-  id: "r1", addedAt: "2026-01-01T00:00:00Z", ...over,
+const rule = (
+  over: Partial<IocWhitelistRule> & Pick<IocWhitelistRule, "match" | "pattern">,
+): IocWhitelistRule => ({
+  id: "r1",
+  addedAt: "2026-01-01T00:00:00Z",
+  ...over,
 });
-const ioc = (type: IOC["type"], value: string): IOC => ({ id: "i", type, value, firstSeen: "2026-01-01T00:00:00Z" });
+const ioc = (type: IOC["type"], value: string): IOC => ({
+  id: "i",
+  type,
+  value,
+  firstSeen: "2026-01-01T00:00:00Z",
+});
 
 describe("ipInCidr / isValidCidr", () => {
   it("matches IPv4 addresses inside a CIDR range", () => {
@@ -92,8 +101,9 @@ describe("matchIocToWhitelist / whitelistMatches", () => {
 
 describe("sanitizeRuleInput", () => {
   it("accepts a valid rule and normalizes the mode/type", () => {
-    expect(sanitizeRuleInput({ match: "CIDR", pattern: "10.0.0.0/8", iocType: "IP", note: " internal " }))
-      .toEqual({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
+    expect(
+      sanitizeRuleInput({ match: "CIDR", pattern: "10.0.0.0/8", iocType: "IP", note: " internal " }),
+    ).toEqual({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
   });
   it("rejects an unknown match mode, empty pattern, bad CIDR, bad regex", () => {
     expect(sanitizeRuleInput({ match: "nope", pattern: "x" })).toBeNull();
@@ -102,14 +112,18 @@ describe("sanitizeRuleInput", () => {
     expect(sanitizeRuleInput({ match: "regex", pattern: "(" })).toBeNull();
   });
   it("drops an unknown iocType rather than rejecting the rule", () => {
-    expect(sanitizeRuleInput({ match: "exact", pattern: "x", iocType: "banana" }))
-      .toEqual({ match: "exact", pattern: "x" });
+    expect(sanitizeRuleInput({ match: "exact", pattern: "x", iocType: "banana" })).toEqual({
+      match: "exact",
+      pattern: "x",
+    });
   });
 });
 
 describe("parseWhitelistText", () => {
   it("parses a JSON array of rules", () => {
-    const out = parseWhitelistText('[{"match":"cidr","pattern":"10.0.0.0/8","iocType":"ip"},{"match":"bad","pattern":"x"}]');
+    const out = parseWhitelistText(
+      '[{"match":"cidr","pattern":"10.0.0.0/8","iocType":"ip"},{"match":"bad","pattern":"x"}]',
+    );
     expect(out).toHaveLength(1);
     expect(out[0]).toEqual({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip" });
   });
@@ -158,6 +172,6 @@ describe("toWhitelistCsv", () => {
     expect(lines[1]).toContain("'=cmd|");
     expect(lines[2]).toContain("'@SUM(1+1)*cmd");
     expect(lines[2]).toContain("'-2+3+cmd");
-    expect(csv).not.toMatch(/(^|,)=cmd/m);        // no bare formula survives
+    expect(csv).not.toMatch(/(^|,)=cmd/m); // no bare formula survives
   });
 });

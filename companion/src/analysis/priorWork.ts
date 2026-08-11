@@ -13,14 +13,17 @@ import type { PlaybookTask } from "./playbook.js";
 import type { Hypothesis } from "./hypothesis.js";
 import type { NextStep } from "./stateTypes.js";
 
-const MAX_PLAYBOOK_LINES = 20;   // a compact digest — the analyst's whole board would bloat the prompt
-const MAX_REFUTED = 15;          // bound the negative-knowledge block; refuted theories are few in practice
+const MAX_PLAYBOOK_LINES = 20; // a compact digest — the analyst's whole board would bloat the prompt
+const MAX_REFUTED = 15; // bound the negative-knowledge block; refuted theories are few in practice
 
 // The playbook DONE/SKIPPED digest. DONE tasks are results to BUILD ON (do not re-recommend); SKIPPED
 // tasks were deliberately not investigated (may be re-raised only if new evidence warrants) — the two
 // must not be conflated, or the model would treat a skipped lead as a closed one. "" when nothing is
 // done or skipped (todo/in-progress tasks are the analyst's live queue, not prior work).
-export function renderPlaybookProgressBlock(tasks: readonly PlaybookTask[], limit = MAX_PLAYBOOK_LINES): string {
+export function renderPlaybookProgressBlock(
+  tasks: readonly PlaybookTask[],
+  limit = MAX_PLAYBOOK_LINES,
+): string {
   const done = (tasks ?? []).filter((t) => t.status === "done");
   const skipped = (tasks ?? []).filter((t) => t.status === "skipped");
   if (!done.length && !skipped.length) return "";
@@ -32,7 +35,8 @@ export function renderPlaybookProgressBlock(tasks: readonly PlaybookTask[], limi
     "PLAYBOOK PROGRESS (work the investigator has already actioned — do NOT re-recommend a [DONE] task " +
     "as a nextStep; build on its result instead. A [SKIPPED] task was deliberately not pursued — re-raise " +
     "it only if new evidence now warrants):\n" +
-    lines.join("\n") + "\n\n"
+    lines.join("\n") +
+    "\n\n"
   );
 }
 
@@ -63,7 +67,8 @@ export function renderRefutedHypothesesBlock(hypotheses: readonly Hypothesis[], 
     "REFUTED / EXHAUSTED HYPOTHESES (the investigator ruled these out, or hunts for them came back empty — " +
     "do NOT re-assert them, re-open threads for them, or derive findings/nextSteps from them; treat each as " +
     "settled negative knowledge):\n" +
-    [...refutedLines, ...exhaustedLines].join("\n") + "\n\n"
+    [...refutedLines, ...exhaustedLines].join("\n") +
+    "\n\n"
   );
 }
 
@@ -72,7 +77,12 @@ export function renderRefutedHypothesesBlock(hypotheses: readonly Hypothesis[], 
 const GENERIC_MIN_LEN = 4; // ignore short/common words when measuring overlap (mirrors falsePositiveSimilarity)
 
 function significantWords(text: string): Set<string> {
-  return new Set(String(text ?? "").toLowerCase().split(/[^a-z0-9.\\/_-]+/i).filter((w) => w.length >= GENERIC_MIN_LEN));
+  return new Set(
+    String(text ?? "")
+      .toLowerCase()
+      .split(/[^a-z0-9.\\/_-]+/i)
+      .filter((w) => w.length >= GENERIC_MIN_LEN),
+  );
 }
 
 // A "specific" token names a concrete collection TARGET — a host, artifact, filename, event id, path —

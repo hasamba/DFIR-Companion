@@ -1,14 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { superOriginOf, dedupeAppend, capEvents, querySuper, STARRED_LABEL } from "../../src/analysis/superTimeline.js";
+import {
+  superOriginOf,
+  dedupeAppend,
+  capEvents,
+  querySuper,
+  STARRED_LABEL,
+} from "../../src/analysis/superTimeline.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string; timestamp: string }): ForensicEvent {
-  return { description: "d", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    description: "d",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 
 describe("superOriginOf", () => {
   it("prefers artifactName, then sources[0], then Unknown", () => {
-    expect(superOriginOf(ev({ id: "a", timestamp: "t", artifactName: "Windows.NTFS.MFT", sources: ["Velociraptor"] }))).toBe("Windows.NTFS.MFT");
+    expect(
+      superOriginOf(
+        ev({ id: "a", timestamp: "t", artifactName: "Windows.NTFS.MFT", sources: ["Velociraptor"] }),
+      ),
+    ).toBe("Windows.NTFS.MFT");
     expect(superOriginOf(ev({ id: "a", timestamp: "t", sources: ["Cisco ASA"] }))).toBe("Cisco ASA");
     expect(superOriginOf(ev({ id: "a", timestamp: "t" }))).toBe("Unknown");
   });
@@ -17,7 +34,10 @@ describe("superOriginOf", () => {
 describe("dedupeAppend", () => {
   it("appends new events and drops incoming whose id already exists", () => {
     const existing = [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" })];
-    const incoming = [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" }), ev({ id: "e2", timestamp: "2026-06-02T00:00:00Z" })];
+    const incoming = [
+      ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" }),
+      ev({ id: "e2", timestamp: "2026-06-02T00:00:00Z" }),
+    ];
     const out = dedupeAppend(existing, incoming);
     expect(out.map((e) => e.id)).toEqual(["e1", "e2"]);
   });
@@ -26,10 +46,14 @@ describe("dedupeAppend", () => {
     // Re-import mints brand-new ids from the new sequence prefix; the old id-only dedup let the
     // duplicate through, doubling the super-timeline for demoted (Info) events. The fix also
     // dedups by timestamp + cleanDescription.
-    const existing = [ev({ id: "1e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" })];
-    const incoming = [ev({ id: "2e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" })]; // new id, same content
+    const existing = [
+      ev({ id: "1e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" }),
+    ];
+    const incoming = [
+      ev({ id: "2e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" }),
+    ]; // new id, same content
     const out = dedupeAppend(existing, incoming);
-    expect(out.map((e) => e.id)).toEqual(["1e1"]);   // the duplicate (2e1) was dropped
+    expect(out.map((e) => e.id)).toEqual(["1e1"]); // the duplicate (2e1) was dropped
   });
 
   it("#26: keeps a genuinely different event that shares a timestamp but has a different description", () => {
@@ -45,14 +69,27 @@ describe("dedupeAppend", () => {
     // collapses the whole sweep to a single row and deletes the lateral-movement picture, which
     // is the bug correlate step 0 already had to fix.
     const sweep = ["WS-01", "WS-02", "SRV-03"].map((asset, i) =>
-      ev({ id: `e${i}`, timestamp: "2026-06-01T00:00:00Z", description: "Suspicious service installed", asset }));
+      ev({
+        id: `e${i}`,
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "Suspicious service installed",
+        asset,
+      }),
+    );
     const out = dedupeAppend([], sweep);
     expect(out.map((e) => e.asset)).toEqual(["WS-01", "WS-02", "SRV-03"]);
   });
 
   it("#345: still drops a re-import of that same fleet sweep (same hosts, new ids)", () => {
-    const sweep = (prefix: string) => ["WS-01", "WS-02"].map((asset, i) =>
-      ev({ id: `${prefix}e${i}`, timestamp: "2026-06-01T00:00:00Z", description: "Suspicious service installed", asset }));
+    const sweep = (prefix: string) =>
+      ["WS-01", "WS-02"].map((asset, i) =>
+        ev({
+          id: `${prefix}e${i}`,
+          timestamp: "2026-06-01T00:00:00Z",
+          description: "Suspicious service installed",
+          asset,
+        }),
+      );
     const out = dedupeAppend(sweep("1"), sweep("2"));
     expect(out.map((e) => e.id)).toEqual(["1e0", "1e1"]);
   });
@@ -98,22 +135,22 @@ describe("querySuper", () => {
 
   it("excludes the given origins (the dashboard's unchecked boxes)", () => {
     const r = querySuper(events, labels, { exclude: ["Windows.NTFS.MFT"] });
-    expect(r.events.map((e) => e.id)).toEqual(["in2"]);   // MFT rows hidden, Sigma kept
+    expect(r.events.map((e) => e.id)).toEqual(["in2"]); // MFT rows hidden, Sigma kept
   });
 
   it("excluding EVERY origin yields zero events (unchecking all = show nothing)", () => {
     const r = querySuper(events, labels, { exclude: ["Windows.NTFS.MFT", "Windows.Detection.Sigma"] });
     expect(r.events).toEqual([]);
     expect(r.total).toBe(0);
-    expect(r.origins).toEqual(["Windows.Detection.Sigma", "Windows.NTFS.MFT"]);   // facet still complete so boxes can be re-checked
+    expect(r.origins).toEqual(["Windows.Detection.Sigma", "Windows.NTFS.MFT"]); // facet still complete so boxes can be re-checked
   });
 
   it("keeps the FULL origin facet when filtering by origin (so the checklist stays complete)", () => {
     // Filtering to MFT still lists Sigma as an available origin — the deselected origin must remain in
     // the checklist so it can be re-checked. (Regression: facets were computed off the filtered set.)
     const r = querySuper(events, labels, { origins: ["Windows.NTFS.MFT"] });
-    expect(r.events.map((e) => e.id)).toEqual(["before", "in1", "after"]);          // MFT-only results
-    expect(r.origins).toEqual(["Windows.Detection.Sigma", "Windows.NTFS.MFT"]);      // full facet, incl. deselected Sigma
+    expect(r.events.map((e) => e.id)).toEqual(["before", "in1", "after"]); // MFT-only results
+    expect(r.origins).toEqual(["Windows.Detection.Sigma", "Windows.NTFS.MFT"]); // full facet, incl. deselected Sigma
   });
 
   it("filters by label (via the sidecar map)", () => {
@@ -125,7 +162,7 @@ describe("querySuper", () => {
     const twoLabels = { in1: ["mine"], in2: ["reviewed"] };
     const r = querySuper(events, twoLabels, { labels: ["reviewed"] });
     expect(r.events.map((e) => e.id)).toEqual(["in2"]);
-    expect(r.labelsAvailable).toEqual(["mine", "reviewed"]);                          // full facet, incl. the unselected "mine"
+    expect(r.labelsAvailable).toEqual(["mine", "reviewed"]); // full facet, incl. the unselected "mine"
   });
 
   it("origin facet still respects the TIME window (only the window bounds what's available)", () => {
@@ -136,7 +173,7 @@ describe("querySuper", () => {
 
   it("taggedOnly keeps only events carrying at least one label/tag", () => {
     const r = querySuper(events, labels, { taggedOnly: true });
-    expect(r.events.map((e) => e.id)).toEqual(["in2"]);   // only in2 has a label
+    expect(r.events.map((e) => e.id)).toEqual(["in2"]); // only in2 has a label
     expect(r.total).toBe(1);
     // Facets are unaffected by taggedOnly (they reflect the whole time window).
     expect(r.origins).toEqual(["Windows.Detection.Sigma", "Windows.NTFS.MFT"]);
@@ -153,7 +190,7 @@ describe("querySuper", () => {
     const withHosts = [
       ev({ id: "h1", timestamp: "2026-06-01T09:00:00Z", asset: "HOST-A" }),
       ev({ id: "h2", timestamp: "2026-06-01T10:00:00Z", asset: "HOST-B" }),
-      ev({ id: "h3", timestamp: "2026-06-01T11:00:00Z" }),   // no asset → (no host)
+      ev({ id: "h3", timestamp: "2026-06-01T11:00:00Z" }), // no asset → (no host)
     ];
     const r = querySuper(withHosts, {}, {});
     expect(r.hosts).toEqual(["(no host)", "HOST-A", "HOST-B"]);
@@ -166,13 +203,13 @@ describe("querySuper", () => {
     ];
     const r = querySuper(withHosts, {}, { excludeHosts: ["HOST-A"] });
     expect(r.events.map((e) => e.id)).toEqual(["h2"]);
-    expect(r.hosts).toEqual(["HOST-A", "HOST-B"]);   // deselected host stays in the facet so it can be re-checked
+    expect(r.hosts).toEqual(["HOST-A", "HOST-B"]); // deselected host stays in the facet so it can be re-checked
   });
 
   it("excludeHosts with the (no host) facet hides host-less events", () => {
     const withHosts = [
       ev({ id: "h1", timestamp: "2026-06-01T09:00:00Z", asset: "HOST-A" }),
-      ev({ id: "h2", timestamp: "2026-06-01T10:00:00Z" }),   // no asset
+      ev({ id: "h2", timestamp: "2026-06-01T10:00:00Z" }), // no asset
     ];
     const r = querySuper(withHosts, {}, { excludeHosts: ["(no host)"] });
     expect(r.events.map((e) => e.id)).toEqual(["h1"]);
@@ -204,9 +241,17 @@ describe("querySuper", () => {
   });
 
   it("search and excludeText compose with time/origin filters", () => {
-    const r = querySuper(events, labels, { from: "2026-06-01T00:00:00Z", to: "2026-06-02T00:00:00Z", search: "d" });
-    expect(r.events.map((e) => e.id)).toEqual(["in1", "in2"]);   // all fixture events share description "d"
-    const none = querySuper(events, labels, { from: "2026-06-01T00:00:00Z", to: "2026-06-02T00:00:00Z", search: "nomatch" });
+    const r = querySuper(events, labels, {
+      from: "2026-06-01T00:00:00Z",
+      to: "2026-06-02T00:00:00Z",
+      search: "d",
+    });
+    expect(r.events.map((e) => e.id)).toEqual(["in1", "in2"]); // all fixture events share description "d"
+    const none = querySuper(events, labels, {
+      from: "2026-06-01T00:00:00Z",
+      to: "2026-06-02T00:00:00Z",
+      search: "nomatch",
+    });
     expect(none.events).toEqual([]);
   });
 });
@@ -258,7 +303,11 @@ describe("querySuper starred filter", () => {
 
   it("starred + taggedOnly compose: a star-only event is still excluded (taggedOnly wins)", () => {
     // s1 is starred but carries no real triage tag; s3 is starred AND tagged — only s3 survives both.
-    const r = querySuper(events, { s1: ["starred"], s3: ["starred", "exfil"] }, { starred: true, taggedOnly: true });
+    const r = querySuper(
+      events,
+      { s1: ["starred"], s3: ["starred", "exfil"] },
+      { starred: true, taggedOnly: true },
+    );
     expect(r.events.map((e) => e.id)).toEqual(["s3"]);
   });
 });

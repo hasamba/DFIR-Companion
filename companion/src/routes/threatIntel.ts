@@ -16,7 +16,11 @@ import { parseNsrlText } from "../analysis/nsrl.js";
 import { NsrlDb, saveNsrlDbPath, removeNsrlDbPath } from "../analysis/nsrlDb.js";
 import { buildManualIoc } from "../analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "../analysis/customerStore.js";
-import { buildCustomerExposureTargets, CustomerExposureStore, summarizeExposure } from "../analysis/customerExposure.js";
+import {
+  buildCustomerExposureTargets,
+  CustomerExposureStore,
+  summarizeExposure,
+} from "../analysis/customerExposure.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import type { Tag } from "../analysis/tags.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
@@ -71,7 +75,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // ctx.enrichmentProviders() reads createApp's live binding — the same one the enrich engine uses.
   const allProviders = (): EnrichmentProvider[] => ctx.enrichmentProviders();
   const configuredNames = (): string[] => allProviders().map((p) => p.name);
-  const localNames = (): string[] => allProviders().filter((p) => p.scope === "local").map((p) => p.name);
+  const localNames = (): string[] =>
+    allProviders()
+      .filter((p) => p.scope === "local")
+      .map((p) => p.name);
 
   // Stateless per-case stores (each just wraps ctx.store); a fresh instance reads/writes the same
   // files as createApp's, matching the customerExposureStore/reportWriter store-instance precedent.
@@ -88,19 +95,19 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Full catalogue of every known enrichment provider — shown in the picker regardless of whether
   // the key is configured, so analysts can see what's available and what env var to add.
   const ALL_KNOWN_PROVIDERS: Array<{ name: string; scope: "local" | "external"; keyHint: string }> = [
-    { name: "VirusTotal",   scope: "external", keyHint: "DFIR_VT_KEY" },
-    { name: "Hunting.ch",   scope: "external", keyHint: "DFIR_HUNTINGCH_KEY" },
-    { name: "AbuseIPDB",    scope: "external", keyHint: "DFIR_ABUSEIPDB_KEY" },
-    { name: "CrowdStrike",  scope: "external", keyHint: "DFIR_CROWDSTRIKE_CLIENT_ID + _SECRET" },
+    { name: "VirusTotal", scope: "external", keyHint: "DFIR_VT_KEY" },
+    { name: "Hunting.ch", scope: "external", keyHint: "DFIR_HUNTINGCH_KEY" },
+    { name: "AbuseIPDB", scope: "external", keyHint: "DFIR_ABUSEIPDB_KEY" },
+    { name: "CrowdStrike", scope: "external", keyHint: "DFIR_CROWDSTRIKE_CLIENT_ID + _SECRET" },
     { name: "RockyRaccoon", scope: "external", keyHint: "DFIR_ROCKYRACCOON_KEY" },
-    { name: "Shodan",       scope: "external", keyHint: "DFIR_SHODAN_KEY" },
-    { name: "Hashlookup",   scope: "external", keyHint: "" },
-    { name: "Reverse DNS",  scope: "external", keyHint: "" },
-    { name: "WHOIS",        scope: "external", keyHint: "" },
-    { name: "GeoIP",        scope: "external", keyHint: "" },
-    { name: "MISP",         scope: "local",    keyHint: "DFIR_MISP_URL + DFIR_MISP_KEY" },
-    { name: "YETI",         scope: "local",    keyHint: "DFIR_YETI_URL + DFIR_YETI_KEY" },
-    { name: "OpenCTI",      scope: "local",    keyHint: "DFIR_OPENCTI_URL + DFIR_OPENCTI_KEY" },
+    { name: "Shodan", scope: "external", keyHint: "DFIR_SHODAN_KEY" },
+    { name: "Hashlookup", scope: "external", keyHint: "" },
+    { name: "Reverse DNS", scope: "external", keyHint: "" },
+    { name: "WHOIS", scope: "external", keyHint: "" },
+    { name: "GeoIP", scope: "external", keyHint: "" },
+    { name: "MISP", scope: "local", keyHint: "DFIR_MISP_URL + DFIR_MISP_KEY" },
+    { name: "YETI", scope: "local", keyHint: "DFIR_YETI_URL + DFIR_YETI_KEY" },
+    { name: "OpenCTI", scope: "local", keyHint: "DFIR_OPENCTI_URL + DFIR_OPENCTI_KEY" },
   ];
 
   app.get("/cases/:id/ioc-sources", async (req: Request, res: Response) => {
@@ -130,7 +137,9 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       if (options.superTimelineStore) {
         superEvents = await options.superTimelineStore.all(req.params.id);
       }
-      return res.status(200).json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
+      return res
+        .status(200)
+        .json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -172,7 +181,11 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       if (options.superTimelineStore) {
         superEvents = await options.superTimelineStore.all(req.params.id);
       }
-      return res.status(200).json(buildIocProvenanceChains(state.iocs, [...state.forensicTimeline, ...superEvents], state.findings));
+      return res
+        .status(200)
+        .json(
+          buildIocProvenanceChains(state.iocs, [...state.forensicTimeline, ...superEvents], state.findings),
+        );
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -208,7 +221,12 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     if (customerExposureProviders().length === 0) {
-      return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY)" });
+      return res
+        .status(501)
+        .json({
+          error:
+            "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY)",
+        });
     }
     const caseId = req.params.id;
     try {
@@ -217,21 +235,41 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       // Provider selection (like the enrichment per-source picker): a `providers` list in the
       // request body wins (one-off run), else the saved selection (customer.json), else all
       // configured. A name not matching a configured provider is simply ignored.
-      const requested = parseList(req.body?.providers).map((s) => s.trim()).filter(Boolean);
-      const selection = requested.length ? requested : (targets.providers?.length ? targets.providers : null);
+      const requested = parseList(req.body?.providers)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const selection = requested.length ? requested : targets.providers?.length ? targets.providers : null;
       const exposureProviders = customerExposureProviders();
-      const active = selection ? exposureProviders.filter((p) => selection.includes(p.name)) : exposureProviders;
-      if (active.length === 0) return res.status(400).json({ error: "no matching exposure providers selected" });
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "checking customer exposure" });
+      const active = selection
+        ? exposureProviders.filter((p) => selection.includes(p.name))
+        : exposureProviders;
+      if (active.length === 0)
+        return res.status(400).json({ error: "no matching exposure providers selected" });
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: new Date().toISOString(),
+        detail: "checking customer exposure",
+      });
       const summary = await summarizeExposure(state, targets, active, {
         delayMs: options.customerExposureDelayMs,
       });
       await customerExposureStore.save(caseId, summary);
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `customer exposure: ${summary.results.length} hit(s), ${summary.errors.length} error(s)` });
-      logLine(`[exposure] ${caseId} providers=[${summary.providers.join(", ")}] domains=${summary.targets.domains.length} emails=${summary.targets.emails.length} hits=${summary.results.length} errors=${summary.errors.length}`);
+      options.onAiStatus?.(caseId, {
+        status: "idle",
+        at: new Date().toISOString(),
+        detail: `customer exposure: ${summary.results.length} hit(s), ${summary.errors.length} error(s)`,
+      });
+      logLine(
+        `[exposure] ${caseId} providers=[${summary.providers.join(", ")}] domains=${summary.targets.domains.length} emails=${summary.targets.emails.length} hits=${summary.results.length} errors=${summary.errors.length}`,
+      );
       return res.status(200).json(summary);
     } catch (err) {
-      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      options.onAiStatus?.(caseId, {
+        status: "error",
+        at: new Date().toISOString(),
+        detail: (err as Error).message,
+      });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -247,7 +285,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       let conflict = false;
       await runStateExclusive(caseId, async () => {
         const state = await stateStore.load(caseId);
-        if (state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase())) { conflict = true; return; }
+        if (state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase())) {
+          conflict = true;
+          return;
+        }
         const next = { ...state, iocs: [...state.iocs, ioc], updatedAt: new Date().toISOString() };
         await stateStore.save(next);
         options.onState?.(next);
@@ -257,7 +298,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       logLine(`[manual] ${caseId} added ioc ${ioc.id} (${ioc.type})`);
       return res.status(201).json(ioc);
     } catch (err) {
-      if (err instanceof ZodError) return res.status(400).json({ error: err.issues.map((i) => i.message).join("; ") });
+      if (err instanceof ZodError)
+        return res.status(400).json({ error: err.issues.map((i) => i.message).join("; ") });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -269,7 +311,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Body: { iocIds: string[], force?: boolean }
   app.post("/cases/:id/iocs/bulk-enrich", async (req: Request, res: Response) => {
     const providers = options.enrichmentProviders ?? [];
-    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)" });
+    if (providers.length === 0)
+      return res
+        .status(501)
+        .json({
+          error:
+            "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)",
+        });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     const rawIds = Array.isArray(req.body?.iocIds) ? req.body.iocIds : [];
@@ -280,11 +328,23 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       const state = await options.stateStore.load(caseId);
       const targetSet = new Set<string>(iocIds);
       const subset = state.iocs.filter((i) => targetSet.has(i.id));
-      if (subset.length === 0) return res.status(404).json({ error: "none of the specified IOC IDs were found in this case" });
+      if (subset.length === 0)
+        return res.status(404).json({ error: "none of the specified IOC IDs were found in this case" });
       const enabledProviders = await ctx.enabledProvidersFor(caseId);
-      if (enabledProviders.length === 0) return res.status(422).json({ error: "no enrichment providers enabled for this case — enable providers in the enrichment panel first" });
+      if (enabledProviders.length === 0)
+        return res
+          .status(422)
+          .json({
+            error:
+              "no enrichment providers enabled for this case — enable providers in the enrichment panel first",
+          });
       void (async () => {
-        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching ${subset.length} selected IOC(s)` });
+        options.onAiStatus?.(caseId, {
+          status: "analyzing",
+          phase: "extracting",
+          at: new Date().toISOString(),
+          detail: `enriching ${subset.length} selected IOC(s)`,
+        });
         const { iocs: enrichedSubset, summary } = await enrichIocs(subset, {
           providers: enabledProviders,
           delayMs: options.enrichDelayMs,
@@ -294,20 +354,37 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
           maxIocs: options.enrichMaxIocs,
           force,
           health: ctx.enrichHealth(),
-          onProgress: (done, total) => options.onAiStatus?.(caseId, {
-            status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-            detail: `enriching selected IOC ${done}/${total}`,
-          }),
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `enriching selected IOC ${done}/${total}`,
+            }),
         });
         const current = await options.stateStore!.load(caseId);
         const merged = mergeEnrichedSubset(current.iocs, enrichedSubset);
         const next = { ...current, iocs: merged, updatedAt: new Date().toISOString() };
         await options.stateStore!.save(next);
         options.onState?.(next);
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} selected IOC(s) (errors ${summary.errors})` });
-        logLine(`[enrich] ${caseId} bulk ids=${iocIds.length} queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors}`);
-      })().catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
-      return res.status(202).json({ accepted: true, iocCount: subset.length, providers: enabledProviders.map((p) => p.name) });
+        options.onAiStatus?.(caseId, {
+          status: "idle",
+          at: new Date().toISOString(),
+          detail: `enriched ${summary.withHits}/${summary.queried} selected IOC(s) (errors ${summary.errors})`,
+        });
+        logLine(
+          `[enrich] ${caseId} bulk ids=${iocIds.length} queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors}`,
+        );
+      })().catch((err) =>
+        options.onAiStatus?.(caseId, {
+          status: "error",
+          at: new Date().toISOString(),
+          detail: (err as Error).message,
+        }),
+      );
+      return res
+        .status(202)
+        .json({ accepted: true, iocCount: subset.length, providers: enabledProviders.map((p) => p.name) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -356,7 +433,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/ioc-whitelist", async (req: Request, res: Response) => {
     if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
     const input = sanitizeRuleInput(req.body ?? {});
-    if (!input) return res.status(400).json({ error: "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)" });
+    if (!input)
+      return res
+        .status(400)
+        .json({
+          error:
+            "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)",
+        });
     try {
       const rule = await options.iocWhitelistStore.add(input);
       return res.status(201).json(rule);
@@ -383,9 +466,18 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     if (!text.trim()) return res.status(400).json({ error: "text is required (CSV or JSON)" });
     try {
       const parsed = parseWhitelistText(text);
-      if (parsed.length === 0) return res.status(400).json({ error: "no valid rules found — expected JSON array or CSV with a 'pattern' column" });
+      if (parsed.length === 0)
+        return res
+          .status(400)
+          .json({ error: "no valid rules found — expected JSON array or CSV with a 'pattern' column" });
       const added = await options.iocWhitelistStore.addMany(parsed);
-      return res.status(200).json({ added: added.length, parsed: parsed.length, total: (await options.iocWhitelistStore.load()).length });
+      return res
+        .status(200)
+        .json({
+          added: added.length,
+          parsed: parsed.length,
+          total: (await options.iocWhitelistStore.load()).length,
+        });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -430,7 +522,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/ioc-exclude", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const input = sanitizeExcludeRuleInput(req.body ?? {});
-    if (!input) return res.status(400).json({ error: "invalid rule — need match (exact|suffix|regex) and a non-empty pattern (valid regex for regex)" });
+    if (!input)
+      return res
+        .status(400)
+        .json({
+          error:
+            "invalid rule — need match (exact|suffix|regex) and a non-empty pattern (valid regex for regex)",
+        });
     const caseId = req.params.id;
     const stateStore = options.stateStore;
     let rule: IocExcludeRule | undefined;
@@ -442,7 +540,12 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         const nextRules = [...state.iocExcludeRules, rule];
         const keptIocs = state.iocs.filter((ioc) => !matchIocToExclude(ioc, nextRules));
         purged = state.iocs.length - keptIocs.length;
-        const next = { ...state, iocs: keptIocs, iocExcludeRules: nextRules, updatedAt: new Date().toISOString() };
+        const next = {
+          ...state,
+          iocs: keptIocs,
+          iocExcludeRules: nextRules,
+          updatedAt: new Date().toISOString(),
+        };
         await stateStore.save(next);
         options.onState?.(next);
       });
@@ -505,10 +608,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     const db = nsrlDb ? nsrlDb.status() : { connected: false };
     const dbConfigurable = Boolean(options.nsrlDbConfigFile) && !options.nsrlDbEnvManaged;
     const dbEnvManaged = Boolean(options.nsrlDbEnvManaged);
-    if (!options.nsrlStore) return res.status(200).json({ count: 0, enabled: db.connected, db, dbConfigurable, dbEnvManaged });
+    if (!options.nsrlStore)
+      return res.status(200).json({ count: 0, enabled: db.connected, db, dbConfigurable, dbEnvManaged });
     try {
       const count = await options.nsrlStore.count();
-      return res.status(200).json({ count, enabled: count > 0 || db.connected, db, dbConfigurable, dbEnvManaged });
+      return res
+        .status(200)
+        .json({ count, enabled: count > 0 || db.connected, db, dbConfigurable, dbEnvManaged });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -519,10 +625,16 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // a restart. Rejected when env-managed (DFIR_NSRL_DB owns the path). Localhost-only tool: opening a
   // path the operator typed is intended (same trust as the env var).
   app.post("/nsrl/db", async (req: Request, res: Response) => {
-    if (options.nsrlDbEnvManaged) return res.status(400).json({ error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var — unset it to configure here" });
+    if (options.nsrlDbEnvManaged)
+      return res
+        .status(400)
+        .json({
+          error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var — unset it to configure here",
+        });
     if (!options.nsrlDbConfigFile) return res.status(501).json({ error: "NSRL RDS database not configured" });
     const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!path) return res.status(400).json({ error: "path is required (the NSRL RDS .db file on the server)" });
+    if (!path)
+      return res.status(400).json({ error: "path is required (the NSRL RDS .db file on the server)" });
     try {
       const opened = NsrlDb.open(path); // throws on bad file / no usable hash column
       const current = ctx.nsrlDb();
@@ -538,11 +650,15 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
 
   // Disconnect the RDS database (the flat set is unaffected).
   app.delete("/nsrl/db", async (_req: Request, res: Response) => {
-    if (options.nsrlDbEnvManaged) return res.status(400).json({ error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var" });
+    if (options.nsrlDbEnvManaged)
+      return res.status(400).json({ error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var" });
     if (!options.nsrlDbConfigFile) return res.status(501).json({ error: "NSRL RDS database not configured" });
     try {
       const current = ctx.nsrlDb();
-      if (current) { current.close(); ctx.setNsrlDb(undefined); }
+      if (current) {
+        current.close();
+        ctx.setNsrlDb(undefined);
+      }
       await removeNsrlDbPath(options.nsrlDbConfigFile);
       logLine(`[nsrl] disconnected RDS DB`);
       return res.status(200).json({ connected: false });
@@ -559,7 +675,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     if (!text.trim()) return res.status(400).json({ error: "text is required (NSRL CSV or a hash list)" });
     try {
       const parsed = parseNsrlText(text);
-      if (parsed.length === 0) return res.status(400).json({ error: "no valid hashes found — expected MD5/SHA-1/SHA-256 hashes (NSRLFile.txt, a hashdeep CSV, or a hash-per-line list)" });
+      if (parsed.length === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no valid hashes found — expected MD5/SHA-1/SHA-256 hashes (NSRLFile.txt, a hashdeep CSV, or a hash-per-line list)",
+          });
       const { added, total } = await options.nsrlStore.addMany(parsed);
       logLine(`[nsrl] import — +${added} new (${parsed.length} parsed, ${total} total)`);
       return res.status(200).json({ added, parsed: parsed.length, total });
@@ -577,10 +699,18 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/nsrl/import-file", async (req: Request, res: Response) => {
     if (!options.nsrlStore) return res.status(501).json({ error: "NSRL store not configured" });
     const paths = splitNsrlPaths(typeof req.body?.path === "string" ? req.body.path : "");
-    if (paths.length === 0) return res.status(400).json({ error: "path is required (a file on the server; ; -separated for multiple)" });
+    if (paths.length === 0)
+      return res
+        .status(400)
+        .json({ error: "path is required (a file on the server; ; -separated for multiple)" });
     try {
       const files = await ingestNsrlFiles(options.nsrlStore, paths);
-      for (const r of files) logLine(r.error ? `[nsrl] could not load ${r.file}: ${r.error}` : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`);
+      for (const r of files)
+        logLine(
+          r.error
+            ? `[nsrl] could not load ${r.file}: ${r.error}`
+            : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`,
+        );
       const added = files.reduce((n, r) => n + r.added, 0);
       const total = await options.nsrlStore.count();
       // All paths failed → 400 (nothing loaded), like the paste import's no-valid-hashes 400.
@@ -617,13 +747,16 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Apply the NSRL set to THIS case now (the analyst just loaded a set, or wants to sweep an
   // already-imported case). Marks matches legitimate, then re-synthesizes so they drop from findings.
   app.post("/cases/:id/nsrl/apply", async (req: Request, res: Response) => {
-    if (!options.nsrlStore && !ctx.nsrlDb()) return res.status(501).json({ error: "NSRL not configured (no hash set or RDS database)" });
+    if (!options.nsrlStore && !ctx.nsrlDb())
+      return res.status(501).json({ error: "NSRL not configured (no hash set or RDS database)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     try {
       const result = await ctx.applyNsrlToCase(caseId);
       if (result.added > 0) ctx.resynthesizeInBackground(caseId);
-      logLine(`[nsrl] ${caseId} apply — matched ${result.matchedIocs} IOC(s) + ${result.matchedEvents} event(s), added ${result.added}`);
+      logLine(
+        `[nsrl] ${caseId} apply — matched ${result.matchedIocs} IOC(s) + ${result.matchedEvents} event(s), added ${result.added}`,
+      );
       return res.status(200).json({ ...result, legitimate: await falsePositives.load(caseId) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -649,7 +782,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Passes the raw JSON through so meta() can read catalogVersion/dateReleased.
   app.post("/kev/import-url", async (req: Request, res: Response) => {
     if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
-    const CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+    const CISA_KEV_URL =
+      "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
     const url = typeof req.body?.url === "string" && req.body.url.trim() ? req.body.url.trim() : CISA_KEV_URL;
     try {
       const resp = await fetch(url, { signal: AbortSignal.timeout(30_000) });
@@ -702,7 +836,9 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.get("/cases/:id/enrich-control", async (req: Request, res: Response) => {
     try {
       const configuredSet = new Set(configuredNames());
-      const enabled = new Set(resolveEnabledProviders(await enrichControl.load(req.params.id), configuredNames(), localNames()));
+      const enabled = new Set(
+        resolveEnabledProviders(await enrichControl.load(req.params.id), configuredNames(), localNames()),
+      );
       return res.status(200).json({
         anyConfigured: allProviders().length > 0,
         // All known providers with scope, configured flag (key present) and enabled flag (on for this case).
@@ -729,10 +865,12 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.get("/enrich-health", async (_req: Request, res: Response) => {
     try {
       const enrichHealth = ctx.enrichHealth();
-      const health = await Promise.all(allProviders().map(async (p) => {
-        const h = p.probe ? await enrichHealth.check(p) : { ok: true, checkedAt: 0 };
-        return { name: p.name, scope: p.scope, probed: Boolean(p.probe), ok: h.ok, detail: h.detail };
-      }));
+      const health = await Promise.all(
+        allProviders().map(async (p) => {
+          const h = p.probe ? await enrichHealth.check(p) : { ok: true, checkedAt: 0 };
+          return { name: p.name, scope: p.scope, probed: Boolean(p.probe), ok: h.ok, detail: h.detail };
+        }),
+      );
       return res.status(200).json({ providers: health });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -743,20 +881,34 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // (preferred) or legacy `{ enabled: boolean }`. Saving re-runs enrichment; per-provider
   // caching means only the newly-enabled providers query the existing IOCs.
   app.post("/cases/:id/enrich-control", async (req: Request, res: Response) => {
-    if (allProviders().length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)" });
+    if (allProviders().length === 0)
+      return res
+        .status(501)
+        .json({
+          error:
+            "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)",
+        });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     let providers: string[];
-    if (Array.isArray(req.body?.providers)) providers = req.body.providers.map(String).filter((n: string) => configuredNames().includes(n));
+    if (Array.isArray(req.body?.providers))
+      providers = req.body.providers.map(String).filter((n: string) => configuredNames().includes(n));
     else if (typeof req.body?.enabled === "boolean") providers = req.body.enabled ? configuredNames() : [];
-    else return res.status(400).json({ error: "providers (array of provider names) or enabled (boolean) is required" });
+    else
+      return res
+        .status(400)
+        .json({ error: "providers (array of provider names) or enabled (boolean) is required" });
     try {
       await enrichControl.save(caseId, { providers });
-      if (providers.length > 0) ctx.enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
-      else ctx.enrichPending().delete(caseId);                    // disabled — stop the poller from waiting on a down provider for this case
+      if (providers.length > 0)
+        ctx.enrichInBackground(caseId); // re-check; cache only queries newly-enabled / un-checked
+      else ctx.enrichPending().delete(caseId); // disabled — stop the poller from waiting on a down provider for this case
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "enrichment", action: "enrich-control",
-        detail: providers.length ? `enrichment enabled: ${providers.join(", ")}` : "enrichment disabled (no providers)",
+        category: "enrichment",
+        action: "enrich-control",
+        detail: providers.length
+          ? `enrichment enabled: ${providers.join(", ")}`
+          : "enrichment disabled (no providers)",
       });
       return res.status(200).json({ providers });
     } catch (err) {
@@ -768,16 +920,30 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // change the toggle. `{ force: true }` re-queries already-enriched IOCs.
   app.post("/cases/:id/enrich", async (req: Request, res: Response) => {
     const providers = options.enrichmentProviders ?? [];
-    if (providers.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)" });
+    if (providers.length === 0)
+      return res
+        .status(501)
+        .json({
+          error:
+            "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)",
+        });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     const force = req.body?.force === true || req.query.force === "true";
     try {
       const enabledProviders = await ctx.enabledProvidersFor(caseId);
-      if (enabledProviders.length === 0) return res.status(422).json({ error: "no enrichment providers enabled for this case — enable providers in the enrichment panel first" });
+      if (enabledProviders.length === 0)
+        return res
+          .status(422)
+          .json({
+            error:
+              "no enrichment providers enabled for this case — enable providers in the enrichment panel first",
+          });
       const state = await options.stateStore.load(caseId);
       ctx.enrichInBackground(caseId, force);
-      return res.status(202).json({ accepted: true, iocs: state.iocs.length, providers: enabledProviders.map((p) => p.name) });
+      return res
+        .status(202)
+        .json({ accepted: true, iocs: state.iocs.length, providers: enabledProviders.map((p) => p.name) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

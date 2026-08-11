@@ -48,7 +48,15 @@
 // here (that cap is shared code, not specific to this format).
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, mergeRowIocs, oneLine, worst, type MappedEvent, type SiemIoc, type SiemParseResult,
+import {
+  aggregateEvents,
+  addIoc,
+  mergeRowIocs,
+  oneLine,
+  worst,
+  type MappedEvent,
+  type SiemIoc,
+  type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
@@ -70,26 +78,43 @@ const FILENAME_RE = /(?:^|[._-])access[_.-]?log(?:\.\w+)?$/i;
 // "IP ident user [date] "METHOD URI[ PROTOCOL]" status bytes "referer" "user-agent"". The protocol
 // token is optional/loose (`[^"]*`) so a bare "CONNECT host:port" with no trailing HTTP/x.x still
 // matches, and bytes may be "-" (no body).
-const LINE_RE = /^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"/;
+const LINE_RE =
+  /^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"/;
 
 // Is this text an Apache/Nginx/Squid combined access log? True when a meaningful share of the
 // first non-blank lines match the line shape, or the filename says so outright.
 export function looksLikeCombinedLog(filename: string, text: string): boolean {
   if (FILENAME_RE.test((filename ?? "").trim())) return true;
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 50);
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 50);
   if (!lines.length) return false;
   const hits = lines.filter((l) => LINE_RE.test(l)).length;
   return hits >= 2 && hits >= lines.length * 0.5;
 }
 
 const MONTHS: Record<string, string> = {
-  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  Jan: "01",
+  Feb: "02",
+  Mar: "03",
+  Apr: "04",
+  May: "05",
+  Jun: "06",
+  Jul: "07",
+  Aug: "08",
+  Sep: "09",
+  Oct: "10",
+  Nov: "11",
+  Dec: "12",
 };
 
 // "14/May/2024:19:00:00 +0000" → ISO. Returns "" when unparseable.
 export function parseApacheDate(raw: string): string {
-  const m = raw.trim().match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})(?:\s+([+-]\d{4}))?$/);
+  const m = raw
+    .trim()
+    .match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})(?:\s+([+-]\d{4}))?$/);
   if (!m) return "";
   const [, dd, mon, yyyy, hh, mi, ss, tz] = m;
   const month = MONTHS[mon];
@@ -101,7 +126,8 @@ export function parseApacheDate(raw: string): string {
 
 // git smart-HTTP clone/push signature — the canonical way any git client (CLI, GitLab, Gitea,
 // Bitbucket…) fetches/pushes over HTTPS, regardless of the hosting product.
-const GIT_SMART_HTTP = /\.git\/(?:info\/refs\?service=git-(?:upload|receive)-pack|git-(?:upload|receive)-pack)\b/i;
+const GIT_SMART_HTTP =
+  /\.git\/(?:info\/refs\?service=git-(?:upload|receive)-pack|git-(?:upload|receive)-pack)\b/i;
 
 // A conventional User-Agent opens with a `Product/Version` token (Mozilla/5.0, curl/8.0,
 // Prometheus/2.47.0, git/2.34.1, python-requests/2.31). A payload smuggled into the UA field — prose,
@@ -156,7 +182,10 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
   const bytesTag = bytesRaw && bytesRaw !== "-" ? ` (${bytesRaw}b)` : "";
   const refTag = referer ? ` (ref ${referer})` : "";
   const uaTag = ua ? ` (ua ${ua})` : "";
-  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(0, 600);
+  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(
+    0,
+    600,
+  );
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
@@ -174,8 +203,10 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
     // merges into a busier ref-less sibling on the same path and its secret vanishes from the
     // description — leaving a Medium with no visible reason. Measured on the spillage-full-matrix
     // benchmark: the JWT in a Referer on `GET /` produced no distinguishable event at all.
-    aggKey: `weblog|${method}|${host}|${uri.split("?")[0]}|${status}${spill ? `|spill:${spill.families.join(",")}` : ""}`
-      .toLowerCase().slice(0, 400),
+    aggKey:
+      `weblog|${method}|${host}|${uri.split("?")[0]}|${status}${spill ? `|spill:${spill.families.join(",")}` : ""}`
+        .toLowerCase()
+        .slice(0, 400),
     sources: [COMBINED_LOG_SOURCE],
   };
 }
@@ -193,7 +224,11 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
     if (!line) continue;
     const rowSink = new Map<string, SiemIoc>();
     const m = mapCombinedLogLine(line, rowSink);
-    if (m) { total++; mergeRowIocs(sink, rowSink, m.aggKey); mapped.push(m); }
+    if (m) {
+      total++;
+      mergeRowIocs(sink, rowSink, m.aggKey);
+      mapped.push(m);
+    }
   }
 
   const { events, groups } = aggregateEvents(mapped, {

@@ -16,7 +16,9 @@ import type { AttackPhase } from "./burstDetect.js";
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
 
 function clip(v: string): string {
-  const s = String(v ?? "").replace(/\s+/g, " ").trim();
+  const s = String(v ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   return s.length > MAX_TAG_VALUE ? s.slice(0, MAX_TAG_VALUE) + "…" : s;
 }
 

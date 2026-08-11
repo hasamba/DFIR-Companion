@@ -15,7 +15,8 @@ describe("notionPushOptions", () => {
   });
 
   it("extracts the id from a full Notion URL, matching the request-body parsing path", () => {
-    process.env.DFIR_NOTION_DATABASE_ID = "https://notion.com/p/acme-workspace/11111111aaaa2222bbbb333333333333";
+    process.env.DFIR_NOTION_DATABASE_ID =
+      "https://notion.com/p/acme-workspace/11111111aaaa2222bbbb333333333333";
     const opts = notionPushOptions();
     expect(opts.databaseId).toBe("11111111-aaaa-2222-bbbb-333333333333");
   });

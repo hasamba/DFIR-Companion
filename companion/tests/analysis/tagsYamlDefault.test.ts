@@ -13,7 +13,8 @@ describe("bundled data/tags.yaml", () => {
     expect(rs.rules.length).toBeGreaterThan(5);
     // every rule carries at least one action
     for (const r of rs.rules) {
-      const hasAction = r.tags.length > 0 || r.mitre.length > 0 || r.severity !== undefined || r.view !== undefined;
+      const hasAction =
+        r.tags.length > 0 || r.mitre.length > 0 || r.severity !== undefined || r.view !== undefined;
       expect(hasAction, `rule ${r.id} has no action`).toBe(true);
     }
   });

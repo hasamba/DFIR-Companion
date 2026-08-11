@@ -21,7 +21,10 @@ export function registerCollectionPlanRoutes(app: Express, ctx: RouteContext): v
     if (!type) return { typeId: "", plan: null };
     const state = await options.stateStore!.load(caseId);
     const overrides = options.collectionPlanStore ? await options.collectionPlanStore.load(caseId) : {};
-    return { typeId: type.id, plan: buildCollectionPlan(type.recommendedImportOrder, state.forensicTimeline, overrides) };
+    return {
+      typeId: type.id,
+      plan: buildCollectionPlan(type.recommendedImportOrder, state.forensicTimeline, overrides),
+    };
   }
 
   function configured(res: Response): boolean {
@@ -44,7 +47,8 @@ export function registerCollectionPlanRoutes(app: Express, ctx: RouteContext): v
   app.put("/cases/:id/collection-plan/:stepId", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     const { stepId } = req.params;
-    if (!getCollectionStep(stepId)) return res.status(404).json({ error: `unknown collection step "${stepId}"` });
+    if (!getCollectionStep(stepId))
+      return res.status(404).json({ error: `unknown collection step "${stepId}"` });
     const state = req.body?.state;
     if (state !== "collected" && state !== "na") {
       return res.status(400).json({ error: 'state must be "collected" or "na"' });
@@ -61,7 +65,8 @@ export function registerCollectionPlanRoutes(app: Express, ctx: RouteContext): v
   app.delete("/cases/:id/collection-plan/:stepId", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     const { stepId } = req.params;
-    if (!getCollectionStep(stepId)) return res.status(404).json({ error: `unknown collection step "${stepId}"` });
+    if (!getCollectionStep(stepId))
+      return res.status(404).json({ error: `unknown collection step "${stepId}"` });
     try {
       await options.collectionPlanStore!.clear(req.params.id, stepId);
       return res.status(200).json(await plan(req.params.id));

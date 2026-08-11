@@ -7,7 +7,14 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string; timestamp: string }): ForensicEvent {
-  return { description: "d", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    description: "d",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 
 describe("SuperTimelineStore", () => {
@@ -26,8 +33,13 @@ describe("SuperTimelineStore", () => {
   });
 
   it("append persists events; query returns them; re-append dedups by id", async () => {
-    await store.append("c1", [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z", artifactName: "Windows.NTFS.MFT" })]);
-    await store.append("c1", [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" }), ev({ id: "e2", timestamp: "2026-06-02T00:00:00Z" })]);
+    await store.append("c1", [
+      ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z", artifactName: "Windows.NTFS.MFT" }),
+    ]);
+    await store.append("c1", [
+      ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" }),
+      ev({ id: "e2", timestamp: "2026-06-02T00:00:00Z" }),
+    ]);
     const r = await store.query("c1", {});
     expect(r.total).toBe(2);
     expect(r.events.map((e) => e.id)).toEqual(["e1", "e2"]);
@@ -63,7 +75,7 @@ describe("SuperTimelineStore", () => {
     const small = new SuperTimelineStore(cases, 2);
     await small.append("c1", [ev({ id: "a", timestamp: "2026-06-02T00:00:00Z" })]);
     await small.setLabels("c1", "a", ["keep"]);
-    await small.append("c1", [ev({ id: "b", timestamp: "2026-06-03T00:00:00Z" })]);   // "a" still retained under cap 2
+    await small.append("c1", [ev({ id: "b", timestamp: "2026-06-03T00:00:00Z" })]); // "a" still retained under cap 2
     const r = await small.query("c1", { labels: ["keep"] });
     expect(r.events.map((e) => e.id)).toEqual(["a"]);
   });
@@ -75,7 +87,10 @@ describe("SuperTimelineStore", () => {
   });
 
   it("setLabels persists labels; query filters by them", async () => {
-    await store.append("c1", [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" }), ev({ id: "e2", timestamp: "2026-06-02T00:00:00Z" })]);
+    await store.append("c1", [
+      ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" }),
+      ev({ id: "e2", timestamp: "2026-06-02T00:00:00Z" }),
+    ]);
     await store.setLabels("c1", "e2", ["key-evidence"]);
     const r = await store.query("c1", { labels: ["key-evidence"] });
     expect(r.events.map((e) => e.id)).toEqual(["e2"]);
@@ -90,7 +105,12 @@ describe("SuperTimelineStore", () => {
   it("serializes concurrent appends so no batch is clobbered", async () => {
     const batches = Array.from({ length: 12 }, (_, b) =>
       Array.from({ length: 5 }, (_, i) =>
-        ev({ id: `b${b}e${i}`, timestamp: `2026-06-0${(b % 9) + 1}T00:0${i}:00Z`, description: `batch ${b} event ${i}` })),
+        ev({
+          id: `b${b}e${i}`,
+          timestamp: `2026-06-0${(b % 9) + 1}T00:0${i}:00Z`,
+          description: `batch ${b} event ${i}`,
+        }),
+      ),
     );
     await Promise.all(batches.map((batch) => store.append("c1", batch)));
     const r = await store.query("c1", {});
@@ -102,8 +122,10 @@ describe("SuperTimelineStore", () => {
   });
 
   it("serializes concurrent setLabels so no label is clobbered", async () => {
-    await store.append("c1", Array.from({ length: 6 }, (_, i) =>
-      ev({ id: `L${i}`, timestamp: `2026-06-0${i + 1}T00:00:00Z` })));
+    await store.append(
+      "c1",
+      Array.from({ length: 6 }, (_, i) => ev({ id: `L${i}`, timestamp: `2026-06-0${i + 1}T00:00:00Z` })),
+    );
     await Promise.all(Array.from({ length: 6 }, (_, i) => store.setLabels("c1", `L${i}`, [`tag${i}`])));
     const r = await store.query("c1", {});
     expect(r.labelsAvailable.sort()).toEqual(["tag0", "tag1", "tag2", "tag3", "tag4", "tag5"]);
@@ -118,12 +140,18 @@ describe("SuperTimelineStore", () => {
   });
 
   it("migrates legacy events and labels before the first indexed query", async () => {
-    await writeFile(join(cases.stateDir("c1"), "super-timeline.json"), JSON.stringify([
-      ev({ id: "legacy", timestamp: "2026-06-01T00:00:00Z", artifactName: "Windows.Events" }),
-    ]));
-    await writeFile(join(cases.stateDir("c1"), "super-timeline-labels.json"), JSON.stringify({
-      legacy: ["key-evidence"],
-    }));
+    await writeFile(
+      join(cases.stateDir("c1"), "super-timeline.json"),
+      JSON.stringify([
+        ev({ id: "legacy", timestamp: "2026-06-01T00:00:00Z", artifactName: "Windows.Events" }),
+      ]),
+    );
+    await writeFile(
+      join(cases.stateDir("c1"), "super-timeline-labels.json"),
+      JSON.stringify({
+        legacy: ["key-evidence"],
+      }),
+    );
 
     const r = await store.query("c1", { labels: ["key-evidence"] });
     expect(r.events.map((event) => event.id)).toEqual(["legacy"]);
@@ -132,7 +160,8 @@ describe("SuperTimelineStore", () => {
 
   it("caps one query page while cursor batches cover the complete store", async () => {
     const events = Array.from({ length: 650 }, (_, i) =>
-      ev({ id: `e${i}`, timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString() }));
+      ev({ id: `e${i}`, timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString() }),
+    );
     await store.append("c1", events);
 
     const page = await store.query("c1", {});

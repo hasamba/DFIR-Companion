@@ -30,10 +30,16 @@ function anchorPair(i: number, host: string, hostSkewSec: number): ForensicEvent
   const at = Date.parse("2026-05-20T14:00:00Z") + i * 600_000;
   return [
     ev(`${host}-${i}`, new Date(at + hostSkewSec * 1000).toISOString(), {
-      asset: host, sha256: `hash${i}`, description: `logon ${i}`, sources: ["Velociraptor"],
+      asset: host,
+      sha256: `hash${i}`,
+      description: `logon ${i}`,
+      sources: ["Velociraptor"],
     }),
     ev(`dc-${host}-${i}`, new Date(at).toISOString(), {
-      asset: "DC01", sha256: `hash${i}`, description: `logon ${i}`, sources: ["Windows Security"],
+      asset: "DC01",
+      sha256: `hash${i}`,
+      description: `logon ${i}`,
+      sources: ["Windows Security"],
     }),
   ];
 }
@@ -62,7 +68,7 @@ describe("detectClockSkew", () => {
     expect(report.referenceHost).toBe("DC01");
     expect(byHost.get("dc01")!.offsetMs).toBe(0);
     expect(byHost.get("hostb")!.offsetMs).toBe(30_000);
-    expect(byHost.get("hostb")!.skewed).toBe(false);   // 30s < 60s alert threshold
+    expect(byHost.get("hostb")!.skewed).toBe(false); // 30s < 60s alert threshold
     expect(byHost.get("hostb")!.anchorCount).toBe(3);
   });
 
@@ -88,8 +94,16 @@ describe("detectClockSkew", () => {
   // a confident skew. Anchors now come from correlation groups, which never match on description.
   it("ignores unrelated events that merely share a description (regression: false anchors)", () => {
     const events = [
-      ev("a1", "2026-05-20T14:00:00Z", { asset: "hostA", description: "Suspicious PowerShell execution", sources: ["Velociraptor"] }),
-      ev("b1", "2026-05-20T14:00:20Z", { asset: "hostB", description: "Suspicious PowerShell execution", sources: ["THOR"] }),
+      ev("a1", "2026-05-20T14:00:00Z", {
+        asset: "hostA",
+        description: "Suspicious PowerShell execution",
+        sources: ["Velociraptor"],
+      }),
+      ev("b1", "2026-05-20T14:00:20Z", {
+        asset: "hostB",
+        description: "Suspicious PowerShell execution",
+        sources: ["THOR"],
+      }),
     ];
     expect(detectClockSkew(groupsOf(events)).results).toEqual([]);
   });
@@ -101,10 +115,26 @@ describe("detectClockSkew", () => {
       const at = Date.parse("2026-05-20T14:00:00Z") + i * 600_000;
       return [
         // hostA reports the same artifact three times, a couple of seconds apart.
-        ev(`a-${i}-1`, new Date(at).toISOString(), { asset: "hostA", sha256: `h${i}`, sources: ["Velociraptor"] }),
-        ev(`a-${i}-2`, new Date(at + 2_000).toISOString(), { asset: "hostA", sha256: `h${i}`, sources: ["Velociraptor"] }),
-        ev(`a-${i}-3`, new Date(at + 4_000).toISOString(), { asset: "hostA", sha256: `h${i}`, sources: ["Velociraptor"] }),
-        ev(`b-${i}`, new Date(at + 30_000).toISOString(), { asset: "hostB", sha256: `h${i}`, sources: ["THOR"] }),
+        ev(`a-${i}-1`, new Date(at).toISOString(), {
+          asset: "hostA",
+          sha256: `h${i}`,
+          sources: ["Velociraptor"],
+        }),
+        ev(`a-${i}-2`, new Date(at + 2_000).toISOString(), {
+          asset: "hostA",
+          sha256: `h${i}`,
+          sources: ["Velociraptor"],
+        }),
+        ev(`a-${i}-3`, new Date(at + 4_000).toISOString(), {
+          asset: "hostA",
+          sha256: `h${i}`,
+          sources: ["Velociraptor"],
+        }),
+        ev(`b-${i}`, new Date(at + 30_000).toISOString(), {
+          asset: "hostB",
+          sha256: `h${i}`,
+          sources: ["THOR"],
+        }),
       ];
     });
     const byHost = new Map(detectClockSkew(groupsOf(events)).results.map((r) => [r.hostKey, r]));
@@ -119,8 +149,16 @@ describe("detectClockSkew", () => {
     const events = [0, 1, 2].flatMap((i) => {
       const at = Date.parse("2026-05-20T14:00:00Z") + i * 600_000;
       return [
-        ev(`a-${i}`, new Date(at).toISOString(), { asset: "hostA", sha256: `h${i}`, sources: ["Velociraptor"] }),
-        ev(`b-${i}`, new Date(at + 30_000).toISOString(), { asset: "hostB", sha256: `h${i}`, sources: ["Velociraptor"] }),
+        ev(`a-${i}`, new Date(at).toISOString(), {
+          asset: "hostA",
+          sha256: `h${i}`,
+          sources: ["Velociraptor"],
+        }),
+        ev(`b-${i}`, new Date(at + 30_000).toISOString(), {
+          asset: "hostB",
+          sha256: `h${i}`,
+          sources: ["Velociraptor"],
+        }),
       ];
     });
     expect(detectClockSkew(groupsOf(events)).results).toEqual([]);
@@ -155,8 +193,16 @@ describe("detectClockSkew", () => {
       const at = Date.parse("2026-05-20T14:00:00Z") + i * 600_000;
       const asset = i === 0 ? "FILE-BO-01" : "FILE-BO-01.northstar.local";
       return [
-        ev(`h-${i}`, new Date(at + 120_000).toISOString(), { asset, sha256: `h${i}`, sources: ["Velociraptor"] }),
-        ev(`dc-${i}`, new Date(at).toISOString(), { asset: "DC01", sha256: `h${i}`, sources: ["Windows Security"] }),
+        ev(`h-${i}`, new Date(at + 120_000).toISOString(), {
+          asset,
+          sha256: `h${i}`,
+          sources: ["Velociraptor"],
+        }),
+        ev(`dc-${i}`, new Date(at).toISOString(), {
+          asset: "DC01",
+          sha256: `h${i}`,
+          sources: ["Windows Security"],
+        }),
       ];
     });
     const results = detectClockSkew(groupsOf(events)).results;
@@ -188,8 +234,15 @@ describe("detectClockSkew", () => {
 
 describe("effectiveOffsets", () => {
   const detected = {
-    host: "hostB", hostKey: "hostb", offsetMs: 15_000, anchorCount: 4, dispersionMs: 0,
-    confidence: "medium" as const, qualified: true, skewed: false, sources: ["THOR"],
+    host: "hostB",
+    hostKey: "hostb",
+    offsetMs: 15_000,
+    anchorCount: 4,
+    dispersionMs: 0,
+    confidence: "medium" as const,
+    qualified: true,
+    skewed: false,
+    sources: ["THOR"],
   };
 
   it("uses qualified detections", () => {
@@ -248,8 +301,9 @@ describe("alignTimestamps", () => {
 
   it("round-trips through stripAlignment", () => {
     const restored = stripAlignment(alignTimestamps(events, new Map([["hostb", 120_000]])));
-    expect([...restored].sort((a, b) => a.id.localeCompare(b.id)))
-      .toEqual([...events].sort((a, b) => a.id.localeCompare(b.id)));
+    expect([...restored].sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+      [...events].sort((a, b) => a.id.localeCompare(b.id)),
+    );
     for (const e of restored) {
       expect(e.originalTimestamp).toBeUndefined();
       expect(e.skewOffsetMs).toBeUndefined();

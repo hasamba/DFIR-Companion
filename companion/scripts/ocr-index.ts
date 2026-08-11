@@ -38,7 +38,11 @@ async function main(): Promise<void> {
   let captures: CaptureMetadata[] = [];
   try {
     const log = await readFile(store.capturesLogPath(caseId), "utf8");
-    captures = log.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    captures = log
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
   } catch {
     console.log(`no captures.jsonl for "${caseId}" — nothing to index.`);
     return;
@@ -48,7 +52,9 @@ async function main(): Promise<void> {
   // Unique screenshot files (duplicates re-use the previous frame's bytes — index once).
   const files = Array.from(new Set(captures.map((c) => c.screenshotFile).filter(Boolean)));
   const todo = force ? files : files.filter((f) => !index[f]);
-  console.log(`Case "${caseId}": ${files.length} screenshots, ${todo.length} to OCR${force ? " (--force: re-indexing all)" : ""}.`);
+  console.log(
+    `Case "${caseId}": ${files.length} screenshots, ${todo.length} to OCR${force ? " (--force: re-indexing all)" : ""}.`,
+  );
 
   const runner = new TesseractOcrRunner();
   let done = 0;

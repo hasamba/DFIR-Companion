@@ -16,7 +16,7 @@ import type { RouteContext } from "./context.js";
 // session cookie with a 12h backstop. The case-lock GATE (createCaseLockGate, still mounted in
 // server.ts) and readUnlockState (ctx) verify these tokens; they don't need these TTLs.
 const UNLOCK_TTL_REMEMBER_MS = 365 * 24 * 60 * 60 * 1000; // ~1 year — "remember on this computer"
-const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000;        // 12h backstop for a browser-session cookie
+const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000; // 12h backstop for a browser-session cookie
 
 /**
  * Did this request reach us over HTTPS — directly, or on the browser-facing hop of a proxy chain?
@@ -65,7 +65,8 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       const hasPassword = Boolean(meta.password);
-      if (!hasPassword) return res.status(200).json({ hasPassword: false, unlocked: true, remembered: false });
+      if (!hasPassword)
+        return res.status(200).json({ hasPassword: false, unlocked: true, remembered: false });
       const state = readUnlockState(req, id, meta.password!.salt);
       return res.status(200).json({ hasPassword: true, ...state });
     } catch (err) {
@@ -82,7 +83,9 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       const remaining = limiter.remainingLockout(id);
       if (remaining > 0) {
         res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
-        return res.status(429).json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
+        return res
+          .status(429)
+          .json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
       }
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
@@ -93,7 +96,9 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
         const lockout = limiter.recordFailure(id);
         if (lockout > 0) {
           res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
-          return res.status(429).json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
+          return res
+            .status(429)
+            .json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
         }
         return res.status(401).json({ error: "incorrect password" });
       }
@@ -120,7 +125,9 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       if (!(await store.caseExists(id))) return res.status(404).json({ error: `case ${id} not found` });
       const newPassword = (req.body as { newPassword?: unknown })?.newPassword;
       if (typeof newPassword !== "string" || newPassword.length < MIN_CASE_PASSWORD_LENGTH) {
-        return res.status(400).json({ error: `password must be at least ${MIN_CASE_PASSWORD_LENGTH} characters` });
+        return res
+          .status(400)
+          .json({ error: `password must be at least ${MIN_CASE_PASSWORD_LENGTH} characters` });
       }
       const password = hashCasePassword(newPassword);
       const updated = await store.updateCaseMeta(id, { password });

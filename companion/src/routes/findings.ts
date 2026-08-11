@@ -1,8 +1,12 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import {
-  FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_REASONS,
-  applyFalsePositive, falsePositiveEventIds,
+  FalsePositiveStore,
+  markerId,
+  type FalsePositiveMarker,
+  FALSE_POSITIVE_REASONS,
+  applyFalsePositive,
+  falsePositiveEventIds,
 } from "../analysis/falsePositive.js";
 import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
 import { patternKey } from "../analysis/prevalence.js";
@@ -78,7 +82,12 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   // ref is empty, or when reason is "other" with no note, so the caller can reject (single) or skip
   // (batch). Shared by the single + batch routes.
   const buildFalsePositiveMarker = (item: {
-    kind?: unknown; ref?: unknown; reason?: unknown; note?: unknown; label?: unknown; markedBy?: unknown;
+    kind?: unknown;
+    ref?: unknown;
+    reason?: unknown;
+    note?: unknown;
+    label?: unknown;
+    markedBy?: unknown;
   }): FalsePositiveMarker | null => {
     const rawKind = item?.kind;
     const kind: FalsePositiveMarker["kind"] =
@@ -86,8 +95,11 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     const ref = String(item?.ref ?? "").trim();
     if (!ref) return null;
     const rawReason = item?.reason;
-    const reason: FalsePositiveMarker["reason"] =
-      (FALSE_POSITIVE_REASONS as readonly string[]).includes(String(rawReason)) ? (rawReason as FalsePositiveMarker["reason"]) : "other";
+    const reason: FalsePositiveMarker["reason"] = (FALSE_POSITIVE_REASONS as readonly string[]).includes(
+      String(rawReason),
+    )
+      ? (rawReason as FalsePositiveMarker["reason"])
+      : "other";
     const note = String(item?.note ?? "");
     if (reason === "other" && !note.trim()) return null;
     // Optional human-readable label (e.g. a forensic event's description) so the
@@ -95,7 +107,13 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     const label = item?.label != null ? String(item.label) : undefined;
     const markedBy = String(item?.markedBy ?? "").trim() || "anonymous";
     return {
-      id: markerId(kind, ref), kind, ref, reason, note, markedAt: new Date().toISOString(), markedBy,
+      id: markerId(kind, ref),
+      kind,
+      ref,
+      reason,
+      note,
+      markedAt: new Date().toISOString(),
+      markedBy,
       ...(label ? { label } : {}),
     };
   };
@@ -115,7 +133,11 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
           const survivingFindingIds = new Set(applyFalsePositive(state, markers).findings.map((f) => f.id));
           const priorFindingIds = state.findings.map((f) => f.id);
           const removedFindingIds = new Set(priorFindingIds.filter((id) => !survivingFindingIds.has(id)));
-          const q = reconsiderKeyQuestions(state.keyQuestions, { survivingFindingIds, priorFindingIds, staleReSynth: true });
+          const q = reconsiderKeyQuestions(state.keyQuestions, {
+            survivingFindingIds,
+            priorFindingIds,
+            staleReSynth: true,
+          });
           const s = reconsiderNextSteps(state.nextSteps, { removedFindingIds, staleReSynth: true });
           if (q.changed || s.changed) {
             await stateStore.save({ ...state, keyQuestions: q.questions, nextSteps: s.steps });
@@ -127,12 +149,14 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
           const state = await stateStore.load(caseId);
           const iocIdByValue = new Map(state.iocs.map((i) => [i.value.trim().toLowerCase(), i.id] as const));
           const fpIocIds = new Set(
-            markers.filter((m) => m.kind === "ioc")
+            markers
+              .filter((m) => m.kind === "ioc")
               .map((m) => iocIdByValue.get(m.ref.trim().toLowerCase()))
               .filter((id): id is string => !!id),
           );
           await options.hypothesisStore.reconsiderForFalsePositive(caseId, {
-            fpEventIds: falsePositiveEventIds(markers), fpIocIds,
+            fpEventIds: falsePositiveEventIds(markers),
+            fpIocIds,
           });
         }
       }
@@ -156,7 +180,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         const key = patternKey(ev);
         if (key) m.patternFingerprint = key;
       }
-    } catch { /* best-effort — leave fingerprints unset */ }
+    } catch {
+      /* best-effort — leave fingerprints unset */
+    }
   };
 
   // Learn from dismissals (#65): distil each finding/event marker into the accumulating learned-patterns
@@ -167,7 +193,11 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     if (!options.learnedPatternStore) return;
     const inputs: LearnedPatternInput[] = markers
       .filter((m) => m.kind === "finding" || m.kind === "event")
-      .map((m) => ({ text: m.kind === "event" ? (m.label ?? "") : m.ref, reason: m.reason, example: m.label ?? m.ref }))
+      .map((m) => ({
+        text: m.kind === "event" ? (m.label ?? "") : m.ref,
+        reason: m.reason,
+        example: m.label ?? m.ref,
+      }))
       .filter((i) => i.text.trim().length > 0);
     if (!inputs.length) return;
     try {
@@ -179,7 +209,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   };
 
   app.get("/cases/:id/learned-patterns", async (req: Request, res: Response) => {
-    if (!options.learnedPatternStore) return res.status(501).json({ error: "learned patterns not configured" });
+    if (!options.learnedPatternStore)
+      return res.status(501).json({ error: "learned patterns not configured" });
     try {
       return res.status(200).json(await options.learnedPatternStore.load(req.params.id));
     } catch (err) {
@@ -190,7 +221,10 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/false-positive", async (req: Request, res: Response) => {
     try {
       const marker = buildFalsePositiveMarker(req.body ?? {});
-      if (!marker) return res.status(400).json({ error: "ref is required (and note is required when reason is 'other')" });
+      if (!marker)
+        return res
+          .status(400)
+          .json({ error: "ref is required (and note is required when reason is 'other')" });
       await stampPatternFingerprints(req.params.id, [marker]);
       const markers = await falsePositives.load(req.params.id);
       const next = [...markers.filter((m) => m.id !== marker.id), marker];
@@ -209,8 +243,12 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       options.onFalsePositive?.(req.params.id);
       await recordLearnedPatterns(req.params.id, [marker]); // #65 accumulate the reasoned dismissal
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "triage", action: "mark-false-positive", actor: marker.markedBy ?? "",
-        detail: `${marker.kind} ${marker.ref} (${marker.reason})`, targetType: marker.kind, targetId: marker.ref,
+        category: "triage",
+        action: "mark-false-positive",
+        actor: marker.markedBy ?? "",
+        detail: `${marker.kind} ${marker.ref} (${marker.reason})`,
+        targetType: marker.kind,
+        targetId: marker.ref,
       });
       await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
@@ -233,16 +271,26 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const fallbackNote = req.body?.note != null ? String(req.body.note) : "";
       const fallbackMarkedBy = req.body?.markedBy;
       const built = rawItems
-        .map((it: { kind?: unknown; ref?: unknown; reason?: unknown; note?: unknown; label?: unknown; markedBy?: unknown }) =>
-          buildFalsePositiveMarker({
-            ...it,
-            reason: it?.reason ?? fallbackReason,
-            note: it?.note ?? fallbackNote,
-            markedBy: it?.markedBy ?? fallbackMarkedBy,
-          }))
+        .map(
+          (it: {
+            kind?: unknown;
+            ref?: unknown;
+            reason?: unknown;
+            note?: unknown;
+            label?: unknown;
+            markedBy?: unknown;
+          }) =>
+            buildFalsePositiveMarker({
+              ...it,
+              reason: it?.reason ?? fallbackReason,
+              note: it?.note ?? fallbackNote,
+              markedBy: it?.markedBy ?? fallbackMarkedBy,
+            }),
+        )
         .filter((m: FalsePositiveMarker | null): m is FalsePositiveMarker => m !== null);
-      if (!built.length) return res.status(400).json({ error: "at least one valid item (with a ref) is required" });
-      await stampPatternFingerprints(req.params.id, built);   // #15b: capture each event's pattern key
+      if (!built.length)
+        return res.status(400).json({ error: "at least one valid item (with a ref) is required" });
+      await stampPatternFingerprints(req.params.id, built); // #15b: capture each event's pattern key
       const markers = await falsePositives.load(req.params.id);
       // De-dupe within the batch and against existing markers (last occurrence wins) by id.
       const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
@@ -252,7 +300,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       options.onFalsePositive?.(req.params.id);
       await recordLearnedPatterns(req.params.id, built); // #65 accumulate the reasoned dismissals
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "triage", action: "mark-false-positive-batch", actor: fallbackMarkedBy ?? "",
+        category: "triage",
+        action: "mark-false-positive-batch",
+        actor: fallbackMarkedBy ?? "",
         detail: `${built.length} item(s) marked false-positive`,
       });
       await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
@@ -272,7 +322,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "triage", action: "unmark-false-positive",
+        category: "triage",
+        action: "unmark-false-positive",
         actor: typeof req.body?.actor === "string" ? req.body.actor : "",
         detail: removedMarker ? `${removedMarker.kind} ${removedMarker.ref}` : `marker ${id}`,
         ...(removedMarker ? { targetType: removedMarker.kind, targetId: removedMarker.ref } : {}),
@@ -293,14 +344,19 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     try {
       const kind = req.body?.kind === "event" ? "event" : req.body?.kind === "finding" ? "finding" : null;
       const ref = String(req.body?.ref ?? "").trim();
-      if (!kind || !ref) return res.status(400).json({ error: "kind ('event'|'finding') and ref are required" });
+      if (!kind || !ref)
+        return res.status(400).json({ error: "kind ('event'|'finding') and ref are required" });
       const state = await options.stateStore.load(req.params.id);
-      const anchor = kind === "event" ? state.forensicTimeline.find((e) => e.id === ref) : state.findings.find((f) => f.id === ref);
+      const anchor =
+        kind === "event"
+          ? state.forensicTimeline.find((e) => e.id === ref)
+          : state.findings.find((f) => f.id === ref);
       if (!anchor) return res.status(404).json({ error: `${kind} ${ref} not found` });
 
-      const deterministic = kind === "event"
-        ? findSimilarEvents(anchor as ForensicEvent, state.forensicTimeline)
-        : findSimilarFindings(anchor as Finding, state.findings);
+      const deterministic =
+        kind === "event"
+          ? findSimilarEvents(anchor as ForensicEvent, state.forensicTimeline)
+          : findSimilarFindings(anchor as Finding, state.findings);
 
       if (!req.body?.ai) return res.status(200).json({ candidates: deterministic });
       if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) {
@@ -308,7 +364,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       }
 
       const pool = kind === "event" ? state.forensicTimeline : state.findings;
-      const anchorLabel = kind === "event" ? (anchor as ForensicEvent).description : (anchor as Finding).title;
+      const anchorLabel =
+        kind === "event" ? (anchor as ForensicEvent).description : (anchor as Finding).title;
       const seen = new Set(deterministic.map((c) => c.id));
       const rest = pool.filter((item) => item.id !== ref && !seen.has(item.id)).slice(0, 100);
       const aiIds = await options.pipeline.suggestFalsePositiveSimilarAi(
@@ -360,8 +417,12 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       await scopeStore.save(req.params.id, scope);
       options.onScope?.(req.params.id, scope);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings", action: "scope-changed",
-        detail: (scope.start || scope.end) ? `scope set: ${scope.start ?? "…"} to ${scope.end ?? "…"}` : "scope cleared",
+        category: "settings",
+        action: "scope-changed",
+        detail:
+          scope.start || scope.end
+            ? `scope set: ${scope.start ?? "…"} to ${scope.end ?? "…"}`
+            : "scope cleared",
       });
       resynthesizeInBackground(req.params.id); // re-derive within the window
       return res.status(200).json(scope);
@@ -372,7 +433,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
 
   // Correlation profile (per-case time window for cross-source event correlation).
   app.get("/cases/:id/correlation-profile", async (req, res) => {
-    if (!options.correlationProfileStore) return res.status(501).json({ error: "correlation profile not configured" });
+    if (!options.correlationProfileStore)
+      return res.status(501).json({ error: "correlation profile not configured" });
     try {
       return res.status(200).json(await options.correlationProfileStore.load(req.params.id));
     } catch (err) {
@@ -381,21 +443,31 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   });
 
   app.put("/cases/:id/correlation-profile", async (req, res) => {
-    if (!options.correlationProfileStore) return res.status(501).json({ error: "correlation profile not configured" });
+    if (!options.correlationProfileStore)
+      return res.status(501).json({ error: "correlation profile not configured" });
     try {
       const { profileName, windowSeconds } = req.body as { profileName?: unknown; windowSeconds?: unknown };
       const validNames = ["strict", "moderate", "aggressive", "custom"];
       // Both checks now also reject the wrong TYPE, not just the wrong value: before, a POSTed
       // `{"profileName": 42}` was typed `string`, sailed past includes() as "not in the list"
       // only by luck, and a non-number windowSeconds reached the store.
-      if (profileName !== undefined && (typeof profileName !== "string" || !validNames.includes(profileName))) {
+      if (
+        profileName !== undefined &&
+        (typeof profileName !== "string" || !validNames.includes(profileName))
+      ) {
         return res.status(400).json({ error: "invalid profileName" });
       }
       if (windowSeconds !== undefined && (typeof windowSeconds !== "number" || windowSeconds < 0)) {
         return res.status(400).json({ error: "windowSeconds must be a non-negative number" });
       }
       const current = await options.correlationProfileStore.load(req.params.id);
-      const updated = { ...current, ...(profileName ? { profileName: profileName as import("../analysis/correlationProfile.js").CorrelationProfileName } : {}), ...(windowSeconds !== undefined ? { windowSeconds } : {}) };
+      const updated = {
+        ...current,
+        ...(profileName
+          ? { profileName: profileName as import("../analysis/correlationProfile.js").CorrelationProfileName }
+          : {}),
+        ...(windowSeconds !== undefined ? { windowSeconds } : {}),
+      };
       await options.correlationProfileStore.save(req.params.id, updated);
       return res.status(200).json(updated);
     } catch (err) {
@@ -444,24 +516,38 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     const targetType = typeof req.body?.targetType === "string" ? req.body.targetType.trim() : "";
     const targetId = typeof req.body?.targetId === "string" ? req.body.targetId.trim() : "";
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-    if (!targetType || !targetId || !text) return res.status(400).json({ error: "targetType, targetId and text are required" });
+    if (!targetType || !targetId || !text)
+      return res.status(400).json({ error: "targetType, targetId and text are required" });
     try {
       const comment = await options.commentsStore.add(req.params.id, {
-        targetType, targetId, text,
+        targetType,
+        targetId,
+        text,
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onComments?.(req.params.id);
       // Awaited, like the tag routes below: the dashboard refreshes the activity log as soon as
       // this responds, so a fire-and-forget append can lose the race against that read.
       await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "collaboration", action: "comment-added", actor: comment.author,
-        detail: `comment on ${targetType} ${targetId}`, targetType, targetId,
+        category: "collaboration",
+        action: "comment-added",
+        actor: comment.author,
+        detail: `comment on ${targetType} ${targetId}`,
+        targetType,
+        targetId,
       });
       if (comment.mentions.length) {
-        dispatchNotify(mentionEvent(
-          req.params.id, targetType, targetId, comment.author, comment.mentions, comment.text,
-          comment.createdAt,
-        ));
+        dispatchNotify(
+          mentionEvent(
+            req.params.id,
+            targetType,
+            targetId,
+            comment.author,
+            comment.mentions,
+            comment.text,
+            comment.createdAt,
+          ),
+        );
       }
       return res.status(201).json(comment);
     } catch (err) {
@@ -476,7 +562,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       if (!removed) return res.status(404).json({ error: "comment not found" });
       options.onComments?.(req.params.id);
       await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "collaboration", action: "comment-removed", detail: `comment ${req.params.commentId} removed`,
+        category: "collaboration",
+        action: "comment-removed",
+        detail: `comment ${req.params.commentId} removed`,
       });
       return res.status(204).end();
     } catch (err) {
@@ -501,10 +589,13 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     const targetType = typeof req.body?.targetType === "string" ? req.body.targetType.trim() : "";
     const targetId = typeof req.body?.targetId === "string" ? req.body.targetId.trim() : "";
     const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
-    if (!targetType || !targetId || !label) return res.status(400).json({ error: "targetType, targetId and label are required" });
+    if (!targetType || !targetId || !label)
+      return res.status(400).json({ error: "targetType, targetId and label are required" });
     try {
       const tag = await options.tagsStore.add(req.params.id, {
-        targetType, targetId, label,
+        targetType,
+        targetId,
+        label,
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onTags?.(req.params.id);
@@ -514,8 +605,12 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       // symmetric with the DELETE side, which reads removed.label.
       if (tag.label !== STARRED_LABEL) {
         await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-          category: "collaboration", action: "tag-added", actor: tag.author,
-          detail: `tagged ${targetType} ${targetId} "${label}"`, targetType, targetId,
+          category: "collaboration",
+          action: "tag-added",
+          actor: tag.author,
+          detail: `tagged ${targetType} ${targetId} "${label}"`,
+          targetType,
+          targetId,
         });
       }
       return res.status(201).json(tag);
@@ -534,7 +629,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       // activity log (it's hidden from every other tag surface too).
       if (removed.label !== STARRED_LABEL) {
         await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-          category: "collaboration", action: "tag-removed", detail: `tag ${req.params.tagId} removed`,
+          category: "collaboration",
+          action: "tag-removed",
+          detail: `tag ${req.params.tagId} removed`,
         });
       }
       return res.status(204).end();
@@ -549,7 +646,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   // GET lists; POST pins one (409 at the cap); PUT /order reorders (drag-to-reorder); DELETE
   // /:findingId unpins. Mutations ping live clients over the WS.
   app.get("/cases/:id/pinned-findings", async (req: Request, res: Response) => {
-    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    if (!options.pinnedFindingsStore)
+      return res.status(501).json({ error: "pinned findings not configured" });
     try {
       const pins = await options.pinnedFindingsStore.load(req.params.id);
       return res.status(200).json({ pins, limit: options.pinnedFindingsStore.limit });
@@ -559,7 +657,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   });
 
   app.post("/cases/:id/pinned-findings", async (req: Request, res: Response) => {
-    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    if (!options.pinnedFindingsStore)
+      return res.status(501).json({ error: "pinned findings not configured" });
     const findingId = typeof req.body?.findingId === "string" ? req.body.findingId.trim() : "";
     if (!findingId) return res.status(400).json({ error: "findingId is required" });
     try {
@@ -576,8 +675,11 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   });
 
   app.put("/cases/:id/pinned-findings/order", async (req: Request, res: Response) => {
-    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
-    const order = Array.isArray(req.body?.order) ? req.body.order.filter((x: unknown): x is string => typeof x === "string") : null;
+    if (!options.pinnedFindingsStore)
+      return res.status(501).json({ error: "pinned findings not configured" });
+    const order = Array.isArray(req.body?.order)
+      ? req.body.order.filter((x: unknown): x is string => typeof x === "string")
+      : null;
     if (!order) return res.status(400).json({ error: "order must be an array of findingId strings" });
     try {
       const pins = await options.pinnedFindingsStore.reorder(req.params.id, order);
@@ -589,7 +691,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   });
 
   app.delete("/cases/:id/pinned-findings/:findingId", async (req: Request, res: Response) => {
-    if (!options.pinnedFindingsStore) return res.status(501).json({ error: "pinned findings not configured" });
+    if (!options.pinnedFindingsStore)
+      return res.status(501).json({ error: "pinned findings not configured" });
     try {
       const pins = await options.pinnedFindingsStore.unpin(req.params.id, req.params.findingId);
       options.onPins?.(req.params.id);
@@ -605,7 +708,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   // one finding's assignee/status (an empty assignee + null status clears the record). Mirrors the
   // comments/tags/pinned pattern: the dashboard fetches the list and merges it onto the finding cards.
   app.get("/cases/:id/finding-workflow", async (req: Request, res: Response) => {
-    if (!options.findingWorkflowStore) return res.status(501).json({ error: "finding workflow not configured" });
+    if (!options.findingWorkflowStore)
+      return res.status(501).json({ error: "finding workflow not configured" });
     try {
       return res.status(200).json(await options.findingWorkflowStore.load(req.params.id));
     } catch (err) {
@@ -614,7 +718,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   });
 
   app.patch("/cases/:id/findings/:findingId/workflow", async (req: Request, res: Response) => {
-    if (!options.findingWorkflowStore) return res.status(501).json({ error: "finding workflow not configured" });
+    if (!options.findingWorkflowStore)
+      return res.status(501).json({ error: "finding workflow not configured" });
     // Only apply fields the caller actually sent, so a status-only PATCH leaves the assignee intact
     // (and vice versa). `status: ""`/null clears the status; an empty assignee clears the owner.
     const patch: { assignee?: string; status?: FindingWorkflowStatus | null; updatedBy?: string } = {};
@@ -626,7 +731,11 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       } else if ((FINDING_WORKFLOW_STATUSES as readonly string[]).includes(String(raw))) {
         patch.status = String(raw) as FindingWorkflowStatus;
       } else {
-        return res.status(400).json({ error: `status must be one of ${FINDING_WORKFLOW_STATUSES.join(", ")} (or empty to clear)` });
+        return res
+          .status(400)
+          .json({
+            error: `status must be one of ${FINDING_WORKFLOW_STATUSES.join(", ")} (or empty to clear)`,
+          });
       }
     }
     if (typeof req.body?.updatedBy === "string") patch.updatedBy = req.body.updatedBy;
@@ -637,11 +746,14 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const record = await options.findingWorkflowStore.patch(req.params.id, req.params.findingId, patch);
       options.onFindingWorkflow?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "triage", action: "finding-workflow", actor: patch.updatedBy ?? "",
+        category: "triage",
+        action: "finding-workflow",
+        actor: patch.updatedBy ?? "",
         detail: record
           ? `finding ${req.params.findingId}: ${record.status ? `status=${record.status}` : "no status"}${record.assignee ? `, assignee=${record.assignee}` : ""}`
           : `finding ${req.params.findingId}: workflow cleared`,
-        targetType: "finding", targetId: req.params.findingId,
+        targetType: "finding",
+        targetId: req.params.findingId,
       });
       return res.status(200).json({ record });
     } catch (err) {
@@ -675,7 +787,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         text,
         type,
         author: typeof req.body?.author === "string" ? req.body.author : undefined,
-        linkedEntityIds: Array.isArray(req.body?.linkedEntityIds) ? req.body.linkedEntityIds.map(String) : undefined,
+        linkedEntityIds: Array.isArray(req.body?.linkedEntityIds)
+          ? req.body.linkedEntityIds.map(String)
+          : undefined,
       });
       options.onNotebook?.(req.params.id);
       return res.status(201).json(entry);
@@ -688,10 +802,14 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     if (!options.notebookStore) return res.status(501).json({ error: "notebook not configured" });
     const patch: { text?: string; type?: NotebookEntryType; linkedEntityIds?: string[] } = {};
     if (typeof req.body?.text === "string") patch.text = req.body.text;
-    if (typeof req.body?.type === "string" && NOTEBOOK_ENTRY_TYPES.includes(req.body.type as NotebookEntryType)) {
+    if (
+      typeof req.body?.type === "string" &&
+      NOTEBOOK_ENTRY_TYPES.includes(req.body.type as NotebookEntryType)
+    ) {
       patch.type = req.body.type as NotebookEntryType;
     }
-    if (Array.isArray(req.body?.linkedEntityIds)) patch.linkedEntityIds = req.body.linkedEntityIds.map(String);
+    if (Array.isArray(req.body?.linkedEntityIds))
+      patch.linkedEntityIds = req.body.linkedEntityIds.map(String);
     try {
       const updated = await options.notebookStore.update(req.params.id, req.params.entryId, patch);
       if (!updated) return res.status(404).json({ error: "notebook entry not found" });

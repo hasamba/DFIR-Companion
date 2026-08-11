@@ -23,25 +23,25 @@ export type HuntOutcomeStatus = "deployed" | "collected";
 // hunt's results are imported. All fields optional past the deploy-time core so a partial/older file
 // loads cleanly.
 export interface HuntOutcome {
-  id: string;                 // stable: the Velociraptor huntId when known, else `${fingerprint}:${deployedAt}`
+  id: string; // stable: the Velociraptor huntId when known, else `${fingerprint}:${deployedAt}`
   source: HuntOutcomeSource;
   title: string;
-  vqlFingerprint: string;     // FNV-1a of the normalized VQL; "" for bundles
-  vqlPreview: string;         // short normalized VQL snippet (profile + prompt); "" for bundles
+  vqlFingerprint: string; // FNV-1a of the normalized VQL; "" for bundles
+  vqlPreview: string; // short normalized VQL snippet (profile + prompt); "" for bundles
   mitreTechniques: string[];
-  huntId?: string;            // Velociraptor hunt id when known (links to a VeloHuntJob for collection)
-  deployedAt: string;         // ISO
+  huntId?: string; // Velociraptor hunt id when known (links to a VeloHuntJob for collection)
+  deployedAt: string; // ISO
   status: HuntOutcomeStatus;
-  foundEvidence?: boolean;    // collected: did the hunt return ANY rows / add any new events or IOCs
+  foundEvidence?: boolean; // collected: did the hunt return ANY rows / add any new events or IOCs
   // ACH-style hypotheses (investigation-guidance #14): the hypothesis this hunt was deployed to test, so
   // a hunt that comes back empty counts as a MISS against it (→ eventual `exhausted`). Optional — most
   // hunts aren't tied to a specific hypothesis and fall back to technique-overlap matching.
   relatedHypothesisId?: string;
-  resultRows?: number;        // collected: total rows the hunt returned (what the analyst sees) — a snapshot, not cumulative
-  addedEvents?: number;       // collected: events NEW to the case after dedup (cumulative across re-collects)
-  addedIocs?: number;         // collected: IOCs new to the case (cumulative)
-  resultSummary?: string;     // collected: compact, e.g. "10 results, +1 new event" / "no results"
-  collectedAt?: string;       // collected: ISO
+  resultRows?: number; // collected: total rows the hunt returned (what the analyst sees) — a snapshot, not cumulative
+  addedEvents?: number; // collected: events NEW to the case after dedup (cumulative across re-collects)
+  addedIocs?: number; // collected: IOCs new to the case (cumulative)
+  resultSummary?: string; // collected: compact, e.g. "10 results, +1 new event" / "no results"
+  collectedAt?: string; // collected: ISO
   // Run-to-run diff (#80): what's new/gone vs this hunt's PREVIOUS run of the same VQL fingerprint (a
   // re-deploy of a recurring/scheduled hunt), as opposed to addedEvents/addedIocs above which are
   // cumulative against the whole CASE. Set by the caller (server.ts, via HuntRunSnapshotStore) since
@@ -60,7 +60,9 @@ const MAX_VQL_PREVIEW_LEN = 300;
 // Whitespace-normalize a VQL statement so two formattings of the same query fingerprint identically
 // (mirrors playbookHunt.ts's task normalization). NOT lowercased — VQL artifact names are case-sensitive.
 export function normalizeVql(vql: string): string {
-  return String(vql ?? "").replace(/\s+/g, " ").trim();
+  return String(vql ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Deterministic FNV-1a fingerprint of the normalized VQL — the dedup/exclude key. Empty input → "" so
@@ -91,8 +93,8 @@ export interface HuntDeployInput {
   vql?: string;
   mitreTechniques?: string[];
   huntId?: string;
-  relatedHypothesisId?: string;  // ACH (#14): the hypothesis this hunt tests, when deployed from one
-  deployedAt: string;         // ISO (the route stamps it — keeps this module time-free)
+  relatedHypothesisId?: string; // ACH (#14): the hypothesis this hunt tests, when deployed from one
+  deployedAt: string; // ISO (the route stamps it — keeps this module time-free)
 }
 
 // Record a freshly-deployed hunt (status "deployed"), prepended and capped (newest first). Upsert by
@@ -109,10 +111,14 @@ export function recordDeploy(
   const entry: HuntOutcome = {
     id,
     source: input.source,
-    title: String(input.title ?? "").trim().slice(0, MAX_TITLE_LEN),
+    title: String(input.title ?? "")
+      .trim()
+      .slice(0, MAX_TITLE_LEN),
     vqlFingerprint: fp,
     vqlPreview: input.vql ? normalizeVql(input.vql).slice(0, MAX_VQL_PREVIEW_LEN) : "",
-    mitreTechniques: dedupeStrings((input.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean)).slice(0, 20),
+    mitreTechniques: dedupeStrings(
+      (input.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean),
+    ).slice(0, 20),
     ...(huntId ? { huntId } : {}),
     ...(input.relatedHypothesisId ? { relatedHypothesisId: String(input.relatedHypothesisId).trim() } : {}),
     deployedAt: input.deployedAt,
@@ -130,8 +136,8 @@ export interface HuntCollectResult {
   resultRows?: number;
   addedEvents: number;
   addedIocs: number;
-  collectedAt: string;        // ISO
-  runDiff?: HuntRunDiff;      // #80: this run vs the fingerprint's previous run, when one was computed
+  collectedAt: string; // ISO
+  runDiff?: HuntRunDiff; // #80: this run vs the fingerprint's previous run, when one was computed
 }
 
 // Compact human summary of a collected hunt. Leads with the rows the hunt RETURNED (the count that
@@ -143,7 +149,7 @@ function summarizeResult(resultRows: number, addedEvents: number, addedIocs: num
   if (addedEvents > 0) parts.push(`+${addedEvents} new event${addedEvents === 1 ? "" : "s"}`);
   if (addedIocs > 0) parts.push(`+${addedIocs} new IOC${addedIocs === 1 ? "" : "s"}`);
   if (parts.length) return parts.join(", ");
-  return (resultRows > 0 || addedEvents > 0 || addedIocs > 0) ? "new evidence" : "no results";
+  return resultRows > 0 || addedEvents > 0 || addedIocs > 0 ? "new evidence" : "no results";
 }
 
 // Mark the outcome(s) matching `huntId` as collected, deriving foundEvidence + the summary. counts that
@@ -165,10 +171,10 @@ export function fillOutcome(
   const newRows = Math.max(0, Math.floor(result.resultRows || 0));
   return outcomes.map((o) => {
     if (o.huntId !== hid) return o;
-    const addedEvents = (o.addedEvents || 0) + deltaEvents;   // cumulative across re-collects (re-reads dedup to 0)
+    const addedEvents = (o.addedEvents || 0) + deltaEvents; // cumulative across re-collects (re-reads dedup to 0)
     const addedIocs = (o.addedIocs || 0) + deltaIocs;
-    const resultRows = Math.max(o.resultRows || 0, newRows);  // snapshot total — keep the largest seen
-    const found = o.foundEvidence === true || resultRows > 0 || addedEvents > 0 || addedIocs > 0;   // returned rows = hit; a hit stays a hit
+    const resultRows = Math.max(o.resultRows || 0, newRows); // snapshot total — keep the largest seen
+    const found = o.foundEvidence === true || resultRows > 0 || addedEvents > 0 || addedIocs > 0; // returned rows = hit; a hit stays a hit
     return {
       ...o,
       status: "collected" as const,
@@ -178,7 +184,7 @@ export function fillOutcome(
       addedIocs,
       resultSummary: summarizeResult(resultRows, addedEvents, addedIocs),
       collectedAt: result.collectedAt,
-      runDiff: result.runDiff ?? o.runDiff,   // keep the last-computed diff when this collect didn't recompute one
+      runDiff: result.runDiff ?? o.runDiff, // keep the last-computed diff when this collect didn't recompute one
     };
   });
 }
@@ -214,11 +220,11 @@ export function renderPriorHuntsBlock(outcomes: readonly HuntOutcome[], limit = 
 // The per-case hunting profile for the dashboard: headline tallies + the raw outcomes (newest first).
 export interface HuntingProfile {
   total: number;
-  hit: number;        // collected AND found new evidence
-  missed: number;     // collected AND found nothing
-  pending: number;    // deployed but not yet collected
+  hit: number; // collected AND found new evidence
+  missed: number; // collected AND found nothing
+  pending: number; // deployed but not yet collected
   hunts: HuntOutcome[];
-  pivotProductivity: PivotProductivity[];   // #72: aggregate hit-rate by pivot class
+  pivotProductivity: PivotProductivity[]; // #72: aggregate hit-rate by pivot class
 }
 
 export function buildHuntingProfile(outcomes: readonly HuntOutcome[]): HuntingProfile {
@@ -231,7 +237,14 @@ export function buildHuntingProfile(outcomes: readonly HuntOutcome[]): HuntingPr
     else if (o.foundEvidence) hit++;
     else missed++;
   }
-  return { total: hunts.length, hit, missed, pending, hunts, pivotProductivity: buildPivotProductivity(hunts) };
+  return {
+    total: hunts.length,
+    hit,
+    missed,
+    pending,
+    hunts,
+    pivotProductivity: buildPivotProductivity(hunts),
+  };
 }
 
 // Aggregate productivity by PIVOT CLASS (issue #72). Per-hunt outcomes already feed the "PRIOR HUNTS"
@@ -274,7 +287,9 @@ export interface PivotProductivity {
 // sort last, ahead of nothing. Only classes with at least one outcome are returned. Pure.
 export function buildPivotProductivity(outcomes: readonly HuntOutcome[]): PivotProductivity[] {
   const order: PivotType[] = ["hash", "process", "path", "network", "registry", "other"];
-  const tally = new Map<PivotType, PivotProductivity>(order.map((type) => [type, { type, total: 0, hit: 0, missed: 0, pending: 0 }]));
+  const tally = new Map<PivotType, PivotProductivity>(
+    order.map((type) => [type, { type, total: 0, hit: 0, missed: 0, pending: 0 }]),
+  );
   for (const o of outcomes ?? []) {
     const entry = tally.get(classifyPivotType(o))!;
     entry.total++;

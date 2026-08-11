@@ -13,8 +13,12 @@ import { waitForEvents } from "../helpers/caseWaits.js";
 
 // A deterministic (no-AI) THOR alert the importer maps straight to a forensic event.
 const THOR_EVENT = {
-  time: "2026-06-13T21:18:18Z", hostname: "WIN11", level: "Alert", module: "Filescan",
-  message: "Malware file found", file: "C:\\Tools\\mimikatz.exe",
+  time: "2026-06-13T21:18:18Z",
+  hostname: "WIN11",
+  level: "Alert",
+  module: "Filescan",
+  message: "Malware file found",
+  file: "C:\\Tools\\mimikatz.exe",
   sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
 };
 
@@ -23,11 +27,15 @@ async function makeApp(opts: { pushToken?: string; withTokenStore?: boolean } = 
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
-    pipeline, stateStore,
+    pipeline,
+    stateStore,
     importMetaStore: new ImportMetaStore(store),
     pushToken: opts.pushToken,
     pushTokenStore: opts.withTokenStore === false ? undefined : new PushTokenStore(store),
@@ -38,33 +46,47 @@ async function makeApp(opts: { pushToken?: string; withTokenStore?: boolean } = 
 
 describe("POST /cases/:id/push — generic push ingest", () => {
   it("403s when no push token is configured anywhere", async () => {
-    const { app } = await makeApp({});   // no global token, store present but no case token
-    const res = await request(app).post("/cases/c1/push").send({ source: "siem", events: [THOR_EVENT] });
+    const { app } = await makeApp({}); // no global token, store present but no case token
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .send({ source: "siem", events: [THOR_EVENT] });
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/disabled/i);
   });
 
   it("401s when a token is configured but the wrong key is presented", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "nope").send({ events: [THOR_EVENT] });
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .set("X-DFIR-Key", "nope")
+      .send({ events: [THOR_EVENT] });
     expect(res.status).toBe(401);
   });
 
   it("401s when no key is presented against a configured token", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
-    const res = await request(app).post("/cases/c1/push").send({ events: [THOR_EVENT] });
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .send({ events: [THOR_EVENT] });
     expect(res.status).toBe(401);
     expect(res.body.error).toMatch(/missing/i);
   });
 
-  it("accepts a payload with the global token and imports it into the timeline", async () => {
-    const { app, stateStore } = await makeApp({ pushToken: "secret" });
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "siem-webhook", events: [THOR_EVENT] });
-    expect(res.status).toBe(202);
-    expect(res.body.kind).toBe("thor");
-    expect(res.body.source).toBe("siem-webhook");
-    expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  }, POLL_TIMEOUT_MS * 2);   // one waitForEvents budget, doubled to leave room for setup + assertions
+  it(
+    "accepts a payload with the global token and imports it into the timeline",
+    async () => {
+      const { app, stateStore } = await makeApp({ pushToken: "secret" });
+      const res = await request(app)
+        .post("/cases/c1/push")
+        .set("X-DFIR-Key", "secret")
+        .send({ source: "siem-webhook", events: [THOR_EVENT] });
+      expect(res.status).toBe(202);
+      expect(res.body.kind).toBe("thor");
+      expect(res.body.source).toBe("siem-webhook");
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one waitForEvents budget, doubled to leave room for setup + assertions
 
   // /push runs the same import → diff → re-synthesize pipeline as the Import button, so it owes the
   // same write guard: a closed or archived case is immutable and takes no new evidence (#511). The
@@ -72,7 +94,10 @@ describe("POST /cases/:id/push — generic push ingest", () => {
   it("423s a push into a closed case and imports nothing", async () => {
     const { app, store, stateStore } = await makeApp({ pushToken: "secret" });
     await store.updateCaseMeta("c1", { status: "closed" });
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "siem", events: [THOR_EVENT] });
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .set("X-DFIR-Key", "secret")
+      .send({ source: "siem", events: [THOR_EVENT] });
     expect(res.status).toBe(423);
     expect(res.body.error).toMatch(/closed/i);
     const after = await stateStore.load("c1").catch(() => null);
@@ -82,42 +107,70 @@ describe("POST /cases/:id/push — generic push ingest", () => {
   it("423s a push into an archived case", async () => {
     const { app, store } = await makeApp({ pushToken: "secret" });
     await store.updateCaseMeta("c1", { status: "archived" });
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ events: [THOR_EVENT] });
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .set("X-DFIR-Key", "secret")
+      .send({ events: [THOR_EVENT] });
     expect(res.status).toBe(423);
     expect(res.body.error).toMatch(/archived/i);
   });
 
   it("accepts a Bearer token too", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
-    const res = await request(app).post("/cases/c1/push").set("Authorization", "Bearer secret").send({ events: [THOR_EVENT] });
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .set("Authorization", "Bearer secret")
+      .send({ events: [THOR_EVENT] });
     expect(res.status).toBe(202);
   });
 
-  it("accepts a raw artifact-map body whole", async () => {
-    const { app, stateStore } = await makeApp({ pushToken: "secret" });
-    const map = { "Windows.Detection.Sigma": [{
-      _Source: "Windows.Detection.Sigma",
-      Rule: { Title: "Susp", Level: "high", Tags: ["attack.t1059"] },
-      System: { EventID: 1, Channel: "Microsoft-Windows-Sysmon/Operational", Computer: "WS01", TimeCreated: "2026-06-13T10:00:00Z" },
-      EventData: { Image: "C:\\evil.exe" },
-    }] };
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send(map);
-    expect(res.status).toBe(202);
-    expect(res.body.kind).toBe("velociraptor");
-    expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  }, POLL_TIMEOUT_MS * 2);
+  it(
+    "accepts a raw artifact-map body whole",
+    async () => {
+      const { app, stateStore } = await makeApp({ pushToken: "secret" });
+      const map = {
+        "Windows.Detection.Sigma": [
+          {
+            _Source: "Windows.Detection.Sigma",
+            Rule: { Title: "Susp", Level: "high", Tags: ["attack.t1059"] },
+            System: {
+              EventID: 1,
+              Channel: "Microsoft-Windows-Sysmon/Operational",
+              Computer: "WS01",
+              TimeCreated: "2026-06-13T10:00:00Z",
+            },
+            EventData: { Image: "C:\\evil.exe" },
+          },
+        ],
+      };
+      const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send(map);
+      expect(res.status).toBe(202);
+      expect(res.body.kind).toBe("velociraptor");
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("authorizes with a per-case token generated via the API", async () => {
-    const { app } = await makeApp({});   // no global token
+    const { app } = await makeApp({}); // no global token
     const gen = await request(app).post("/cases/c1/push-token/generate");
     expect(gen.status).toBe(201);
     const token = gen.body.token as string;
     expect(token).toMatch(/^[0-9a-f]{32}$/);
 
     // wrong/no key still rejected
-    expect((await request(app).post("/cases/c1/push").send({ events: [THOR_EVENT] })).status).toBe(401);
+    expect(
+      (
+        await request(app)
+          .post("/cases/c1/push")
+          .send({ events: [THOR_EVENT] })
+      ).status,
+    ).toBe(401);
     // correct per-case key accepted
-    const ok = await request(app).post("/cases/c1/push").set("X-DFIR-Key", token).send({ events: [THOR_EVENT] });
+    const ok = await request(app)
+      .post("/cases/c1/push")
+      .set("X-DFIR-Key", token)
+      .send({ events: [THOR_EVENT] });
     expect(ok.status).toBe(202);
   });
 
@@ -134,23 +187,36 @@ describe("POST /cases/:id/push — generic push ingest", () => {
 
   it("404s an unknown case (even with a valid token)", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
-    const res = await request(app).post("/cases/nope/push").set("X-DFIR-Key", "secret").send({ events: [THOR_EVENT] });
+    const res = await request(app)
+      .post("/cases/nope/push")
+      .set("X-DFIR-Key", "secret")
+      .send({ events: [THOR_EVENT] });
     expect(res.status).toBe(404);
   });
 
   it("400s an undetectable payload", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "x", events: [] });
+    const res = await request(app)
+      .post("/cases/c1/push")
+      .set("X-DFIR-Key", "secret")
+      .send({ source: "x", events: [] });
     // empty events array → empty payload "[]" still detects as something? assert it's a 4xx either way
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
   });
 
-  it("accepts push to a password-protected (locked) case with a valid push token", async () => {
-    const { app, stateStore } = await makeApp({ pushToken: "secret" });
-    await request(app).post("/cases/c1/password").send({ newPassword: "case-secret" });
-    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "siem", events: [THOR_EVENT] });
-    expect(res.status).toBe(202);
-    expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  }, POLL_TIMEOUT_MS * 2);
+  it(
+    "accepts push to a password-protected (locked) case with a valid push token",
+    async () => {
+      const { app, stateStore } = await makeApp({ pushToken: "secret" });
+      await request(app).post("/cases/c1/password").send({ newPassword: "case-secret" });
+      const res = await request(app)
+        .post("/cases/c1/push")
+        .set("X-DFIR-Key", "secret")
+        .send({ source: "siem", events: [THOR_EVENT] });
+      expect(res.status).toBe(202);
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 });

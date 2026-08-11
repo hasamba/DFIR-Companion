@@ -32,7 +32,8 @@ function suggestion(over: Partial<MemoryNextStep> = {}): MemoryNextStep {
     anomaly: "svchost.exe (PID 1234) is parented by explorer.exe, not services.exe",
     command: "vol -f <image> windows.malfind --pid 1234",
     plugin: "windows.malfind",
-    rationale: "A mis-parented svchost is a strong injection signal; dump executable private memory and yara-scan it.",
+    rationale:
+      "A mis-parented svchost is a strong injection signal; dump executable private memory and yara-scan it.",
     severity: "High",
     pid: "1234",
     mitreTechniques: ["T1055"],
@@ -52,7 +53,7 @@ describe("memoryNextStepResponseSchema", () => {
       suggestions: [{ anomaly: "x", command: "vol -f <image> windows.netscan", severity: "Catastrophic" }],
     });
     expect(parsed.suggestions[0].severity).toBe("Medium"); // unknown enum → fallback
-    expect(parsed.suggestions[0].rationale).toBe("");        // missing → ""
+    expect(parsed.suggestions[0].rationale).toBe(""); // missing → ""
     expect(parsed.suggestions[0].pid).toBe("");
     expect(parsed.suggestions[0].mitreTechniques).toEqual([]);
   });
@@ -67,8 +68,8 @@ describe("sanitizeMemoryNextSteps", () => {
   it("drops suggestions with no command or no anomaly", () => {
     const out = sanitizeMemoryNextSteps([
       suggestion(),
-      suggestion({ command: "   " }),   // empty command → dropped
-      suggestion({ anomaly: "" }),       // empty anomaly → dropped
+      suggestion({ command: "   " }), // empty command → dropped
+      suggestion({ anomaly: "" }), // empty anomaly → dropped
     ]);
     expect(out).toHaveLength(1);
   });
@@ -140,9 +141,9 @@ describe("renderMemoryEvidence", () => {
       event({ description: "Sysmon: ignored", severity: "Critical", sources: ["Sysmon"] }),
     ]);
     const lines = text.split("\n");
-    expect(lines[0]).toContain("malfind");        // High sorts before Info
+    expect(lines[0]).toContain("malfind"); // High sorts before Info
     expect(lines[0].startsWith("[High]")).toBe(true);
-    expect(text).not.toContain("Sysmon");          // non-memory excluded
+    expect(text).not.toContain("Sysmon"); // non-memory excluded
   });
 
   it("returns a placeholder when there is no memory evidence", () => {

@@ -43,10 +43,7 @@ beforeEach(async () => {
   stateStore = new StateStore(cases);
   await stateStore.save({
     ...emptyState("c1"),
-    findings: [
-      makeFinding({ id: "f-confirmed" }),
-      makeFinding({ id: "f-open", status: "open" }),
-    ],
+    findings: [makeFinding({ id: "f-confirmed" }), makeFinding({ id: "f-open", status: "open" })],
   });
 
   complianceControlStore = new ComplianceControlStore(cases);
@@ -119,8 +116,9 @@ describe("GET /cases/:id/compliance", () => {
     expect(res.body.discoveredAt).toBe("2026-03-05T00:00:00.000Z");
 
     const byControl = Object.fromEntries(
-      (res.body.results[0].frameworks as Array<{ control: string; deadline?: { dueAt: string } }>)
-        .map((r) => [r.control, r]),
+      (res.body.results[0].frameworks as Array<{ control: string; deadline?: { dueAt: string } }>).map(
+        (r) => [r.control, r],
+      ),
     );
     // GDPR Art. 33: +72 calendar hours.
     expect(byControl["Art. 33"].deadline?.dueAt).toBe("2026-03-08T00:00:00.000Z");
@@ -139,8 +137,9 @@ describe("GET /cases/:id/compliance", () => {
       .expect(200);
 
     const res = await request(app).get("/cases/c1/compliance");
-    const frameworks = (res.body.results[0].frameworks as Array<{ framework: string }>)
-      .map((r) => r.framework);
+    const frameworks = (res.body.results[0].frameworks as Array<{ framework: string }>).map(
+      (r) => r.framework,
+    );
     expect([...new Set(frameworks)]).toEqual(["GDPR"]);
     // The filter must not hide its own options — the roster comes from the unfiltered mapping.
     expect(res.body.availableFrameworks).toEqual(
@@ -191,9 +190,7 @@ describe("/cases/:id/compliance/control", () => {
   });
 
   it("400s when frameworks is not an array of strings", async () => {
-    const res = await request(app)
-      .patch("/cases/c1/compliance/control")
-      .send({ frameworks: "GDPR" });
+    const res = await request(app).patch("/cases/c1/compliance/control").send({ frameworks: "GDPR" });
     expect(res.status).toBe(400);
   });
 

@@ -1,12 +1,21 @@
 {
+  "analysis/anonymize.ts": 850,
   "analysis/caseSqliteWorker.ts": 812,
-  "analysis/memoryImport.ts": 1264,
-  "analysis/seedDemoCase.ts": 819,
-  "analysis/siemImport.ts": 1346,
-  "analysis/velociraptorImport.ts": 1503,
-  "integrations/velociraptor/velociraptorApi.ts": 1086,
+  "analysis/evidenceGraph.ts": 860,
+  "analysis/memoryImport.ts": 1577,
+  "analysis/seedDemoCase.ts": 2700,
+  "analysis/siemImport.ts": 1778,
+  "analysis/velociraptorImport.ts": 1901,
+  "integrations/velociraptor/velociraptorApi.ts": 1291,
   "public/dashboard.html#inline-js": 1964,
   "public/js/dashboard-velo-triage.js": 815,
-  "reports/markdown.ts": 1461,
-  "routes/import.ts": 1766
+  "reports/markdown.ts": 1597,
+  "reports/reportWriter.ts": 862,
+  "routes/aiSynthesis.ts": 918,
+  "routes/caseLifecycle.ts": 924,
+  "routes/findings.ts": 835,
+  "routes/import.ts": 3209,
+  "routes/mcp.ts": 913,
+  "routes/threatIntel.ts": 952,
+  "routes/velociraptor.ts": 1127
 }

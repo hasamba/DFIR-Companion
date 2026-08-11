@@ -1,15 +1,34 @@
-import type { CustomerExposureProvider, CustomerExposureResult, ExposureTargetType } from "../analysis/customerExposure.js";
+import type {
+  CustomerExposureProvider,
+  CustomerExposureResult,
+  ExposureTargetType,
+} from "../analysis/customerExposure.js";
 import type { FetchFn } from "../enrichment/provider.js";
 import { LeakCheckClient, type LeakCheckRecord } from "./leakcheck/leakcheckClient.js";
 
-function asArray(v: unknown): unknown[] { return Array.isArray(v) ? v : []; }
-function isObject(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null; }
-function str(v: unknown): string { return v === undefined || v === null ? "" : String(v); }
-function unique(values: string[]): string[] { return [...new Set(values.map((v) => v.trim()).filter(Boolean))]; }
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+function str(v: unknown): string {
+  return v === undefined || v === null ? "" : String(v);
+}
+function unique(values: string[]): string[] {
+  return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+}
 
 function secretPresent(record: Record<string, unknown>): boolean {
-  return ["password", "passwords", "hash", "hashed_password", "credential", "credentials", "credential_status"]
-    .some((k) => String(record[k] ?? "").trim().length > 0);
+  return [
+    "password",
+    "passwords",
+    "hash",
+    "hashed_password",
+    "credential",
+    "credentials",
+    "credential_status",
+  ].some((k) => String(record[k] ?? "").trim().length > 0);
 }
 
 export interface LeakCheckExposureOptions {
@@ -30,7 +49,11 @@ export class LeakCheckExposureProvider implements CustomerExposureProvider {
     this.domainLimit = opts.domainLimit ?? 1000;
   }
 
-  private map(targetType: ExposureTargetType, target: string, rows: LeakCheckRecord[]): CustomerExposureResult[] {
+  private map(
+    targetType: ExposureTargetType,
+    target: string,
+    rows: LeakCheckRecord[],
+  ): CustomerExposureResult[] {
     return rows.map((row) => {
       const record = row as Record<string, unknown>;
       return {
@@ -90,7 +113,8 @@ export class HaveIBeenPwnedExposureProvider implements CustomerExposureProvider 
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (res.status === 404) return [];
-    if (res.status === 401 || res.status === 403) throw new Error("HIBP auth failed or domain is not verified for this account");
+    if (res.status === 401 || res.status === 403)
+      throw new Error("HIBP auth failed or domain is not verified for this account");
     if (res.status === 429) throw new Error("HIBP rate limit");
     if (!res.ok) throw new Error(`HIBP HTTP ${res.status}`);
     return res.json();
@@ -98,19 +122,21 @@ export class HaveIBeenPwnedExposureProvider implements CustomerExposureProvider 
 
   async lookupEmail(email: string): Promise<CustomerExposureResult[]> {
     const json = await this.get(`/breachedAccount/${encodeURIComponent(email)}?truncateResponse=false`);
-    return asArray(json).filter(isObject).map((b) => {
-      const dataClasses = asArray(b.DataClasses).map(str).filter(Boolean);
-      return {
-        provider: this.name,
-        targetType: "email",
-        target: email,
-        email,
-        breach: str(b.Name || b.Title) || "HIBP breach",
-        breachDate: str(b.BreachDate) || undefined,
-        exposedData: dataClasses,
-        secretPresent: dataClasses.some((c) => /password|credential/i.test(c)),
-      };
-    });
+    return asArray(json)
+      .filter(isObject)
+      .map((b) => {
+        const dataClasses = asArray(b.DataClasses).map(str).filter(Boolean);
+        return {
+          provider: this.name,
+          targetType: "email",
+          target: email,
+          email,
+          breach: str(b.Name || b.Title) || "HIBP breach",
+          breachDate: str(b.BreachDate) || undefined,
+          exposedData: dataClasses,
+          secretPresent: dataClasses.some((c) => /password|credential/i.test(c)),
+        };
+      });
   }
 
   async lookupDomain(domain: string): Promise<CustomerExposureResult[]> {
@@ -151,7 +177,11 @@ export class DeHashedExposureProvider implements CustomerExposureProvider {
     this.timeoutMs = opts.timeoutMs ?? 20_000;
   }
 
-  private async search(query: string, targetType: ExposureTargetType, target: string): Promise<CustomerExposureResult[]> {
+  private async search(
+    query: string,
+    targetType: ExposureTargetType,
+    target: string,
+  ): Promise<CustomerExposureResult[]> {
     const res = await this.fetchFn(`${this.base}/search`, {
       method: "POST",
       headers: {
@@ -164,7 +194,9 @@ export class DeHashedExposureProvider implements CustomerExposureProvider {
     });
     if (res.status === 401 || res.status === 403) {
       const body = await res.text().catch(() => "");
-      throw new Error(`DeHashed auth failed (${res.status})${body ? `: ${body.slice(0, 200)}` : ""} — check DFIR_DEHASHED_KEY (v2 API key, sent as the DeHashed-Api-Key header)`);
+      throw new Error(
+        `DeHashed auth failed (${res.status})${body ? `: ${body.slice(0, 200)}` : ""} — check DFIR_DEHASHED_KEY (v2 API key, sent as the DeHashed-Api-Key header)`,
+      );
     }
     if (res.status === 429) throw new Error("DeHashed rate limit");
     if (res.status === 404) return [];
@@ -172,10 +204,15 @@ export class DeHashedExposureProvider implements CustomerExposureProvider {
     const json = (await res.json()) as Record<string, unknown>;
     const rows = asArray(json.entries ?? json.data ?? json.results).filter(isObject);
     return rows.map((row) => {
-      const data = unique(asArray(row.fields).map(str).concat(
-        ["email", "username", "phone", "address", "ip_address", "password", "hash"]
-          .filter((k) => row[k] !== undefined),
-      ));
+      const data = unique(
+        asArray(row.fields)
+          .map(str)
+          .concat(
+            ["email", "username", "phone", "address", "ip_address", "password", "hash"].filter(
+              (k) => row[k] !== undefined,
+            ),
+          ),
+      );
       return {
         provider: this.name,
         targetType,
@@ -229,39 +266,48 @@ export class ShodanExposureProvider implements CustomerExposureProvider {
   // dropping it made `new ShodanExposureProvider(...).lookupEmail(addr)` a compile error for
   // anyone holding the class rather than the interface.
   async lookupEmail(_email: string): Promise<CustomerExposureResult[]> {
-    return [];   // Shodan maps exposed hosts/services, not email breaches
+    return []; // Shodan maps exposed hosts/services, not email breaches
   }
 
   async lookupDomain(domain: string): Promise<CustomerExposureResult[]> {
-    const url = `${this.base}/shodan/host/search?key=${encodeURIComponent(this.opts.apiKey)}`
-      + `&query=${encodeURIComponent(`hostname:${domain}`)}`;
-    const res = await this.fetchFn(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(this.timeoutMs) });
-    if (res.status === 401 || res.status === 403) throw new Error("Shodan auth failed (check DFIR_SHODAN_KEY)");
+    const url =
+      `${this.base}/shodan/host/search?key=${encodeURIComponent(this.opts.apiKey)}` +
+      `&query=${encodeURIComponent(`hostname:${domain}`)}`;
+    const res = await this.fetchFn(url, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (res.status === 401 || res.status === 403)
+      throw new Error("Shodan auth failed (check DFIR_SHODAN_KEY)");
     if (res.status === 429) throw new Error("Shodan rate limit / out of query credits");
     if (!res.ok) throw new Error(`Shodan HTTP ${res.status}`);
     const json = (await res.json()) as { matches?: unknown };
-    return asArray(json.matches).filter(isObject).slice(0, this.maxMatches).map((m) => {
-      const ip = str(m.ip_str);
-      const port = str(m.port);
-      const transport = str(m.transport) || "tcp";
-      const service = [str(m.product), str(m.version)].filter(Boolean).join(" ") || str(m.transport) || "service";
-      const vulns = isObject(m.vulns) ? Object.keys(m.vulns) : asArray(m.vulns).map(str).filter(Boolean);
-      const exposedData = unique([
-        port ? `${port}/${transport}` : "",
-        str(m.product),
-        str(m.org),
-        ...vulns.map((v) => `vuln:${v}`),
-      ]);
-      return {
-        provider: this.name,
-        targetType: "domain",
-        target: domain,
-        breach: `${ip}:${port} ${service}`.trim(),
-        breachDate: str(m.timestamp) || undefined,
-        exposedData,
-        sourceUrl: ip ? `https://www.shodan.io/host/${encodeURIComponent(ip)}` : undefined,
-        secretPresent: false,   // exposed services/CVEs, not credentials (CVEs surface in exposedData)
-      };
-    });
+    return asArray(json.matches)
+      .filter(isObject)
+      .slice(0, this.maxMatches)
+      .map((m) => {
+        const ip = str(m.ip_str);
+        const port = str(m.port);
+        const transport = str(m.transport) || "tcp";
+        const service =
+          [str(m.product), str(m.version)].filter(Boolean).join(" ") || str(m.transport) || "service";
+        const vulns = isObject(m.vulns) ? Object.keys(m.vulns) : asArray(m.vulns).map(str).filter(Boolean);
+        const exposedData = unique([
+          port ? `${port}/${transport}` : "",
+          str(m.product),
+          str(m.org),
+          ...vulns.map((v) => `vuln:${v}`),
+        ]);
+        return {
+          provider: this.name,
+          targetType: "domain",
+          target: domain,
+          breach: `${ip}:${port} ${service}`.trim(),
+          breachDate: str(m.timestamp) || undefined,
+          exposedData,
+          sourceUrl: ip ? `https://www.shodan.io/host/${encodeURIComponent(ip)}` : undefined,
+          secretPresent: false, // exposed services/CVEs, not credentials (CVEs surface in exposedData)
+        };
+      });
   }
 }

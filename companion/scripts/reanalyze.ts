@@ -43,7 +43,9 @@ function opt(name: string, fallback: number): number {
 }
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
-  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--")
+    ? process.argv[i + 1]
+    : undefined;
 }
 
 async function main(): Promise<void> {
@@ -73,7 +75,13 @@ async function main(): Promise<void> {
   const synthBaseUrl = strOpt("synth-base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? baseUrl;
   const usingTwoTier = synthModel !== model || synthProvName !== provName;
   const synthesisProvider = usingTwoTier
-    ? buildProviderFrom({ provider: synthProvName, model: synthModel, apiKey: synthKey, baseUrl: synthBaseUrl, imageDetail })
+    ? buildProviderFrom({
+        provider: synthProvName,
+        model: synthModel,
+        apiKey: synthKey,
+        baseUrl: synthBaseUrl,
+        imageDetail,
+      })
     : provider;
 
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
@@ -82,10 +90,26 @@ async function main(): Promise<void> {
 
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
-  const pipeline = new AnalysisPipeline({ provider, synthesisProvider, stateStore, falsePositiveStore: new FalsePositiveStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store) });
+  const pipeline = new AnalysisPipeline({
+    provider,
+    synthesisProvider,
+    stateStore,
+    falsePositiveStore: new FalsePositiveStore(store),
+    scopeStore: new ScopeStore(store),
+    imageLoader: makeImageLoader(store),
+    anonStore: new AnonControlStore(store),
+    customEntitiesStore: new CustomEntitiesStore(store),
+    discoveredStore: new DiscoveredEntitiesStore(store),
+    synthMetaStore: new SynthMetaStore(store),
+    hypothesisStore: new HypothesisStore(store),
+  });
 
   const logText = await readFile(store.capturesLogPath(caseId), "utf8");
-  const all: CaptureMetadata[] = logText.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const all: CaptureMetadata[] = logText
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
 
   // analyzeWindow skips isDuplicate; with --all we force them in by clearing the flag.
   const pool = includeAll
@@ -93,22 +117,29 @@ async function main(): Promise<void> {
     : all.filter((c) => !c.isDuplicate);
 
   const windows = Math.ceil(pool.length / windowSize);
-  console.log(`Case "${caseId}" — extraction: ${provName}/${model}` +
-    (usingTwoTier ? `  |  synthesis: ${synthProvName}/${synthModel}` : ""));
-  console.log(`Re-analyzing ${pool.length} screenshot(s) in ${windows} window(s) of ${windowSize}` +
-    `${includeAll ? " (including duplicates)" : ""}${reset ? " (state reset)" : " (merging into existing state)"}.`);
+  console.log(
+    `Case "${caseId}" — extraction: ${provName}/${model}` +
+      (usingTwoTier ? `  |  synthesis: ${synthProvName}/${synthModel}` : ""),
+  );
+  console.log(
+    `Re-analyzing ${pool.length} screenshot(s) in ${windows} window(s) of ${windowSize}` +
+      `${includeAll ? " (including duplicates)" : ""}${reset ? " (state reset)" : " (merging into existing state)"}.`,
+  );
   console.log(`This makes ~${windows} AI call(s) and will use your API quota.\n`);
 
   if (reset) await stateStore.save(emptyState(caseId));
 
-  let ok = 0, failed = 0;
+  let ok = 0,
+    failed = 0;
   for (let i = 0; i < pool.length; i += windowSize) {
     const win = pool.slice(i, i + windowSize);
     const n = Math.floor(i / windowSize) + 1;
     try {
       const state = await pipeline.analyzeWindow(caseId, win);
       ok++;
-      console.log(`  window ${n}/${windows} ✓  findings=${state.findings.length} timeline=${state.timeline.length} iocs=${state.iocs.length}`);
+      console.log(
+        `  window ${n}/${windows} ✓  findings=${state.findings.length} timeline=${state.timeline.length} iocs=${state.iocs.length}`,
+      );
     } catch (err) {
       failed++;
       console.log(`  window ${n}/${windows} ✗  ${(err as Error).message}`);
@@ -129,7 +160,9 @@ async function main(): Promise<void> {
 
   const final = await stateStore.load(caseId);
   console.log(`\nDone. ${ok} window(s) ok, ${failed} failed.`);
-  console.log(`Final state: findings=${final.findings.length} iocs=${final.iocs.length} forensicEvents=${final.forensicTimeline.length} techniques=${final.mitreTechniques.length}`);
+  console.log(
+    `Final state: findings=${final.findings.length} iocs=${final.iocs.length} forensicEvents=${final.forensicTimeline.length} techniques=${final.mitreTechniques.length}`,
+  );
   console.log(`Attacker path: ${final.attackerPath ? "yes" : "(empty — try a stronger model)"}`);
   console.log(`Open the dashboard and connect to "${caseId}" to view, or run: npm run coverage -- ${caseId}`);
 }

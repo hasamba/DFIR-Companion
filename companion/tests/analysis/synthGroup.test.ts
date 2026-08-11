@@ -141,7 +141,9 @@ describe("env options", () => {
       gapSeconds: DEFAULT_GROUP_GAP_SECONDS,
       minRepeats: DEFAULT_GROUP_MIN_REPEATS,
     });
-    expect(groupEnvOptions({ DFIR_SYNTH_GROUP_GAP_SECONDS: "nope" }).gapSeconds).toBe(DEFAULT_GROUP_GAP_SECONDS);
+    expect(groupEnvOptions({ DFIR_SYNTH_GROUP_GAP_SECONDS: "nope" }).gapSeconds).toBe(
+      DEFAULT_GROUP_GAP_SECONDS,
+    );
     expect(groupEnvOptions({ DFIR_SYNTH_GROUP_MIN_REPEATS: "1" }).minRepeats).toBe(DEFAULT_GROUP_MIN_REPEATS);
   });
 
@@ -197,18 +199,20 @@ describe("promptCandidates", () => {
 
 describe("detectionRuleHead", () => {
   it("extracts the rule identity and drops the per-event detail", () => {
-    expect(detectionRuleHead("Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell - Computer: ws-01"))
-      .toBe("Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell");
+    expect(
+      detectionRuleHead("Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell - Computer: ws-01"),
+    ).toBe("Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell");
   });
 
   it("keeps the whole header when there is no per-event detail", () => {
-    expect(detectionRuleHead("Velociraptor [Windows.Detection.Yara] Yara: Mimikatz_Generic"))
-      .toBe("Velociraptor [Windows.Detection.Yara] Yara: Mimikatz_Generic");
+    expect(detectionRuleHead("Velociraptor [Windows.Detection.Yara] Yara: Mimikatz_Generic")).toBe(
+      "Velociraptor [Windows.Detection.Yara] Yara: Mimikatz_Generic",
+    );
   });
 
   it("returns null for descriptions that are not in the detection format", () => {
-    expect(detectionRuleHead("robocopy C:\\data \\\\srv\\bak /mir")).toBeNull();      // no bracket, no colon
-    expect(detectionRuleHead("A file was written [somewhere]")).toBeNull();            // bracket but no ": "
+    expect(detectionRuleHead("robocopy C:\\data \\\\srv\\bak /mir")).toBeNull(); // no bracket, no colon
+    expect(detectionRuleHead("A file was written [somewhere]")).toBeNull(); // bracket but no ": "
     expect(detectionRuleHead("")).toBeNull();
   });
 });
@@ -236,7 +240,10 @@ describe("rule-identity grouping", () => {
   });
 
   it("never merges two different rules", () => {
-    const groups = groupDetections([...sigmaHits("Encoded PowerShell", 6), ...sigmaHits("Mimikatz Access", 6)]);
+    const groups = groupDetections([
+      ...sigmaHits("Encoded PowerShell", 6),
+      ...sigmaHits("Mimikatz Access", 6),
+    ]);
     expect(groups).toHaveLength(2);
   });
 
@@ -294,8 +301,12 @@ describe("grouping + selection end to end", () => {
     // it is the same normalization the prevalence/rarity baseline already relies on, and real detection
     // titles carry words. Asserted so the behaviour is a recorded decision, not an accident.
     const events = [
-      ...Array.from({ length: 4 }, (_, i) => ev(`x${i}`, `2026-05-20T09:0${i}:00Z`, "High", "Sigma rule 1 matched")),
-      ...Array.from({ length: 4 }, (_, i) => ev(`y${i}`, `2026-05-20T09:1${i}:00Z`, "High", "Sigma rule 2 matched")),
+      ...Array.from({ length: 4 }, (_, i) =>
+        ev(`x${i}`, `2026-05-20T09:0${i}:00Z`, "High", "Sigma rule 1 matched"),
+      ),
+      ...Array.from({ length: 4 }, (_, i) =>
+        ev(`y${i}`, `2026-05-20T09:1${i}:00Z`, "High", "Sigma rule 2 matched"),
+      ),
     ];
     expect(groupDetections(events)).toHaveLength(1);
   });

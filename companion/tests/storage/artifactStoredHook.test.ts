@@ -15,7 +15,9 @@ beforeEach(async () => {
   store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   seen = [];
-  store.onArtifactStored(async (artifact) => { seen.push(artifact); });
+  store.onArtifactStored(async (artifact) => {
+    seen.push(artifact);
+  });
 });
 
 describe("CaseStore artifact-stored hook", () => {
@@ -30,7 +32,11 @@ describe("CaseStore artifact-stored hook", () => {
   });
 
   it("passes the caller's provenance through to the listener", async () => {
-    const provenance = { source: "https://mail.example.com/inbox", trigger: "navigation", collectedBy: "extension" };
+    const provenance = {
+      source: "https://mail.example.com/inbox",
+      trigger: "navigation",
+      collectedBy: "extension",
+    };
 
     await store.saveScreenshot("c1", "000001_shot.webp", Buffer.from("x"), provenance);
 
@@ -43,7 +49,13 @@ describe("CaseStore artifact-stored hook", () => {
     const path = await store.saveImport("c1", "evidence.csv", text);
 
     expect(seen).toEqual([
-      { caseId: "c1", path, sha256: sha256(Buffer.from(text, "utf8")), kind: "import", provenance: undefined },
+      {
+        caseId: "c1",
+        path,
+        sha256: sha256(Buffer.from(text, "utf8")),
+        kind: "import",
+        provenance: undefined,
+      },
     ]);
   });
 
@@ -57,7 +69,9 @@ describe("CaseStore artifact-stored hook", () => {
   });
 
   it("surfaces a listener failure to the caller rather than dropping the record silently", async () => {
-    store.onArtifactStored(async () => { throw new Error("custody log is full"); });
+    store.onArtifactStored(async () => {
+      throw new Error("custody log is full");
+    });
 
     await expect(store.saveImport("c1", "evidence.csv", "data")).rejects.toThrow("custody log is full");
   });

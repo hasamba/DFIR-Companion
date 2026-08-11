@@ -54,7 +54,9 @@ describe("global case-id gate — routes with NO prior isValidCaseId coverage (#
   });
 
   it("blocks a bad id on pushNotify.ts (POST /cases/:id/push) — the write-primitive route named in #248's own threat model", async () => {
-    const res = await request(app).post(`/cases/${encodeURIComponent(BAD_ID)}/push`).send({ source: "x", events: [] });
+    const res = await request(app)
+      .post(`/cases/${encodeURIComponent(BAD_ID)}/push`)
+      .send({ source: "x", events: [] });
     expect(res.status).toBe(400);
   });
 
@@ -66,7 +68,9 @@ describe("global case-id gate — routes with NO prior isValidCaseId coverage (#
 
 describe("global case-id gate — doesn't break routes that already had their own check", () => {
   it("still 400s (via whichever gate fires first) for a bad id on casePassword.ts's /unlock", async () => {
-    const res = await request(app).post(`/cases/${encodeURIComponent(BAD_ID)}/unlock`).send({ password: "x" });
+    const res = await request(app)
+      .post(`/cases/${encodeURIComponent(BAD_ID)}/unlock`)
+      .send({ password: "x" });
     expect(res.status).toBe(400);
   });
 

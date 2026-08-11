@@ -59,10 +59,7 @@ export async function ocrRedactImage(
 
   const anon = createAnonymizer(policy, known);
   const matched = words.filter(
-    (w) =>
-      w.confidence >= confidenceThreshold &&
-      w.text.trim().length > 0 &&
-      anon.apply(w.text) !== w.text,
+    (w) => w.confidence >= confidenceThreshold && w.text.trim().length > 0 && anon.apply(w.text) !== w.text,
   );
   // What the anonymizer tokenized out of this image — surfaced into the case's auto-discovery
   // list. Captured before the bbox filter so an entity is recorded even if it couldn't be drawn.
@@ -112,20 +109,28 @@ export class TesseractOcrRunner implements OcrRunner {
     const worker = await createWorker("eng", 1, {
       // Swallow the library's own throw; the recognize() call below rejects so the
       // caller's try/catch handles it as a normal failed promise.
-      errorHandler: (_err: unknown) => { /* contained — see comment above */ },
+      errorHandler: (_err: unknown) => {
+        /* contained — see comment above */
+      },
     });
     try {
       const { data } = await worker.recognize(imageBuffer);
-      return (data.words ?? []).map((w: { text: string; confidence: number; bbox: { x0: number; y0: number; x1: number; y1: number } }) => ({
-        text: w.text.trim(),
-        bbox: {
-          x: w.bbox.x0,
-          y: w.bbox.y0,
-          w: w.bbox.x1 - w.bbox.x0,
-          h: w.bbox.y1 - w.bbox.y0,
-        },
-        confidence: w.confidence,
-      }));
+      return (data.words ?? []).map(
+        (w: {
+          text: string;
+          confidence: number;
+          bbox: { x0: number; y0: number; x1: number; y1: number };
+        }) => ({
+          text: w.text.trim(),
+          bbox: {
+            x: w.bbox.x0,
+            y: w.bbox.y0,
+            w: w.bbox.x1 - w.bbox.x0,
+            h: w.bbox.y1 - w.bbox.y0,
+          },
+          confidence: w.confidence,
+        }),
+      );
     } finally {
       await worker.terminate();
     }

@@ -45,7 +45,10 @@ async function sawStateBroadcast(query: string, headers: Record<string, string> 
     socket.on("error", () => resolve("closed"));
   });
   if (settled === "open") {
-    hub.broadcast({ caseId: "locked", findings: [{ secret: "exfiltrated" }] } as unknown as InvestigationState);
+    hub.broadcast({
+      caseId: "locked",
+      findings: [{ secret: "exfiltrated" }],
+    } as unknown as InvestigationState);
     await new Promise((r) => setTimeout(r, 50)); // let any message land
   }
   socket.close();

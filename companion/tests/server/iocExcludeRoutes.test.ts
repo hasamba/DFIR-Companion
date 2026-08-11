@@ -55,8 +55,12 @@ describe("IOC exclude list routes (per-case)", () => {
 
   it("rejects an invalid rule (400) and a missing rule on delete (404)", async () => {
     const { app } = await harness();
-    expect((await request(app).post("/cases/c1/ioc-exclude").send({ match: "regex", pattern: "(" })).status).toBe(400);
-    expect((await request(app).post("/cases/c1/ioc-exclude").send({ match: "bogus", pattern: "x" })).status).toBe(400);
+    expect(
+      (await request(app).post("/cases/c1/ioc-exclude").send({ match: "regex", pattern: "(" })).status,
+    ).toBe(400);
+    expect(
+      (await request(app).post("/cases/c1/ioc-exclude").send({ match: "bogus", pattern: "x" })).status,
+    ).toBe(400);
     expect((await request(app).delete("/cases/c1/ioc-exclude/ghost")).status).toBe(404);
   });
 
@@ -71,6 +75,8 @@ describe("IOC exclude list routes (per-case)", () => {
   it("returns 501 when no state store is configured", async () => {
     const store = new CaseStore(await tmp());
     const app = createApp(store);
-    expect((await request(app).post("/cases/c1/ioc-exclude").send({ match: "exact", pattern: "x" })).status).toBe(501);
+    expect(
+      (await request(app).post("/cases/c1/ioc-exclude").send({ match: "exact", pattern: "x" })).status,
+    ).toBe(501);
   });
 });

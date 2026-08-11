@@ -21,10 +21,10 @@ const severityEnum = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 
 // One proposed fleet-hunt. Every field is lenient so one off value never rejects the whole reply.
 export const huntSuggestionSchema = z.object({
-  title: z.string().catch(""),               // short hunt name, e.g. "Hunt for ASPX webshells in web roots"
-  rationale: z.string().catch(""),           // why: which finding triggered it + what the query looks for + how to triage hits
-  vql: z.string().catch(""),                 // a single CLIENT-side Velociraptor VQL statement, run on each endpoint
-  severity: severityEnum.catch("Medium"),    // priority of the underlying threat (drives display ordering)
+  title: z.string().catch(""), // short hunt name, e.g. "Hunt for ASPX webshells in web roots"
+  rationale: z.string().catch(""), // why: which finding triggered it + what the query looks for + how to triage hits
+  vql: z.string().catch(""), // a single CLIENT-side Velociraptor VQL statement, run on each endpoint
+  severity: severityEnum.catch("Medium"), // priority of the underlying threat (drives display ordering)
   mitreTechniques: z.array(z.string()).catch([]),
   relatedFindingIds: z.array(z.string()).catch([]),
 });
@@ -42,31 +42,47 @@ export type HuntSuggestionsResponse = z.infer<typeof huntSuggestionsResponseSche
 // high-signal list beats a wall of near-duplicate queries the analyst won't read.
 export const HUNT_SUGGEST_MAX_DEFAULT = 8;
 
-const MAX_VQL_LEN = 4000;        // a runaway query is a sign of a confused model; keep it pasteable
+const MAX_VQL_LEN = 4000; // a runaway query is a sign of a confused model; keep it pasteable
 const MAX_TITLE_LEN = 200;
 const MAX_RATIONALE_LEN = 2000;
 
 // IOC types that a VQL hunt can actually pivot on (a file / hash / process name / network
 // indicator). "other" IOCs carry no hunt value, so they're left out of the model's pivot list.
-const PIVOTABLE_IOC_TYPES: ReadonlySet<IOC["type"]> = new Set<IOC["type"]>(["hash", "file", "process", "domain", "ip", "url"]);
+const PIVOTABLE_IOC_TYPES: ReadonlySet<IOC["type"]> = new Set<IOC["type"]>([
+  "hash",
+  "file",
+  "process",
+  "domain",
+  "ip",
+  "url",
+]);
 
 // Drop unusable suggestions and clamp fields. A hunt with no VQL or no title is useless; a
 // suggestion list longer than `max` is trimmed. Pure — deterministic, no I/O. Order is preserved
 // (the pipeline hands events in the model's order; display sorting happens in the dashboard).
-export function sanitizeHuntSuggestions(raw: readonly HuntSuggestion[] | undefined, max: number = HUNT_SUGGEST_MAX_DEFAULT): HuntSuggestion[] {
+export function sanitizeHuntSuggestions(
+  raw: readonly HuntSuggestion[] | undefined,
+  max: number = HUNT_SUGGEST_MAX_DEFAULT,
+): HuntSuggestion[] {
   const out: HuntSuggestion[] = [];
   const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : HUNT_SUGGEST_MAX_DEFAULT;
   for (const s of raw ?? []) {
     const vql = String(s?.vql ?? "").trim();
     const title = String(s?.title ?? "").trim();
-    if (!vql || !title) continue;            // no query or no name → nothing to deploy
+    if (!vql || !title) continue; // no query or no name → nothing to deploy
     out.push({
       title: title.slice(0, MAX_TITLE_LEN),
-      rationale: String(s?.rationale ?? "").trim().slice(0, MAX_RATIONALE_LEN),
+      rationale: String(s?.rationale ?? "")
+        .trim()
+        .slice(0, MAX_RATIONALE_LEN),
       vql: vql.slice(0, MAX_VQL_LEN),
       severity: s?.severity ?? "Medium",
-      mitreTechniques: dedupeStrings((s?.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean)).slice(0, 20),
-      relatedFindingIds: dedupeStrings((s?.relatedFindingIds ?? []).map((i) => String(i).trim()).filter(Boolean)).slice(0, 20),
+      mitreTechniques: dedupeStrings(
+        (s?.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean),
+      ).slice(0, 20),
+      relatedFindingIds: dedupeStrings(
+        (s?.relatedFindingIds ?? []).map((i) => String(i).trim()).filter(Boolean),
+      ).slice(0, 20),
     });
     if (out.length >= cap) break;
   }
@@ -106,9 +122,7 @@ export function renderHuntIocs(iocs: readonly IOC[], perTypeLimit = 25): string 
     groups.set(ioc.type, list);
   }
   const order: IOC["type"][] = ["hash", "file", "process", "domain", "ip", "url"];
-  const lines = order
-    .filter((t) => groups.get(t)?.length)
-    .map((t) => `${t}: ${groups.get(t)!.join(", ")}`);
+  const lines = order.filter((t) => groups.get(t)?.length).map((t) => `${t}: ${groups.get(t)!.join(", ")}`);
   return lines.length ? lines.join("\n") : "(no pivotable IOCs)";
 }
 
@@ -122,4 +136,10 @@ export function hasHuntMaterial(state: InvestigationState): boolean {
 
 // Severity rank for display ordering (Critical first). Exposed so the dashboard and any report
 // stay consistent with the rest of the app's severity ordering.
-export const HUNT_SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+export const HUNT_SEVERITY_RANK: Record<Severity, number> = {
+  Critical: 0,
+  High: 1,
+  Medium: 2,
+  Low: 3,
+  Info: 4,
+};

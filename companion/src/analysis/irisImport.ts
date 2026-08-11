@@ -38,9 +38,9 @@ type Row = Record<string, unknown>;
 export interface IrisCaseData {
   irisCaseId?: number;
   caseName?: string;
-  assets: Row[];     // /case/assets/list rows
-  iocs: Row[];       // /case/ioc/list rows
-  timeline: Row[];   // /case/timeline/events rows
+  assets: Row[]; // /case/assets/list rows
+  iocs: Row[]; // /case/ioc/list rows
+  timeline: Row[]; // /case/timeline/events rows
 }
 
 export interface IrisImportOptions {
@@ -48,19 +48,19 @@ export interface IrisImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  includeAssets?: boolean;   // map IRIS assets to evidence events (default true)
+  includeAssets?: boolean; // map IRIS assets to evidence events (default true)
 }
 
 export interface IrisImportResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  timelineCount: number;   // timeline rows found
-  assetCount: number;      // asset rows found
-  iocRecords: number;      // ioc rows found
-  kept: number;            // events emitted (after aggregation + cap)
-  dropped: number;         // events not represented (below floor / capped)
-  groups: number;          // distinct event groups before the cap
-  iocCount: number;        // IOCs extracted
+  timelineCount: number; // timeline rows found
+  assetCount: number; // asset rows found
+  iocRecords: number; // ioc rows found
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // events not represented (below floor / capped)
+  groups: number; // distinct event groups before the cap
+  iocCount: number; // IOCs extracted
   caseName?: string;
   irisCaseId?: number;
 }
@@ -77,7 +77,12 @@ const COLOR_SEVERITY: Record<string, Severity> = {
 };
 
 const SEVERITY_WORDS: Record<string, Severity> = {
-  critical: "Critical", high: "High", medium: "Medium", low: "Low", info: "Info", informational: "Info",
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  info: "Info",
+  informational: "Info",
 };
 
 function severityFromTags(tags: string): Severity | undefined {
@@ -174,11 +179,15 @@ export function mapIrisAsset(row: Row): MappedEvent | null {
   const tags = str(getCI(row, "asset_tags"));
 
   const detail = [ip && `IP ${ip}`, domain && `domain ${domain}`, compromised && "COMPROMISED"]
-    .filter(Boolean).join(", ");
-  const description = (`IRIS asset: ${name}${detail ? ` (${detail})` : ""}${desc ? ` — ${desc}` : ""}`).slice(0, 600);
+    .filter(Boolean)
+    .join(", ");
+  const description = `IRIS asset: ${name}${detail ? ` (${detail})` : ""}${desc ? ` — ${desc}` : ""}`.slice(
+    0,
+    600,
+  );
 
   return {
-    timestamp: "",   // assets carry no event time
+    timestamp: "", // assets carry no event time
     description,
     severity: compromised ? "High" : "Info",
     mitre: mitreFrom(tags, desc),
@@ -210,10 +219,10 @@ function typeFromIrisName(name: string): SiemIoc["type"] | undefined {
 function typeFromValue(value: string): SiemIoc["type"] {
   const v = value.trim();
   if (/^https?:\/\//i.test(v)) return "url";
-  if (/[\\]/.test(v) || /^[a-z]:[\\/]/i.test(v)) return "file";   // backslash / Windows drive path
+  if (/[\\]/.test(v) || /^[a-z]:[\\/]/i.test(v)) return "file"; // backslash / Windows drive path
   if (cleanIp(v)) return "ip";
   if (HEX.test(v) && [32, 40, 64, 128].includes(v.length)) return "hash";
-  if (v.includes("/")) return "file";                              // unix path
+  if (v.includes("/")) return "file"; // unix path
   if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !v.includes(" ")) return "domain";
   return "other";
 }

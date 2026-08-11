@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import { parseSnortLog, looksLikeSnort, mapSnortLine } from "../../src/analysis/snortImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
-const SQLI = "05/14-12:26:09.500 [**] [1:2009714:9] ET WEB_SERVER Possible SQL Injection Attempt UNION SELECT [**] [Classification: web-application-attack] [Priority: 1] {TCP} 145.78.103.167:60278 -> 45.83.220.5:80";
-const PING = "05/14-12:08:14.605 [**] [1:366:1] PROTOCOL-ICMP PING BSDtype [**] [Classification: icmp-event] [Priority: 3] {ICMP} 37.75.195.175 -> 45.83.220.5";
+const SQLI =
+  "05/14-12:26:09.500 [**] [1:2009714:9] ET WEB_SERVER Possible SQL Injection Attempt UNION SELECT [**] [Classification: web-application-attack] [Priority: 1] {TCP} 145.78.103.167:60278 -> 45.83.220.5:80";
+const PING =
+  "05/14-12:08:14.605 [**] [1:366:1] PROTOCOL-ICMP PING BSDtype [**] [Classification: icmp-event] [Priority: 3] {ICMP} 37.75.195.175 -> 45.83.220.5";
 
 describe("looksLikeSnort", () => {
   it("recognizes a fast-alert log and rejects other logs", () => {
@@ -47,7 +49,7 @@ describe("parseSnortLog", () => {
     const dup = `${SQLI}\n${SQLI}\n${PING}`;
     const r = parseSnortLog(dup, { assumeYear: 2024 });
     expect(r.total).toBe(3);
-    expect(r.events).toHaveLength(2);                 // the two identical SQLi alerts collapse
+    expect(r.events).toHaveLength(2); // the two identical SQLi alerts collapse
     const sqli = r.events.find((e) => e.severity === "High")!;
     expect(sqli.count).toBe(2);
     expect(sqli.timestamp.startsWith("2024-05-14")).toBe(true);
@@ -56,7 +58,7 @@ describe("parseSnortLog", () => {
 
   it("respects a minSeverity floor", () => {
     const r = parseSnortLog([SQLI, PING].join("\n"), { assumeYear: 2024, minSeverity: "Medium" });
-    expect(r.events).toHaveLength(1);                 // the Low ICMP ping is dropped
+    expect(r.events).toHaveLength(1); // the Low ICMP ping is dropped
     expect(r.events[0].severity).toBe("High");
   });
 });

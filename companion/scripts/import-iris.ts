@@ -36,21 +36,31 @@ async function main(): Promise<void> {
   const pipeline = buildRuntimePipeline({ stateStore, store });
 
   const numericId = Number(irisRef);
-  const ref = Number.isFinite(numericId) && /^\d+$/.test(irisRef) ? { irisCaseId: numericId } : { caseName: irisRef };
+  const ref =
+    Number.isFinite(numericId) && /^\d+$/.test(irisRef) ? { irisCaseId: numericId } : { caseName: irisRef };
 
   console.log(`Importing IRIS case ${irisRef} from ${process.env.DFIR_IRIS_URL} into "${caseId}" …`);
   const data = await fetchIrisCase(client, ref);
-  console.log(`  fetched: ${data.timeline.length} timeline event(s), ${data.assets.length} asset(s), ${data.iocs.length} IOC(s) from IRIS case ${data.caseName ?? `#${data.irisCaseId}`}`);
+  console.log(
+    `  fetched: ${data.timeline.length} timeline event(s), ${data.assets.length} asset(s), ${data.iocs.length} IOC(s) from IRIS case ${data.caseName ?? `#${data.irisCaseId}`}`,
+  );
 
   const before = (await stateStore.load(caseId)).forensicTimeline.length;
   const importedAt = new Date().toISOString();
   const state = await pipeline.importIris(caseId, data, {
-    label: `iris-case-${data.irisCaseId}.json`, idPrefix: `iriscli`, importedAt,
+    label: `iris-case-${data.irisCaseId}.json`,
+    idPrefix: `iriscli`,
+    importedAt,
   });
   const added = state.forensicTimeline.length - before;
 
-  console.log(`\nDone: case "${caseId}" now has ${state.forensicTimeline.length} timeline event(s) (+${added}) and ${state.iocs.length} IOC(s).`);
+  console.log(
+    `\nDone: case "${caseId}" now has ${state.forensicTimeline.length} timeline event(s) (+${added}) and ${state.iocs.length} IOC(s).`,
+  );
   console.log("Run `npm run synthesize -- " + caseId + "` to re-derive findings/MITRE/attacker path.");
 }
 
-main().catch((e) => { console.error("iris import error:", (e as Error).message); process.exit(1); });
+main().catch((e) => {
+  console.error("iris import error:", (e as Error).message);
+  process.exit(1);
+});

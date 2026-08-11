@@ -52,12 +52,18 @@ export type FetchFn = typeof fetch;
 // file paths, process names, "other" can't be looked up by value).
 export function iocKind(type: string): IocKind | undefined {
   switch (type) {
-    case "hash": return "hash";
-    case "ip": return "ip";
-    case "domain": return "domain";
-    case "url": return "url";
-    case "process": return "process";
-    default: return undefined;
+    case "hash":
+      return "hash";
+    case "ip":
+      return "ip";
+    case "domain":
+      return "domain";
+    case "url":
+      return "url";
+    case "process":
+      return "process";
+    default:
+      return undefined;
   }
 }
 
@@ -84,14 +90,14 @@ export function parseRetryAfterMs(header: string | null | undefined, nowMs = Dat
 }
 
 export interface RetryPolicy {
-  retries?: number;       // additional attempts after the first (default 2)
-  backoffMs?: number;     // base backoff before the first retry (default 1000, doubles each attempt)
-  maxBackoffMs?: number;  // cap on the computed backoff, before jitter (default 30_000)
+  retries?: number; // additional attempts after the first (default 2)
+  backoffMs?: number; // base backoff before the first retry (default 1000, doubles each attempt)
+  maxBackoffMs?: number; // cap on the computed backoff, before jitter (default 30_000)
 }
 
 export interface RetryRunOptions extends RetryPolicy {
-  sleep?: (ms: number) => Promise<void>;  // injectable delay (tests pass a no-op)
-  random?: () => number;                  // injectable jitter source (default Math.random), returns [0, 1)
+  sleep?: (ms: number) => Promise<void>; // injectable delay (tests pass a no-op)
+  random?: () => number; // injectable jitter source (default Math.random), returns [0, 1)
 }
 
 // Retries `fn` when it throws a RateLimitError, waiting the server's Retry-After if it gave
@@ -112,7 +118,7 @@ export async function withRateLimitRetry<T>(fn: () => Promise<T>, opts: RetryRun
     } catch (err) {
       if (!(err instanceof RateLimitError) || attempt >= retries) throw err;
       const base = err.retryAfterMs ?? Math.min(maxBackoffMs, backoffMs * 2 ** attempt);
-      const jitter = base * 0.2 * random();   // 0–20% extra, never below the requested wait
+      const jitter = base * 0.2 * random(); // 0–20% extra, never below the requested wait
       await sleep(Math.round(base + jitter));
       attempt++;
     }

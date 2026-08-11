@@ -31,14 +31,25 @@ const INFO_SUPER_EVENT: ForensicEvent = {
 };
 
 const DET_IOC: IOC = {
-  id: "i-det", type: "ip", value: "10.9.9.9", firstSeen: "2026-06-01T00:00:00Z",
+  id: "i-det",
+  type: "ip",
+  value: "10.9.9.9",
+  firstSeen: "2026-06-01T00:00:00Z",
   enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "2026-06-01T02:00:00Z" }],
 };
 const TEL_IOC: IOC = { id: "i-tel", type: "ip", value: "10.1.1.1", firstSeen: "2026-06-01T01:00:00Z" };
 
 const FINDING: Finding = {
-  id: "f1", severity: "High", title: "C2 beacon", description: "d", relatedIocs: ["i-det"],
-  sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-06-01T00:00:00Z", lastUpdated: "2026-06-01T00:00:00Z", status: "open",
+  id: "f1",
+  severity: "High",
+  title: "C2 beacon",
+  description: "d",
+  relatedIocs: ["i-det"],
+  sourceScreenshots: [],
+  mitreTechniques: [],
+  firstSeen: "2026-06-01T00:00:00Z",
+  lastUpdated: "2026-06-01T00:00:00Z",
+  status: "open",
 };
 
 async function makeApp() {
@@ -47,7 +58,10 @@ async function makeApp() {
   const stateStore = new StateStore(store);
   const superTimelineStore = new SuperTimelineStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, superTimelineStore });
@@ -69,7 +83,13 @@ describe("GET /cases/:id/ioc-provenance-chain", () => {
     expect(res.status).toBe(200);
     expect(res.body["i-det"].extraction.map((e: { eventId: string }) => e.eventId)).toEqual(["e-high"]);
     expect(res.body["i-det"].enrichment).toEqual([
-      { source: "VirusTotal", verdict: "malicious", score: undefined, fetchedAt: "2026-06-01T02:00:00Z", link: undefined },
+      {
+        source: "VirusTotal",
+        verdict: "malicious",
+        score: undefined,
+        fetchedAt: "2026-06-01T02:00:00Z",
+        link: undefined,
+      },
     ]);
     expect(res.body["i-det"].findings.map((f: { findingId: string }) => f.findingId)).toEqual(["f1"]);
     // telemetry IOC's supporting event lives only in the super-timeline — route must still see it.

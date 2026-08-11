@@ -48,7 +48,9 @@ describe("redactPaths", () => {
   });
 
   it("leaves ordinary prose and fractions alone", () => {
-    expect(redactPaths("kept 50/50 of the rows and/or dropped them")).toBe("kept 50/50 of the rows and/or dropped them");
+    expect(redactPaths("kept 50/50 of the rows and/or dropped them")).toBe(
+      "kept 50/50 of the rows and/or dropped them",
+    );
     expect(redactPaths("bad JSON at row 3")).toBe("bad JSON at row 3");
   });
 

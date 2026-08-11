@@ -66,8 +66,7 @@ export const DEFAULT_TOP_N = 5;
 export const BASE_MATCH_WEIGHT = 0.5;
 
 // One wording for the disclaimer, shared by every surface that renders hints (issue #46).
-export const ADVERSARY_HINTS_CAVEAT =
-  "Statistical similarity based on technique overlap — not attribution.";
+export const ADVERSARY_HINTS_CAVEAT = "Statistical similarity based on technique overlap — not attribution.";
 
 // The id helpers moved to adversaryTechniques.ts alongside the shapes they validate, for the same
 // reason. Re-exported so existing importers are unaffected.
@@ -156,7 +155,8 @@ export function rankAdversaryGroups(
   }
 
   // Specificity ratio for tie-breaks (guarded against a hand-edited group with no techniques).
-  const ratio = (h: AdversaryHint): number => (h.groupTechniqueCount > 0 ? h.overlapCount / h.groupTechniqueCount : 0);
+  const ratio = (h: AdversaryHint): number =>
+    h.groupTechniqueCount > 0 ? h.overlapCount / h.groupTechniqueCount : 0;
   hints.sort(
     (a, b) =>
       b.score - a.score || // weighted: exact agreement wins

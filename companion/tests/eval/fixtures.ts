@@ -24,8 +24,14 @@ import type { GoldenEvent, Thresholds } from "./scorer.js";
 // A delta the MockProvider returns verbatim for an extraction call. Kept as a builder so fixtures read as data.
 function delta(forensicEvents: unknown[]): string {
   return JSON.stringify({
-    findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-    timelineNote: "", summary: "eval", forensicEvents,
+    findings: [],
+    iocs: [],
+    mitreTechniques: [],
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: "",
+    summary: "eval",
+    forensicEvents,
   });
 }
 
@@ -33,9 +39,9 @@ export interface ExtractionFixture {
   name: string;
   modality: "csv" | "log";
   input: string;
-  canned: string;            // MockProvider response (Phase-1 deterministic runs); ignored in --real mode
+  canned: string; // MockProvider response (Phase-1 deterministic runs); ignored in --real mode
   golden: GoldenEvent[];
-  thresholds?: Thresholds;   // per-fixture override; else DEFAULT_THRESHOLDS (mock) / REAL_THRESHOLDS (--real)
+  thresholds?: Thresholds; // per-fixture override; else DEFAULT_THRESHOLDS (mock) / REAL_THRESHOLDS (--real)
 }
 
 export interface SynthesisFixture {
@@ -47,14 +53,16 @@ export interface SynthesisFixture {
 export interface ScreenshotFixture {
   name: string;
   captures: CaptureMetadata[]; // synthetic capture metadata; no real image bytes are shipped
-  canned: string;              // MockProvider response — MOCK-ONLY (see SCREENSHOT_FIXTURES note)
+  canned: string; // MockProvider response — MOCK-ONLY (see SCREENSHOT_FIXTURES note)
   golden: GoldenEvent[];
   thresholds?: Thresholds;
 }
 
 // A synthetic browser capture, sized like the real thing. Defaults are the boring path; a fixture overrides
 // only what it asserts on. contentHash is a stand-in string — dedup never runs on a single eval capture.
-function cap(partial: Partial<CaptureMetadata> & { sequenceNumber: number; screenshotFile: string }): CaptureMetadata {
+function cap(
+  partial: Partial<CaptureMetadata> & { sequenceNumber: number; screenshotFile: string },
+): CaptureMetadata {
   return {
     caseId: "eval",
     timestamp: "2026-06-01T14:05:00Z",
@@ -67,7 +75,9 @@ function cap(partial: Partial<CaptureMetadata> & { sequenceNumber: number; scree
   };
 }
 
-function ev(partial: Partial<ForensicEvent> & { id: string; timestamp: string; description: string }): ForensicEvent {
+function ev(
+  partial: Partial<ForensicEvent> & { id: string; timestamp: string; description: string },
+): ForensicEvent {
   return { severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...partial };
 }
 
@@ -95,8 +105,22 @@ export const EXTRACTION_FIXTURES: ExtractionFixture[] = [
       "2026-06-01T10:14:00Z,4634,asmith,WS03,logoff",
     ].join("\n"),
     canned: delta([
-      { id: "e1", timestamp: "2026-06-01T10:00:00Z", description: "Multiple failed logons for jdoe on WS01", severity: "Medium", mitreTechniques: ["T1110"], asset: "WS01" },
-      { id: "e2", timestamp: "2026-06-01T10:02:00Z", description: "Successful logon for jdoe on WS01 after brute force", severity: "High", mitreTechniques: ["T1078"], asset: "WS01" },
+      {
+        id: "e1",
+        timestamp: "2026-06-01T10:00:00Z",
+        description: "Multiple failed logons for jdoe on WS01",
+        severity: "Medium",
+        mitreTechniques: ["T1110"],
+        asset: "WS01",
+      },
+      {
+        id: "e2",
+        timestamp: "2026-06-01T10:02:00Z",
+        description: "Successful logon for jdoe on WS01 after brute force",
+        severity: "High",
+        mitreTechniques: ["T1078"],
+        asset: "WS01",
+      },
     ]),
     golden: [
       // Timestamp tolerance absorbs the model anchoring on any row in the burst.
@@ -126,7 +150,14 @@ export const EXTRACTION_FIXTURES: ExtractionFixture[] = [
       "Jun  1 10:05:01 srv sshd[200]: pam_unix(sshd:session): session opened for user root by (uid=0)",
     ].join("\n"),
     canned: delta([
-      { id: "e1", timestamp: "2026-06-01T10:00:00Z", description: "SSH brute force against root from 10.0.0.9", severity: "High", mitreTechniques: ["T1110"], asset: "srv" },
+      {
+        id: "e1",
+        timestamp: "2026-06-01T10:00:00Z",
+        description: "SSH brute force against root from 10.0.0.9",
+        severity: "High",
+        mitreTechniques: ["T1110"],
+        asset: "srv",
+      },
     ]),
     golden: [
       // No `timestamp`: syslog carries no year, so the resolved date depends on the importer's inference.
@@ -143,16 +174,28 @@ export const EXTRACTION_FIXTURES: ExtractionFixture[] = [
     input: [
       "Timestamp,Host,ParentImage,Image,CommandLine",
       "2026-06-01T09:02:00Z,WS02,C:\\Windows\\explorer.exe,C:\\Program Files\\Git\\git.exe,git status",
-      "2026-06-01T09:11:00Z,WS02,C:\\Windows\\explorer.exe,C:\\Windows\\System32\\WINWORD.EXE,\"WINWORD.EXE /n invoice.docm\"",
+      '2026-06-01T09:11:00Z,WS02,C:\\Windows\\explorer.exe,C:\\Windows\\System32\\WINWORD.EXE,"WINWORD.EXE /n invoice.docm"',
       "2026-06-01T09:15:00Z,WS02,C:\\Windows\\System32\\WINWORD.EXE,C:\\Windows\\System32\\powershell.exe,powershell -nop -w hidden -enc SQEXpAGkAZQBz",
       "2026-06-01T09:21:00Z,WS02,C:\\Windows\\explorer.exe,C:\\Windows\\System32\\notepad.exe,notepad.exe notes.txt",
     ].join("\n"),
     canned: delta([
-      { id: "e1", timestamp: "2026-06-01T09:15:00Z", description: "WINWORD spawned encoded PowerShell on WS02 (macro execution)", severity: "High", mitreTechniques: ["T1059.001"], asset: "WS02" },
+      {
+        id: "e1",
+        timestamp: "2026-06-01T09:15:00Z",
+        description: "WINWORD spawned encoded PowerShell on WS02 (macro execution)",
+        severity: "High",
+        mitreTechniques: ["T1059.001"],
+        asset: "WS02",
+      },
     ]),
     golden: [
       // "ws02" removed from keywords — it lives in `asset`, and keywords only match the description.
-      { timestamp: "2026-06-01T09:15:00Z", keywords: ["powershell"], mitreTechniques: ["T1059.001"], asset: "WS02" },
+      {
+        timestamp: "2026-06-01T09:15:00Z",
+        keywords: ["powershell"],
+        mitreTechniques: ["T1059.001"],
+        asset: "WS02",
+      },
     ],
   },
   {
@@ -171,7 +214,14 @@ export const EXTRACTION_FIXTURES: ExtractionFixture[] = [
       "2026-06-01T13:02:00Z 10.1.1.5 GET update.microsoft.com/patch bytes_out=512 user=SYSTEM",
     ].join("\n"),
     canned: delta([
-      { id: "e1", timestamp: "2026-06-01T13:00:00Z", description: "Large outbound transfer to mega.nz from 10.1.1.5 (svc_backup) — likely exfiltration", severity: "High", mitreTechniques: ["T1567.002"], asset: "10.1.1.5" },
+      {
+        id: "e1",
+        timestamp: "2026-06-01T13:00:00Z",
+        description: "Large outbound transfer to mega.nz from 10.1.1.5 (svc_backup) — likely exfiltration",
+        severity: "High",
+        mitreTechniques: ["T1567.002"],
+        asset: "10.1.1.5",
+      },
     ]),
     golden: [
       // "exfil" removed — that's the model's conclusion wording; the destination is the checkable fact.
@@ -184,31 +234,89 @@ export const SYNTHESIS_FIXTURES: SynthesisFixture[] = [
   {
     name: "ransomware-timeline",
     seedEvents: [
-      ev({ id: "s1", timestamp: "2026-06-01T11:00:00Z", description: "Ransomware note dropped on FS01", severity: "Critical", mitreTechniques: ["T1486"], asset: "FS01" }),
-      ev({ id: "s2", timestamp: "2026-06-01T10:30:00Z", description: "LSASS memory dumped on DC01", severity: "High", mitreTechniques: ["T1003.001"], asset: "DC01" }),
+      ev({
+        id: "s1",
+        timestamp: "2026-06-01T11:00:00Z",
+        description: "Ransomware note dropped on FS01",
+        severity: "Critical",
+        mitreTechniques: ["T1486"],
+        asset: "FS01",
+      }),
+      ev({
+        id: "s2",
+        timestamp: "2026-06-01T10:30:00Z",
+        description: "LSASS memory dumped on DC01",
+        severity: "High",
+        mitreTechniques: ["T1003.001"],
+        asset: "DC01",
+      }),
     ],
     // Canned synthesis: one finding grounded on the seed events. The deterministic backfill guarantees any
     // uncovered high-severity event also gets a finding, so checkSynthesis coverage must pass.
     canned: JSON.stringify({
       findings: [
-        { id: "f1", severity: "Critical", confidence: 90, confidenceReason: "ransom note + AV alert", title: "Ransomware deployment", description: "Files encrypted on FS01", relatedIocs: [], mitreTechniques: ["T1486"], status: "open", relatedEventIds: ["s1"] },
+        {
+          id: "f1",
+          severity: "Critical",
+          confidence: 90,
+          confidenceReason: "ransom note + AV alert",
+          title: "Ransomware deployment",
+          description: "Files encrypted on FS01",
+          relatedIocs: [],
+          mitreTechniques: ["T1486"],
+          status: "open",
+          relatedEventIds: ["s1"],
+        },
       ],
-      iocs: [], mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact" }],
-      threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "ransomware case",
+      iocs: [],
+      mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact" }],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "ransomware case",
     }),
   },
   {
     name: "lateral-movement-timeline",
     seedEvents: [
-      ev({ id: "s1", timestamp: "2026-06-01T08:00:00Z", description: "PsExec service install on FS01 from WS02", severity: "High", mitreTechniques: ["T1021.002"], asset: "FS01" }),
-      ev({ id: "s2", timestamp: "2026-06-01T08:05:00Z", description: "Admin logon (type 3) to DC01 using harvested creds", severity: "Critical", mitreTechniques: ["T1078.002"], asset: "DC01" }),
+      ev({
+        id: "s1",
+        timestamp: "2026-06-01T08:00:00Z",
+        description: "PsExec service install on FS01 from WS02",
+        severity: "High",
+        mitreTechniques: ["T1021.002"],
+        asset: "FS01",
+      }),
+      ev({
+        id: "s2",
+        timestamp: "2026-06-01T08:05:00Z",
+        description: "Admin logon (type 3) to DC01 using harvested creds",
+        severity: "Critical",
+        mitreTechniques: ["T1078.002"],
+        asset: "DC01",
+      }),
     ],
     canned: JSON.stringify({
       findings: [
-        { id: "f1", severity: "High", confidence: 75, confidenceReason: "service install + source host", title: "Lateral movement via PsExec", description: "WS02 → FS01 over SMB", relatedIocs: [], mitreTechniques: ["T1021.002"], status: "open", relatedEventIds: ["s1"] },
+        {
+          id: "f1",
+          severity: "High",
+          confidence: 75,
+          confidenceReason: "service install + source host",
+          title: "Lateral movement via PsExec",
+          description: "WS02 → FS01 over SMB",
+          relatedIocs: [],
+          mitreTechniques: ["T1021.002"],
+          status: "open",
+          relatedEventIds: ["s1"],
+        },
       ],
-      iocs: [], mitreTechniques: [{ id: "T1021.002", name: "SMB/Windows Admin Shares" }],
-      threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "lateral movement case",
+      iocs: [],
+      mitreTechniques: [{ id: "T1021.002", name: "SMB/Windows Admin Shares" }],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "lateral movement case",
     }),
   },
 ];
@@ -231,12 +339,25 @@ export const SCREENSHOT_FIXTURES: ScreenshotFixture[] = [
       }),
     ],
     canned: delta([
-      { id: "e1", timestamp: "2026-06-01T02:13:00Z", description: "Scheduled task 'UpdateOrchestratorBackdoor' launches hidden powershell on WS02 (persistence)", severity: "High", mitreTechniques: ["T1053.005"], asset: "WS02" },
+      {
+        id: "e1",
+        timestamp: "2026-06-01T02:13:00Z",
+        description:
+          "Scheduled task 'UpdateOrchestratorBackdoor' launches hidden powershell on WS02 (persistence)",
+        severity: "High",
+        mitreTechniques: ["T1053.005"],
+        asset: "WS02",
+      },
     ]),
     golden: [
       // Timestamp is the artifact's own 02:13, NOT the 14:05 capture — keyword + technique + host are the
       // checkable facts; severity is left unpinned (a defensible judgment call), per the golden discipline above.
-      { timestamp: "2026-06-01T02:13:00Z", keywords: ["powershell"], mitreTechniques: ["T1053.005"], asset: "WS02" },
+      {
+        timestamp: "2026-06-01T02:13:00Z",
+        keywords: ["powershell"],
+        mitreTechniques: ["T1053.005"],
+        asset: "WS02",
+      },
     ],
   },
 ];

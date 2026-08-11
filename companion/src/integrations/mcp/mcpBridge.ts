@@ -56,12 +56,16 @@ export function parseServerList(stdout: string): McpBridgeServer[] {
     const dash = t.lastIndexOf(" - ");
     if (colon === -1 || dash <= colon) continue;
     const name = t.slice(0, colon).trim();
-    const status = t.slice(dash + 3).trim();   // the ONLY other part kept
+    const status = t.slice(dash + 3).trim(); // the ONLY other part kept
     if (!name) continue;
     out.push({
       name,
       connected: STATUS_CONNECTED.test(status),
-      status: STATUS_CONNECTED.test(status) ? "connected" : STATUS_AUTH.test(status) ? "needs-auth" : "failed",
+      status: STATUS_CONNECTED.test(status)
+        ? "connected"
+        : STATUS_AUTH.test(status)
+          ? "needs-auth"
+          : "failed",
     });
   }
   return out;
@@ -78,10 +82,13 @@ export async function listServers(opts: McpBridgeOptions = {}): Promise<McpBridg
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
-  if (run.timedOut) throw new Error("`claude mcp list` timed out — a configured MCP server may be hanging on startup");
+  if (run.timedOut)
+    throw new Error("`claude mcp list` timed out — a configured MCP server may be hanging on startup");
   // Never quote stdout on failure: it is the very output that carries tokens.
   if (run.code !== 0 && !run.stdout.trim()) {
-    throw new Error(`\`claude mcp list\` failed (exit ${run.code ?? "null"}) — check that Claude Code is configured on this host`);
+    throw new Error(
+      `\`claude mcp list\` failed (exit ${run.code ?? "null"}) — check that Claude Code is configured on this host`,
+    );
   }
   return parseServerList(run.stdout);
 }
@@ -101,7 +108,11 @@ export function finalText(stdout: string, stderr: string, code: number | null): 
     const t = line.trim();
     if (!t) continue;
     let evt: unknown;
-    try { evt = JSON.parse(t); } catch { continue; }
+    try {
+      evt = JSON.parse(t);
+    } catch {
+      continue;
+    }
     if ((evt as { type?: string }).type === "result") result = evt as typeof result;
   }
   if (!result) {
@@ -130,14 +141,17 @@ export function finalText(stdout: string, stderr: string, code: number | null): 
 function baseArgs(model?: string): string[] {
   return [
     "-p",
-    "--input-format", "stream-json",
-    "--output-format", "stream-json",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
     "--verbose",
     ...(model ? ["--model", model] : []),
     // "user" and NOT "" — MCP servers ARE a user setting, so blanking every source leaves Claude
     // Code with no servers at all. Found by running it: the call came back "no sift-mcp server is
     // connected". Project and local sources stay off, so no repo CLAUDE.md, hooks or settings.
-    "--setting-sources", "user",
+    "--setting-sources",
+    "user",
   ];
 }
 
@@ -167,23 +181,29 @@ const LIST_TOOLS_PROMPT = [
  * the run form still accepts a name typed by hand, so a wrong or partial answer costs the analyst a
  * suggestion rather than the ability to run anything.
  */
-export async function listTools(opts: McpBridgeOptions & { server: string; model?: string }): Promise<string[]> {
+export async function listTools(
+  opts: McpBridgeOptions & { server: string; model?: string },
+): Promise<string[]> {
   const runner = opts.runner ?? defaultClaudeRunner;
   const run = await runner({
     bin: opts.bin?.trim() || "claude",
     args: [
       ...baseArgs(opts.model),
-      "--system-prompt", LIST_TOOLS_PROMPT,
+      "--system-prompt",
+      LIST_TOOLS_PROMPT,
       // Server-wide, so the model can see everything it offers rather than a subset we picked.
       // Use the explicit wildcard permission form: this call is non-interactive, so a bare server
       // pattern that Claude does not expand would strand the model at an approval prompt.
-      "--allowed-tools", `mcp__${opts.server}__*`,
-      "--max-turns", "4",
+      "--allowed-tools",
+      `mcp__${opts.server}__*`,
+      "--max-turns",
+      "4",
     ],
-    stdin: JSON.stringify({
-      type: "user",
-      message: { role: "user", content: [{ type: "text", text: `Server: ${opts.server}` }] },
-    }) + "\n",
+    stdin:
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: `Server: ${opts.server}` }] },
+      }) + "\n",
     timeoutMs: opts.timeoutMs ?? 300_000,
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
@@ -194,7 +214,8 @@ export async function listTools(opts: McpBridgeOptions & { server: string; model
   const text = finalText(run.stdout, run.stderr, run.code);
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
-  if (start === -1 || end <= start) throw new Error(`could not read a tool list for "${opts.server}" from Claude Code's reply`);
+  if (start === -1 || end <= start)
+    throw new Error(`could not read a tool list for "${opts.server}" from Claude Code's reply`);
   let raw: unknown;
   try {
     raw = JSON.parse(text.slice(start, end + 1));
@@ -203,10 +224,14 @@ export async function listTools(opts: McpBridgeOptions & { server: string; model
   }
   if (!Array.isArray(raw)) return [];
   // Strip a qualified prefix if the model included one anyway, and drop anything unusable.
-  return [...new Set(raw
-    .filter((t): t is string => typeof t === "string")
-    .map((t) => t.trim().replace(new RegExp(`^mcp__${opts.server}__`), ""))
-    .filter((t) => /^[A-Za-z0-9_.-]+$/.test(t)))];
+  return [
+    ...new Set(
+      raw
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => t.trim().replace(new RegExp(`^mcp__${opts.server}__`), ""))
+        .filter((t) => /^[A-Za-z0-9_.-]+$/.test(t)),
+    ),
+  ];
 }
 
 export interface McpCallOptions extends McpBridgeOptions {
@@ -241,23 +266,32 @@ const CALL_MAX_TURNS = 10;
 export async function callTool(opts: McpCallOptions): Promise<string> {
   const runner = opts.runner ?? defaultClaudeRunner;
   const qualified = `mcp__${opts.server}__${opts.tool}`;
-  const stdin = JSON.stringify({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "text", text: `Call ${qualified} with exactly these arguments:\n${JSON.stringify(opts.args)}` }],
-    },
-  }) + "\n";
+  const stdin =
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Call ${qualified} with exactly these arguments:\n${JSON.stringify(opts.args)}`,
+          },
+        ],
+      },
+    }) + "\n";
 
   const run = await runner({
     bin: opts.bin?.trim() || "claude",
     args: [
       ...baseArgs(opts.model),
-      "--system-prompt", CALL_SYSTEM_PROMPT,
+      "--system-prompt",
+      CALL_SYSTEM_PROMPT,
       // Exactly the one tool. Not a wildcard, so this call cannot reach anything else the server
       // offers, let alone another server.
-      "--allowed-tools", qualified,
-      "--max-turns", String(CALL_MAX_TURNS),
+      "--allowed-tools",
+      qualified,
+      "--max-turns",
+      String(CALL_MAX_TURNS),
     ],
     stdin,
     timeoutMs: opts.timeoutMs ?? 300_000,
@@ -265,7 +299,8 @@ export async function callTool(opts: McpCallOptions): Promise<string> {
   });
 
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
-  if (run.timedOut) throw new Error(`${opts.server}/${opts.tool} exceeded ${opts.timeoutMs ?? 300_000}ms and was stopped`);
+  if (run.timedOut)
+    throw new Error(`${opts.server}/${opts.tool} exceeded ${opts.timeoutMs ?? 300_000}ms and was stopped`);
 
   try {
     return finalText(run.stdout, run.stderr, run.code);
@@ -280,9 +315,11 @@ export async function callTool(opts: McpCallOptions): Promise<string> {
 
 export function claudeMissingMessage(bin: string | undefined, err: NodeJS.ErrnoException): string {
   if (err.code === "ENOENT") {
-    return `Claude Code CLI not found (tried "${bin || "claude"}"). The Companion reaches MCP servers only through ` +
+    return (
+      `Claude Code CLI not found (tried "${bin || "claude"}"). The Companion reaches MCP servers only through ` +
       `Claude Code, so it must be installed and authenticated on THIS host, with your MCP servers configured in it. ` +
-      `Set DFIR_AI_CLAUDE_CODE_BIN if it is not on PATH.`;
+      `Set DFIR_AI_CLAUDE_CODE_BIN if it is not on PATH.`
+    );
   }
   return `Claude Code failed to start: ${err.message}`;
 }

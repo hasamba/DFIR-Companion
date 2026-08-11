@@ -20,7 +20,9 @@ class StubProvider implements AIProvider {
         normalContext: "Unusual in office environments",
         suspiciousIndicators: "WINWORD.EXE parent process",
         attackMapping: "T1059.001",
-        pivotQueries: [{ platform: "velociraptor", query: "SELECT * FROM pslist()", rationale: "check process tree" }],
+        pivotQueries: [
+          { platform: "velociraptor", query: "SELECT * FROM pslist()", rationale: "check process tree" },
+        ],
         evidenceFor: "Macro execution chain",
         evidenceAgainst: "Could be legitimate automation",
         relatedEventIds: [],
@@ -36,13 +38,25 @@ async function makeApp() {
   await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
   const s = emptyState("c1");
   s.forensicTimeline.push({
-    id: "ev1", timestamp: "2026-06-01T10:00:00Z", description: "powershell.exe spawned",
-    severity: "High", mitreTechniques: ["T1059.001"], relatedFindingIds: [], sourceScreenshots: [],
-    processName: "powershell.exe", parentName: "WINWORD.EXE", asset: "WS01",
+    id: "ev1",
+    timestamp: "2026-06-01T10:00:00Z",
+    description: "powershell.exe spawned",
+    severity: "High",
+    mitreTechniques: ["T1059.001"],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    processName: "powershell.exe",
+    parentName: "WINWORD.EXE",
+    asset: "WS01",
   });
   await stateStore.save(s);
   const provider = new StubProvider();
-  const pipeline = buildRuntimePipeline({ provider, stateStore, store, imageLoader: async () => ({ base64: "AA", mimeType: "image/webp" }) });
+  const pipeline = buildRuntimePipeline({
+    provider,
+    stateStore,
+    store,
+    imageLoader: async () => ({ base64: "AA", mimeType: "image/webp" }),
+  });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: true });
   return { app };
 }

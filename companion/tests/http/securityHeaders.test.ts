@@ -70,8 +70,9 @@ describe("createSecurityHeaders — CSP on every response", () => {
 
 describe("withNonce — stamping the served HTML", () => {
   it("replaces every placeholder occurrence, not just the first", () => {
-    const html = `<script nonce="${CSP_NONCE_PLACEHOLDER}">a</script>`
-      + `<script nonce="${CSP_NONCE_PLACEHOLDER}">b</script>`;
+    const html =
+      `<script nonce="${CSP_NONCE_PLACEHOLDER}">a</script>` +
+      `<script nonce="${CSP_NONCE_PLACEHOLDER}">b</script>`;
     const out = withNonce(html, "abc123");
     expect(out).toBe('<script nonce="abc123">a</script><script nonce="abc123">b</script>');
     expect(out).not.toContain(CSP_NONCE_PLACEHOLDER);
@@ -111,9 +112,9 @@ describe("CSP_POLICY — origin confinement independent of each response nonce",
   // Step 1 — free hardening. None of these interact with inline code, so nothing can break.
   it("forbids framing, plugins, <base> rewrites and form posts", () => {
     expect(d["frame-ancestors"]).toBe("'none'"); // clickjacking
-    expect(d["object-src"]).toBe("'none'");       // <object>/<embed> script smuggling
-    expect(d["base-uri"]).toBe("'none'");         // an injected <base> re-pointing every relative URL
-    expect(d["form-action"]).toBe("'none'");      // all 5 dashboard forms are onsubmit="return false"
+    expect(d["object-src"]).toBe("'none'"); // <object>/<embed> script smuggling
+    expect(d["base-uri"]).toBe("'none'"); // an injected <base> re-pointing every relative URL
+    expect(d["form-action"]).toBe("'none'"); // all 5 dashboard forms are onsubmit="return false"
   });
 
   // Step 2 — the one that carries real weight while inline script is still allowed: an injected

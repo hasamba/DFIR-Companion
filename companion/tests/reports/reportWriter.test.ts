@@ -45,23 +45,46 @@ describe("ReportWriter", () => {
   it("excludes client-confirmed legitimate forensic events from the report", async () => {
     const state = emptyState("c1");
     state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "attacker beacon callout",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "client admin maintenance window",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(state);
 
     const falsePositives = new FalsePositiveStore(caseStore);
     await falsePositives.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
+      {
+        id: markerId("event", "e2"),
+        kind: "event",
+        ref: "e2",
+        reason: "other",
+        note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+        label: "client admin maintenance window",
+      },
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const paths = await writer.writeAll("c1");
 
     const forensic = await readFile(paths.forensicTimelineCsv, "utf8");
-    expect(forensic).toContain("attacker beacon callout");          // kept
+    expect(forensic).toContain("attacker beacon callout"); // kept
     expect(forensic).not.toContain("client admin maintenance window"); // legit event excluded
 
     const md = await readFile(paths.markdown, "utf8");
@@ -71,16 +94,39 @@ describe("ReportWriter", () => {
   it("exports the incident timeline as CSV, excluding legitimate events", async () => {
     const state = emptyState("c1");
     state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "attacker beacon callout",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "client admin maintenance window",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(state);
 
     const falsePositives = new FalsePositiveStore(caseStore);
     await falsePositives.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
+      {
+        id: markerId("event", "e2"),
+        kind: "event",
+        ref: "e2",
+        reason: "other",
+        note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+        label: "client admin maintenance window",
+      },
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
@@ -97,17 +143,39 @@ describe("ReportWriter", () => {
     const state = emptyState("c1");
     state.lastSummary = "real summary text";
     state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "attacker beacon callout",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "client admin maintenance window",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(state);
 
     const falsePositives = new FalsePositiveStore(caseStore);
     await falsePositives.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance",
-        markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
+      {
+        id: markerId("event", "e2"),
+        kind: "event",
+        ref: "e2",
+        reason: "other",
+        note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+        label: "client admin maintenance window",
+      },
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
@@ -118,59 +186,122 @@ describe("ReportWriter", () => {
 
     const zip = await JSZip.loadAsync(buf);
     const xml = await zip.file("word/document.xml")!.async("text");
-    expect(xml).toContain("real summary text");                        // canonical report content present
-    expect(xml).toContain("attacker beacon callout");                  // kept
-    expect(xml).not.toContain("client admin maintenance window");      // legit event excluded
-  }, 30_000);   // docx generation is CPU-heavy; give it headroom under full-suite parallel load
+    expect(xml).toContain("real summary text"); // canonical report content present
+    expect(xml).toContain("attacker beacon callout"); // kept
+    expect(xml).not.toContain("client admin maintenance window"); // legit event excluded
+  }, 30_000); // docx generation is CPU-heavy; give it headroom under full-suite parallel load
 
   it("builds a mobile summary with the case name and scope/legitimate filtering applied", async () => {
     const state = emptyState("c1");
     state.lastSummary = "mobile recap";
-    state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware deployed", description: "d",
-      relatedIocs: [], sourceScreenshots: [], mitreTechniques: ["T1486"], firstSeen: "t0", lastUpdated: "t1", status: "open" });
+    state.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Ransomware deployed",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: ["T1486"],
+      firstSeen: "t0",
+      lastUpdated: "t1",
+      status: "open",
+    });
     state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "attacker beacon callout",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "client admin maintenance window",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(state);
 
     const falsePositives = new FalsePositiveStore(caseStore);
     await falsePositives.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance",
-        markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
+      {
+        id: markerId("event", "e2"),
+        kind: "event",
+        ref: "e2",
+        reason: "other",
+        note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+        label: "client admin maintenance window",
+      },
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const s = await writer.mobileSummary("c1");
 
     expect(s.caseId).toBe("c1");
-    expect(s.caseName).toBe("n");               // pulled from case.json (createCase name "n")
+    expect(s.caseName).toBe("n"); // pulled from case.json (createCase name "n")
     expect(s.summary).toBe("mobile recap");
     expect(s.severityCounts.Critical).toBe(1);
-    expect(s.counts.events).toBe(1);            // legit event e2 filtered out
+    expect(s.counts.events).toBe(1); // legit event e2 filtered out
     expect(s.events.items.map((e) => e.id)).toEqual(["e1"]);
     expect(s.events.items.map((e) => e.description)).not.toContain("client admin maintenance window");
   });
 
   it("builds an ATT&CK Navigator layer, excluding techniques only from legitimate events", async () => {
     const state = emptyState("c1");
-    state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware deployed", description: "d",
-      relatedIocs: [], sourceScreenshots: [], mitreTechniques: ["T1486"],
-      firstSeen: "t0", lastUpdated: "t1", status: "open" });
+    state.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Ransomware deployed",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: ["T1486"],
+      firstSeen: "t0",
+      lastUpdated: "t1",
+      status: "open",
+    });
     state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker beacon callout", severity: "High",
-        mitreTechniques: ["T1071"], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance window", severity: "Low",
-        mitreTechniques: ["T1018"], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "attacker beacon callout",
+        severity: "High",
+        mitreTechniques: ["T1071"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "client admin maintenance window",
+        severity: "Low",
+        mitreTechniques: ["T1018"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(state);
 
     const falsePositives = new FalsePositiveStore(caseStore);
     await falsePositives.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance",
-        markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
+      {
+        id: markerId("event", "e2"),
+        kind: "event",
+        ref: "e2",
+        reason: "other",
+        note: "client's maintenance",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+        label: "client admin maintenance window",
+      },
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
@@ -190,18 +321,40 @@ describe("ReportWriter", () => {
       type: "ip",
       value: "8.8.8.8",
       firstSeen: "2026-05-28T09:00:00Z",
-      enrichments: [{ source: "GeoIP", verdict: "unknown", fetchedAt: "2026-05-28T09:00:00Z", lat: 37.4, lon: -122.1, country: "US" }],
+      enrichments: [
+        {
+          source: "GeoIP",
+          verdict: "unknown",
+          fetchedAt: "2026-05-28T09:00:00Z",
+          lat: 37.4,
+          lon: -122.1,
+          country: "US",
+        },
+      ],
     });
-    state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "beacon to 8.8.8.8", severity: "Critical",
-        dstIp: "8.8.8.8", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-    );
+    state.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-28T09:00:00Z",
+      description: "beacon to 8.8.8.8",
+      severity: "Critical",
+      dstIp: "8.8.8.8",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(state);
 
     const falsePositives = new FalsePositiveStore(caseStore);
     await falsePositives.save("c1", [
-      { id: markerId("ioc", "8.8.8.8"), kind: "ioc", ref: "8.8.8.8", reason: "known-good-tool",
-        note: "known-good resolver", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous" },
+      {
+        id: markerId("ioc", "8.8.8.8"),
+        kind: "ioc",
+        ref: "8.8.8.8",
+        reason: "known-good-tool",
+        note: "known-good resolver",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+      },
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });

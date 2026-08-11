@@ -39,8 +39,8 @@ export interface StixBundle {
 
 export interface StixExportOptions {
   organization?: string; // victim/customer org → an `identity` SDO (omitted when blank)
-  producer?: string;     // creating org name (the investigating firm); default "DFIR Companion"
-  incidentId?: string;   // optional human incident id, folded into the report name
+  producer?: string; // creating org name (the investigating firm); default "DFIR Companion"
+  incidentId?: string; // optional human incident id, folded into the report name
 }
 
 // Fixed v5 namespace for DFIR Companion STIX ids. Any 16 bytes work as a namespace; this one is
@@ -81,7 +81,7 @@ function escPattern(s: string): string {
 
 const HASH_ALGO: Record<number, string> = { 32: "MD5", 40: "SHA-1", 64: "SHA-256", 128: "SHA-512" };
 function hashAlgo(value: string): string | null {
-  return /^[a-f0-9]+$/i.test(value) ? HASH_ALGO[value.length] ?? null : null;
+  return /^[a-f0-9]+$/i.test(value) ? (HASH_ALGO[value.length] ?? null) : null;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -126,10 +126,16 @@ export function iocToStixPattern(ioc: IOC): string | null {
 
 // Worst-wins verdict across an IOC's threat-intel enrichments (malicious > suspicious > …).
 const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
-  malicious: 3, suspicious: 2, harmless: 1, unknown: 0,
+  malicious: 3,
+  suspicious: 2,
+  harmless: 1,
+  unknown: 0,
 };
 const INDICATOR_TYPE: Record<IocEnrichment["verdict"], string> = {
-  malicious: "malicious-activity", suspicious: "anomalous-activity", harmless: "benign", unknown: "unknown",
+  malicious: "malicious-activity",
+  suspicious: "anomalous-activity",
+  harmless: "benign",
+  unknown: "unknown",
 };
 
 function worstVerdict(ioc: IOC): IocEnrichment["verdict"] | null {
@@ -166,23 +172,38 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   // Build a STIX object with the common required props baked in. `owner` defaults to the producer
   // identity (created_by_ref); pass false for the producer identity itself (no self-reference).
   const sdo = (type: string, id: string, props: Record<string, unknown>, owner = true): StixObject => ({
-    type, spec_version: "2.1", id, created: now, modified: now,
+    type,
+    spec_version: "2.1",
+    id,
+    created: now,
+    modified: now,
     ...(owner ? { created_by_ref: producerId } : {}),
     ...props,
   });
 
   // --- identities ---------------------------------------------------------
-  objects.push(sdo("identity", producerId, {
-    name: producerName, identity_class: "organization",
-    description: "Producer of this STIX bundle (DFIR Companion case export).",
-  }, false));
+  objects.push(
+    sdo(
+      "identity",
+      producerId,
+      {
+        name: producerName,
+        identity_class: "organization",
+        description: "Producer of this STIX bundle (DFIR Companion case export).",
+      },
+      false,
+    ),
+  );
 
   const victimName = opts.organization?.trim();
   if (victimName) {
-    objects.push(sdo("identity", idFor("identity", `victim|${victimName}`), {
-      name: victimName, identity_class: "organization",
-      description: "Victim / customer organization for this investigation.",
-    }));
+    objects.push(
+      sdo("identity", idFor("identity", `victim|${victimName}`), {
+        name: victimName,
+        identity_class: "organization",
+        description: "Victim / customer organization for this investigation.",
+      }),
+    );
   }
 
   // --- attack-patterns (one per referenced MITRE technique) ---------------
@@ -193,7 +214,8 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
     if (!id) return;
     const existing = techniqueNames.get(id);
     // Fill the name from the techniques list; never let a blank/id-only entry clobber a real name.
-    if (!existing || (name?.trim() && existing === id)) techniqueNames.set(id, name?.trim() || existing || id);
+    if (!existing || (name?.trim() && existing === id))
+      techniqueNames.set(id, name?.trim() || existing || id);
   };
   for (const t of state.mitreTechniques) noteTechnique(t.id, t.name);
   for (const f of state.findings) for (const t of f.mitreTechniques) noteTechnique(t);
@@ -203,10 +225,12 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   for (const techId of [...techniqueNames.keys()].sort()) {
     const id = idFor("attack-pattern", techId);
     attackPatternId.set(techId, id);
-    objects.push(sdo("attack-pattern", id, {
-      name: techniqueNames.get(techId) || techId,
-      external_references: [{ source_name: "mitre-attack", external_id: techId }],
-    }));
+    objects.push(
+      sdo("attack-pattern", id, {
+        name: techniqueNames.get(techId) || techId,
+        external_references: [{ source_name: "mitre-attack", external_id: techId }],
+      }),
+    );
   }
 
   // --- indicators (one per mappable IOC) ----------------------------------
@@ -218,15 +242,18 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
     indicatorId.set(ioc.id, id);
     const verdict = worstVerdict(ioc);
     const summary = enrichmentSummary(ioc);
-    objects.push(sdo("indicator", id, {
-      name: ioc.value,
-      pattern, pattern_type: "stix",
-      valid_from: stixTime(ioc.firstSeen, now),
-      indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
-      description: summary
-        ? `Threat-intel verdict: ${verdict} — ${summary}`
-        : "Indicator observed during the investigation (no threat-intel enrichment).",
-    }));
+    objects.push(
+      sdo("indicator", id, {
+        name: ioc.value,
+        pattern,
+        pattern_type: "stix",
+        valid_from: stixTime(ioc.firstSeen, now),
+        indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
+        description: summary
+          ? `Threat-intel verdict: ${verdict} — ${summary}`
+          : "Indicator observed during the investigation (no threat-intel enrichment).",
+      }),
+    );
   }
 
   // --- malware (one per distinct enrichment family/classification tag) -----
@@ -234,7 +261,7 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   // case-insensitive key, keeping the first-seen casing, and remember which IOCs carried each
   // so we can wire indicator →indicates→ malware edges.
   const malwareIocs = new Map<string, Set<string>>(); // tagKey → ioc ids
-  const malwareName = new Map<string, string>();       // tagKey → display name
+  const malwareName = new Map<string, string>(); // tagKey → display name
   for (const ioc of state.iocs) {
     for (const e of ioc.enrichments ?? []) {
       for (const tag of e.tags ?? []) {
@@ -252,9 +279,13 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   for (const key of [...malwareName.keys()].sort()) {
     const id = idFor("malware", key);
     malwareId.set(key, id);
-    objects.push(sdo("malware", id, {
-      name: malwareName.get(key)!, is_family: true, malware_types: ["unknown"],
-    }));
+    objects.push(
+      sdo("malware", id, {
+        name: malwareName.get(key)!,
+        is_family: true,
+        malware_types: ["unknown"],
+      }),
+    );
   }
 
   // --- relationships ------------------------------------------------------
@@ -265,12 +296,18 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
     const dedup = `${sourceRef}->${targetRef}`;
     if (relSeen.has(dedup)) return;
     relSeen.add(dedup);
-    objects.push(sdo("relationship", idFor("relationship", `indicates|${dedup}`), {
-      relationship_type: "indicates", source_ref: sourceRef, target_ref: targetRef,
-    }));
+    objects.push(
+      sdo("relationship", idFor("relationship", `indicates|${dedup}`), {
+        relationship_type: "indicates",
+        source_ref: sourceRef,
+        target_ref: targetRef,
+      }),
+    );
   };
   for (const f of state.findings) {
-    const indicators = f.relatedIocs.map((iid) => indicatorId.get(iid)).filter((x): x is string => Boolean(x));
+    const indicators = f.relatedIocs
+      .map((iid) => indicatorId.get(iid))
+      .filter((x): x is string => Boolean(x));
     const patterns = f.mitreTechniques
       .map((t) => normalizeTechnique(t))
       .map((t) => (t ? attackPatternId.get(t) : undefined))
@@ -290,14 +327,19 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   const reportName = opts.incidentId?.trim()
     ? `Incident ${opts.incidentId.trim()} — ${state.caseId}`
     : `DFIR Companion — ${state.caseId}`;
-  objects.push(sdo("report", idFor("report", "case"), {
-    name: reportName,
-    description: state.lastSummary?.trim() || state.attackerPath?.trim() ||
-      `STIX export of DFIR Companion case ${state.caseId}.`,
-    report_types: ["threat-report"], published: now,
-    // object_refs is required and must be non-empty — the producer identity guarantees that.
-    object_refs: objects.map((o) => o.id),
-  }));
+  objects.push(
+    sdo("report", idFor("report", "case"), {
+      name: reportName,
+      description:
+        state.lastSummary?.trim() ||
+        state.attackerPath?.trim() ||
+        `STIX export of DFIR Companion case ${state.caseId}.`,
+      report_types: ["threat-report"],
+      published: now,
+      // object_refs is required and must be non-empty — the producer identity guarantees that.
+      object_refs: objects.map((o) => o.id),
+    }),
+  );
 
   return { type: "bundle", id: `bundle--${uuidv5(`${state.caseId}|bundle`)}`, objects };
 }

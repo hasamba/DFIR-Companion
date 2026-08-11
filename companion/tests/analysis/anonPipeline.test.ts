@@ -18,10 +18,32 @@ class CapturingProvider implements AIProvider {
   lastReq?: AnalyzeRequest;
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.lastReq = req;
-    return { rawText: JSON.stringify({
-      findings: [{ id: "f1", severity: "High", title: "exec on ANON_HOST_1", description: "activity on ANON_HOST_1", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] }],
-      iocs: [], mitreTechniques: [], attackerPath: "", summary: "", threadsOpened: [], threadsClosed: [], keyQuestions: [], nextSteps: [], forensicEvents: [], timelineNote: "",
-    }) };
+    return {
+      rawText: JSON.stringify({
+        findings: [
+          {
+            id: "f1",
+            severity: "High",
+            title: "exec on ANON_HOST_1",
+            description: "activity on ANON_HOST_1",
+            relatedIocs: [],
+            mitreTechniques: [],
+            status: "open",
+            relatedEventIds: ["e1"],
+          },
+        ],
+        iocs: [],
+        mitreTechniques: [],
+        attackerPath: "",
+        summary: "",
+        threadsOpened: [],
+        threadsClosed: [],
+        keyQuestions: [],
+        nextSteps: [],
+        forensicEvents: [],
+        timelineNote: "",
+      }),
+    };
   }
 }
 
@@ -31,11 +53,27 @@ async function makePipeline() {
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(cases);
   const s = emptyState("c1");
-  s.forensicTimeline = [{ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "process run on ALCLIENT07", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "ALCLIENT07" }];
+  s.forensicTimeline = [
+    {
+      id: "e1",
+      timestamp: "2026-01-01T00:00:00Z",
+      description: "process run on ALCLIENT07",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "ALCLIENT07",
+    },
+  ];
   await stateStore.save(s);
   const provider = new CapturingProvider();
   const anonStore = new AnonControlStore(cases);
-  const pipeline = new AnalysisPipeline({ provider, stateStore, anonStore, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
+  const pipeline = new AnalysisPipeline({
+    provider,
+    stateStore,
+    anonStore,
+    imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+  });
   return { pipeline, provider, stateStore, anonStore };
 }
 
@@ -52,7 +90,23 @@ describe("pipeline anonymization (default on)", () => {
 
   it("when disabled, sends the real host (no tokenization)", async () => {
     const { pipeline, provider, anonStore } = await makePipeline();
-    await anonStore.save("c1", { enabled: false, categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true }, redactSecrets: true });
+    await anonStore.save("c1", {
+      enabled: false,
+      categories: {
+        IP: true,
+        EMAIL: true,
+        USER: true,
+        HOST: true,
+        DOMAIN: true,
+        PATH: true,
+        CMD: true,
+        REG: true,
+        CARD: true,
+        PHONE: true,
+        NATID: true,
+      },
+      redactSecrets: true,
+    });
     await pipeline.synthesize("c1", { force: true });
     expect(provider.lastReq!.userPrompt).toContain("ALCLIENT07");
     expect(provider.lastReq!.userPrompt).not.toContain("ANON_HOST_1");
@@ -66,13 +120,30 @@ describe("pipeline anonymization — custom entities", () => {
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const stateStore = new StateStore(cases);
     const s = emptyState("c1");
-    s.forensicTimeline = [{ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "exfil to 203.0.113.50", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "" }];
+    s.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: "exfil to 203.0.113.50",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "",
+      },
+    ];
     await stateStore.save(s);
     const provider = new CapturingProvider();
     const anonStore = new AnonControlStore(cases);
     const customEntitiesStore = new CustomEntitiesStore(cases);
     await customEntitiesStore.save("c1", [{ value: "203.0.113.50", category: "IP" }]);
-    const pipeline = new AnalysisPipeline({ provider, stateStore, anonStore, customEntitiesStore, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      anonStore,
+      customEntitiesStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
     await pipeline.synthesize("c1", { force: true });
     // On the AI wire maskPublicIps is on, so the IP detector alone would already tokenize this as
     // ANON_EXTIP_n. The custom entry pins it to the IP category instead, and anonCustom runs first

@@ -164,7 +164,12 @@ describe("suggestNextTechniques — observed-filter / shape / guards", () => {
 
   it("labels suggestions with name + dataSources from the techniqueInfo map", () => {
     const ds = [group("G1", "A", ["T1486"]), ...fillers(9, ["T9999"])];
-    const info = { T1486: { name: "Data Encrypted for Impact", dataSources: ["Command: Command Execution", "File: File Modification"] } };
+    const info = {
+      T1486: {
+        name: "Data Encrypted for Impact",
+        dataSources: ["Command: Command Execution", "File: File Modification"],
+      },
+    };
     const [n] = suggestNextTechniques([], [hint("G1")], ds, { info });
     expect(n.name).toBe("Data Encrypted for Impact");
     expect(n.dataSources).toEqual(["Command: Command Execution", "File: File Modification"]);
@@ -172,7 +177,9 @@ describe("suggestNextTechniques — observed-filter / shape / guards", () => {
 
   it("omits an empty name / empty dataSources so the UI falls back cleanly to the id", () => {
     const ds = [group("G1", "A", ["T1486"]), ...fillers(9, ["T9999"])];
-    const [n] = suggestNextTechniques([], [hint("G1")], ds, { info: { T1486: { name: "", dataSources: [] } } });
+    const [n] = suggestNextTechniques([], [hint("G1")], ds, {
+      info: { T1486: { name: "", dataSources: [] } },
+    });
     expect(n.name).toBeUndefined();
     expect(n.dataSources).toBeUndefined();
   });

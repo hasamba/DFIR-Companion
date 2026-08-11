@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { ProviderRegistry, MockProvider, requestSignal, type AnalyzeRequest } from "../../src/providers/provider.js";
+import {
+  ProviderRegistry,
+  MockProvider,
+  requestSignal,
+  type AnalyzeRequest,
+} from "../../src/providers/provider.js";
 
 describe("requestSignal (#225 cancel)", () => {
   it("returns a plain timeout signal when no external signal is given", () => {

@@ -5,8 +5,20 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import type { AnonTokenCategory, CustomEntity } from "./anonymize.js";
 
 const VALID: readonly AnonTokenCategory[] = [
-  "IP", "EXTIP", "EMAIL", "USER", "HOST", "DOMAIN", "PATH", "CMD", "REG",
-  "CARD", "PHONE", "NATID", "PERSON", "OTHER",
+  "IP",
+  "EXTIP",
+  "EMAIL",
+  "USER",
+  "HOST",
+  "DOMAIN",
+  "PATH",
+  "CMD",
+  "REG",
+  "CARD",
+  "PHONE",
+  "NATID",
+  "PERSON",
+  "OTHER",
 ];
 
 // Sanitize a raw entity list: trim, drop blanks, coerce unknown categories to OTHER, dedupe by
@@ -23,7 +35,9 @@ export function sanitizeCustomEntities(raw: unknown): CustomEntity[] {
     if (seen.has(key)) continue;
     seen.add(key);
     const rawCat = (item as { category?: unknown })?.category;
-    const category: AnonTokenCategory = VALID.includes(rawCat as AnonTokenCategory) ? (rawCat as AnonTokenCategory) : "OTHER";
+    const category: AnonTokenCategory = VALID.includes(rawCat as AnonTokenCategory)
+      ? (rawCat as AnonTokenCategory)
+      : "OTHER";
     out.push({ value, category });
     if (out.length >= 500) break;
   }
@@ -49,6 +63,9 @@ export class CustomEntitiesStore {
   }
 
   async save(caseId: string, entities: CustomEntity[]): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify({ entities: sanitizeCustomEntities(entities) }, null, 2));
+    await atomicWrite(
+      this.path(caseId),
+      JSON.stringify({ entities: sanitizeCustomEntities(entities) }, null, 2),
+    );
   }
 }

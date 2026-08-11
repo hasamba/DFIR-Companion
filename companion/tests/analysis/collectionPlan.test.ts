@@ -8,8 +8,14 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(sources: string[]): ForensicEvent {
   return {
-    id: `e${sources.join("-")}`, timestamp: "2026-01-01T00:00:00Z", description: "",
-    severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources,
+    id: `e${sources.join("-")}`,
+    timestamp: "2026-01-01T00:00:00Z",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    sources,
   };
 }
 
@@ -78,15 +84,19 @@ describe("buildCollectionPlan", () => {
   });
 
   it("lets an override beat the derived state in both directions", () => {
-    const collected = buildCollectionPlan(["network"], [], { network: { state: "collected", reason: "pcap on the SAN" } });
+    const collected = buildCollectionPlan(["network"], [], {
+      network: { state: "collected", reason: "pcap on the SAN" },
+    });
     expect(collected.steps[0].state).toBe("override-collected");
     expect(collected.steps[0].reason).toBe("pcap on the SAN");
     expect(collected.collected).toBe(1);
 
-    const na = buildCollectionPlan(["edr"], [ev(["EDR (ECAR)"])], { edr: { state: "na", reason: "no EDR here" } });
+    const na = buildCollectionPlan(["edr"], [ev(["EDR (ECAR)"])], {
+      edr: { state: "na", reason: "no EDR here" },
+    });
     expect(na.steps[0].state).toBe("override-na");
     expect(na.collected).toBe(0);
-    expect(na.total).toBe(0);          // n/a leaves the denominator, like an external step
+    expect(na.total).toBe(0); // n/a leaves the denominator, like an external step
   });
 
   it("never proposes an overridden step as next", () => {

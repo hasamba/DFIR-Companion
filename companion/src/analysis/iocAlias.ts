@@ -11,9 +11,11 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 // from new source text later, it's routed straight onto the canonical IOC instead of recreating
 // the duplicate — "synthesis re-merge preserves the alias".
 
-export const iocAliasSchema = z.object({
-  aliases: z.record(z.string(), z.string()).default({}),
-}).catch({ aliases: {} });
+export const iocAliasSchema = z
+  .object({
+    aliases: z.record(z.string(), z.string()).default({}),
+  })
+  .catch({ aliases: {} });
 
 export type IocAliasMap = z.infer<typeof iocAliasSchema>;
 

@@ -34,7 +34,10 @@ async function harnessWithPipeline() {
   const stateStore = new StateStore(store);
   const commentsStore = new CommentsStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: new MockProvider("stub", "{}"), stateStore, store,
+    provider: undefined,
+    synthesisProvider: new MockProvider("stub", "{}"),
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { stateStore, commentsStore, pipeline, aiConfigured: true });
@@ -110,9 +113,7 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
   it("does not remove the case when removeFromList is omitted", async () => {
     const { app, store } = await harness();
     await seedCase(app, "INC-4b", "Case Four B");
-    const res = await request(app)
-      .post("/cases/INC-4b/export/encrypted")
-      .send({ password: PASSWORD });
+    const res = await request(app).post("/cases/INC-4b/export/encrypted").send({ password: PASSWORD });
     expect(res.status).toBe(200);
     expect(res.headers["x-case-removed-from-list"]).toBe("false");
     const meta = await store.getCaseMeta("INC-4b");
@@ -126,7 +127,9 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
     // Typed to the one method being swapped, so a rename of archiveCaseFolder breaks this test
     // instead of silently leaving it patching a method that no longer exists.
     const patch = store as { archiveCaseFolder: CaseStore["archiveCaseFolder"] };
-    patch.archiveCaseFolder = async () => { throw new Error("simulated rename failure"); };
+    patch.archiveCaseFolder = async () => {
+      throw new Error("simulated rename failure");
+    };
     try {
       const res = await request(app)
         .post("/cases/INC-4c/export/encrypted")
@@ -180,7 +183,9 @@ describe("Archived-case write guards on other evidence routes", () => {
     const { app } = await harnessWithPipeline();
     await seedCase(app, "INC-9", "Case Nine");
     await request(app).post("/cases/INC-9/archive").send({ removeFromList: true });
-    const res = await request(app).post("/cases/INC-9/import-file").send({ filename: "x.csv", content: "a,b\n1,2" });
+    const res = await request(app)
+      .post("/cases/INC-9/import-file")
+      .send({ filename: "x.csv", content: "a,b\n1,2" });
     expect(res.status).toBe(423);
   });
 
@@ -280,7 +285,9 @@ describe("POST /cases/:id/delete", () => {
     await request(app).patch("/cases/DEL-6/status").send({ status: "closed" });
     const original = store.deleteCaseFolder.bind(store);
     const patch = store as { deleteCaseFolder: CaseStore["deleteCaseFolder"] };
-    patch.deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
+    patch.deleteCaseFolder = async () => {
+      throw new Error("simulated delete failure");
+    };
     try {
       const res = await request(app).post("/cases/DEL-6/delete").send({ archiveFirst: "zip" });
       expect(res.status).toBe(200);
@@ -298,7 +305,9 @@ describe("POST /cases/:id/delete", () => {
     await request(app).patch("/cases/DEL-6b/status").send({ status: "closed" });
     const original = store.deleteCaseFolder.bind(store);
     const patch = store as { deleteCaseFolder: CaseStore["deleteCaseFolder"] };
-    patch.deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
+    patch.deleteCaseFolder = async () => {
+      throw new Error("simulated delete failure");
+    };
     try {
       const res = await bufferRequest(
         request(app).post("/cases/DEL-6b/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),
@@ -379,7 +388,9 @@ describe("POST /cases/seed-demo — force guard (#19)", () => {
   it("seedDemoCase itself refuses a traversal id, so the CLI path is covered too", async () => {
     const { store } = await harness();
     const { seedDemoCase } = await import("../../src/analysis/seedDemoCase.js");
-    await expect(seedDemoCase(store.casesRoot, { caseId: "../cli-escape", force: true })).rejects.toThrow(/invalid caseId/i);
+    await expect(seedDemoCase(store.casesRoot, { caseId: "../cli-escape", force: true })).rejects.toThrow(
+      /invalid caseId/i,
+    );
     await expect(stat(join(store.casesRoot, "..", "cli-escape"))).rejects.toThrow();
   });
 

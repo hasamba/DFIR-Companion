@@ -45,7 +45,9 @@ describe("store id traversal (#213)", () => {
 
   it("ArtifactBundleStore.save cannot overwrite a file outside its root", async () => {
     const store = new ArtifactBundleStore(root);
-    await expect(store.save({ id: "../secret", name: "pwn", artifacts: [] } as never)).rejects.toThrow(UnsafeStoreIdError);
+    await expect(store.save({ id: "../secret", name: "pwn", artifacts: [] } as never)).rejects.toThrow(
+      UnsafeStoreIdError,
+    );
     expect(await secretIntact()).toBe(true);
   });
 

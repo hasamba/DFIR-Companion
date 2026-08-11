@@ -96,13 +96,13 @@ export function checkConfiguredPromptDrift(env: NodeJS.ProcessEnv = process.env)
       text = inline;
     } else {
       const file = env[`DFIR_AI_${cap.name}_PROMPT_FILE`];
-      if (!file || file.trim().length === 0) continue;   // no override → built-in is used
+      if (!file || file.trim().length === 0) continue; // no override → built-in is used
       try {
         const raw = readFileSync(file, "utf8");
-        if (raw.trim().length === 0) continue;            // empty file → resolvePrompt uses the built-in
+        if (raw.trim().length === 0) continue; // empty file → resolvePrompt uses the built-in
         text = raw;
       } catch {
-        continue;                                          // unreadable → resolvePrompt uses the built-in
+        continue; // unreadable → resolvePrompt uses the built-in
       }
     }
     const missing = missingMarkers(text, cap.markers);
@@ -125,7 +125,7 @@ export function assertBuiltinsHaveMarkers(builtinByName: Record<string, string>)
     if (missing.length) {
       throw new Error(
         `promptCapabilities: built-in ${cap.name} prompt is missing its own markers [${missing.join(", ")}] — ` +
-        `the marker list is stale, update PROMPT_CAPABILITIES to match the current prompt`,
+          `the marker list is stale, update PROMPT_CAPABILITIES to match the current prompt`,
       );
     }
   }

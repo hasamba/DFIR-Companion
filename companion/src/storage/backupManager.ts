@@ -1,10 +1,7 @@
 import { mkdir, readdir, stat, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "./atomicWrite.js";
-import {
-  SNAPSHOT_BINARY_STATE_FILES,
-  SNAPSHOT_STATE_FILES,
-} from "../analysis/investigationStateFiles.js";
+import { SNAPSHOT_BINARY_STATE_FILES, SNAPSHOT_STATE_FILES } from "../analysis/investigationStateFiles.js";
 import { caseSqliteWorker } from "../analysis/caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "../analysis/stateStore.js";
 import type { CaseStore } from "./caseStore.js";
@@ -78,10 +75,7 @@ export function resolveBackupConfig(env: NodeJS.ProcessEnv = process.env): Backu
   const retain = requestedRetain === 0 ? RETAIN_FALLBACK_CAP : requestedRetain;
   const preSynthRetain = Math.max(0, Number(env.DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN) || 10);
   const rawInterval = env.DFIR_STATE_BACKUP_INTERVAL_MS;
-  const intervalMs = Math.max(
-    0,
-    rawInterval != null && rawInterval !== "" ? Number(rawInterval) : 3_600_000,
-  );
+  const intervalMs = Math.max(0, rawInterval != null && rawInterval !== "" ? Number(rawInterval) : 3_600_000);
   // Parsed explicitly like retain above: a literal "0" is the operator turning the byte cap off,
   // while blank or non-numeric must land on the default rather than NaN — every `total > NaN`
   // comparison is false, which would leave the cap silently disabled.
@@ -123,13 +117,12 @@ interface BackupBundle {
   binaryFiles?: Record<string, string>;
 }
 
-function binaryBackupEntries(
-  manifestFilename: string,
-  bundle: BackupBundle,
-): Array<[string, string]> {
+function binaryBackupEntries(manifestFilename: string, bundle: BackupBundle): Array<[string, string]> {
   return Object.entries(bundle.binaryFiles ?? {}).map(([name, sidecar]) => {
-    if (!(SNAPSHOT_BINARY_STATE_FILES as readonly string[]).includes(name) ||
-        sidecar !== binaryBackupFilename(manifestFilename, name)) {
+    if (
+      !(SNAPSHOT_BINARY_STATE_FILES as readonly string[]).includes(name) ||
+      sidecar !== binaryBackupFilename(manifestFilename, name)
+    ) {
       throw new Error(`backup contains an invalid binary sidecar reference: ${name}`);
     }
     return [name, sidecar];

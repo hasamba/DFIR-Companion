@@ -25,16 +25,16 @@ export interface RuleMatch {
 /** Aggregated proposal for one event across every rule that matched it. */
 export interface EventTagResult {
   eventId: string;
-  tags: string[];       // union of matching rules' tags (order-stable, deduped)
-  mitre: string[];      // union of matching rules' MITRE ids
-  severity?: Severity;  // the HIGHEST severity any matching rule requested (undefined if none set one)
-  ruleIds: string[];    // ids of the rules that matched (drives per-tag authorship: `tagger:<id>`)
+  tags: string[]; // union of matching rules' tags (order-stable, deduped)
+  mitre: string[]; // union of matching rules' MITRE ids
+  severity?: Severity; // the HIGHEST severity any matching rule requested (undefined if none set one)
+  ruleIds: string[]; // ids of the rules that matched (drives per-tag authorship: `tagger:<id>`)
 }
 
 export interface TaggerResult {
-  perRule: RuleMatch[];       // every rule, including 0-match ones (so a "Run tagger" report is complete)
+  perRule: RuleMatch[]; // every rule, including 0-match ones (so a "Run tagger" report is complete)
   perEvent: EventTagResult[]; // only events with ≥1 match
-  totalMatched: number;       // number of events with ≥1 match
+  totalMatched: number; // number of events with ≥1 match
 }
 
 /** Rank a severity — lower index is MORE severe (Critical=0 … Info=4). */
@@ -51,7 +51,10 @@ export function raiseSeverity(current: Severity, proposed?: Severity): Severity 
 
 function uniqPush(into: string[], seen: Set<string>, values: readonly string[]): void {
   for (const v of values) {
-    if (!seen.has(v)) { seen.add(v); into.push(v); }
+    if (!seen.has(v)) {
+      seen.add(v);
+      into.push(v);
+    }
   }
 }
 
@@ -68,14 +71,20 @@ export function runTagger(events: readonly ForensicEvent[], ruleset: CompiledRul
       eventIds.push(event.id);
       let slot = byEvent.get(event.id);
       if (!slot) {
-        slot = { res: { eventId: event.id, tags: [], mitre: [], severity: undefined, ruleIds: [] }, tagSeen: new Set(), mitreSeen: new Set() };
+        slot = {
+          res: { eventId: event.id, tags: [], mitre: [], severity: undefined, ruleIds: [] },
+          tagSeen: new Set(),
+          mitreSeen: new Set(),
+        };
         byEvent.set(event.id, slot);
       }
       uniqPush(slot.res.tags, slot.tagSeen, rule.tags);
       uniqPush(slot.res.mitre, slot.mitreSeen, rule.mitre);
       slot.res.ruleIds.push(rule.id);
       if (rule.severity) {
-        slot.res.severity = slot.res.severity ? raiseSeverity(slot.res.severity, rule.severity) : rule.severity;
+        slot.res.severity = slot.res.severity
+          ? raiseSeverity(slot.res.severity, rule.severity)
+          : rule.severity;
       }
     }
     perRule.push({
@@ -104,7 +113,11 @@ export function applyToForensicEvent(event: ForensicEvent, result: EventTagResul
   const severity = raiseSeverity(event.severity, result.severity);
   const seen = new Set(event.mitreTechniques);
   const mitreTechniques = [...event.mitreTechniques];
-  for (const t of result.mitre) if (!seen.has(t)) { seen.add(t); mitreTechniques.push(t); }
+  for (const t of result.mitre)
+    if (!seen.has(t)) {
+      seen.add(t);
+      mitreTechniques.push(t);
+    }
   if (severity === event.severity && mitreTechniques.length === event.mitreTechniques.length) {
     return event; // nothing to change — preserve identity so callers can skip the write
   }

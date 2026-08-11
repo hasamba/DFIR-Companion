@@ -3,7 +3,13 @@ import { byEventTime } from "./forensicSort.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
-import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
+import {
+  rankConnectiveIocs,
+  buildConnectiveIocDigest,
+  shortHost,
+  classifyVerdict,
+  iocHasBehavioralEvent,
+} from "./iocAnchors.js";
 import { scoreIocs, RISK_TIER_RANK } from "./iocRiskScore.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
@@ -27,29 +33,23 @@ const PER_ANCHOR_CONTEXT_CAP = 6;
 // Reserved fractions of the post-guaranteed budget for each behavioral class, so a burst of mis-graded
 // High noise can't starve the corroborated/technique-tagged evidence. Filled in order, each capped, so
 // an over-supplied earlier class can't consume a later class's share; unused capacity rolls to spread.
-const BUDGET_ANCHOR_CONTEXT = 0.40;
+const BUDGET_ANCHOR_CONTEXT = 0.4;
 const BUDGET_CORROBORATED = 0.25;
 const BUDGET_TECHNIQUE = 0.15;
-const BUDGET_RARE = 0.15;          // prevalence #15: reserved seats for RARE (low-prevalence) events
-const RARE_SCORE_MIN = 0.34;       // rarityOf(e) ≥ this counts as rare (≈ ≤2 occurrences via 1/count)
+const BUDGET_RARE = 0.15; // prevalence #15: reserved seats for RARE (low-prevalence) events
+const RARE_SCORE_MIN = 0.34; // rarityOf(e) ≥ this counts as rare (≈ ≤2 occurrences via 1/count)
 
 // Why an event earned a synthesis seat. "anchor" = Critical/High verdict; "earliest" = initial-access
 // context; the rest are the behavioral fills. Exposed (via the annotated selection) so the dashboard
 // can show the analyst what CLASSES of evidence the model actually saw.
 export type SelectionClass =
-  | "anchor"
-  | "earliest"
-  | "anchor_context"
-  | "corroborated"
-  | "technique"
-  | "rare"
-  | "spread";
+  "anchor" | "earliest" | "anchor_context" | "corroborated" | "technique" | "rare" | "spread";
 
 export interface AnnotatedSelection {
-  events: ForensicEvent[];                       // chosen events, CHRONOLOGICAL (the model reads a story)
-  classOf: Map<string, SelectionClass>;          // event id → the class that claimed it (strongest wins)
-  counts: Record<SelectionClass, number>;        // per-class tally of the final selection
-  omitted: number;                               // scoped events NOT selected (still in the case)
+  events: ForensicEvent[]; // chosen events, CHRONOLOGICAL (the model reads a story)
+  classOf: Map<string, SelectionClass>; // event id → the class that claimed it (strongest wins)
+  counts: Record<SelectionClass, number>; // per-class tally of the final selection
+  omitted: number; // scoped events NOT selected (still in the case)
 }
 
 function emptyCounts(): Record<SelectionClass, number> {
@@ -72,7 +72,9 @@ function assetKey(asset: string | undefined): string | null {
 // ran), so they're preferred when an anchor has more nearby events than the per-anchor cap.
 function isProcessLike(e: ForensicEvent): boolean {
   if (e.processName || e.parentName || e.action === "execute") return true;
-  return /\b(cmd|powershell|pwsh|bash|sh|wscript|cscript|rundll32|regsvr32|mshta|\.exe|\.ps1|\.dll|-enc|-e[nc]{0,2} |http)\b/i.test(e.description ?? "");
+  return /\b(cmd|powershell|pwsh|bash|sh|wscript|cscript|rundll32|regsvr32|mshta|\.exe|\.ps1|\.dll|-enc|-e[nc]{0,2} |http)\b/i.test(
+    e.description ?? "",
+  );
 }
 
 // An event pre-resolved for the anchor-context scan: timestamp parsed once and process-likeness
@@ -80,7 +82,7 @@ function isProcessLike(e: ForensicEvent): boolean {
 interface TimedEvent {
   readonly e: ForensicEvent;
   readonly ms: number;
-  readonly procRank: 0 | 1;   // 0 = process-like (preferred context), 1 = everything else
+  readonly procRank: 0 | 1; // 0 = process-like (preferred context), 1 = everything else
 }
 
 // Index of the first entry with ms >= target, in an ms-ascending list.
@@ -132,12 +134,16 @@ function anchorContextCandidates(
     const bucket = byAsset.get(key);
     if (!bucket) continue;
     const near: TimedEvent[] = [];
-    for (let i = lowerBound(bucket, am - ANCHOR_WINDOW_MS); i < bucket.length && bucket[i].ms <= am + ANCHOR_WINDOW_MS; i++) {
+    for (
+      let i = lowerBound(bucket, am - ANCHOR_WINDOW_MS);
+      i < bucket.length && bucket[i].ms <= am + ANCHOR_WINDOW_MS;
+      i++
+    ) {
       const t = bucket[i];
       if (t.e.id === a.id || claimed.has(t.e.id)) continue;
       near.push(t);
     }
-    near.sort((x, y) => (x.procRank - y.procRank) || (Math.abs(x.ms - am) - Math.abs(y.ms - am)));
+    near.sort((x, y) => x.procRank - y.procRank || Math.abs(x.ms - am) - Math.abs(y.ms - am));
     if (near.length) perAnchor.push(near.slice(0, PER_ANCHOR_CONTEXT_CAP).map((t) => t.e));
   }
   // Round-robin flatten, de-duped (a context event near two anchors appears once).
@@ -149,7 +155,10 @@ function anchorContextCandidates(
       if (i < list.length) {
         progressed = true;
         const e = list[i];
-        if (!seen.has(e.id)) { seen.add(e.id); out.push(e); }
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          out.push(e);
+        }
       }
     }
     if (!progressed) break;
@@ -166,7 +175,7 @@ function anchorContextCandidates(
 export function selectSynthesisEventsAnnotated(
   events: ForensicEvent[],
   max: number,
-  rarityOf?: (e: ForensicEvent) => number,   // prevalence #15: higher = rarer; omitted = no rarity bias
+  rarityOf?: (e: ForensicEvent) => number, // prevalence #15: higher = rarer; omitted = no rarity bias
 ): AnnotatedSelection {
   const byTime = [...events].sort(byEventTime);
   if (events.length <= max || max <= 0) {
@@ -174,7 +183,9 @@ export function selectSynthesisEventsAnnotated(
   }
 
   const classOf = new Map<string, SelectionClass>();
-  const claim = (id: string, c: SelectionClass): void => { if (!classOf.has(id)) classOf.set(id, c); };
+  const claim = (id: string, c: SelectionClass): void => {
+    if (!classOf.has(id)) classOf.set(id, c);
+  };
   const capacityLeft = (): number => max - classOf.size;
 
   // GUARANTEED 1: anchors — every Critical/High event (the verdict-bearing rows).
@@ -190,14 +201,17 @@ export function selectSynthesisEventsAnnotated(
     const reserve = Math.min(EARLIEST_KEEP, Math.floor(max * OVERFLOW_RESERVE_FRACTION));
     const anchorBudget = Math.max(1, max - reserve);
     const keptAnchors = [...anchorEvents]
-      .sort((a, b) =>
-        (SEV_RANK[a.severity] - SEV_RANK[b.severity])
-        || (rarityOf ? rarityOf(b) - rarityOf(a) : 0)
-        || byEventTime(a, b))
+      .sort(
+        (a, b) =>
+          SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+          (rarityOf ? rarityOf(b) - rarityOf(a) : 0) ||
+          byEventTime(a, b),
+      )
       .slice(0, anchorBudget);
 
     const kept = new Map<string, SelectionClass>(keptAnchors.map((e) => [e.id, "anchor" as const]));
-    for (const e of byTime) {                     // spend the reserve on the earliest events
+    for (const e of byTime) {
+      // spend the reserve on the earliest events
       if (kept.size >= max) break;
       if (kept.has(e.id)) continue;
       kept.set(e.id, "earliest");
@@ -234,16 +248,29 @@ export function selectSynthesisEventsAnnotated(
 
   // RESERVED FILL 1: same-host context around each anchor.
   fill(
-    () => anchorContextCandidates(byTime, events.filter((e) => classOf.get(e.id) === "anchor"), new Set(classOf.keys())),
+    () =>
+      anchorContextCandidates(
+        byTime,
+        events.filter((e) => classOf.get(e.id) === "anchor"),
+        new Set(classOf.keys()),
+      ),
     Math.floor(remaining * BUDGET_ANCHOR_CONTEXT),
     "anchor_context",
   );
 
   // RESERVED FILL 2: cross-source-corroborated events (correlate.ts already merged their sources).
-  fill(() => byTime.filter((e) => !classOf.has(e.id) && (e.sources?.length ?? 0) >= 2), Math.floor(remaining * BUDGET_CORROBORATED), "corroborated");
+  fill(
+    () => byTime.filter((e) => !classOf.has(e.id) && (e.sources?.length ?? 0) >= 2),
+    Math.floor(remaining * BUDGET_CORROBORATED),
+    "corroborated",
+  );
 
   // RESERVED FILL 3: ATT&CK-technique-tagged events regardless of severity (behavioral signal).
-  fill(() => byTime.filter((e) => !classOf.has(e.id) && (e.mitreTechniques?.length ?? 0) > 0), Math.floor(remaining * BUDGET_TECHNIQUE), "technique");
+  fill(
+    () => byTime.filter((e) => !classOf.has(e.id) && (e.mitreTechniques?.length ?? 0) > 0),
+    Math.floor(remaining * BUDGET_TECHNIQUE),
+    "technique",
+  );
 
   // RESERVED FILL 4 (prevalence #15): RARE events — a low-prevalence pattern (seen once or twice in the
   // whole case) is far more likely to be signal than the 500× nightly-robocopy baseline, yet grades Low
@@ -255,9 +282,10 @@ export function selectSynthesisEventsAnnotated(
     // be crowded out by baseline noise), even when the fractional budget rounds to 0 at a small cap. An
     // empty candidate list fills nothing on its own, so the floor of 1 costs a seat only when earned.
     fill(
-      () => byTime
-        .filter((e) => !classOf.has(e.id) && rare(e) >= RARE_SCORE_MIN)
-        .sort((a, b) => rare(b) - rare(a) || byEventTime(a, b)),
+      () =>
+        byTime
+          .filter((e) => !classOf.has(e.id) && rare(e) >= RARE_SCORE_MIN)
+          .sort((a, b) => rare(b) - rare(a) || byEventTime(a, b)),
       Math.max(1, Math.floor(remaining * BUDGET_RARE)),
       "rare",
     );
@@ -270,22 +298,27 @@ export function selectSynthesisEventsAnnotated(
     const phases = buildAttackPhases(events);
     const phaseRank = (p: { maxSeverity: Severity }): number => SEV_RANK[p.maxSeverity] ?? 9;
     for (const p of [...phases].sort((a, b) => phaseRank(a) - phaseRank(b))) {
-      const pending = p.eventIds.map((id) => byId.get(id)).filter((e): e is ForensicEvent => !!e && !classOf.has(e.id));
+      const pending = p.eventIds
+        .map((id) => byId.get(id))
+        .filter((e): e is ForensicEvent => !!e && !classOf.has(e.id));
       if (!pending.length) continue;
-      if (pending.length <= capacityLeft()) {                    // keep the whole burst, or skip it whole
+      if (pending.length <= capacityLeft()) {
+        // keep the whole burst, or skip it whole
         for (const e of pending) classOf.set(e.id, "spread");
       }
       if (capacityLeft() <= 0) break;
     }
   }
-  if (capacityLeft() > 0) {                                       // residual even time-spread of what's left
+  if (capacityLeft() > 0) {
+    // residual even time-spread of what's left
     const rest = byTime.filter((e) => !classOf.has(e.id));
     const slots = capacityLeft();
     if (rest.length <= slots) {
       rest.forEach((e) => classOf.set(e.id, "spread"));
     } else {
       const step = rest.length / slots;
-      for (let i = 0; i < slots; i++) classOf.set(rest[Math.min(rest.length - 1, Math.floor(i * step))].id, "spread");
+      for (let i = 0; i < slots; i++)
+        classOf.set(rest[Math.min(rest.length - 1, Math.floor(i * step))].id, "spread");
     }
   }
 
@@ -321,10 +354,16 @@ export function buildSynthesisContext(
   // otherwise trust at face value) needs a flag, not silent inclusion. See iocAnchors.ts.
   const hostNames = new Set(graph.assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
 
-  const assetLines = graph.assets.filter((a) => a.compromised).slice(0, 25).map((a) => {
-    const iocs = a.iocIds.map((id) => iocVal.get(id) || id).slice(0, 8).join(", ");
-    return `- ${a.name} (${a.type})${iocs ? ` ← ${iocs}` : ""}`;
-  });
+  const assetLines = graph.assets
+    .filter((a) => a.compromised)
+    .slice(0, 25)
+    .map((a) => {
+      const iocs = a.iocIds
+        .map((id) => iocVal.get(id) || id)
+        .slice(0, 8)
+        .join(", ");
+      return `- ${a.name} (${a.type})${iocs ? ` ← ${iocs}` : ""}`;
+    });
 
   // Threat-intel verdicts, classified by trust (investigation-guidance #7): a single stale provider
   // verdict on the case's OWN infra flowed unchecked into a Critical finding (northpeak). Each verdict
@@ -334,14 +373,20 @@ export function buildSynthesisContext(
   const trustedVerdicts: string[] = [];
   const conflictVerdicts: string[] = [];
   for (const i of state.iocs) {
-    const hit = (i.enrichments ?? []).find((x) => x.verdict === "malicious")
-      ?? (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
+    const hit =
+      (i.enrichments ?? []).find((x) => x.verdict === "malicious") ??
+      (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
     if (!hit) continue;
-    const cls = classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames });
+    const cls = classifyVerdict(i, {
+      hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents),
+      hostNames,
+    });
     if (cls === "none") continue;
     const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
     if (cls === "conflicted") {
-      conflictVerdicts.push(`- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2`);
+      conflictVerdicts.push(
+        `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2`,
+      );
     } else {
       trustedVerdicts.push(`- ${base} [${cls}]`);
     }
@@ -367,7 +412,9 @@ export function buildSynthesisContext(
 
   // Signal concentration (#202): tell the model which host(s) carry the suspicious activity so an
   // automatic run over a noisy multi-host timeline doesn't anchor its narrative on a benign host.
-  const concentrationBlock = buildSignalConcentrationDigest(rankHosts({ ...state, forensicTimeline: scopedEvents }));
+  const concentrationBlock = buildSignalConcentrationDigest(
+    rankHosts({ ...state, forensicTimeline: scopedEvents }),
+  );
 
   // Composite IOC risk (#63): surface the actionable critical/high indicators (verdict + severity +
   // corroboration + KEV) so the model prioritises them. Whitelist/NSRL aren't wired here (no store
@@ -378,16 +425,22 @@ export function buildSynthesisContext(
     .filter((x) => x.r && (x.r.score === "critical" || x.r.score === "high"))
     .sort((a, b) => RISK_TIER_RANK[b.r.score] - RISK_TIER_RANK[a.r.score]);
   const riskBlock = topRisk.length
-    ? `HIGH-RISK INDICATORS (composite score — act on these first):\n${topRisk.slice(0, 15).map((x) => `- [${x.r.score}] ${x.i.value} (${x.i.type}) — ${x.r.factors.slice(0, 2).join("; ")}`).join("\n")}\n\n`
+    ? `HIGH-RISK INDICATORS (composite score — act on these first):\n${topRisk
+        .slice(0, 15)
+        .map((x) => `- [${x.r.score}] ${x.i.value} (${x.i.type}) — ${x.r.factors.slice(0, 2).join("; ")}`)
+        .join("\n")}\n\n`
     : "";
 
   let block = "";
   if (riskBlock) block += riskBlock;
   if (concentrationBlock) block += concentrationBlock;
   if (connectiveBlock) block += connectiveBlock;
-  if (assetLines.length) block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
-  if (trustedVerdicts.length) block += `THREAT-INTEL VERDICTS (third-party — [corroborated] = 2+ providers or intel PLUS behavioral evidence; [lone-intel] = a single provider with no corroborating activity, treat as a LEAD, not a confirmed compromise):\n${trustedVerdicts.join("\n")}\n\n`;
-  if (conflictVerdicts.length) block += `INTEL CONFLICTS (do NOT treat as confirmed — a verdict on the case's OWN infrastructure or an internal address, most likely stale/incorrect third-party data):\n${conflictVerdicts.join("\n")}\n\n`;
+  if (assetLines.length)
+    block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
+  if (trustedVerdicts.length)
+    block += `THREAT-INTEL VERDICTS (third-party — [corroborated] = 2+ providers or intel PLUS behavioral evidence; [lone-intel] = a single provider with no corroborating activity, treat as a LEAD, not a confirmed compromise):\n${trustedVerdicts.join("\n")}\n\n`;
+  if (conflictVerdicts.length)
+    block += `INTEL CONFLICTS (do NOT treat as confirmed — a verdict on the case's OWN infrastructure or an internal address, most likely stale/incorrect third-party data):\n${conflictVerdicts.join("\n")}\n\n`;
   if (kevBlock) block += kevBlock;
   return block;
 }

@@ -7,15 +7,15 @@ export type ThreadStatus = "open" | "closed";
 
 // One threat-intel lookup result for an IOC (VirusTotal, MalwareBazaar, AbuseIPDB…).
 export interface IocEnrichment {
-  source: string;                                              // display label, e.g. "VirusTotal" | "MalwareBazaar" | "ThreatFox"
-  provider?: string;                                           // owning provider name (e.g. "Hunting.ch") when it differs from `source` — a fan-out provider emits several sources; dedup/re-check key on this, falling back to `source`
+  source: string; // display label, e.g. "VirusTotal" | "MalwareBazaar" | "ThreatFox"
+  provider?: string; // owning provider name (e.g. "Hunting.ch") when it differs from `source` — a fan-out provider emits several sources; dedup/re-check key on this, falling back to `source`
   verdict: "malicious" | "suspicious" | "harmless" | "unknown";
-  score?: string;                                              // human summary, e.g. "52/73 detections", "100% abuse"
-  detections?: number;                                         // malicious engine count (where applicable)
+  score?: string; // human summary, e.g. "52/73 detections", "100% abuse"
+  detections?: number; // malicious engine count (where applicable)
   total?: number;
-  tags?: string[];                                             // malware family / classification labels
-  link?: string;                                               // permalink to the report
-  fetchedAt: string;                                           // ISO time the lookup was made
+  tags?: string[]; // malware family / classification labels
+  link?: string; // permalink to the report
+  fetchedAt: string; // ISO time the lookup was made
   // Geo coordinates (#133): set by the GeoIP provider so the map can plot the IOC. Optional —
   // older enrichments without them still validate; nothing else needs wiring.
   lat?: number;
@@ -29,8 +29,8 @@ export interface IOC {
   type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
   value: string;
   firstSeen: string;
-  enrichments?: IocEnrichment[];                               // threat-intel HITS (added by the enrich pass)
-  enrichedBy?: string[];                                       // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
+  enrichments?: IocEnrichment[]; // threat-intel HITS (added by the enrich pass)
+  enrichedBy?: string[]; // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
   // Case-scoped forensic-event id(s) this IOC was authoritatively extracted from (set by the 5
   // priority importers via pipeline.ts). Absent/empty ⇒ iocProvenanceChain.ts falls back to
   // matching by value, same as before this field existed.
@@ -51,22 +51,22 @@ export interface IOC {
 // vs "uncorroborated", and drives the confidence caps — an unverifiable AI-emitted number alone let a
 // single stale CTI verdict mint a Critical finding (northpeak).
 export interface FindingCorroboration {
-  distinctTools: number;   // union of event.sources across the finding's supporting events
-  distinctHosts: number;   // distinct event.asset across them
-  intelSources: number;    // this finding's related IOCs carrying a malicious/suspicious intel verdict
-  graphLinked: boolean;    // any supporting event participates in an evidence-graph causal edge
+  distinctTools: number; // union of event.sources across the finding's supporting events
+  distinctHosts: number; // distinct event.asset across them
+  intelSources: number; // this finding's related IOCs carrying a malicious/suspicious intel verdict
+  graphLinked: boolean; // any supporting event participates in an evidence-graph causal edge
   // Issue #61 — three additional deterministic confidence signals, all computed in
   // groundAndScoreFindings and optional so findings persisted before they existed still validate:
-  verdictFirst?: boolean;      // ≥1 supporting event is a graded (Low+) detection — a tool adjudicated it
-  huntArtifactOnly?: boolean;  // grounded, but EVERY supporting event is Info telemetry (raw collection) — penalised
-  kevLinked?: boolean;         // a CISA-KEV (actively-exploited) CVE appears in the finding, its events, or its IOCs
+  verdictFirst?: boolean; // ≥1 supporting event is a graded (Low+) detection — a tool adjudicated it
+  huntArtifactOnly?: boolean; // grounded, but EVERY supporting event is Info telemetry (raw collection) — penalised
+  kevLinked?: boolean; // a CISA-KEV (actively-exploited) CVE appears in the finding, its events, or its IOCs
 }
 
 export interface Finding {
   id: string;
   severity: Severity;
-  confidence?: number;          // 0–100: AI certainty this finding is real (absent = unknown)
-  confidenceReason?: string;    // one-sentence why (evidence strength, source corroboration, model certainty)
+  confidence?: number; // 0–100: AI certainty this finding is real (absent = unknown)
+  confidenceReason?: string; // one-sentence why (evidence strength, source corroboration, model certainty)
   // Set post-synthesis by groundAndScoreFindings (investigation-guidance #6). `ungrounded` = no cited
   // in-scope event supports it (a hypothesis, not a fact) → confidence hard-capped + badged.
   // `corroboration` is the rollup above. Both recomputed every synthesis; persisted for display.
@@ -105,9 +105,9 @@ export interface Finding {
   // synthesized before this field existed fall back to the normalized title.
   semanticKey?: string;
   description: string;
-  relatedIocs: string[];        // IOC ids
-  sourceScreenshots: string[];  // screenshot filenames
-  mitreTechniques: string[];    // technique ids, e.g. "T1059"
+  relatedIocs: string[]; // IOC ids
+  sourceScreenshots: string[]; // screenshot filenames
+  mitreTechniques: string[]; // technique ids, e.g. "T1059"
   // Forensic-event ids this finding cites as its supporting evidence (issue #222 — cited AI
   // answers). Only synthesis populates it (extraction can't know finding ids yet); optional so
   // findings persisted before this field existed still validate.
@@ -137,7 +137,7 @@ export interface TimelineEntry {
 // capture/analysis timeline above. These form the chronological attack story.
 export interface ForensicEvent {
   id: string;
-  timestamp: string;            // the event's real time as observed in the artifact (best effort)
+  timestamp: string; // the event's real time as observed in the artifact (best effort)
   description: string;
   severity: Severity;
   mitreTechniques: string[];
@@ -147,22 +147,22 @@ export interface ForensicEvent {
   // incremental migration, but identity-aware consumers read this envelope so prose wording is
   // never their data contract. StateStore upgrades older events on read without removing fields.
   canonical?: CanonicalEventEnvelope;
-  count?: number;               // occurrences when this event aggregates many collapsed lines (e.g. 20); absent ⇒ 1
-  endTimestamp?: string;        // time of the last occurrence when aggregated (timestamp is the first)
+  count?: number; // occurrences when this event aggregates many collapsed lines (e.g. 20); absent ⇒ 1
+  endTimestamp?: string; // time of the last occurrence when aggregated (timestamp is the first)
   // Clock-skew projection (#228), set ONLY on read-path copies while timeline alignment is on and
   // stripped before anything derived from them is persisted (analysis/clockSkew.ts). When present,
   // `timestamp` is the aligned (virtual) time and `originalTimestamp` is what the artifact actually
   // recorded — the report and the UI must show the recorded time alongside the corrected one, since
   // only the former is evidence.
   originalTimestamp?: string;
-  skewOffsetMs?: number;        // correction applied: recorded − aligned
+  skewOffsetMs?: number; // correction applied: recorded − aligned
   // Structured identifiers used to CORRELATE the same real-world artifact across tools
   // (e.g. a Velociraptor alert and a THOR alert about the same downloaded file).
   sha256?: string;
   md5?: string;
-  path?: string;                // file path the event concerns (normalized lowercased for matching)
-  asset?: string;               // host/computer/FQDN this event pertains to (the affected asset)
-  sources?: string[];           // distinct tools/imports that reported this event (corroboration)
+  path?: string; // file path the event concerns (normalized lowercased for matching)
+  asset?: string; // host/computer/FQDN this event pertains to (the affected asset)
+  sources?: string[]; // distinct tools/imports that reported this event (corroboration)
   // The specific artifact/source-tool identifier that produced this event, at a finer grain than
   // `sources` (e.g. "Windows.NTFS.MFT" vs "Windows.Detection.Sigma" — both would otherwise show as
   // just "Velociraptor"). Set only by importers that know it (currently velociraptorImport.ts);
@@ -204,15 +204,15 @@ export interface ForensicEvent {
   // action distinguishes a file write from an execute (same hash → lineage edge) and
   // network sends/receives (srcIp/dstIp/port → network-flow edge).
   action?: "write" | "execute" | "network_send" | "network_receive";
-  srcIp?: string;    // source IP for network connections
-  dstIp?: string;    // destination IP for network connections
-  port?: number;     // destination port
+  srcIp?: string; // source IP for network connections
+  dstIp?: string; // destination IP for network connections
+  port?: number; // destination port
   // Deobfuscated command line (issue #97). Set by the deterministic deobfuscation pass when the
   // event's description contains a base64-encoded or otherwise obfuscated command.
   deobfuscated?: {
-    decoded: string;   // the decoded/deobfuscated payload
-    method: string;    // how it was decoded: "powershell-enc" | "base64"
-    iocs: string[];    // canonical IOC ids (i###) extracted from the decoded content
+    decoded: string; // the decoded/deobfuscated payload
+    method: string; // how it was decoded: "powershell-enc" | "base64"
+    iocs: string[]; // canonical IOC ids (i###) extracted from the decoded content
   };
   // Provenance markers explaining WHY this event was pulled into the analyzed timeline by an automated
   // pass rather than a normal import — currently the second-look loop (guidance #11), which stamps
@@ -225,13 +225,13 @@ export interface ForensicEvent {
 // (RockyRaccoon). `observed: false` on a real chain is an anomaly worth surfacing.
 export interface ProcessChainCheck {
   observed: boolean;
-  note: string;                 // human summary, e.g. "excel.exe → powershell.exe NOT observed"
+  note: string; // human summary, e.g. "excel.exe → powershell.exe NOT observed"
   link?: string;
   checkedAt: string;
 }
 
 export interface Technique {
-  id: string;            // e.g. "T1059.001"
+  id: string; // e.g. "T1059.001"
   name: string;
   findingIds: string[];
 }
@@ -242,9 +242,9 @@ export interface Technique {
 // button, the playbook can task it against the right endpoint, and a later import can be matched to it.
 // Every field optional/best-effort so an older state or a partial model reply still validates.
 export interface CollectDirective {
-  host?: string;            // the endpoint to collect from (validated against the case's known endpoints before deploy)
-  artifact?: string;        // the artifact/tool to collect, e.g. "Windows.EventLogs" or "$MFT"
-  logSource?: string;       // the log source/channel/file, e.g. "Security.evtx 4624/4672", "web proxy logs"
+  host?: string; // the endpoint to collect from (validated against the case's known endpoints before deploy)
+  artifact?: string; // the artifact/tool to collect, e.g. "Windows.EventLogs" or "$MFT"
+  logSource?: string; // the log source/channel/file, e.g. "Security.evtx 4624/4672", "web proxy logs"
   expectedOutcome?: string; // what a positive result would show — ties the collection to the question/hypothesis it serves
 }
 
@@ -254,11 +254,11 @@ export type QuestionStatus = "answered" | "partial" | "unknown";
 // and a pointer to where the investigator can find/confirm it (or what to collect).
 export interface InvestigationQuestion {
   id: string;
-  question: string;            // "What was the initial access vector?"
+  question: string; // "What was the initial access vector?"
   status: QuestionStatus;
-  answer: string;              // current best answer, or "" if unknown
-  pointer: string;             // where to look: finding ids / event times / screenshots, or what to collect next
-  pinned?: boolean;            // analyst-added (via Ask) — preserved across synthesis, which may answer it later
+  answer: string; // current best answer, or "" if unknown
+  pointer: string; // where to look: finding ids / event times / screenshots, or what to collect next
+  pinned?: boolean; // analyst-added (via Ask) — preserved across synthesis, which may answer it later
   // Finding ids this answer relies on (set by synthesis). Lets a later re-synthesis detect when a
   // supporting finding was marked false-positive and force the question back to "unknown" instead
   // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
@@ -268,8 +268,8 @@ export interface InvestigationQuestion {
   // techniques — the timeline contradicts the answer. Set post-synthesis by flagContradictedAnswers;
   // the UI/report render it as a "contradicted by timeline evidence" badge. Absent = no contradiction.
   contradicted?: {
-    techniques: string[];   // the contradicting technique ids observed in-scope
-    eventIds: string[];     // the events that carry them (a few, for the pointer/badge)
+    techniques: string[]; // the contradicting technique ids observed in-scope
+    eventIds: string[]; // the events that carry them (a few, for the pointer/badge)
   };
   // Structured collection directive for an 'unknown'/'partial' question (investigation-guidance #8):
   // where/what to collect to answer it, so the UI can offer a one-click Deploy and a later import can be
@@ -289,9 +289,9 @@ export type StepPriority = "critical" | "high" | "medium" | "low";
 export interface NextStep {
   id: string;
   priority: StepPriority;
-  action: string;              // what to do, e.g. "Pull Security.evtx 4624/4672 on ALClient07"
-  rationale: string;           // why it matters now — what it confirms or rules out
-  pointer: string;             // concrete artifact/host/finding to act on, or data to collect
+  action: string; // what to do, e.g. "Pull Security.evtx 4624/4672 on ALClient07"
+  rationale: string; // why it matters now — what it confirms or rules out
+  pointer: string; // concrete artifact/host/finding to act on, or data to collect
   // Structured collection directive (investigation-guidance #8): the machine-actionable form of a
   // collection-type step, so the UI can attach a one-click Velociraptor Deploy and a later import can
   // be matched to it. Absent for non-collection steps (e.g. "sandbox-detonate X").
@@ -311,10 +311,10 @@ export const UNCERTAINTY_STATUSES = ["confirmed", "inferred", "speculated", "unk
 export type UncertaintyStatus = (typeof UNCERTAINTY_STATUSES)[number];
 
 export interface Uncertainty {
-  topic: string;              // the claim/aspect this refers to, e.g. "initial access vector"
-  status: UncertaintyStatus;  // confirmed (evidenced) | inferred | speculated | unknown
-  basis: string;              // what the current status rests on — supporting event ids / findings (prose)
-  gap: string;                // what is missing to raise the status (the collection/analysis needed)
+  topic: string; // the claim/aspect this refers to, e.g. "initial access vector"
+  status: UncertaintyStatus; // confirmed (evidenced) | inferred | speculated | unknown
+  basis: string; // what the current status rests on — supporting event ids / findings (prose)
+  gap: string; // what is missing to raise the status (the collection/analysis needed)
 }
 
 export interface InvestigationState {
@@ -322,15 +322,15 @@ export interface InvestigationState {
   findings: Finding[];
   iocs: IOC[];
   openThreads: Thread[];
-  timeline: TimelineEntry[];           // capture/analysis timeline (what was reviewed, when)
-  forensicTimeline: ForensicEvent[];   // real incident events, sorted by their true time
+  timeline: TimelineEntry[]; // capture/analysis timeline (what was reviewed, when)
+  forensicTimeline: ForensicEvent[]; // real incident events, sorted by their true time
   mitreTechniques: Technique[];
   keyQuestions: InvestigationQuestion[]; // standard DFIR questions + current answers
-  nextSteps: NextStep[];               // AI-recommended next investigative actions, most important first
-  uncertainties: Uncertainty[];        // structured "what we know vs inferred vs speculated" ledger (#73)
+  nextSteps: NextStep[]; // AI-recommended next investigative actions, most important first
+  uncertainties: Uncertainty[]; // structured "what we know vs inferred vs speculated" ledger (#73)
   lastSummary: string;
-  attackerPath: string;                // narrative reconstruction of the attacker's path
-  narrativeTimeline: string;           // prose story of the incident for stakeholders (re-generated on synthesis)
+  attackerPath: string; // narrative reconstruction of the attacker's path
+  narrativeTimeline: string; // prose story of the incident for stakeholders (re-generated on synthesis)
   // Per-case domain/hostname (or any IOC type) exclude rules — a match is deleted from `iocs`
   // outright and never re-created by a future import/AI-synthesis delta (see mergeDelta). Distinct
   // from the global IOC Whitelist, which is reversible and merely marks a match false-positive.

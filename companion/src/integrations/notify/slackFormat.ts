@@ -21,7 +21,10 @@ export interface SlackPayload {
 export function formatSlack(event: NotificationEvent): SlackPayload {
   const emoji = SEVERITY_EMOJI[event.severity] ?? "⚪";
   const headline = `${emoji} ${event.title}`;
-  const body = event.lines.filter(Boolean).map((l) => `• ${l}`).join("\n");
+  const body = event.lines
+    .filter(Boolean)
+    .map((l) => `• ${l}`)
+    .join("\n");
   const contextText = `DFIR Companion · ${event.kind.replace(/_/g, " ")} · ${event.at}`;
 
   const blocks: unknown[] = [

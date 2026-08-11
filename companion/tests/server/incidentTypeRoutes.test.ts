@@ -21,7 +21,8 @@ async function makeApp(opts: { withStore?: boolean } = {}) {
   const stateStore = new StateStore(store);
   const incidentTypeStore = new IncidentTypeStore(store, customDir);
   const app = createApp(store, {
-    stateStore, aiConfigured: false,
+    stateStore,
+    aiConfigured: false,
     activityLogStore: new ActivityLogStore(store),
     templateStore: new TemplateStore(join(root, "templates")),
     ...(opts.withStore === false ? {} : { incidentTypeStore }),
@@ -42,7 +43,9 @@ const CUSTOM: Partial<IncidentType> & { id: string } = {
   name: "Org CryptoLocker",
   description: "Org-specific variant",
   initialKeyQuestions: ["Which share was hit first?"],
-  initialNextSteps: [{ action: "Isolate the file server", priority: "critical", rationale: "contain", pointer: "EDR" }],
+  initialNextSteps: [
+    { action: "Isolate the file server", priority: "critical", rationale: "contain", pointer: "EDR" },
+  ],
   findingsSeeds: ["Share encryption confirmed"],
   synthesisHint: "Org variant — prioritize share encryption.",
 };
@@ -101,7 +104,9 @@ describe("GET /incident-types/:id", () => {
 describe("POST /cases/:id/incident-type", () => {
   async function withCase() {
     const made = await makeApp();
-    await request(made.app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await request(made.app)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     return made;
   }
 
@@ -115,7 +120,9 @@ describe("POST /cases/:id/incident-type", () => {
     expect(res.body.record.appliedAt).not.toBe("");
 
     const state = await stateStore.load("c1");
-    expect(state.keyQuestions.some((q) => q.question.includes("Was data exfiltrated before encryption"))).toBe(true);
+    expect(
+      state.keyQuestions.some((q) => q.question.includes("Was data exfiltrated before encryption")),
+    ).toBe(true);
     expect(state.keyQuestions.some((q) => q.question.startsWith(TYPE_SEED_PREFIX))).toBe(true);
     // The hint reaches the AI from the record, never from the case summary (which reports print).
     expect(state.lastSummary).toBe("");
@@ -128,7 +135,17 @@ describe("POST /cases/:id/incident-type", () => {
     const before = await stateStore.load("c1");
     await stateStore.save({
       ...before,
-      keyQuestions: [...before.keyQuestions, { id: "mine", question: "My own question", status: "unknown", answer: "", pointer: "", pinned: false }],
+      keyQuestions: [
+        ...before.keyQuestions,
+        {
+          id: "mine",
+          question: "My own question",
+          status: "unknown",
+          answer: "",
+          pointer: "",
+          pinned: false,
+        },
+      ],
     });
 
     const res = await request(app).post("/cases/c1/incident-type").send({ typeId: "ransomware" });
@@ -143,8 +160,12 @@ describe("POST /cases/:id/incident-type", () => {
     await request(app).post("/cases/c1/incident-type").send({ typeId: "ransomware" });
     await request(app).post("/cases/c1/incident-type").send({ typeId: "bec", replace: true });
     const state = await stateStore.load("c1");
-    expect(state.keyQuestions.some((q) => q.question.includes("Which mailboxes were compromised"))).toBe(true);
-    expect(state.keyQuestions.some((q) => q.question.includes("Was data exfiltrated before encryption"))).toBe(false);
+    expect(state.keyQuestions.some((q) => q.question.includes("Which mailboxes were compromised"))).toBe(
+      true,
+    );
+    expect(
+      state.keyQuestions.some((q) => q.question.includes("Was data exfiltrated before encryption")),
+    ).toBe(false);
   });
 
   it("applies a custom type through the same path", async () => {
@@ -189,7 +210,11 @@ describe("POST /cases with incidentTypeId", () => {
   it("auto-configures the fresh case", async () => {
     const { app, stateStore, incidentTypeStore } = await makeApp();
     const res = await request(app).post("/cases").send({
-      caseId: "c1", name: "n", investigator: "i", aiProvider: null, incidentTypeId: "ransomware",
+      caseId: "c1",
+      name: "n",
+      investigator: "i",
+      aiProvider: null,
+      incidentTypeId: "ransomware",
     });
     expect(res.status).toBe(201);
     const state = await stateStore.load("c1");
@@ -204,20 +229,30 @@ describe("POST /cases with incidentTypeId", () => {
   it("keeps the template's questions when a template AND a type are both supplied", async () => {
     const { app, stateStore } = await makeApp();
     await request(app).post("/cases").send({
-      caseId: "c1", name: "n", investigator: "i", aiProvider: null,
-      templateId: "web-intrusion", incidentTypeId: "ransomware",
+      caseId: "c1",
+      name: "n",
+      investigator: "i",
+      aiProvider: null,
+      templateId: "web-intrusion",
+      incidentTypeId: "ransomware",
     });
     const state = await stateStore.load("c1");
     // From the web-intrusion template…
     expect(state.keyQuestions.some((q) => q.question.includes("web application"))).toBe(true);
     // …and from the ransomware incident type.
-    expect(state.keyQuestions.some((q) => q.question.includes("Was data exfiltrated before encryption"))).toBe(true);
+    expect(
+      state.keyQuestions.some((q) => q.question.includes("Was data exfiltrated before encryption")),
+    ).toBe(true);
   });
 
   it("creates the case normally when the incident type id is unknown", async () => {
     const { app, incidentTypeStore } = await makeApp();
     const res = await request(app).post("/cases").send({
-      caseId: "c1", name: "n", investigator: "i", aiProvider: null, incidentTypeId: "nope",
+      caseId: "c1",
+      name: "n",
+      investigator: "i",
+      aiProvider: null,
+      incidentTypeId: "nope",
     });
     expect(res.status).toBe(201);
     expect((await incidentTypeStore.loadRecord("c1")).typeId).toBe("");

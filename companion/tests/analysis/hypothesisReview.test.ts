@@ -33,11 +33,13 @@ describe("sanitizeHypothesisReviews (#71)", () => {
 
   it("trims, dedupes, drops blanks and caps support/refute bullets", () => {
     const [r] = sanitizeHypothesisReviews(
-      [{
-        hypothesisId: "h1",
-        supportingEvidence: ["  a phishing email was found  ", "a phishing email was found", "", "   "],
-        refutingEvidence: ["no attachment in web-proxy logs"],
-      }],
+      [
+        {
+          hypothesisId: "h1",
+          supportingEvidence: ["  a phishing email was found  ", "a phishing email was found", "", "   "],
+          refutingEvidence: ["no attachment in web-proxy logs"],
+        },
+      ],
       known,
       validEvents,
     );

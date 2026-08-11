@@ -16,11 +16,11 @@ import type { Severity, Finding, ForensicEvent } from "../../src/analysis/stateT
 // A golden expectation. Every field is OPTIONAL: only the fields present are asserted, so a fixture can be
 // as loose ("some High event mentioning mimikatz") or as tight ("T1003.001 on DC01 at 10:02Z") as needed.
 export interface GoldenEvent {
-  timestamp?: string;          // ISO — matched within MatchOptions.toleranceMinutes
-  keywords?: string[];         // all must appear (case-insensitive substring) in the produced description
-  severity?: Severity;         // exact severity, if asserted
-  mitreTechniques?: string[];  // at least one must overlap the produced techniques, if asserted
-  asset?: string;              // host/FQDN — case-insensitive equality, if asserted
+  timestamp?: string; // ISO — matched within MatchOptions.toleranceMinutes
+  keywords?: string[]; // all must appear (case-insensitive substring) in the produced description
+  severity?: Severity; // exact severity, if asserted
+  mitreTechniques?: string[]; // at least one must overlap the produced techniques, if asserted
+  asset?: string; // host/FQDN — case-insensitive equality, if asserted
 }
 
 // Minimal produced-event shape the scorer needs — a structural subset of ForensicEvent so callers can pass
@@ -29,13 +29,19 @@ export type ProducedEvent = Pick<ForensicEvent, "id" | "timestamp" | "descriptio
   Partial<Pick<ForensicEvent, "mitreTechniques" | "asset" | "relatedFindingIds">>;
 
 export interface MatchOptions {
-  toleranceMinutes: number;    // timestamp match window (± minutes); default 5
+  toleranceMinutes: number; // timestamp match window (± minutes); default 5
 }
 
 export const DEFAULT_MATCH_OPTIONS: MatchOptions = { toleranceMinutes: 5 };
 
-const norm = (s: string | undefined): string => String(s ?? "").trim().toLowerCase();
-const normTechnique = (t: string): string => String(t ?? "").trim().toUpperCase();
+const norm = (s: string | undefined): string =>
+  String(s ?? "")
+    .trim()
+    .toLowerCase();
+const normTechnique = (t: string): string =>
+  String(t ?? "")
+    .trim()
+    .toUpperCase();
 
 // A produced technique satisfies a golden one when it's the same technique OR a SUB-technique of it:
 // tagging password guessing as T1110.001 is a strictly more precise — and still correct — answer to a
@@ -76,13 +82,13 @@ export function eventMatches(
 
 export interface ExtractionScore {
   truePositives: number;
-  falsePositives: number;      // produced events matching no golden expectation (extra / possible noise)
-  falseNegatives: number;      // golden expectations no produced event satisfied (missed)
-  precision: number;           // TP / (TP + FP)
-  recall: number;              // TP / (TP + FN)
+  falsePositives: number; // produced events matching no golden expectation (extra / possible noise)
+  falseNegatives: number; // golden expectations no produced event satisfied (missed)
+  precision: number; // TP / (TP + FP)
+  recall: number; // TP / (TP + FN)
   f1: number;
-  missedGolden: number[];      // indices into the golden array that went unmatched
-  extraProduced: string[];     // ids of produced events that matched nothing
+  missedGolden: number[]; // indices into the golden array that went unmatched
+  extraProduced: string[]; // ids of produced events that matched nothing
 }
 
 // Greedy bipartite matching of golden expectations to produced events. Each produced event is consumed by
@@ -107,17 +113,30 @@ export function scoreExtraction(
   golden.forEach((g, gi) => {
     const hit = produced.findIndex((p, pi) => !used.has(pi) && eventMatches(g, p, opts));
     if (hit === -1) missedGolden.push(gi);
-    else { used.add(hit); truePositives += 1; }
+    else {
+      used.add(hit);
+      truePositives += 1;
+    }
   });
   const extraProduced = produced
     .filter((p, pi) => !used.has(pi) && !golden.some((g) => eventMatches(g, p, opts)))
     .map((p) => p.id);
   const falsePositives = extraProduced.length;
   const falseNegatives = missedGolden.length;
-  const precision = truePositives + falsePositives === 0 ? 1 : truePositives / (truePositives + falsePositives);
+  const precision =
+    truePositives + falsePositives === 0 ? 1 : truePositives / (truePositives + falsePositives);
   const recall = truePositives + falseNegatives === 0 ? 1 : truePositives / (truePositives + falseNegatives);
   const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
-  return { truePositives, falsePositives, falseNegatives, precision, recall, f1, missedGolden, extraProduced };
+  return {
+    truePositives,
+    falsePositives,
+    falseNegatives,
+    precision,
+    recall,
+    f1,
+    missedGolden,
+    extraProduced,
+  };
 }
 
 // Minimal produced-finding shape for the synthesis checks.
@@ -125,10 +144,14 @@ export type ProducedFinding = Pick<Finding, "id" | "severity"> &
   Partial<Pick<Finding, "confidence" | "confidenceReason" | "relatedEventIds" | "relatedIocs">>;
 
 export interface SynthesisReport {
-  highSeverity: { total: number; covered: number; uncovered: { id: string; severity: Severity; description: string }[] };
-  grounding: { total: number; grounded: number; ungrounded: string[] };        // finding ids with no real supporting event
-  danglingEventRefs: { findingId: string; badRefs: string[] }[];                // referenced event ids absent from the timeline = invented
-  confidenceIssues: string[];                                                    // finding ids with a confidence score but no reason (rubric)
+  highSeverity: {
+    total: number;
+    covered: number;
+    uncovered: { id: string; severity: Severity; description: string }[];
+  };
+  grounding: { total: number; grounded: number; ungrounded: string[] }; // finding ids with no real supporting event
+  danglingEventRefs: { findingId: string; badRefs: string[] }[]; // referenced event ids absent from the timeline = invented
+  confidenceIssues: string[]; // finding ids with a confidence score but no reason (rubric)
 }
 
 // Deterministic synthesis-quality checks over a produced (events, findings) pair — no golden needed:
@@ -159,11 +182,16 @@ export function checkSynthesis(
     const badRefs = refs.filter((id) => !eventIds.has(id));
     if (badRefs.length) danglingEventRefs.push({ findingId: f.id, badRefs });
     if (realRefs.length === 0 && !(f.relatedIocs ?? []).length) ungrounded.push(f.id);
-    if (typeof f.confidence === "number" && !String(f.confidenceReason ?? "").trim()) confidenceIssues.push(f.id);
+    if (typeof f.confidence === "number" && !String(f.confidenceReason ?? "").trim())
+      confidenceIssues.push(f.id);
   }
 
   return {
-    highSeverity: { total: highSevEvents.length, covered: highSevEvents.length - uncovered.length, uncovered },
+    highSeverity: {
+      total: highSevEvents.length,
+      covered: highSevEvents.length - uncovered.length,
+      uncovered,
+    },
     grounding: { total: findings.length, grounded: findings.length - ungrounded.length, ungrounded },
     danglingEventRefs,
     confidenceIssues,
@@ -191,22 +219,31 @@ export const DEFAULT_THRESHOLDS: Thresholds = { minPrecision: 0.8, minRecall: 0.
 // (dangling event refs) separately and strictly.
 export const REAL_THRESHOLDS: Thresholds = { minPrecision: 0, minRecall: 0.7 };
 
-export function passesExtraction(score: ExtractionScore, thresholds: Thresholds = DEFAULT_THRESHOLDS): boolean {
+export function passesExtraction(
+  score: ExtractionScore,
+  thresholds: Thresholds = DEFAULT_THRESHOLDS,
+): boolean {
   return score.precision >= thresholds.minPrecision && score.recall >= thresholds.minRecall;
 }
 
 // A synthesis result passes when nothing invented (no dangling refs), nothing ungrounded, and every
 // high-severity event is covered. Confidence-rubric issues are reported but don't fail the gate (advisory).
 export function passesSynthesis(report: SynthesisReport): boolean {
-  return report.danglingEventRefs.length === 0 &&
+  return (
+    report.danglingEventRefs.length === 0 &&
     report.grounding.ungrounded.length === 0 &&
-    report.highSeverity.uncovered.length === 0;
+    report.highSeverity.uncovered.length === 0
+  );
 }
 
 const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
 
 // One-line-per-metric human report for the CLI runner (issue #64 "summary report").
-export function formatExtractionReport(name: string, score: ExtractionScore, thresholds: Thresholds = DEFAULT_THRESHOLDS): string {
+export function formatExtractionReport(
+  name: string,
+  score: ExtractionScore,
+  thresholds: Thresholds = DEFAULT_THRESHOLDS,
+): string {
   const ok = passesExtraction(score, thresholds);
   return [
     `[${ok ? "PASS" : "FAIL"}] extraction: ${name}`,
@@ -224,9 +261,15 @@ export function formatSynthesisReport(name: string, report: SynthesisReport): st
     `  high-sev coverage ${report.highSeverity.covered}/${report.highSeverity.total}` +
       `  grounded findings ${report.grounding.grounded}/${report.grounding.total}`,
   ];
-  if (report.highSeverity.uncovered.length) lines.push(`  UNCOVERED high-sev: ${report.highSeverity.uncovered.map((e) => e.id).join(", ")}`);
-  if (report.grounding.ungrounded.length) lines.push(`  UNGROUNDED findings: ${report.grounding.ungrounded.join(", ")}`);
-  if (report.danglingEventRefs.length) lines.push(`  INVENTED event refs: ${report.danglingEventRefs.map((d) => `${d.findingId}→[${d.badRefs.join(",")}]`).join("; ")}`);
-  if (report.confidenceIssues.length) lines.push(`  confidence w/o reason (advisory): ${report.confidenceIssues.join(", ")}`);
+  if (report.highSeverity.uncovered.length)
+    lines.push(`  UNCOVERED high-sev: ${report.highSeverity.uncovered.map((e) => e.id).join(", ")}`);
+  if (report.grounding.ungrounded.length)
+    lines.push(`  UNGROUNDED findings: ${report.grounding.ungrounded.join(", ")}`);
+  if (report.danglingEventRefs.length)
+    lines.push(
+      `  INVENTED event refs: ${report.danglingEventRefs.map((d) => `${d.findingId}→[${d.badRefs.join(",")}]`).join("; ")}`,
+    );
+  if (report.confidenceIssues.length)
+    lines.push(`  confidence w/o reason (advisory): ${report.confidenceIssues.join(", ")}`);
   return lines.join("\n");
 }

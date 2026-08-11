@@ -51,8 +51,9 @@ describe("nounPhrase", () => {
 
 describe("deriveSemanticKey", () => {
   it("prefixes the dominant (first) ATT&CK technique", () => {
-    expect(deriveSemanticKey({ title: "Encoded PowerShell execution", mitreTechniques: ["T1059.001", "T1027"] }))
-      .toBe("T1059.001:encoded_powershell");
+    expect(
+      deriveSemanticKey({ title: "Encoded PowerShell execution", mitreTechniques: ["T1059.001", "T1027"] }),
+    ).toBe("T1059.001:encoded_powershell");
   });
 
   it("collapses reworded-but-equivalent findings with the same technique to one key", () => {
@@ -62,13 +63,15 @@ describe("deriveSemanticKey", () => {
   });
 
   it("skips malformed technique ids and uses the first well-formed one", () => {
-    expect(deriveSemanticKey({ title: "Credential dumping", mitreTechniques: ["bogus", "T1003.001"] }))
-      .toBe("T1003.001:credential_dumping");
+    expect(deriveSemanticKey({ title: "Credential dumping", mitreTechniques: ["bogus", "T1003.001"] })).toBe(
+      "T1003.001:credential_dumping",
+    );
   });
 
   it("omits the technique prefix when the finding maps none", () => {
-    expect(deriveSemanticKey({ title: "Cobalt Strike beacon", mitreTechniques: [] }))
-      .toBe("beacon_cobalt_strike");
+    expect(deriveSemanticKey({ title: "Cobalt Strike beacon", mitreTechniques: [] })).toBe(
+      "beacon_cobalt_strike",
+    );
   });
 
   it("is deterministic / idempotent", () => {

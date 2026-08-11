@@ -78,8 +78,7 @@ async function main(): Promise<void> {
   const { headers, rows } = parseCsv(text);
 
   // Detect column indices by name (tolerant of capitalisation differences).
-  const h = (name: string): number =>
-    headers.findIndex((x) => x.toLowerCase() === name.toLowerCase());
+  const h = (name: string): number => headers.findIndex((x) => x.toLowerCase() === name.toLowerCase());
 
   const idxCode = h("country");
   const idxLat = h("latitude");
@@ -88,8 +87,7 @@ async function main(): Promise<void> {
 
   if (idxCode === -1 || idxLat === -1 || idxLon === -1 || idxName === -1) {
     throw new Error(
-      `unexpected CSV headers: ${JSON.stringify(headers)} — ` +
-        `expected country, latitude, longitude, name`,
+      `unexpected CSV headers: ${JSON.stringify(headers)} — ` + `expected country, latitude, longitude, name`,
     );
   }
 
@@ -135,9 +133,7 @@ async function main(): Promise<void> {
   await writeFile(OUT_PATH, JSON.stringify(sorted, null, 2) + "\n", "utf8");
 
   const count = Object.keys(sorted).length;
-  console.log(
-    `[geo] wrote ${OUT_PATH}\n[geo] ${count} country centroids (skipped ${skipped} rows)`,
-  );
+  console.log(`[geo] wrote ${OUT_PATH}\n[geo] ${count} country centroids (skipped ${skipped} rows)`);
 
   // Spot-check a few key entries.
   const spot = ["DE", "IL", "US", "GB", "JP"];

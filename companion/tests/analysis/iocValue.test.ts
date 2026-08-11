@@ -4,23 +4,30 @@ import { repairIocValue, isWellFormedIocValue, isInternalTarget } from "../../sr
 describe("repairIocValue", () => {
   describe("annotation stripping (#177)", () => {
     it("moves a trailing host label out of an IP value and into `note`", () => {
-      expect(repairIocValue({ type: "ip", value: "10.10.20.15 (DC01)" }))
-        .toEqual({ value: "10.10.20.15", note: "DC01" });
+      expect(repairIocValue({ type: "ip", value: "10.10.20.15 (DC01)" })).toEqual({
+        value: "10.10.20.15",
+        note: "DC01",
+      });
     });
 
     it("handles the reversed form, where the parenthesised half is the indicator", () => {
-      expect(repairIocValue({ type: "ip", value: "FS01 (10.10.20.30)" }))
-        .toEqual({ value: "10.10.20.30", note: "FS01" });
+      expect(repairIocValue({ type: "ip", value: "FS01 (10.10.20.30)" })).toEqual({
+        value: "10.10.20.30",
+        note: "FS01",
+      });
     });
 
     it("strips a descriptive annotation from a url value", () => {
-      expect(repairIocValue({ type: "url", value: "northlakeportal.com (wdi-svc.exe download URL)" }))
-        .toEqual({ value: "northlakeportal.com", note: "wdi-svc.exe download URL" });
+      expect(
+        repairIocValue({ type: "url", value: "northlakeportal.com (wdi-svc.exe download URL)" }),
+      ).toEqual({ value: "northlakeportal.com", note: "wdi-svc.exe download URL" });
     });
 
     it("strips an annotation from a domain value, keeping the casing it was seen with", () => {
-      expect(repairIocValue({ type: "domain", value: "Evil.Example.COM (C2 domain)" }))
-        .toEqual({ value: "Evil.Example.COM", note: "C2 domain" });
+      expect(repairIocValue({ type: "domain", value: "Evil.Example.COM (C2 domain)" })).toEqual({
+        value: "Evil.Example.COM",
+        note: "C2 domain",
+      });
     });
 
     it("keeps parentheses that are part of the indicator itself (no space before the paren)", () => {
@@ -44,8 +51,10 @@ describe("repairIocValue", () => {
     });
 
     it("splits a trailing port off an IPv4 value", () => {
-      expect(repairIocValue({ type: "ip", value: "185.220.101.47:443" }))
-        .toEqual({ value: "185.220.101.47", note: "port 443" });
+      expect(repairIocValue({ type: "ip", value: "185.220.101.47:443" })).toEqual({
+        value: "185.220.101.47",
+        note: "port 443",
+      });
     });
 
     it("validates a hash case-insensitively but keeps the casing it was seen with", () => {
@@ -54,11 +63,15 @@ describe("repairIocValue", () => {
     });
 
     it("strips a trailing dot from a fully-qualified domain", () => {
-      expect(repairIocValue({ type: "domain", value: "evil.example.com." })).toEqual({ value: "evil.example.com" });
+      expect(repairIocValue({ type: "domain", value: "evil.example.com." })).toEqual({
+        value: "evil.example.com",
+      });
     });
 
     it("trims surrounding whitespace on every type", () => {
-      expect(repairIocValue({ type: "process", value: "  svchost32.exe \n" })).toEqual({ value: "svchost32.exe" });
+      expect(repairIocValue({ type: "process", value: "  svchost32.exe \n" })).toEqual({
+        value: "svchost32.exe",
+      });
     });
   });
 
@@ -85,8 +98,9 @@ describe("repairIocValue", () => {
     });
 
     it("keeps an unknown IOC type verbatim (types outside the union exist in older cases)", () => {
-      expect(repairIocValue({ type: "vulnerability", value: "CVE-2021-44228" }))
-        .toEqual({ value: "CVE-2021-44228" });
+      expect(repairIocValue({ type: "vulnerability", value: "CVE-2021-44228" })).toEqual({
+        value: "CVE-2021-44228",
+      });
     });
   });
 });
@@ -108,7 +122,9 @@ describe("isWellFormedIocValue", () => {
   });
 
   it("rejects a hash that is not a recognised digest length", () => {
-    expect(isWellFormedIocValue("hash", "cafe0001002003004005006007008009000a000b000c000d000e000f0010001100")).toBe(false);
+    expect(
+      isWellFormedIocValue("hash", "cafe0001002003004005006007008009000a000b000c000d000e000f0010001100"),
+    ).toBe(false);
     expect(isWellFormedIocValue("hash", "deadbeef")).toBe(false);
   });
 

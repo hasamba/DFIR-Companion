@@ -27,10 +27,18 @@ export function emptyDiscovered(): AnonDiscovered {
 export function sanitizeDiscovered(raw: unknown): AnonDiscovered {
   const obj = (raw ?? {}) as { discovered?: unknown; suppressed?: unknown };
   const suppressed = Array.isArray(obj.suppressed)
-    ? [...new Set(obj.suppressed.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim().toLowerCase()))]
+    ? [
+        ...new Set(
+          obj.suppressed
+            .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+            .map((s) => s.trim().toLowerCase()),
+        ),
+      ]
     : [];
   const suppressedSet = new Set(suppressed);
-  const discovered = sanitizeCustomEntities(obj.discovered).filter((e) => !suppressedSet.has(e.value.toLowerCase()));
+  const discovered = sanitizeCustomEntities(obj.discovered).filter(
+    (e) => !suppressedSet.has(e.value.toLowerCase()),
+  );
   return { discovered: discovered.slice(0, MAX_DISCOVERED), suppressed };
 }
 

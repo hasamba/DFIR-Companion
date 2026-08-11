@@ -39,7 +39,7 @@ describe("buildSwimlaneData", () => {
       ]);
       expect(r.lanes).toHaveLength(2);
       expect(r.lanes[0].type).toBe("host");
-      expect(r.lanes[0].label).toBe("SRV-02");    // alphabetical: SRV before WIN
+      expect(r.lanes[0].label).toBe("SRV-02"); // alphabetical: SRV before WIN
       expect(r.lanes[0].events).toHaveLength(1);
       expect(r.lanes[1].label).toBe("WIN-01");
       expect(r.lanes[1].events).toHaveLength(2);
@@ -47,18 +47,14 @@ describe("buildSwimlaneData", () => {
     });
 
     it("extracts accounts from description when no asset field is set", () => {
-      const r = buildSwimlaneData([
-        ev("e1", "2026-05-01T10:00:00Z", { description: "Logon CORP\\alice" }),
-      ]);
+      const r = buildSwimlaneData([ev("e1", "2026-05-01T10:00:00Z", { description: "Logon CORP\\alice" })]);
       expect(r.lanes).toHaveLength(1);
       expect(r.lanes[0].type).toBe("account");
       expect(r.lanes[0].label).toBe("CORP\\alice");
     });
 
     it("puts events with no asset and no account into the Unassigned lane", () => {
-      const r = buildSwimlaneData([
-        ev("e1", "2026-05-01T10:00:00Z"),
-      ]);
+      const r = buildSwimlaneData([ev("e1", "2026-05-01T10:00:00Z")]);
       expect(r.lanes).toHaveLength(1);
       expect(r.lanes[0].id).toBe("unassigned");
       expect(r.lanes[0].type).toBe("unassigned");
@@ -69,7 +65,7 @@ describe("buildSwimlaneData", () => {
         ev("e1", "2026-05-01T10:00:00Z", { asset: "ZZZ-HOST" }),
         ev("e2", "2026-05-01T10:01:00Z", { asset: "AAA-HOST" }),
         ev("e3", "2026-05-01T10:02:00Z", { description: "CORP\\bob" }),
-        ev("e4", "2026-05-01T10:03:00Z"),   // unassigned
+        ev("e4", "2026-05-01T10:03:00Z"), // unassigned
       ]);
       const ids = r.lanes.map((l) => l.type);
       expect(ids[0]).toBe("host");
@@ -96,10 +92,7 @@ describe("buildSwimlaneData", () => {
     });
 
     it("omits empty severity lanes", () => {
-      const r = buildSwimlaneData(
-        [ev("e1", "2026-05-01T10:00:00Z", { severity: "Info" })],
-        "severity",
-      );
+      const r = buildSwimlaneData([ev("e1", "2026-05-01T10:00:00Z", { severity: "Info" })], "severity");
       expect(r.lanes).toHaveLength(1);
       expect(r.lanes[0].label).toBe("Info");
     });
@@ -122,8 +115,8 @@ describe("buildSwimlaneData", () => {
     it("places events with unknown technique into Uncategorized last", () => {
       const r = buildSwimlaneData(
         [
-          ev("e1", "2026-05-01T10:00:00Z", { mitreTechniques: ["T1059"] }),  // Execution
-          ev("e2", "2026-05-01T10:01:00Z", { mitreTechniques: [] }),         // Uncategorized
+          ev("e1", "2026-05-01T10:00:00Z", { mitreTechniques: ["T1059"] }), // Execution
+          ev("e2", "2026-05-01T10:01:00Z", { mitreTechniques: [] }), // Uncategorized
         ],
         "tactic",
       );

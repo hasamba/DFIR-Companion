@@ -10,7 +10,7 @@ import { atomicWrite } from "../../storage/atomicWrite.js";
 // `state/iris-export.json`, like the other side-file stores (see clickupExportStore.ts).
 
 export const irisExportSchema = z.object({
-  caseName: z.string().catch(""),   // last IRIS case name used for this Companion case ("" = never pushed)
+  caseName: z.string().catch(""), // last IRIS case name used for this Companion case ("" = never pushed)
 });
 
 export type IrisExport = z.infer<typeof irisExportSchema>;

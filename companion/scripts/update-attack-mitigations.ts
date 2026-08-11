@@ -124,7 +124,12 @@ async function main(): Promise<void> {
     if (o.type !== "course-of-action" || !o.id || !isLive(o)) continue;
     const mid = attackId(o);
     if (!mid || !MITIGATION_RE.test(mid) || !o.name) continue;
-    mitigationByStixId.set(o.id, { id: mid, name: o.name.trim(), description: clean(o.description), url: attackUrl(o) });
+    mitigationByStixId.set(o.id, {
+      id: mid,
+      name: o.name.trim(),
+      description: clean(o.description),
+      url: attackUrl(o),
+    });
   }
 
   // 3. "mitigates" relationships course-of-action → attack-pattern, carrying the technique-specific detail.
@@ -153,7 +158,8 @@ async function main(): Promise<void> {
   for (const tech of Object.keys(map).sort()) sortedMap[tech] = map[tech];
 
   const mitigations: Record<string, SlimMitigation> = {};
-  for (const m of [...mitigationByStixId.values()].sort((a, b) => a.id.localeCompare(b.id))) mitigations[m.id] = m;
+  for (const m of [...mitigationByStixId.values()].sort((a, b) => a.id.localeCompare(b.id)))
+    mitigations[m.id] = m;
 
   const collection = objects.find((o) => o.type === "x-mitre-collection");
   const attackVersion = collection?.x_mitre_version || "unknown";

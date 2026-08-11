@@ -6,8 +6,17 @@ export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 
 const confidenceSchema = z.enum(["high", "medium", "low"]);
 const entityKindSchema = z.enum([
-  "account", "host", "process", "file", "registry", "service", "task",
-  "mailbox", "cloud_principal", "network", "other",
+  "account",
+  "host",
+  "process",
+  "file",
+  "registry",
+  "service",
+  "task",
+  "mailbox",
+  "cloud_principal",
+  "network",
+  "other",
 ]);
 
 export const canonicalEntitySchema = z.object({
@@ -24,11 +33,13 @@ const canonicalProcessSchema = z.object({
   name: z.string().optional(),
   executable: z.string().optional(),
   commandLine: z.string().optional(),
-  parent: z.object({
-    pid: z.number().int().positive().optional(),
-    name: z.string().optional(),
-    executable: z.string().optional(),
-  }).optional(),
+  parent: z
+    .object({
+      pid: z.number().int().positive().optional(),
+      name: z.string().optional(),
+      executable: z.string().optional(),
+    })
+    .optional(),
 });
 
 const rawRecordPointerSchema = z.object({
@@ -49,8 +60,17 @@ export const canonicalEventEnvelopeSchema = z.object({
   schemaVersion: z.literal(CANONICAL_EVENT_SCHEMA_VERSION),
   event: z.object({
     category: z.enum([
-      "authentication", "process", "network", "file", "registry", "service",
-      "task", "email", "cloud", "memory", "other",
+      "authentication",
+      "process",
+      "network",
+      "file",
+      "registry",
+      "service",
+      "task",
+      "email",
+      "cloud",
+      "memory",
+      "other",
     ]),
     type: z.string().min(1),
     action: z.string().optional(),
@@ -60,71 +80,95 @@ export const canonicalEventEnvelopeSchema = z.object({
   subject: canonicalEntitySchema.optional(),
   object: canonicalEntitySchema.optional(),
   target: canonicalEntitySchema.optional(),
-  account: z.object({
-    id: z.string().optional(),
-    name: z.string().optional(),
-    domain: z.string().optional(),
-  }).optional(),
-  authentication: z.object({
-    sessionId: z.string().optional(),
-    logonType: z.number().int().nonnegative().optional(),
-    protocol: z.string().optional(),
-    mechanism: z.string().optional(),
-  }).optional(),
-  session: z.object({
-    id: z.string().optional(),
-    terminal: z.string().optional(),
-    interactive: z.boolean().optional(),
-  }).optional(),
-  network: z.object({
-    source: z.object({
-      address: z.string().optional(),
-      port: z.number().int().positive().max(65535).optional(),
-      hostname: z.string().optional(),
-    }).optional(),
-    destination: z.object({
-      address: z.string().optional(),
-      port: z.number().int().positive().max(65535).optional(),
-      hostname: z.string().optional(),
-    }).optional(),
-    protocol: z.string().optional(),
-  }).optional(),
+  account: z
+    .object({
+      id: z.string().optional(),
+      name: z.string().optional(),
+      domain: z.string().optional(),
+    })
+    .optional(),
+  authentication: z
+    .object({
+      sessionId: z.string().optional(),
+      logonType: z.number().int().nonnegative().optional(),
+      protocol: z.string().optional(),
+      mechanism: z.string().optional(),
+    })
+    .optional(),
+  session: z
+    .object({
+      id: z.string().optional(),
+      terminal: z.string().optional(),
+      interactive: z.boolean().optional(),
+    })
+    .optional(),
+  network: z
+    .object({
+      source: z
+        .object({
+          address: z.string().optional(),
+          port: z.number().int().positive().max(65535).optional(),
+          hostname: z.string().optional(),
+        })
+        .optional(),
+      destination: z
+        .object({
+          address: z.string().optional(),
+          port: z.number().int().positive().max(65535).optional(),
+          hostname: z.string().optional(),
+        })
+        .optional(),
+      protocol: z.string().optional(),
+    })
+    .optional(),
   process: canonicalProcessSchema.optional(),
-  file: z.object({
-    path: z.string().optional(),
-    name: z.string().optional(),
-    sha256: z.string().optional(),
-    md5: z.string().optional(),
-  }).optional(),
-  registry: z.object({
-    key: z.string().optional(),
-    valueName: z.string().optional(),
-    valueData: z.string().optional(),
-  }).optional(),
-  service: z.object({
-    name: z.string().optional(),
-    displayName: z.string().optional(),
-    executable: z.string().optional(),
-  }).optional(),
-  task: z.object({
-    name: z.string().optional(),
-    command: z.string().optional(),
-  }).optional(),
-  mailbox: z.object({
-    messageId: z.string().optional(),
-    sender: z.string().optional(),
-    recipients: z.array(z.string()).optional(),
-    subject: z.string().optional(),
-  }).optional(),
-  cloud: z.object({
-    provider: z.string().optional(),
-    principalId: z.string().optional(),
-    principalType: z.string().optional(),
-    tenant: z.string().optional(),
-    accountId: z.string().optional(),
-    region: z.string().optional(),
-    resource: z.string().optional(),
-  }).optional(),
+  file: z
+    .object({
+      path: z.string().optional(),
+      name: z.string().optional(),
+      sha256: z.string().optional(),
+      md5: z.string().optional(),
+    })
+    .optional(),
+  registry: z
+    .object({
+      key: z.string().optional(),
+      valueName: z.string().optional(),
+      valueData: z.string().optional(),
+    })
+    .optional(),
+  service: z
+    .object({
+      name: z.string().optional(),
+      displayName: z.string().optional(),
+      executable: z.string().optional(),
+    })
+    .optional(),
+  task: z
+    .object({
+      name: z.string().optional(),
+      command: z.string().optional(),
+    })
+    .optional(),
+  mailbox: z
+    .object({
+      messageId: z.string().optional(),
+      sender: z.string().optional(),
+      recipients: z.array(z.string()).optional(),
+      subject: z.string().optional(),
+    })
+    .optional(),
+  cloud: z
+    .object({
+      provider: z.string().optional(),
+      principalId: z.string().optional(),
+      principalType: z.string().optional(),
+      tenant: z.string().optional(),
+      accountId: z.string().optional(),
+      region: z.string().optional(),
+      resource: z.string().optional(),
+    })
+    .optional(),
   time: z.object({
     observed: z.string(),
     normalized: z.string(),
@@ -134,7 +178,10 @@ export const canonicalEventEnvelopeSchema = z.object({
   }),
   evidence: z.object({
     rawRecords: z.array(rawRecordPointerSchema).min(1),
-    sourceArtifactHash: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+    sourceArtifactHash: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/)
+      .optional(),
   }),
   producer: z.object({
     importer: z.string().min(1),
@@ -206,12 +253,7 @@ function normalizedPart(envelope: CanonicalEventEnvelope): CanonicalNormalizedFi
 }
 
 export function createCanonicalEvent(input: CreateCanonicalEventInput): CanonicalEventEnvelope {
-  const {
-    rawFieldMap = {},
-    confidenceMap = {},
-    derivationMap = {},
-    ...fields
-  } = input;
+  const { rawFieldMap = {}, confidenceMap = {}, derivationMap = {}, ...fields } = input;
   const time: CanonicalEventEnvelope["time"] = {
     observed: input.time.observed,
     normalized: input.time.normalized,
@@ -226,7 +268,9 @@ export function createCanonicalEvent(input: CreateCanonicalEventInput): Canonica
   const firstLocator = input.evidence.rawRecords[0]?.locator;
   if (!firstLocator) throw new Error("Canonical events require at least one raw-record locator");
   const fieldProvenance: CanonicalEventEnvelope["fieldProvenance"] = {};
-  for (const path of normalizedLeafPaths(base).filter((path) => !path.startsWith("evidence.") && !path.startsWith("producer."))) {
+  for (const path of normalizedLeafPaths(base).filter(
+    (path) => !path.startsWith("evidence.") && !path.startsWith("producer."),
+  )) {
     const rawFields = rawFieldMap[path];
     const derivation = derivationMap[path];
     fieldProvenance[path] = rawFields?.length
@@ -239,7 +283,9 @@ export function createCanonicalEvent(input: CreateCanonicalEventInput): Canonica
       : {
           origin: "derived",
           confidence: confidenceMap[path] ?? "high",
-          derivation: derivation ?? `${input.producer.mappingVersion}: deterministic mapping from referenced raw record`,
+          derivation:
+            derivation ??
+            `${input.producer.mappingVersion}: deterministic mapping from referenced raw record`,
           recordLocators: [firstLocator],
         };
   }
@@ -254,9 +300,7 @@ export function canonicalConformanceIssues(envelope: unknown): string[] {
   if (envelope == null) return ["canonical envelope missing"];
   const parsed = canonicalEventEnvelopeSchema.safeParse(envelope);
   if (!parsed.success) {
-    return parsed.error.issues.map((issue) =>
-      `${issue.path.join(".") || "canonical"}: ${issue.message}`,
-    );
+    return parsed.error.issues.map((issue) => `${issue.path.join(".") || "canonical"}: ${issue.message}`);
   }
   const issues: string[] = [];
   const canonical = parsed.data;
@@ -272,7 +316,8 @@ export function canonicalConformanceIssues(envelope: unknown): string[] {
       issues.push(`derived provenance has no rule: ${path}`);
     }
     for (const locator of provenance.recordLocators) {
-      if (!rawLocators.has(locator)) issues.push(`field provenance references an unknown record: ${path} -> ${locator}`);
+      if (!rawLocators.has(locator))
+        issues.push(`field provenance references an unknown record: ${path} -> ${locator}`);
     }
   }
   return issues;
@@ -287,15 +332,17 @@ export function stampSourceArtifactHash<T extends { canonical?: CanonicalEventEn
   text: string,
 ): T[] {
   const hash = sourceArtifactHash(text);
-  return events.map((event) => event.canonical
-    ? {
-        ...event,
-        canonical: {
-          ...event.canonical,
-          evidence: { ...event.canonical.evidence, sourceArtifactHash: hash },
-        },
-      }
-    : { ...event });
+  return events.map((event) =>
+    event.canonical
+      ? {
+          ...event,
+          canonical: {
+            ...event.canonical,
+            evidence: { ...event.canonical.evidence, sourceArtifactHash: hash },
+          },
+        }
+      : { ...event },
+  );
 }
 
 export function mergeCanonicalEvents(
@@ -310,7 +357,8 @@ export function mergeCanonicalEvents(
   if (incomingVersion !== CANONICAL_EVENT_SCHEMA_VERSION) return incoming;
   const pointers = [...first.evidence.rawRecords];
   for (const pointer of incoming.evidence.rawRecords) {
-    if (!pointers.some((p) => p.source === pointer.source && p.locator === pointer.locator)) pointers.push(pointer);
+    if (!pointers.some((p) => p.source === pointer.source && p.locator === pointer.locator))
+      pointers.push(pointer);
   }
   const fieldProvenance = { ...first.fieldProvenance };
   for (const [path, provenance] of Object.entries(incoming.fieldProvenance)) {
@@ -321,7 +369,9 @@ export function mergeCanonicalEvents(
     }
     fieldProvenance[path] = {
       ...existing,
-      recordLocators: [...new Set([...(existing.recordLocators ?? []), ...(provenance.recordLocators ?? [])])],
+      recordLocators: [
+        ...new Set([...(existing.recordLocators ?? []), ...(provenance.recordLocators ?? [])]),
+      ],
     };
   }
   return {
@@ -344,7 +394,8 @@ interface LegacyLogon {
 }
 
 const LEGACY_LOGON_MARKER = /(Successful|Failed) logon \(EID (?:4624|4625)\)/;
-const LEGACY_ACCOUNT = /(?<![\\/:.\w])(NT AUTHORITY|NT SERVICE|Window Manager|Font Driver Host|[A-Za-z][A-Za-z0-9.-]{1,30})\\([A-Za-z0-9._$-]{2,40})(?![\\/\w])/g;
+const LEGACY_ACCOUNT =
+  /(?<![\\/:.\w])(NT AUTHORITY|NT SERVICE|Window Manager|Font Driver Host|[A-Za-z][A-Za-z0-9.-]{1,30})\\([A-Za-z0-9._$-]{2,40})(?![\\/\w])/g;
 
 function legacyLogon(event: ForensicEvent): LegacyLogon | undefined {
   const marker = LEGACY_LOGON_MARKER.exec(event.description);
@@ -352,7 +403,11 @@ function legacyLogon(event: ForensicEvent): LegacyLogon | undefined {
   const separator = event.description.indexOf(" - ");
   if (separator !== -1 && marker.index > separator) return undefined;
   const rest = event.description.slice(marker.index + marker[0].length);
-  const segment = rest.replace(/^ - /, "").split(/ - (?=[A-Za-z]+=)| @ | \[/)[0]?.trim() ?? "";
+  const segment =
+    rest
+      .replace(/^ - /, "")
+      .split(/ - (?=[A-Za-z]+=)| @ | \[/)[0]
+      ?.trim() ?? "";
   const account = segment.split(", ")[0]?.trim();
   if (!account || account.includes("=")) return undefined;
   const rawType = /\bLogonType=(\d+)\b/.exec(event.description)?.[1];
@@ -391,67 +446,82 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
         : event.path || event.sha256 || event.md5
           ? "file"
           : "other";
-  const actor: CanonicalEntity | undefined = accountName
-    ? { kind: "account", name: accountName }
-    : undefined;
-  const target: CanonicalEntity | undefined = event.asset
-    ? { kind: "host", name: event.asset }
-    : undefined;
-  const process = event.processName || event.parentName || event.pid || event.commandLine
-    ? {
-        ...(event.pid ? { pid: event.pid } : {}),
-        ...(event.processName ? { name: event.processName } : {}),
-        ...(event.path ? { executable: event.path } : {}),
-        ...(event.commandLine ? { commandLine: event.commandLine } : {}),
-        ...(event.parentName ? { parent: { name: event.parentName } } : {}),
-      }
-    : undefined;
-  const file = event.path || event.sha256 || event.md5
-    ? {
-        ...(event.path ? { path: event.path, name: fileName(event.path) } : {}),
-        ...(event.sha256 ? { sha256: event.sha256 } : {}),
-        ...(event.md5 ? { md5: event.md5 } : {}),
-      }
-    : undefined;
-  const network = event.srcIp || event.dstIp || event.port
-    ? {
-        ...(event.srcIp ? { source: { address: event.srcIp } } : {}),
-        ...(event.dstIp || event.port ? {
-          destination: {
-            ...(event.dstIp ? { address: event.dstIp } : {}),
-            ...(event.port ? { port: event.port } : {}),
-          },
-        } : {}),
-      }
-    : undefined;
+  const actor: CanonicalEntity | undefined = accountName ? { kind: "account", name: accountName } : undefined;
+  const target: CanonicalEntity | undefined = event.asset ? { kind: "host", name: event.asset } : undefined;
+  const process =
+    event.processName || event.parentName || event.pid || event.commandLine
+      ? {
+          ...(event.pid ? { pid: event.pid } : {}),
+          ...(event.processName ? { name: event.processName } : {}),
+          ...(event.path ? { executable: event.path } : {}),
+          ...(event.commandLine ? { commandLine: event.commandLine } : {}),
+          ...(event.parentName ? { parent: { name: event.parentName } } : {}),
+        }
+      : undefined;
+  const file =
+    event.path || event.sha256 || event.md5
+      ? {
+          ...(event.path ? { path: event.path, name: fileName(event.path) } : {}),
+          ...(event.sha256 ? { sha256: event.sha256 } : {}),
+          ...(event.md5 ? { md5: event.md5 } : {}),
+        }
+      : undefined;
+  const network =
+    event.srcIp || event.dstIp || event.port
+      ? {
+          ...(event.srcIp ? { source: { address: event.srcIp } } : {}),
+          ...(event.dstIp || event.port
+            ? {
+                destination: {
+                  ...(event.dstIp ? { address: event.dstIp } : {}),
+                  ...(event.port ? { port: event.port } : {}),
+                },
+              }
+            : {}),
+        }
+      : undefined;
   return createCanonicalEvent({
     event: {
       category,
-      type: logon ? "logon" : category === "process" ? "observation" : category === "network" ? "connection" : category === "file" ? "observation" : "event",
+      type: logon
+        ? "logon"
+        : category === "process"
+          ? "observation"
+          : category === "network"
+            ? "connection"
+            : category === "file"
+              ? "observation"
+              : "event",
       ...(event.action ? { action: event.action } : {}),
       ...(logon ? { outcome: logon.outcome } : {}),
     },
     ...(actor ? { actor } : {}),
     ...(target ? { target } : {}),
-    ...(accountName ? {
-      account: {
-        name: accountName,
-        ...(accountName.includes("\\") ? { domain: accountName.split("\\")[0] } : {}),
-      },
-    } : {}),
-    ...(logon ? {
-      authentication: {
-        ...(logon.sessionId ? { sessionId: logon.sessionId } : {}),
-        ...(logon.logonType !== undefined ? { logonType: logon.logonType } : {}),
-      },
-      ...(logon.workstation ? { session: { terminal: logon.workstation } } : {}),
-    } : {}),
-    ...(network || logon?.sourceIp ? {
-      network: {
-        ...network,
-        ...(logon?.sourceIp ? { source: { address: logon.sourceIp } } : {}),
-      },
-    } : {}),
+    ...(accountName
+      ? {
+          account: {
+            name: accountName,
+            ...(accountName.includes("\\") ? { domain: accountName.split("\\")[0] } : {}),
+          },
+        }
+      : {}),
+    ...(logon
+      ? {
+          authentication: {
+            ...(logon.sessionId ? { sessionId: logon.sessionId } : {}),
+            ...(logon.logonType !== undefined ? { logonType: logon.logonType } : {}),
+          },
+          ...(logon.workstation ? { session: { terminal: logon.workstation } } : {}),
+        }
+      : {}),
+    ...(network || logon?.sourceIp
+      ? {
+          network: {
+            ...network,
+            ...(logon?.sourceIp ? { source: { address: logon.sourceIp } } : {}),
+          },
+        }
+      : {}),
     ...(process ? { process } : {}),
     ...(file ? { file } : {}),
     time: { observed: event.timestamp, normalized: event.timestamp },
@@ -480,10 +550,14 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
     },
     confidenceMap: accountName ? { "actor.name": "medium", "account.name": "medium" } : {},
     derivationMap: {
-      ...(accountName ? {
-        "actor.name": "legacy-event-to-canonical-v1: one-time guarded identity extraction from legacy display text",
-        "account.name": "legacy-event-to-canonical-v1: one-time guarded identity extraction from legacy display text",
-      } : {}),
+      ...(accountName
+        ? {
+            "actor.name":
+              "legacy-event-to-canonical-v1: one-time guarded identity extraction from legacy display text",
+            "account.name":
+              "legacy-event-to-canonical-v1: one-time guarded identity extraction from legacy display text",
+          }
+        : {}),
     },
   });
 }

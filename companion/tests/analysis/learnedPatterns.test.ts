@@ -23,8 +23,12 @@ describe("deriveSignature (#65)", () => {
 
 describe("learnedPatternKey (#65)", () => {
   it("is stable per (signature, reason) and distinguishes reasons", () => {
-    expect(learnedPatternKey("bloodhound", "authorized-test")).toBe(learnedPatternKey("bloodhound", "authorized-test"));
-    expect(learnedPatternKey("bloodhound", "authorized-test")).not.toBe(learnedPatternKey("bloodhound", "detection-misfire"));
+    expect(learnedPatternKey("bloodhound", "authorized-test")).toBe(
+      learnedPatternKey("bloodhound", "authorized-test"),
+    );
+    expect(learnedPatternKey("bloodhound", "authorized-test")).not.toBe(
+      learnedPatternKey("bloodhound", "detection-misfire"),
+    );
   });
 });
 
@@ -33,10 +37,18 @@ describe("mergeLearnedPattern (#65)", () => {
     const a = mergeLearnedPattern([], { text: "BloodHound collection", reason: "authorized-test" }, NOW);
     expect(a.changed).toBe(true);
     expect(a.patterns).toHaveLength(1);
-    expect(a.patterns[0]).toMatchObject({ signature: "bloodhound collection", reason: "authorized-test", count: 1 });
+    expect(a.patterns[0]).toMatchObject({
+      signature: "bloodhound collection",
+      reason: "authorized-test",
+      count: 1,
+    });
 
-    const b = mergeLearnedPattern(a.patterns, { text: "bloodhound collection", reason: "authorized-test", example: "BloodHound run #2" }, LATER);
-    expect(b.patterns).toHaveLength(1);          // same key → upsert, not a new row
+    const b = mergeLearnedPattern(
+      a.patterns,
+      { text: "bloodhound collection", reason: "authorized-test", example: "BloodHound run #2" },
+      LATER,
+    );
+    expect(b.patterns).toHaveLength(1); // same key → upsert, not a new row
     expect(b.patterns[0].count).toBe(2);
     expect(b.patterns[0].lastSeen).toBe(LATER);
     expect(b.patterns[0].examples).toContain("BloodHound run #2");
@@ -66,7 +78,9 @@ describe("matchLearnedPatterns (#65)", () => {
     mergeLearnedPattern([], { text: "bloodhound", reason: "authorized-test" }, NOW).patterns[0],
   ];
   it("matches a new finding whose title contains the pattern signature", () => {
-    expect(matchLearnedPatterns("BloodHound SharpHound ingestor detected", patterns).map((p) => p.signature)).toEqual(["bloodhound"]);
+    expect(
+      matchLearnedPatterns("BloodHound SharpHound ingestor detected", patterns).map((p) => p.signature),
+    ).toEqual(["bloodhound"]);
   });
   it("does not match unrelated titles", () => {
     expect(matchLearnedPatterns("ransomware note dropped", patterns)).toEqual([]);
@@ -81,10 +95,13 @@ describe("buildLearnedPatternsBlock (#65)", () => {
     expect(buildLearnedPatternsBlock([pat({ signature: "a", count: 1 })], 2)).toBe("");
   });
   it("renders a lower-confidence (not exclude) instruction, sorted by recurrence", () => {
-    const block = buildLearnedPatternsBlock([
-      pat({ signature: "bloodhound", count: 3, reason: "authorized-test" }),
-      pat({ signature: "nessus scan", count: 5, reason: "authorized-test" }),
-    ], 1);
+    const block = buildLearnedPatternsBlock(
+      [
+        pat({ signature: "bloodhound", count: 3, reason: "authorized-test" }),
+        pat({ signature: "nessus scan", count: 5, reason: "authorized-test" }),
+      ],
+      1,
+    );
     expect(block).toMatch(/LOWER its confidence/);
     expect(block).toMatch(/do NOT exclude/);
     // Highest recurrence first.

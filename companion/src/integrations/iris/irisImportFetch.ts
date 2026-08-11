@@ -49,7 +49,9 @@ export async function fetchIrisCase(client: IrisImportClientLike, ref: IrisImpor
     // Best-effort: look up the display name from the case list (non-fatal).
     try {
       caseName = (await client.listCases()).find((c) => c.caseId === cid)?.caseName;
-    } catch { /* ignore — name is cosmetic */ }
+    } catch {
+      /* ignore — name is cosmetic */
+    }
     caseName ??= `IRIS case #${cid}`;
   } else {
     throw new IrisImportError("an IRIS case id or name is required");

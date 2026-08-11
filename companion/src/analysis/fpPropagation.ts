@@ -15,17 +15,17 @@ import type { FalsePositiveMarker } from "./falsePositive.js";
 import { patternKey } from "./prevalence.js";
 
 export interface FpPropagationSuggestion {
-  markerId: string;            // the FP marker this pattern came from
-  ref: string;                 // the marker's ref (the original anchor event id), for display
-  note: string;                // the marker's note/reason, for display
-  patternFingerprint: string;  // the matched normalized pattern key
-  count: number;               // how many NEW events match it
-  matchedEventIds: string[];   // the matching new-event ids (capped) — fed to the bulk-mark batch call
-  sampleLabel: string;         // a sample new-event description, for the banner
+  markerId: string; // the FP marker this pattern came from
+  ref: string; // the marker's ref (the original anchor event id), for display
+  note: string; // the marker's note/reason, for display
+  patternFingerprint: string; // the matched normalized pattern key
+  count: number; // how many NEW events match it
+  matchedEventIds: string[]; // the matching new-event ids (capped) — fed to the bulk-mark batch call
+  sampleLabel: string; // a sample new-event description, for the banner
 }
 
 export interface FpPropagationOptions {
-  minMatches?: number;     // suggest only when at least this many new events match (default 3)
+  minMatches?: number; // suggest only when at least this many new events match (default 3)
   maxSuggestions?: number; // cap the number of distinct patterns surfaced (default 5)
   maxIdsPerPattern?: number; // cap the id list per pattern (default 500 — the batch endpoint's practical bound)
 }
@@ -62,7 +62,10 @@ export function matchFpPropagation(
     const marker = byFingerprint.get(key);
     if (!marker) continue;
     let hit = hits.get(key);
-    if (!hit) { hit = { marker, ids: [], sample: e.description || e.id }; hits.set(key, hit); }
+    if (!hit) {
+      hit = { marker, ids: [], sample: e.description || e.id };
+      hits.set(key, hit);
+    }
     if (hit.ids.length < maxIds) hit.ids.push(e.id);
   }
 

@@ -10,14 +10,20 @@ import type { SocratesStatus } from "../../src/integrations/socrates/socratesApi
 async function makeStore() {
   const root = await mkdtemp(join(tmpdir(), "socrates-job-"));
   await mkdir(join(root, "state"), { recursive: true });
-  const cases = { stateDir: () => join(root, "state") } as unknown as ConstructorParameters<typeof SocratesJobStore>[0];
+  const cases = { stateDir: () => join(root, "state") } as unknown as ConstructorParameters<
+    typeof SocratesJobStore
+  >[0];
   return new SocratesJobStore(cases);
 }
 
 function job(over: Partial<SocratesJob> = {}): SocratesJob {
   return {
-    jobId: "j1", md5: "a".repeat(32), sourceName: "evil.pcap",
-    status: "processing", startedAt: "2026-07-29T00:00:00.000Z", ...over,
+    jobId: "j1",
+    md5: "a".repeat(32),
+    sourceName: "evil.pcap",
+    status: "processing",
+    startedAt: "2026-07-29T00:00:00.000Z",
+    ...over,
   };
 }
 
@@ -69,21 +75,29 @@ describe("pollUntilImported", () => {
   });
 
   it("records the failure reason when analysis errors", async () => {
-    const res = await pollUntilImported("case-1", job(), deps([{ status: "error", message: "suricata died" }]));
+    const res = await pollUntilImported(
+      "case-1",
+      job(),
+      deps([{ status: "error", message: "suricata died" }]),
+    );
     expect(res.status).toBe("error");
     expect(res.error).toContain("suricata died");
   });
 
   it("gives up after maxAttempts instead of polling a nonexistent md5 forever", async () => {
     // /api/check-status never 404s, so an unknown md5 answers "processing" indefinitely.
-    const res = await pollUntilImported("case-1", job(), deps([{ status: "processing", phase: "" }]), { maxAttempts: 3 });
+    const res = await pollUntilImported("case-1", job(), deps([{ status: "processing", phase: "" }]), {
+      maxAttempts: 3,
+    });
     expect(res.status).toBe("error");
     expect(res.error).toMatch(/timed out/i);
   });
 
   it("records an import failure rather than claiming success", async () => {
     const d = deps([{ status: "ready" }], {
-      ingest: async () => { throw new Error("importer rejected the blob"); },
+      ingest: async () => {
+        throw new Error("importer rejected the blob");
+      },
     });
     const res = await pollUntilImported("case-1", job(), d);
     expect(res.status).toBe("error");

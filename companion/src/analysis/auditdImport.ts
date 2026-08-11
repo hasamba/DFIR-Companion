@@ -47,12 +47,12 @@ export interface AuditdImportOptions {
 export interface AuditdParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;     // logical audit events found (grouped by serial) + aureport rows
-  kept: number;      // events emitted (after aggregation + cap)
-  dropped: number;   // events not represented (below floor / capped)
-  groups: number;    // distinct event groups before the cap
-  format: string;    // "auditd" | "aureport" | "empty"
-  hostname: string;  // best-effort dominant node/host
+  total: number; // logical audit events found (grouped by serial) + aureport rows
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // events not represented (below floor / capped)
+  groups: number; // distinct event groups before the cap
+  format: string; // "auditd" | "aureport" | "empty"
+  hostname: string; // best-effort dominant node/host
 }
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -108,7 +108,11 @@ const AUDIT_TYPES: Record<string, AuditTypeDef> = {
   AVC: { label: "SELinux/AppArmor access denial", severity: "Medium", mitre: ["T1562.001"] },
   SECCOMP: { label: "Seccomp filter violation", severity: "Medium" },
   ANOM_ABEND: { label: "Process ended abnormally (crash)", severity: "Medium", mitre: ["T1499"] },
-  ANOM_PROMISCUOUS: { label: "Network interface entered promiscuous mode", severity: "High", mitre: ["T1040"] },
+  ANOM_PROMISCUOUS: {
+    label: "Network interface entered promiscuous mode",
+    severity: "High",
+    mitre: ["T1040"],
+  },
   // Network / firewall
   NETFILTER_CFG: { label: "Netfilter (firewall) configuration", severity: "Low", mitre: ["T1562.004"] },
   // System lifecycle
@@ -126,17 +130,38 @@ const AUDIT_TYPES: Record<string, AuditTypeDef> = {
 };
 
 // Record types that only add CONTEXT to a logical event (they are never the "primary" type).
-const CONTEXT_TYPES = new Set(["SYSCALL", "PATH", "CWD", "PROCTITLE", "SOCKADDR", "EXECVE_ARGS", "ARGS", "OBJ_PID", "BPRM_FCAPS", "FD_PAIR", "IPC"]);
+const CONTEXT_TYPES = new Set([
+  "SYSCALL",
+  "PATH",
+  "CWD",
+  "PROCTITLE",
+  "SOCKADDR",
+  "EXECVE_ARGS",
+  "ARGS",
+  "OBJ_PID",
+  "BPRM_FCAPS",
+  "FD_PAIR",
+  "IPC",
+]);
 
 // Linux attacker tradecraft in a command line → bump severity + add MITRE.
 const SUSP_CMD: { re: RegExp; mitre: string[] }[] = [
-  { re: /(?:\bnc\b|\bncat\b|\bnetcat\b)[^|]*\s-e\b|\bbash\s+-i\b|\bsh\s+-i\b|\/dev\/tcp\//i, mitre: ["T1059.004", "T1571"] },
-  { re: /\b(?:curl|wget)\b[^|]*\|\s*(?:ba)?sh\b|base64\s+(?:-d|--decode)[^|]*\|\s*(?:ba)?sh\b/i, mitre: ["T1059.004", "T1105"] },
+  {
+    re: /(?:\bnc\b|\bncat\b|\bnetcat\b)[^|]*\s-e\b|\bbash\s+-i\b|\bsh\s+-i\b|\/dev\/tcp\//i,
+    mitre: ["T1059.004", "T1571"],
+  },
+  {
+    re: /\b(?:curl|wget)\b[^|]*\|\s*(?:ba)?sh\b|base64\s+(?:-d|--decode)[^|]*\|\s*(?:ba)?sh\b/i,
+    mitre: ["T1059.004", "T1105"],
+  },
   { re: /\/etc\/(?:shadow|gshadow)\b/i, mitre: ["T1003.008"] },
   { re: /\bchmod\s+(?:[0-7]*[4-7][0-7]{3}|u?\+s)\b|\bchattr\s+[+]i\b/i, mitre: ["T1548.001"] },
   { re: /\b(?:insmod|modprobe|rmmod)\b/i, mitre: ["T1547.006"] },
   { re: /\bcrontab\b|\/etc\/cron|systemctl\s+(?:enable|start)\b/i, mitre: ["T1053.003"] },
-  { re: /\bhistory\s+-c\b|\bunset\s+HISTFILE\b|>\s*\/var\/log\/|\btruncate\b[^|]*\/var\/log/i, mitre: ["T1070.003"] },
+  {
+    re: /\bhistory\s+-c\b|\bunset\s+HISTFILE\b|>\s*\/var\/log\/|\btruncate\b[^|]*\/var\/log/i,
+    mitre: ["T1070.003"],
+  },
   { re: /\bnmap\b|\bmasscan\b|\bmimikatz\b|\bhashcat\b|\bjohn\b/i, mitre: ["T1046"] },
 ];
 
@@ -188,7 +213,7 @@ function parseFields(body: string): Fields {
 interface AuditLine {
   type: string;
   serial: string;
-  tsMs: number;     // epoch ms from msg=audit(); 0 when absent
+  tsMs: number; // epoch ms from msg=audit(); 0 when absent
   fields: Fields;
 }
 
@@ -214,16 +239,24 @@ function decodeSaddr(hex: string): { ip: string; port: number } | null {
   if (!/^[0-9A-Fa-f]+$/.test(hex) || hex.length < 8) return null;
   const byte = (i: number): number => parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   const family = byte(0) | (byte(1) << 8); // little-endian sa_family_t
-  if (family === 2 && hex.length >= 16) { // AF_INET: family(2) port(2) addr(4)
+  if (family === 2 && hex.length >= 16) {
+    // AF_INET: family(2) port(2) addr(4)
     const port = (byte(2) << 8) | byte(3);
     const ip = [byte(4), byte(5), byte(6), byte(7)].join(".");
     return { ip, port };
   }
-  if (family === 10 && hex.length >= 56) { // AF_INET6: family(2) port(2) flowinfo(4) addr(16)
+  if (family === 10 && hex.length >= 56) {
+    // AF_INET6: family(2) port(2) flowinfo(4) addr(16)
     const port = (byte(2) << 8) | byte(3);
     const seg: string[] = [];
     for (let i = 8; i < 24; i += 2) seg.push(((byte(i) << 8) | byte(i + 1)).toString(16));
-    return { ip: seg.join(":").replace(/(^|:)(0:)+/, "::").replace(/::+/, "::"), port };
+    return {
+      ip: seg
+        .join(":")
+        .replace(/(^|:)(0:)+/, "::")
+        .replace(/::+/, "::"),
+      port,
+    };
   }
   return null;
 }
@@ -234,10 +267,10 @@ interface AuditEvent {
   serial: string;
   tsMs: number;
   types: string[];
-  fields: Fields;          // merged across records (context types fill in exe/argv/path/addr)
-  argv: string[];          // EXECVE args, hex-decoded
-  pathNames: string[];     // PATH name= entries
-  saddr?: string;          // SOCKADDR saddr= hex
+  fields: Fields; // merged across records (context types fill in exe/argv/path/addr)
+  argv: string[]; // EXECVE args, hex-decoded
+  pathNames: string[]; // PATH name= entries
+  saddr?: string; // SOCKADDR saddr= hex
 }
 
 // EXECVE arguments are a0,a1,…; each may be hex-encoded (spaces / quotes) or quoted.
@@ -247,7 +280,10 @@ function execveArgv(f: Fields): string[] {
   const argv: string[] = [];
   for (let i = 0; i < n; i++) {
     const v = f[`a${i}`];
-    if (v == null) { if (i >= argc) break; else continue; }
+    if (v == null) {
+      if (i >= argc) break;
+      else continue;
+    }
     argv.push(decodeHex(v));
   }
   return argv;
@@ -262,7 +298,10 @@ function primaryType(types: string[]): string {
     if (CONTEXT_TYPES.has(t)) continue;
     const def = AUDIT_TYPES[t];
     const r = def ? rank[def.severity] : 3.5; // an unknown non-context type ranks just below Low
-    if (r < bestRank) { bestRank = r; best = t; }
+    if (r < bestRank) {
+      bestRank = r;
+      best = t;
+    }
   }
   if (best) return best;
   if (types.includes("SYSCALL")) return "SYSCALL";
@@ -325,14 +364,25 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
   for (const name of ev.pathNames) if (name.includes("/")) addIoc(iocSink, "file", name.slice(0, 300));
   // Remote login source: addr (USER records) or decoded SOCKADDR.
   const addr = (f["addr"] ?? "").trim();
-  if (addr) { const ip = cleanIp(addr); if (ip) addIoc(iocSink, "ip", ip); }
+  if (addr) {
+    const ip = cleanIp(addr);
+    if (ip) addIoc(iocSink, "ip", ip);
+  }
   const hostField = (f["hostname"] ?? "").trim();
   if (hostField && hostField !== "?" && hostField !== "(null)") {
-    if (IPV4.test(hostField)) { const ip = cleanIp(hostField); if (ip) addIoc(iocSink, "ip", ip); }
-    else if (DOMAIN.test(hostField)) addIoc(iocSink, "domain", hostField.toLowerCase());
+    if (IPV4.test(hostField)) {
+      const ip = cleanIp(hostField);
+      if (ip) addIoc(iocSink, "ip", ip);
+    } else if (DOMAIN.test(hostField)) addIoc(iocSink, "domain", hostField.toLowerCase());
   }
   let saddrInfo: { ip: string; port: number } | null = null;
-  if (ev.saddr) { saddrInfo = decodeSaddr(ev.saddr); if (saddrInfo) { const ip = cleanIp(saddrInfo.ip); if (ip) addIoc(iocSink, "ip", ip); } }
+  if (ev.saddr) {
+    saddrInfo = decodeSaddr(ev.saddr);
+    if (saddrInfo) {
+      const ip = cleanIp(saddrInfo.ip);
+      if (ip) addIoc(iocSink, "ip", ip);
+    }
+  }
 
   // ── description ──
   let description = `auditd ${def.label} (${ptype})`;
@@ -365,41 +415,51 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
       type: authEvent ? "logon" : procName || cmdLine ? "observation" : ptype.toLowerCase(),
       ...(authEvent ? { outcome: failed ? "failed" : "success" } : {}),
     },
-    ...(acct ? {
-      actor: {
-        kind: "account",
-        id: acct,
-        ...(!/^\d+$/.test(acct) ? { name: acct } : {}),
-      },
-      account: {
-        id: acct,
-        ...(!/^\d+$/.test(acct) ? { name: acct } : {}),
-      },
-    } : {}),
+    ...(acct
+      ? {
+          actor: {
+            kind: "account",
+            id: acct,
+            ...(!/^\d+$/.test(acct) ? { name: acct } : {}),
+          },
+          account: {
+            id: acct,
+            ...(!/^\d+$/.test(acct) ? { name: acct } : {}),
+          },
+        }
+      : {}),
     ...(node ? { target: { kind: "host", name: node } } : {}),
-    ...(authEvent ? {
-      authentication: { sessionId: ev.serial, mechanism: ptype.toLowerCase() },
-      ...(term ? { session: { id: ev.serial, terminal: term } } : { session: { id: ev.serial } }),
-    } : {}),
-    ...(sourceAddress ? {
-      network: {
-        source: {
-          address: sourceAddress,
-          ...(saddrInfo?.port ? { port: saddrInfo.port } : {}),
-        },
-      },
-    } : {}),
-    ...(procName || exe || cmdLine || pid ? {
-      process: {
-        ...(pid ? { pid } : {}),
-        ...(procName ? { name: procName } : {}),
-        ...(exe ? { executable: exe } : {}),
-        ...(cmdLine ? { commandLine: cmdLine } : {}),
-      },
-    } : {}),
-    ...(ev.pathNames[0] ? {
-      file: { path: ev.pathNames[0], name: baseName(ev.pathNames[0]) },
-    } : {}),
+    ...(authEvent
+      ? {
+          authentication: { sessionId: ev.serial, mechanism: ptype.toLowerCase() },
+          ...(term ? { session: { id: ev.serial, terminal: term } } : { session: { id: ev.serial } }),
+        }
+      : {}),
+    ...(sourceAddress
+      ? {
+          network: {
+            source: {
+              address: sourceAddress,
+              ...(saddrInfo?.port ? { port: saddrInfo.port } : {}),
+            },
+          },
+        }
+      : {}),
+    ...(procName || exe || cmdLine || pid
+      ? {
+          process: {
+            ...(pid ? { pid } : {}),
+            ...(procName ? { name: procName } : {}),
+            ...(exe ? { executable: exe } : {}),
+            ...(cmdLine ? { commandLine: cmdLine } : {}),
+          },
+        }
+      : {}),
+    ...(ev.pathNames[0]
+      ? {
+          file: { path: ev.pathNames[0], name: baseName(ev.pathNames[0]) },
+        }
+      : {}),
     time: {
       observed: ev.tsMs > 0 ? String(ev.tsMs / 1000) : "",
       normalized: timestamp,
@@ -454,7 +514,10 @@ function mapAureportRow(m: RegExpMatchArray, iocSink: Map<string, SiemIoc>): Map
   const iso = `${yyyy}-${mm}-${dd}T${time}Z`;
   const d = new Date(iso);
   const body = oneLine(rest);
-  for (const ip of body.matchAll(RE_IPV4_G)) { const c = cleanIp(ip[0]); if (c) addIoc(iocSink, "ip", c); }
+  for (const ip of body.matchAll(RE_IPV4_G)) {
+    const c = cleanIp(ip[0]);
+    if (c) addIoc(iocSink, "ip", c);
+  }
   const failed = /\bno\b\s*$|\bfailed\b/i.test(body);
   return {
     timestamp: Number.isNaN(d.getTime()) ? "" : d.toISOString(),
@@ -479,8 +542,8 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
 
   for (const line of lines) {
     const l = line.trim();
-    if (!l || l === "----") continue;             // ausearch record separator
-    if (l.startsWith("time->")) continue;          // ausearch -i header (epoch is in msg=audit)
+    if (!l || l === "----") continue; // ausearch record separator
+    if (l.startsWith("time->")) continue; // ausearch -i header (epoch is in msg=audit)
 
     const parsed = parseAuditLine(l);
     if (!parsed) {

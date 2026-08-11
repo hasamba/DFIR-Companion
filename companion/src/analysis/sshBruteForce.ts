@@ -17,9 +17,15 @@ export interface SshAuth {
 
 const IPV4 = String.raw`(\d{1,3}(?:\.\d{1,3}){3})`;
 // "Accepted password|publickey|keyboard-interactive/pam for [invalid user] <user> from <ip> ..."
-const ACCEPTED_RE = new RegExp(String.raw`^Accepted (?:password|publickey|keyboard-interactive(?:/pam)?) for (?:invalid user )?(\S+) from ${IPV4}\b`, "i");
+const ACCEPTED_RE = new RegExp(
+  String.raw`^Accepted (?:password|publickey|keyboard-interactive(?:/pam)?) for (?:invalid user )?(\S+) from ${IPV4}\b`,
+  "i",
+);
 // "Failed password|publickey for [invalid user] <user> from <ip> ..."
-const FAILED_RE = new RegExp(String.raw`^Failed (?:password|publickey) for (?:invalid user )?(\S+) from ${IPV4}\b`, "i");
+const FAILED_RE = new RegExp(
+  String.raw`^Failed (?:password|publickey) for (?:invalid user )?(\S+) from ${IPV4}\b`,
+  "i",
+);
 // "Invalid user <user> from <ip> ..." — a pre-auth failure (unknown account), counts as a failed try.
 const INVALID_RE = new RegExp(String.raw`^Invalid user (\S+) from ${IPV4}\b`, "i");
 

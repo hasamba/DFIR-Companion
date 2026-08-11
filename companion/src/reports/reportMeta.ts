@@ -53,14 +53,14 @@ function normalizeLogo(value: unknown): string {
 // normalizes instead of rejecting — same philosophy as the AI response schemas.
 export const reportMetaSchema = z.object({
   // 0 Title page
-  companyName: z.string().catch(""),            // optional — the investigating firm, shown with the logo
+  companyName: z.string().catch(""), // optional — the investigating firm, shown with the logo
   companyLogo: z.preprocess(normalizeLogo, z.string().catch("")), // optional — base64 image data URI
   organization: z.string().catch(""),
-  incidentId: z.string().catch(""),             // optional — omitted from the report when blank
+  incidentId: z.string().catch(""), // optional — omitted from the report when blank
   investigators: z.array(z.string()).catch([]), // one or more investigators
-  reviewer: z.string().catch(""),               // optional report reviewer
-  incidentManager: z.string().catch(""),        // optional incident manager
-  restrictions: z.string().catch(""),          // e.g. "CONFIDENTIAL / TLP:AMBER"
+  reviewer: z.string().catch(""), // optional report reviewer
+  incidentManager: z.string().catch(""), // optional incident manager
+  restrictions: z.string().catch(""), // e.g. "CONFIDENTIAL / TLP:AMBER"
   // 1.1 Report revisions
   revisions: z.array(revisionSchema).catch([]),
   // 1.2 Distribution list

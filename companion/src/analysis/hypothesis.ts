@@ -43,11 +43,11 @@ export const hypothesisSchema = z.object({
   id: z.string(),
   title: z.string(),
   description: z.string().default("").catch(""),
-  expectedOutcome: z.string().default("").catch(""),   // what would prove/disprove this hypothesis
+  expectedOutcome: z.string().default("").catch(""), // what would prove/disprove this hypothesis
   status: z.enum(HYPOTHESIS_STATUSES).default("open").catch("open"),
   relatedTechniques: z.array(z.string()).default([]).catch([]), // ATT&CK ids (T1566, T1021.006…)
-  relatedEventIds: z.array(z.string()).default([]).catch([]),   // supporting forensic-event ids
-  relatedIocIds: z.array(z.string()).default([]).catch([]),     // implicated IOC ids
+  relatedEventIds: z.array(z.string()).default([]).catch([]), // supporting forensic-event ids
+  relatedIocIds: z.array(z.string()).default([]).catch([]), // implicated IOC ids
   // ACH-style analysis (investigation-guidance #14). `contradictingEventIds` are events INCONSISTENT
   // with this explanation — tracked so a hypothesis is judged by fewest contradictions (ACH), not most
   // support, and a red herring can't sail through unopposed. `discriminator` names the single artifact
@@ -96,7 +96,7 @@ export interface HypothesisSeed {
   relatedEventIds: string[];
   relatedIocIds: string[];
   contradictingEventIds: string[]; // ACH (#14): events inconsistent with this explanation
-  discriminator: string;           // ACH (#14): the artifact (host + artifact) that best separates it
+  discriminator: string; // ACH (#14): the artifact (host + artifact) that best separates it
 }
 
 // Fields an analyst may set when creating a hypothesis by hand (or promoting a notebook entry).
@@ -165,7 +165,10 @@ export function ensureHypothesisStatusHistory(h: Hypothesis): Hypothesis {
 // Whitespace-normalize a title so two formattings fingerprint identically. Lowercased — unlike VQL,
 // a hypothesis title is prose and case is not semantically significant for dedup.
 export function normalizeTitle(title: string): string {
-  return String(title ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  return String(title ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 // Deterministic FNV-1a fingerprint of the normalized title — the stable auto-gen dedup/refresh key
@@ -198,24 +201,40 @@ export function sanitizeHypotheses(
   const out: HypothesisSeed[] = [];
   for (const item of raw ?? []) {
     const h = (item ?? {}) as Record<string, unknown>;
-    const title = String(h.title ?? "").trim().slice(0, MAX_TITLE_LEN);
+    const title = String(h.title ?? "")
+      .trim()
+      .slice(0, MAX_TITLE_LEN);
     if (!title) continue;
     const sourceKey = hypothesisAutoKey(title);
     if (!sourceKey || seen.has(sourceKey)) continue;
     seen.add(sourceKey);
-    const status = String(h.status ?? "").trim().toLowerCase();
+    const status = String(h.status ?? "")
+      .trim()
+      .toLowerCase();
     out.push({
       sourceKey,
       title,
-      description: String(h.description ?? "").trim().slice(0, MAX_TEXT_LEN),
-      expectedOutcome: String(h.expectedOutcome ?? "").trim().slice(0, MAX_TEXT_LEN),
+      description: String(h.description ?? "")
+        .trim()
+        .slice(0, MAX_TEXT_LEN),
+      expectedOutcome: String(h.expectedOutcome ?? "")
+        .trim()
+        .slice(0, MAX_TEXT_LEN),
       status: VALID_STATUS.has(status) ? (status as HypothesisStatus) : "open",
       relatedTechniques: dedupeStrings(h.relatedTechniques as string[]).slice(0, MAX_TECHNIQUES),
-      relatedEventIds: dedupeStrings(h.relatedEventIds as string[]).filter((id) => validEventIds.has(id)).slice(0, MAX_LINKS),
-      relatedIocIds: dedupeStrings(h.relatedIocIds as string[]).filter((id) => validIocIds.has(id)).slice(0, MAX_LINKS),
+      relatedEventIds: dedupeStrings(h.relatedEventIds as string[])
+        .filter((id) => validEventIds.has(id))
+        .slice(0, MAX_LINKS),
+      relatedIocIds: dedupeStrings(h.relatedIocIds as string[])
+        .filter((id) => validIocIds.has(id))
+        .slice(0, MAX_LINKS),
       // ACH (#14): contradicting events must be REAL case events too (no invented refs); discriminator is prose.
-      contradictingEventIds: dedupeStrings(h.contradictingEventIds as string[]).filter((id) => validEventIds.has(id)).slice(0, MAX_LINKS),
-      discriminator: String(h.discriminator ?? "").trim().slice(0, MAX_TEXT_LEN),
+      contradictingEventIds: dedupeStrings(h.contradictingEventIds as string[])
+        .filter((id) => validEventIds.has(id))
+        .slice(0, MAX_LINKS),
+      discriminator: String(h.discriminator ?? "")
+        .trim()
+        .slice(0, MAX_TEXT_LEN),
     });
     if (out.length >= cap) break;
   }
@@ -277,9 +296,9 @@ export function mergeHypotheses(
           relatedTechniques: [...seed.relatedTechniques],
           relatedEventIds: [...seed.relatedEventIds],
           relatedIocIds: [...seed.relatedIocIds],
-          contradictingEventIds: [...(seed.contradictingEventIds ?? [])],   // ACH (#14)
+          contradictingEventIds: [...(seed.contradictingEventIds ?? [])], // ACH (#14)
           discriminator: seed.discriminator ?? "",
-          needsReview: false,   // authoritative refresh clears any interim FP-cascade flag (#12)
+          needsReview: false, // authoritative refresh clears any interim FP-cascade flag (#12)
           statusHistory: appendStatusChange(cur.statusHistory, seed.status, now),
           updatedAt: now,
         };
@@ -295,7 +314,7 @@ export function mergeHypotheses(
         relatedTechniques: [...seed.relatedTechniques],
         relatedEventIds: [...seed.relatedEventIds],
         relatedIocIds: [...seed.relatedIocIds],
-        contradictingEventIds: [...(seed.contradictingEventIds ?? [])],   // ACH (#14)
+        contradictingEventIds: [...(seed.contradictingEventIds ?? [])], // ACH (#14)
         discriminator: seed.discriminator ?? "",
         exhausted: false,
         exhaustedReason: "",
@@ -345,17 +364,19 @@ export function hypothesisStats(hypotheses: readonly Hypothesis[]): HypothesisSt
 // Build a stored Hypothesis from analyst input (used by the store and the notebook-promote bridge).
 // The caller supplies id/timestamps so this stays pure and testable. Analyst-authored hypotheses are
 // born analystTouched so the synthesis merge never refreshes or prunes them.
-export function buildAnalystHypothesis(
-  input: NewHypothesis,
-  id: string,
-  now: string,
-): Hypothesis {
+export function buildAnalystHypothesis(input: NewHypothesis, id: string, now: string): Hypothesis {
   const status = input.status && VALID_STATUS.has(input.status) ? input.status : "open";
   return {
     id,
-    title: String(input.title ?? "").trim().slice(0, MAX_TITLE_LEN),
-    description: String(input.description ?? "").trim().slice(0, MAX_TEXT_LEN),
-    expectedOutcome: String(input.expectedOutcome ?? "").trim().slice(0, MAX_TEXT_LEN),
+    title: String(input.title ?? "")
+      .trim()
+      .slice(0, MAX_TITLE_LEN),
+    description: String(input.description ?? "")
+      .trim()
+      .slice(0, MAX_TEXT_LEN),
+    expectedOutcome: String(input.expectedOutcome ?? "")
+      .trim()
+      .slice(0, MAX_TEXT_LEN),
     status,
     relatedTechniques: dedupeStrings(input.relatedTechniques).slice(0, MAX_TECHNIQUES),
     relatedEventIds: dedupeStrings(input.relatedEventIds).slice(0, MAX_LINKS),
@@ -365,7 +386,9 @@ export function buildAnalystHypothesis(
     exhausted: false,
     exhaustedReason: "",
     assignee: String(input.assignee ?? "").trim(),
-    notes: String(input.notes ?? "").trim().slice(0, MAX_TEXT_LEN),
+    notes: String(input.notes ?? "")
+      .trim()
+      .slice(0, MAX_TEXT_LEN),
     source: "analyst",
     analystTouched: true,
     needsReview: false,
@@ -379,30 +402,47 @@ export function buildAnalystHypothesis(
 // Apply an analyst patch to a hypothesis, marking it analystTouched and bumping updatedAt. Pure —
 // the store passes `now` and persists the result. Unknown status values are ignored (kept as-is).
 export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now: string): Hypothesis {
-  const statusChanged = patch.status !== undefined && VALID_STATUS.has(patch.status) && patch.status !== h.status;
+  const statusChanged =
+    patch.status !== undefined && VALID_STATUS.has(patch.status) && patch.status !== h.status;
   return {
     ...h,
     ...(patch.title !== undefined ? { title: String(patch.title).trim().slice(0, MAX_TITLE_LEN) } : {}),
-    ...(patch.description !== undefined ? { description: String(patch.description).trim().slice(0, MAX_TEXT_LEN) } : {}),
-    ...(patch.expectedOutcome !== undefined ? { expectedOutcome: String(patch.expectedOutcome).trim().slice(0, MAX_TEXT_LEN) } : {}),
+    ...(patch.description !== undefined
+      ? { description: String(patch.description).trim().slice(0, MAX_TEXT_LEN) }
+      : {}),
+    ...(patch.expectedOutcome !== undefined
+      ? { expectedOutcome: String(patch.expectedOutcome).trim().slice(0, MAX_TEXT_LEN) }
+      : {}),
     ...(patch.status !== undefined && VALID_STATUS.has(patch.status) ? { status: patch.status } : {}),
-    ...(patch.relatedTechniques !== undefined ? { relatedTechniques: dedupeStrings(patch.relatedTechniques).slice(0, MAX_TECHNIQUES) } : {}),
-    ...(patch.relatedEventIds !== undefined ? { relatedEventIds: dedupeStrings(patch.relatedEventIds).slice(0, MAX_LINKS) } : {}),
-    ...(patch.relatedIocIds !== undefined ? { relatedIocIds: dedupeStrings(patch.relatedIocIds).slice(0, MAX_LINKS) } : {}),
-    ...(patch.contradictingEventIds !== undefined ? { contradictingEventIds: dedupeStrings(patch.contradictingEventIds).slice(0, MAX_LINKS) } : {}),
-    ...(patch.discriminator !== undefined ? { discriminator: String(patch.discriminator).trim().slice(0, MAX_TEXT_LEN) } : {}),
+    ...(patch.relatedTechniques !== undefined
+      ? { relatedTechniques: dedupeStrings(patch.relatedTechniques).slice(0, MAX_TECHNIQUES) }
+      : {}),
+    ...(patch.relatedEventIds !== undefined
+      ? { relatedEventIds: dedupeStrings(patch.relatedEventIds).slice(0, MAX_LINKS) }
+      : {}),
+    ...(patch.relatedIocIds !== undefined
+      ? { relatedIocIds: dedupeStrings(patch.relatedIocIds).slice(0, MAX_LINKS) }
+      : {}),
+    ...(patch.contradictingEventIds !== undefined
+      ? { contradictingEventIds: dedupeStrings(patch.contradictingEventIds).slice(0, MAX_LINKS) }
+      : {}),
+    ...(patch.discriminator !== undefined
+      ? { discriminator: String(patch.discriminator).trim().slice(0, MAX_TEXT_LEN) }
+      : {}),
     ...(patch.assignee !== undefined ? { assignee: String(patch.assignee).trim() } : {}),
     ...(patch.notes !== undefined ? { notes: String(patch.notes).trim().slice(0, MAX_TEXT_LEN) } : {}),
     analystTouched: true,
-    needsReview: false,   // the analyst is editing it now — that IS the review (#12)
-    ...(statusChanged ? { statusHistory: appendStatusChange(h.statusHistory, patch.status as HypothesisStatus, now) } : {}),
+    needsReview: false, // the analyst is editing it now — that IS the review (#12)
+    ...(statusChanged
+      ? { statusHistory: appendStatusChange(h.statusHistory, patch.status as HypothesisStatus, now) }
+      : {}),
     updatedAt: now,
   };
 }
 
 export interface ReconsiderHypothesesInput {
   fpEventIds: ReadonlySet<string>; // forensic-event ids just marked false positive (lowercased)
-  fpIocIds: ReadonlySet<string>;   // IOC ids just marked false positive
+  fpIocIds: ReadonlySet<string>; // IOC ids just marked false positive
 }
 
 export interface ReconsiderHypothesesResult {
@@ -450,12 +490,12 @@ export function reconsiderHypotheses(
 // auto-applied. This is the pure, unit-tested core; the AI call + I/O wrapper live in the pipeline.
 export interface HypothesisReviewItem {
   hypothesisId: string;
-  title: string;                     // the KNOWN title (not the model's echo, which can drift)
-  supportingEvidence: string[];      // plain-English bullets FOR the hypothesis
-  refutingEvidence: string[];        // plain-English bullets AGAINST it (the disconfirming lens)
+  title: string; // the KNOWN title (not the model's echo, which can drift)
+  supportingEvidence: string[]; // plain-English bullets FOR the hypothesis
+  refutingEvidence: string[]; // plain-English bullets AGAINST it (the disconfirming lens)
   recommendedStatus: HypothesisStatus; // advisory only — never applied by this module
-  rationale: string;                 // one-paragraph justification for the recommendation
-  relatedEventIds: string[];         // real case event ids the review cites
+  rationale: string; // one-paragraph justification for the recommendation
+  relatedEventIds: string[]; // real case event ids the review cites
 }
 
 const MAX_REVIEW_BULLETS = 12;
@@ -463,8 +503,17 @@ const MAX_BULLET_LEN = 500;
 export const HYPOTHESIS_REVIEW_MAX_DEFAULT = 20; // cap on reviews returned in one pass
 
 function sanitizeBullets(arr: readonly unknown[] | undefined): string[] {
-  return [...new Set((arr ?? []).map((s) => String(s ?? "").trim().slice(0, MAX_BULLET_LEN)).filter(Boolean))]
-    .slice(0, MAX_REVIEW_BULLETS);
+  return [
+    ...new Set(
+      (arr ?? [])
+        .map((s) =>
+          String(s ?? "")
+            .trim()
+            .slice(0, MAX_BULLET_LEN),
+        )
+        .filter(Boolean),
+    ),
+  ].slice(0, MAX_REVIEW_BULLETS);
 }
 
 // Turn a raw model hypothesis-review response into clean, ADVISORY review items. Pure — no I/O, no clock.
@@ -488,15 +537,21 @@ export function sanitizeHypothesisReviews(
     const hypothesisId = String(r.hypothesisId ?? "").trim();
     if (!hypothesisId || !knownHypotheses.has(hypothesisId) || seen.has(hypothesisId)) continue;
     seen.add(hypothesisId);
-    const status = String(r.recommendedStatus ?? "").trim().toLowerCase();
+    const status = String(r.recommendedStatus ?? "")
+      .trim()
+      .toLowerCase();
     out.push({
       hypothesisId,
       title: knownHypotheses.get(hypothesisId) as string,
       supportingEvidence: sanitizeBullets(r.supportingEvidence as unknown[]),
       refutingEvidence: sanitizeBullets(r.refutingEvidence as unknown[]),
       recommendedStatus: VALID_STATUS.has(status) ? (status as HypothesisStatus) : "unknown",
-      rationale: String(r.rationale ?? "").trim().slice(0, MAX_TEXT_LEN),
-      relatedEventIds: dedupeStrings(r.relatedEventIds as string[]).filter((id) => validEventIds.has(id)).slice(0, MAX_LINKS),
+      rationale: String(r.rationale ?? "")
+        .trim()
+        .slice(0, MAX_TEXT_LEN),
+      relatedEventIds: dedupeStrings(r.relatedEventIds as string[])
+        .filter((id) => validEventIds.has(id))
+        .slice(0, MAX_LINKS),
     });
     if (out.length >= cap) break;
   }
@@ -509,11 +564,13 @@ export function sanitizeHypothesisReviews(
 // Exhausted / refuted hypotheses sink (they're negative knowledge). Pure; returns a sorted COPY.
 export function rankHypothesesAch(hypotheses: readonly Hypothesis[]): Hypothesis[] {
   const dead = (h: Hypothesis): number => (h.exhausted || h.status === "refuted" ? 1 : 0);
-  return hypotheses.slice().sort((a, b) =>
-    dead(a) - dead(b) ||
-    a.contradictingEventIds.length - b.contradictingEventIds.length ||   // fewest contradictions first
-    b.relatedEventIds.length - a.relatedEventIds.length ||               // then most support
-    a.title.localeCompare(b.title));
+  return hypotheses.slice().sort(
+    (a, b) =>
+      dead(a) - dead(b) ||
+      a.contradictingEventIds.length - b.contradictingEventIds.length || // fewest contradictions first
+      b.relatedEventIds.length - a.relatedEventIds.length || // then most support
+      a.title.localeCompare(b.title),
+  );
 }
 
 // One hunting signal against a hypothesis (investigation-guidance #14): a collected hunt either tied to
@@ -522,8 +579,8 @@ export function rankHypothesesAch(hypotheses: readonly Hypothesis[]): Hypothesis
 export interface HypothesisHuntSignal {
   relatedHypothesisId?: string;
   techniques: string[];
-  missed: boolean;      // true = the hunt came back empty (negative evidence for what it tested)
-  title?: string;       // for the exhaustion reason
+  missed: boolean; // true = the hunt came back empty (negative evidence for what it tested)
+  title?: string; // for the exhaustion reason
 }
 
 export interface MarkExhaustedResult {

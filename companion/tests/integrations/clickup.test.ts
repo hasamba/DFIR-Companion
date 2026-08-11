@@ -7,15 +7,27 @@ import { ClickUpClient } from "../../src/integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "../../src/integrations/clickup/clickupExportStore.js";
 import { pushPlaybookToClickUp, type ClickUpClientLike } from "../../src/integrations/clickup/clickupPush.js";
 import {
-  clickupPriority, clickupStatusCandidates, resolveClickUpStatus, mapPlaybookTaskToClickUp,
+  clickupPriority,
+  clickupStatusCandidates,
+  resolveClickUpStatus,
+  mapPlaybookTaskToClickUp,
 } from "../../src/integrations/clickup/clickupMap.js";
 import type { PlaybookTask } from "../../src/integrations/clickup/../../analysis/playbook.js";
 
 const NOW = "2026-06-10T00:00:00.000Z";
 function task(over: Partial<PlaybookTask> = {}): PlaybookTask {
   return {
-    id: "next_step:s1", title: "Isolate DC01", description: "Active C2", status: "todo", priority: "high",
-    source: "next_step", sourceKey: "next_step:s1", order: 0, createdAt: NOW, updatedAt: NOW, ...over,
+    id: "next_step:s1",
+    title: "Isolate DC01",
+    description: "Active C2",
+    status: "todo",
+    priority: "high",
+    source: "next_step",
+    sourceKey: "next_step:s1",
+    order: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...over,
   };
 }
 
@@ -57,7 +69,9 @@ describe("ClickUpClient (HTTP via injected fetch)", () => {
     let seenAuth = "";
     const fetchFn = (async (_url: string, init: RequestInit) => {
       seenAuth = (init.headers as Record<string, string>).Authorization;
-      return new Response(JSON.stringify({ statuses: [{ status: "To Do" }, { status: "Complete" }] }), { status: 200 });
+      return new Response(JSON.stringify({ statuses: [{ status: "To Do" }, { status: "Complete" }] }), {
+        status: 200,
+      });
     }) as unknown as typeof fetch;
     const client = new ClickUpClient({ token: "pk_123", fetchFn });
     expect(await client.listStatuses("L1")).toEqual(["to do", "complete"]);
@@ -65,7 +79,8 @@ describe("ClickUpClient (HTTP via injected fetch)", () => {
   });
 
   it("maps a 401 to an actionable auth error", async () => {
-    const fetchFn = (async () => new Response(JSON.stringify({ err: "Token invalid" }), { status: 401 })) as unknown as typeof fetch;
+    const fetchFn = (async () =>
+      new Response(JSON.stringify({ err: "Token invalid" }), { status: 401 })) as unknown as typeof fetch;
     const client = new ClickUpClient({ token: "bad", fetchFn });
     await expect(client.me()).rejects.toThrow(/auth failed/i);
   });
@@ -77,14 +92,21 @@ class MockClickUp implements ClickUpClientLike {
   updated: { taskId: string; body: unknown }[] = [];
   failTitles = new Set<string>();
   private seq = 1;
-  async me() { return { id: "u1", username: "tester" }; }
-  async listStatuses() { return this.statuses; }
+  async me() {
+    return { id: "u1", username: "tester" };
+  }
+  async listStatuses() {
+    return this.statuses;
+  }
   async createTask(listId: string, body: { name: string }) {
     if (this.failTitles.has(body.name)) throw new Error("boom");
     this.created.push({ listId, body });
     return { id: `ct${this.seq++}`, url: `https://app.clickup.com/t/ct${this.seq}` };
   }
-  async updateTask(taskId: string, body: unknown) { this.updated.push({ taskId, body }); return { id: taskId }; }
+  async updateTask(taskId: string, body: unknown) {
+    this.updated.push({ taskId, body });
+    return { id: taskId };
+  }
 }
 
 describe("pushPlaybookToClickUp", () => {
@@ -98,10 +120,19 @@ describe("pushPlaybookToClickUp", () => {
 
   it("creates tasks for new playbook tasks, mapping status, and remembers the ClickUp ids", async () => {
     const m = new MockClickUp();
-    const res = await pushPlaybookToClickUp(m, {
-      caseId: "c1", listId: "L1",
-      tasks: [task({ id: "next_step:s1", status: "in_progress" }), task({ id: "custom:1", title: "Notify", status: "done" })],
-    }, store, NOW);
+    const res = await pushPlaybookToClickUp(
+      m,
+      {
+        caseId: "c1",
+        listId: "L1",
+        tasks: [
+          task({ id: "next_step:s1", status: "in_progress" }),
+          task({ id: "custom:1", title: "Notify", status: "done" }),
+        ],
+      },
+      store,
+      NOW,
+    );
     expect(res.created).toBe(2);
     expect(res.updated).toBe(0);
     expect((m.created[0].body as { status: string }).status).toBe("in progress");
@@ -114,7 +145,12 @@ describe("pushPlaybookToClickUp", () => {
   it("UPDATES an already-exported task on re-push instead of creating a duplicate", async () => {
     const m = new MockClickUp();
     await pushPlaybookToClickUp(m, { caseId: "c1", listId: "L1", tasks: [task()] }, store, NOW);
-    const res2 = await pushPlaybookToClickUp(m, { caseId: "c1", listId: "L1", tasks: [task({ status: "done" })] }, store, NOW);
+    const res2 = await pushPlaybookToClickUp(
+      m,
+      { caseId: "c1", listId: "L1", tasks: [task({ status: "done" })] },
+      store,
+      NOW,
+    );
     expect(res2.created).toBe(0);
     expect(res2.updated).toBe(1);
     expect(m.updated[0].taskId).toBe("ct1");

@@ -16,8 +16,16 @@ const USER = "analyst";
 const PASS = "s3cret";
 const CSRF = "CSRF-TOKEN-123";
 
-interface StubSketch { id: number; name: string; timelines: { id: number; name: string }[] }
-interface StubUpload { sketchId: string | null; name: string | null; events: string | null }
+interface StubSketch {
+  id: number;
+  name: string;
+  timelines: { id: number; name: string }[];
+}
+interface StubUpload {
+  sketchId: string | null;
+  name: string | null;
+  events: string | null;
+}
 
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -59,9 +67,12 @@ beforeAll(async () => {
     // ---- auth: submit credentials → upgrade cookie on a 302 (Flask-Login style) ----
     if (method === "POST" && path === "/login/") {
       const form = new URLSearchParams(await readBody(req));
-      const ok = form.get("username") === USER && form.get("password") === PASS
-        && form.get("csrf_token") === CSRF && req.headers["x-csrftoken"] === CSRF
-        && (req.headers.cookie ?? "").includes("session=anon");
+      const ok =
+        form.get("username") === USER &&
+        form.get("password") === PASS &&
+        form.get("csrf_token") === CSRF &&
+        req.headers["x-csrftoken"] === CSRF &&
+        (req.headers.cookie ?? "").includes("session=anon");
       if (ok) {
         res.writeHead(302, { "set-cookie": "session=authed; Path=/", location: "/" });
         res.end("redirecting");
@@ -107,7 +118,9 @@ beforeAll(async () => {
         const form = new URLSearchParams(await readBody(req));
         const sketchId = form.get("sketch_id");
         if (!sketchId) {
-          return sendJson(res, 400, { message: "Unable to upload data without supplying a sketch to associate it with." });
+          return sendJson(res, 400, {
+            message: "Unable to upload data without supplying a sketch to associate it with.",
+          });
         }
         uploads.push({ sketchId, name: form.get("name"), events: form.get("events") });
         const s = sketches.find((x) => x.id === Number(sketchId));
@@ -126,12 +139,26 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 
-afterAll(() => { server.close(); });
+afterAll(() => {
+  server.close();
+});
 
-beforeEach(() => { sketches = []; uploads = []; deletedTimelines = []; seq = 100; });
+beforeEach(() => {
+  sketches = [];
+  uploads = [];
+  deletedTimelines = [];
+  seq = 100;
+});
 
 function event(over: Partial<ForensicEvent> & { timestamp: string; description: string }): ForensicEvent {
-  return { id: over.timestamp, severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over };
+  return {
+    id: over.timestamp,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...over,
+  };
 }
 function sampleState(): InvestigationState {
   return {
@@ -146,12 +173,16 @@ function sampleState(): InvestigationState {
 describe("TimesketchClient (real HTTP against a stub Timesketch)", () => {
   it("logs in (CSRF + session cookie), creates the sketch, and uploads the timeline with sketch_id parsed from request.form", async () => {
     const client = new TimesketchClient({ baseUrl: base, username: USER, password: PASS });
-    const res = await pushCaseToTimesketch(client, { sketchName: "Case Alpha", state: sampleState() }, { baseUrl: base });
+    const res = await pushCaseToTimesketch(
+      client,
+      { sketchName: "Case Alpha", state: sampleState() },
+      { baseUrl: base },
+    );
 
     expect(res.created).toBe(true);
     expect(res.events).toBe(2);
-    expect(uploads).toHaveLength(1);                                 // upload reached the server…
-    expect(uploads[0].sketchId).toBe(String(res.sketchId));         // …WITH sketch_id (the bug: multipart loses it)
+    expect(uploads).toHaveLength(1); // upload reached the server…
+    expect(uploads[0].sketchId).toBe(String(res.sketchId)); // …WITH sketch_id (the bug: multipart loses it)
     expect(uploads[0].name).toBe("DFIR-Companion Forensic Timeline");
     const lines = (uploads[0].events ?? "").trim().split("\n");
     expect(lines).toHaveLength(2);
@@ -160,9 +191,17 @@ describe("TimesketchClient (real HTTP against a stub Timesketch)", () => {
   });
 
   it("reuses an existing sketch and clean-replaces the managed timeline before uploading", async () => {
-    sketches.push({ id: 42, name: "Case Alpha", timelines: [{ id: 7, name: "DFIR-Companion Forensic Timeline" }] });
+    sketches.push({
+      id: 42,
+      name: "Case Alpha",
+      timelines: [{ id: 7, name: "DFIR-Companion Forensic Timeline" }],
+    });
     const client = new TimesketchClient({ baseUrl: base, username: USER, password: PASS });
-    const res = await pushCaseToTimesketch(client, { sketchName: "Case Alpha", state: sampleState() }, { baseUrl: base });
+    const res = await pushCaseToTimesketch(
+      client,
+      { sketchName: "Case Alpha", state: sampleState() },
+      { baseUrl: base },
+    );
 
     expect(res.created).toBe(false);
     expect(res.sketchId).toBe(42);
@@ -174,8 +213,9 @@ describe("TimesketchClient (real HTTP against a stub Timesketch)", () => {
 
   it("fails with an auth error on a bad password (no session established)", async () => {
     const client = new TimesketchClient({ baseUrl: base, username: USER, password: "wrong" });
-    await expect(pushCaseToTimesketch(client, { sketchName: "Case Alpha", state: sampleState() }))
-      .rejects.toThrow(/auth failed/i);
+    await expect(
+      pushCaseToTimesketch(client, { sketchName: "Case Alpha", state: sampleState() }),
+    ).rejects.toThrow(/auth failed/i);
     expect(uploads).toHaveLength(0);
   });
 });

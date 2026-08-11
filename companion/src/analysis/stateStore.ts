@@ -49,7 +49,10 @@ export interface InvestigationStateStorage {
   queryForensicTimeline(caseId: string, query?: EntityQuery): Promise<EntityPage<ForensicEvent>>;
   appendForensicEvents(caseId: string, events: readonly ForensicEvent[]): Promise<number>;
   hasForensicEventIds(caseId: string, ids: readonly string[]): Promise<Set<string>>;
-  forensicTimelineBatches(caseId: string, query?: Omit<EntityQuery, "cursor">): AsyncGenerator<ForensicEvent[]>;
+  forensicTimelineBatches(
+    caseId: string,
+    query?: Omit<EntityQuery, "cursor">,
+  ): AsyncGenerator<ForensicEvent[]>;
   integrityCheck(caseId: string): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -99,7 +102,9 @@ export class StateStore implements InvestigationStateStorage {
 
   private recordQuery(operation: QueryOperation, index: QueryIndex, startedAt: number, rows: number): void {
     void this.operationalMetrics?.record({
-      type: "query", operation, index,
+      type: "query",
+      operation,
+      index,
       durationMs: Math.max(0, performance.now() - startedAt),
       rows: Math.max(0, Math.floor(rows)),
     });
@@ -121,7 +126,9 @@ export class StateStore implements InvestigationStateStorage {
     // in the worker; only seam-driven tests parse on the caller thread.
     if (this.hasInjectedReader) {
       try {
-        const parsed = JSON.parse(await this.readLegacyFile(this.legacyPath(caseId))) as Partial<InvestigationState>;
+        const parsed = JSON.parse(
+          await this.readLegacyFile(this.legacyPath(caseId)),
+        ) as Partial<InvestigationState>;
         await this.save({ ...emptyState(caseId), ...parsed, caseId });
         return true;
       } catch (err) {
@@ -146,10 +153,10 @@ export class StateStore implements InvestigationStateStorage {
   private legacyTooLargeError(caseId: string): Error {
     return new Error(
       `case "${caseId}" cannot be opened: its legacy state is too large to load for migration. ` +
-      `${this.legacyPath(caseId)} has passed V8's ` +
-      `~512 MB max string length. The original JSON case is still untouched and no partial SQLite ` +
-      `migration is authoritative. Restore the newest backup below that size, open it once to ` +
-      `complete migration, and then continue in the indexed store.`,
+        `${this.legacyPath(caseId)} has passed V8's ` +
+        `~512 MB max string length. The original JSON case is still untouched and no partial SQLite ` +
+        `migration is authoritative. Restore the newest backup below that size, open it once to ` +
+        `complete migration, and then continue in the indexed store.`,
     );
   }
 
@@ -198,10 +205,7 @@ export class StateStore implements InvestigationStateStorage {
     void this.onRetry;
   }
 
-  async queryForensicTimeline(
-    caseId: string,
-    query: EntityQuery = {},
-  ): Promise<EntityPage<ForensicEvent>> {
+  async queryForensicTimeline(caseId: string, query: EntityQuery = {}): Promise<EntityPage<ForensicEvent>> {
     const startedAt = performance.now();
     await this.ensureMigrated(caseId);
     const indexName = query.ioc ? "ioc" : query.technique ? "technique" : undefined;

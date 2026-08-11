@@ -16,7 +16,10 @@ beforeEach(async () => {
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   store = new AnonControlStore(cases);
 });
-afterEach(() => { if (ENV === undefined) delete process.env.DFIR_ANONYMIZE; else process.env.DFIR_ANONYMIZE = ENV; });
+afterEach(() => {
+  if (ENV === undefined) delete process.env.DFIR_ANONYMIZE;
+  else process.env.DFIR_ANONYMIZE = ENV;
+});
 
 describe("AnonControlStore", () => {
   it("defaults to enabled with all categories on", async () => {
@@ -30,7 +33,23 @@ describe("AnonControlStore", () => {
     expect((await store.load("c1")).enabled).toBe(false);
   });
   it("round-trips a saved control and merges new categories over the default", async () => {
-    await store.save("c1", { enabled: false, categories: { IP: false, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true }, redactSecrets: false });
+    await store.save("c1", {
+      enabled: false,
+      categories: {
+        IP: false,
+        EMAIL: true,
+        USER: true,
+        HOST: true,
+        DOMAIN: true,
+        PATH: true,
+        CMD: true,
+        REG: true,
+        CARD: true,
+        PHONE: true,
+        NATID: true,
+      },
+      redactSecrets: false,
+    });
     const c = await store.load("c1");
     expect(c.enabled).toBe(false);
     expect(c.categories.IP).toBe(false);

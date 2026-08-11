@@ -61,7 +61,10 @@ export function scoreEventRelevance(
   }
 
   if (e.severity === "Info") {
-    return { tier: "low", reasons: ["Info-severity telemetry with no structured identity, technique tag, or corroboration"] };
+    return {
+      tier: "low",
+      reasons: ["Info-severity telemetry with no structured identity, technique tag, or corroboration"],
+    };
   }
   // Medium/Low severity with none of the above signals: still a graded detection (a tool judged it),
   // just uncorroborated — treat as medium rather than low so a lone real detection isn't buried.

@@ -11,23 +11,26 @@ import type { FetchFn } from "../../enrichment/provider.js";
 const CLICKUP_BASE = "https://api.clickup.com/api/v2";
 
 export interface ClickUpClientOptions {
-  token: string;            // personal API token (pk_…) or OAuth access token
-  baseUrl?: string;         // default https://api.clickup.com/api/v2 (override for tests/proxies)
-  fetchFn?: FetchFn;        // injectable transport (tests pass a mock)
-  timeoutMs?: number;       // per-request timeout (default 30s)
+  token: string; // personal API token (pk_…) or OAuth access token
+  baseUrl?: string; // default https://api.clickup.com/api/v2 (override for tests/proxies)
+  fetchFn?: FetchFn; // injectable transport (tests pass a mock)
+  timeoutMs?: number; // per-request timeout (default 30s)
 }
 
 // The subset of a ClickUp task-create/update body we set.
 export interface ClickUpTaskBody {
   name: string;
   description?: string;
-  status?: string;          // must match one of the list's status names (case-insensitive on ClickUp)
+  status?: string; // must match one of the list's status names (case-insensitive on ClickUp)
   priority?: number | null; // 1=urgent, 2=high, 3=normal, 4=low; null clears
-  due_date?: number;        // Unix epoch ms
+  due_date?: number; // Unix epoch ms
   due_date_time?: boolean;
 }
 
-export interface ClickUpTaskRef { id: string; url?: string }
+export interface ClickUpTaskRef {
+  id: string;
+  url?: string;
+}
 
 export class ClickUpApiError extends Error {
   constructor(
@@ -40,7 +43,10 @@ export class ClickUpApiError extends Error {
   }
 }
 
-interface ClickUpErrorEnvelope { err?: string; ECODE?: string }
+interface ClickUpErrorEnvelope {
+  err?: string;
+  ECODE?: string;
+}
 
 export class ClickUpClient {
   private readonly fetchFn: FetchFn;
@@ -73,11 +79,19 @@ export class ClickUpClient {
     if (!res.ok) {
       const env = (await res.json().catch(() => ({}))) as ClickUpErrorEnvelope;
       const detail = env.err ? `: ${env.err}` : "";
-      if (res.status === 401) throw new ClickUpApiError(`ClickUp auth failed (check DFIR_CLICKUP_TOKEN)${detail}`, 401, "auth");
-      if (res.status === 403) throw new ClickUpApiError(`ClickUp permission denied — the token can't access this list${detail}`, 403, "permission");
-      if (res.status === 404) throw new ClickUpApiError(`ClickUp not found — check the list id${detail}`, 404, "notfound");
+      if (res.status === 401)
+        throw new ClickUpApiError(`ClickUp auth failed (check DFIR_CLICKUP_TOKEN)${detail}`, 401, "auth");
+      if (res.status === 403)
+        throw new ClickUpApiError(
+          `ClickUp permission denied — the token can't access this list${detail}`,
+          403,
+          "permission",
+        );
+      if (res.status === 404)
+        throw new ClickUpApiError(`ClickUp not found — check the list id${detail}`, 404, "notfound");
       if (res.status === 429) throw new ClickUpApiError(`ClickUp rate limit hit${detail}`, 429, "ratelimit");
-      if (res.status === 400) throw new ClickUpApiError(`ClickUp rejected the request${detail}`, 400, "validation");
+      if (res.status === 400)
+        throw new ClickUpApiError(`ClickUp rejected the request${detail}`, 400, "validation");
       throw new ClickUpApiError(`ClickUp HTTP ${res.status} on ${path}${detail}`, res.status, "http");
     }
     return (await res.json().catch(() => ({}))) as T;
@@ -92,17 +106,28 @@ export class ClickUpClient {
   // The list's custom status NAMES (lowercased) — used to map a playbook status onto whatever
   // statuses this list actually has.
   async listStatuses(listId: string): Promise<string[]> {
-    const data = await this.request<{ statuses?: Array<{ status?: string }> }>("GET", `/list/${encodeURIComponent(listId)}`);
+    const data = await this.request<{ statuses?: Array<{ status?: string }> }>(
+      "GET",
+      `/list/${encodeURIComponent(listId)}`,
+    );
     return (data.statuses ?? []).map((s) => String(s.status ?? "").toLowerCase()).filter(Boolean);
   }
 
   async createTask(listId: string, body: ClickUpTaskBody): Promise<ClickUpTaskRef> {
-    const data = await this.request<{ id?: string; url?: string }>("POST", `/list/${encodeURIComponent(listId)}/task`, body);
+    const data = await this.request<{ id?: string; url?: string }>(
+      "POST",
+      `/list/${encodeURIComponent(listId)}/task`,
+      body,
+    );
     return { id: String(data.id ?? ""), url: typeof data.url === "string" ? data.url : undefined };
   }
 
   async updateTask(taskId: string, body: ClickUpTaskBody): Promise<ClickUpTaskRef> {
-    const data = await this.request<{ id?: string; url?: string }>("PUT", `/task/${encodeURIComponent(taskId)}`, body);
+    const data = await this.request<{ id?: string; url?: string }>(
+      "PUT",
+      `/task/${encodeURIComponent(taskId)}`,
+      body,
+    );
     return { id: String(data.id ?? taskId), url: typeof data.url === "string" ? data.url : undefined };
   }
 }

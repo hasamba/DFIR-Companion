@@ -32,8 +32,8 @@ export interface MobileEvent {
   description: string;
   asset?: string;
   mitreTechniques: string[];
-  count?: number;          // occurrences when the event aggregates collapsed lines (absent ⇒ 1)
-  sources?: string[];      // distinct tools that reported it (corroboration)
+  count?: number; // occurrences when the event aggregates collapsed lines (absent ⇒ 1)
+  sources?: string[]; // distinct tools that reported it (corroboration)
 }
 
 export interface MobileIoc {
@@ -41,7 +41,7 @@ export interface MobileIoc {
   type: IOC["type"];
   value: string;
   firstSeen: string;
-  verdict: IocVerdict | null;   // worst enrichment verdict across engines; null = not enriched yet
+  verdict: IocVerdict | null; // worst enrichment verdict across engines; null = not enriched yet
 }
 
 export interface MobileSummaryCounts {
@@ -49,7 +49,7 @@ export interface MobileSummaryCounts {
   events: number;
   iocs: number;
   openThreads: number;
-  flaggedIocs: number;          // IOCs with a malicious or suspicious verdict from any engine
+  flaggedIocs: number; // IOCs with a malicious or suspicious verdict from any engine
   techniques: number;
 }
 
@@ -63,19 +63,19 @@ export interface MobileCaseSummary {
   caseId: string;
   caseName: string;
   updatedAt: string;
-  summary: string;                            // lastSummary (trimmed)
-  severityCounts: Record<Severity, number>;   // FINDINGS counted by severity
+  summary: string; // lastSummary (trimmed)
+  severityCounts: Record<Severity, number>; // FINDINGS counted by severity
   counts: MobileSummaryCounts;
-  findings: MobileSection<MobileFinding>;      // worst-first
-  events: MobileSection<MobileEvent>;          // most severe, then most recent
-  iocs: MobileSection<MobileIoc>;              // flagged-first, then newest
+  findings: MobileSection<MobileFinding>; // worst-first
+  events: MobileSection<MobileEvent>; // most severe, then most recent
+  iocs: MobileSection<MobileIoc>; // flagged-first, then newest
 }
 
 export interface MobileSummaryOptions {
-  maxFindings?: number;   // default 50
-  maxEvents?: number;     // default 50
-  maxIocs?: number;       // default 100
-  caseName?: string;      // display name (from case.json); falls back to caseId
+  maxFindings?: number; // default 50
+  maxEvents?: number; // default 50
+  maxIocs?: number; // default 100
+  caseName?: string; // display name (from case.json); falls back to caseId
 }
 
 const DEFAULTS = { maxFindings: 50, maxEvents: 50, maxIocs: 100 } as const;
@@ -123,7 +123,7 @@ function compareEvents(a: ForensicEvent, b: ForensicEvent): number {
   if (va && vb) return 0;
   if (va) return 1;
   if (vb) return -1;
-  return tb - ta;   // most recent first
+  return tb - ta; // most recent first
 }
 
 // Order IOCs flagged-first (malicious before suspicious), then everything else newest-first.

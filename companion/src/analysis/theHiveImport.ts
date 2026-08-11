@@ -42,13 +42,13 @@ export interface TheHiveImportOptions {
 export interface TheHiveParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;       // records found (cases/alerts)
-  kept: number;        // events emitted
-  dropped: number;     // cases/alerts below the severity floor or over the cap
-  groups: number;      // distinct groups before the cap
+  total: number; // records found (cases/alerts)
+  kept: number; // events emitted
+  dropped: number; // cases/alerts below the severity floor or over the cap
+  groups: number; // distinct groups before the cap
   observables: number; // observable records found
-  iocCount: number;    // IOCs extracted
-  format: string;      // "single" | "array" | "container" | "observables" | "empty"
+  iocCount: number; // IOCs extracted
+  format: string; // "single" | "array" | "container" | "observables" | "empty"
 }
 
 // ───────────────────────────── severity mapping ─────────────────────────────
@@ -149,8 +149,13 @@ function mapRecord(rec: Row): MappedEvent {
 
   const label = type === "case" ? "TheHive Case" : "TheHive Alert";
   const subject = title || description.slice(0, 120) || `${label} (untitled)`;
-  const body = [prefix + subject, description && description !== title ? description.slice(0, 300) : "", cfSuffix]
-    .filter(Boolean).join(" — ");
+  const body = [
+    prefix + subject,
+    description && description !== title ? description.slice(0, 300) : "",
+    cfSuffix,
+  ]
+    .filter(Boolean)
+    .join(" — ");
 
   const fullDesc = (`${label}: ${body}` + (assignee ? ` (assignee: ${assignee})` : "")).slice(0, 600);
 
@@ -174,7 +179,7 @@ const OBS_TYPE_MAP: Record<string, SiemIoc["type"]> = {
   url: "url",
   hash: "hash",
   filename: "file",
-  mail: "other",   // email addresses — stored as "other" (SiemIoc has no "email" type)
+  mail: "other", // email addresses — stored as "other" (SiemIoc has no "email" type)
 };
 
 function mapObservable(rec: Row, sink: Map<string, SiemIoc>, allObservables: boolean): void {
@@ -233,19 +238,53 @@ export function parseTheHive(text: string, opts: TheHiveImportOptions = {}): The
   const maxIocs = opts.maxIocs ?? 5000;
   const t = text.trim();
   if (!t) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, observables: 0, iocCount: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      observables: 0,
+      iocCount: 0,
+      format: "empty",
+    };
   }
 
   let root: unknown;
-  try { root = JSON.parse(t); } catch { /* fall through to empty */ }
+  try {
+    root = JSON.parse(t);
+  } catch {
+    /* fall through to empty */
+  }
 
   if (root === undefined) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, observables: 0, iocCount: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      observables: 0,
+      iocCount: 0,
+      format: "empty",
+    };
   }
 
   const { records, format } = extractRecords(root);
   if (records.length === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, observables: 0, iocCount: 0, format };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      observables: 0,
+      iocCount: 0,
+      format,
+    };
   }
 
   const sink = new Map<string, SiemIoc>();

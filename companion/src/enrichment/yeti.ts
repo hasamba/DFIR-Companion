@@ -1,13 +1,15 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
 
 export interface YetiOptions {
-  baseUrl: string;   // your YETI instance, e.g. https://yeti.example.org
-  apiKey: string;    // YETI per-user API key (x-yeti-apikey)
+  baseUrl: string; // your YETI instance, e.g. https://yeti.example.org
+  apiKey: string; // YETI per-user API key (x-yeti-apikey)
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
 
-interface YetiTag { name?: string }
+interface YetiTag {
+  name?: string;
+}
 interface YetiObservable {
   id?: string;
   value?: string;
@@ -17,7 +19,8 @@ interface YetiObservable {
 }
 
 // Tag names that indicate the observable is known-bad (vs merely tracked).
-const MALICIOUS_TAGS = /\b(malware|malicious|c2|c&c|botnet|trojan|ransom\w*|phishing|exploit|apt|backdoor|stealer)\b/i;
+const MALICIOUS_TAGS =
+  /\b(malware|malicious|c2|c&c|botnet|trojan|ransom\w*|phishing|exploit|apt|backdoor|stealer)\b/i;
 
 // YETI v2 returns tags as an array of objects ({ name, fresh, expires, … }); also tolerate a
 // plain string[] or a { tagName: meta } dict. Extracting the names is what makes the malicious-tag
@@ -26,7 +29,7 @@ function tagNames(tags: YetiObservable["tags"]): string[] {
   if (!tags) return [];
   if (Array.isArray(tags)) {
     return tags
-      .map((t) => (typeof t === "string" ? t : t?.name ?? ""))
+      .map((t) => (typeof t === "string" ? t : (t?.name ?? "")))
       .filter((n): n is string => n.length > 0);
   }
   return Object.keys(tags);
@@ -37,7 +40,7 @@ function tagNames(tags: YetiObservable["tags"]): string[] {
 // Auth is two-step: exchange the API key for a short-lived JWT, then Bearer it.
 export class YetiProvider implements EnrichmentProvider {
   readonly name = "YETI";
-  readonly scope = "local" as const;     // your own instance — OPSEC-safe
+  readonly scope = "local" as const; // your own instance — OPSEC-safe
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   private token?: string;
@@ -46,7 +49,9 @@ export class YetiProvider implements EnrichmentProvider {
     this.base = opts.baseUrl.replace(/\/+$/, "");
   }
 
-  supports(kind: IocKind): boolean { return kind !== "process"; } // hash/ip/domain/url observables
+  supports(kind: IocKind): boolean {
+    return kind !== "process";
+  } // hash/ip/domain/url observables
 
   // Cheap reachability + auth check: force a fresh API-key→JWT exchange (the exact call that
   // fails with "YETI auth HTTP 405" when the instance is down). Discards the cached token so
@@ -57,7 +62,9 @@ export class YetiProvider implements EnrichmentProvider {
     await this.accessToken();
   }
 
-  private signal(): AbortSignal { return AbortSignal.timeout(this.opts.timeoutMs ?? 20_000); }
+  private signal(): AbortSignal {
+    return AbortSignal.timeout(this.opts.timeoutMs ?? 20_000);
+  }
 
   // Exchange the API key for a JWT access token (cached until a 401 invalidates it).
   private async accessToken(): Promise<string> {
@@ -69,7 +76,7 @@ export class YetiProvider implements EnrichmentProvider {
     });
     if (res.status === 401 || res.status === 403) throw new Error("YETI auth failed (check DFIR_YETI_KEY)");
     if (!res.ok) throw new Error(`YETI auth HTTP ${res.status}`);
-    const token = (await res.json() as { access_token?: string }).access_token;
+    const token = ((await res.json()) as { access_token?: string }).access_token;
     if (!token) throw new Error("YETI auth returned no access_token");
     this.token = token;
     return token;
@@ -86,13 +93,16 @@ export class YetiProvider implements EnrichmentProvider {
 
   async lookup(_kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     let res = await this.search(value, await this.accessToken());
-    if (res.status === 401) { this.token = undefined; res = await this.search(value, await this.accessToken()); } // token expired → refresh once
+    if (res.status === 401) {
+      this.token = undefined;
+      res = await this.search(value, await this.accessToken());
+    } // token expired → refresh once
     if (res.status === 403) throw new Error("YETI access denied");
     if (!res.ok) throw new Error(`YETI HTTP ${res.status}`);
 
     const json = (await res.json()) as { observables?: YetiObservable[]; total?: number };
     const obs = json.observables ?? [];
-    if (obs.length === 0) return null;                          // not tracked in YETI
+    if (obs.length === 0) return null; // not tracked in YETI
 
     const first = obs[0];
     const tags = tagNames(first.tags);
@@ -106,7 +116,9 @@ export class YetiProvider implements EnrichmentProvider {
       verdict,
       score: `tracked${total > 1 ? ` (${total} matches)` : ""}${contexts.length ? `, sources: ${[...new Set(contexts)].slice(0, 3).join(", ")}` : ""}`,
       tags: tags.slice(0, 6),
-      link: first.id ? `${this.base}/observables/${encodeURIComponent(first.id)}` : `${this.base}/observables`,
+      link: first.id
+        ? `${this.base}/observables/${encodeURIComponent(first.id)}`
+        : `${this.base}/observables`,
     };
   }
 }

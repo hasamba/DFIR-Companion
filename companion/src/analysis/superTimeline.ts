@@ -18,15 +18,15 @@ export const NO_HOST_FACET = "(no host)";
 export const STARRED_LABEL = "starred";
 
 export interface SuperQuery {
-  from?: string;        // ISO lower bound (inclusive)
-  to?: string;          // ISO upper bound (inclusive)
-  origins?: string[];   // keep only these origins (empty/undefined = all)
-  exclude?: string[];   // drop these origins (the dashboard's unchecked boxes) — so unchecking ALL yields 0
+  from?: string; // ISO lower bound (inclusive)
+  to?: string; // ISO upper bound (inclusive)
+  origins?: string[]; // keep only these origins (empty/undefined = all)
+  exclude?: string[]; // drop these origins (the dashboard's unchecked boxes) — so unchecking ALL yields 0
   excludeHosts?: string[]; // drop these hosts (the dashboard's unchecked host boxes); use NO_HOST_FACET for undated-host rows
-  labels?: string[];    // keep only events carrying at least one of these labels
+  labels?: string[]; // keep only events carrying at least one of these labels
   taggedOnly?: boolean; // keep only events carrying at least one tag/label (any)
-  starred?: boolean;    // keep only events carrying the reserved "starred" label (ANDed with the rest)
-  search?: string;      // free-text search (dashboard's main filter bar), same fields as the forensic timeline
+  starred?: boolean; // keep only events carrying the reserved "starred" label (ANDed with the rest)
+  search?: string; // free-text search (dashboard's main filter bar), same fields as the forensic timeline
   excludeText?: string[]; // hide events matching ANY of these terms (dashboard's main filter "Exclude" chips)
   offset?: number;
   limit?: number;
@@ -34,10 +34,10 @@ export interface SuperQuery {
 
 export interface SuperQueryResult {
   events: ForensicEvent[];
-  total: number;                 // full match count before pagination
-  origins: string[];             // distinct origins across the matched set (facet, sorted)
-  hosts: string[];               // distinct hosts across the time window (facet, sorted; incl. NO_HOST_FACET)
-  labelsAvailable: string[];     // distinct labels across the matched set (facet, sorted)
+  total: number; // full match count before pagination
+  origins: string[]; // distinct origins across the matched set (facet, sorted)
+  hosts: string[]; // distinct hosts across the time window (facet, sorted; incl. NO_HOST_FACET)
+  labelsAvailable: string[]; // distinct labels across the matched set (facet, sorted)
 }
 
 // The origin facet: the specific artifact when known, else the first tool in `sources`, else "Unknown".
@@ -85,12 +85,19 @@ export function dedupeAppend(existing: ForensicEvent[], incoming: ForensicEvent[
 // dropped first when over the cap). No-op when under the cap.
 export function capEvents(events: ForensicEvent[], max: number): ForensicEvent[] {
   if (events.length <= max) return events;
-  const ms = (e: ForensicEvent): number => { const t = Date.parse(e.timestamp); return Number.isNaN(t) ? -Infinity : t; };
+  const ms = (e: ForensicEvent): number => {
+    const t = Date.parse(e.timestamp);
+    return Number.isNaN(t) ? -Infinity : t;
+  };
   return [...events].sort((a, b) => ms(b) - ms(a)).slice(0, max);
 }
 
 // Filter + paginate + facet. Undated events are kept under a time filter (can't be proven out of range).
-export function querySuper(events: ForensicEvent[], labelMap: SuperLabelMap, q: SuperQuery): SuperQueryResult {
+export function querySuper(
+  events: ForensicEvent[],
+  labelMap: SuperLabelMap,
+  q: SuperQuery,
+): SuperQueryResult {
   const fromMs = q.from ? Date.parse(q.from) : NaN;
   const toMs = q.to ? Date.parse(q.to) : NaN;
   const originSet = q.origins && q.origins.length ? new Set(q.origins) : null;
@@ -100,7 +107,7 @@ export function querySuper(events: ForensicEvent[], labelMap: SuperLabelMap, q: 
 
   const inTime = (e: ForensicEvent): boolean => {
     const t = Date.parse(e.timestamp);
-    if (Number.isNaN(t)) return true;   // undated kept — can't be proven out of range
+    if (Number.isNaN(t)) return true; // undated kept — can't be proven out of range
     if (!Number.isNaN(fromMs) && t < fromMs) return false;
     if (!Number.isNaN(toMs) && t > toMs) return false;
     return true;
@@ -114,15 +121,17 @@ export function querySuper(events: ForensicEvent[], labelMap: SuperLabelMap, q: 
   const inWindow = events.filter(inTime);
   const origins = [...new Set(inWindow.map(superOriginOf))].sort();
   const hosts = [...new Set(inWindow.map(superHostOf))].sort();
-  const labelsAvailable = [...new Set(inWindow.flatMap((e) => labelMap[e.id] ?? []))].filter((l) => l !== STARRED_LABEL).sort();
+  const labelsAvailable = [...new Set(inWindow.flatMap((e) => labelMap[e.id] ?? []))]
+    .filter((l) => l !== STARRED_LABEL)
+    .sort();
 
   // Results apply the origin + host + label filters on top of the time window.
   const matched = inWindow.filter((e) => {
     const origin = superOriginOf(e);
     const evLabels = labelMap[e.id] ?? [];
     if (originSet && !originSet.has(origin)) return false;
-    if (excludeSet && excludeSet.has(origin)) return false;   // unchecked in the dashboard → hidden
-    if (excludeHostSet && excludeHostSet.has(superHostOf(e))) return false;   // unchecked host → hidden
+    if (excludeSet && excludeSet.has(origin)) return false; // unchecked in the dashboard → hidden
+    if (excludeHostSet && excludeHostSet.has(superHostOf(e))) return false; // unchecked host → hidden
     if (labelSet && !evLabels.some((l) => labelSet.has(l))) return false;
     // "Tagged only": keep only events carrying at least one REAL triage tag (the reserved starred
     // pseudo-tag doesn't count — starring is not triage labelling).

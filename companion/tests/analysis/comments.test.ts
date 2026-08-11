@@ -19,7 +19,12 @@ describe("CommentsStore", () => {
   });
 
   it("adds a comment (server-assigned id + createdAt) and lists it", async () => {
-    const c = await store.add("c1", { targetType: "ioc", targetId: "i1", author: "Alice", text: "looks like C2" });
+    const c = await store.add("c1", {
+      targetType: "ioc",
+      targetId: "i1",
+      author: "Alice",
+      text: "looks like C2",
+    });
     expect(c.id).toBeTruthy();
     expect(c.createdAt).toBeTruthy();
     expect(c.author).toBe("Alice");
@@ -29,7 +34,12 @@ describe("CommentsStore", () => {
   });
 
   it("defaults a blank author to anonymous and trims text", async () => {
-    const c = await store.add("c1", { targetType: "event", targetId: "e1", author: "   ", text: "  a note  " });
+    const c = await store.add("c1", {
+      targetType: "event",
+      targetId: "e1",
+      author: "   ",
+      text: "  a note  ",
+    });
     expect(c.author).toBe("anonymous");
     expect(c.text).toBe("a note");
   });
@@ -43,7 +53,9 @@ describe("CommentsStore", () => {
 
   it("parses @name mentions and stores them on the comment", async () => {
     const c = await store.add("c1", {
-      targetType: "finding", targetId: "f1", author: "Bob",
+      targetType: "finding",
+      targetId: "f1",
+      author: "Bob",
       text: "cc @alice and @Charlie-99 can you check this?",
     });
     expect(c.mentions).toEqual(["alice", "Charlie-99"]);
@@ -74,7 +86,12 @@ describe("CommentsStore", () => {
   });
 
   it("returns [] mentions when the text has no @tokens", async () => {
-    const c = await store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", text: "no mentions here" });
+    const c = await store.add("c1", {
+      targetType: "event",
+      targetId: "e1",
+      author: "Bob",
+      text: "no mentions here",
+    });
     expect(c.mentions).toEqual([]);
   });
 });

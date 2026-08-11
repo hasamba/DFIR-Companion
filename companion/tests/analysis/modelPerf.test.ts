@@ -16,16 +16,46 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 // high-severity backfill, parse retries, and (for secondOpinion) the cross-model agreement rate —
 // so DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL / DFIR_AI_SECOND_OPINION_MODEL can be compared empirically.
 
-function event(id: string, timestamp: string, severity: ForensicEvent["severity"] = "Info", description = "benign"): ForensicEvent {
-  return { id, timestamp, description, severity, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+function event(
+  id: string,
+  timestamp: string,
+  severity: ForensicEvent["severity"] = "Info",
+  description = "benign",
+): ForensicEvent {
+  return {
+    id,
+    timestamp,
+    description,
+    severity,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 // A minimal, valid synthesis delta covering ONE event (e2) with ONE finding — e1 (seeded as
 // Critical, elsewhere) is deliberately left uncovered so the deterministic high-severity safety
 // net has to backfill it.
 const DELTA = JSON.stringify({
-  findings: [{ id: "f1", severity: "Medium", title: "Suspicious login", description: "d", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e2"] }],
-  iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "s", forensicEvents: [],
+  findings: [
+    {
+      id: "f1",
+      severity: "Medium",
+      title: "Suspicious login",
+      description: "d",
+      relatedIocs: [],
+      mitreTechniques: [],
+      status: "open",
+      relatedEventIds: ["e2"],
+    },
+  ],
+  iocs: [],
+  mitreTechniques: [],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "",
+  summary: "s",
+  forensicEvents: [],
 });
 
 // Fails (invalid JSON) for the first `failCount` calls, then returns `goodText`. Lets a test assert
@@ -35,7 +65,10 @@ class FlakyProvider implements AIProvider {
   readonly name = "flaky";
   readonly model = "flaky-model";
   private calls = 0;
-  constructor(private readonly failCount: number, private readonly goodText: string) {}
+  constructor(
+    private readonly failCount: number,
+    private readonly goodText: string,
+  ) {}
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.calls++;
     return { rawText: this.calls <= this.failCount ? "not valid json" : this.goodText };
@@ -49,7 +82,9 @@ async function makeCase() {
   const stateStore = new StateStore(caseStore);
   const synthMetaStore = new SynthMetaStore(caseStore);
   const seeded = emptyState("c1");
-  seeded.forensicTimeline.push(event("e1", "2026-05-20T09:00:00.000Z", "Critical", "ransomware note dropped"));
+  seeded.forensicTimeline.push(
+    event("e1", "2026-05-20T09:00:00.000Z", "Critical", "ransomware note dropped"),
+  );
   seeded.forensicTimeline.push(event("e2", "2026-05-20T09:05:00.000Z", "Info", "logon"));
   await stateStore.save(seeded);
   return { caseStore, stateStore, synthMetaStore };
@@ -75,7 +110,10 @@ describe("per-model performance telemetry (#74)", () => {
     const { stateStore, synthMetaStore } = await makeCase();
     const provider = new MockProvider("mock", DELTA, "sonnet-5");
     const pipeline = new AnalysisPipeline({
-      provider, synthesisProvider: provider, stateStore, synthMetaStore,
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      synthMetaStore,
       imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
 
@@ -83,8 +121,8 @@ describe("per-model performance telemetry (#74)", () => {
 
     const meta = await synthMetaStore.load("c1");
     expect(meta.synthModel).toBe("mock/sonnet-5");
-    expect(meta.findingsCount).toBe(2);              // f1 (model) + the backfilled e1 finding
-    expect(meta.highSeverityBackfillCount).toBe(1);   // e1 (Critical, uncited) recovered by the safety net
+    expect(meta.findingsCount).toBe(2); // f1 (model) + the backfilled e1 finding
+    expect(meta.highSeverityBackfillCount).toBe(1); // e1 (Critical, uncited) recovered by the safety net
     expect(meta.parseRetries).toBe(0);
   });
 
@@ -92,7 +130,10 @@ describe("per-model performance telemetry (#74)", () => {
     const { stateStore, synthMetaStore } = await makeCase();
     const provider = new MockProvider("mock", DELTA, "sonnet-5");
     const pipeline = new AnalysisPipeline({
-      provider, synthesisProvider: provider, stateStore, synthMetaStore,
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      synthMetaStore,
       synthesisModelLabel: "Primary (Claude Sonnet 5)",
       imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
@@ -106,7 +147,11 @@ describe("per-model performance telemetry (#74)", () => {
     const { stateStore, synthMetaStore } = await makeCase();
     const provider = new FlakyProvider(2, DELTA); // fails twice, succeeds on the 3rd (default retries=3)
     const pipeline = new AnalysisPipeline({
-      provider, synthesisProvider: provider, stateStore, synthMetaStore, backoffMs: 1,
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      synthMetaStore,
+      backoffMs: 1,
       imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
 
@@ -123,16 +168,45 @@ describe("per-model performance telemetry (#74)", () => {
     // one delta (b_only), so agreementRate = 1 / (1 + 1) = 0.5.
     const secondOpinionDelta = JSON.stringify({
       findings: [
-        { id: "f1", severity: "Medium", title: "Suspicious login", description: "d", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e2"] },
-        { id: "g2", severity: "High", title: "B only finding", description: "d2", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: [] },
+        {
+          id: "f1",
+          severity: "Medium",
+          title: "Suspicious login",
+          description: "d",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+          relatedEventIds: ["e2"],
+        },
+        {
+          id: "g2",
+          severity: "High",
+          title: "B only finding",
+          description: "d2",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+          relatedEventIds: [],
+        },
       ],
-      iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "s2", forensicEvents: [],
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "s2",
+      forensicEvents: [],
     });
     const secondOpinionProvider = new MockProvider("second", secondOpinionDelta, "gpt-5");
     const pipeline = new AnalysisPipeline({
-      provider: primary, synthesisProvider: primary, stateStore, synthMetaStore,
-      secondOpinionProvider, secondOpinionStore,
-      synthesisModelLabel: "primary/sonnet-5", secondOpinionModelLabel: "second/gpt-5",
+      provider: primary,
+      synthesisProvider: primary,
+      stateStore,
+      synthMetaStore,
+      secondOpinionProvider,
+      secondOpinionStore,
+      synthesisModelLabel: "primary/sonnet-5",
+      secondOpinionModelLabel: "second/gpt-5",
       imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
 

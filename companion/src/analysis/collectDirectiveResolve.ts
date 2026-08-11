@@ -13,8 +13,8 @@ import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import type { CollectDirective } from "./stateTypes.js";
 
 export interface ResolvedCollection {
-  vql: string;        // a single deployable CLIENT-side VQL statement
-  artifact: string;   // the Velociraptor artifact name it collects (for display + the deploy record)
+  vql: string; // a single deployable CLIENT-side VQL statement
+  artifact: string; // the Velociraptor artifact name it collects (for display + the deploy record)
 }
 
 // Looks like a dotted Velociraptor artifact name, e.g. "Windows.EventLogs.Evtx" (optionally "Artifact."-prefixed).
@@ -26,7 +26,10 @@ function artifactName(raw: string): string | null {
 // Hand-verified common built-ins NOT covered by the anti-forensic SHADOW_ARTIFACTS catalog. Keywords are
 // matched case-insensitively against the combined artifact + logSource text.
 const EXTRA_ARTIFACTS: ReadonlyArray<{ re: RegExp; artifact: string }> = [
-  { re: /(security\.evtx|system\.evtx|application\.evtx|\bevtx\b|event ?logs?|\b4624\b|\b4672\b|\b4688\b|\b4648\b|\b4634\b|\b4104\b|\b7045\b)/i, artifact: "Windows.EventLogs.Evtx" },
+  {
+    re: /(security\.evtx|system\.evtx|application\.evtx|\bevtx\b|event ?logs?|\b4624\b|\b4672\b|\b4688\b|\b4648\b|\b4634\b|\b4104\b|\b7045\b)/i,
+    artifact: "Windows.EventLogs.Evtx",
+  },
   { re: /(\bnetstat\b|network connections?|active connections?)/i, artifact: "Windows.Network.Netstat" },
   { re: /(scheduled tasks?|\bschtasks\b|task scheduler)/i, artifact: "Windows.System.TaskScheduler" },
   { re: /(process list|running processes?|\bpslist\b|process listing)/i, artifact: "Windows.System.Pslist" },

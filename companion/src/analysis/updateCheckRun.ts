@@ -31,7 +31,11 @@ export async function performUpdateCheck(opts: {
       publishedAt: parsed.publishedAt,
       checkedAt: now,
     };
-    try { await store.setResult(result); } catch { /* best-effort: persistence failure must not break the caller */ }
+    try {
+      await store.setResult(result);
+    } catch {
+      /* best-effort: persistence failure must not break the caller */
+    }
     return result;
   } catch (err) {
     const result: UpdateResult = {
@@ -42,7 +46,11 @@ export async function performUpdateCheck(opts: {
       checkedAt: now,
       error: err instanceof Error ? err.message : String(err),
     };
-    try { await store.setResult(result); } catch { /* best-effort */ }
+    try {
+      await store.setResult(result);
+    } catch {
+      /* best-effort */
+    }
     return result;
   }
 }

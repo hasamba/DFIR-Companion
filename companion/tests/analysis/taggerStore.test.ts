@@ -23,7 +23,9 @@ describe("compileText", () => {
   });
 
   it("throws on an invalid rule (unknown field)", () => {
-    expect(() => compileText("bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n")).toThrow(/nope/);
+    expect(() => compileText("bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n")).toThrow(
+      /nope/,
+    );
   });
 });
 
@@ -36,7 +38,10 @@ describe("TaggerStore", () => {
     dir = await mkdtemp(join(tmpdir(), "dfir-tagger-"));
     userPath = join(dir, "tagger-rules.yaml");
     defaultPath = join(dir, "default-tags.yaml");
-    await writeFile(defaultPath, `default_rule:\n  any:\n    - { field: message, contains: def }\n  tags: ['d']\n`);
+    await writeFile(
+      defaultPath,
+      `default_rule:\n  any:\n    - { field: message, contains: def }\n  tags: ['d']\n`,
+    );
     delete process.env.TAGGER_RULES_FILE;
   });
 
@@ -65,7 +70,9 @@ describe("TaggerStore", () => {
 
   it("save() rejects an invalid ruleset WITHOUT writing the file", async () => {
     const store = new TaggerStore(userPath, [defaultPath]);
-    await expect(store.save("bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n")).rejects.toThrow();
+    await expect(
+      store.save("bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n"),
+    ).rejects.toThrow();
     // user file must not exist — the bad edit never landed
     await expect(readFile(userPath, "utf8")).rejects.toThrow();
   });
@@ -112,7 +119,9 @@ describe("TaggerStore edits (add/remove/reset)", () => {
   it("addRuleYaml creates the rules directory if it does not exist", async () => {
     // point the store at a NESTED path whose parent dir is absent
     const nestedStore = new TaggerStore(join(dir, "missing-subdir", "tags.yaml"), [defaultPath]);
-    const res = await nestedStore.addRuleYaml("logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n");
+    const res = await nestedStore.addRuleYaml(
+      "logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n",
+    );
     expect(res.ruleCount).toBeGreaterThanOrEqual(1);
     expect((await nestedStore.load()).source).toBe("user");
   });
@@ -139,7 +148,7 @@ describe("TaggerStore edits (add/remove/reset)", () => {
     expect(active.rules.map((r) => r.id)).toEqual(["logon"]);
   });
 
-  it("removeRule on the last remaining rule empties the ruleset (persists \"\", not falls back to default)", async () => {
+  it('removeRule on the last remaining rule empties the ruleset (persists "", not falls back to default)', async () => {
     const res = await store.removeRule("svc"); // svc is the only rule, no prior addRuleYaml
     expect(res.removed).toBe(true);
     expect(res.ruleCount).toBe(0);
@@ -176,7 +185,9 @@ describe("TaggerStore edits (add/remove/reset)", () => {
 
   it("refuses edits when TAGGER_RULES_FILE (operator override) is set", async () => {
     process.env.TAGGER_RULES_FILE = defaultPath;
-    await expect(store.addRuleYaml("x:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n")).rejects.toThrow(/operator override/i);
+    await expect(
+      store.addRuleYaml("x:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n"),
+    ).rejects.toThrow(/operator override/i);
     await expect(store.removeRule("svc")).rejects.toThrow(/operator override/i);
     await expect(store.resetToDefault()).rejects.toThrow(/operator override/i);
   });

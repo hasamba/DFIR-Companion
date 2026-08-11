@@ -14,14 +14,23 @@ import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timeline
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
-import { coverageLabel, modelPerfLabel, type SynthesisCoverage, type ModelPerfSnapshot } from "../analysis/synthMeta.js";
+import {
+  coverageLabel,
+  modelPerfLabel,
+  type SynthesisCoverage,
+  type ModelPerfSnapshot,
+} from "../analysis/synthMeta.js";
 import { collectSummary } from "../analysis/collectDirective.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { loadKnownPlaybooks } from "../analysis/knownPlaybooksData.js";
-import { buildPlaybookMatchResult, playbookMatchEnvOptions, type PlaybookMatch } from "../analysis/playbookMatch.js";
+import {
+  buildPlaybookMatchResult,
+  playbookMatchEnvOptions,
+  type PlaybookMatch,
+} from "../analysis/playbookMatch.js";
 import { buildD3fendResult, D3FEND_ACTION_INFO } from "../analysis/d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
 import { buildMitigationsResult } from "../analysis/attackMitigations.js";
@@ -62,7 +71,11 @@ function cellMd(value: string): string {
 }
 
 const SEVERITY_ORDER: Record<Severity, number> = {
-  Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4,
+  Critical: 0,
+  High: 1,
+  Medium: 2,
+  Low: 3,
+  Info: 4,
 };
 
 const TODO = "> _To be completed by the investigator — edit in the dashboard → **Case details**._";
@@ -111,9 +124,13 @@ function titlePage(
   if (meta.incidentId.trim().length > 0) lines.push(`**Incident ID:** ${meta.incidentId.trim()}`, "");
   const investigators = trimmedList(meta.investigators);
   const label = investigators.length > 1 ? "Investigators" : "Investigator";
-  lines.push(`**${label}:** ${investigators.length > 0 ? investigators.join(", ") : "_(investigator not set)_"}`, "");
+  lines.push(
+    `**${label}:** ${investigators.length > 0 ? investigators.join(", ") : "_(investigator not set)_"}`,
+    "",
+  );
   if (meta.reviewer.trim().length > 0) lines.push(`**Reviewer:** ${meta.reviewer.trim()}`, "");
-  if (meta.incidentManager.trim().length > 0) lines.push(`**Incident manager:** ${meta.incidentManager.trim()}`, "");
+  if (meta.incidentManager.trim().length > 0)
+    lines.push(`**Incident manager:** ${meta.incidentManager.trim()}`, "");
   lines.push(`**Restrictions:** ${humanOr(meta.restrictions, "CONFIDENTIAL / TLP:AMBER")}`, "");
 }
 
@@ -121,8 +138,14 @@ function titlePage(
 // case's last update and authored by the investigators, so the report always has a version line.
 function defaultRevision(state: InvestigationState, meta: ReportMeta): ReportRevision {
   // Treat the epoch default (a case with no recorded activity yet) as "no date".
-  const date = state.updatedAt && !state.updatedAt.startsWith("1970-01-01") ? state.updatedAt.slice(0, 10) : "";
-  return { version: "1.0", date, author: trimmedList(meta.investigators).join(", "), comments: "Initial report" };
+  const date =
+    state.updatedAt && !state.updatedAt.startsWith("1970-01-01") ? state.updatedAt.slice(0, 10) : "";
+  return {
+    version: "1.0",
+    date,
+    author: trimmedList(meta.investigators).join(", "),
+    comments: "Initial report",
+  };
 }
 
 function revisions(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
@@ -150,15 +173,15 @@ function disclaimer(lines: string[]): void {
   lines.push("## 1.3 Disclaimer and reading guide", "");
   lines.push(
     "This report has been written based on the facts found during an investigation into a cyber " +
-    "security incident. All findings are based on the materials delivered for inspection and " +
-    "discovered during the investigation, and are subject to change if new evidence is found.",
+      "security incident. All findings are based on the materials delivered for inspection and " +
+      "discovered during the investigation, and are subject to change if new evidence is found.",
     "",
   );
   lines.push("### 1.3.1 Timestamps", "");
   lines.push(
     "Unless otherwise stated, all timestamps are in Coordinated Universal Time (UTC) following the " +
-    "ISO 8601 format (`YYYY-MM-DDTHH:MM:SSZ`). A trailing `Z` denotes UTC; deviations are shown " +
-    "explicitly (e.g. `UTC+2`).",
+      "ISO 8601 format (`YYYY-MM-DDTHH:MM:SSZ`). A trailing `Z` denotes UTC; deviations are shown " +
+      "explicitly (e.g. `UTC+2`).",
     "",
   );
   lines.push("### 1.3.2 Statements of probability", "");
@@ -175,7 +198,7 @@ function disclaimer(lines: string[]): void {
   lines.push("| Low | Missing evidence and open questions; logical but easily disproven. |", "");
   lines.push(
     "Conclusions, theories and interpretations of fact are presented separately from material " +
-    "findings as the investigator's educated opinion, not as material fact.",
+      "findings as the investigator's educated opinion, not as material fact.",
     "",
   );
 }
@@ -239,7 +262,10 @@ function narrativeTimeline(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.2 Narrative timeline", "");
   lines.push("_Chronological prose account of the incident for management and stakeholders._", "");
   if (!state.narrativeTimeline || state.narrativeTimeline.trim().length === 0) {
-    lines.push("_Narrative not yet generated — run Synthesize or use the Generate button in the dashboard._", "");
+    lines.push(
+      "_Narrative not yet generated — run Synthesize or use the Generate button in the dashboard._",
+      "",
+    );
     return;
   }
   lines.push(state.narrativeTimeline, "");
@@ -260,9 +286,9 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
   if (aligned.length > 0) {
     lines.push(
       `> **Clock-skew alignment is ON.** Times for ${alignedHosts.length} host(s) — ` +
-      `${alignedHosts.join(", ")} — have been shifted onto a common axis to correct a measured clock ` +
-      "offset. The **Recorded** column carries the time the artifact itself holds, which is the " +
-      "evidence; the **Time** column is a derived, corrected view.",
+        `${alignedHosts.join(", ")} — have been shifted onto a common axis to correct a measured clock ` +
+        "offset. The **Recorded** column carries the time the artifact itself holds, which is the " +
+        "evidence; the **Time** column is a derived, corrected view.",
       "",
     );
   }
@@ -274,14 +300,15 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
   );
   const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
   for (const e of ordered) {
-    const time = e.endTimestamp && e.endTimestamp !== e.timestamp
-      ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
-      : (e.timestamp || "(undated)");
+    const time =
+      e.endTimestamp && e.endTimestamp !== e.timestamp
+        ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
+        : e.timestamp || "(undated)";
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
     const recorded = aligned.length > 0 ? ` ${cellMd(e.originalTimestamp ?? "")} |` : "";
     lines.push(
       `| ${cellMd(time)} |${recorded} ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
-      `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
+        `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }
   lines.push("");
@@ -292,7 +319,10 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
 // kill-chain at a glance — when each stage happened and how dense it was.
 function attackPhases(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.2 Attack phases", "");
-  lines.push("_Timeline grouped into temporal bursts; each phase labelled by its dominant ATT&CK tactic._", "");
+  lines.push(
+    "_Timeline grouped into temporal bursts; each phase labelled by its dominant ATT&CK tactic._",
+    "",
+  );
   const gapSeconds = Number(process.env.DFIR_PHASE_GAP_S) || DEFAULT_GAP_SECONDS;
   const phases = buildAttackPhases(state.forensicTimeline, { gapSeconds });
   if (phases.length === 0) {
@@ -301,12 +331,13 @@ function attackPhases(state: InvestigationState, lines: string[]): void {
   }
   lines.push("| Phase | When | Severity | Events | MITRE |", "| --- | --- | --- | --- | --- |");
   phases.forEach((p, i) => {
-    const when = p.endTimestamp && p.endTimestamp !== p.startTimestamp
-      ? `${p.startTimestamp} → ${p.endTimestamp}`
-      : (p.startTimestamp || "(undated)");
+    const when =
+      p.endTimestamp && p.endTimestamp !== p.startTimestamp
+        ? `${p.startTimestamp} → ${p.endTimestamp}`
+        : p.startTimestamp || "(undated)";
     lines.push(
       `| ${i + 1}. ${cellMd(p.label)} | ${cellMd(when)} | ${p.maxSeverity} | ${p.eventCount} | ` +
-      `${p.inferredTechniques.map(attackTechniqueMd).join(", ")} |`,
+        `${p.inferredTechniques.map(attackTechniqueMd).join(", ")} |`,
     );
   });
   lines.push("");
@@ -322,7 +353,10 @@ function attackPhases(state: InvestigationState, lines: string[]): void {
 function synthesisCoverageNote(coverage: SynthesisCoverage | null | undefined, lines: string[]): void {
   if (!coverage || coverage.inWindow <= 0) return;
   lines.push("### 3.4 Synthesis coverage", "");
-  lines.push(`_${coverageLabel(coverage)}. Events omitted for the prompt size limit remain in the case; any Critical/High among them is still covered by the deterministic safety-net backfill._`, "");
+  lines.push(
+    `_${coverageLabel(coverage)}. Events omitted for the prompt size limit remain in the case; any Critical/High among them is still covered by the deterministic safety-net backfill._`,
+    "",
+  );
 }
 
 // Model-performance footnote (issue #74) — which model ran the last synthesis, how many findings it
@@ -345,14 +379,17 @@ function timelineCoverage(state: InvestigationState, lines: string[]): void {
     lines.push("_No suspicious silent periods detected in the forensic timeline._", "");
     return;
   }
-  lines.push("| Severity | Gap | Duration | Silent sources | Still active |", "| --- | --- | --- | --- | --- |");
+  lines.push(
+    "| Severity | Gap | Duration | Silent sources | Still active |",
+    "| --- | --- | --- | --- | --- |",
+  );
   for (const g of gaps) {
     const kind = g.complete ? "complete silence" : "partial";
     const silent = g.silentSources.length ? g.silentSources.join(", ") : "all sources";
     const active = g.activeSources.length ? g.activeSources.join(", ") : "—";
     lines.push(
       `| ${g.severity} (${kind}) | ${cellMd(`${g.startTimestamp} → ${g.endTimestamp}`)} | ${cellMd(g.durationLabel)} | ` +
-      `${cellMd(silent)} | ${cellMd(active)} |`,
+        `${cellMd(silent)} | ${cellMd(active)} |`,
     );
   }
   lines.push("");
@@ -377,7 +414,10 @@ function timelineAnomalies(state: InvestigationState, lines: string[]): void {
     );
     return;
   }
-  lines.push("| Severity | Asset | Type | Bucket | Events | Baseline | Ratio |", "| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push(
+    "| Severity | Asset | Type | Bucket | Events | Baseline | Ratio |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+  );
   for (const a of result.anomalies) {
     const window = `${a.bucketStart} → ${a.bucketEnd}`;
     lines.push(
@@ -400,12 +440,15 @@ function evidenceGaps(state: InvestigationState, lines: string[], secondLookLead
     playbookMatch: topPlaybookMatch(state),
   });
   const uncovered = all.filter((i) => i.kind === "uncovered_tactic");
-  const yieldGaps = all.filter((i) => i.kind === "yield_gap");   // #10 source-yield blind spots
+  const yieldGaps = all.filter((i) => i.kind === "yield_gap"); // #10 source-yield blind spots
   const pbSteps = all.filter((i) => i.kind === "playbook_step"); // #230 chain steps never evidenced
-  const leads = secondLookLeads.filter((l) => l && l.trim());     // #11 second-look collection leads
+  const leads = secondLookLeads.filter((l) => l && l.trim()); // #11 second-look collection leads
   if (!uncovered.length && !yieldGaps.length && !pbSteps.length && !leads.length) return;
   lines.push("#### 4.6.3 Evidence gaps — what this case is missing", "");
-  lines.push("_Coverage gaps derived from the case (a lead, not proof). Collect the named evidence to close each._", "");
+  lines.push(
+    "_Coverage gaps derived from the case (a lead, not proof). Collect the named evidence to close each._",
+    "",
+  );
   for (const i of uncovered) {
     lines.push(`- **${i.tactic}** — ${cellMd(i.label)}`);
     for (const c of i.collect) lines.push(`  - ${cellMd(collectSummary(c))}`);
@@ -420,7 +463,9 @@ function evidenceGaps(state: InvestigationState, lines: string[], secondLookLead
   // Second-look collection leads (investigation-guidance #11): the post-synthesis raw re-query searched
   // for these and found nothing — each is a concrete "collect this next" gap the case still has.
   for (const lead of leads.slice(0, 15)) {
-    lines.push(`- **Unresolved lead** — ${cellMd(lead)} (searched the raw record, no evidence found yet — collect to confirm/deny)`);
+    lines.push(
+      `- **Unresolved lead** — ${cellMd(lead)} (searched the raw record, no evidence found yet — collect to confirm/deny)`,
+    );
   }
   lines.push("");
 }
@@ -429,10 +474,14 @@ function evidenceGaps(state: InvestigationState, lines: string[], secondLookLead
 // report never names a chain in one place and gaps from a different one in the other.
 function topPlaybookMatch(state: InvestigationState): PlaybookMatch | null {
   try {
-    const r = buildPlaybookMatchResult(state.forensicTimeline, loadKnownPlaybooks(), playbookMatchEnvOptions());
+    const r = buildPlaybookMatchResult(
+      state.forensicTimeline,
+      loadKnownPlaybooks(),
+      playbookMatchEnvOptions(),
+    );
     return r.matches[0] ?? null;
   } catch {
-    return null;   // a catalog problem must never break the report
+    return null; // a catalog problem must never break the report
   }
 }
 
@@ -444,7 +493,11 @@ function topPlaybookMatch(state: InvestigationState): PlaybookMatch | null {
 function likelyPlaybook(state: InvestigationState, lines: string[]): void {
   const result = (() => {
     try {
-      return buildPlaybookMatchResult(state.forensicTimeline, loadKnownPlaybooks(), playbookMatchEnvOptions());
+      return buildPlaybookMatchResult(
+        state.forensicTimeline,
+        loadKnownPlaybooks(),
+        playbookMatchEnvOptions(),
+      );
     } catch {
       return null;
     }
@@ -467,7 +520,8 @@ function likelyPlaybook(state: InvestigationState, lines: string[]): void {
   }
 
   const top = result.matches[0];
-  const where = top.scope === "host" && top.host ? ` on **${cellMd(top.host)}**` : " across the case timeline";
+  const where =
+    top.scope === "host" && top.host ? ` on **${cellMd(top.host)}**` : " across the case timeline";
   const ref = top.reference ? ` ([source](${top.reference}))` : "";
   lines.push(
     `The case's chronological technique sequence matches the **${cellMd(top.name)}** playbook at ` +
@@ -477,7 +531,12 @@ function likelyPlaybook(state: InvestigationState, lines: string[]): void {
   );
   lines.push("| # | Step | Tactic | Status | Evidence |", "| --- | --- | --- | --- | --- |");
   top.steps.forEach((s, i) => {
-    const mark = s.status === "matched" ? "✅ matched" : s.status === "out-of-order" ? "🟡 out of order" : "❌ not observed";
+    const mark =
+      s.status === "matched"
+        ? "✅ matched"
+        : s.status === "out-of-order"
+          ? "🟡 out of order"
+          : "❌ not observed";
     const evidence =
       s.status === "matched"
         ? `${attackTechniqueMd(s.matchedTechnique ?? "")}${s.matchKind === "base" ? " _(base technique only)_" : ""}`
@@ -502,10 +561,7 @@ function likelyPlaybook(state: InvestigationState, lines: string[]): void {
   }
   const runners = result.matches.slice(1);
   if (runners.length) {
-    lines.push(
-      `Also considered: ${runners.map((m) => `${cellMd(m.name)} (${m.score}%)`).join(", ")}.`,
-      "",
-    );
+    lines.push(`Also considered: ${runners.map((m) => `${cellMd(m.name)} (${m.score}%)`).join(", ")}.`, "");
   }
 }
 
@@ -544,9 +600,7 @@ function adversaryHints(state: InvestigationState, lines: string[]): void {
     const techniques = h.overlapTechniques
       .map((t) => (exactSet.has(t) ? `**${attackTechniqueMd(t)}**` : attackTechniqueMd(t)))
       .join(", ");
-    lines.push(
-      `| ${cellMd(name)} | ${cellMd(h.aliases.join(", ") || "—")} | ${overlap} | ${techniques} |`,
-    );
+    lines.push(`| ${cellMd(name)} | ${cellMd(h.aliases.join(", ") || "—")} | ${overlap} | ${techniques} |`);
   }
   lines.push("");
 
@@ -580,7 +634,10 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   // not a leak/breach check was run; a placeholder makes "not assessed" explicit to the reader.
   lines.push("### 4.5 Customer exposure", "");
   if (!exposure || !exposure.checkedAt) {
-    lines.push("_Not assessed — configure a leak/breach provider and run the customer exposure check from the dashboard._", "");
+    lines.push(
+      "_Not assessed — configure a leak/breach provider and run the customer exposure check from the dashboard._",
+      "",
+    );
     return;
   }
   lines.push(`Checked: ${exposure.checkedAt}`, "");
@@ -593,9 +650,14 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   if (found.length === 0) {
     lines.push("_No customer exposures found._", "");
   } else {
-    lines.push("| Provider | Target | Email | Breach/source | Date | Data |", "| --- | --- | --- | --- | --- | --- |");
+    lines.push(
+      "| Provider | Target | Email | Breach/source | Date | Data |",
+      "| --- | --- | --- | --- | --- | --- |",
+    );
     for (const r of found) {
-      lines.push(`| ${cellMd(r.provider)} | ${cellMd(`${r.targetType}:${r.target}`)} | ${cellMd(r.email ?? "")} | ${cellMd(r.breach ?? "")} | ${cellMd(r.breachDate ?? "")} | ${cellMd([...(r.exposedData ?? []), ...(r.secretPresent ? ["credential material present"] : [])].join(", "))} |`);
+      lines.push(
+        `| ${cellMd(r.provider)} | ${cellMd(`${r.targetType}:${r.target}`)} | ${cellMd(r.email ?? "")} | ${cellMd(r.breach ?? "")} | ${cellMd(r.breachDate ?? "")} | ${cellMd([...(r.exposedData ?? []), ...(r.secretPresent ? ["credential material present"] : [])].join(", "))} |`,
+      );
     }
     lines.push("");
   }
@@ -621,10 +683,18 @@ function gatherCaseCveIds(state: InvestigationState, exposure?: CustomerExposure
   return [...ids];
 }
 
-function kevCorrelation(state: InvestigationState, exposure: CustomerExposureSummary | undefined, catalog: KevCatalog, lines: string[]): void {
+function kevCorrelation(
+  state: InvestigationState,
+  exposure: CustomerExposureSummary | undefined,
+  catalog: KevCatalog,
+  lines: string[],
+): void {
   lines.push("### 4.5.1 CISA KEV correlation", "");
   if (!catalog.size) {
-    lines.push("_KEV catalog not loaded — go to Settings → KEV to load the CISA Known Exploited Vulnerabilities feed._", "");
+    lines.push(
+      "_KEV catalog not loaded — go to Settings → KEV to load the CISA Known Exploited Vulnerabilities feed._",
+      "",
+    );
     return;
   }
   const cveIds = gatherCaseCveIds(state, exposure);
@@ -648,11 +718,22 @@ function kevCorrelation(state: InvestigationState, exposure: CustomerExposureSum
   lines.push("");
 }
 
-function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph, kevCatalog?: KevCatalog, secondLookLeads: string[] = [], prebuiltPaths?: LateralPath[]): void {
+function investigation(
+  state: InvestigationState,
+  lines: string[],
+  exposure?: CustomerExposureSummary,
+  prebuiltGraph?: AssetGraph,
+  kevCatalog?: KevCatalog,
+  secondLookLeads: string[] = [],
+  prebuiltPaths?: LateralPath[],
+): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
-  lines.push(state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attack path not yet reconstructed._", "");
+  lines.push(
+    state.attackerPath.trim().length > 0 ? state.attackerPath : "_Attack path not yet reconstructed._",
+    "",
+  );
 
   // 4.2 Compromised assets — the victim hosts/accounts and the IoCs that touched each.
   // A prebuiltGraph (with analyst overrides applied) is used when available.
@@ -675,7 +756,9 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   if (state.findings.length === 0) {
     lines.push("_No findings yet._", "");
   } else {
-    const sorted = [...state.findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+    const sorted = [...state.findings].sort(
+      (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
+    );
     // Citations (#222): which events each finding cites as its supporting evidence. Prefer the
     // finding's own relatedEventIds (set by synthesis); fall back to the reverse relatedFindingIds
     // link on the events themselves for findings persisted before that field existed.
@@ -696,22 +779,33 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
       if (f.ungrounded) {
         lines.push(`> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`);
       } else if (f.contentMismatch) {
-        lines.push(`> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`);
+        lines.push(
+          `> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`,
+        );
       } else if (f.lateralUnconfirmed) {
-        lines.push(`> ⚠️ **Unconfirmed lateral movement** — the destination host has no confirmed malicious activity of its own; the cited logon may be a legitimate session by a reused account. Severity floored and confidence capped until the source is tied to a compromised node.`);
+        lines.push(
+          `> ⚠️ **Unconfirmed lateral movement** — the destination host has no confirmed malicious activity of its own; the cited logon may be a legitimate session by a reused account. Severity floored and confidence capped until the source is tied to a compromised node.`,
+        );
       } else if (f.corroboration) {
         lines.push(`- Corroboration: ${corroborationLabel(f)}`);
       }
       lines.push(f.description || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
-      if (f.mitreTechniques.length) lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
+      if (f.mitreTechniques.length)
+        lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
       if (f.sourceScreenshots.length) lines.push(`- Evidence: ${f.sourceScreenshots.join(", ")}`);
-      const citedIds = (f.relatedEventIds && f.relatedEventIds.length) ? f.relatedEventIds : (eventsByFinding.get(f.id) ?? []).map((e) => e.id);
+      const citedIds =
+        f.relatedEventIds && f.relatedEventIds.length
+          ? f.relatedEventIds
+          : (eventsByFinding.get(f.id) ?? []).map((e) => e.id);
       if (citedIds.length) {
         lines.push(`- Cited events: ${citedIds.map((id, i) => `[${i + 1}] ${cellMd(id)}`).join(", ")}`);
         for (const [i, id] of citedIds.entries()) {
           const ev = eventById.get(id);
-          if (ev) lines.push(`  - [${i + 1}] ${ev.timestamp || "(undated)"} [${ev.severity}] ${cellMd(ev.description.slice(0, 200))}`);
+          if (ev)
+            lines.push(
+              `  - [${i + 1}] ${ev.timestamp || "(undated)"} [${ev.severity}] ${cellMd(ev.description.slice(0, 200))}`,
+            );
         }
       }
       lines.push(`- Status: ${f.status} | First seen: ${f.firstSeen} | Updated: ${f.lastUpdated}`, "");
@@ -726,13 +820,19 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
     // Composite risk tier per indicator (#63) so the table is actionable at a glance.
     const iocRisk = scoreIocsFromState(state);
-    lines.push("| ID | Type | Value | First seen | Sources | Risk |", "| --- | --- | --- | --- | --- | --- |");
+    lines.push(
+      "| ID | Type | Value | First seen | Sources | Risk |",
+      "| --- | --- | --- | --- | --- | --- |",
+    );
     for (const i of state.iocs) {
       const src = iocSrc[i.id];
-      const srcCell = src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
+      const srcCell =
+        src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
       const r = iocRisk[i.id];
       const riskCell = r ? `**${r.score}**${r.factors.length ? ` — ${r.factors[0]}` : ""}` : "—";
-      lines.push(`| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`);
+      lines.push(
+        `| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`,
+      );
     }
     lines.push("");
   }
@@ -817,7 +917,10 @@ function geographicDistribution(state: InvestigationState, lines: string[]): voi
   lines.push("### 4.10 Geographic distribution", "");
   const geo = buildGeoMap(state);
   if (geo.markers.length === 0) {
-    lines.push("_No geo-located IP addresses — enrich IP IOCs with the GeoIP provider to populate this._", "");
+    lines.push(
+      "_No geo-located IP addresses — enrich IP IOCs with the GeoIP provider to populate this._",
+      "",
+    );
     return;
   }
   const s = geo.stats;
@@ -848,7 +951,10 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
   lines.push("### 4.8 Chain of evidence", "");
   const graph = buildEvidenceGraph(state);
   if (graph.edges.length === 0) {
-    lines.push("_No causal chains derived yet — import process-creation events or evidence spanning multiple hosts._", "");
+    lines.push(
+      "_No causal chains derived yet — import process-creation events or evidence spanning multiple hosts._",
+      "",
+    );
     return;
   }
   const label = new Map(graph.nodes.map((n) => [n.id, n] as const));
@@ -860,7 +966,9 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("**Process execution chains**", "");
     lines.push("| Parent process | Child process | Host | Confidence |", "| --- | --- | --- | --- |");
     for (const e of spawned) {
-      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(host(e.target))} | ${e.confidence} |`);
+      lines.push(
+        `| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(host(e.target))} | ${e.confidence} |`,
+      );
     }
     lines.push("");
   }
@@ -870,7 +978,9 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("**Lateral movement**", "");
     lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
     for (const e of lateral) {
-      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+      lines.push(
+        `| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`,
+      );
     }
     lines.push("");
   }
@@ -887,7 +997,8 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("| Path | Via | Confidence | First seen | Last seen |", "| --- | --- | --- | --- | --- |");
     for (const p of paths) {
       const route = p.hostIds.map((id) => cellMd(name(id))).join(" → ");
-      const via = [...new Set(p.hops.map((h) => h.actor).filter(Boolean))].map((a) => cellMd(a)).join(", ") || "—";
+      const via =
+        [...new Set(p.hops.map((h) => h.actor).filter(Boolean))].map((a) => cellMd(a)).join(", ") || "—";
       lines.push(`| ${route} | ${via} | ${p.confidence} | ${p.startTime || "—"} | ${p.endTime || "—"} |`);
     }
     lines.push("");
@@ -898,7 +1009,9 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("**File lineage (wrote → executed)**", "");
     lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
     for (const e of fileLineage) {
-      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+      lines.push(
+        `| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`,
+      );
     }
     lines.push("");
   }
@@ -908,7 +1021,9 @@ function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPat
     lines.push("**Network flows (src → dst)**", "");
     lines.push("| Source | Destination | Basis | Confidence |", "| --- | --- | --- | --- |");
     for (const e of netFlows) {
-      lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+      lines.push(
+        `| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`,
+      );
     }
     lines.push("");
   }
@@ -935,12 +1050,17 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   } else if (state.nextSteps.length > 0) {
     // Fall back to the AI-recommended next steps as draft recommendations.
     lines.push("_Draft recommendations from the recommended next steps — review and finalize._", "");
-    lines.push("| Priority | Action | Why it matters | Where / what to collect |", "| --- | --- | --- | --- |");
+    lines.push(
+      "| Priority | Action | Why it matters | Where / what to collect |",
+      "| --- | --- | --- | --- |",
+    );
     for (const s of state.nextSteps) {
       // Prefer the structured collect directive (investigation-guidance #8) over the free-text pointer:
       // "collect Security.evtx from HOST7 — expected: …" is directly actionable.
       const where = collectSummary(s.collect) || s.pointer || "—";
-      lines.push(`| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(where)} |`);
+      lines.push(
+        `| ${s.priority.toUpperCase()} | ${cellMd(s.action)} | ${cellMd(s.rationale || "—")} | ${cellMd(where)} |`,
+      );
     }
     lines.push("");
   } else {
@@ -1086,15 +1206,14 @@ function sessionsSection(state: InvestigationState, lines: string[]): void {
 //   - Show a deadline the analyst did not ask for. The clocks start on a legal determination, so
 //     without a discovery date set on the case there are no countdowns at all — only the
 //     obligation text and the trigger each clock keys on.
-function complianceSection(
-  state: InvestigationState,
-  control: ComplianceControl,
-  lines: string[],
-): void {
+function complianceSection(state: InvestigationState, control: ComplianceControl, lines: string[]): void {
   lines.push("## Compliance Impact", "");
   const dataset = loadComplianceMap();
   if (!dataset.techniqueCount) {
-    lines.push("_Compliance mapping not available — `data/compliance-map.json` is missing or unreadable._", "");
+    lines.push(
+      "_Compliance mapping not available — `data/compliance-map.json` is missing or unreadable._",
+      "",
+    );
     return;
   }
 
@@ -1232,8 +1351,12 @@ function d3fendSection(state: InvestigationState, lines: string[]): void {
   const BAND1 = ["Harden", "Detect", "Isolate"];
   const BAND2 = ["Evict", "Restore", "Model", "Deceive"];
   const ordIdx = (arr: string[], t: string): number => (arr.indexOf(t) < 0 ? 99 : arr.indexOf(t));
-  const band1 = result.byTactic.filter((g) => BAND1.includes(g.tactic)).sort((a, b) => ordIdx(BAND1, a.tactic) - ordIdx(BAND1, b.tactic));
-  const band2 = result.byTactic.filter((g) => !BAND1.includes(g.tactic)).sort((a, b) => ordIdx(BAND2, a.tactic) - ordIdx(BAND2, b.tactic));
+  const band1 = result.byTactic
+    .filter((g) => BAND1.includes(g.tactic))
+    .sort((a, b) => ordIdx(BAND1, a.tactic) - ordIdx(BAND1, b.tactic));
+  const band2 = result.byTactic
+    .filter((g) => !BAND1.includes(g.tactic))
+    .sort((a, b) => ordIdx(BAND2, a.tactic) - ordIdx(BAND2, b.tactic));
 
   if (band1.length) {
     lines.push("### Harden now — implement these", "");
@@ -1252,7 +1375,10 @@ function playbookSection(tasks: PlaybookTask[], lines: string[]): void {
     `_Actionable remediation/investigation checklist derived from the recommended next steps and high-severity findings, tracked by the analyst. **${stats.done}/${stats.total} complete (${stats.completionPct}%)**._`,
     "",
   );
-  lines.push("| # | Status | Priority | Task | Assignee | Due | Notes |", "| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push(
+    "| # | Status | Priority | Task | Assignee | Due | Notes |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+  );
   tasks.forEach((t, i) => {
     const status = PLAYBOOK_STATUS_LABEL[t.status] ?? t.status;
     lines.push(
@@ -1266,11 +1392,14 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
   lines.push("## Hypotheses", "");
   lines.push(
     "_What we investigated and concluded. Each hypothesis is a testable claim about the incident, " +
-    "tracked from open to supported / refuted / unknown — a lead to test, not a verdict._",
+      "tracked from open to supported / refuted / unknown — a lead to test, not a verdict._",
     "",
   );
   const STATUS_LABEL: Record<Hypothesis["status"], string> = {
-    supported: "Supported", refuted: "Refuted", open: "Open", unknown: "Unknown",
+    supported: "Supported",
+    refuted: "Refuted",
+    open: "Open",
+    unknown: "Unknown",
   };
   // Negative knowledge (issue #95): a refuted hypothesis, or one whose linked hunts came back empty
   // (`exhausted`), is a settled, ruled-out theory — call it out up front so a reader doesn't mistake it
@@ -1279,7 +1408,7 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
   if (negative.length) {
     lines.push(
       "> **Negative knowledge — ruled out.** These theories were refuted by the evidence or exhausted " +
-      "(hunted for and not found); treat them as settled, not as open leads.",
+        "(hunted for and not found); treat them as settled, not as open leads.",
       "",
     );
     for (const h of negative) {
@@ -1296,12 +1425,15 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
     const exhaustedTag = h.exhausted ? " ⊘ Exhausted" : "";
     lines.push(`### ${h.title} — ${STATUS_LABEL[h.status] ?? h.status}${exhaustedTag}`, "");
     if (h.description) lines.push(h.description, "");
-    if (h.expectedOutcome) lines.push(`**Expected outcome (what would prove or disprove this):** ${h.expectedOutcome}`, "");
+    if (h.expectedOutcome)
+      lines.push(`**Expected outcome (what would prove or disprove this):** ${h.expectedOutcome}`, "");
     if (h.exhausted && h.exhaustedReason) lines.push(`**Exhausted:** ${h.exhaustedReason}`, "");
     const bits: string[] = [];
     if (h.relatedTechniques.length) bits.push(`ATT&CK: ${h.relatedTechniques.join(", ")}`);
-    if (h.relatedEventIds.length) bits.push(`${h.relatedEventIds.length} supporting event${h.relatedEventIds.length === 1 ? "" : "s"}`);
-    if (h.relatedIocIds.length) bits.push(`${h.relatedIocIds.length} related IOC${h.relatedIocIds.length === 1 ? "" : "s"}`);
+    if (h.relatedEventIds.length)
+      bits.push(`${h.relatedEventIds.length} supporting event${h.relatedEventIds.length === 1 ? "" : "s"}`);
+    if (h.relatedIocIds.length)
+      bits.push(`${h.relatedIocIds.length} related IOC${h.relatedIocIds.length === 1 ? "" : "s"}`);
     if (bits.length) lines.push(`_${bits.join(" · ")}._`, "");
     if (h.notes) lines.push(`**Analyst notes:** ${h.notes}`, "");
     // Status-change audit trail (issue #95): a dated open → … chain, skipped when there's only the
@@ -1318,7 +1450,10 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
 
 function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   lines.push("## Analyst Notebook", "");
-  lines.push("_Investigator working notes and open questions recorded during the investigation. Tracked hypotheses are in the Hypotheses section._", "");
+  lines.push(
+    "_Investigator working notes and open questions recorded during the investigation. Tracked hypotheses are in the Hypotheses section._",
+    "",
+  );
   if (!entries.length) {
     lines.push("_(no notebook entries)_", "");
     return;
@@ -1390,12 +1525,12 @@ export function renderMarkdownReport(
   template: ReportTemplate = defaultReportTemplate(),
   kevCatalog?: KevCatalog,
   hypotheses?: Hypothesis[],
-  secondLookLeads: string[] = [],   // #11 deferred: unresolved second-look collection leads
-  coverage?: SynthesisCoverage | null,   // #62: synthesis coverage footnote (opt-in via DFIR_REPORT_SYNTH_COVERAGE)
-  lateralPaths?: LateralPath[],   // prebuilt with analyst dismissals applied; derived here when absent
-  modelPerf?: ModelPerfSnapshot | null,  // #74: model-performance footnote (opt-in via DFIR_REPORT_MODEL_PERF)
-  complianceControl?: ComplianceControl,  // #336: analyst-set discovery date + framework filter
-  custody?: CustodyRecord[],   // #231: per-artifact chain of custody for the appendix
+  secondLookLeads: string[] = [], // #11 deferred: unresolved second-look collection leads
+  coverage?: SynthesisCoverage | null, // #62: synthesis coverage footnote (opt-in via DFIR_REPORT_SYNTH_COVERAGE)
+  lateralPaths?: LateralPath[], // prebuilt with analyst dismissals applied; derived here when absent
+  modelPerf?: ModelPerfSnapshot | null, // #74: model-performance footnote (opt-in via DFIR_REPORT_MODEL_PERF)
+  complianceControl?: ComplianceControl, // #336: analyst-set discovery date + framework filter
+  custody?: CustodyRecord[], // #231: per-artifact chain of custody for the appendix
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -1433,7 +1568,8 @@ export function renderMarkdownReport(
       modelPerformanceNote(modelPerf, lines);
       timelineAnomalies(state, lines);
     },
-    investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads, lateralPaths),
+    investigation: () =>
+      investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads, lateralPaths),
     conclusions: () => conclusions(state, meta, lines),
     hypotheses: () => {
       if (hypotheses && hypotheses.length > 0) hypothesesSection(hypotheses, lines);

@@ -50,7 +50,10 @@ describe("sanitizeUncertainties", () => {
 
   it("caps the number of entries", () => {
     const many = Array.from({ length: UNCERTAINTY_MAX_DEFAULT + 10 }, (_, i) => ({
-      topic: `t${i}`, status: "unknown", basis: "", gap: "",
+      topic: `t${i}`,
+      status: "unknown",
+      basis: "",
+      gap: "",
     }));
     expect(sanitizeUncertainties(many)).toHaveLength(UNCERTAINTY_MAX_DEFAULT);
     expect(sanitizeUncertainties(many, 3)).toHaveLength(3);

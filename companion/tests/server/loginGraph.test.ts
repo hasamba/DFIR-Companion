@@ -13,9 +13,14 @@ const LOGON_DESC = (acct: string, host: string, type: number, failed = false) =>
   `Windows Security ${failed ? "Failed logon (EID 4625)" : "Successful logon (EID 4624)"} - ${acct} - LogonType=${type} - IpAddress=10.0.0.5 @ ${host}`;
 
 const ev = (id: string, description: string, asset: string): ForensicEvent => ({
-  id, description, asset,
-  timestamp: "2026-06-10T12:00:00Z", severity: "Low",
-  mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+  id,
+  description,
+  asset,
+  timestamp: "2026-06-10T12:00:00Z",
+  severity: "Low",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
 });
 
 // Harness mirrors tests/server/superTimeline.test.ts (real CaseStore + StateStore + a deterministic
@@ -27,11 +32,15 @@ async function harness(opts: { withStore?: boolean } = {}) {
   const stateStore = new StateStore(store);
   const superTimelineStore = new SuperTimelineStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
-    pipeline, stateStore,
+    pipeline,
+    stateStore,
     ...(opts.withStore === false ? {} : { superTimelineStore }),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -48,7 +57,7 @@ describe("GET /cases/:id/login-graph", () => {
     const { app, superTimelineStore } = await harness();
     await superTimelineStore.append("c1", [
       ev("e1", LOGON_DESC("CORP\\jdoe", "SRV-01", 2), "SRV-01"),
-      ev("e2", LOGON_DESC("CORP\\jdoe", "SRV-01", 2), "SRV-01"),   // distinct id → same edge, count 2
+      ev("e2", LOGON_DESC("CORP\\jdoe", "SRV-01", 2), "SRV-01"), // distinct id → same edge, count 2
       ev("e3", LOGON_DESC("CORP\\bob", "SRV-02", 10), "SRV-02"),
     ]);
     const res = await request(app).get("/cases/c1/login-graph");
@@ -76,7 +85,7 @@ describe("GET /cases/:id/login-graph", () => {
     for (const q of ["maxEdges=0", "maxEdges=-5"]) {
       const res = await request(app).get(`/cases/c1/login-graph?${q}`);
       expect(res.status).toBe(200);
-      expect(res.body.edges.length).toBe(1);   // default cap, not zero
+      expect(res.body.edges.length).toBe(1); // default cap, not zero
       expect(res.body.truncated).toBe(false);
     }
   });
@@ -91,7 +100,8 @@ describe("GET /cases/:id/login-graph/edge-events", () => {
     ]);
     expect((await request(app).get("/cases/c1/login-graph/edge-events")).status).toBe(400);
     const res = await request(app).get(
-      "/cases/c1/login-graph/edge-events?account=CORP%5Cjdoe&host=SRV-01&type=Interactive&outcome=success");
+      "/cases/c1/login-graph/edge-events?account=CORP%5Cjdoe&host=SRV-01&type=Interactive&outcome=success",
+    );
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(1);
     expect(res.body.events[0].id).toBe("e1");

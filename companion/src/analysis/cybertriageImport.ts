@@ -51,18 +51,18 @@ export interface CybertriageImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  fileTelemetry?: boolean;   // include unscored File (MFT) rows as Info evidence (default: false)
+  fileTelemetry?: boolean; // include unscored File (MFT) rows as Info evidence (default: false)
 }
 
 export interface CybertriageParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;      // rows found
-  kept: number;       // events emitted (after aggregation + cap)
-  dropped: number;    // rows not represented (file telemetry / port noise / below floor / capped)
-  groups: number;     // distinct event groups before the cap
-  notable: number;    // scored (Bad/Suspicious) rows seen
-  format: string;     // "jsonl" | "array" | "csv" | "single" | "empty"
+  total: number; // rows found
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // rows not represented (file telemetry / port noise / below floor / capped)
+  groups: number; // distinct event groups before the cap
+  notable: number; // scored (Bad/Suspicious) rows seen
+  format: string; // "jsonl" | "array" | "csv" | "single" | "empty"
   hostname: string;
 }
 
@@ -80,7 +80,8 @@ function readVerdict(rec: Row): { verdict: Verdict; reason: string } {
 
   if (score) {
     const s = score.toLowerCase();
-    if (s === "none" || s === "" || s === "good" || s === "normal") return { verdict: "none", reason: scoreDesc };
+    if (s === "none" || s === "" || s === "good" || s === "normal")
+      return { verdict: "none", reason: scoreDesc };
     if (/likely/.test(s) && /notable/.test(s)) return { verdict: "suspicious", reason: scoreDesc };
     if (/notable/.test(s)) return { verdict: "bad", reason: scoreDesc };
     // CSV threat_level lands here ("Bad. …" / "Suspicious. …" / "Good. …").
@@ -96,9 +97,11 @@ function readVerdict(rec: Row): { verdict: Verdict; reason: string } {
 
 // Known credential-dumping / ransomware wording in the verdict reason or the item → Critical. Reads
 // the tool's OWN reason text, so it stays "consume the verdict, don't re-detect".
-const CRIT_KEYWORDS = /lsass|mimikatz|credential|dump(?:ing)?\s+lsass|password|ransom|lockbit|black\s*suit|blacksuit|cobalt\s*strike|secretsdump|dcsync/i;
+const CRIT_KEYWORDS =
+  /lsass|mimikatz|credential|dump(?:ing)?\s+lsass|password|ransom|lockbit|black\s*suit|blacksuit|cobalt\s*strike|secretsdump|dcsync/i;
 // Offensive tooling / remote-access wording → at least High even when only flagged Suspicious.
-const HIGH_KEYWORDS = /remote\s*access\s*software|\bras\b|anydesk|teamviewer|\bpsexec\b|\bbeacon\b|meterpreter|reverse\s*shell|yara\s*pattern|web\s*shell|webshell|impacket|icedid|trickbot|qakbot|emotet/i;
+const HIGH_KEYWORDS =
+  /remote\s*access\s*software|\bras\b|anydesk|teamviewer|\bpsexec\b|\bbeacon\b|meterpreter|reverse\s*shell|yara\s*pattern|web\s*shell|webshell|impacket|icedid|trickbot|qakbot|emotet/i;
 
 function severityFor(verdict: Verdict, reason: string, item: string): Severity {
   if (verdict === "none") return "Info";
@@ -176,7 +179,10 @@ function looksLikePath(p: string): boolean {
 }
 function addProc(sink: Map<string, SiemIoc>, name: string): string | undefined {
   const bn = baseName(name.trim());
-  if (bn && /\.\w{2,4}$/.test(bn)) { addIoc(sink, "process", bn); return bn; }
+  if (bn && /\.\w{2,4}$/.test(bn)) {
+    addIoc(sink, "process", bn);
+    return bn;
+  }
   return undefined;
 }
 
@@ -194,13 +200,21 @@ function taskAction(rec: Row): string {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-function mapRow(rec: Row, kind: Kind, opts: CybertriageImportOptions, sink: Map<string, SiemIoc>): MappedEvent | null {
+function mapRow(
+  rec: Row,
+  kind: Kind,
+  opts: CybertriageImportOptions,
+  sink: Map<string, SiemIoc>,
+): MappedEvent | null {
   const host = firstStr(rec, ["hostName", "Host DNS Name", "Host Display Name"]);
   const { verdict, reason } = readVerdict(rec);
   const message = oneLine(firstStr(rec, ["message"]));
 
   // Network: telemetry → IOC only (Active Connection carries "To <ip>:<port>"); never an event.
-  if (kind === "network") { harvestText(message, sink); return null; }
+  if (kind === "network") {
+    harvestText(message, sink);
+    return null;
+  }
 
   // Unscored File rows are the MFT super-timeline — dropped unless the analyst opts in.
   if (kind === "file" && verdict === "none" && !opts.fileTelemetry) return null;
@@ -236,20 +250,23 @@ function mapRow(rec: Row, kind: Kind, opts: CybertriageImportOptions, sink: Map<
   let aggSubject: string;
   if (kind === "process") {
     const proc = processName || baseName(path) || "process";
-    subject = `${proc}${args ? ` ${oneLine(args).slice(0, 160)}` : (message.includes(" ") ? ` ${message.split(/\s+/).slice(1).join(" ").slice(0, 160)}` : "")}`.trim();
+    subject =
+      `${proc}${args ? ` ${oneLine(args).slice(0, 160)}` : message.includes(" ") ? ` ${message.split(/\s+/).slice(1).join(" ").slice(0, 160)}` : ""}`.trim();
     aggSubject = `${proc}|${parentName ?? ""}`;
   } else if (kind === "task") {
     const action = taskAction(rec).slice(0, 200);
     subject = `scheduled task${taskName ? ` "${taskName}"` : ""}${action ? ` → ${action}` : ""}`;
     aggSubject = `${taskName ?? ""}|${action}`;
-  } else { // file
+  } else {
+    // file
     subject = path || message;
-    aggSubject = (path || message);
+    aggSubject = path || message;
   }
 
-  const headline = verdict === "none"
-    ? `${lead}: ${firstStr(rec, ["timestamp_desc", "timestamp_description"]) || "event"} — ${subject}`
-    : `${lead}: ${reason || "notable item"} — ${subject}`;
+  const headline =
+    verdict === "none"
+      ? `${lead}: ${firstStr(rec, ["timestamp_desc", "timestamp_description"]) || "event"} — ${subject}`
+      : `${lead}: ${reason || "notable item"} — ${subject}`;
   let description = headline;
   if (parentName) description += ` (parent ${parentName})`;
   if (host && !description.toLowerCase().includes(host.toLowerCase())) description += ` @ ${host}`;
@@ -287,7 +304,12 @@ function extractRows(text: string): { rows: Row[]; format: string } {
   if (trimmed[0] === "{" || trimmed[0] === "[") {
     const { records, format } = extractRecords(trimmed);
     if (records.length) return { rows: records, format: format === "ndjson" ? "jsonl" : format };
-  } else if (trimmed.split(/\r\n|\r|\n/, 1)[0]?.trim().startsWith("{")) {
+  } else if (
+    trimmed
+      .split(/\r\n|\r|\n/, 1)[0]
+      ?.trim()
+      .startsWith("{")
+  ) {
     const { records, format } = extractRecords(trimmed);
     if (records.length) return { rows: records, format: format === "ndjson" ? "jsonl" : format };
   }
@@ -298,7 +320,9 @@ function extractRows(text: string): { rows: Row[]; format: string } {
   if (!CT_HEADERS.every((h) => hset.has(h))) return { rows: [], format: "empty" };
   const objs: Row[] = rows.map((cols) => {
     const o: Row = {};
-    headers.forEach((h, i) => { o[h.trim()] = cols[i] ?? ""; });
+    headers.forEach((h, i) => {
+      o[h.trim()] = cols[i] ?? "";
+    });
     // Fold the CSV's `threat_level` into `score` so readVerdict sees one field.
     if (o.threat_level != null) o.score = o.threat_level;
     return o;
@@ -313,7 +337,17 @@ export function parseCybertriage(text: string, opts: CybertriageImportOptions = 
   const { rows, format } = extractRows(text);
   const total = rows.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, notable: 0, format: "empty", hostname: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      notable: 0,
+      format: "empty",
+      hostname: "",
+    };
   }
 
   const sink = new Map<string, SiemIoc>();

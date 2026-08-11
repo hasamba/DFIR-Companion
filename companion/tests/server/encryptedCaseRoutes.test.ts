@@ -23,14 +23,41 @@ async function harness() {
 }
 
 async function seedCase(app: ReturnType<typeof createApp>, stateStore: StateStore, store: CaseStore) {
-  await request(app).post("/cases").send({ caseId: "INC-1", name: "Case One", investigator: "alice", aiProvider: "anthropic" });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "INC-1", name: "Case One", investigator: "alice", aiProvider: "anthropic" });
   await stateStore.save({
     ...emptyState("INC-1"),
-    findings: [{ id: "f1", severity: "High", title: "t", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-01-01T00:00:00Z", lastUpdated: "2026-01-01T00:00:00Z", status: "open" }],
+    findings: [
+      {
+        id: "f1",
+        severity: "High",
+        title: "t",
+        description: "d",
+        relatedIocs: [],
+        sourceScreenshots: [],
+        mitreTechniques: [],
+        firstSeen: "2026-01-01T00:00:00Z",
+        lastUpdated: "2026-01-01T00:00:00Z",
+        status: "open",
+      },
+    ],
     iocs: [{ id: "i1", type: "ip", value: "8.8.8.8", firstSeen: "2026-01-01T00:00:00Z" }],
-    forensicTimeline: [{ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "evt", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] }],
+    forensicTimeline: [
+      {
+        id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: "evt",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+    ],
   });
-  await request(app).post("/cases/INC-1/comments").send({ targetType: "ioc", targetId: "i1", text: "looks malicious" });
+  await request(app)
+    .post("/cases/INC-1/comments")
+    .send({ targetType: "ioc", targetId: "i1", text: "looks malicious" });
   await store.saveScreenshot("INC-1", "shot.webp", Buffer.from([1, 2, 3, 4]));
 }
 
@@ -76,9 +103,7 @@ describe("POST /cases/:id/export/encrypted", () => {
 
   it("400s on a path-traversal case id instead of reading outside the cases root", async () => {
     const { app } = await harness();
-    const res = await request(app)
-      .post("/cases/..%2F..%2Fetc/export/encrypted")
-      .send({ password: PASSWORD });
+    const res = await request(app).post("/cases/..%2F..%2Fetc/export/encrypted").send({ password: PASSWORD });
     expect(res.status).toBe(400);
   });
 
@@ -130,7 +155,9 @@ describe("POST /cases/import/encrypted", () => {
     await seedCase(app, stateStore, store);
     const data = await exportArchive(app, "INC-1");
 
-    const imp = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD, targetCaseId: "INC-2" });
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2" });
     expect(imp.status).toBe(201);
     expect(imp.body.caseId).toBe("INC-2");
     expect(imp.body.counts).toMatchObject({ findings: 1, iocs: 1, forensicEvents: 1 });
@@ -169,7 +196,9 @@ describe("POST /cases/import/encrypted", () => {
     const { app, stateStore, store } = await harness();
     await seedCase(app, stateStore, store);
     const data = await exportArchive(app, "INC-1");
-    const imp = await request(app).post("/cases/import/encrypted").send({ data, password: "totally-wrong", targetCaseId: "INC-3" });
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: "totally-wrong", targetCaseId: "INC-3" });
     expect(imp.status).toBe(400);
   });
 
@@ -187,7 +216,9 @@ describe("POST /cases/import/encrypted", () => {
     // prove exactly the same thing.
     const junk = Buffer.from("nowhere near a .dfircase container").toString("base64");
     for (let i = 0; i < 4; i++) {
-      expect((await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status).toBe(400);
+      expect(
+        (await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status,
+      ).toBe(400);
     }
     const tripped = await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" });
     expect(tripped.status).toBe(429);
@@ -195,7 +226,9 @@ describe("POST /cases/import/encrypted", () => {
     expect(tripped.body.retryAfterMs).toBeGreaterThan(0);
 
     // The lockout is what protects the CPU: the correct password no longer buys a derivation.
-    const locked = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD, targetCaseId: "INC-9" });
+    const locked = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-9" });
     expect(locked.status).toBe(429);
     expect((await request(app).get("/cases/INC-9/state")).status).toBe(404); // and nothing was imported
   });
@@ -207,13 +240,17 @@ describe("POST /cases/import/encrypted", () => {
 
     // Two 409s: the archive opened both times, so neither is a failed attempt.
     for (let i = 0; i < 2; i++) {
-      expect((await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD })).status).toBe(409);
+      expect(
+        (await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD })).status,
+      ).toBe(409);
     }
     // Four genuine failures then still fit under the 5-attempt threshold — they would not if the
     // two conflicts had been counted. (Two conflicts, not six: each one costs a real derivation.)
     const junk = Buffer.from("nowhere near a .dfircase container").toString("base64");
     for (let i = 0; i < 4; i++) {
-      expect((await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status).toBe(400);
+      expect(
+        (await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status,
+      ).toBe(400);
     }
   });
 
@@ -222,20 +259,26 @@ describe("POST /cases/import/encrypted", () => {
   // throws an archive error instead — so it never touched the limiter, and looping it was an
   // unmetered way to hold the event loop. (It answered 500 as well: a client-supplied archive that
   // does not parse is a bad request, not a server fault.)
-  it("counts a correctly encrypted but malformed archive, which costs the same derivation", { timeout: 60_000 }, async () => {
-    const { app } = await harness();
-    // Valid container, correct password, contents that are not a ZIP. Decryption succeeds; the
-    // ZIP parse is what fails.
-    const data = encryptBuffer(Buffer.from("valid container, contents are not a ZIP"), PASSWORD).toString("base64");
+  it(
+    "counts a correctly encrypted but malformed archive, which costs the same derivation",
+    { timeout: 60_000 },
+    async () => {
+      const { app } = await harness();
+      // Valid container, correct password, contents that are not a ZIP. Decryption succeeds; the
+      // ZIP parse is what fails.
+      const data = encryptBuffer(Buffer.from("valid container, contents are not a ZIP"), PASSWORD).toString(
+        "base64",
+      );
 
-    for (let i = 0; i < 4; i++) {
-      const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
-      expect(res.status).toBe(400);
-    }
-    const tripped = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
-    expect(tripped.status).toBe(429);
-    expect(tripped.headers["retry-after"]).toBeDefined();
-  });
+      for (let i = 0; i < 4; i++) {
+        const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
+        expect(res.status).toBe(400);
+      }
+      const tripped = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
+      expect(tripped.status).toBe(429);
+      expect(tripped.headers["retry-after"]).toBeDefined();
+    },
+  );
 
   it("clears the failure state only on a successful import", { timeout: 60_000 }, async () => {
     const { app, stateStore, store } = await harness();
@@ -244,13 +287,23 @@ describe("POST /cases/import/encrypted", () => {
     const bad = encryptBuffer(Buffer.from("not a ZIP"), PASSWORD).toString("base64");
 
     for (let i = 0; i < 4; i++) {
-      expect((await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status).toBe(400);
+      expect(
+        (await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status,
+      ).toBe(400);
     }
     // One good import resets the counter...
-    expect((await request(app).post("/cases/import/encrypted").send({ data: good, password: PASSWORD, targetCaseId: "INC-2" })).status).toBe(201);
+    expect(
+      (
+        await request(app)
+          .post("/cases/import/encrypted")
+          .send({ data: good, password: PASSWORD, targetCaseId: "INC-2" })
+      ).status,
+    ).toBe(201);
     // ...so four more failures fit again rather than tripping on the first.
     for (let i = 0; i < 4; i++) {
-      expect((await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status).toBe(400);
+      expect(
+        (await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status,
+      ).toBe(400);
     }
   });
 
@@ -265,8 +318,11 @@ describe("POST /cases/import/encrypted", () => {
     let budgetHit = 0;
     for (let i = 0; i < 12; i++) {
       const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
-      if (res.status === 429) { budgetHit = i; break; }
-      expect(res.status).toBe(409);   // still a conflict, still not a "failed import"
+      if (res.status === 429) {
+        budgetHit = i;
+        break;
+      }
+      expect(res.status).toBe(409); // still a conflict, still not a "failed import"
     }
     expect(budgetHit).toBeGreaterThan(0);
     // The bound came from the request budget, not the failure lockout — so the message is the
@@ -278,7 +334,13 @@ describe("POST /cases/import/encrypted", () => {
   it("400s on a malformed payload", async () => {
     const { app } = await harness();
     expect((await request(app).post("/cases/import/encrypted").send({ hello: "world" })).status).toBe(400);
-    expect((await request(app).post("/cases/import/encrypted").send({ data: "@@@not-base64@@@", password: PASSWORD })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .post("/cases/import/encrypted")
+          .send({ data: "@@@not-base64@@@", password: PASSWORD })
+      ).status,
+    ).toBe(400);
   });
 
   it("never leaks a case-lock password hash — an archived case that had one keeps it out of the import response", async () => {
@@ -292,10 +354,14 @@ describe("POST /cases/import/encrypted", () => {
     const agent = request.agent(app);
     await agent.post("/cases/INC-1/password").send({ newPassword: "correct horse" });
     await agent.post("/cases/INC-1/unlock").send({ password: "correct horse" });
-    const exportRes = await bufferRequest(agent.post("/cases/INC-1/export/encrypted").send({ password: PASSWORD }));
+    const exportRes = await bufferRequest(
+      agent.post("/cases/INC-1/export/encrypted").send({ password: PASSWORD }),
+    );
     const data = (exportRes.body as Buffer).toString("base64");
 
-    const imp = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD, targetCaseId: "INC-4" });
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-4" });
     expect(imp.status).toBe(201);
     expect(imp.body.hasPassword).toBe(true);
     expect(imp.body.password).toBeUndefined();

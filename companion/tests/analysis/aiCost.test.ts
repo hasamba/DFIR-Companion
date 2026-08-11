@@ -35,8 +35,12 @@ describe("AiCostStore", () => {
   it("returns an all-empty state when no file exists yet", async () => {
     const state = await store.load("c1");
     expect(state.vision).toEqual({
-      totalCalls: 0, totalCostUSD: 0, hasCost: false,
-      totalInputTokens: 0, totalOutputTokens: 0, hasTokens: false,
+      totalCalls: 0,
+      totalCostUSD: 0,
+      hasCost: false,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      hasTokens: false,
       byModel: {},
     });
     expect(state.synthesis.totalCalls).toBe(0);
@@ -44,10 +48,16 @@ describe("AiCostStore", () => {
   });
 
   it("accumulates cost and tokens into the right bucket and model", async () => {
-    await store.record("c1", "vision", "openrouter", "google/gemini-3.1-flash-lite",
-      { inputTokens: 100, outputTokens: 20, costUSD: 0.01 });
-    await store.record("c1", "vision", "openrouter", "google/gemini-3.1-flash-lite",
-      { inputTokens: 100, outputTokens: 20, costUSD: 0.01 });
+    await store.record("c1", "vision", "openrouter", "google/gemini-3.1-flash-lite", {
+      inputTokens: 100,
+      outputTokens: 20,
+      costUSD: 0.01,
+    });
+    await store.record("c1", "vision", "openrouter", "google/gemini-3.1-flash-lite", {
+      inputTokens: 100,
+      outputTokens: 20,
+      costUSD: 0.01,
+    });
     const state = await store.load("c1");
     expect(state.vision.totalCalls).toBe(2);
     expect(state.vision.totalCostUSD).toBeCloseTo(0.02);
@@ -55,7 +65,12 @@ describe("AiCostStore", () => {
     expect(state.vision.totalInputTokens).toBe(200);
     expect(state.vision.totalOutputTokens).toBe(40);
     expect(state.vision.byModel["openrouter/google/gemini-3.1-flash-lite"]).toEqual({
-      calls: 2, costUSD: 0.02, hasCost: true, inputTokens: 200, outputTokens: 40, hasTokens: true,
+      calls: 2,
+      costUSD: 0.02,
+      hasCost: true,
+      inputTokens: 200,
+      outputTokens: 40,
+      hasTokens: true,
     });
     expect(state.synthesis.totalCalls).toBe(0);
   });
@@ -67,7 +82,12 @@ describe("AiCostStore", () => {
     expect(state.other.hasCost).toBe(false);
     expect(state.other.hasTokens).toBe(false);
     expect(state.other.byModel["gemini/gemini-2.5-pro"]).toEqual({
-      calls: 1, costUSD: 0, hasCost: false, inputTokens: 0, outputTokens: 0, hasTokens: false,
+      calls: 1,
+      costUSD: 0,
+      hasCost: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      hasTokens: false,
     });
   });
 

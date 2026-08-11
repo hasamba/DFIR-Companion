@@ -7,7 +7,10 @@
 // Ordered: more-specific patterns first (SentinelOne before a bare "Sentinel"; "Defender
 // for Endpoint" maps to Microsoft Defender). First match wins; no match → undefined.
 
-interface ToolPattern { re: RegExp; name: string; }
+interface ToolPattern {
+  re: RegExp;
+  name: string;
+}
 
 const TOOLS: ToolPattern[] = [
   { re: /velociraptor/i, name: "Velociraptor" },
@@ -15,7 +18,10 @@ const TOOLS: ToolPattern[] = [
   { re: /crowdstrike|falcon/i, name: "CrowdStrike Falcon" },
   { re: /sentinel[\s_-]?one/i, name: "SentinelOne" },
   { re: /(?:microsoft|azure)[\s_-]*sentinel/i, name: "Microsoft Sentinel" },
-  { re: /(?:microsoft|windows|ms)[\s_-]*defender|defender[\s_-]*for[\s_-]*endpoint|\bmde\b/i, name: "Microsoft Defender" },
+  {
+    re: /(?:microsoft|windows|ms)[\s_-]*defender|defender[\s_-]*for[\s_-]*endpoint|\bmde\b/i,
+    name: "Microsoft Defender",
+  },
   { re: /carbon[\s_-]?black|cb[\s_-]?response|\bvmware cb\b/i, name: "Carbon Black" },
   { re: /cortex[\s_-]?xdr|palo[\s_-]?alto/i, name: "Cortex XDR" },
   { re: /\bsplunk\b/i, name: "Splunk" },

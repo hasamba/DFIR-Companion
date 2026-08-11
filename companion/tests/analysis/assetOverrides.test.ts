@@ -12,10 +12,27 @@ function baseGraph() {
     { id: "i2", type: "ip", value: "10.0.0.5", firstSeen: "" },
   );
   s.forensicTimeline.push(
-    { id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "malware on WIN-01", severity: "Critical",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01", sha256: HASH },
-    { id: "e2", timestamp: "2026-01-01T00:05:00Z", description: "beacon to 10.0.0.5", severity: "High",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-02" },
+    {
+      id: "e1",
+      timestamp: "2026-01-01T00:00:00Z",
+      description: "malware on WIN-01",
+      severity: "Critical",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+      sha256: HASH,
+    },
+    {
+      id: "e2",
+      timestamp: "2026-01-01T00:05:00Z",
+      description: "beacon to 10.0.0.5",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WIN-02",
+    },
   );
   return buildAssetGraph(s);
 }
@@ -90,7 +107,10 @@ describe("applyAssetOverrides", () => {
     const g = baseGraph();
     const win02 = g.assets.find((a) => a.name === "WIN-02")!;
     // WIN-02 is currently linked to i2; manually link it to i1 as well
-    const result = applyAssetOverrides(g, { ...emptyOverrides(), addedLinks: [{ asset: win02.id, ioc: "i1" }] });
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      addedLinks: [{ asset: win02.id, ioc: "i1" }],
+    });
     expect(result.edges.some((e) => e.asset === win02.id && e.ioc === "i1")).toBe(true);
     const win02out = result.assets.find((a) => a.id === win02.id)!;
     expect(win02out.iocIds).toContain("i1");
@@ -101,7 +121,10 @@ describe("applyAssetOverrides", () => {
   it("ignores an added link whose IoC does not exist in the graph", () => {
     const g = baseGraph();
     const win01 = g.assets.find((a) => a.name === "WIN-01")!;
-    const result = applyAssetOverrides(g, { ...emptyOverrides(), addedLinks: [{ asset: win01.id, ioc: "nonexistent" }] });
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      addedLinks: [{ asset: win01.id, ioc: "nonexistent" }],
+    });
     expect(result.edges.every((e) => e.ioc !== "nonexistent")).toBe(true);
   });
 
@@ -109,7 +132,10 @@ describe("applyAssetOverrides", () => {
     const g = baseGraph();
     const win01 = g.assets.find((a) => a.name === "WIN-01")!;
     // WIN-01 → i1 (hash field). Suppress this edge.
-    const result = applyAssetOverrides(g, { ...emptyOverrides(), removedLinks: [{ asset: win01.id, ioc: "i1" }] });
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      removedLinks: [{ asset: win01.id, ioc: "i1" }],
+    });
     expect(result.edges.some((e) => e.asset === win01.id && e.ioc === "i1")).toBe(false);
     const win01out = result.assets.find((a) => a.id === win01.id)!;
     expect(win01out.iocIds).not.toContain("i1");
@@ -119,7 +145,10 @@ describe("applyAssetOverrides", () => {
     const g = baseGraph();
     const win01 = g.assets.find((a) => a.name === "WIN-01")!;
     // i1 is only linked to WIN-01 via sha256. Suppress that link → i1 disappears.
-    const result = applyAssetOverrides(g, { ...emptyOverrides(), removedLinks: [{ asset: win01.id, ioc: "i1" }] });
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      removedLinks: [{ asset: win01.id, ioc: "i1" }],
+    });
     expect(result.iocs.find((i) => i.id === "i1")).toBeUndefined();
   });
 

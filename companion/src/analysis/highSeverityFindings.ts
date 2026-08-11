@@ -56,15 +56,21 @@ export function backfillHighSeverityFindings(
     const severity: Severity = events.some((e) => e.severity === "Critical") ? "Critical" : "High";
     const mitre = [...new Set(events.flatMap((e) => e.mitreTechniques))];
     const screenshots = [...new Set(events.flatMap((e) => e.sourceScreenshots))];
-    const firstSeen = events.map((e) => e.timestamp).filter(Boolean).sort()[0] || timestamp;
+    const firstSeen =
+      events
+        .map((e) => e.timestamp)
+        .filter(Boolean)
+        .sort()[0] || timestamp;
     const count = events.length;
-    const suffix = count > 1
-      ? ` (auto-flagged; ${count} similar ${severity}-severity events grouped under this title).`
-      : ` (auto-flagged from a ${severity}-severity artifact row that had no finding).`;
+    const suffix =
+      count > 1
+        ? ` (auto-flagged; ${count} similar ${severity}-severity events grouped under this title).`
+        : ` (auto-flagged from a ${severity}-severity artifact row that had no finding).`;
     const sourceCount = new Set(events.flatMap((e) => e.sources ?? [])).size;
-    const confidenceReason = sourceCount > 1
-      ? `Deterministic backfill of an uncovered ${severity} event corroborated by ${sourceCount} distinct tools.`
-      : `Deterministic backfill of an uncovered ${severity} event — a graded artifact row is treated as a confirmed finding.`;
+    const confidenceReason =
+      sourceCount > 1
+        ? `Deterministic backfill of an uncovered ${severity} event corroborated by ${sourceCount} distinct tools.`
+        : `Deterministic backfill of an uncovered ${severity} event — a graded artifact row is treated as a confirmed finding.`;
 
     newFindings.push({
       id: findingId,

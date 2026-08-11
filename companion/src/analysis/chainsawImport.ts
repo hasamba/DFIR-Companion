@@ -64,13 +64,13 @@ export interface ChainsawImportOptions {
 export interface ChainsawParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;       // records found in the container
-  kept: number;        // events emitted (after aggregation + cap)
-  dropped: number;     // records not represented (below floor / capped / unparseable)
-  groups: number;      // distinct event groups before the cap
-  detections: number;  // Chainsaw rule detections seen (0 ⇒ a pure raw-EVTX dump)
-  format: string;      // "chainsaw" | "evtx" | "mixed" | "empty"
-  hostname: string;    // best-effort dominant host
+  total: number; // records found in the container
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // records not represented (below floor / capped / unparseable)
+  groups: number; // distinct event groups before the cap
+  detections: number; // Chainsaw rule detections seen (0 ⇒ a pure raw-EVTX dump)
+  format: string; // "chainsaw" | "evtx" | "mixed" | "empty"
+  hostname: string; // best-effort dominant host
 }
 
 // Sigma severity vocabulary → our Severity. Chainsaw passes the rule's level straight
@@ -103,10 +103,20 @@ function mitreFromTags(tags: unknown): string[] {
 function eventDocs(rec: Row): Row[] {
   const out: Row[] = [];
   const docs = getCI(rec, "documents");
-  if (Array.isArray(docs)) for (const d of docs) { const e = pickEvent(d); if (e) out.push(e); }
+  if (Array.isArray(docs))
+    for (const d of docs) {
+      const e = pickEvent(d);
+      if (e) out.push(e);
+    }
   const doc = getCI(rec, "document");
-  if (isObject(doc)) { const e = pickEvent(doc); if (e) out.push(e); }
-  if (out.length === 0) { const e = pickEvent(rec); if (e) out.push(e); }
+  if (isObject(doc)) {
+    const e = pickEvent(doc);
+    if (e) out.push(e);
+  }
+  if (out.length === 0) {
+    const e = pickEvent(rec);
+    if (e) out.push(e);
+  }
   return out;
 }
 
@@ -143,15 +153,19 @@ function normalizeEventData(ed: unknown): Row {
 }
 
 function providerName(sys: Row): string {
-  return str(getPath(sys, "Provider.#attributes.Name"))
-    || str(getPath(sys, "Provider.Name"))
-    || str(getPath(sys, "Provider_attributes.Name"));
+  return (
+    str(getPath(sys, "Provider.#attributes.Name")) ||
+    str(getPath(sys, "Provider.Name")) ||
+    str(getPath(sys, "Provider_attributes.Name"))
+  );
 }
 
 function systemTime(sys: Row): string {
-  return str(getPath(sys, "TimeCreated.#attributes.SystemTime"))
-    || str(getPath(sys, "TimeCreated.SystemTime"))
-    || str(getCI(sys, "TimeCreated"));
+  return (
+    str(getPath(sys, "TimeCreated.#attributes.SystemTime")) ||
+    str(getPath(sys, "TimeCreated.SystemTime")) ||
+    str(getCI(sys, "TimeCreated"))
+  );
 }
 
 // Normalize an EVTX `Event` document into the flat record `mapWindows` consumes
@@ -161,7 +175,7 @@ function toFlatRecord(event: Row): { rec: Row; host: string } {
   const channel = str(getCI(sys, "Channel")) || providerName(sys);
   const host = str(getCI(sys, "Computer")).trim();
   const rec: Row = {
-    event_id: getCI(sys, "EventID"),                 // mapWindows unwraps a {#text} form
+    event_id: getCI(sys, "EventID"), // mapWindows unwraps a {#text} form
     channel,
     event_data: normalizeEventData(getCI(event, "EventData")),
     "@timestamp": systemTime(sys),
@@ -223,8 +237,12 @@ function genericDetection(meta: SigmaMeta): MappedEvent {
 
 // True when a record looks like a Chainsaw detection (vs a bare EVTX dump record).
 function isDetection(rec: Row): boolean {
-  return !!(getCI(rec, "document") || getCI(rec, "documents") || getCI(rec, "rule")
-    || (getCI(rec, "group") && getCI(rec, "kind")));
+  return !!(
+    getCI(rec, "document") ||
+    getCI(rec, "documents") ||
+    getCI(rec, "rule") ||
+    (getCI(rec, "group") && getCI(rec, "kind"))
+  );
 }
 
 // ───────────────────────────── flat Chainsaw/Sigma shape ─────────────────────────────
@@ -238,8 +256,12 @@ function isDetection(rec: Row): boolean {
 // top level (Detection/Severity) alongside an already-flat EventID/Channel, so it needs
 // neither eventDocs() unwrapping nor isDetection()'s nested-shape check.
 export function isFlatChainsawRow(rec: Row): boolean {
-  return typeof getCI(rec, "Detection") === "string" && typeof getCI(rec, "Severity") === "string" &&
-    getCI(rec, "EventID") != null && (!!getCI(rec, "Channel") || isObject(getCI(rec, "SystemData")));
+  return (
+    typeof getCI(rec, "Detection") === "string" &&
+    typeof getCI(rec, "Severity") === "string" &&
+    getCI(rec, "EventID") != null &&
+    (!!getCI(rec, "Channel") || isObject(getCI(rec, "SystemData")))
+  );
 }
 
 function readFlatSigmaMeta(rec: Row): SigmaMeta {
@@ -270,7 +292,17 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, detections: 0, format: "empty", hostname: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      detections: 0,
+      format: "empty",
+      hostname: "",
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();
@@ -302,10 +334,16 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       const { rec: flat, host } = toFlatRecord(event);
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);
-      if (!win) { if (meta) mapped.push(genericDetection(meta)); continue; }
+      if (!win) {
+        if (meta) mapped.push(genericDetection(meta));
+        continue;
+      }
       sawEvtx = true;
       if (meta) mapped.push(applySigma(win, meta));
-      else { win.sources = ["EVTX"]; mapped.push(win); }
+      else {
+        win.sources = ["EVTX"];
+        mapped.push(win);
+      }
     }
   }
 

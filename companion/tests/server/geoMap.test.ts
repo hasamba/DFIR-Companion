@@ -87,7 +87,12 @@ describe("GET /cases/:id/geo-map (#133)", () => {
     // marked event should no longer count toward eventCount.
     const root2 = await mkdtemp(join(tmpdir(), "dfir-geomap-legit-"));
     const cases2 = new CaseStore(root2);
-    await cases2.createCase({ caseId: "c1", name: "Geo Legit Test", investigator: "analyst", aiProvider: null });
+    await cases2.createCase({
+      caseId: "c1",
+      name: "Geo Legit Test",
+      investigator: "analyst",
+      aiProvider: null,
+    });
     const stateStore2 = new StateStore(cases2);
     await stateStore2.save({
       ...emptyState("c1"),

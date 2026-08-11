@@ -4,12 +4,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isNoiseDomain } from "./anonymize.js";
 import type { InvestigationState } from "./stateTypes.js";
-import {
-  extractCaseEmails,
-  normalizeEmail,
-  sanitizeTargets,
-  type CustomerTargets,
-} from "./customerStore.js";
+import { extractCaseEmails, normalizeEmail, sanitizeTargets, type CustomerTargets } from "./customerStore.js";
 
 export type ExposureTargetType = "domain" | "email";
 
@@ -130,7 +125,11 @@ function iocHostsAndParents(iocs: { value: string; type: string }[]): string[] {
     if (!v) continue;
     let host = v;
     if (ioc.type === "url") {
-      try { host = new URL(v).hostname; } catch { /* not a URL; treat the value as the host */ }
+      try {
+        host = new URL(v).hostname;
+      } catch {
+        /* not a URL; treat the value as the host */
+      }
     }
     if (!host || !host.includes(".")) continue;
     out.add(host);
@@ -157,8 +156,8 @@ export function extractCaseDomains(state: InvestigationState): string[] {
     if (dot <= 0) continue; // no dot (or leading dot) — not a FQDN, nothing to derive
     const domain = host.slice(dot + 1);
     if (isNoiseDomain(domain)) continue;
-    if (isPublicSuffixOrTld(domain)) continue;       // bare TLD like "com"/"org" — never a customer domain
-    if (isAtOrUnder(domain, excluded) || isAtOrUnder(host, excluded)) continue;  // adversary domain (IOC) — OPSEC boundary
+    if (isPublicSuffixOrTld(domain)) continue; // bare TLD like "com"/"org" — never a customer domain
+    if (isAtOrUnder(domain, excluded) || isAtOrUnder(host, excluded)) continue; // adversary domain (IOC) — OPSEC boundary
     domains.add(domain);
   }
   return [...domains];
@@ -198,13 +197,16 @@ export async function summarizeExposure(
   const errors: CustomerExposureError[] = [];
   let calls = 0;
 
-  async function runOne(provider: CustomerExposureProvider, targetType: ExposureTargetType, target: string): Promise<void> {
+  async function runOne(
+    provider: CustomerExposureProvider,
+    targetType: ExposureTargetType,
+    target: string,
+  ): Promise<void> {
     if (calls > 0) await sleep(delayMs);
     calls += 1;
     try {
-      const found = targetType === "domain"
-        ? await provider.lookupDomain(target)
-        : await provider.lookupEmail(target);
+      const found =
+        targetType === "domain" ? await provider.lookupDomain(target) : await provider.lookupEmail(target);
       results.push(...found.map(safeResult));
     } catch (err) {
       errors.push({ provider: provider.name, targetType, target, error: errorMessage(err) });
@@ -240,13 +242,17 @@ export class CustomerExposureStore {
         ...raw,
         providers: Array.isArray(raw.providers) ? raw.providers.map(String) : [],
         targets: sanitizeTargets(raw.targets),
-        results: Array.isArray(raw.results) ? raw.results.map((r) => safeResult(r as CustomerExposureResult)) : [],
-        errors: Array.isArray(raw.errors) ? raw.errors.map((e) => ({
-          provider: String(e.provider ?? ""),
-          targetType: e.targetType === "domain" ? "domain" : "email",
-          target: String(e.target ?? ""),
-          error: String(e.error ?? ""),
-        })) : [],
+        results: Array.isArray(raw.results)
+          ? raw.results.map((r) => safeResult(r as CustomerExposureResult))
+          : [],
+        errors: Array.isArray(raw.errors)
+          ? raw.errors.map((e) => ({
+              provider: String(e.provider ?? ""),
+              targetType: e.targetType === "domain" ? "domain" : "email",
+              target: String(e.target ?? ""),
+              error: String(e.error ?? ""),
+            }))
+          : [],
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ...NO_EXPOSURE };
@@ -255,10 +261,17 @@ export class CustomerExposureStore {
   }
 
   async save(caseId: string, summary: CustomerExposureSummary): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify({
-      ...summary,
-      targets: sanitizeTargets(summary.targets),
-      results: summary.results.map((r) => safeResult(r)),
-    }, null, 2));
+    await atomicWrite(
+      this.path(caseId),
+      JSON.stringify(
+        {
+          ...summary,
+          targets: sanitizeTargets(summary.targets),
+          results: summary.results.map((r) => safeResult(r)),
+        },
+        null,
+        2,
+      ),
+    );
   }
 }

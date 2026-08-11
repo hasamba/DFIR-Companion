@@ -40,8 +40,9 @@ describe("MispPushClient HTTP handling", () => {
   it("treats HTTP 200 with saved:false as a failure, not a success", async () => {
     // The exact shape a live MISP returns for an unknown tag.
     const { fetchFn } = stubFetch(() => ({ status: 200, json: { saved: false, errors: "Invalid Tag." } }));
-    await expect(client(fetchFn).addTagToEvent("42", "dfir-companion:case:demo"))
-      .rejects.toThrow(/Invalid Tag/);
+    await expect(client(fetchFn).addTagToEvent("42", "dfir-companion:case:demo")).rejects.toThrow(
+      /Invalid Tag/,
+    );
   });
 
   it("flattens MISP's per-field error map into the thrown message", async () => {
@@ -49,15 +50,22 @@ describe("MispPushClient HTTP handling", () => {
       status: 200,
       json: { saved: false, errors: { value: ["IP address has an invalid format."] } },
     }));
-    await expect(client(fetchFn).addAttribute("42", { type: "ip-dst", value: "10.0.0.1 (DC01)", category: "Network activity", to_ids: false }))
-      .rejects.toThrow(/value: IP address has an invalid format/);
+    await expect(
+      client(fetchFn).addAttribute("42", {
+        type: "ip-dst",
+        value: "10.0.0.1 (DC01)",
+        category: "Network activity",
+        to_ids: false,
+      }),
+    ).rejects.toThrow(/value: IP address has an invalid format/);
   });
 
   it("creates the tag before attaching it, so an unknown tag name still lands", async () => {
     const { fetchFn, calls } = stubFetch((c) =>
       c.url.endsWith("/tags/add")
         ? { json: { Tag: { id: "1", name: "t" } } }
-        : { json: { saved: true, success: "Tag added." } });
+        : { json: { saved: true, success: "Tag added." } },
+    );
     await client(fetchFn).addTagToEvent("42", "dfir-companion:case:demo");
     expect(calls.map((c) => c.url.replace("https://misp.test", ""))).toEqual(["/tags/add", "/events/addTag"]);
     expect(calls[0].body).toEqual({ name: "dfir-companion:case:demo" });
@@ -67,9 +75,10 @@ describe("MispPushClient HTTP handling", () => {
     const { fetchFn, calls } = stubFetch((c) =>
       c.url.endsWith("/tags/add")
         ? { status: 403, json: { errors: "A similar tag already exists." } }
-        : { json: { saved: true, success: "Tag added." } });
+        : { json: { saved: true, success: "Tag added." } },
+    );
     await expect(client(fetchFn).addTagToEvent("42", "dupe")).resolves.toBeUndefined();
-    expect(calls).toHaveLength(2);   // create attempted, attach still made
+    expect(calls).toHaveLength(2); // create attempted, attach still made
   });
 
   it("finds a prior event via POST /events/restSearch with a tag filter", async () => {
@@ -98,7 +107,12 @@ describe("MispPushClient HTTP handling", () => {
       json: { saved: false, errors: { value: ["IP address has an invalid format."] } },
     }));
     const err = await client(fetchFn)
-      .addAttribute("42", { type: "ip-dst", value: "10.0.0.1 (DC01)", category: "Network activity", to_ids: false })
+      .addAttribute("42", {
+        type: "ip-dst",
+        value: "10.0.0.1 (DC01)",
+        category: "Network activity",
+        to_ids: false,
+      })
       .catch((e: Error) => e);
     expect((err as Error).message).toMatch(/IP address has an invalid format/);
     expect((err as Error).message).not.toMatch(/needs write access/);
@@ -106,8 +120,9 @@ describe("MispPushClient HTTP handling", () => {
 
   it("still gives the API-key hint on a 403 with no usable body", async () => {
     const { fetchFn } = stubFetch(() => ({ status: 403, json: {} }));
-    await expect(client(fetchFn).createEvent({ info: "i", threat_level_id: "4", analysis: "0", distribution: "0" }))
-      .rejects.toThrow(/needs write access/);
+    await expect(
+      client(fetchFn).createEvent({ info: "i", threat_level_id: "4", analysis: "0", distribution: "0" }),
+    ).rejects.toThrow(/needs write access/);
   });
 });
 
@@ -129,7 +144,9 @@ describe("MispPushClient ping diagnostics (issue #179)", () => {
 
   it("names the URL and the likely wrong scheme when the ping answers 400", async () => {
     const { fetchFn } = stubFetch(() => ({ status: 400, json: {} }));
-    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    const msg = await client(fetchFn)
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toContain(PING_URL);
     expect(msg).toMatch(/scheme/i);
     expect(msg).toMatch(/DFIR_MISP_URL/);
@@ -137,28 +154,35 @@ describe("MispPushClient ping diagnostics (issue #179)", () => {
 
   it("treats a 404 on the ping as a wrong base URL as well", async () => {
     const { fetchFn } = stubFetch(() => ({ status: 404, json: {} }));
-    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    const msg = await client(fetchFn)
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toContain(PING_URL);
     expect(msg).toMatch(/DFIR_MISP_URL/);
   });
 
   it("does NOT blame the base URL for a 500 — the instance answered, so the URL reached MISP", async () => {
     const { fetchFn } = stubFetch(() => ({ status: 500, json: {} }));
-    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
-    expect(msg).toContain(PING_URL);          // still says WHERE it failed
+    const msg = await client(fetchFn)
+      .ping()
+      .catch((e: Error) => e.message);
+    expect(msg).toContain(PING_URL); // still says WHERE it failed
     expect(msg).not.toMatch(/DFIR_MISP_URL/); // but does not send the operator editing the URL
   });
 
   it("still blames the API key, not the URL, when the ping answers 401", async () => {
     const { fetchFn } = stubFetch(() => ({ status: 401, json: {} }));
-    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    const msg = await client(fetchFn)
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/DFIR_MISP_KEY/);
     expect(msg).not.toMatch(/DFIR_MISP_URL/);
   });
 
   it("reports a refused connection as host/port, not as an opaque 'fetch failed'", async () => {
     const msg = await client(failingFetch(netError("ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:4430")))
-      .ping().catch((e: Error) => e.message);
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/refused/i);
     expect(msg).toContain(PING_URL);
     expect(msg).toMatch(/DFIR_MISP_URL/);
@@ -166,7 +190,8 @@ describe("MispPushClient ping diagnostics (issue #179)", () => {
 
   it("points at DFIR_MISP_CA / DFIR_MISP_INSECURE on a certificate failure", async () => {
     const msg = await client(failingFetch(netError("SELF_SIGNED_CERT_IN_CHAIN")))
-      .ping().catch((e: Error) => e.message);
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/certificate/i);
     expect(msg).toMatch(/DFIR_MISP_CA/);
     expect(msg).toMatch(/DFIR_MISP_INSECURE/);
@@ -174,30 +199,39 @@ describe("MispPushClient ping diagnostics (issue #179)", () => {
 
   it("calls out the opposite scheme mistake — https:// against a plain-HTTP port", async () => {
     const msg = await client(failingFetch(netError("EPROTO", "wrong version number")))
-      .ping().catch((e: Error) => e.message);
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/DFIR_MISP_URL/);
     expect(msg).toMatch(/http/i);
   });
 
   it("reports an unresolvable hostname as DNS, not as a down instance", async () => {
     const msg = await client(failingFetch(netError("ENOTFOUND", "getaddrinfo ENOTFOUND misp.internal")))
-      .ping().catch((e: Error) => e.message);
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/resolve/i);
     expect(msg).toMatch(/DFIR_MISP_URL/);
   });
 
   it("digs the reason out of a nested cause chain", async () => {
     const msg = await client(failingFetch({ cause: netError("ECONNREFUSED") }))
-      .ping().catch((e: Error) => e.message);
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/refused/i);
   });
 
   it("reports a timeout as a timeout (AbortSignal.timeout rejects with no error code)", async () => {
     // AbortSignal.timeout rejects with a DOMException whose name is TimeoutError and which has
     // NO `code` — so a code-only lookup would fall through to "fetch failed".
-    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
-    const fetchFn = (async () => { throw timeout; }) as unknown as typeof fetch;
-    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), {
+      name: "TimeoutError",
+    });
+    const fetchFn = (async () => {
+      throw timeout;
+    }) as unknown as typeof fetch;
+    const msg = await client(fetchFn)
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toMatch(/timed out|timeout/i);
     expect(msg).toContain(PING_URL);
   });
@@ -224,9 +258,13 @@ describe("MispPushClient ping diagnostics (issue #179)", () => {
     const fetchFn = (async () => ({
       ok: true,
       status: 200,
-      json: async () => { throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`); },
+      json: async () => {
+        throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`);
+      },
     })) as unknown as typeof fetch;
-    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    const msg = await client(fetchFn)
+      .ping()
+      .catch((e: Error) => e.message);
     expect(msg).toContain(PING_URL);
     expect(msg).toMatch(/DFIR_MISP_URL/);
   });

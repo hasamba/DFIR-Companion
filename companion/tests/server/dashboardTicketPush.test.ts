@@ -21,7 +21,10 @@ beforeAll(() => {
 describe("Jira / ServiceNow push buttons in the finding panel (#297)", () => {
   it("puts a push chip for each ticket system on every finding row", () => {
     expect(html).toContain("function ticketPushChips(");
-    const chips = html.slice(html.indexOf("function ticketPushChips("), html.indexOf("function ticketPushChips(") + 900);
+    const chips = html.slice(
+      html.indexOf("function ticketPushChips("),
+      html.indexOf("function ticketPushChips(") + 900,
+    );
     expect(chips).toContain("jira-push-btn");
     expect(chips).toContain("snow-push-btn");
     // The row template has to actually call it, or the helper is dead code.
@@ -42,7 +45,10 @@ describe("Jira / ServiceNow push buttons in the finding panel (#297)", () => {
   });
 
   it("pushes a single finding to the per-finding route", () => {
-    const fn = html.slice(html.indexOf("function pushFindingToTicket("), html.indexOf("function bulkPushFindingsToTicket("));
+    const fn = html.slice(
+      html.indexOf("function pushFindingToTicket("),
+      html.indexOf("function bulkPushFindingsToTicket("),
+    );
     expect(fn).toContain("/push/${target}`");
     expect(fn).toContain("findingId");
     expect(fn).toContain('method: "POST"');

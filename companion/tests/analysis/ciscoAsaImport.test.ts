@@ -2,11 +2,16 @@ import { describe, it, expect } from "vitest";
 import { looksLikeCiscoAsa, mapCiscoAsaLine, parseCiscoAsaLog } from "../../src/analysis/ciscoAsaImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
-const BUILT = "<166>May 15 06:42:06 fw01 %ASA-6-302013: Built outbound TCP connection 1209723 for inside:10.30.20.30/45083 (45.62.114.1/21267) to outside:185.143.62.40/443 (185.143.62.40/443)";
-const TEARDOWN = "<166>May 15 06:42:09 fw01 %ASA-6-302014: Teardown TCP connection 1209723 for inside:10.30.20.30/45083 to outside:185.143.62.40/443 duration 0:00:03 bytes 23625 TCP FINs";
-const DENY = '<164>May 14 19:02:58 fw01 %ASA-4-106023: Deny tcp src inside:10.30.10.27/60228 dst outside:42.5.45.223/23 by access-group "inside_access_in" [0xa9d4, 0xa8e5]';
-const NAT_BUILT = "<166>May 14 19:00:02 fw01 %ASA-6-305011: Built dynamic TCP translation from inside:10.30.20.30/42449 to outside:45.62.114.1/34951";
-const NAT_TEARDOWN = "<166>May 14 19:00:03 fw01 %ASA-6-305012: Teardown dynamic TCP translation from inside:10.30.20.30/42449 to outside:45.62.114.1/34951 duration 0:00:01";
+const BUILT =
+  "<166>May 15 06:42:06 fw01 %ASA-6-302013: Built outbound TCP connection 1209723 for inside:10.30.20.30/45083 (45.62.114.1/21267) to outside:185.143.62.40/443 (185.143.62.40/443)";
+const TEARDOWN =
+  "<166>May 15 06:42:09 fw01 %ASA-6-302014: Teardown TCP connection 1209723 for inside:10.30.20.30/45083 to outside:185.143.62.40/443 duration 0:00:03 bytes 23625 TCP FINs";
+const DENY =
+  '<164>May 14 19:02:58 fw01 %ASA-4-106023: Deny tcp src inside:10.30.10.27/60228 dst outside:42.5.45.223/23 by access-group "inside_access_in" [0xa9d4, 0xa8e5]';
+const NAT_BUILT =
+  "<166>May 14 19:00:02 fw01 %ASA-6-305011: Built dynamic TCP translation from inside:10.30.20.30/42449 to outside:45.62.114.1/34951";
+const NAT_TEARDOWN =
+  "<166>May 14 19:00:03 fw01 %ASA-6-305012: Teardown dynamic TCP translation from inside:10.30.20.30/42449 to outside:45.62.114.1/34951 duration 0:00:01";
 
 describe("looksLikeCiscoAsa", () => {
   it("recognizes a %ASA-tagged syslog export and rejects other logs", () => {
@@ -63,8 +68,8 @@ describe("parseCiscoAsaLog", () => {
   it("parses the northpeak exfil sequence, dropping NAT noise, stamping the assumed year", () => {
     const text = [BUILT, TEARDOWN, DENY, NAT_BUILT, NAT_TEARDOWN].join("\n");
     const r = parseCiscoAsaLog(text, { assumeYear: 2024 });
-    expect(r.total).toBe(5);           // all 5 are recognized ASA lines
-    expect(r.events).toHaveLength(3);  // NAT_BUILT/NAT_TEARDOWN dropped
+    expect(r.total).toBe(5); // all 5 are recognized ASA lines
+    expect(r.events).toHaveLength(3); // NAT_BUILT/NAT_TEARDOWN dropped
     expect(r.format).toBe("cisco-asa");
     const ips = r.iocs.map((i) => i.value);
     expect(ips).toContain("185.143.62.40");

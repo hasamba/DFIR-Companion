@@ -50,10 +50,10 @@ import { secretSpillSignal } from "./secretSpillRules.js";
 type Row = Record<string, unknown>;
 
 export interface EcarImportOptions {
-  aggregate?: boolean;   // collapse repetitive identical events into one counted row. Default true.
+  aggregate?: boolean; // collapse repetitive identical events into one counted row. Default true.
   minSeverity?: Severity; // drop events below this floor. Default undefined = keep everything.
-  maxEvents?: number;    // safety cap on emitted events (most-severe first). Default 2000 (overridable via DFIR_MAX_EVENTS).
-  maxIocs?: number;      // safety cap on emitted IOCs. Default 5000.
+  maxEvents?: number; // safety cap on emitted events (most-severe first). Default 2000 (overridable via DFIR_MAX_EVENTS).
+  maxIocs?: number; // safety cap on emitted IOCs. Default 5000.
 }
 
 export type EcarParseResult = SiemParseResult;
@@ -145,8 +145,10 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const strong = grade === "strong" || tc?.weight === "strong";
       const flagged = Boolean(grade) || Boolean(tc) || Boolean(spill);
       const severity: Severity = strong ? "High" : flagged ? "Medium" : "Info";
-      const desc = `Process created: ${cmd || image || "(unknown)"}` +
-        (parentName ? ` (parent ${parentName})` : "") + at;
+      const desc =
+        `Process created: ${cmd || image || "(unknown)"}` +
+        (parentName ? ` (parent ${parentName})` : "") +
+        at;
       if (flagged) addIoc(sink, "process", procName || image);
       // The created-process pid — the cross-tool correlation key (matches Windows 4688 NewProcessId /
       // Sysmon EID 1 ProcessId on the same host), so an ECAR create merges with its Windows-log twin.
@@ -155,9 +157,17 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       // Discovery / credential-access recon tagging (whoami, net group /domain, find -name *.env,
       // cat .env, …) plus deterministic tradecraft techniques (Defender-disable, tunneling, exfil…)
       // so the enumeration/tradecraft phase is identified even when each command stays Info.
-      const mitre = [...new Set([...(flagged ? ["T1059"] : []), ...(tc?.mitre ?? []), ...(spill?.mitre ?? []), ...reconTechniques(image, cmd)])];
+      const mitre = [
+        ...new Set([
+          ...(flagged ? ["T1059"] : []),
+          ...(tc?.mitre ?? []),
+          ...(spill?.mitre ?? []),
+          ...reconTechniques(image, cmd),
+        ]),
+      ];
       return {
-        ...base, severity,
+        ...base,
+        severity,
         mitre,
         description: desc,
         // pid is in the key so distinct executions stay distinct rows (not aggregated away) — that's
@@ -179,8 +189,10 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const target = prop(p, "target_image_path");
       const access = prop(p, "granted_access");
       const procName = baseName(image);
-      const desc = `Process access: ${procName || "(unknown)"} opened ${baseName(target) || target || "(unknown)"}` +
-        (access ? ` (granted_access ${access})` : "") + at;
+      const desc =
+        `Process access: ${procName || "(unknown)"} opened ${baseName(target) || target || "(unknown)"}` +
+        (access ? ` (granted_access ${access})` : "") +
+        at;
       return {
         ...base,
         description: desc,
@@ -208,7 +220,8 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const image = baseName(prop(p, "image_path"));
       return {
         ...base,
-        description: `Remote thread created by ${image || "(unknown)"} into pid ${prop(p, "target_pid") || "?"}` +
+        description:
+          `Remote thread created by ${image || "(unknown)"} into pid ${prop(p, "target_pid") || "?"}` +
           ` — possible process injection (T1055)${at}`,
         aggKey: `ecar|rthread|${host}|${image}|${prop(p, "target_pid")}`,
         ...(image ? { processName: image } : {}),
@@ -224,8 +237,12 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const direction = prop(p, "direction").toLowerCase();
       const external = (srcIp && !isPrivateIp(srcIp)) || (dstIp && !isPrivateIp(dstIp));
       iocPublicIps(sink, srcIp, dstIp);
-      const desc = `${direction || "network"} ${proto || "tcp"} ${srcIp || "?"}` +
-        (srcPort ? `:${srcPort}` : "") + ` → ${dstIp || "?"}` + (dstPort ? `:${dstPort}` : "") + at;
+      const desc =
+        `${direction || "network"} ${proto || "tcp"} ${srcIp || "?"}` +
+        (srcPort ? `:${srcPort}` : "") +
+        ` → ${dstIp || "?"}` +
+        (dstPort ? `:${dstPort}` : "") +
+        at;
       return {
         ...base,
         // An external flow is a marginally stronger lead than purely internal chatter, but still just
@@ -245,9 +262,12 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const logonType = prop(p, "logon_type");
       const failed = outcome === "failure" || outcome === "fail" || !!prop(p, "failure_reason");
       iocPublicIps(sink, srcIp);
-      const desc = `Logon ${failed ? "FAILED" : "success"}` +
-        (logonType ? ` (type ${logonType})` : "") + (srcIp ? ` from ${srcIp}` : "") +
-        (failed && prop(p, "failure_reason") ? ` — ${prop(p, "failure_reason")}` : "") + at;
+      const desc =
+        `Logon ${failed ? "FAILED" : "success"}` +
+        (logonType ? ` (type ${logonType})` : "") +
+        (srcIp ? ` from ${srcIp}` : "") +
+        (failed && prop(p, "failure_reason") ? ` — ${prop(p, "failure_reason")}` : "") +
+        at;
       return {
         ...base,
         // Failed logons cluster (brute force / password spray) — Low so the aggregated count surfaces
@@ -334,16 +354,26 @@ function canonicalizeEcarRecord(rec: Row, mapped: MappedEvent, recordIndex: numb
   const logonTypeRaw = prop(p, "logon_type");
   const logonType = Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
   const outcome = prop(p, "outcome").toLowerCase();
-  const category = object === "process" || object === "thread" ? "process"
-    : object === "flow" ? "network"
-    : object === "user_session" ? "authentication"
-    : object === "registry" ? "registry"
-    : object === "file" || object === "module" ? "file"
-    : "other";
-  const type = object === "process" && action === "create" ? "start"
-    : object === "process" && action === "terminate" ? "stop"
-    : object === "user_session" && action === "login" ? "logon"
-    : action || "event";
+  const category =
+    object === "process" || object === "thread"
+      ? "process"
+      : object === "flow"
+        ? "network"
+        : object === "user_session"
+          ? "authentication"
+          : object === "registry"
+            ? "registry"
+            : object === "file" || object === "module"
+              ? "file"
+              : "other";
+  const type =
+    object === "process" && action === "create"
+      ? "start"
+      : object === "process" && action === "terminate"
+        ? "stop"
+        : object === "user_session" && action === "login"
+          ? "logon"
+          : action || "event";
   const observedTimestamp = str(rec["timestamp_ms"]);
   const canonical = createCanonicalEvent({
     event: {
@@ -356,50 +386,64 @@ function canonicalizeEcarRecord(rec: Row, mapped: MappedEvent, recordIndex: numb
     },
     ...(principal ? { actor: { kind: "account", name: principal }, account: { name: principal } } : {}),
     ...(host ? { target: { kind: "host", name: host } } : {}),
-    ...(category === "authentication" ? {
-      authentication: {
-        ...(logonType !== undefined ? { logonType } : {}),
-        ...(prop(p, "session_id") ? { sessionId: prop(p, "session_id") } : {}),
-      },
-    } : {}),
-    ...(srcIp || dstIp || destinationPort || sourcePort ? {
-      network: {
-        ...(srcIp || sourcePort ? {
-          source: {
-            ...(srcIp ? { address: srcIp } : {}),
-            ...(sourcePort ? { port: sourcePort } : {}),
+    ...(category === "authentication"
+      ? {
+          authentication: {
+            ...(logonType !== undefined ? { logonType } : {}),
+            ...(prop(p, "session_id") ? { sessionId: prop(p, "session_id") } : {}),
           },
-        } : {}),
-        ...(dstIp || destinationPort ? {
-          destination: {
-            ...(dstIp ? { address: dstIp } : {}),
-            ...(destinationPort ? { port: destinationPort } : {}),
+        }
+      : {}),
+    ...(srcIp || dstIp || destinationPort || sourcePort
+      ? {
+          network: {
+            ...(srcIp || sourcePort
+              ? {
+                  source: {
+                    ...(srcIp ? { address: srcIp } : {}),
+                    ...(sourcePort ? { port: sourcePort } : {}),
+                  },
+                }
+              : {}),
+            ...(dstIp || destinationPort
+              ? {
+                  destination: {
+                    ...(dstIp ? { address: dstIp } : {}),
+                    ...(destinationPort ? { port: destinationPort } : {}),
+                  },
+                }
+              : {}),
+            ...(prop(p, "protocol") ? { protocol: prop(p, "protocol") } : {}),
           },
-        } : {}),
-        ...(prop(p, "protocol") ? { protocol: prop(p, "protocol") } : {}),
-      },
-    } : {}),
-    ...(category === "process" ? {
-      process: {
-        ...(mapped.pid ? { pid: mapped.pid } : {}),
-        ...(processName ? { name: processName } : {}),
-        ...(image ? { executable: image } : {}),
-        ...(commandLine ? { commandLine } : {}),
-        ...(parentName || parentImage ? {
-          parent: {
-            ...(parentName ? { name: parentName } : {}),
-            ...(parentImage ? { executable: parentImage } : {}),
+        }
+      : {}),
+    ...(category === "process"
+      ? {
+          process: {
+            ...(mapped.pid ? { pid: mapped.pid } : {}),
+            ...(processName ? { name: processName } : {}),
+            ...(image ? { executable: image } : {}),
+            ...(commandLine ? { commandLine } : {}),
+            ...(parentName || parentImage
+              ? {
+                  parent: {
+                    ...(parentName ? { name: parentName } : {}),
+                    ...(parentImage ? { executable: parentImage } : {}),
+                  },
+                }
+              : {}),
           },
-        } : {}),
-      },
-    } : {}),
+        }
+      : {}),
     ...(filePath ? { file: { path: filePath, name: baseName(filePath) } } : {}),
-    ...(registryKey ? {
-      registry: {
-        key: registryKey,
-        ...(registryValue ? { valueData: registryValue } : {}),
-      },
-    } : {}),
+    ...(registryKey
+      ? {
+          registry: {
+            key: registryKey,
+            ...(registryValue ? { valueData: registryValue } : {}),
+          },
+        }
+      : {}),
     time: {
       observed: observedTimestamp,
       normalized: mapped.timestamp,

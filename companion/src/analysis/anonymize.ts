@@ -9,8 +9,7 @@ import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 // metacharacters — e.g. a Windows path's backslashes — never corrupt parsing.
 
 export type AnonCategory =
-  | "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH" | "CMD" | "REG"
-  | "CARD" | "PHONE" | "NATID";
+  "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH" | "CMD" | "REG" | "CARD" | "PHONE" | "NATID";
 
 // OTHER and EXTIP are token-only: they never appear in the per-case `categories` toggle map.
 // EXTIP is produced by the IP detector when maskPublicIps is on, so a public address stays
@@ -24,9 +23,20 @@ export type AnonTokenCategory = AnonCategory | "OTHER" | "EXTIP" | "PERSON";
 // Record<AnonTokenCategory, true> makes TypeScript reject any new union member that is not
 // listed here — which is what stops a new category from silently failing to restore.
 const TOKEN_CATEGORY_KEYS: Record<AnonTokenCategory, true> = {
-  IP: true, EXTIP: true, EMAIL: true, USER: true, HOST: true,
-  DOMAIN: true, PATH: true, CMD: true, REG: true,
-  CARD: true, PHONE: true, NATID: true, PERSON: true, OTHER: true,
+  IP: true,
+  EXTIP: true,
+  EMAIL: true,
+  USER: true,
+  HOST: true,
+  DOMAIN: true,
+  PATH: true,
+  CMD: true,
+  REG: true,
+  CARD: true,
+  PHONE: true,
+  NATID: true,
+  PERSON: true,
+  OTHER: true,
 };
 
 export const ALL_TOKEN_CATEGORIES = Object.keys(TOKEN_CATEGORY_KEYS) as readonly AnonTokenCategory[];
@@ -61,10 +71,10 @@ export interface AnonPolicy {
 // of things regex can't reliably find (usernames, hostnames) and to decide which domains/UPNs
 // are "internal" (tokenize) vs third-party/adversary (preserve).
 export interface KnownEntities {
-  hosts: string[];          // victim hostnames / FQDNs (longest-first)
-  accounts: string[];       // DOMAIN\user or user@domain
+  hosts: string[]; // victim hostnames / FQDNs (longest-first)
+  accounts: string[]; // DOMAIN\user or user@domain
   internalDomains: string[]; // AD/email domains to tokenize (lowercased, longest-first)
-  custom?: CustomEntity[];   // analyst-added + auto-discovered exact-match entities (tokenized when enabled)
+  custom?: CustomEntity[]; // analyst-added + auto-discovered exact-match entities (tokenized when enabled)
   // Values the analyst REMOVED from auto-discovery (lowercased). Never tokenized — even when a
   // pattern would match — so removing a false positive (e.g. a mis-matched path) actually stops it
   // being redacted. Checked at the single assign() chokepoint, so it covers every matcher.
@@ -149,8 +159,8 @@ export function isMaskableIpv4(ip: string): boolean {
   if (parts.length !== 4) return false;
   const nums = parts.map((p) => Number(p));
   if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
-  if (nums[0] === 0) return false;     // 0.0.0.0/8 "this network"
-  if (nums[0] >= 224) return false;    // 224/4 multicast, 240/4 reserved, 255.255.255.255 broadcast
+  if (nums[0] === 0) return false; // 0.0.0.0/8 "this network"
+  if (nums[0] >= 224) return false; // 224/4 multicast, 240/4 reserved, 255.255.255.255 broadcast
   return true;
 }
 
@@ -191,7 +201,7 @@ export function isInternalIpv6(ip: string): boolean {
   const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
   if (lower === "::1" || lower === "::") return true;
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
-  if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true;               // link-local fe80::/10
+  if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true; // link-local fe80::/10
   const mapped = embeddedIpv4(lower);
   if (mapped && isInternalIp(mapped)) return true;
   // Mirror the NAT64 branch in isMaskableIpv6() so an INTERNAL destination behind the well-known
@@ -227,10 +237,10 @@ export function isMaskableIpv6(ip: string): boolean {
   const mapped = embeddedIpv4(lower);
   if (mapped) return isMaskableIpv4(mapped);
   const groups = expandIpv6Groups(lower);
-  if (!groups) return false;                            // not a well-formed IPv6 literal
+  if (!groups) return false; // not a well-formed IPv6 literal
   const nat64 = nat64EmbeddedIpv4(groups);
-  if (nat64) return isMaskableIpv4(nat64);              // NAT64 64:ff9b::/96 — judge by the embedded IPv4
-  return groups[0] >= 0x2000 && groups[0] <= 0x3fff;    // 2000::/3 global unicast
+  if (nat64) return isMaskableIpv4(nat64); // NAT64 64:ff9b::/96 — judge by the embedded IPv4
+  return groups[0] >= 0x2000 && groups[0] <= 0x3fff; // 2000::/3 global unicast
 }
 
 // Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
@@ -244,13 +254,15 @@ export function isMaskableIpv6(ip: string): boolean {
 // dotted/hex-group mapped forms first means they get first refusal at a "::ffff:" prefix, so the
 // WHOLE address is consumed as one match before IPV4_RE (run second, see anonIps below) ever gets
 // a chance to tokenize the embedded dotted quad on its own and leave a dangling "::ffff:" behind.
-const IPV6_RE = /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}/gi;
+const IPV6_RE =
+  /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}/gi;
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
 const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
 const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
-const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
+const PATH_DOMAINS =
+  /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
 
 // Private-key blocks in every armor this is likely to meet: PEM (RSA / EC / DSA / OPENSSH /
 // ENCRYPTED PKCS#8 / bare PKCS#8), the PGP form (which ends "PRIVATE KEY BLOCK", not "PRIVATE KEY"),
@@ -338,8 +350,8 @@ export function luhnValid(digits: string): boolean {
 }
 
 export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anonymizer {
-  const toToken = new Map<string, string>();  // "CAT:reallower" -> token
-  const toReal = new Map<string, string>();   // token (UPPER) -> real value
+  const toToken = new Map<string, string>(); // "CAT:reallower" -> token
+  const toReal = new Map<string, string>(); // token (UPPER) -> real value
   const counters: Record<string, number> = {};
   // Values the analyst removed from auto-discovery — never tokenize them (leave as-is), even when
   // a pattern matches. The check sits in assign(), the single point every matcher funnels through.
@@ -381,15 +393,18 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       (_m, k: string, sep: string) => `${k}${sep}${SECRET_PLACEHOLDER}`,
     );
     // URL userinfo password (scheme://user:pass@host) — redact just the password.
-    out = out.replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi, (_m, a: string, _pw: string, c: string) => `${a}${SECRET_PLACEHOLDER}${c}`);
+    out = out.replace(
+      /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi,
+      (_m, a: string, _pw: string, c: string) => `${a}${SECRET_PLACEHOLDER}${c}`,
+    );
     // Distinctive fixed-shape secrets. NOTE: deliberately NO generic high-entropy rule — it
     // would clobber hashes (which we must keep as IOCs).
     const fixed: RegExp[] = [
-      /\bAKIA[0-9A-Z]{16}\b/g,                                                   // AWS access key id
-      /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g,         // JWT
-      /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,                                         // GitHub tokens
-      /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,                                       // Slack tokens
-      PEM_PRIVATE_KEY,                                                           // PEM/PGP/SSH2 private keys
+      /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
+      /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g, // JWT
+      /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, // GitHub tokens
+      /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, // Slack tokens
+      PEM_PRIVATE_KEY, // PEM/PGP/SSH2 private keys
     ];
     for (const re of fixed) out = out.replace(re, SECRET_PLACEHOLDER);
     return out;
@@ -400,7 +415,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
   function anonAccounts(t: string): string {
     let out = t.replace(NETBIOS_ACCT, (m, dom: string, user: string) =>
-      PATH_DOMAINS.test(dom) ? m : assign("USER", `${dom}\\${user}`));
+      PATH_DOMAINS.test(dom) ? m : assign("USER", `${dom}\\${user}`),
+    );
     // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
     out = out.replace(UPN_ACCT, (m) => {
       const domain = m.split("@")[1] ?? "";
@@ -408,16 +424,19 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     });
     return out;
   }
-  const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
+  const EMAIL_RE =
+    /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
   function anonEmails(t: string): string {
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
   // Capture the profile-dir prefix + the username segment; tokenize only the username.
   const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/|\/root\/)([^\\/\r\n"'<>|:*?]+)/g;
-  const WELL_KNOWN_PROFILE = /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
+  const WELL_KNOWN_PROFILE =
+    /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
   function anonUserPaths(t: string): string {
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
-      WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name));
+      WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name),
+    );
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
   // FromBase64String('…'). Tokenize ONLY the blob — the command verb + flag stay visible as
@@ -518,7 +537,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   function anonCards(t: string): string {
     return t.replace(CARD_RE, (m) => {
       const digits = m.replace(/[ -]/g, "");
-      if (!/^[3-6]/.test(digits)) return m;   // Amex 3, Visa 4, Mastercard 5, Discover 6
+      if (!/^[3-6]/.test(digits)) return m; // Amex 3, Visa 4, Mastercard 5, Discover 6
       if (!luhnValid(digits)) return m;
       return assign("CARD", m);
     });
@@ -570,7 +589,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       t = reserved.text;
       ipv6Literals = reserved.literals;
     }
-    t = anonCustom(t);                       // analyst-added entities always win (outside IPv6 literals)
+    t = anonCustom(t); // analyst-added entities always win (outside IPv6 literals)
     if (policy.redactSecrets) t = redactSecrets(t);
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = anonEmails(t);
@@ -580,8 +599,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
     if (policy.categories.IP) {
-      t = restoreIpv6Literals(t, ipv6Literals);  // classify + tokenize the reserved literals
-      t = anonIpv4(t);                           // then any standalone (non-embedded) IPv4 address
+      t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
+      t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
     }
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
@@ -618,32 +637,112 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
 // lowercase. A dotted FQDN (windomain.local) is always treated as a real domain and kept.
 export const NON_VICTIM_DOMAINS: ReadonlySet<string> = new Set([
   // Windows well-known principals / NETBIOS authorities (the DOMAIN half of e.g. BUILTIN\Administrators)
-  "nt", "authority", "service", "builtin", "workgroup", "virtual", "machine",
-  "iis", "apppool", "window", "manager", "font", "driver", "host", "dwm", "umfd",
-  "everyone", "system", "owner", "creator",
+  "nt",
+  "authority",
+  "service",
+  "builtin",
+  "workgroup",
+  "virtual",
+  "machine",
+  "iis",
+  "apppool",
+  "window",
+  "manager",
+  "font",
+  "driver",
+  "host",
+  "dwm",
+  "umfd",
+  "everyone",
+  "system",
+  "owner",
+  "creator",
   // Registry hives (HKU\Software → "hku")
-  "hku", "hklm", "hkcu", "hkcr", "hkcc",
-  "hkey_users", "hkey_local_machine", "hkey_current_user", "hkey_classes_root", "hkey_current_config",
+  "hku",
+  "hklm",
+  "hkcu",
+  "hkcr",
+  "hkcc",
+  "hkey_users",
+  "hkey_local_machine",
+  "hkey_current_user",
+  "hkey_classes_root",
+  "hkey_current_config",
   // Bare single-label LAN suffixes (a 2-label host like dc.local would otherwise add "local")
-  "local", "localdomain", "lan", "home",
+  "local",
+  "localdomain",
+  "lan",
+  "home",
   // MITRE ATT&CK tactics — the EVTX-ATTACK-SAMPLES folder names that keep getting mis-parsed
-  "reconnaissance", "resource", "development", "initial", "access", "execution",
-  "persistence", "privilege", "escalation", "defense", "evasion", "credential",
-  "discovery", "lateral", "movement", "collection", "command", "control",
-  "exfiltration", "impact", "tactics", "techniques", "mitre", "attack",
+  "reconnaissance",
+  "resource",
+  "development",
+  "initial",
+  "access",
+  "execution",
+  "persistence",
+  "privilege",
+  "escalation",
+  "defense",
+  "evasion",
+  "credential",
+  "discovery",
+  "lateral",
+  "movement",
+  "collection",
+  "command",
+  "control",
+  "exfiltration",
+  "impact",
+  "tactics",
+  "techniques",
+  "mitre",
+  "attack",
   // Common tool / process / generic folder names that get mis-parsed as a DOMAIN
-  "defender", "explorer", "vgauth", "ransomware", "malware", "samples", "results",
-  "tools", "setup", "files", "hours", "global", "launch", "layers", "code", "jobs",
-  "lite", "csv", "zip", "logs", "temp", "data", "output", "report", "reports",
-  "evidence", "downloads", "desktop", "documents", "users", "public", "default",
-  "windows", "programdata", "program", "system32", "appdata",
+  "defender",
+  "explorer",
+  "vgauth",
+  "ransomware",
+  "malware",
+  "samples",
+  "results",
+  "tools",
+  "setup",
+  "files",
+  "hours",
+  "global",
+  "launch",
+  "layers",
+  "code",
+  "jobs",
+  "lite",
+  "csv",
+  "zip",
+  "logs",
+  "temp",
+  "data",
+  "output",
+  "report",
+  "reports",
+  "evidence",
+  "downloads",
+  "desktop",
+  "documents",
+  "users",
+  "public",
+  "default",
+  "windows",
+  "programdata",
+  "program",
+  "system32",
+  "appdata",
 ]);
 
 // A single-label token is "noise" when it's a known non-victim word; a dotted FQDN is kept.
 export function isNoiseDomain(domain: string): boolean {
   const d = domain.toLowerCase().trim();
   if (!d) return true;
-  if (d.includes(".")) return false;          // real FQDN (windomain.local) — always keep
+  if (d.includes(".")) return false; // real FQDN (windomain.local) — always keep
   return NON_VICTIM_DOMAINS.has(d);
 }
 
@@ -660,7 +759,17 @@ export function isNoiseAccount(account: string): boolean {
 // Special-use / private-namespace TLDs (RFC 6761/6762 plus the conventional enterprise ones).
 // A host under one of these is never routable adversary infrastructure, so a domain/url IOC on
 // one is victim internal naming — the only IOC shape deriveKnownEntities can safely tokenize.
-const INTERNAL_TLDS = new Set(["local", "localdomain", "internal", "intranet", "lan", "corp", "home", "arpa", "private"]);
+const INTERNAL_TLDS = new Set([
+  "local",
+  "localdomain",
+  "internal",
+  "intranet",
+  "lan",
+  "corp",
+  "home",
+  "arpa",
+  "private",
+]);
 function hasInternalTld(host: string): boolean {
   const tld = host.slice(host.lastIndexOf(".") + 1);
   return INTERNAL_TLDS.has(tld);
@@ -678,7 +787,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   for (const e of state.forensicTimeline) {
     if (e.asset && e.asset.trim()) hosts.add(e.asset.trim());
     for (const acct of extractAccounts(e.description)) {
-      if (isNoiseAccount(acct)) continue;       // registry hive / Windows principal / tactic folder, not a victim account
+      if (isNoiseAccount(acct)) continue; // registry hive / Windows principal / tactic folder, not a victim account
       accounts.add(acct);
       if (acct.includes("\\")) internalDomains.add(acct.split("\\")[0]);
       else if (acct.includes("@")) internalDomains.add(acct.split("@")[1]);
@@ -705,13 +814,17 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     if (!raw) continue;
     let host = raw;
     if (ioc.type === "url") {
-      try { host = new URL(raw).hostname; } catch { host = raw; }
+      try {
+        host = new URL(raw).hostname;
+      } catch {
+        host = raw;
+      }
     }
     if (!host || !host.includes(".")) continue;
     if (isNoiseDomain(host)) continue;
     const parent = host.slice(host.indexOf(".") + 1);
-    const victimSide = hasInternalTld(host)
-      || [...internalDomains].some((d) => host === d || host.endsWith("." + d));
+    const victimSide =
+      hasInternalTld(host) || [...internalDomains].some((d) => host === d || host.endsWith("." + d));
     if (!victimSide) continue;
     hosts.add(host);
     if (!isNoiseDomain(parent)) internalDomains.add(parent);
@@ -722,7 +835,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     accounts: [...accounts],
     internalDomains: [...internalDomains]
       .map((d) => d.toLowerCase())
-      .filter((d) => !isNoiseDomain(d))         // belt-and-suspenders: also drops noisy FQDN-parent labels (dc.local → "local")
+      .filter((d) => !isNoiseDomain(d)) // belt-and-suspenders: also drops noisy FQDN-parent labels (dc.local → "local")
       .sort(byLenDesc),
   };
 }

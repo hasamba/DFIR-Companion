@@ -31,7 +31,9 @@ function flag(name: string): string | undefined {
 async function main(): Promise<void> {
   const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : undefined;
   if (!caseId) {
-    console.error("usage: npm run notion:push -- <caseId> --page <urlOrId> | --new [--database <id>] [--parent <id>]");
+    console.error(
+      "usage: npm run notion:push -- <caseId> --page <urlOrId> | --new [--database <id>] [--parent <id>]",
+    );
     process.exit(2);
   }
 
@@ -46,7 +48,10 @@ async function main(): Promise<void> {
   const target: NotionPushTarget = pageArg ? { mode: "existing" } : { mode: "new" };
   if (pageArg) {
     const pageId = parseNotionPageId(pageArg);
-    if (!pageId) { console.error(`could not read a Notion page id from "${pageArg}"`); process.exit(2); }
+    if (!pageId) {
+      console.error(`could not read a Notion page id from "${pageArg}"`);
+      process.exit(2);
+    }
     target.pageId = pageId;
   } else {
     const db = flag("--database");
@@ -71,10 +76,18 @@ async function main(): Promise<void> {
   const exportStore = new NotionExportStore(store);
 
   console.log(`Exporting "${caseId}" to Notion (${target.mode} page) …`);
-  const res = await pushCaseToNotion(client, { caseName: caseId, state, meta }, target, notionPushOptions(), exportStore);
+  const res = await pushCaseToNotion(
+    client,
+    { caseName: caseId, state, meta },
+    target,
+    notionPushOptions(),
+    exportStore,
+  );
 
   console.log(`\nNotion page ${res.pageId} ${res.created ? "CREATED" : "UPDATED"}`);
-  console.log(`  blocks:   +${res.blocksAppended} appended in ${res.batches} batch(es); ${res.blocksArchived} archived${res.containerRecreated ? "; container recreated" : ""}`);
+  console.log(
+    `  blocks:   +${res.blocksAppended} appended in ${res.batches} batch(es); ${res.blocksArchived} archived${res.containerRecreated ? "; container recreated" : ""}`,
+  );
   if (res.pageUrl) console.log(`  open:     ${res.pageUrl}`);
   if (res.warnings.length) {
     console.log(`\n  ${res.warnings.length} warning(s):`);
@@ -83,4 +96,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => { console.error("notion push error:", (e as Error).message); process.exit(1); });
+main().catch((e) => {
+  console.error("notion push error:", (e as Error).message);
+  process.exit(1);
+});

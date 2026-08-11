@@ -16,11 +16,7 @@ import {
   type ReportReleaseSummary,
 } from "./reportReleaseStore.js";
 import { ReportWorkflowStore } from "./reportWorkflowStore.js";
-import type {
-  ReportActor,
-  ReportAnnotationInput,
-  ReportWorkflow,
-} from "./reportWorkflowTypes.js";
+import type { ReportActor, ReportAnnotationInput, ReportWorkflow } from "./reportWorkflowTypes.js";
 
 // Report versioning (#77): every `writeAll()` (report generation) snapshots the rendered markdown +
 // the human-authored report-meta + the diff-relevant slice of state (findings/IOCs/forensic timeline)
@@ -44,8 +40,8 @@ export interface ReportVersionDiffState {
 
 export interface ReportVersionSummary {
   id: string;
-  createdAt: string;   // ISO timestamp
-  version: string;     // auto-numbered "v1", "v2", ... (display label)
+  createdAt: string; // ISO timestamp
+  version: string; // auto-numbered "v1", "v2", ... (display label)
   manualVersion: string; // the human-authored revisions[] latest entry's version string, if any ("" if none)
   contentHash: string; // sha256 of the rendered markdown — lets snapshot() dedupe unchanged regenerations
   findingsCount: number;
@@ -173,9 +169,10 @@ export class ReportVersionStore {
   ): Promise<ReportWorkflow> {
     const version = await this.get(caseId, versionId);
     if (!version) throw new Error("report version not found");
-    const validTarget = input.targetType === "evidence"
-      ? version.state.forensicTimeline.some((event) => event.id === input.targetId)
-      : version.state.findings.some((finding) => finding.id === input.targetId);
+    const validTarget =
+      input.targetType === "evidence"
+        ? version.state.forensicTimeline.some((event) => event.id === input.targetId)
+        : version.state.findings.some((finding) => finding.id === input.targetId);
     if (!validTarget) throw new Error(`${input.targetType} target not found in this report version`);
     return this.workflows.addAnnotation(caseId, versionId, actor, input);
   }
@@ -187,13 +184,7 @@ export class ReportVersionStore {
     actor: ReportActor,
     resolution: string,
   ): Promise<ReportWorkflow> {
-    return this.workflows.resolveAnnotation(
-      caseId,
-      versionId,
-      annotationId,
-      actor,
-      resolution,
-    );
+    return this.workflows.resolveAnnotation(caseId, versionId, annotationId, actor, resolution);
   }
 
   requestReportChanges(
@@ -205,21 +196,11 @@ export class ReportVersionStore {
     return this.workflows.requestChanges(caseId, versionId, actor, reason);
   }
 
-  approve(
-    caseId: string,
-    versionId: string,
-    actor: ReportActor,
-    note: string,
-  ): Promise<ReportWorkflow> {
+  approve(caseId: string, versionId: string, actor: ReportActor, note: string): Promise<ReportWorkflow> {
     return this.workflows.approve(caseId, versionId, actor, note);
   }
 
-  selfApprove(
-    caseId: string,
-    versionId: string,
-    actor: ReportActor,
-    note: string,
-  ): Promise<ReportWorkflow> {
+  selfApprove(caseId: string, versionId: string, actor: ReportActor, note: string): Promise<ReportWorkflow> {
     return this.workflows.selfApprove(caseId, versionId, actor, note);
   }
 
@@ -268,10 +249,11 @@ export class ReportVersionStore {
     const latest = existing[0];
     const analysisRunIds = input.analysisRunIds ?? [];
     if (
-      latest
-      && latest.contentHash === contentHash
-      && JSON.stringify(latest.analysisRunIds ?? []) === JSON.stringify(analysisRunIds)
-    ) return latest;
+      latest &&
+      latest.contentHash === contentHash &&
+      JSON.stringify(latest.analysisRunIds ?? []) === JSON.stringify(analysisRunIds)
+    )
+      return latest;
 
     const createdAt = new Date().toISOString();
     const id = `${createdAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
@@ -315,7 +297,10 @@ export class ReportVersionStore {
       (await this.releases.list(caseId)).map((release) => release.reportVersionId),
     );
     const retainedWorking = new Set(
-      updated.filter((item) => !protectedIds.has(item.id)).slice(0, cap).map((item) => item.id),
+      updated
+        .filter((item) => !protectedIds.has(item.id))
+        .slice(0, cap)
+        .map((item) => item.id),
     );
     const kept = updated.filter((item) => protectedIds.has(item.id) || retainedWorking.has(item.id));
     const pruned = updated.filter((item) => !kept.includes(item));

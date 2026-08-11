@@ -20,16 +20,24 @@ function stateWith(descs: string[], iocs: string[] = []): InvestigationState {
       relatedFindingIds: [],
       sourceScreenshots: [],
     })),
-    iocs: iocs.map((value, n) => ({ id: `i${n + 1}`, type: "domain", value, firstSeen: "2026-06-01T00:00:00Z" })),
+    iocs: iocs.map((value, n) => ({
+      id: `i${n + 1}`,
+      type: "domain",
+      value,
+      firstSeen: "2026-06-01T00:00:00Z",
+    })),
   };
 }
 
 describe("buildCustomerExposureTargets", () => {
   it("checks only manually entered customer domains, never IOC domains found in the case", () => {
-    const state = stateWith([
-      "User alice@example.com clicked a phishing link at evil-c2.test",
-      "Remote domain payload.bad was contacted by host DC01",
-    ], ["evil-c2.test", "payload.bad"]);
+    const state = stateWith(
+      [
+        "User alice@example.com clicked a phishing link at evil-c2.test",
+        "Remote domain payload.bad was contacted by host DC01",
+      ],
+      ["evil-c2.test", "payload.bad"],
+    );
     const targets: CustomerTargets = { domains: ["example.com"], emails: [] };
 
     const built = buildCustomerExposureTargets(state, targets);
@@ -40,10 +48,10 @@ describe("buildCustomerExposureTargets", () => {
   });
 
   it("checks manually entered emails even when their domain is not in the domain list", () => {
-    const built = buildCustomerExposureTargets(
-      stateWith(["No emails in evidence"]),
-      { domains: [], emails: [" VIP@Example.org "] },
-    );
+    const built = buildCustomerExposureTargets(stateWith(["No emails in evidence"]), {
+      domains: [],
+      emails: [" VIP@Example.org "],
+    });
 
     expect(built.domains).toEqual([]);
     expect(built.emails).toEqual(["vip@example.org"]);
@@ -69,10 +77,13 @@ describe("buildCustomerExposureTargets", () => {
   });
 
   it("does not auto-check case emails outside customer domains or emails recorded as IOCs", () => {
-    const state = stateWith([
-      "alice@example.com received mail from attacker@phish.test and bob@other.test",
-    ], ["attacker@phish.test"]);
-    state.iocs = [{ id: "i1", type: "other", value: "attacker@phish.test", firstSeen: "2026-06-01T00:00:00Z" }];
+    const state = stateWith(
+      ["alice@example.com received mail from attacker@phish.test and bob@other.test"],
+      ["attacker@phish.test"],
+    );
+    state.iocs = [
+      { id: "i1", type: "other", value: "attacker@phish.test", firstSeen: "2026-06-01T00:00:00Z" },
+    ];
 
     const built = buildCustomerExposureTargets(state, { domains: ["example.com"], emails: [] });
 
@@ -82,11 +93,18 @@ describe("buildCustomerExposureTargets", () => {
   it("OPSEC: never sends a bare public-suffix TLD to a breach-check provider (#30)", () => {
     // A 2-label host like "evil.com" derives domain = "com" — that must NOT reach HIBP/LeakCheck.
     const state = emptyState("c1");
-    state.forensicTimeline = [{
-      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "inbound attack from evil.com",
-      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
-      asset: "evil.com",
-    }];
+    state.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "inbound attack from evil.com",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "evil.com",
+      },
+    ];
     const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
     expect(built.domains).not.toContain("com");
     expect(built.domains).not.toContain("org");
@@ -97,14 +115,26 @@ describe("buildCustomerExposureTargets", () => {
     // A URL IOC value is a full URL (https://c2.evil.com/beacon); the derived parent domain
     // evil.com never exact-matches the IOC value, so the old filter leaked it to HIBP.
     const state = emptyState("c1");
-    state.forensicTimeline = [{
-      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "host connected to c2.evil.com",
-      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
-      asset: "c2.evil.com",
-    }];
-    state.iocs = [{
-      id: "i1", type: "url", value: "https://c2.evil.com/beacon", firstSeen: "2026-06-01T00:00:00Z",
-    }];
+    state.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "host connected to c2.evil.com",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "c2.evil.com",
+      },
+    ];
+    state.iocs = [
+      {
+        id: "i1",
+        type: "url",
+        value: "https://c2.evil.com/beacon",
+        firstSeen: "2026-06-01T00:00:00Z",
+      },
+    ];
     const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
     expect(built.domains).not.toContain("evil.com");
     expect(built.domains).toEqual([]);
@@ -115,10 +145,18 @@ describe("buildCustomerExposureTargets", () => {
     // to its registrable parent, so an exact-set check let it through to HIBP. Anything at or
     // under an adversary name is adversary.
     const state = emptyState("c1");
-    state.forensicTimeline = [{
-      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "beacon", severity: "Medium",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "a.b.evil.com",
-    }];
+    state.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "beacon",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "a.b.evil.com",
+      },
+    ];
     state.iocs = [{ id: "i1", type: "domain", value: "evil.com", firstSeen: "2026-06-01T00:00:00Z" }];
     const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
     expect(built.domains).toEqual([]);
@@ -126,10 +164,18 @@ describe("buildCustomerExposureTargets", () => {
 
   it("OPSEC: keeps a genuine victim subdomain whose parent is NOT an IOC", () => {
     const state = emptyState("c1");
-    state.forensicTimeline = [{
-      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "logon", severity: "Medium",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "fs01.victim.org",
-    }];
+    state.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "logon",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "fs01.victim.org",
+      },
+    ];
     const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
     expect(built.domains).toEqual(["victim.org"]);
   });
@@ -150,27 +196,33 @@ describe("hasExposureFinding", () => {
 
 describe("summarizeExposure", () => {
   it("runs all providers and strips raw secrets from stored findings", async () => {
-    const providers: CustomerExposureProvider[] = [{
-      name: "MockLeaks",
-      lookupEmail: async (email) => [{
-        provider: "MockLeaks",
-        targetType: "email",
-        target: email,
-        email,
-        breach: "ExampleBreach",
-        exposedData: ["email", "password"],
-        secretPresent: true,
-        raw: { password: "cleartext-secret" },
-      }],
-      lookupDomain: async (domain) => [{
-        provider: "MockLeaks",
-        targetType: "domain",
-        target: domain,
-        email: `alice@${domain}`,
-        breach: "DomainBreach",
-        raw: { password: "another-secret" },
-      }],
-    }];
+    const providers: CustomerExposureProvider[] = [
+      {
+        name: "MockLeaks",
+        lookupEmail: async (email) => [
+          {
+            provider: "MockLeaks",
+            targetType: "email",
+            target: email,
+            email,
+            breach: "ExampleBreach",
+            exposedData: ["email", "password"],
+            secretPresent: true,
+            raw: { password: "cleartext-secret" },
+          },
+        ],
+        lookupDomain: async (domain) => [
+          {
+            provider: "MockLeaks",
+            targetType: "domain",
+            target: domain,
+            email: `alice@${domain}`,
+            breach: "DomainBreach",
+            raw: { password: "another-secret" },
+          },
+        ],
+      },
+    ];
 
     const summary = await summarizeExposure(
       stateWith(["alice@example.com logged in"]),
@@ -190,12 +242,16 @@ describe("summarizeExposure", () => {
     const providers: CustomerExposureProvider[] = [
       {
         name: "Bad",
-        lookupEmail: async () => { throw new Error("rate limited"); },
+        lookupEmail: async () => {
+          throw new Error("rate limited");
+        },
         lookupDomain: async () => [],
       },
       {
         name: "Good",
-        lookupEmail: async (email) => [{ provider: "Good", targetType: "email", target: email, breach: "B1" }],
+        lookupEmail: async (email) => [
+          { provider: "Good", targetType: "email", target: email, breach: "B1" },
+        ],
         lookupDomain: async () => [],
       },
     ];
@@ -208,6 +264,8 @@ describe("summarizeExposure", () => {
     );
 
     expect(summary.results).toHaveLength(1);
-    expect(summary.errors).toEqual([{ provider: "Bad", targetType: "email", target: "alice@example.com", error: "rate limited" }]);
+    expect(summary.errors).toEqual([
+      { provider: "Bad", targetType: "email", target: "alice@example.com", error: "rate limited" },
+    ]);
   });
 });

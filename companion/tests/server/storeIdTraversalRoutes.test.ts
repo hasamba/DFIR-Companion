@@ -19,7 +19,10 @@ async function harness() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   // The stores live one level below the sandbox, so `..` in an id reaches the sentinel beside them.

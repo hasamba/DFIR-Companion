@@ -1,4 +1,11 @@
-import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind } from "./provider.js";
+import {
+  RateLimitError,
+  parseRetryAfterMs,
+  type EnrichmentProvider,
+  type EnrichmentResult,
+  type FetchFn,
+  type IocKind,
+} from "./provider.js";
 
 // WHOIS-equivalent registration lookup for an IP IOC, over RDAP (the modern, JSON-over-HTTPS
 // replacement for port-43 WHOIS). Resolves which network block owns the address: net name,
@@ -11,7 +18,7 @@ import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type Enrich
 // which registry owns the IP. No API key. Base overridable via DFIR_RDAP_URL. Injectable
 // fetchFn so tests never hit the network.
 export interface RdapOptions {
-  baseUrl?: string;     // default https://rdap.org
+  baseUrl?: string; // default https://rdap.org
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
@@ -69,7 +76,8 @@ function abuseEmail(entities: RdapEntity[] | undefined): string | undefined {
 
 function cidrRange(j: RdapIpResponse): string | undefined {
   const c = j.cidr0_cidrs?.[0];
-  if (c && (c.v4prefix ?? c.v6prefix) && c.length !== undefined) return `${c.v4prefix ?? c.v6prefix}/${c.length}`;
+  if (c && (c.v4prefix ?? c.v6prefix) && c.length !== undefined)
+    return `${c.v4prefix ?? c.v6prefix}/${c.length}`;
   if (j.startAddress && j.endAddress) return `${j.startAddress} – ${j.endAddress}`;
   return undefined;
 }
@@ -84,7 +92,9 @@ export class RdapProvider implements EnrichmentProvider {
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
-  supports(kind: IocKind): boolean { return kind === "ip"; }
+  supports(kind: IocKind): boolean {
+    return kind === "ip";
+  }
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "ip") return null;
@@ -93,8 +103,9 @@ export class RdapProvider implements EnrichmentProvider {
       headers: { Accept: "application/rdap+json, application/json" },
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
-    if (res.status === 404) return null;                          // no allocation found for this IP
-    if (res.status === 429) throw new RateLimitError("RDAP/WHOIS rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
+    if (res.status === 404) return null; // no allocation found for this IP
+    if (res.status === 429)
+      throw new RateLimitError("RDAP/WHOIS rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`RDAP/WHOIS HTTP ${res.status}`);
 
     const json = (await res.json()) as RdapIpResponse;

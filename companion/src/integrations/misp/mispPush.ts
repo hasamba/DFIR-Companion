@@ -13,19 +13,19 @@ import { severityRank } from "../../analysis/dashboardViews.js";
 import { repairIocValue, isWellFormedIocValue } from "../../analysis/iocValue.js";
 
 export interface MispPushInput {
-  caseId: string;              // Companion case id — used for idempotency tag and event title
+  caseId: string; // Companion case id — used for idempotency tag and event title
   state: InvestigationState;
 }
 
 export interface MispPushOptions {
-  distribution?: string;       // MISP distribution: "0"=org (default), "1"=community, "2"=connected, "3"=all
-  analysis?: string;           // MISP analysis: "0"=initial, "1"=ongoing (default), "2"=complete
-  baseUrl?: string;            // to build a clickable event URL in the result
+  distribution?: string; // MISP distribution: "0"=org (default), "1"=community, "2"=connected, "3"=all
+  analysis?: string; // MISP analysis: "0"=initial, "1"=ongoing (default), "2"=complete
+  baseUrl?: string; // to build a clickable event URL in the result
   // Max forensic-timeline events pushed in one call. The timeline is UNBOUNDED (a big
   // MFT/USN import can carry tens of thousands of rows) and each event costs one sequential
   // HTTP round-trip, so an uncapped push would hang the request for hours. Excess events are
   // reported as skipped with a warning; the highest-value events go first (see sort below).
-  timelineLimit?: number;      // default DEFAULT_TIMELINE_LIMIT
+  timelineLimit?: number; // default DEFAULT_TIMELINE_LIMIT
 }
 
 // Bounds a single push. Chosen so a worst-case run stays in the low minutes against a real
@@ -40,10 +40,10 @@ const MAX_CONSECUTIVE_FAILURES = 10;
 export interface MispPushResult {
   eventId: string;
   eventInfo: string;
-  created: boolean;            // true = the event was newly created
+  created: boolean; // true = the event was newly created
   attributes: { added: number; existing: number; skipped: number };
   timeline: { added: number; existing: number; skipped: number };
-  tags: number;                // MITRE + idempotency tags attached
+  tags: number; // MITRE + idempotency tags attached
   eventUrl?: string;
   warnings: string[];
 }
@@ -74,19 +74,25 @@ function worstThreatLevel(state: InvestigationState): string {
 // Map a Companion IOC type to a MISP attribute type + category. Returns null for unmappable types.
 function mapIocType(ioc: IOC): { type: string; category: string } | null {
   switch (ioc.type) {
-    case "ip":      return { type: "ip-dst",   category: "Network activity" };
-    case "domain":  return { type: "domain",   category: "Network activity" };
-    case "url":     return { type: "url",      category: "External analysis" };
-    case "file":    return { type: "filename", category: "Payload delivery" };
-    case "process": return { type: "filename", category: "Artifacts dropped" };
+    case "ip":
+      return { type: "ip-dst", category: "Network activity" };
+    case "domain":
+      return { type: "domain", category: "Network activity" };
+    case "url":
+      return { type: "url", category: "External analysis" };
+    case "file":
+      return { type: "filename", category: "Payload delivery" };
+    case "process":
+      return { type: "filename", category: "Artifacts dropped" };
     case "hash": {
       const len = ioc.value.replace(/\s/g, "").length;
-      if (len === 32) return { type: "md5",    category: "Payload delivery" };
-      if (len === 40) return { type: "sha1",   category: "Payload delivery" };
+      if (len === 32) return { type: "md5", category: "Payload delivery" };
+      if (len === 40) return { type: "sha1", category: "Payload delivery" };
       if (len === 64) return { type: "sha256", category: "Payload delivery" };
       return { type: "md5", category: "Payload delivery" }; // best guess for unknown hash length
     }
-    default: return null; // "other" — no reliable MISP type
+    default:
+      return null; // "other" — no reliable MISP type
   }
 }
 
@@ -147,8 +153,8 @@ export async function pushCaseToMisp(
     const body: MispEventCreate = {
       info: eventInfo,
       threat_level_id: worstThreatLevel(input.state),
-      analysis: options.analysis ?? "1",           // ongoing
-      distribution: options.distribution ?? "0",   // org only (OPSEC-safe default)
+      analysis: options.analysis ?? "1", // ongoing
+      distribution: options.distribution ?? "0", // org only (OPSEC-safe default)
       date,
     };
     eventId = await client.createEvent(body);
@@ -162,8 +168,8 @@ export async function pushCaseToMisp(
     } catch (err) {
       warnings.push(
         `could not attach the case tag "${caseTag}" (${err instanceof Error ? err.message : String(err)}) — ` +
-        `re-pushing this case will CREATE A DUPLICATE EVENT instead of updating event ${eventId}, ` +
-        `because that tag is how a prior push is found`,
+          `re-pushing this case will CREATE A DUPLICATE EVENT instead of updating event ${eventId}, ` +
+          `because that tag is how a prior push is found`,
       );
     }
   }
@@ -191,7 +197,9 @@ export async function pushCaseToMisp(
     const value = repaired?.value ?? "";
     if (!value || !isWellFormedIocValue(ioc.type, value)) {
       attributes.skipped += 1;
-      warnings.push(`ioc skipped (not a valid ${ioc.type} value — MISP would reject it): ${short(ioc.value)}`);
+      warnings.push(
+        `ioc skipped (not a valid ${ioc.type} value — MISP would reject it): ${short(ioc.value)}`,
+      );
       continue;
     }
     const mapped = mapIocType({ ...ioc, value });
@@ -201,7 +209,10 @@ export async function pushCaseToMisp(
       continue;
     }
     const key = value.toLowerCase();
-    if (existingValues.has(key)) { attributes.existing += 1; continue; }
+    if (existingValues.has(key)) {
+      attributes.existing += 1;
+      continue;
+    }
     // The annotation that was split out of the value rides along as the attribute comment, so the
     // host label survives the export instead of being lost with the malformed value.
     const comment = ioc.note ?? repaired?.note;
@@ -230,14 +241,16 @@ export async function pushCaseToMisp(
   //     chronological order so the MISP event still reads as a timeline.
   const limit = options.timelineLimit ?? DEFAULT_TIMELINE_LIMIT;
   const allEvents = input.state.forensicTimeline;
-  const selected = (allEvents.length > limit
-    ? [...allEvents].sort((a, b) => severityRank(a.severity) - severityRank(b.severity)).slice(0, limit)
-    : [...allEvents]).sort(byEventTime);
+  const selected = (
+    allEvents.length > limit
+      ? [...allEvents].sort((a, b) => severityRank(a.severity) - severityRank(b.severity)).slice(0, limit)
+      : [...allEvents]
+  ).sort(byEventTime);
   if (allEvents.length > limit) {
     timeline.skipped += allEvents.length - limit;
     warnings.push(
       `timeline truncated: pushed the ${limit} most severe of ${allEvents.length} events ` +
-      `(raise options.timelineLimit to push more)`,
+        `(raise options.timelineLimit to push more)`,
     );
   }
 
@@ -250,7 +263,10 @@ export async function pushCaseToMisp(
       continue;
     }
     const key = mapped.value.trim().toLowerCase();
-    if (existingValues.has(key)) { timeline.existing += 1; continue; }
+    if (existingValues.has(key)) {
+      timeline.existing += 1;
+      continue;
+    }
     try {
       await client.addAttribute(eventId, mapped);
       existingValues.add(key);
@@ -268,7 +284,7 @@ export async function pushCaseToMisp(
         if (remaining > 0) timeline.skipped += remaining;
         warnings.push(
           `timeline push aborted after ${MAX_CONSECUTIVE_FAILURES} consecutive MISP failures ` +
-          `(${remaining} event(s) not attempted) — re-push once MISP is healthy`,
+            `(${remaining} event(s) not attempted) — re-push once MISP is healthy`,
         );
         break;
       }
@@ -287,12 +303,16 @@ export async function pushCaseToMisp(
     } catch (err) {
       tagFailures.push(tech);
       if (tagFailures.length === 1) {
-        warnings.push(`MITRE tag "mitre-attack:${tech}" was rejected by MISP: ${err instanceof Error ? err.message : String(err)}`);
+        warnings.push(
+          `MITRE tag "mitre-attack:${tech}" was rejected by MISP: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
   if (tagFailures.length > 1) {
-    warnings.push(`${tagFailures.length} MITRE tags could not be attached (first reason above): ${tagFailures.slice(0, 8).join(", ")}${tagFailures.length > 8 ? ", …" : ""}`);
+    warnings.push(
+      `${tagFailures.length} MITRE tags could not be attached (first reason above): ${tagFailures.slice(0, 8).join(", ")}${tagFailures.length > 8 ? ", …" : ""}`,
+    );
   }
 
   return {
@@ -302,9 +322,7 @@ export async function pushCaseToMisp(
     attributes,
     timeline,
     tags,
-    eventUrl: options.baseUrl
-      ? `${options.baseUrl.replace(/\/+$/, "")}/events/view/${eventId}`
-      : undefined,
+    eventUrl: options.baseUrl ? `${options.baseUrl.replace(/\/+$/, "")}/events/view/${eventId}` : undefined,
     warnings,
   };
 }

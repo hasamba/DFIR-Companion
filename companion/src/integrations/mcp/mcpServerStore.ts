@@ -44,8 +44,15 @@ export const mcpDeliverySchema = z.object({
 export type McpDelivery = z.infer<typeof mcpDeliverySchema>;
 
 export const DEFAULT_DELIVERY: McpDelivery = {
-  mode: "remote-path", host: "", user: "", port: 22, identityFile: "", remoteDir: "",
-  timeoutMs: 3_600_000, localPrefix: "", remotePrefix: "",
+  mode: "remote-path",
+  host: "",
+  user: "",
+  port: 22,
+  identityFile: "",
+  remoteDir: "",
+  timeoutMs: 3_600_000,
+  localPrefix: "",
+  remotePrefix: "",
 };
 
 /**
@@ -63,11 +70,15 @@ const SAFE_REMOTE_DIR = /^\/[A-Za-z0-9._\-/]*$/;
 export function validateDelivery(d: McpDelivery): string | null {
   if (d.mode === "scp") {
     if (!d.host.trim()) return "scp delivery needs a host";
-    if (!SAFE_HOSTPART.test(d.host)) return `delivery host "${d.host}" may only contain letters, digits, dot, dash and underscore`;
-    if (d.user && !SAFE_HOSTPART.test(d.user)) return `delivery user "${d.user}" may only contain letters, digits, dot, dash and underscore`;
+    if (!SAFE_HOSTPART.test(d.host))
+      return `delivery host "${d.host}" may only contain letters, digits, dot, dash and underscore`;
+    if (d.user && !SAFE_HOSTPART.test(d.user))
+      return `delivery user "${d.user}" may only contain letters, digits, dot, dash and underscore`;
     if (!d.remoteDir.trim()) return "scp delivery needs a remote staging directory";
-    if (!SAFE_REMOTE_DIR.test(d.remoteDir)) return `remote directory "${d.remoteDir}" must be an absolute POSIX path of letters, digits, dot, dash, underscore and slash`;
-    if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535) return `delivery port ${d.port} is not a valid port`;
+    if (!SAFE_REMOTE_DIR.test(d.remoteDir))
+      return `remote directory "${d.remoteDir}" must be an absolute POSIX path of letters, digits, dot, dash, underscore and slash`;
+    if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535)
+      return `delivery port ${d.port} is not a valid port`;
     return null;
   }
   // remote-path: a rewrite needs both halves or neither. One alone silently maps everything to the
@@ -103,8 +114,8 @@ export interface McpServerInput {
   id: string;
   label?: string;
   enabled?: boolean;
-  allowedTools?: string[] | string;      // array or a comma/space-separated string
-  allowedCommands?: string[] | string;   // likewise
+  allowedTools?: string[] | string; // array or a comma/space-separated string
+  allowedCommands?: string[] | string; // likewise
   agentEnabled?: boolean;
   timeoutMs?: number;
   delivery?: Partial<McpDelivery>;
@@ -145,7 +156,10 @@ function normalizeNames(input: string[] | string | undefined): string[] {
 function fromInput(input: McpServerInput, id: string): McpServer {
   return {
     id,
-    label: String(input.label ?? "").trim().slice(0, 120) || id,
+    label:
+      String(input.label ?? "")
+        .trim()
+        .slice(0, 120) || id,
     enabled: input.enabled !== false,
     allowedTools: normalizeNames(input.allowedTools),
     // Stored by basename, the same form mcpGuard compares against, so "/usr/bin/grep" and "grep"
@@ -153,7 +167,9 @@ function fromInput(input: McpServerInput, id: string): McpServer {
     allowedCommands: normalizeNames(input.allowedCommands).map((c) => basename(c)),
     agentEnabled: input.agentEnabled === true,
     timeoutMs: Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : 300_000,
-    delivery: mcpDeliverySchema.catch(DEFAULT_DELIVERY).parse({ ...DEFAULT_DELIVERY, ...(input.delivery ?? {}) }),
+    delivery: mcpDeliverySchema
+      .catch(DEFAULT_DELIVERY)
+      .parse({ ...DEFAULT_DELIVERY, ...(input.delivery ?? {}) }),
   };
 }
 
@@ -166,7 +182,10 @@ export class McpServerStore {
       if (!Array.isArray(raw)) return [];
       // Re-validate on read so a hand-edited file cannot inject a malformed entry into the runner.
       return raw
-        .map((r) => { const p = mcpServerSchema.safeParse(r); return p.success ? p.data : null; })
+        .map((r) => {
+          const p = mcpServerSchema.safeParse(r);
+          return p.success ? p.data : null;
+        })
         .filter((s): s is McpServer => s !== null && !!s.id);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -194,7 +213,9 @@ export class McpServerStore {
     if (deliveryError) throw new Error(deliveryError);
 
     const list = await this.load();
-    const next = list.some((s) => s.id === id) ? list.map((s) => (s.id === id ? server : s)) : [...list, server];
+    const next = list.some((s) => s.id === id)
+      ? list.map((s) => (s.id === id ? server : s))
+      : [...list, server];
     await this.save(next);
     return server;
   }
@@ -203,17 +224,20 @@ export class McpServerStore {
     const list = await this.load();
     const cur = list.find((s) => s.id === id);
     if (!cur) return null;
-    const merged = fromInput({
+    const merged = fromInput(
+      {
+        id,
+        label: patch.label ?? cur.label,
+        enabled: patch.enabled ?? cur.enabled,
+        allowedTools: patch.allowedTools ?? cur.allowedTools,
+        allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
+        agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
+        timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
+        // Merged field-wise so changing one delivery setting does not reset the rest to defaults.
+        delivery: { ...cur.delivery, ...(patch.delivery ?? {}) },
+      },
       id,
-      label: patch.label ?? cur.label,
-      enabled: patch.enabled ?? cur.enabled,
-      allowedTools: patch.allowedTools ?? cur.allowedTools,
-      allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
-      agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
-      timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
-      // Merged field-wise so changing one delivery setting does not reset the rest to defaults.
-      delivery: { ...cur.delivery, ...(patch.delivery ?? {}) },
-    }, id);
+    );
     const deliveryError = validateDelivery(merged.delivery);
     if (deliveryError) throw new Error(deliveryError);
     await this.save(list.map((s) => (s.id === id ? merged : s)));

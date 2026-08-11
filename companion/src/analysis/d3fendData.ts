@@ -52,7 +52,10 @@ function isCountermeasure(value: unknown): value is D3fendCountermeasure {
 // Validate + normalize a parsed JSON blob into a dataset, dropping malformed countermeasure records.
 function coerce(raw: unknown): D3fendDatasetView {
   const obj = raw as Partial<D3fendDatasetView> & { map?: unknown };
-  const rawMap = obj?.map && typeof obj.map === "object" && !Array.isArray(obj.map) ? (obj.map as Record<string, unknown>) : {};
+  const rawMap =
+    obj?.map && typeof obj.map === "object" && !Array.isArray(obj.map)
+      ? (obj.map as Record<string, unknown>)
+      : {};
   const map: Record<string, D3fendCountermeasure[]> = {};
   for (const [tech, cms] of Object.entries(rawMap)) {
     if (!Array.isArray(cms)) continue;

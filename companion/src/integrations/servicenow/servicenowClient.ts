@@ -4,10 +4,10 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 
 export interface ServiceNowClientOptions {
-  baseUrl: string;          // e.g. https://instance.service-now.com
+  baseUrl: string; // e.g. https://instance.service-now.com
   user: string;
   password: string;
-  table?: string;           // default "incident"
+  table?: string; // default "incident"
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
@@ -15,14 +15,18 @@ export interface ServiceNowClientOptions {
 export interface ServiceNowIncidentBody {
   shortDescription: string;
   description?: string;
-  urgency?: number;         // 1=High, 2=Medium, 3=Low
-  impact?: number;          // 1=High, 2=Medium, 3=Low
-  caller?: string;          // sys_id or email of the caller (optional)
+  urgency?: number; // 1=High, 2=Medium, 3=Low
+  impact?: number; // 1=High, 2=Medium, 3=Low
+  caller?: string; // sys_id or email of the caller (optional)
   category?: string;
   subcategory?: string;
 }
 
-export interface ServiceNowIncidentRef { id: string; number: string; url?: string }
+export interface ServiceNowIncidentRef {
+  id: string;
+  number: string;
+  url?: string;
+}
 
 // Structural subset used by servicenowPush.ts so tests can pass a lightweight mock.
 export interface ServiceNowClientLike {
@@ -42,7 +46,9 @@ export class ServiceNowApiError extends Error {
   }
 }
 
-interface ServiceNowErrorEnvelope { error?: { message?: string; detail?: string } }
+interface ServiceNowErrorEnvelope {
+  error?: { message?: string; detail?: string };
+}
 
 function snowBaseUrl(raw: string): string {
   return raw.replace(/\/+$/, "");
@@ -65,7 +71,11 @@ export class ServiceNowClient {
     this.table = opts.table ?? "incident";
   }
 
-  private async request<T>(method: "GET" | "POST" | "PUT" | "PATCH", path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: "GET" | "POST" | "PUT" | "PATCH",
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
     let res: Response;
     try {
       res = await this.fetchFn(this.base + path, {
@@ -86,11 +96,20 @@ export class ServiceNowClient {
       const env = (await res.json().catch(() => ({}))) as ServiceNowErrorEnvelope;
       const detail = env.error?.message || env.error?.detail;
       const suffix = detail ? `: ${detail}` : "";
-      if (res.status === 401) throw new ServiceNowApiError(`ServiceNow auth failed (check DFIR_SERVICENOW_USER and DFIR_SERVICENOW_PASSWORD)${suffix}`, 401, "auth");
-      if (res.status === 403) throw new ServiceNowApiError(`ServiceNow permission denied${suffix}`, 403, "permission");
-      if (res.status === 404) throw new ServiceNowApiError(`ServiceNow resource not found${suffix}`, 404, "notfound");
-      if (res.status === 429) throw new ServiceNowApiError(`ServiceNow rate limit hit${suffix}`, 429, "ratelimit");
-      if (res.status === 400) throw new ServiceNowApiError(`ServiceNow rejected the request${suffix}`, 400, "validation");
+      if (res.status === 401)
+        throw new ServiceNowApiError(
+          `ServiceNow auth failed (check DFIR_SERVICENOW_USER and DFIR_SERVICENOW_PASSWORD)${suffix}`,
+          401,
+          "auth",
+        );
+      if (res.status === 403)
+        throw new ServiceNowApiError(`ServiceNow permission denied${suffix}`, 403, "permission");
+      if (res.status === 404)
+        throw new ServiceNowApiError(`ServiceNow resource not found${suffix}`, 404, "notfound");
+      if (res.status === 429)
+        throw new ServiceNowApiError(`ServiceNow rate limit hit${suffix}`, 429, "ratelimit");
+      if (res.status === 400)
+        throw new ServiceNowApiError(`ServiceNow rejected the request${suffix}`, 400, "validation");
       throw new ServiceNowApiError(`ServiceNow HTTP ${res.status} on ${path}${suffix}`, res.status, "http");
     }
     return (await res.json().catch(() => ({}))) as T;
@@ -117,7 +136,10 @@ export class ServiceNowClient {
     };
   }
 
-  private incidentRef(result: { sys_id?: string; number?: string }, fallbackSysId = ""): ServiceNowIncidentRef {
+  private incidentRef(
+    result: { sys_id?: string; number?: string },
+    fallbackSysId = "",
+  ): ServiceNowIncidentRef {
     const sysId = String(result.sys_id ?? fallbackSysId);
     return {
       id: sysId,
@@ -127,12 +149,20 @@ export class ServiceNowClient {
   }
 
   async createIncident(body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef> {
-    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>("POST", `/api/now/table/${encodeURIComponent(this.table)}`, this.incidentPayload(body));
+    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>(
+      "POST",
+      `/api/now/table/${encodeURIComponent(this.table)}`,
+      this.incidentPayload(body),
+    );
     return this.incidentRef(data.result ?? {});
   }
 
   async updateIncident(sysId: string, body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef> {
-    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>("PATCH", `/api/now/table/${encodeURIComponent(this.table)}/${encodeURIComponent(sysId)}`, this.incidentPayload(body));
+    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>(
+      "PATCH",
+      `/api/now/table/${encodeURIComponent(this.table)}/${encodeURIComponent(sysId)}`,
+      this.incidentPayload(body),
+    );
     return this.incidentRef(data.result ?? {}, sysId);
   }
 }

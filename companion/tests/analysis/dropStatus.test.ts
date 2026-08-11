@@ -16,17 +16,27 @@ describe("DropStatusStore", () => {
 
   it("returns an empty status when none exists", async () => {
     expect(await store.load("c1")).toEqual({
-      lastSweepAt: "", dropPath: "", importedCount: 0, failedCount: 0, imported: [], failed: [], pendingRawInputs: [],
+      lastSweepAt: "",
+      dropPath: "",
+      importedCount: 0,
+      failedCount: 0,
+      imported: [],
+      failed: [],
+      pendingRawInputs: [],
     });
   });
 
   it("records a sweep (imported + failed) and loads it back", async () => {
     const at = "2026-06-29T12:00:00.000Z";
-    await store.record("c1", {
-      dropPath: "/cases/c1/drop",
-      imported: ["triage/prefetch.csv", "events.json"],
-      failed: [{ relpath: "broken.bin", reason: "unrecognized file type" }],
-    }, at);
+    await store.record(
+      "c1",
+      {
+        dropPath: "/cases/c1/drop",
+        imported: ["triage/prefetch.csv", "events.json"],
+        failed: [{ relpath: "broken.bin", reason: "unrecognized file type" }],
+      },
+      at,
+    );
     const s = await store.load("c1");
     expect(s.lastSweepAt).toBe(at);
     expect(s.dropPath).toBe("/cases/c1/drop");

@@ -18,11 +18,11 @@ import { timingSafeEqual } from "./pushAuth.js";
 
 export interface SlackSignatureInput {
   signingSecret: string;
-  timestamp: string;        // the X-Slack-Request-Timestamp header
-  rawBody: string;          // the raw request body (string)
-  signature: string;        // the X-Slack-Signature header (starts with "v0=")
-  now?: () => number;       // injectable clock (seconds since epoch) for tests
-  maxAgeSeconds?: number;   // default 300 (5 min)
+  timestamp: string; // the X-Slack-Request-Timestamp header
+  rawBody: string; // the raw request body (string)
+  signature: string; // the X-Slack-Signature header (starts with "v0=")
+  now?: () => number; // injectable clock (seconds since epoch) for tests
+  maxAgeSeconds?: number; // default 300 (5 min)
 }
 
 export interface SignatureVerifyResult {
@@ -33,13 +33,15 @@ export interface SignatureVerifyResult {
 export function verifySlackSignature(input: SlackSignatureInput): SignatureVerifyResult {
   const secret = String(input.signingSecret ?? "").trim();
   if (!secret) return { ok: false, error: "no Slack signing secret configured" };
-  if (!input.signature || !input.timestamp) return { ok: false, error: "missing signature/timestamp headers" };
+  if (!input.signature || !input.timestamp)
+    return { ok: false, error: "missing signature/timestamp headers" };
 
   const now = input.now ?? (() => Math.floor(Date.now() / 1000));
   const maxAge = input.maxAgeSeconds ?? 300;
   const ts = Number.parseInt(input.timestamp, 10);
   if (!Number.isFinite(ts)) return { ok: false, error: "invalid timestamp" };
-  if (Math.abs(now() - ts) > maxAge) return { ok: false, error: "request timestamp outside the replay window" };
+  if (Math.abs(now() - ts) > maxAge)
+    return { ok: false, error: "request timestamp outside the replay window" };
 
   const base = `v0:${input.timestamp}:${input.rawBody}`;
   const expected = "v0=" + createHmac("sha256", secret).update(base).digest("hex");
@@ -49,11 +51,16 @@ export function verifySlackSignature(input: SlackSignatureInput): SignatureVerif
 
 // Teams webhook-based slash commands carry a bearer token the operator configures in the Teams
 // channel's webhook connector. Accepts both "Bearer <token>" and a bare "<token>" presentation.
-export function verifyTeamsToken(presented: string | undefined, expected: string | undefined): SignatureVerifyResult {
+export function verifyTeamsToken(
+  presented: string | undefined,
+  expected: string | undefined,
+): SignatureVerifyResult {
   const want = String(expected ?? "").trim();
   if (!want) return { ok: false, error: "no Teams token configured" };
   if (!presented) return { ok: false, error: "missing Authorization header" };
-  const presentedToken = String(presented).replace(/^Bearer\s+/i, "").trim();
+  const presentedToken = String(presented)
+    .replace(/^Bearer\s+/i, "")
+    .trim();
   if (!timingSafeEqual(presentedToken, want)) return { ok: false, error: "token mismatch" };
   return { ok: true };
 }
@@ -61,7 +68,10 @@ export function verifyTeamsToken(presented: string | undefined, expected: string
 // Telegram echoes back the `secret_token` given to setWebhook in the
 // X-Telegram-Bot-Api-Secret-Token header. Without it, anyone who learns the webhook URL can post
 // updates — so an unconfigured secret refuses the request rather than running open.
-export function verifyTelegramSecret(presented: string | undefined, expected: string | undefined): SignatureVerifyResult {
+export function verifyTelegramSecret(
+  presented: string | undefined,
+  expected: string | undefined,
+): SignatureVerifyResult {
   const want = String(expected ?? "").trim();
   if (!want) return { ok: false, error: "no Telegram webhook secret configured" };
   if (!presented) return { ok: false, error: "missing X-Telegram-Bot-Api-Secret-Token header" };
@@ -99,10 +109,15 @@ export function isAllowedResponseUrl(
   return [...DEFAULT_RESPONSE_HOSTS[platform], ...extraHosts]
     .map((h) => h.trim().toLowerCase())
     .filter(Boolean)
-    .some((allowed) => (allowed.startsWith(".") ? host === allowed.slice(1) || host.endsWith(allowed) : host === allowed));
+    .some((allowed) =>
+      allowed.startsWith(".") ? host === allowed.slice(1) || host.endsWith(allowed) : host === allowed,
+    );
 }
 
 /** Parse a comma-separated env var into a trimmed, non-empty list. */
 export function parseHostList(value: string | undefined): string[] {
-  return (value ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return (value ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }

@@ -60,16 +60,28 @@ describe("sanitizeQueryTranslations", () => {
   });
 
   it("drops an entry that is neither a query nor an explained N/A", () => {
-    expect(sanitizeQueryTranslations([raw({ query: "  ", notApplicable: false })], [...HUNT_PLATFORMS])).toHaveLength(0);
+    expect(
+      sanitizeQueryTranslations([raw({ query: "  ", notApplicable: false })], [...HUNT_PLATFORMS]),
+    ).toHaveLength(0);
     // notApplicable but no explanation → still dropped (nothing useful to show)
     expect(
-      sanitizeQueryTranslations([raw({ platform: "yara", query: "", explanation: "", notApplicable: true })], [...HUNT_PLATFORMS]),
+      sanitizeQueryTranslations(
+        [raw({ platform: "yara", query: "", explanation: "", notApplicable: true })],
+        [...HUNT_PLATFORMS],
+      ),
     ).toHaveLength(0);
   });
 
   it("keeps an explained not-applicable entry and forces notApplicable on an empty query", () => {
     const out = sanitizeQueryTranslations(
-      [raw({ platform: "yara", query: "", explanation: "YARA matches file content, not process behavior", notApplicable: true })],
+      [
+        raw({
+          platform: "yara",
+          query: "",
+          explanation: "YARA matches file content, not process behavior",
+          notApplicable: true,
+        }),
+      ],
       [...HUNT_PLATFORMS],
     );
     expect(out).toHaveLength(1);
@@ -80,7 +92,11 @@ describe("sanitizeQueryTranslations", () => {
 
   it("sorts output into canonical platform display order regardless of input order", () => {
     const out = sanitizeQueryTranslations(
-      [raw({ platform: "splunk", query: "a" }), raw({ platform: "velociraptor", query: "b" }), raw({ platform: "defender", query: "c" })],
+      [
+        raw({ platform: "splunk", query: "a" }),
+        raw({ platform: "velociraptor", query: "b" }),
+        raw({ platform: "defender", query: "c" }),
+      ],
       [...HUNT_PLATFORMS],
     );
     expect(out.map((q) => q.platform)).toEqual(["velociraptor", "defender", "splunk"]);
@@ -88,7 +104,14 @@ describe("sanitizeQueryTranslations", () => {
 
   it("clamps over-long fields", () => {
     const out = sanitizeQueryTranslations(
-      [raw({ query: "x".repeat(9000), explanation: "y".repeat(5000), caveats: "z".repeat(5000), label: "l".repeat(900) })],
+      [
+        raw({
+          query: "x".repeat(9000),
+          explanation: "y".repeat(5000),
+          caveats: "z".repeat(5000),
+          label: "l".repeat(900),
+        }),
+      ],
       [...HUNT_PLATFORMS],
     );
     expect(out[0].query.length).toBeLessThanOrEqual(4000);
@@ -111,7 +134,7 @@ describe("renderPlatformGuide", () => {
     expect(veloIdx).toBeGreaterThanOrEqual(0);
     expect(splunkIdx).toBeGreaterThan(veloIdx); // canonical order: velociraptor before splunk
     expect(guide).toContain(PLATFORM_LABELS.velociraptor);
-    expect(guide).toContain("pslist()");        // a velociraptor schema hint
+    expect(guide).toContain("pslist()"); // a velociraptor schema hint
     expect(guide).not.toContain("DeviceProcessEvents"); // defender not requested
   });
 
@@ -123,7 +146,7 @@ describe("renderPlatformGuide", () => {
 
 describe("renderCaseDataSources", () => {
   const stateWith = (timeline: Array<{ sources?: string[] }>): InvestigationState =>
-    ({ forensicTimeline: timeline } as unknown as InvestigationState);
+    ({ forensicTimeline: timeline }) as unknown as InvestigationState;
 
   it("lists distinct tool sources from the timeline", () => {
     const text = renderCaseDataSources(
@@ -154,7 +177,16 @@ describe("queryTranslationResponseSchema (lenient parsing)", () => {
   it("parses a well-formed response", () => {
     const parsed = queryTranslationResponseSchema.parse({
       interpretation: "find x",
-      queries: [{ platform: "velociraptor", label: "L", query: "SELECT 1", explanation: "e", caveats: "c", notApplicable: false }],
+      queries: [
+        {
+          platform: "velociraptor",
+          label: "L",
+          query: "SELECT 1",
+          explanation: "e",
+          caveats: "c",
+          notApplicable: false,
+        },
+      ],
     });
     expect(parsed.queries).toHaveLength(1);
     expect(parsed.interpretation).toBe("find x");

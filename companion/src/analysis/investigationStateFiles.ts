@@ -4,31 +4,29 @@
 // export ids, in-flight hunts, forensic-gate display preference). Used by BackupManager to decide
 // which files to snapshot before synthesis/import so a bad run can be rolled back.
 export const SNAPSHOT_STATE_FILES = [
-  "investigation.json",     // legacy pre-SQLite core; retained in snapshots while a case still has one
-  "false-positive.json",    // analyst false-positive / known-good markers
-  "scope.json",             // analyst investigation time-window
-  "comments.json",          // investigator comments on entities
-  "tags.json",              // analyst triage labels
-  "notebook.json",          // analyst notebook (hypotheses, notes)
-  "hypotheses.json",        // #140 status-tracked investigative hypotheses (analyst + auto-generated) — investigation data
-  "report-meta.json",       // human-authored report sections (title page, distribution, BIA, glossary…)
-  "playbook.json",          // response playbook (tracked checklist)
-  "playbook-control.json",  // per-case IR-templates toggle
-  "asset-overrides.json",   // analyst edits to the asset ↔ IoC graph (graph state)
-  "customer.json",          // customer-exposure targets (victim org domains/emails the analyst entered)
+  "investigation.json", // legacy pre-SQLite core; retained in snapshots while a case still has one
+  "false-positive.json", // analyst false-positive / known-good markers
+  "scope.json", // analyst investigation time-window
+  "comments.json", // investigator comments on entities
+  "tags.json", // analyst triage labels
+  "notebook.json", // analyst notebook (hypotheses, notes)
+  "hypotheses.json", // #140 status-tracked investigative hypotheses (analyst + auto-generated) — investigation data
+  "report-meta.json", // human-authored report sections (title page, distribution, BIA, glossary…)
+  "playbook.json", // response playbook (tracked checklist)
+  "playbook-control.json", // per-case IR-templates toggle
+  "asset-overrides.json", // analyst edits to the asset ↔ IoC graph (graph state)
+  "customer.json", // customer-exposure targets (victim org domains/emails the analyst entered)
   "customer-exposure.json", // exposure summary (already password-stripped at write time)
-  "synth-meta.json",        // when synthesis last ran + findings diff (investigation history)
-  "import-meta.json",       // when the last import ran + timeline/IOC diff (investigation history)
-  "hunt-outcomes.json",     // #157 per-case hunting profile (what was hunted, what hit/missed) — investigation data
+  "synth-meta.json", // when synthesis last ran + findings diff (investigation history)
+  "import-meta.json", // when the last import ran + timeline/IOC diff (investigation history)
+  "hunt-outcomes.json", // #157 per-case hunting profile (what was hunted, what hit/missed) — investigation data
   "hunt-run-snapshots.json", // #80 per-fingerprint latest run snapshot, so a hunt re-run diff stays in sync with hunt-outcomes.json across an undo
-  "saved-hunts.json",       // #376 typed hunt templates and their execution history
-  "dwell-windows.json",     // analyst-defined attacker-presence windows (label/start/end) — investigation data
-  "pinned-findings.json",   // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
-  "cockpit.json",           // #375 per-investigator review timestamps + audited cockpit decisions
+  "saved-hunts.json", // #376 typed hunt templates and their execution history
+  "dwell-windows.json", // analyst-defined attacker-presence windows (label/start/end) — investigation data
+  "pinned-findings.json", // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
+  "cockpit.json", // #375 per-investigator review timestamps + audited cockpit decisions
 ] as const;
 
 // Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A
 // multi-gigabyte SQLite case must never be turned into one V8 string merely to make a backup.
-export const SNAPSHOT_BINARY_STATE_FILES = [
-  "investigation.sqlite",
-] as const;
+export const SNAPSHOT_BINARY_STATE_FILES = ["investigation.sqlite"] as const;

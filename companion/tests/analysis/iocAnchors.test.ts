@@ -1,17 +1,33 @@
 import { describe, it, expect } from "vitest";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
-import { rankConnectiveIocs, buildConnectiveIocDigest, looksSuspiciousDomain, isKnownHostAsset, shortHost } from "../../src/analysis/iocAnchors.js";
+import {
+  rankConnectiveIocs,
+  buildConnectiveIocDigest,
+  looksSuspiciousDomain,
+  isKnownHostAsset,
+  shortHost,
+} from "../../src/analysis/iocAnchors.js";
 
 function ev(id: string, asset: string, sources: string[], description: string): ForensicEvent {
-  return { id, timestamp: "2024-03-18T15:00:00Z", description, severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset, sources };
+  return {
+    id,
+    timestamp: "2024-03-18T15:00:00Z",
+    description,
+    severity: "Medium",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset,
+    sources,
+  };
 }
 
 function caseState(): ReturnType<typeof emptyState> {
   const s = emptyState("veridia");
   s.iocs.push(
     { id: "i1", type: "domain", value: "northlakeportal.com", firstSeen: "" }, // C2 — touches 2 hosts, 3 tools
-    { id: "i2", type: "ip", value: "10.10.20.20", firstSeen: "" },             // internal, 1 host / 1 tool
-    { id: "i3", type: "domain", value: "lookup-hopn4hi4.tk", firstSeen: "" },  // 1 host but risky TLD
+    { id: "i2", type: "ip", value: "10.10.20.20", firstSeen: "" }, // internal, 1 host / 1 tool
+    { id: "i3", type: "domain", value: "lookup-hopn4hi4.tk", firstSeen: "" }, // 1 host but risky TLD
   );
   s.forensicTimeline.push(
     ev("e1", "WS-DEV-01", ["Zeek", "ECAR"], "C2 tool download from northlakeportal.com (wdi-svc.exe)"),
@@ -24,11 +40,11 @@ function caseState(): ReturnType<typeof emptyState> {
 
 describe("looksSuspiciousDomain — offline reputation heuristic (#200)", () => {
   it("flags risky TLDs and DGA-ish labels, not clean domains", () => {
-    expect(looksSuspiciousDomain("lookup-hopn4hi4.tk")).toBe(true);  // risky TLD
+    expect(looksSuspiciousDomain("lookup-hopn4hi4.tk")).toBe(true); // risky TLD
     expect(looksSuspiciousDomain("kx7zqplmv.example.com")).toBe(true); // DGA-ish subdomain label
     expect(looksSuspiciousDomain("northlakeportal.com")).toBe(false);
     expect(looksSuspiciousDomain("google.com")).toBe(false);
-    expect(looksSuspiciousDomain("10.10.20.20")).toBe(false);        // not a domain
+    expect(looksSuspiciousDomain("10.10.20.20")).toBe(false); // not a domain
   });
 });
 
@@ -78,8 +94,13 @@ describe("rankConnectiveIocs — internal-infra conflict dampener", () => {
     const s = emptyState("c");
     // db-01 is the case's OWN shared internal server (widely touched — many hosts/accounts), and a
     // (possibly stale) threat-intel provider has marked it malicious.
-    s.iocs.push({ id: "i1", type: "domain", value: "db-01.northpeaklabs.com", firstSeen: "",
-      enrichments: [{ source: "OpenCTI", verdict: "suspicious", score: "", fetchedAt: "" }] });
+    s.iocs.push({
+      id: "i1",
+      type: "domain",
+      value: "db-01.northpeaklabs.com",
+      firstSeen: "",
+      enrichments: [{ source: "OpenCTI", verdict: "suspicious", score: "", fetchedAt: "" }],
+    });
     s.forensicTimeline.push(
       ev("e1", "db-01.northpeaklabs.com", ["SIEM"], "connection from grace.kim to db-01.northpeaklabs.com"),
       ev("e2", "db-01.northpeaklabs.com", ["SIEM"], "connection from priya.raman to db-01.northpeaklabs.com"),
@@ -103,8 +124,13 @@ describe("rankConnectiveIocs — internal-infra conflict dampener", () => {
 
   it("does NOT flag a genuine external indicator that happens to be malicious", () => {
     const s = emptyState("c");
-    s.iocs.push({ id: "i1", type: "domain", value: "evil-c2.tld", firstSeen: "",
-      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "60/73", fetchedAt: "" }] });
+    s.iocs.push({
+      id: "i1",
+      type: "domain",
+      value: "evil-c2.tld",
+      firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "60/73", fetchedAt: "" }],
+    });
     s.forensicTimeline.push(
       ev("e1", "WS-01", ["Zeek"], "beacon to evil-c2.tld"),
       ev("e2", "WS-02", ["ECAR"], "beacon to evil-c2.tld"),

@@ -1,4 +1,12 @@
-import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
+import {
+  RateLimitError,
+  parseRetryAfterMs,
+  type EnrichmentProvider,
+  type EnrichmentResult,
+  type FetchFn,
+  type IocKind,
+  type Verdict,
+} from "./provider.js";
 
 // CIRCL hashlookup (https://www.circl.lu/services/hashlookup/) — a large, free, keyless
 // KNOWN-FILE database (NSRL-derived corpus + Linux distro packages + more). For DFIR this is
@@ -12,7 +20,7 @@ import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type Enrich
 // opt-in per case (default OFF) like the other keyless external providers. Injectable fetchFn
 // so tests never hit the network; base URL overridable for a self-hosted / air-gapped mirror.
 export interface HashlookupOptions {
-  baseUrl?: string;        // default https://hashlookup.circl.lu
+  baseUrl?: string; // default https://hashlookup.circl.lu
   fetchFn?: FetchFn;
   timeoutMs?: number;
   trustThreshold?: number; // hashlookup:trust >= this → harmless (default 50, the documented split)
@@ -57,7 +65,9 @@ export class HashlookupProvider implements EnrichmentProvider {
     this.trustThreshold = opts.trustThreshold ?? DEFAULT_TRUST_THRESHOLD;
   }
 
-  supports(kind: IocKind): boolean { return kind === "hash"; }
+  supports(kind: IocKind): boolean {
+    return kind === "hash";
+  }
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "hash") return null;
@@ -72,29 +82,36 @@ export class HashlookupProvider implements EnrichmentProvider {
     });
     // Unknown hash (404) or malformed (400) → a clean miss, cached as "checked, nothing".
     if (res.status === 404 || res.status === 400) return null;
-    if (res.status === 429) throw new RateLimitError("Hashlookup rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
+    if (res.status === 429)
+      throw new RateLimitError("Hashlookup rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`Hashlookup HTTP ${res.status}`);
 
     const json = (await res.json()) as Record<string, unknown>;
     if (!json || typeof json !== "object" || Array.isArray(json)) return null;
 
     const fileName = typeof json.FileName === "string" ? json.FileName.trim() : "";
-    const source = typeof json.source === "string" ? json.source.trim()
-      : typeof json.db === "string" ? json.db.trim() : "";
+    const source =
+      typeof json.source === "string"
+        ? json.source.trim()
+        : typeof json.db === "string"
+          ? json.db.trim()
+          : "";
     const trustRaw = json["hashlookup:trust"];
     const trust = typeof trustRaw === "number" ? trustRaw : Number(trustRaw);
     const hasTrust = Number.isFinite(trust);
 
     let verdict: Verdict;
     if (isKnownMalicious(json.KnownMalicious)) verdict = "malicious";
-    else if (hasTrust && trust >= this.trustThreshold) verdict = "harmless";   // known good
-    else verdict = "unknown";                                                  // known file, legitimacy not asserted
+    else if (hasTrust && trust >= this.trustThreshold)
+      verdict = "harmless"; // known good
+    else verdict = "unknown"; // known file, legitimacy not asserted
 
     const tags: string[] = [];
     if (source) tags.push(source);
     if (hasTrust) tags.push(`trust ${trust}`);
 
-    const score = (verdict === "malicious" ? "known malicious" : "known file") + (fileName ? `: ${fileName}` : "");
+    const score =
+      (verdict === "malicious" ? "known malicious" : "known file") + (fileName ? `: ${fileName}` : "");
 
     return { source: this.name, verdict, score, tags, link: url };
   }

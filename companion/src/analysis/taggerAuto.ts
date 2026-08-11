@@ -33,7 +33,11 @@ export interface AutoTagDeps {
  * Tag the just-imported events. `added` is the set newly appended to the super-timeline. Safe to call
  * from any import site; never throws.
  */
-export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added: readonly ForensicEvent[]): Promise<void> {
+export async function autoTagNewEvents(
+  deps: AutoTagDeps,
+  caseId: string,
+  added: readonly ForensicEvent[],
+): Promise<void> {
   const { taggerStore, tagsStore, stateStore } = deps;
   if (!taggerStore || !tagsStore || !added.length) return;
   const settings = readTaggerSettings();
@@ -56,17 +60,25 @@ export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added:
       mutateForensic,
     });
     const byId = new Map(applied.forensicTimeline.map((event) => [event.id, event]));
-    const promoted = added.filter((event) => event.severity === "Info" && byId.get(event.id)?.severity !== "Info").length;
+    const promoted = added.filter(
+      (event) => event.severity === "Info" && byId.get(event.id)?.severity !== "Info",
+    ).length;
     if (promoted > 0) await deps.operationalMetrics?.record({ type: "import_promotion", promoted });
 
     if (state && applied.mutatedCount > 0) {
-      const next: InvestigationState = { ...state, forensicTimeline: applied.forensicTimeline, updatedAt: new Date().toISOString() };
+      const next: InvestigationState = {
+        ...state,
+        forensicTimeline: applied.forensicTimeline,
+        updatedAt: new Date().toISOString(),
+      };
       await stateStore!.save(next);
       deps.onState?.(next);
     }
     if (applied.tagsWritten > 0) deps.onTags?.(caseId);
     if (applied.result.totalMatched > 0) {
-      deps.logLine?.(`[tagger] ${caseId} auto-tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${applied.mutatedCount} severity/MITRE update(s)`);
+      deps.logLine?.(
+        `[tagger] ${caseId} auto-tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${applied.mutatedCount} severity/MITRE update(s)`,
+      );
     }
     await deps.analysisRunStore?.record(caseId, {
       kind: "deterministic",
@@ -88,10 +100,12 @@ export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added:
       },
       output: {
         entityIds: applied.result.perEvent.map((event) => event.eventId),
-        hashes: [{
-          id: "tagger-result",
-          sha256: hashManifestValue(applied.result),
-        }],
+        hashes: [
+          {
+            id: "tagger-result",
+            sha256: hashManifestValue(applied.result),
+          },
+        ],
         claims: [],
       },
     });

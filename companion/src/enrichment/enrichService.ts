@@ -3,7 +3,13 @@
 // the normalized results to the IOC. Pure-ish and testable — sleep + now are injectable.
 
 import type { IOC, IocEnrichment } from "../analysis/stateTypes.js";
-import { iocKind, withRateLimitRetry, type EnrichmentProvider, type IocKind, type RetryPolicy } from "./provider.js";
+import {
+  iocKind,
+  withRateLimitRetry,
+  type EnrichmentProvider,
+  type IocKind,
+  type RetryPolicy,
+} from "./provider.js";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
 
@@ -11,34 +17,34 @@ import type { ProviderHealthCache } from "./providerHealth.js";
 // API was hit, for which indicator, and how it resolved (hit / miss / error). Lets the
 // server print a `[enrich]` audit line per call without the pure service touching console.
 export interface EnrichLookupEvent {
-  provider: string;          // provider name (e.g. "MISP", "YETI")
-  kind: IocKind;             // the looked-up IOC kind
-  value: string;             // the indicator value
-  outcome: "hit" | "miss" | "error" | "skipped";  // "skipped" = provider was probed down, no request sent
-  detail?: string;           // verdict on a hit, or the error/unreachable message
-  ms: number;                // call duration in milliseconds
+  provider: string; // provider name (e.g. "MISP", "YETI")
+  kind: IocKind; // the looked-up IOC kind
+  value: string; // the indicator value
+  outcome: "hit" | "miss" | "error" | "skipped"; // "skipped" = provider was probed down, no request sent
+  detail?: string; // verdict on a hit, or the error/unreachable message
+  ms: number; // call duration in milliseconds
 }
 
 export interface EnrichOptions {
   providers: EnrichmentProvider[];
-  delayMs?: number;                       // throttle between external lookups (default 1500)
-  perProviderDelayMs?: Record<string, number>;  // per-provider throttle; overrides delayMs for named providers
+  delayMs?: number; // throttle between external lookups (default 1500)
+  perProviderDelayMs?: Record<string, number>; // per-provider throttle; overrides delayMs for named providers
   // ± random jitter added to every inter-call wait (default 0 = none), so aligned/parallel runs
   // against the same provider don't all land on the same rate-limit window. E.g. jitterMs: 300
   // on a 1500ms delay waits somewhere in [1200, 1800].
   jitterMs?: number;
-  random?: () => number;                  // injected jitter source (default Math.random), returns [0, 1)
+  random?: () => number; // injected jitter source (default Math.random), returns [0, 1)
   // Retry policy for a provider call that throws RateLimitError (HTTP 429): retried with
   // exponential backoff honouring the server's Retry-After when it sent one, instead of
   // aborting the lookup on the first rate-limit hit. Other errors are not retried here.
   retry?: RetryPolicy;
-  maxIocs?: number;                       // cap IOCs queried per run (default 100)
-  force?: boolean;                        // re-query IOCs already enriched
-  now?: () => string;                     // injected timestamp
-  sleep?: (ms: number) => Promise<void>;  // injected delay (tests pass a no-op)
-  monotonic?: () => number;               // injected ms clock for call timing (default Date.now)
+  maxIocs?: number; // cap IOCs queried per run (default 100)
+  force?: boolean; // re-query IOCs already enriched
+  now?: () => string; // injected timestamp
+  sleep?: (ms: number) => Promise<void>; // injected delay (tests pass a no-op)
+  monotonic?: () => number; // injected ms clock for call timing (default Date.now)
   onProgress?: (done: number, total: number) => void;
-  onLookup?: (event: EnrichLookupEvent) => void;   // fired per provider call (for logging)
+  onLookup?: (event: EnrichLookupEvent) => void; // fired per provider call (for logging)
   // External cancellation (#225). Checked between IOCs so a long throttled run (up to maxIocs ×
   // delayMs) can be stopped by the analyst; already-enriched IOCs from this run are still returned
   // (enrichment is additive, so a partial result is safe to persist).
@@ -54,12 +60,12 @@ function errorMessage(err: unknown): string {
 }
 
 export interface EnrichSummary {
-  enrichable: number;     // IOCs that have an enrichable kind
-  queried: number;        // IOCs actually looked up this run (≥1 real provider call)
-  withHits: number;       // IOCs that got ≥1 non-empty result
-  skipped: number;        // already-enriched (cached) or beyond the cap
-  errors: number;         // provider call failures
-  unavailable: string[];  // providers probed DOWN and skipped this run (no requests sent)
+  enrichable: number; // IOCs that have an enrichable kind
+  queried: number; // IOCs actually looked up this run (≥1 real provider call)
+  withHits: number; // IOCs that got ≥1 non-empty result
+  skipped: number; // already-enriched (cached) or beyond the cap
+  errors: number; // provider call failures
+  unavailable: string[]; // providers probed DOWN and skipped this run (no requests sent)
 }
 
 // Most-valuable kinds first so the per-run cap spends lookups where they matter.
@@ -72,7 +78,7 @@ const KIND_PRIORITY: Record<IocKind, number> = { hash: 0, ip: 1, process: 2, dom
 function needsEnrichment(ioc: IOC, providers: readonly EnrichmentProvider[]): boolean {
   const kind = iocKind(ioc.type);
   if (!kind) return false;
-  if (isInternalTarget(ioc.value, ioc.type)) return false;  // SSRF guard
+  if (isInternalTarget(ioc.value, ioc.type)) return false; // SSRF guard
   const checked = new Set(ioc.enrichedBy ?? []);
   return providers.some((p) => p.supports(kind) && !checked.has(p.name));
 }
@@ -141,14 +147,14 @@ export async function enrichIocs(
 
   // Map of IOC index → { enrichments, enrichedBy }, so we can rebuild the list immutably.
   const updates = new Map<number, { enrichments: IocEnrichment[]; enrichedBy: string[] }>();
-  const lastCallAt = new Map<string, number>();   // provider name → monotonic timestamp of last call start
-  const downReported = new Set<string>();          // providers we've already logged as unreachable this run
+  const lastCallAt = new Map<string, number>(); // provider name → monotonic timestamp of last call start
+  const downReported = new Set<string>(); // providers we've already logged as unreachable this run
 
   for (const { ioc, idx, kind, todo } of toQuery) {
-    if (opts.signal?.aborted) break;   // #225: analyst cancelled — stop before the next IOC, keep what's done
-    const succeeded = new Set<string>();   // providers whose call returned (hit OR miss) — NOT errors
+    if (opts.signal?.aborted) break; // #225: analyst cancelled — stop before the next IOC, keep what's done
+    const succeeded = new Set<string>(); // providers whose call returned (hit OR miss) — NOT errors
     const fresh: IocEnrichment[] = [];
-    let queriedThisIoc = false;            // a real provider call was made for this IOC
+    let queriedThisIoc = false; // a real provider call was made for this IOC
     for (const provider of todo) {
       // Reachability gate (cached ~60s): skip a provider probed DOWN before spending a call.
       // It's NOT counted as an error and NOT added to enrichedBy, so a later run retries it
@@ -159,7 +165,14 @@ export async function enrichIocs(
           if (!downReported.has(provider.name)) {
             downReported.add(provider.name);
             summary.unavailable.push(provider.name);
-            opts.onLookup?.({ provider: provider.name, kind, value: ioc.value, outcome: "skipped", detail: h.detail, ms: 0 });
+            opts.onLookup?.({
+              provider: provider.name,
+              kind,
+              value: ioc.value,
+              outcome: "skipped",
+              detail: h.detail,
+              ms: 0,
+            });
           }
           continue;
         }
@@ -179,7 +192,11 @@ export async function enrichIocs(
       try {
         // A single 429 doesn't abort the lookup: retry with backoff (honouring Retry-After)
         // before giving up and counting it as an error.
-        const r = await withRateLimitRetry(() => provider.lookup(kind, ioc.value), { ...opts.retry, sleep, random });
+        const r = await withRateLimitRetry(() => provider.lookup(kind, ioc.value), {
+          ...opts.retry,
+          sleep,
+          random,
+        });
         // A provider may return a single result, several (a fan-out source like Hunting.ch),
         // or null/[] for a miss. When a result's displayed `source` differs from the provider
         // (a fan-out emits sub-sources like "MalwareBazaar"), stamp the OWNING provider so
@@ -191,19 +208,27 @@ export async function enrichIocs(
         }
         succeeded.add(provider.name);
         opts.onLookup?.({
-          provider: provider.name, kind, value: ioc.value,
+          provider: provider.name,
+          kind,
+          value: ioc.value,
           outcome: list.length ? "hit" : "miss",
           // verdict per result; prefix the sub-source only when a fan-out makes it differ from the provider.
           detail: list.length
-            ? list.map((x) => (x.source && x.source !== provider.name ? `${x.source}:${x.verdict}` : x.verdict)).join(", ")
+            ? list
+                .map((x) => (x.source && x.source !== provider.name ? `${x.source}:${x.verdict}` : x.verdict))
+                .join(", ")
             : undefined,
           ms: monotonic() - startedAt,
         });
       } catch (err) {
         summary.errors += 1;
         opts.onLookup?.({
-          provider: provider.name, kind, value: ioc.value,
-          outcome: "error", detail: errorMessage(err), ms: monotonic() - startedAt,
+          provider: provider.name,
+          kind,
+          value: ioc.value,
+          outcome: "error",
+          detail: errorMessage(err),
+          ms: monotonic() - startedAt,
         });
       }
     }
@@ -217,7 +242,7 @@ export async function enrichIocs(
     // `enrichedBy`, so a later run retries it — a transient outage (or a since-fixed URL)
     // never gets cached as "checked". If nothing succeeded and the IOC was never enriched,
     // leave it untouched (don't mark it "checked, no intel" when it actually errored).
-    if (succeeded.size === 0 && (ioc.enrichments === undefined)) continue;
+    if (succeeded.size === 0 && ioc.enrichments === undefined) continue;
     // Keep existing hits from providers we did NOT successfully re-run (errored providers
     // retain their last-known result); successful providers are superseded by `fresh`. Match on
     // the owning `provider` (falling back to `source` for older single-source enrichments) so a

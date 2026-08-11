@@ -80,7 +80,8 @@ export const CONTRADICTION_RULES: readonly ContradictionRule[] = [
 // confirmation word, so "No data exfiltration has been confirmed" trips it but "not only X but Y" and a
 // neutral answer do not. An empty answer is NOT an absence assertion ("we don't know" ≠ "it didn't
 // happen") — the caller also gates on a non-empty answer.
-const NEGATION_RE = /\b(no|not|never|none|without|nothing|didn'?t|wasn'?t|weren'?t|isn'?t|aren'?t|un(?:confirmed|observed|detected))\b/i;
+const NEGATION_RE =
+  /\b(no|not|never|none|without|nothing|didn'?t|wasn'?t|weren'?t|isn'?t|aren'?t|un(?:confirmed|observed|detected))\b/i;
 const ABSENCE_CONTEXT_RE =
   /\b(evidence|confirmed?|observ\w*|found|detect\w*|identif\w*|occurr\w*|present|indication|sign|signs|activity|seen|no such|took place|happen\w*)\b/i;
 
@@ -135,7 +136,7 @@ export function flagContradictedAnswers(
   events: readonly ForensicEvent[],
 ): InvestigationQuestion[] {
   return (questions ?? []).map((q) => {
-    const { contradicted: _prev, ...clean } = q;   // recompute from scratch each pass
+    const { contradicted: _prev, ...clean } = q; // recompute from scratch each pass
     if (!assertsAbsence(clean.answer)) return clean;
     const rule = CONTRADICTION_RULES.find((r) => matchesRule(clean, r));
     if (!rule) return clean;
@@ -147,7 +148,8 @@ export function flagContradictedAnswers(
       status: "partial" as const,
       pointer:
         `Timeline contains ${techniques.join(", ")} events${cite} that contradict this negative answer — ` +
-        `review before concluding.` + (clean.pointer ? ` (was: ${clean.pointer})` : ""),
+        `review before concluding.` +
+        (clean.pointer ? ` (was: ${clean.pointer})` : ""),
       contradicted: { techniques, eventIds },
     };
   });

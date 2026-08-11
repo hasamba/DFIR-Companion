@@ -8,7 +8,10 @@ function spec() {
   return r.spec;
 }
 const csvCtx = (headers: string[], filename = "x.csv"): EngineDetectContext => ({
-  filename, text: "", root: undefined, sample: null,
+  filename,
+  text: "",
+  root: undefined,
+  sample: null,
   csvHeaders: new Set(headers.map((h) => h.toLowerCase())),
 });
 
@@ -23,7 +26,15 @@ describe("declarativeImporter detect", () => {
   });
   it("rejects a JSON sample when the spec wants CSV", () => {
     const imp = buildImporter(spec());
-    expect(imp.detect({ filename: "x.json", text: "", root: {}, sample: { Timestamp: "t", DeviceName: "d" }, csvHeaders: null })).toBe(false);
+    expect(
+      imp.detect({
+        filename: "x.json",
+        text: "",
+        root: {},
+        sample: { Timestamp: "t", DeviceName: "d" },
+        csvHeaders: null,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -38,7 +49,7 @@ describe("declarativeImporter parse", () => {
     const imp = buildImporter(spec());
     const r = imp.parse(MDE_CSV);
     expect(r.total).toBe(2);
-    expect(r.events).toHaveLength(1);            // both rows aggregate (same severity|description)
+    expect(r.events).toHaveLength(1); // both rows aggregate (same severity|description)
     const e = r.events[0];
     expect(e.count).toBe(2);
     expect(e.severity).toBe("High");
@@ -48,10 +59,12 @@ describe("declarativeImporter parse", () => {
     expect(e.description).toContain("CORP\\jdoe");
     expect(e.mitreTechniques).toContain("T1059.001");
     expect(e.sha256).toBe("abc123");
-    expect(r.iocs).toEqual(expect.arrayContaining([
-      { type: "hash", value: "abc123" },
-      { type: "ip", value: "9.9.9.9" },
-    ]));
+    expect(r.iocs).toEqual(
+      expect.arrayContaining([
+        { type: "hash", value: "abc123" },
+        { type: "ip", value: "9.9.9.9" },
+      ]),
+    );
   });
 
   it("applies a severity map with default", () => {
@@ -86,7 +99,9 @@ describe("declarativeImporter — user regex is ReDoS-vetted (#249)", () => {
   });
 
   it("rejects a catastrophic keyEquals pattern, naming the key", () => {
-    const r = parseImporterSpec(withMatch({ requireHeaders: ["Timestamp"], keyEquals: { ActionType: "(a|a)+$" } }));
+    const r = parseImporterSpec(
+      withMatch({ requireHeaders: ["Timestamp"], keyEquals: { ActionType: "(a|a)+$" } }),
+    );
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.errors).toContainEqual(expect.objectContaining({ path: "match.keyEquals.ActionType" }));
@@ -100,8 +115,19 @@ describe("declarativeImporter — user regex is ReDoS-vetted (#249)", () => {
     // Skipping an uncompilable filename test would widen the importer instead of narrowing it:
     // filenamePattern is the only discriminator here, so every other check passes and the importer
     // would claim every upload.
-    const imp = buildImporter({ ...spec(), match: { format: "auto", priority: 50, filenamePattern: "((a+))+$" } } as never);
+    const imp = buildImporter({
+      ...spec(),
+      match: { format: "auto", priority: 50, filenamePattern: "((a+))+$" },
+    } as never);
     expect(imp.detect(csvCtx(["Timestamp", "DeviceName"], "anything.csv"))).toBe(false);
-    expect(imp.detect({ filename: "a".repeat(64) + ".csv", text: "", root: {}, sample: { x: 1 }, csvHeaders: null })).toBe(false);
+    expect(
+      imp.detect({
+        filename: "a".repeat(64) + ".csv",
+        text: "",
+        root: {},
+        sample: { x: 1 },
+        csvHeaders: null,
+      }),
+    ).toBe(false);
   });
 });

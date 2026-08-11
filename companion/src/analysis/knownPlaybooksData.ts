@@ -87,9 +87,7 @@ export function loadKnownPlaybooks(): KnownPlaybooksDataset {
   }
   if (!warned) {
     warned = true;
-    console.warn(
-      "[playbook-match] known-playbooks.json not found or invalid — playbook matching disabled.",
-    );
+    console.warn("[playbook-match] known-playbooks.json not found or invalid — playbook matching disabled.");
   }
   cached = EMPTY;
   return cached;

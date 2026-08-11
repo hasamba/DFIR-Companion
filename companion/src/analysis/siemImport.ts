@@ -62,7 +62,7 @@ export interface SiemEvent {
   processName?: string;
   parentName?: string;
   pid?: number;
-  commandLine?: string;   // process-creation command line, forwarded to ForensicEvent for chainSignature (#68)
+  commandLine?: string; // process-creation command line, forwarded to ForensicEvent for chainSignature (#68)
   srcIp?: string;
   dstIp?: string;
   port?: number;
@@ -91,12 +91,12 @@ export interface SiemIoc {
 export interface SiemParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;     // records found in the container
-  kept: number;      // events emitted (after aggregation + cap)
-  dropped: number;   // records not represented (below floor / capped / unparseable)
-  groups: number;    // distinct event groups before the cap
-  format: string;    // detected container shape (elastic-data / elastic-hits / ndjson / array / events:<key> / single)
-  hostname: string;  // best-effort dominant host
+  total: number; // records found in the container
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // records not represented (below floor / capped / unparseable)
+  groups: number; // distinct event groups before the cap
+  format: string; // detected container shape (elastic-data / elastic-hits / ndjson / array / events:<key> / single)
+  hostname: string; // best-effort dominant host
 }
 
 type Row = Record<string, unknown>;
@@ -124,7 +124,7 @@ export function oneLine(s: string): string {
   return s.replace(/\s*[\r\n]+\s*/g, " ").trim();
 }
 export function baseName(p: string): string {
-  return (p.trim().split(/[\\/]/).pop() || p.trim());
+  return p.trim().split(/[\\/]/).pop() || p.trim();
 }
 // Case-insensitive single-key lookup.
 export function getCI(row: Row, key: string): unknown {
@@ -161,7 +161,21 @@ function unwrapSource(el: unknown): Row | null {
   return isObject(src) ? src : el;
 }
 
-const RECORD_ARRAY_KEYS = ["events", "Events", "records", "Records", "results", "Results", "logs", "Logs", "rows", "items", "alerts", "Alerts", "value"];
+const RECORD_ARRAY_KEYS = [
+  "events",
+  "Events",
+  "records",
+  "Records",
+  "results",
+  "Results",
+  "logs",
+  "Logs",
+  "rows",
+  "items",
+  "alerts",
+  "Alerts",
+  "value",
+];
 
 // Parse the file and extract the flat array of event records + a label for the shape.
 // Parse a stream of CONCATENATED top-level JSON values (objects/arrays), tolerating pretty-
@@ -173,7 +187,10 @@ const RECORD_ARRAY_KEYS = ["events", "Events", "records", "Records", "results", 
 // Pure; malformed chunks are skipped rather than throwing.
 export function parseConcatenatedJson(text: string): unknown[] {
   const out: unknown[] = [];
-  let depth = 0, start = -1, inStr = false, esc = false;
+  let depth = 0,
+    start = -1,
+    inStr = false,
+    esc = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (inStr) {
@@ -182,11 +199,20 @@ export function parseConcatenatedJson(text: string): unknown[] {
       else if (ch === '"') inStr = false;
       continue;
     }
-    if (ch === '"') { inStr = true; continue; }
-    if (ch === "{" || ch === "[") { if (depth === 0) start = i; depth++; }
-    else if (ch === "}" || ch === "]") {
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" || ch === "]") {
       if (depth > 0 && --depth === 0 && start !== -1) {
-        try { out.push(JSON.parse(text.slice(start, i + 1))); } catch { /* skip malformed chunk */ }
+        try {
+          out.push(JSON.parse(text.slice(start, i + 1)));
+        } catch {
+          /* skip malformed chunk */
+        }
         start = -1;
       }
     }
@@ -201,7 +227,12 @@ export function extractRecords(text: string): { records: Row[]; format: string }
   // First try the whole thing as one JSON value.
   let root: unknown;
   let parsed = false;
-  try { root = JSON.parse(trimmed); parsed = true; } catch { /* fall through to NDJSON */ }
+  try {
+    root = JSON.parse(trimmed);
+    parsed = true;
+  } catch {
+    /* fall through to NDJSON */
+  }
 
   if (parsed) {
     if (Array.isArray(root)) {
@@ -211,18 +242,27 @@ export function extractRecords(text: string): { records: Row[]; format: string }
       // Elastic/Kibana table export: { data: [ { _source } ] }
       const data = getCI(root, "data");
       if (Array.isArray(data)) {
-        return { records: data.map(unwrapSource).filter((r): r is Row => r !== null), format: "elastic-data" };
+        return {
+          records: data.map(unwrapSource).filter((r): r is Row => r !== null),
+          format: "elastic-data",
+        };
       }
       // Elasticsearch search response: { hits: { hits: [ { _source } ] } }
       const hits = getPath(root, "hits.hits");
       if (Array.isArray(hits)) {
-        return { records: hits.map(unwrapSource).filter((r): r is Row => r !== null), format: "elastic-hits" };
+        return {
+          records: hits.map(unwrapSource).filter((r): r is Row => r !== null),
+          format: "elastic-hits",
+        };
       }
       // { events: [...] } / { records: [...] } / { results: [...] } …
       for (const key of RECORD_ARRAY_KEYS) {
         const arr = getCI(root, key);
         if (Array.isArray(arr)) {
-          return { records: arr.map(unwrapSource).filter((r): r is Row => r !== null), format: `events:${key}` };
+          return {
+            records: arr.map(unwrapSource).filter((r): r is Row => r !== null),
+            format: `events:${key}`,
+          };
         }
       }
       // A single event object.
@@ -239,7 +279,11 @@ export function extractRecords(text: string): { records: Row[]; format: string }
     const l = line.trim();
     if (!l) continue;
     let obj: unknown;
-    try { obj = JSON.parse(l); } catch { continue; }
+    try {
+      obj = JSON.parse(l);
+    } catch {
+      continue;
+    }
     const rec = unwrapSource(obj);
     if (rec && Object.keys(rec).length > 0) records.push(rec);
   }
@@ -249,8 +293,15 @@ export function extractRecords(text: string): { records: Row[]; format: string }
   // multi-line objects, no array, no commas). NDJSON's per-line parse can't see these.
   const concat: Row[] = [];
   for (const v of parseConcatenatedJson(trimmed)) {
-    if (Array.isArray(v)) { for (const e of v) { const r = unwrapSource(e); if (r && Object.keys(r).length > 0) concat.push(r); } }
-    else { const r = unwrapSource(v); if (r && Object.keys(r).length > 0) concat.push(r); }
+    if (Array.isArray(v)) {
+      for (const e of v) {
+        const r = unwrapSource(e);
+        if (r && Object.keys(r).length > 0) concat.push(r);
+      }
+    } else {
+      const r = unwrapSource(v);
+      if (r && Object.keys(r).length > 0) concat.push(r);
+    }
   }
   if (concat.length > 0) return { records: concat, format: "concatenated-json" };
   return { records: [], format: "ndjson" };
@@ -355,11 +406,38 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
 
 // LOLBins whose appearance as the image (Sysmon 1 / 4688) bumps a benign process-create.
 const LOLBINS = new Set([
-  "powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe",
-  "rundll32.exe", "regsvr32.exe", "wmic.exe", "certutil.exe", "bitsadmin.exe", "msiexec.exe",
-  "installutil.exe", "regasm.exe", "regsvcs.exe", "msbuild.exe", "cmstp.exe", "schtasks.exe",
-  "at.exe", "sc.exe", "net.exe", "net1.exe", "psexec.exe", "psexesvc.exe", "vssadmin.exe",
-  "bcdedit.exe", "wevtutil.exe", "reg.exe", "curl.exe", "ftp.exe", "hh.exe", "odbcconf.exe",
+  "powershell.exe",
+  "pwsh.exe",
+  "cmd.exe",
+  "wscript.exe",
+  "cscript.exe",
+  "mshta.exe",
+  "rundll32.exe",
+  "regsvr32.exe",
+  "wmic.exe",
+  "certutil.exe",
+  "bitsadmin.exe",
+  "msiexec.exe",
+  "installutil.exe",
+  "regasm.exe",
+  "regsvcs.exe",
+  "msbuild.exe",
+  "cmstp.exe",
+  "schtasks.exe",
+  "at.exe",
+  "sc.exe",
+  "net.exe",
+  "net1.exe",
+  "psexec.exe",
+  "psexesvc.exe",
+  "vssadmin.exe",
+  "bcdedit.exe",
+  "wevtutil.exe",
+  "reg.exe",
+  "curl.exe",
+  "ftp.exe",
+  "hh.exe",
+  "odbcconf.exe",
 ]);
 // Core OS processes that legitimately call CreateRemoteThread (Sysmon EID 8) during normal
 // session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
@@ -373,9 +451,24 @@ const LOLBINS = new Set([
 // and otherwise drown real injection signal in noise (see the fairhaven-rdp-takeover benchmark,
 // where this exact pairing on unrelated hosts got escalated into a fabricated finding).
 const BENIGN_THREAD_SOURCES = new Set([
-  "csrss.exe", "wininit.exe", "services.exe", "smss.exe", "svchost.exe", "wmiprvse.exe", "lsm.exe", "winlogon.exe",
-  "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
-  "searchindexer.exe", "searchprotocolhost.exe", "dllhost.exe", "taskhostw.exe", "runtimebroker.exe", // shell/UI brokers
+  "csrss.exe",
+  "wininit.exe",
+  "services.exe",
+  "smss.exe",
+  "svchost.exe",
+  "wmiprvse.exe",
+  "lsm.exe",
+  "winlogon.exe",
+  "msmpeng.exe",
+  "mpdefendercoreservice.exe",
+  "mssense.exe",
+  "sensendr.exe",
+  "mpcmdrun.exe", // Defender / MDE
+  "searchindexer.exe",
+  "searchprotocolhost.exe",
+  "dllhost.exe",
+  "taskhostw.exe",
+  "runtimebroker.exe", // shell/UI brokers
 ]);
 // Windows-native processes that access LSASS constantly as part of normal operation (#198). A
 // Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /
@@ -383,12 +476,25 @@ const BENIGN_THREAD_SOURCES = new Set([
 // SourceImage basename; still graded High when the source runs from a SUSPICIOUS path (a masqueraded
 // "svchost.exe" in \Temp\ is not benign), and a non-listed accessor (e.g. a renamed dumper) stays High.
 const BENIGN_LSASS_ACCESSORS = new Set([
-  "msmpeng.exe", "mpdefendercoreservice.exe", "mssense.exe", "sensendr.exe", "mpcmdrun.exe", // Defender / MDE
-  "svchost.exe", "services.exe", "csrss.exe", "wininit.exe", "lsass.exe", "wmiprvse.exe", "smss.exe", "lsm.exe",
+  "msmpeng.exe",
+  "mpdefendercoreservice.exe",
+  "mssense.exe",
+  "sensendr.exe",
+  "mpcmdrun.exe", // Defender / MDE
+  "svchost.exe",
+  "services.exe",
+  "csrss.exe",
+  "wininit.exe",
+  "lsass.exe",
+  "wmiprvse.exe",
+  "smss.exe",
+  "lsm.exe",
 ]);
 // Command-line markers strongly associated with attacker tradecraft → stronger bump.
-const STRONG_CMD = /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
-const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
+const STRONG_CMD =
+  /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
+const SUSP_CMD =
+  /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
 // Execution from a user-writable / staging directory is itself a weak masquerade/tradecraft signal
 // (#199) — a non-system binary launched from Temp / AppData / Downloads / Public / ProgramData, or
 // /tmp,/dev/shm,/var/tmp on *nix. Tested against the IMAGE path (not the whole command) to avoid
@@ -398,7 +504,8 @@ const SUSP_CMD = /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string
 // EXCEPTION: `\ProgramData\Microsoft\Windows Defender\` is Defender's own legitimate install path
 // (MsMpEng.exe et al. really live there), so it's carved out — otherwise every benign Defender
 // EID 8/10 event would trip the masquerade override in BENIGN_THREAD_SOURCES/BENIGN_LSASS_ACCESSORS.
-const SUSP_PATH = /\\(?:appdata|temp|downloads)\\|\\users\\public\\|\\programdata\\(?!microsoft\\windows defender\\)|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
+const SUSP_PATH =
+  /\\(?:appdata|temp|downloads)\\|\\users\\public\\|\\programdata\\(?!microsoft\\windows defender\\)|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
 // Channel → short tool label for the description and source tag.
 function channelLabel(channel: string): string {
@@ -429,8 +536,18 @@ export function normalizeTime(s: string): string {
 // renders in the browser TZ unless `dateFormat:tz` is UTC; without offset info that's unrecoverable.)
 const KIBANA_DATE = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) @ (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/;
 const KIBANA_MONTHS: Record<string, string> = {
-  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  Jan: "01",
+  Feb: "02",
+  Mar: "03",
+  Apr: "04",
+  May: "05",
+  Jun: "06",
+  Jul: "07",
+  Aug: "08",
+  Sep: "09",
+  Oct: "10",
+  Nov: "11",
+  Dec: "12",
 };
 function parseKibanaDate(t: string): string {
   const m = KIBANA_DATE.exec(t);
@@ -442,9 +559,23 @@ function parseKibanaDate(t: string): string {
 }
 
 const TIME_KEYS = [
-  "@timestamp", "timestamp", "_time", "eventTime", "EventTime", "event_time",
-  "DeviceEventTime", "createdAt", "created", "event.created", "ingested",
-  "generated_time", "received_time", "observed_timestamp", "time", "date", "@time",
+  "@timestamp",
+  "timestamp",
+  "_time",
+  "eventTime",
+  "EventTime",
+  "event_time",
+  "DeviceEventTime",
+  "createdAt",
+  "created",
+  "event.created",
+  "ingested",
+  "generated_time",
+  "received_time",
+  "observed_timestamp",
+  "time",
+  "date",
+  "@time",
 ];
 
 // The event's own time. For Sysmon prefer the structured UtcTime (the in-event clock —
@@ -456,16 +587,30 @@ function pickTimestamp(rec: Row, ed: Row | undefined): string {
 }
 
 const HOST_KEYS = [
-  "computer_name", "Computer", "hostname", "host.name", "host", "host_name",
-  "agent.hostname", "beat.hostname", "device.hostname", "endpoint.name", "MachineName",
-  "src_host", "source.host", "winlog.computer_name",
+  "computer_name",
+  "Computer",
+  "hostname",
+  "host.name",
+  "host",
+  "host_name",
+  "agent.hostname",
+  "beat.hostname",
+  "device.hostname",
+  "endpoint.name",
+  "MachineName",
+  "src_host",
+  "source.host",
+  "winlog.computer_name",
 ];
 
 export function pickHost(rec: Row): string {
   for (const k of HOST_KEYS) {
     const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
     if (typeof v === "string" && v.trim()) return v.trim();
-    if (isObject(v)) { const n = str(getCI(v, "name")).trim(); if (n) return n; } // ECS host:{name}
+    if (isObject(v)) {
+      const n = str(getCI(v, "name")).trim();
+      if (n) return n;
+    } // ECS host:{name}
   }
   return "";
 }
@@ -511,7 +656,10 @@ export function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; m
     if (k && val) take(k.trim().toUpperCase(), val);
   }
   const hx = getCI(rec, "hashes_ex");
-  if (isObject(hx)) { take("SHA256", str(getCI(hx, "SHA256"))); take("MD5", str(getCI(hx, "MD5"))); }
+  if (isObject(hx)) {
+    take("SHA256", str(getCI(hx, "SHA256")));
+    take("MD5", str(getCI(hx, "MD5")));
+  }
   return out;
 }
 
@@ -520,11 +668,34 @@ export function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; m
 // event_data fields rendered into the description (curated + stable — no volatile ports,
 // GUIDs, or logon IDs, so identical events aggregate). User/domain handled by winAccounts.
 const SUBJECT_KEYS = [
-  "LogonType", "IpAddress", "WorkstationName", "ServiceName", "ServiceFileName",
-  "Image", "CommandLine", "NewProcessName", "ParentImage", "ParentCommandLine", "SourceImage", "TargetImage",
-  "TargetFilename", "ImageLoaded", "DestinationIp", "DestinationPort", "DestinationHostname",
-  "Protocol", "QueryName", "ShareName", "RelativeTargetName", "TaskName", "PipeName",
-  "TargetObject", "MemberName", "Status", "SubStatus", "FailureReason",
+  "LogonType",
+  "IpAddress",
+  "WorkstationName",
+  "ServiceName",
+  "ServiceFileName",
+  "Image",
+  "CommandLine",
+  "NewProcessName",
+  "ParentImage",
+  "ParentCommandLine",
+  "SourceImage",
+  "TargetImage",
+  "TargetFilename",
+  "ImageLoaded",
+  "DestinationIp",
+  "DestinationPort",
+  "DestinationHostname",
+  "Protocol",
+  "QueryName",
+  "ShareName",
+  "RelativeTargetName",
+  "TaskName",
+  "PipeName",
+  "TargetObject",
+  "MemberName",
+  "Status",
+  "SubStatus",
+  "FailureReason",
 ];
 
 function renderFields(ed: Row, keys: string[]): string {
@@ -539,12 +710,16 @@ function renderFields(ed: Row, keys: string[]): string {
 // Compose DOMAIN\user (or UPN) account references so the asset graph picks them up.
 function winAccounts(ed: Row): string[] {
   const out = new Set<string>();
-  const pairs: [string, string][] = [["TargetDomainName", "TargetUserName"], ["SubjectDomainName", "SubjectUserName"]];
+  const pairs: [string, string][] = [
+    ["TargetDomainName", "TargetUserName"],
+    ["SubjectDomainName", "SubjectUserName"],
+  ];
   for (const [dk, uk] of pairs) {
     const user = str(getCI(ed, uk)).trim();
     if (!user || user === "-" || user === "*") continue;
     const dom = str(getCI(ed, dk)).trim();
-    if (user.includes("@")) out.add(user);                       // already a UPN
+    if (user.includes("@"))
+      out.add(user); // already a UPN
     else if (dom && dom !== "-") out.add(`${dom}\\${user}`);
     else out.add(user);
   }
@@ -557,7 +732,8 @@ function winAccounts(ed: Row): string[] {
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   const blob = `${image} ${cmd}`;
   if (STRONG_CMD.test(blob)) return "strong";
-  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
+  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob) || SUSP_PATH.test(image))
+    return "weak";
   return null;
 }
 
@@ -575,7 +751,7 @@ export interface MappedEvent {
   processName?: string;
   parentName?: string;
   pid?: number;
-  commandLine?: string;   // full command line of a process-creation event (#68 cross-tool correlation)
+  commandLine?: string; // full command line of a process-creation event (#68 cross-tool correlation)
   // Per-event tool source(s). siem mapping leaves this unset (the pipeline tags the whole
   // import); reused by chainsawImport, which tags each event Chainsaw/EVTX individually.
   sources?: string[];
@@ -630,8 +806,15 @@ export function kerberosRoastSignal(eid: number, ed: Row): { severity: Severity;
 // Windows logon-type codes (4624/4625 `LogonType`) → human name. Mirrors Timesketch's login analyzer
 // LOGON_TYPES, which only tags; we additionally GRADE the risky ones (see logonRisk).
 export const LOGON_TYPES: Record<number, string> = {
-  2: "Interactive", 3: "Network", 4: "Batch", 5: "Service", 7: "Unlock",
-  8: "NetworkCleartext", 9: "NewCredentials", 10: "RemoteInteractive/RDP", 11: "CachedInteractive",
+  2: "Interactive",
+  3: "Network",
+  4: "Batch",
+  5: "Service",
+  7: "Unlock",
+  8: "NetworkCleartext",
+  9: "NewCredentials",
+  10: "RemoteInteractive/RDP",
+  11: "CachedInteractive",
 };
 
 // A routable (public) IPv4 source? RFC1918 / loopback / link-local / CGNAT are internal → not a
@@ -657,15 +840,23 @@ function isPublicIpv4(ip: string): boolean {
 //   • Type 3  Network from a PUBLIC IP → T1078; internet-facing network logon (SMB/WinRM/etc.).
 //   • Type 8  NetworkCleartext        → T1078, Medium; credentials sent in cleartext (legacy/basic auth).
 //   • Type 9  NewCredentials          → T1550.002, Medium; runas /netonly — the overpass/pass-the-hash shape.
-export function logonRisk(logonType: number, sourceIp: string): { typeName: string; severity?: Severity; mitre: string[] } {
+export function logonRisk(
+  logonType: number,
+  sourceIp: string,
+): { typeName: string; severity?: Severity; mitre: string[] } {
   const typeName = LOGON_TYPES[logonType] ?? `type ${logonType}`;
   const external = isPublicIpv4(sourceIp);
   switch (logonType) {
-    case 10: return { typeName, severity: external ? "Medium" : undefined, mitre: ["T1021.001"] };
-    case 3: return external ? { typeName, severity: "Medium", mitre: ["T1078"] } : { typeName, mitre: [] };
-    case 8: return { typeName, severity: "Medium", mitre: ["T1078"] };
-    case 9: return { typeName, severity: "Medium", mitre: ["T1550.002"] };
-    default: return { typeName, mitre: [] };
+    case 10:
+      return { typeName, severity: external ? "Medium" : undefined, mitre: ["T1021.001"] };
+    case 3:
+      return external ? { typeName, severity: "Medium", mitre: ["T1078"] } : { typeName, mitre: [] };
+    case 8:
+      return { typeName, severity: "Medium", mitre: ["T1078"] };
+    case 9:
+      return { typeName, severity: "Medium", mitre: ["T1550.002"] };
+    default:
+      return { typeName, mitre: [] };
   }
 }
 
@@ -680,7 +871,11 @@ export function mapWindows(
   iocSink: Map<string, SiemIoc>,
   canonicalContext: CanonicalRecordContext = { source: "windows-event", recordIndex: 0 },
 ): MappedEvent | null {
-  const eidRaw = getCI(rec, "event_id") ?? getCI(rec, "EventID") ?? getPath(rec, "winlog.event_id") ?? getPath(rec, "event.code");
+  const eidRaw =
+    getCI(rec, "event_id") ??
+    getCI(rec, "EventID") ??
+    getPath(rec, "winlog.event_id") ??
+    getPath(rec, "event.code");
   const eid = Number(typeof eidRaw === "object" && isObject(eidRaw) ? getCI(eidRaw, "#text") : eidRaw);
   const channel = firstStr(rec, ["log_name", "channel", "Channel", "winlog.channel", "source_name"]);
   if (!Number.isFinite(eid) || !channel) return null;
@@ -709,8 +904,10 @@ export function mapWindows(
     const image = str(getCI(ed, "Image")) || str(getCI(ed, "NewProcessName"));
     const cmd = str(getCI(ed, "CommandLine"));
     const susp = isSuspiciousCmd(image, cmd);
-    if (susp === "strong") { severity = worst(severity, "High"); if (!mitre.includes("T1003")) mitre.push("T1003"); }
-    else if (susp === "weak") severity = worst(severity, "Medium");
+    if (susp === "strong") {
+      severity = worst(severity, "High");
+      if (!mitre.includes("T1003")) mitre.push("T1003");
+    } else if (susp === "weak") severity = worst(severity, "Medium");
     // Deterministic attacker-tradecraft grading harvested from real intrusions (Defender-disable,
     // recovery inhibition, reverse-tunnel C2, Impacket lateral movement, cloud exfil, RMM/C2 tooling)
     // with the CORRECT ATT&CK technique per match (not isSuspiciousCmd's T1003 default).
@@ -781,16 +978,29 @@ export function mapWindows(
 
   // Structured correlation/IOC fields.
   const { sha256, md5 } = parseHashes(rec, ed);
-  const imagePath = firstStr(ed, ["Image", "NewProcessName", "ImageLoaded", "TargetFilename", "ServiceFileName", "TargetImage"]);
-  const processName = def.kind === "process" || def.kind === "procaccess"
-    ? baseName(str(getCI(ed, "Image")) || str(getCI(ed, "SourceImage")) || str(getCI(ed, "NewProcessName"))) || undefined
-    : undefined;
+  const imagePath = firstStr(ed, [
+    "Image",
+    "NewProcessName",
+    "ImageLoaded",
+    "TargetFilename",
+    "ServiceFileName",
+    "TargetImage",
+  ]);
+  const processName =
+    def.kind === "process" || def.kind === "procaccess"
+      ? baseName(
+          str(getCI(ed, "Image")) || str(getCI(ed, "SourceImage")) || str(getCI(ed, "NewProcessName")),
+        ) || undefined
+      : undefined;
   const parentName = baseName(str(getCI(ed, "ParentImage"))) || undefined;
   // Subject (created-process) pid on process-CREATION events only — Security 4688 renders it as
   // NewProcessId (hex), Sysmon EID 1 as ProcessId (decimal). Used for cross-tool correlation.
-  const pid = (!isSysmon && eid === 4688) ? parsePid(str(getCI(ed, "NewProcessId")))
-    : (isSysmon && eid === 1) ? parsePid(str(getCI(ed, "ProcessId")))
-    : undefined;
+  const pid =
+    !isSysmon && eid === 4688
+      ? parsePid(str(getCI(ed, "NewProcessId")))
+      : isSysmon && eid === 1
+        ? parsePid(str(getCI(ed, "ProcessId")))
+        : undefined;
   const commandLine = def.kind === "process" ? str(getCI(ed, "CommandLine")) : "";
   const observedTimestamp = str(getCI(ed, "UtcTime")).trim() || firstStr(rec, TIME_KEYS);
   const normalizedTimestamp = pickTimestamp(rec, ed);
@@ -801,100 +1011,144 @@ export function mapWindows(
   const logonType = logonTypeRaw && Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
   const isLogon = !isSysmon && (eid === 4624 || eid === 4625);
   const accountName = accts[0];
-  const category = isLogon ? "authentication"
-    : def.kind === "process" || def.kind === "procaccess" ? "process"
-    : def.kind === "network" || def.kind === "dns" ? "network"
-    : def.kind === "file" ? "file"
-    : def.kind === "service" ? "service"
-    : str(getCI(ed, "TaskName")) ? "task"
-    : str(getCI(ed, "TargetObject")) ? "registry"
-    : "other";
+  const category = isLogon
+    ? "authentication"
+    : def.kind === "process" || def.kind === "procaccess"
+      ? "process"
+      : def.kind === "network" || def.kind === "dns"
+        ? "network"
+        : def.kind === "file"
+          ? "file"
+          : def.kind === "service"
+            ? "service"
+            : str(getCI(ed, "TaskName"))
+              ? "task"
+              : str(getCI(ed, "TargetObject"))
+                ? "registry"
+                : "other";
   const canonical = createCanonicalEvent({
     event: {
       category,
-      type: isLogon ? "logon"
-        : def.kind === "process" ? "start"
-        : def.kind === "procaccess" ? "access"
-        : def.kind === "network" ? "connection"
-        : def.kind === "dns" ? "query"
-        : def.kind ?? "event",
+      type: isLogon
+        ? "logon"
+        : def.kind === "process"
+          ? "start"
+          : def.kind === "procaccess"
+            ? "access"
+            : def.kind === "network"
+              ? "connection"
+              : def.kind === "dns"
+                ? "query"
+                : (def.kind ?? "event"),
       ...(isLogon ? { outcome: eid === 4624 ? "success" : "failed" } : {}),
     },
     ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
     ...(host ? { target: { kind: "host" as const, name: host } } : {}),
-    ...(accountName ? {
-      account: {
-        name: accountName,
-        ...(accountName.includes("\\") ? { domain: accountName.split("\\")[0] } : {}),
-      },
-    } : {}),
-    ...(isLogon ? {
-      authentication: {
-        ...(logonType !== undefined ? { logonType } : {}),
-        ...(str(getCI(ed, "TargetLogonId")).trim() ? { sessionId: str(getCI(ed, "TargetLogonId")).trim() } : {}),
-      },
-      ...(str(getCI(ed, "WorkstationName")).trim()
-        ? { session: { terminal: str(getCI(ed, "WorkstationName")).trim() } }
-        : {}),
-    } : {}),
-    ...(sourceIp || destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0) ? {
-      network: {
-        ...(sourceIp ? { source: { address: sourceIp } } : {}),
-        ...(destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0) ? {
-          destination: {
-            ...(destinationIp ? { address: destinationIp } : {}),
-            ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+    ...(accountName
+      ? {
+          account: {
+            name: accountName,
+            ...(accountName.includes("\\") ? { domain: accountName.split("\\")[0] } : {}),
           },
-        } : {}),
-        ...(str(getCI(ed, "Protocol")).trim() ? { protocol: str(getCI(ed, "Protocol")).trim() } : {}),
-      },
-    } : {}),
-    ...(def.kind === "process" || def.kind === "procaccess" ? {
-      process: {
-        ...(pid !== undefined ? { pid } : {}),
-        ...(processName ? { name: processName } : {}),
-        ...(imagePath ? { executable: imagePath } : {}),
-        ...(commandLine ? { commandLine } : {}),
-        ...(parentName ? {
-          parent: {
-            name: parentName,
-            ...(str(getCI(ed, "ParentImage")).trim() ? { executable: str(getCI(ed, "ParentImage")).trim() } : {}),
+        }
+      : {}),
+    ...(isLogon
+      ? {
+          authentication: {
+            ...(logonType !== undefined ? { logonType } : {}),
+            ...(str(getCI(ed, "TargetLogonId")).trim()
+              ? { sessionId: str(getCI(ed, "TargetLogonId")).trim() }
+              : {}),
           },
-        } : {}),
-      },
-    } : {}),
-    ...(imagePath || sha256 || md5 ? {
-      file: {
-        ...(imagePath ? { path: imagePath, name: baseName(imagePath) } : {}),
-        ...(sha256 ? { sha256 } : {}),
-        ...(md5 ? { md5 } : {}),
-      },
-    } : {}),
-    ...(str(getCI(ed, "TargetObject")).trim() ? {
-      registry: {
-        key: str(getCI(ed, "TargetObject")).trim(),
-        ...(str(getCI(ed, "Details")).trim() ? { valueData: str(getCI(ed, "Details")).trim() } : {}),
-      },
-    } : {}),
-    ...(def.kind === "service" ? {
-      service: {
-        ...(str(getCI(ed, "ServiceName")).trim() ? { name: str(getCI(ed, "ServiceName")).trim() } : {}),
-        ...(str(getCI(ed, "ServiceFileName")).trim() ? { executable: str(getCI(ed, "ServiceFileName")).trim() } : {}),
-      },
-    } : {}),
-    ...(str(getCI(ed, "TaskName")).trim() ? {
-      task: {
-        name: str(getCI(ed, "TaskName")).trim(),
-        ...(commandLine ? { command: commandLine } : {}),
-      },
-    } : {}),
+          ...(str(getCI(ed, "WorkstationName")).trim()
+            ? { session: { terminal: str(getCI(ed, "WorkstationName")).trim() } }
+            : {}),
+        }
+      : {}),
+    ...(sourceIp || destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0)
+      ? {
+          network: {
+            ...(sourceIp ? { source: { address: sourceIp } } : {}),
+            ...(destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0)
+              ? {
+                  destination: {
+                    ...(destinationIp ? { address: destinationIp } : {}),
+                    ...(Number.isInteger(destinationPort) && destinationPort > 0
+                      ? { port: destinationPort }
+                      : {}),
+                  },
+                }
+              : {}),
+            ...(str(getCI(ed, "Protocol")).trim() ? { protocol: str(getCI(ed, "Protocol")).trim() } : {}),
+          },
+        }
+      : {}),
+    ...(def.kind === "process" || def.kind === "procaccess"
+      ? {
+          process: {
+            ...(pid !== undefined ? { pid } : {}),
+            ...(processName ? { name: processName } : {}),
+            ...(imagePath ? { executable: imagePath } : {}),
+            ...(commandLine ? { commandLine } : {}),
+            ...(parentName
+              ? {
+                  parent: {
+                    name: parentName,
+                    ...(str(getCI(ed, "ParentImage")).trim()
+                      ? { executable: str(getCI(ed, "ParentImage")).trim() }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(imagePath || sha256 || md5
+      ? {
+          file: {
+            ...(imagePath ? { path: imagePath, name: baseName(imagePath) } : {}),
+            ...(sha256 ? { sha256 } : {}),
+            ...(md5 ? { md5 } : {}),
+          },
+        }
+      : {}),
+    ...(str(getCI(ed, "TargetObject")).trim()
+      ? {
+          registry: {
+            key: str(getCI(ed, "TargetObject")).trim(),
+            ...(str(getCI(ed, "Details")).trim() ? { valueData: str(getCI(ed, "Details")).trim() } : {}),
+          },
+        }
+      : {}),
+    ...(def.kind === "service"
+      ? {
+          service: {
+            ...(str(getCI(ed, "ServiceName")).trim() ? { name: str(getCI(ed, "ServiceName")).trim() } : {}),
+            ...(str(getCI(ed, "ServiceFileName")).trim()
+              ? { executable: str(getCI(ed, "ServiceFileName")).trim() }
+              : {}),
+          },
+        }
+      : {}),
+    ...(str(getCI(ed, "TaskName")).trim()
+      ? {
+          task: {
+            name: str(getCI(ed, "TaskName")).trim(),
+            ...(commandLine ? { command: commandLine } : {}),
+          },
+        }
+      : {}),
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {
-      rawRecords: [{
-        source: canonicalContext.source,
-        locator: `row:${canonicalContext.recordIndex}`,
-        ...(str(getCI(rec, "EventRecordID")).trim() ? { recordId: str(getCI(rec, "EventRecordID")).trim() } : {}),
-      }],
+      rawRecords: [
+        {
+          source: canonicalContext.source,
+          locator: `row:${canonicalContext.recordIndex}`,
+          ...(str(getCI(rec, "EventRecordID")).trim()
+            ? { recordId: str(getCI(rec, "EventRecordID")).trim() }
+            : {}),
+        },
+      ],
     },
     producer: {
       importer: "windows-event",
@@ -909,7 +1163,9 @@ export function mapWindows(
       ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
       ...(sourceIp ? { "network.source.address": ["EventData.IpAddress", "EventData.SourceIp"] } : {}),
       ...(destinationIp ? { "network.destination.address": ["EventData.DestinationIp"] } : {}),
-      ...(processName ? { "process.name": ["EventData.Image", "EventData.NewProcessName", "EventData.SourceImage"] } : {}),
+      ...(processName
+        ? { "process.name": ["EventData.Image", "EventData.NewProcessName", "EventData.SourceImage"] }
+        : {}),
       ...(pid !== undefined ? { "process.pid": ["EventData.ProcessId", "EventData.NewProcessId"] } : {}),
       ...(commandLine ? { "process.commandLine": ["EventData.CommandLine"] } : {}),
     },
@@ -933,7 +1189,8 @@ export function mapWindows(
   // already skips internal AD/mDNS zones (.local/.lan/.corp) and filenames, so this stays signal-rich.
   if (def.kind === "process") textIocs(str(getCI(ed, "CommandLine")), iocSink);
   const dns = str(getCI(ed, "QueryName")).trim();
-  if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns)) addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
+  if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns))
+    addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
 
   return {
     timestamp: normalizedTimestamp,
@@ -943,7 +1200,8 @@ export function mapWindows(
     canonical,
     // pid (on process-creation events) is in the key so distinct creations stay distinct rows rather
     // than aggregating into one — preserving per-process granularity and enabling pid correlation.
-    aggKey: `win|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
+    aggKey:
+      `win|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),
@@ -963,13 +1221,40 @@ export function worst(a: Severity, b: Severity): Severity {
 // ───────────────────────────── generic record → event ─────────────────────────────
 
 const SEV_WORDS: Record<string, Severity> = {
-  critical: "Critical", crit: "Critical", emergency: "Critical", alert: "Critical", fatal: "Critical",
-  high: "High", error: "High", err: "High",
-  medium: "Medium", med: "Medium", moderate: "Medium", warning: "Medium", warn: "Medium",
-  low: "Low", notice: "Low",
-  info: "Info", informational: "Info", debug: "Info",
+  critical: "Critical",
+  crit: "Critical",
+  emergency: "Critical",
+  alert: "Critical",
+  fatal: "Critical",
+  high: "High",
+  error: "High",
+  err: "High",
+  medium: "Medium",
+  med: "Medium",
+  moderate: "Medium",
+  warning: "Medium",
+  warn: "Medium",
+  low: "Low",
+  notice: "Low",
+  info: "Info",
+  informational: "Info",
+  debug: "Info",
 };
-const SEVERITY_FIELD_KEYS = ["severity", "Severity", "alert.severity", "event.severity", "priority", "Priority", "risk", "risk_level", "risk_score", "score", "threat_level", "confidence", "level"];
+const SEVERITY_FIELD_KEYS = [
+  "severity",
+  "Severity",
+  "alert.severity",
+  "event.severity",
+  "priority",
+  "Priority",
+  "risk",
+  "risk_level",
+  "risk_score",
+  "score",
+  "threat_level",
+  "confidence",
+  "level",
+];
 
 // Best-effort severity for a non-Windows record from an explicit severity/level field.
 function pickGenericSeverity(rec: Row): Severity {
@@ -991,9 +1276,25 @@ function pickGenericSeverity(rec: Row): Severity {
 }
 
 const GENERIC_MSG_KEYS = [
-  "message", "Message", "description", "Description", "desc", "Desc", "event.action", "action",
-  "rule.name", "ruleName", "signature", "signature_name", "name", "alert_name",
-  "title", "event.original", "_raw", "raw", "summary",
+  "message",
+  "Message",
+  "description",
+  "Description",
+  "desc",
+  "Desc",
+  "event.action",
+  "action",
+  "rule.name",
+  "ruleName",
+  "signature",
+  "signature_name",
+  "name",
+  "alert_name",
+  "title",
+  "event.original",
+  "_raw",
+  "raw",
+  "summary",
 ];
 
 // Flatten a record to dotted key/value string pairs (objects one+ levels deep).
@@ -1020,16 +1321,43 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
     const k = key.toLowerCase();
     const v = value.trim();
     if (!v || v === "-") continue;
-    if (/(?:^|[._])(?:ip|ipaddr|ipaddress|src_ip|dst_ip|source_ip|dest_ip|destination_ip|remote_ip|client_ip|address)$/.test(k)) {
-      const ip = cleanIp(v); if (ip) addIoc(iocSink, "ip", ip); continue;
+    if (
+      /(?:^|[._])(?:ip|ipaddr|ipaddress|src_ip|dst_ip|source_ip|dest_ip|destination_ip|remote_ip|client_ip|address)$/.test(
+        k,
+      )
+    ) {
+      const ip = cleanIp(v);
+      if (ip) addIoc(iocSink, "ip", ip);
+      continue;
     }
-    if (/sha256|sha1|\bmd5\b|imphash|(?:^|[._])hash$/.test(k) && HEX_HASH.test(v)) { addIoc(iocSink, "hash", v.toLowerCase()); continue; }
-    if (/(?:url|uri)$/.test(k) && /^https?:\/\//i.test(v)) { addIoc(iocSink, "url", v.slice(0, 300)); continue; }
-    if (/(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) && !IPV4.test(v) && !TEXT_DOMAIN_SKIP_RE.test(v) && !TEXT_FILE_EXT_RE.test(v) && hasPlausibleTld(v)) { addIoc(iocSink, "domain", v.toLowerCase()); continue; }
+    if (/sha256|sha1|\bmd5\b|imphash|(?:^|[._])hash$/.test(k) && HEX_HASH.test(v)) {
+      addIoc(iocSink, "hash", v.toLowerCase());
+      continue;
+    }
+    if (/(?:url|uri)$/.test(k) && /^https?:\/\//i.test(v)) {
+      addIoc(iocSink, "url", v.slice(0, 300));
+      continue;
+    }
+    if (
+      /(?:domain|fqdn|dns|query|host_name|hostname)$/.test(k) &&
+      /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) &&
+      !IPV4.test(v) &&
+      !TEXT_DOMAIN_SKIP_RE.test(v) &&
+      !TEXT_FILE_EXT_RE.test(v) &&
+      hasPlausibleTld(v)
+    ) {
+      addIoc(iocSink, "domain", v.toLowerCase());
+      continue;
+    }
     if (/(?:image|process|exe|process_name|processname|command_line|commandline|cmdline)$/.test(k)) {
-      const bn = baseName(v); if (/\.\w{2,4}$/.test(bn)) addIoc(iocSink, "process", bn); continue;
+      const bn = baseName(v);
+      if (/\.\w{2,4}$/.test(bn)) addIoc(iocSink, "process", bn);
+      continue;
     }
-    if (/(?:file|filename|filepath|file_path|path|target_filename)$/.test(k) && /[\\/]/.test(v)) { addIoc(iocSink, "file", v.slice(0, 300)); continue; }
+    if (/(?:file|filename|filepath|file_path|path|target_filename)$/.test(k) && /[\\/]/.test(v)) {
+      addIoc(iocSink, "file", v.slice(0, 300));
+      continue;
+    }
   }
 }
 
@@ -1059,7 +1387,8 @@ const TEXT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,127}[a-z]
 const TEXT_DOMAIN_SKIP_RE = /\.(?:local|localdomain|internal|lan|home|corp|arpa)$/i;
 // A "domain" ending in a common file extension is really a filename (evil.exe, payload.bin, report.json)
 // — keep it out of the domain IOCs (the URL/path importers already capture files where relevant).
-const TEXT_FILE_EXT_RE = /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|log|txt|json|xml|yml|yaml|cfg|ini|py|pl|so|gz|tar|zip|7z|rar|tmp|bak|dat|pid|sock|key|pem|crt|doc|docx|xls|xlsx|pdf|png|jpg|gif)$/i;
+const TEXT_FILE_EXT_RE =
+  /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|log|txt|json|xml|yml|yaml|cfg|ini|py|pl|so|gz|tar|zip|7z|rar|tmp|bak|dat|pid|sock|key|pem|crt|doc|docx|xls|xlsx|pdf|png|jpg|gif)$/i;
 
 // Real, commonly-registered TLDs — 3+ letter last labels must be on this list to count as a domain.
 // Without this, ANY dot-separated identifier (a Velociraptor artifact id like
@@ -1070,11 +1399,61 @@ const TEXT_FILE_EXT_RE = /\.(?:exe|dll|sys|ps1|bat|cmd|vbs|js|jar|sh|bin|conf|lo
 // are accepted unconditionally (nearly the entire ccTLD space is exactly 2 letters — enumerating all
 // ISO-3166 codes buys nothing over just accepting the shape).
 const KNOWN_TLDS = new Set([
-  "com", "net", "org", "edu", "gov", "mil", "int", "info", "biz", "pro",
-  "io", "co", "ai", "app", "dev", "cloud", "tech", "xyz", "top", "site", "online", "store", "shop",
-  "live", "win", "fun", "space", "click", "link", "download", "icu", "vip", "work", "run",
-  "me", "tv", "cc", "ws", "la", "fm", "im", "gg", "sh", "to", "pw", "gq", "ml", "cf", "ga", "tk",
-  "asia", "mobi", "tel", "cat", "onion",
+  "com",
+  "net",
+  "org",
+  "edu",
+  "gov",
+  "mil",
+  "int",
+  "info",
+  "biz",
+  "pro",
+  "io",
+  "co",
+  "ai",
+  "app",
+  "dev",
+  "cloud",
+  "tech",
+  "xyz",
+  "top",
+  "site",
+  "online",
+  "store",
+  "shop",
+  "live",
+  "win",
+  "fun",
+  "space",
+  "click",
+  "link",
+  "download",
+  "icu",
+  "vip",
+  "work",
+  "run",
+  "me",
+  "tv",
+  "cc",
+  "ws",
+  "la",
+  "fm",
+  "im",
+  "gg",
+  "sh",
+  "to",
+  "pw",
+  "gq",
+  "ml",
+  "cf",
+  "ga",
+  "tk",
+  "asia",
+  "mobi",
+  "tel",
+  "cat",
+  "onion",
 ]);
 export function hasPlausibleTld(domain: string): boolean {
   const labels = domain.split(".");
@@ -1091,13 +1470,16 @@ export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
   for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
   for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase());
   for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());
-  for (const m of text.match(TEXT_IPV4_RE) ?? []) { const ip = cleanIp(m); if (ip) addIoc(sink, "ip", ip); }
+  for (const m of text.match(TEXT_IPV4_RE) ?? []) {
+    const ip = cleanIp(m);
+    if (ip) addIoc(sink, "ip", ip);
+  }
   for (const m of text.matchAll(TEXT_DOMAIN_RE)) {
     const d = m[0].toLowerCase();
     const after = text[(m.index ?? 0) + m[0].length] ?? "";
-    if (after === "@") continue;                          // local-part of user@host, not a domain
+    if (after === "@") continue; // local-part of user@host, not a domain
     if (IPV4.test(d) || TEXT_DOMAIN_SKIP_RE.test(d) || TEXT_FILE_EXT_RE.test(d)) continue;
-    if (!hasPlausibleTld(d)) continue;                    // e.g. "artifacts.precondition", "detectraptor.windows.detection.amcache"
+    if (!hasPlausibleTld(d)) continue; // e.g. "artifacts.precondition", "detectraptor.windows.detection.amcache"
     addIoc(sink, "domain", d);
   }
 }
@@ -1105,19 +1487,34 @@ export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
 // Document/transport metadata that carries no investigative signal — excluded from the fallback
 // field dump so the description leads with real content (e.g. Elasticsearch hit metadata).
 const META_KEYS = new Set([
-  "_id", "_index", "_type", "_score", "_version", "_ignored", "_routing", "_seq_no",
-  "_primary_term", "sort", "clientid", "flowid", "highlight",
+  "_id",
+  "_index",
+  "_type",
+  "_score",
+  "_version",
+  "_ignored",
+  "_routing",
+  "_seq_no",
+  "_primary_term",
+  "sort",
+  "clientid",
+  "flowid",
+  "highlight",
 ]);
 // Field names worth surfacing first when there's no standard message field (detections, rule hits,
 // command lines, paths, …). Matched against flattened (possibly dotted) key names.
-const SALIENT_RE = /(name|message|detection|rule|signature|title|desc|stringhit|scriptblock|command|cmdline|action|alert|artifact|reference|keyword|path|process|original|user|account)/i;
+const SALIENT_RE =
+  /(name|message|detection|rule|signature|title|desc|stringhit|scriptblock|command|cmdline|action|alert|artifact|reference|keyword|path|process|original|user|account)/i;
 
 // Build a one-line summary from a record's fields when it has no recognized message field: drop
 // metadata noise, prefer salient fields, and fall back to the first handful of the rest.
 function summarizePairs(pairs: [string, string][]): string {
   const meaningful = pairs.filter(([k]) => !k.startsWith("_") && !META_KEYS.has(k.toLowerCase()));
   const salient = meaningful.filter(([k]) => SALIENT_RE.test(k));
-  return (salient.length ? salient : meaningful).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" - ");
+  return (salient.length ? salient : meaningful)
+    .slice(0, 8)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" - ");
 }
 
 export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
@@ -1128,9 +1525,10 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   genericIocs(pairs, iocSink);
 
   const base = msg ? oneLine(msg) : summarizePairs(pairs);
-  textIocs(base, iocSink);   // scrape indicators embedded in the free-text message (not in a named field)
+  textIocs(base, iocSink); // scrape indicators embedded in the free-text message (not in a named field)
   let description = `${vendor ?? "SIEM event"}: ${base}`.slice(0, 600);
-  if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
+  if (host && !description.toLowerCase().includes(host.toLowerCase()))
+    description = `${description} @ ${host}`.slice(0, 600);
 
   const severity = pickGenericSeverity(rec);
   // Aggregate identical generic events, normalizing volatile numbers/GUIDs out of the key.
@@ -1140,12 +1538,29 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     .replace(/\d+/g, "#")
     .slice(0, 400);
 
-  return { timestamp: pickTimestamp(rec, undefined), description, severity, mitre: [], aggKey, ...(host ? { asset: host } : {}) };
+  return {
+    timestamp: pickTimestamp(rec, undefined),
+    description,
+    severity,
+    mitre: [],
+    aggKey,
+    ...(host ? { asset: host } : {}),
+  };
 }
 
 // Detect the vendor/tool behind a generic record from its source/provider/index fields.
 function detectVendor(rec: Row): string | undefined {
-  const blob = firstStr(rec, ["vendor", "product", "source_name", "provider", "provider_guid", "_index", "agent.type", "observer.vendor", "tags"]);
+  const blob = firstStr(rec, [
+    "vendor",
+    "product",
+    "source_name",
+    "provider",
+    "provider_guid",
+    "_index",
+    "agent.type",
+    "observer.vendor",
+    "tags",
+  ]);
   if (/sentinel.?one/i.test(blob)) return "SentinelOne";
   if (/crowdstrike|falcon/i.test(blob)) return "CrowdStrike Falcon";
   if (/defender|mde/i.test(blob)) return "Microsoft Defender";
@@ -1171,7 +1586,11 @@ export function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value:
 // is known, unioning sourceAggKeys so a value seen across multiple rows keeps every row's link.
 // Call with no aggKey for a row that produced IOCs but no event (e.g. non-alert network telemetry)
 // — the value still merges in, just without a link, matching today's approximate-only behavior.
-export function mergeRowIocs(fileSink: Map<string, SiemIoc>, rowSink: Map<string, SiemIoc>, aggKey?: string): void {
+export function mergeRowIocs(
+  fileSink: Map<string, SiemIoc>,
+  rowSink: Map<string, SiemIoc>,
+  aggKey?: string,
+): void {
   for (const [key, ioc] of rowSink) {
     const existing = fileSink.get(key);
     const keys = existing?.sourceAggKeys ?? [];
@@ -1183,10 +1602,15 @@ export function mergeRowIocs(fileSink: Map<string, SiemIoc>, rowSink: Map<string
 // Resolve each IOC's sourceAggKeys against a final aggKey->event-id lookup (built once events have
 // their case-scoped ids), stamping extractedFrom. An aggKey with no match (e.g. the event was
 // capped by maxEvents) is silently dropped — that IOC just falls back to approximate matching.
-export function resolveExtractedFrom(iocs: readonly SiemIoc[], eventIdByAggKey: ReadonlyMap<string, string>): SiemIoc[] {
+export function resolveExtractedFrom(
+  iocs: readonly SiemIoc[],
+  eventIdByAggKey: ReadonlyMap<string, string>,
+): SiemIoc[] {
   return iocs.map((c) => {
     if (!c.sourceAggKeys?.length) return c;
-    const ids = [...new Set(c.sourceAggKeys.map((k) => eventIdByAggKey.get(k)).filter((x): x is string => !!x))];
+    const ids = [
+      ...new Set(c.sourceAggKeys.map((k) => eventIdByAggKey.get(k)).filter((x): x is string => !!x)),
+    ];
     return ids.length ? { ...c, extractedFrom: ids } : c;
   });
 }
@@ -1215,8 +1639,8 @@ export function createEventAggregator(
 
   return {
     add(m: MappedEvent): void {
-      if (SEVERITY_RANK[m.severity] > floorRank) return;          // below the severity floor
-      const key = aggregate ? m.aggKey : `${order.length}`;       // no-agg ⇒ unique key per row
+      if (SEVERITY_RANK[m.severity] > floorRank) return; // below the severity floor
+      const key = aggregate ? m.aggKey : `${order.length}`; // no-agg ⇒ unique key per row
       const existing = byKey.get(key);
       if (existing) {
         existing.count = (existing.count ?? 1) + 1;
@@ -1226,8 +1650,13 @@ export function createEventAggregator(
           if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
         }
         existing.severity = worst(existing.severity, m.severity);
-        for (const mt of m.mitre) if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
-        if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
+        for (const mt of m.mitre)
+          if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
+        if (m.sources)
+          for (const s of m.sources) {
+            existing.sources ??= [];
+            if (!existing.sources.includes(s)) existing.sources.push(s);
+          }
         if (!existing.artifactName && m.artifactName) existing.artifactName = m.artifactName; // first-wins provenance
         if (!existing.message && m.message) existing.message = m.message; // first-wins full detail
         // `count` records repeats; retaining the first pointer avoids unbounded provenance arrays.
@@ -1266,10 +1695,12 @@ export function createEventAggregator(
       const groups = events.length;
 
       // Most-severe first, then noisiest, then earliest — then cap.
-      events.sort((a, b) =>
-        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
-        (b.count ?? 1) - (a.count ?? 1) ||
-        (a.timestamp || "~").localeCompare(b.timestamp || "~"));
+      events.sort(
+        (a, b) =>
+          SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+          (b.count ?? 1) - (a.count ?? 1) ||
+          (a.timestamp || "~").localeCompare(b.timestamp || "~"),
+      );
 
       return { events: events.slice(0, maxEvents), groups };
     },
@@ -1312,7 +1743,8 @@ export function buildSiemResult(
     const host = pickHost(rec);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
-    const m = mapWindows(rec, host, rowSink, { source: format, recordIndex }) ?? mapGeneric(rec, host, rowSink);
+    const m =
+      mapWindows(rec, host, rowSink, { source: format, recordIndex }) ?? mapGeneric(rec, host, rowSink);
     mergeRowIocs(iocSink, rowSink, m.aggKey);
     mapped.push(m);
   }

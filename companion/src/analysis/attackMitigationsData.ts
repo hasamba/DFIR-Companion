@@ -59,7 +59,9 @@ function coerce(raw: unknown): MitigationsDatasetView {
     for (const [tech, links] of Object.entries(obj.map as Record<string, unknown>)) {
       if (!Array.isArray(links)) continue;
       const clean = links
-        .filter((l): l is { id: string; detail?: unknown } => !!l && typeof (l as { id?: unknown }).id === "string")
+        .filter(
+          (l): l is { id: string; detail?: unknown } => !!l && typeof (l as { id?: unknown }).id === "string",
+        )
         .map((l) => ({ id: l.id, detail: typeof l.detail === "string" ? l.detail : "" }));
       if (clean.length) map[tech] = clean;
     }

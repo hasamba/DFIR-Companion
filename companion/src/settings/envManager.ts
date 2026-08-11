@@ -40,34 +40,111 @@ const DENIED_ENV_KEYS = new Set([
 // dashboard can configure AI, integrations, enrichment, push, NSRL, and tools, but cannot
 // rewrite core server config, security toggles, or filesystem paths.
 const WRITABLE_ENV_PREFIXES = [
-  "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
-  "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
-  "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
-  "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
+  "DFIR_VISION_",
+  "DFIR_AI_",
+  "DFIR_IRIS_",
+  "DFIR_VELOCIRAPTOR_",
+  "DFIR_TIMESKETCH_",
+  "DFIR_NOTION_",
+  "DFIR_CLICKUP_",
+  "DFIR_VT_",
+  "DFIR_ABUSEIPDB_",
+  "DFIR_HUNTINGCH_",
+  "DFIR_MB_",
+  "DFIR_CROWDSTRIKE_",
+  "DFIR_SHODAN_",
+  "DFIR_MISP_",
+  "DFIR_YETI_",
+  "DFIR_OPENCTI_",
+  "DFIR_ROCKYRACCOON_",
+  "DFIR_GEOIP_",
+  "DFIR_LEAKCHECK_",
+  "DFIR_HIBP_",
+  "DFIR_DEHASHED_",
+  "DFIR_PUSH_TOKEN",
+  "DFIR_NSRL_",
+  "DFIR_TOOL_",
   // Bearer tokens for analyst-registered MCP servers (#296), as DFIR_MCP_<ID>_TOKEN. The _TOKEN
   // suffix is already in SECRET_SUFFIXES, so GET /settings/env redacts these for free.
   "DFIR_MCP_",
-  "DFIR_NOTIFY_", "DFIR_SMTP_", "DFIR_HASHLOOKUP_", "DFIR_RDAP_", "DFIR_OCR_", "DFIR_SYNTH_",
-  "DFIR_DEEP_PASS_", "DFIR_ASK_", "DFIR_GAP_", "DFIR_SSH_", "DFIR_TIMESTOMP_",
-  "DFIR_ANOMALY_", "DFIR_ADVERSARY_", "DFIR_ATTACK_", "DFIR_HUNT_", "DFIR_PBHUNT_",
-  "DFIR_MEMORY_", "DFIR_IMPORT_", "DFIR_UNDO_", "DFIR_CORRELATE_", "DFIR_SUPERTIMELINE_",
-  "DFIR_REPORT_", "DFIR_LOG_LEVEL", "DFIR_UPDATE_CHECK", "DFIR_STATE_BACKUP_",
-  "DFIR_DEMO_RESET_HOURS", "DFIR_MAX_EVENTS", "DFIR_MAX_BODY_MB", "DFIR_FORENSIC_",
-  "DFIR_DROP_", "DFIR_BEACON_", "DFIR_PHASE_", "DFIR_LEARNED_", "DFIR_SYNTH_ADVERSARY",
-  "DFIR_AI_TIMEOUT_MS", "DFIR_AI_MAX_TOKENS", "DFIR_AI_CONTEXT_TOKENS", "DFIR_AI_SYNTH_MAX_EVENTS",
-  "DFIR_AI_AUTO_SYNTHESIZE", "DFIR_AI_AUTO_SYNTHESIZE_MS", "DFIR_AI_SYNTH_THINKING_TOKENS",
-  "DFIR_AI_DEBUG_USAGE", "DFIR_AI_VELO_", "DFIR_AI_SECOND_OPINION_",
-  "DFIR_AI_CLAUDE_CODE_BIN", "DFIR_AI_CODEX_BIN", "DFIR_VISION_IMAGE_DETAIL",
-  "DFIR_AI_", "DFIR_VISION_", "DFIR_PRESIDIO_",
+  "DFIR_NOTIFY_",
+  "DFIR_SMTP_",
+  "DFIR_HASHLOOKUP_",
+  "DFIR_RDAP_",
+  "DFIR_OCR_",
+  "DFIR_SYNTH_",
+  "DFIR_DEEP_PASS_",
+  "DFIR_ASK_",
+  "DFIR_GAP_",
+  "DFIR_SSH_",
+  "DFIR_TIMESTOMP_",
+  "DFIR_ANOMALY_",
+  "DFIR_ADVERSARY_",
+  "DFIR_ATTACK_",
+  "DFIR_HUNT_",
+  "DFIR_PBHUNT_",
+  "DFIR_MEMORY_",
+  "DFIR_IMPORT_",
+  "DFIR_UNDO_",
+  "DFIR_CORRELATE_",
+  "DFIR_SUPERTIMELINE_",
+  "DFIR_REPORT_",
+  "DFIR_LOG_LEVEL",
+  "DFIR_UPDATE_CHECK",
+  "DFIR_STATE_BACKUP_",
+  "DFIR_DEMO_RESET_HOURS",
+  "DFIR_MAX_EVENTS",
+  "DFIR_MAX_BODY_MB",
+  "DFIR_FORENSIC_",
+  "DFIR_DROP_",
+  "DFIR_BEACON_",
+  "DFIR_PHASE_",
+  "DFIR_LEARNED_",
+  "DFIR_SYNTH_ADVERSARY",
+  "DFIR_AI_TIMEOUT_MS",
+  "DFIR_AI_MAX_TOKENS",
+  "DFIR_AI_CONTEXT_TOKENS",
+  "DFIR_AI_SYNTH_MAX_EVENTS",
+  "DFIR_AI_AUTO_SYNTHESIZE",
+  "DFIR_AI_AUTO_SYNTHESIZE_MS",
+  "DFIR_AI_SYNTH_THINKING_TOKENS",
+  "DFIR_AI_DEBUG_USAGE",
+  "DFIR_AI_VELO_",
+  "DFIR_AI_SECOND_OPINION_",
+  "DFIR_AI_CLAUDE_CODE_BIN",
+  "DFIR_AI_CODEX_BIN",
+  "DFIR_VISION_IMAGE_DETAIL",
+  "DFIR_AI_",
+  "DFIR_VISION_",
+  "DFIR_PRESIDIO_",
   // Tuning knobs the Settings modal has always rendered as editable fields but the original
   // allowlist (#240) never covered, so a save carrying them was rejected wholesale. All of them are
   // limits, delays, and display options — none redirects case data, relaxes a security control, or
   // changes where the server listens (those stay in DENIED_ENV_KEYS).
-  "TAGGER_", "DFIR_ENRICH_", "DFIR_EXPOSURE_", "DFIR_GEOMAP_", "DFIR_MOBILE_", "DFIR_PRESENT_",
-  "DFIR_VELO_HUNT_", "DFIR_VELO_MONITOR_", "DFIR_LOOKALIKE_", "DFIR_D3FEND_",
-  "DFIR_DEDUP", "DFIR_FLUSH_INTERVAL_MS", "DFIR_ATOMIC_WRITE_RETRIES", "DFIR_DISK_WARN_PCT",
-  "DFIR_IMPORTERS_DIR", "DFIR_MAX_PINNED_FINDINGS", "DFIR_LOG_MAX_TEMPLATES",
-  "DFIR_PUBLIC_URL", "DFIR_UPDATE_REPO", "DFIR_DIAG_MAX_FILES", "DFIR_LOCAL_TELEMETRY", "DFIR_JOBS_MAX", "DFIR_JOBS_CONCURRENCY", "DFIR_JOBS_PER_CASE",
+  "TAGGER_",
+  "DFIR_ENRICH_",
+  "DFIR_EXPOSURE_",
+  "DFIR_GEOMAP_",
+  "DFIR_MOBILE_",
+  "DFIR_PRESENT_",
+  "DFIR_VELO_HUNT_",
+  "DFIR_VELO_MONITOR_",
+  "DFIR_LOOKALIKE_",
+  "DFIR_D3FEND_",
+  "DFIR_DEDUP",
+  "DFIR_FLUSH_INTERVAL_MS",
+  "DFIR_ATOMIC_WRITE_RETRIES",
+  "DFIR_DISK_WARN_PCT",
+  "DFIR_IMPORTERS_DIR",
+  "DFIR_MAX_PINNED_FINDINGS",
+  "DFIR_LOG_MAX_TEMPLATES",
+  "DFIR_PUBLIC_URL",
+  "DFIR_UPDATE_REPO",
+  "DFIR_DIAG_MAX_FILES",
+  "DFIR_LOCAL_TELEMETRY",
+  "DFIR_JOBS_MAX",
+  "DFIR_JOBS_CONCURRENCY",
+  "DFIR_JOBS_PER_CASE",
 ];
 
 /**
@@ -155,11 +232,15 @@ export function resolveEnvFilePath(): string {
 }
 
 export function isSecretKey(key: string): boolean {
-  return SECRET_SUFFIXES.some(s => key.toUpperCase().endsWith(s) || key.toUpperCase().includes(s + "_"));
+  return SECRET_SUFFIXES.some((s) => key.toUpperCase().endsWith(s) || key.toUpperCase().includes(s + "_"));
 }
 
 async function readRaw(): Promise<string> {
-  try { return await readFile(resolveEnvFilePath(), "utf8"); } catch { return ""; }
+  try {
+    return await readFile(resolveEnvFilePath(), "utf8");
+  } catch {
+    return "";
+  }
 }
 
 function parseLines(raw: string): Record<string, string> {
@@ -186,7 +267,10 @@ export async function reloadEnvPrefix(prefix: string): Promise<string[]> {
   const raw = parseLines(await readRaw());
   const applied: string[] = [];
   for (const [k, v] of Object.entries(raw)) {
-    if (k.startsWith(prefix)) { process.env[k] = v; applied.push(k); }
+    if (k.startsWith(prefix)) {
+      process.env[k] = v;
+      applied.push(k);
+    }
   }
   return applied;
 }
@@ -245,7 +329,7 @@ export async function updateEnv(updates: Record<string, string>): Promise<void> 
     const lines = raw.split("\n");
     const updatedKeys = new Set<string>();
 
-    const newLines = lines.map(line => {
+    const newLines = lines.map((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) return line;
       const eq = trimmed.indexOf("=");

@@ -3,10 +3,26 @@ import { buildIntelCorroborationSteps, capIntelOnlyFindings } from "../../src/an
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
 function ioc(id: string, value: string): IOC {
-  return { id, type: "ip", value, enrichments: [{ source: "OneCTI", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z" }] } as IOC;
+  return {
+    id,
+    type: "ip",
+    value,
+    enrichments: [{ source: "OneCTI", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z" }],
+  } as IOC;
 }
 function finding(partial: Partial<Finding> & { id: string }): Finding {
-  return { severity: "Critical", title: "C2 to evil", description: "d", relatedIocs: ["i1"], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-01-01T00:00:00Z", lastUpdated: "2026-01-01T00:00:00Z", status: "open", ...partial };
+  return {
+    severity: "Critical",
+    title: "C2 to evil",
+    description: "d",
+    relatedIocs: ["i1"],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "2026-01-01T00:00:00Z",
+    lastUpdated: "2026-01-01T00:00:00Z",
+    status: "open",
+    ...partial,
+  };
 }
 
 describe("buildIntelCorroborationSteps (#7 deferred)", () => {
@@ -16,7 +32,9 @@ describe("buildIntelCorroborationSteps (#7 deferred)", () => {
     const scopedEvents: ForensicEvent[] = []; // no behavioral event → intel-only
 
     // Sanity: the cap fires for this finding.
-    expect(capIntelOnlyFindings({ findings, iocs, scopedEvents, hostNames: new Set() })[0].severity).toBe("Medium");
+    expect(capIntelOnlyFindings({ findings, iocs, scopedEvents, hostNames: new Set() })[0].severity).toBe(
+      "Medium",
+    );
 
     const steps = buildIntelCorroborationSteps({ findings, iocs, scopedEvents, hostNames: new Set() });
     expect(steps).toHaveLength(1);
@@ -28,18 +46,35 @@ describe("buildIntelCorroborationSteps (#7 deferred)", () => {
 
   it("returns nothing for a finding with behavioral corroboration or no verdict IOC", () => {
     const iocs = [ioc("i1", "203.0.113.9")];
-    const grounded = finding({ id: "f1", relatedIocs: ["i1"], corroboration: { distinctTools: 3, distinctHosts: 2, intelSources: 1, graphLinked: true } });
-    expect(buildIntelCorroborationSteps({ findings: [grounded], iocs, scopedEvents: [], hostNames: new Set() })).toEqual([]);
+    const grounded = finding({
+      id: "f1",
+      relatedIocs: ["i1"],
+      corroboration: { distinctTools: 3, distinctHosts: 2, intelSources: 1, graphLinked: true },
+    });
+    expect(
+      buildIntelCorroborationSteps({ findings: [grounded], iocs, scopedEvents: [], hostNames: new Set() }),
+    ).toEqual([]);
 
     const noVerdict = finding({ id: "f2", relatedIocs: [] });
-    expect(buildIntelCorroborationSteps({ findings: [noVerdict], iocs, scopedEvents: [], hostNames: new Set() })).toEqual([]);
+    expect(
+      buildIntelCorroborationSteps({ findings: [noVerdict], iocs, scopedEvents: [], hostNames: new Set() }),
+    ).toEqual([]);
   });
 
   it("picks a host from a scoped event that references the indicator", () => {
     const iocs = [ioc("i1", "203.0.113.9")];
     const findings = [finding({ id: "f1", relatedIocs: ["i1"] })];
     const scopedEvents: ForensicEvent[] = [
-      { id: "e1", timestamp: "2026-01-02T10:00:00Z", description: "connection to 203.0.113.9 observed", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-7" },
+      {
+        id: "e1",
+        timestamp: "2026-01-02T10:00:00Z",
+        description: "connection to 203.0.113.9 observed",
+        severity: "Info",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WKSTN-7",
+      },
     ];
     // NOTE: a behavioral event referencing the IOC would normally clear intel-only, but this event is a
     // bare "Info" mention with no process/connection fields, so iocHasBehavioralEvent stays false and the

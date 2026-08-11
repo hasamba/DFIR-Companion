@@ -3,7 +3,16 @@ import { renderAssetGraphSvg } from "../../src/reports/assetGraphSvg.js";
 import type { AssetGraph, GraphAsset, GraphIoc } from "../../src/analysis/assetGraph.js";
 
 function host(id: string, name: string, compromised = false): GraphAsset {
-  return { id, name, type: "host", compromised, iocIds: [], findingIds: [], eventCount: 1, maxSeverity: "Info" };
+  return {
+    id,
+    name,
+    type: "host",
+    compromised,
+    iocIds: [],
+    findingIds: [],
+    eventCount: 1,
+    maxSeverity: "Info",
+  };
 }
 function ioc(id: string, value: string, type = "ip", verdict?: string): GraphIoc {
   return { id, type, value, verdict, assetIds: [] };
@@ -45,7 +54,16 @@ describe("renderAssetGraphSvg", () => {
     const graph: AssetGraph = {
       assets: [
         host("host:w1", "WIN-01"),
-        { id: "account:jdoe", name: "CORP\\jdoe", type: "account", compromised: false, iocIds: [], findingIds: [], eventCount: 1, maxSeverity: "Info" },
+        {
+          id: "account:jdoe",
+          name: "CORP\\jdoe",
+          type: "account",
+          compromised: false,
+          iocIds: [],
+          findingIds: [],
+          eventCount: 1,
+          maxSeverity: "Info",
+        },
       ],
       iocs: [],
       edges: [],
@@ -100,9 +118,7 @@ describe("renderAssetGraphSvg", () => {
   });
 
   it("shows a truncation note when the graph exceeds the display cap", () => {
-    const assets = Array.from({ length: 35 }, (_, i) =>
-      host(`host:h${i}`, `HOST-${i}`),
-    );
+    const assets = Array.from({ length: 35 }, (_, i) => host(`host:h${i}`, `HOST-${i}`));
     const svg = renderAssetGraphSvg(makeGraph({ assets }));
     // Note mentions total asset count and refers to dashboard
     expect(svg).toContain("35");
@@ -117,12 +133,10 @@ describe("renderAssetGraphSvg", () => {
 
   it("excludes IoCs not connected to any displayed asset from the right column", () => {
     // i2 is connected to a non-displayed asset (beyond MAX_ITEMS cap); won't appear
-    const assets = Array.from({ length: 31 }, (_, i) =>
-      host(`host:h${i}`, `HOST-${i}`),
-    );
+    const assets = Array.from({ length: 31 }, (_, i) => host(`host:h${i}`, `HOST-${i}`));
     const iocs: GraphIoc[] = [
       { ...ioc("i1", "1.1.1.1"), assetIds: ["host:h0"] },
-      { ...ioc("i2", "9.9.9.9"), assetIds: ["host:h30"] },  // h30 is index 30 — beyond cap of 30
+      { ...ioc("i2", "9.9.9.9"), assetIds: ["host:h30"] }, // h30 is index 30 — beyond cap of 30
     ];
     const svg = renderAssetGraphSvg({ assets, iocs, edges: [] });
     expect(svg).toContain("1.1.1.1");

@@ -4,15 +4,27 @@ import type { ForensicEvent, Finding } from "../../src/analysis/stateTypes.js";
 
 function event(overrides: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    timestamp: "", description: "an event", severity: "Low", mitreTechniques: [],
-    relatedFindingIds: [], sourceScreenshots: [], ...overrides,
+    timestamp: "",
+    description: "an event",
+    severity: "Low",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...overrides,
   };
 }
 
 function finding(overrides: Partial<Finding> & { id: string; title: string }): Finding {
   return {
-    severity: "Low", description: "", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-    firstSeen: "", lastUpdated: "", status: "open", ...overrides,
+    severity: "Low",
+    description: "",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "",
+    lastUpdated: "",
+    status: "open",
+    ...overrides,
   };
 }
 
@@ -45,7 +57,9 @@ describe("findSimilarEvents", () => {
 
   it("caps results at maxResults, highest score first", () => {
     const anchor = event({ id: "e1", mitreTechniques: ["T1569"] });
-    const candidates = Array.from({ length: 30 }, (_, i) => event({ id: `e${i + 2}`, mitreTechniques: ["T1569"] }));
+    const candidates = Array.from({ length: 30 }, (_, i) =>
+      event({ id: `e${i + 2}`, mitreTechniques: ["T1569"] }),
+    );
     const out = findSimilarEvents(anchor, candidates, { maxResults: 5 });
     expect(out).toHaveLength(5);
   });
@@ -65,10 +79,25 @@ describe("findSimilarEvents", () => {
 
 describe("findSimilarFindings", () => {
   it("scores shared MITRE technique and overlapping related IOCs", () => {
-    const anchor = finding({ id: "f1", title: "PsExec lateral movement", mitreTechniques: ["T1569.002"], relatedIocs: ["i1"] });
+    const anchor = finding({
+      id: "f1",
+      title: "PsExec lateral movement",
+      mitreTechniques: ["T1569.002"],
+      relatedIocs: ["i1"],
+    });
     const candidates = [
-      finding({ id: "f2", title: "PsExec use on FILE-02", mitreTechniques: ["T1569.002"], relatedIocs: ["i1"] }),
-      finding({ id: "f3", title: "Unrelated persistence finding", mitreTechniques: ["T1547"], relatedIocs: [] }),
+      finding({
+        id: "f2",
+        title: "PsExec use on FILE-02",
+        mitreTechniques: ["T1569.002"],
+        relatedIocs: ["i1"],
+      }),
+      finding({
+        id: "f3",
+        title: "Unrelated persistence finding",
+        mitreTechniques: ["T1547"],
+        relatedIocs: [],
+      }),
     ];
     const out = findSimilarFindings(anchor, candidates);
     expect(out.map((c) => c.id)).toEqual(["f2"]);

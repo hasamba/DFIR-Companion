@@ -74,7 +74,9 @@ afterEach(async () => {
 
 function app() {
   return createApp(store, {
-    stateStore, tagsStore, taggerStore,
+    stateStore,
+    tagsStore,
+    taggerStore,
     superTimelineStore: new SuperTimelineStore(store),
   });
 }
@@ -120,10 +122,17 @@ describe("POST /cases/:id/tagger/run", () => {
     expect(res.body.totalMatched).toBe(1);
     expect(res.body.tagsWritten).toBe(2); // win-service + persistence on e1
     expect(res.body.mutatedCount).toBe(1);
-    expect(res.body.perRule.find((r: { id: string }) => r.id === "svc")).toMatchObject({ matched: 1, view: "Service Installs" });
+    expect(res.body.perRule.find((r: { id: string }) => r.id === "svc")).toMatchObject({
+      matched: 1,
+      view: "Service Installs",
+    });
 
     // e1 carries two tagger-authored tags; e2 carries none.
-    const tags = (await request(app()).get("/cases/c1/tags")).body as Array<{ targetId: string; label: string; author: string }>;
+    const tags = (await request(app()).get("/cases/c1/tags")).body as Array<{
+      targetId: string;
+      label: string;
+      author: string;
+    }>;
     const e1 = tags.filter((t) => t.targetId === "e1");
     expect(e1.map((t) => t.label).sort()).toEqual(["persistence", "win-service"]);
     expect(e1.every((t) => t.author === "tagger:svc")).toBe(true);
@@ -148,13 +157,18 @@ describe("POST /cases/:id/tagger/clear", () => {
   it("removes only tagger-authored tags, leaving analyst tags intact", async () => {
     await request(app()).post("/cases/c1/tagger/run").send({});
     // add a manual analyst tag on the same event
-    await request(app()).post("/cases/c1/tags").send({ targetType: "event", targetId: "e1", label: "key-evidence", author: "alice" });
+    await request(app())
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "e1", label: "key-evidence", author: "alice" });
 
     const clear = await request(app()).post("/cases/c1/tagger/clear").send({});
     expect(clear.status).toBe(200);
     expect(clear.body.removed).toBe(2);
 
-    const tags = (await request(app()).get("/cases/c1/tags")).body as Array<{ label: string; author: string }>;
+    const tags = (await request(app()).get("/cases/c1/tags")).body as Array<{
+      label: string;
+      author: string;
+    }>;
     expect(tags).toHaveLength(1);
     expect(tags[0]).toMatchObject({ label: "key-evidence", author: "alice" });
   });
@@ -163,11 +177,13 @@ describe("POST /cases/:id/tagger/clear", () => {
 function appAi(suggest: (caseId: string, desc: string) => Promise<SuggestOutcome>) {
   const fakePipeline = {
     hasAiProvider: () => true,
-    hasSynthesisProvider: () => true,   // suggest-rule is TEXT work — gated on the synthesis provider
+    hasSynthesisProvider: () => true, // suggest-rule is TEXT work — gated on the synthesis provider
     suggestTaggerRule: suggest,
   } as unknown as import("../../src/analysis/pipeline.js").AnalysisPipeline;
   return createApp(store, {
-    stateStore, tagsStore, taggerStore,
+    stateStore,
+    tagsStore,
+    taggerStore,
     superTimelineStore: new SuperTimelineStore(store),
     pipeline: fakePipeline,
     aiConfigured: true,
@@ -176,22 +192,30 @@ function appAi(suggest: (caseId: string, desc: string) => Promise<SuggestOutcome
 
 describe("POST /cases/:id/tagger/suggest-rule", () => {
   it("is 501 when no AI provider is configured", async () => {
-    const res = await request(app()).post("/cases/c1/tagger/suggest-rule").send({ description: "flag log clears" });
+    const res = await request(app())
+      .post("/cases/c1/tagger/suggest-rule")
+      .send({ description: "flag log clears" });
     expect(res.status).toBe(501);
   });
 
   it("returns a rule outcome from the pipeline", async () => {
     const outcome: SuggestOutcome = {
-      kind: "rule", ruleId: "logon", explanation: "e",
+      kind: "rule",
+      ruleId: "logon",
+      explanation: "e",
       ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n",
     };
-    const res = await request(appAi(async () => outcome)).post("/cases/c1/tagger/suggest-rule").send({ description: "x" });
+    const res = await request(appAi(async () => outcome))
+      .post("/cases/c1/tagger/suggest-rule")
+      .send({ description: "x" });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ kind: "rule", ruleId: "logon" });
   });
 
   it("400s on an empty description", async () => {
-    const res = await request(appAi(async () => ({ kind: "decline", reason: "n/a" }))).post("/cases/c1/tagger/suggest-rule").send({ description: "  " });
+    const res = await request(appAi(async () => ({ kind: "decline", reason: "n/a" })))
+      .post("/cases/c1/tagger/suggest-rule")
+      .send({ description: "  " });
     expect(res.status).toBe(400);
   });
 });
@@ -213,7 +237,9 @@ describe("POST /cases/:id/tagger/preview", () => {
   });
 
   it("400s on an invalid rule YAML", async () => {
-    const res = await request(app()).post("/cases/c1/tagger/preview").send({ ruleYaml: "bad:\n  any:\n    - { field: nope, contains: 'x' }\n  tags: ['t']\n" });
+    const res = await request(app())
+      .post("/cases/c1/tagger/preview")
+      .send({ ruleYaml: "bad:\n  any:\n    - { field: nope, contains: 'x' }\n  tags: ['t']\n" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/nope/);
   });
@@ -233,7 +259,11 @@ describe("POST /tagger/rules/add", () => {
 
 describe("DELETE /tagger/rules/:ruleId", () => {
   it("removes a rule (200) and 404s for an unknown id", async () => {
-    await request(app()).post("/tagger/rules/add").send({ ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n" });
+    await request(app())
+      .post("/tagger/rules/add")
+      .send({
+        ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n",
+      });
     const del = await request(app()).delete("/tagger/rules/svc");
     expect(del.status).toBe(200);
     expect(del.body.ruleCount).toBe(1);
@@ -244,7 +274,9 @@ describe("DELETE /tagger/rules/:ruleId", () => {
 
 describe("POST /tagger/rules/reset", () => {
   it("restores the shipped default ruleset", async () => {
-    await request(app()).post("/tagger/rules/add").send({ ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n" });
+    await request(app())
+      .post("/tagger/rules/add")
+      .send({ ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n" });
     expect((await request(app()).get("/tagger/rules")).body.source).toBe("user");
     const reset = await request(app()).post("/tagger/rules/reset");
     expect(reset.status).toBe(200);

@@ -83,7 +83,9 @@ export class SlackSocketMode {
     this.stopped = true;
     try {
       this.socket?.close();
-    } catch { /* already gone */ }
+    } catch {
+      /* already gone */
+    }
     this.endCurrentSocket?.(); // don't wait on a "close" event that may never come
     await this.loop?.catch(() => {});
     this.loop = undefined;
@@ -139,8 +141,13 @@ export class SlackSocketMode {
         settled = true;
         this.socket = undefined;
         this.endCurrentSocket = undefined;
-        try { socket.close(); } catch { /* already closing */ }
-        if (err) reject(err); else resolve();
+        try {
+          socket.close();
+        } catch {
+          /* already closing */
+        }
+        if (err) reject(err);
+        else resolve();
       };
       this.endCurrentSocket = () => done();
 
@@ -149,7 +156,9 @@ export class SlackSocketMode {
       socket.on("error", (err) => done(err instanceof Error ? err : new Error(String(err))));
       socket.on("message", (data) => {
         void this.onMessage(socket, data)
-          .then((reconnect) => { if (reconnect) done(); })
+          .then((reconnect) => {
+            if (reconnect) done();
+          })
           .catch((err) => this.opts.log.warn(`[slack] socket message failed: ${(err as Error).message}`));
       });
     });
@@ -197,7 +206,9 @@ export class SlackSocketMode {
           `(starts "xapp-") with the connections:write scope, from Settings → Basic Information → App-Level Tokens.`,
       );
     } else {
-      this.opts.log.warn(`[slack] socket mode: ${message}; retrying in ${Math.round(this.backoffMs / 1000)}s`);
+      this.opts.log.warn(
+        `[slack] socket mode: ${message}; retrying in ${Math.round(this.backoffMs / 1000)}s`,
+      );
     }
     await this.sleepFn(this.backoffMs);
     this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);

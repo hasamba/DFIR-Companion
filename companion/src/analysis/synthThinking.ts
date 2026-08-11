@@ -22,7 +22,8 @@ export interface SynthThinkingInput {
 
 // envBudget is the resolved DFIR_AI_SYNTH_THINKING_TOKENS value (any number; <min counts as 0).
 export function resolveSynthThinkingBudget(opts: SynthThinkingInput, envBudget: number): number {
-  const env = Number.isFinite(envBudget) && envBudget >= MIN_SYNTH_THINKING_TOKENS ? Math.floor(envBudget) : 0;
+  const env =
+    Number.isFinite(envBudget) && envBudget >= MIN_SYNTH_THINKING_TOKENS ? Math.floor(envBudget) : 0;
   if (opts.thinkingTokens !== undefined) {
     const n = Math.floor(opts.thinkingTokens);
     return n >= MIN_SYNTH_THINKING_TOKENS ? n : 0; // explicit per-run value (0/low = off)

@@ -12,8 +12,16 @@ import { buildImporter, type ExternalImporter } from "./declarativeImporter.js";
 
 export type ImporterPrecedence = "builtin-first" | "external-first";
 
-export interface ImporterMeta { id: string; label: string; file: string; priority: number; }
-export interface ImporterLoadError { file: string; errors: SpecParseError[]; }
+export interface ImporterMeta {
+  id: string;
+  label: string;
+  file: string;
+  priority: number;
+}
+export interface ImporterLoadError {
+  file: string;
+  errors: SpecParseError[];
+}
 export interface ImporterRegistry {
   importers: Map<string, ExternalImporter>;
   meta: ImporterMeta[];
@@ -35,19 +43,38 @@ export class ImporterStore {
     const meta: ImporterMeta[] = [];
     const errors: ImporterLoadError[] = [];
     let files: string[] = [];
-    try { files = await readdir(this.dir); } catch { return { importers, meta, errors }; }
+    try {
+      files = await readdir(this.dir);
+    } catch {
+      return { importers, meta, errors };
+    }
 
     for (const file of files) {
       if (!file.endsWith(".json") || file === CONFIG_FILE) continue;
       let raw: unknown;
-      try { raw = JSON.parse(await readFile(join(this.dir, file), "utf8")); }
-      // /diagnostics ships these load errors to the client, so the message is redacted here (#250).
-      // A JSON.parse error carries no path, but the readFile in the same try can fail with an ENOENT
-      // or EACCES that quotes the spec's absolute path — `file` above is deliberately a bare name.
-      catch (err) { errors.push({ file, errors: [{ path: "(file)", message: `not valid JSON: ${redactPaths((err as Error).message, [this.dir])}` }] }); continue; }
+      try {
+        raw = JSON.parse(await readFile(join(this.dir, file), "utf8"));
+      } catch (err) {
+        // /diagnostics ships these load errors to the client, so the message is redacted here (#250).
+        // A JSON.parse error carries no path, but the readFile in the same try can fail with an ENOENT
+        // or EACCES that quotes the spec's absolute path — `file` above is deliberately a bare name.
+        errors.push({
+          file,
+          errors: [
+            { path: "(file)", message: `not valid JSON: ${redactPaths((err as Error).message, [this.dir])}` },
+          ],
+        });
+        continue;
+      }
       const parsed = parseImporterSpec(raw);
-      if (!parsed.ok) { errors.push({ file, errors: parsed.errors }); continue; }
-      if (importers.has(parsed.spec.id)) { errors.push({ file, errors: [{ path: "id", message: `duplicate id "${parsed.spec.id}"` }] }); continue; }
+      if (!parsed.ok) {
+        errors.push({ file, errors: parsed.errors });
+        continue;
+      }
+      if (importers.has(parsed.spec.id)) {
+        errors.push({ file, errors: [{ path: "id", message: `duplicate id "${parsed.spec.id}"` }] });
+        continue;
+      }
       importers.set(parsed.spec.id, buildImporter(parsed.spec));
       meta.push({ id: parsed.spec.id, label: parsed.spec.label, file, priority: parsed.spec.match.priority });
     }
@@ -70,7 +97,9 @@ export class ImporterStore {
     try {
       const cfg = JSON.parse(await readFile(join(this.dir, CONFIG_FILE), "utf8")) as { precedence?: string };
       return cfg.precedence === "external-first" ? "external-first" : "builtin-first";
-    } catch { return "builtin-first"; }
+    } catch {
+      return "builtin-first";
+    }
   }
 
   async setPrecedence(p: ImporterPrecedence): Promise<void> {

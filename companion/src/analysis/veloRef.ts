@@ -59,11 +59,22 @@ export function parseVeloRef(input: string): VeloRef | null {
 
   // A flow needs exactly one client + one flow token and NO hunt token.
   if (clients.length === 1 && flows.length === 1 && hunts.length === 0) {
-    return { kind: "flow", clientId: clients[0], flowId: flows[0], ...(isNotebookUrl ? { isNotebookUrl } : {}), ...(isUploadsUrl ? { isUploadsUrl } : {}) };
+    return {
+      kind: "flow",
+      clientId: clients[0],
+      flowId: flows[0],
+      ...(isNotebookUrl ? { isNotebookUrl } : {}),
+      ...(isUploadsUrl ? { isUploadsUrl } : {}),
+    };
   }
   // A hunt needs exactly one hunt token and no flow token.
   if (hunts.length === 1 && flows.length === 0) {
-    return { kind: "hunt", huntId: hunts[0], ...(isNotebookUrl ? { isNotebookUrl } : {}), ...(isUploadsUrl ? { isUploadsUrl } : {}) };
+    return {
+      kind: "hunt",
+      huntId: hunts[0],
+      ...(isNotebookUrl ? { isNotebookUrl } : {}),
+      ...(isUploadsUrl ? { isUploadsUrl } : {}),
+    };
   }
   return null;
 }

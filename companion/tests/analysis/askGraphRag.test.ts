@@ -16,12 +16,22 @@ class CapturingProvider implements AIProvider {
   lastReq?: AnalyzeRequest;
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.lastReq = req;
-    return { rawText: JSON.stringify({ answer: "ok", status: "unknown", pointer: "n/a", relatedEventIds: [] }) };
+    return {
+      rawText: JSON.stringify({ answer: "ok", status: "unknown", pointer: "n/a", relatedEventIds: [] }),
+    };
   }
 }
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { timestamp: "2026-01-01T00:00:00Z", description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    timestamp: "2026-01-01T00:00:00Z",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 
 async function makePipeline(timeline: ForensicEvent[]) {
@@ -34,14 +44,24 @@ async function makePipeline(timeline: ForensicEvent[]) {
   await stateStore.save(s);
   const provider = new CapturingProvider();
   // No anonStore → real names survive in the captured prompt, so we can assert on them directly.
-  const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
+  const pipeline = new AnalysisPipeline({
+    provider,
+    stateStore,
+    imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+  });
   return { pipeline, provider };
 }
 
 describe("ask() GraphRAG grounding (#98)", () => {
   it("serializes the evidence-chain graph (spawns + network flows) into the ask prompt", async () => {
     const { pipeline, provider } = await makePipeline([
-      ev({ id: "e1", asset: "WEB01", parentName: "excel.exe", processName: "powershell.exe", severity: "High" }),
+      ev({
+        id: "e1",
+        asset: "WEB01",
+        parentName: "excel.exe",
+        processName: "powershell.exe",
+        severity: "High",
+      }),
       ev({ id: "e2", asset: "WEB01", dstIp: "1.2.3.4", port: 443, severity: "High" }),
     ]);
     await pipeline.ask("c1", "Trace the path from the document to the C2 server");
@@ -50,7 +70,7 @@ describe("ask() GraphRAG grounding (#98)", () => {
     expect(prompt).toContain("ATTACK GRAPH");
     expect(prompt).toContain("Process spawns (parent → child):");
     expect(prompt).toContain("excel.exe → powershell.exe on WEB01");
-    expect(prompt).toContain("[e1]");                                   // backing event id is citable
+    expect(prompt).toContain("[e1]"); // backing event id is citable
     expect(prompt).toContain("Network connections (source → destination):");
     expect(prompt).toContain("1.2.3.4:443");
   });

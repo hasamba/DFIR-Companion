@@ -33,12 +33,16 @@ describe("parseWazuhAlerts — severity mapping", () => {
   });
 
   it("level ≥7 → Medium", () => {
-    const r = parseWazuhAlerts(j(alert({ rule: { level: 8, description: "Suspicious activity", id: "9999" } })));
+    const r = parseWazuhAlerts(
+      j(alert({ rule: { level: 8, description: "Suspicious activity", id: "9999" } })),
+    );
     expect(r.events[0].severity).toBe("Medium");
   });
 
   it("level <7 → Info", () => {
-    const r = parseWazuhAlerts(j(alert({ rule: { level: 4, description: "Low priority event", id: "1001" } })));
+    const r = parseWazuhAlerts(
+      j(alert({ rule: { level: 4, description: "Low priority event", id: "1001" } })),
+    );
     expect(r.events[0].severity).toBe("Info");
   });
 });
@@ -80,14 +84,18 @@ describe("parseWazuhAlerts — field extraction", () => {
   });
 
   it("handles array of MITRE techniques", () => {
-    const a = alert({ rule: { level: 10, description: "x", id: "1", mitre: { technique: ["T1059", "T1078.004"] } } });
+    const a = alert({
+      rule: { level: 10, description: "x", id: "1", mitre: { technique: ["T1059", "T1078.004"] } },
+    });
     const r = parseWazuhAlerts(j(a));
     expect(r.events[0].mitreTechniques).toContain("T1059");
     expect(r.events[0].mitreTechniques).toContain("T1078.004");
   });
 
   it("ignores invalid MITRE ids", () => {
-    const a = alert({ rule: { level: 10, description: "x", id: "1", mitre: { technique: ["not-a-technique", "T1059"] } } });
+    const a = alert({
+      rule: { level: 10, description: "x", id: "1", mitre: { technique: ["not-a-technique", "T1059"] } },
+    });
     const r = parseWazuhAlerts(j(a));
     expect(r.events[0].mitreTechniques).toEqual(["T1059"]);
   });
@@ -175,10 +183,13 @@ describe("parseWazuhAlerts — noise filtering", () => {
   });
 
   it("applies severity floor option", () => {
-    const r = parseWazuhAlerts(j(
-      alert({ rule: { level: 14, description: "High severity", id: "1" } }), // Critical
-      alert({ rule: { level: 4, description: "Low severity", id: "2" } }),   // Info
-    ), { minSeverity: "High" });
+    const r = parseWazuhAlerts(
+      j(
+        alert({ rule: { level: 14, description: "High severity", id: "1" } }), // Critical
+        alert({ rule: { level: 4, description: "Low severity", id: "2" } }), // Info
+      ),
+      { minSeverity: "High" },
+    );
     expect(r.events).toHaveLength(1);
     expect(r.events[0].severity).toBe("Critical");
   });

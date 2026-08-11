@@ -22,8 +22,13 @@ class CapturingProvider implements AIProvider {
 }
 
 const sev = (id: string, ts: string, description: string) => ({
-  id, timestamp: ts, description, severity: "Info" as const,
-  mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+  id,
+  timestamp: ts,
+  description,
+  severity: "Info" as const,
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
 });
 
 async function harness(opts: { ai?: boolean } = {}) {
@@ -33,12 +38,17 @@ async function harness(opts: { ai?: boolean } = {}) {
   const stateStore = new StateStore(store);
   const provider = ai ? new CapturingProvider() : undefined;
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const superStore = new SuperTimelineStore(store);
   const app = createApp(store, {
-    pipeline, stateStore, aiConfigured: ai,
+    pipeline,
+    stateStore,
+    aiConfigured: ai,
     tagsStore: new TagsStore(store),
     superTimelineStore: superStore,
     starredReportStore: new StarredReportStore(store),
@@ -66,7 +76,9 @@ describe("POST /cases/:id/starred-report", () => {
       sev("sv1", "2026-06-01T09:00:00Z", "mimikatz.exe executed"),
       sev("sv2", "2026-06-01T10:00:00Z", "benign chrome update"),
     ]);
-    await request(app).post("/cases/c1/tags").send({ targetType: "event", targetId: "sv1", label: "starred", author: "an" });
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "sv1", label: "starred", author: "an" });
     const r = await request(app).post("/cases/c1/starred-report").send({});
     expect(r.status).toBe(200);
     expect(r.body.markdown).toContain("# Starred Events Report");
@@ -80,7 +92,9 @@ describe("saved starred report (GET/PUT /cases/:id/starred-report)", () => {
   it("404 before anything is saved; round-trips after PUT", async () => {
     const { app } = await harness();
     expect((await request(app).get("/cases/c1/starred-report")).status).toBe(404);
-    const put = await request(app).put("/cases/c1/starred-report").send({ markdown: "# saved", eventCount: 3 });
+    const put = await request(app)
+      .put("/cases/c1/starred-report")
+      .send({ markdown: "# saved", eventCount: 3 });
     expect(put.status).toBe(200);
     const got = await request(app).get("/cases/c1/starred-report");
     expect(got.status).toBe(200);
@@ -121,7 +135,9 @@ describe("POST /cases/:id/view-summary", () => {
       sev("v1", "2026-06-01T09:00:00Z", "psexec lateral hop"),
       sev("v2", "2026-06-01T10:00:00Z", "normal dns chatter"),
     ]);
-    await request(app).post("/cases/c1/tags").send({ targetType: "event", targetId: "v1", label: "exfil", author: "an" });
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "v1", label: "exfil", author: "an" });
     const r = await request(app).post("/cases/c1/view-summary").send({ labels: "exfil" });
     expect(r.status).toBe(200);
     expect(r.body.eventCount).toBe(1);
@@ -135,7 +151,9 @@ describe("POST /cases/:id/view-summary", () => {
       sev("v1", "2026-06-01T09:00:00Z", "starred row"),
       sev("v2", "2026-06-01T10:00:00Z", "plain row"),
     ]);
-    await request(app).post("/cases/c1/tags").send({ targetType: "event", targetId: "v1", label: "starred", author: "an" });
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "v1", label: "starred", author: "an" });
     const r = await request(app).post("/cases/c1/view-summary").send({ starred: "1" });
     expect(r.status).toBe(200);
     expect(provider!.lastReq!.userPrompt).toContain("starred row");
@@ -159,12 +177,17 @@ describe("synthesis-provider gate (no vision provider)", () => {
     const stateStore = new StateStore(store);
     const provider = new CapturingProvider();
     const pipeline = buildRuntimePipeline({
-      provider: undefined, synthesisProvider: provider, stateStore, store,
+      provider: undefined,
+      synthesisProvider: provider,
+      stateStore,
+      store,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const superStore = new SuperTimelineStore(store);
     const app = createApp(store, {
-      pipeline, stateStore, aiConfigured: false,   // vision provider off — mirrors buildProvider() === undefined
+      pipeline,
+      stateStore,
+      aiConfigured: false, // vision provider off — mirrors buildProvider() === undefined
       tagsStore: new TagsStore(store),
       superTimelineStore: superStore,
       starredReportStore: new StarredReportStore(store),
@@ -176,7 +199,9 @@ describe("synthesis-provider gate (no vision provider)", () => {
   it("starred-report works on synthesis alone (200, not 501)", async () => {
     const { app, superStore } = await synthOnlyHarness();
     await superStore.append("c1", [sev("v1", "2026-06-01T09:00:00Z", "mimikatz.exe executed")]);
-    await request(app).post("/cases/c1/tags").send({ targetType: "event", targetId: "v1", label: "starred", author: "an" });
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "v1", label: "starred", author: "an" });
     const r = await request(app).post("/cases/c1/starred-report").send({});
     expect(r.status).toBe(200);
     expect(r.body.markdown).toContain("# Starred Events Report");

@@ -46,9 +46,15 @@ async function harness() {
 describe("NSRL stats / import / clear / export routes", () => {
   it("starts empty, imports hashes, reports the count, exports, then clears", async () => {
     const { app } = await harness();
-    expect((await request(app).get("/nsrl")).body).toMatchObject({ count: 0, enabled: false, db: { connected: false } });
+    expect((await request(app).get("/nsrl")).body).toMatchObject({
+      count: 0,
+      enabled: false,
+      db: { connected: false },
+    });
 
-    const imp = await request(app).post("/nsrl/import").send({ text: `${MD5}\n${SHA256}\n${MD5}\n` });
+    const imp = await request(app)
+      .post("/nsrl/import")
+      .send({ text: `${MD5}\n${SHA256}\n${MD5}\n` });
     expect(imp.status).toBe(200);
     expect(imp.body).toMatchObject({ added: 2, total: 2 });
 
@@ -68,12 +74,18 @@ describe("NSRL stats / import / clear / export routes", () => {
   it("400s on empty or hash-free import text", async () => {
     const { app } = await harness();
     expect((await request(app).post("/nsrl/import").send({ text: "" })).status).toBe(400);
-    expect((await request(app).post("/nsrl/import").send({ text: "just words, no hashes" })).status).toBe(400);
+    expect((await request(app).post("/nsrl/import").send({ text: "just words, no hashes" })).status).toBe(
+      400,
+    );
   });
 
   it("returns 501 when no NSRL store is configured (GET degrades to disabled)", async () => {
     const app = createApp(new CaseStore(await tmp()));
-    expect((await request(app).get("/nsrl")).body).toMatchObject({ count: 0, enabled: false, db: { connected: false } });
+    expect((await request(app).get("/nsrl")).body).toMatchObject({
+      count: 0,
+      enabled: false,
+      db: { connected: false },
+    });
     expect((await request(app).post("/nsrl/import").send({ text: MD5 })).status).toBe(501);
     expect((await request(app).post("/nsrl/import-file").send({ path: "x" })).status).toBe(501);
     expect((await request(app).post("/nsrl/clear")).status).toBe(501);
@@ -100,7 +112,9 @@ describe("POST /nsrl/import-file", () => {
     const dir = await tmp();
     const good = join(dir, "good.txt");
     await writeFile(good, MD5, "utf8");
-    const res = await request(app).post("/nsrl/import-file").send({ path: `${good} ; ${join(dir, "nope.txt")}` });
+    const res = await request(app)
+      .post("/nsrl/import-file")
+      .send({ path: `${good} ; ${join(dir, "nope.txt")}` });
     expect(res.status).toBe(200);
     expect(res.body.added).toBe(1);
     expect(res.body.files.filter((f: { error?: string }) => f.error)).toHaveLength(1);
@@ -109,8 +123,10 @@ describe("POST /nsrl/import-file", () => {
   it("400s when no path is given, or every path fails", async () => {
     const { app } = await harness();
     expect((await request(app).post("/nsrl/import-file").send({})).status).toBe(400);
-    const res = await request(app).post("/nsrl/import-file").send({ path: join(await tmp(), "ghost.txt") });
-    expect(res.status).toBe(400);   // all paths failed → nothing loaded
+    const res = await request(app)
+      .post("/nsrl/import-file")
+      .send({ path: join(await tmp(), "ghost.txt") });
+    expect(res.status).toBe(400); // all paths failed → nothing loaded
     expect(res.body.files[0].error).toBeTruthy();
   });
 });
@@ -118,19 +134,27 @@ describe("POST /nsrl/import-file", () => {
 describe("POST /cases/:id/nsrl/apply", () => {
   it("marks known-good IOCs and forensic events legitimate, leaving the rest", async () => {
     const { app, stateStore, legit } = await harness();
-    const base = { description: "d", severity: "High" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+    const base = {
+      description: "d",
+      severity: "High" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    };
     await stateStore.save({
       ...emptyState("c1"),
       iocs: [
-        { id: "i1", type: "hash", value: MD5, firstSeen: "2026-01-01T00:00:00Z" },     // known-good → marked
+        { id: "i1", type: "hash", value: MD5, firstSeen: "2026-01-01T00:00:00Z" }, // known-good → marked
         { id: "i2", type: "hash", value: "f".repeat(64), firstSeen: "2026-01-01T00:00:00Z" }, // unknown → kept
       ],
       forensicTimeline: [
-        { id: "e1", timestamp: "2026-01-01T00:00:00Z", ...base, sha256: SHA256 },        // known-good file → marked
+        { id: "e1", timestamp: "2026-01-01T00:00:00Z", ...base, sha256: SHA256 }, // known-good file → marked
         { id: "e2", timestamp: "2026-01-01T00:00:00Z", ...base, sha256: "a".repeat(64) }, // unknown → kept
       ],
     });
-    await request(app).post("/nsrl/import").send({ text: `${MD5}\n${SHA256}` });
+    await request(app)
+      .post("/nsrl/import")
+      .send({ text: `${MD5}\n${SHA256}` });
 
     const res = await request(app).post("/cases/c1/nsrl/apply");
     expect(res.status).toBe(200);
@@ -146,7 +170,10 @@ describe("POST /cases/:id/nsrl/apply", () => {
 
   it("adds nothing when the set is empty", async () => {
     const { app, stateStore } = await harness();
-    await stateStore.save({ ...emptyState("c1"), iocs: [{ id: "i1", type: "hash", value: MD5, firstSeen: "2026-01-01T00:00:00Z" }] });
+    await stateStore.save({
+      ...emptyState("c1"),
+      iocs: [{ id: "i1", type: "hash", value: MD5, firstSeen: "2026-01-01T00:00:00Z" }],
+    });
     const res = await request(app).post("/cases/c1/nsrl/apply");
     expect(res.status).toBe(200);
     expect(res.body.added).toBe(0);
@@ -159,12 +186,15 @@ describe("NSRL RDS SQLite backend (#63)", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const legit = new FalsePositiveStore(store);
-    const dbFile = await buildRds(root, [{ sha256: SHA256 }]);   // one known-good sha256
+    const dbFile = await buildRds(root, [{ sha256: SHA256 }]); // one known-good sha256
     const app = createApp(store, { stateStore, nsrlDbConfigFile: join(root, "nsrl", "db-path.txt") });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
     // not connected yet
-    expect((await request(app).get("/nsrl")).body).toMatchObject({ db: { connected: false }, dbConfigurable: true });
+    expect((await request(app).get("/nsrl")).body).toMatchObject({
+      db: { connected: false },
+      dbConfigurable: true,
+    });
 
     const conn = await request(app).post("/nsrl/db").send({ path: dbFile });
     expect(conn.status).toBe(200);
@@ -173,12 +203,18 @@ describe("NSRL RDS SQLite backend (#63)", () => {
     expect((await request(app).get("/nsrl")).body.db).toMatchObject({ connected: true, table: "METADATA" });
 
     // an event carrying that sha256 is auto-marked legitimate by the DB lookup
-    const base = { description: "d", severity: "High" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+    const base = {
+      description: "d",
+      severity: "High" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    };
     await stateStore.save({
       ...emptyState("c1"),
       forensicTimeline: [
         { id: "e1", timestamp: "2026-01-01T00:00:00Z", ...base, sha256: SHA256.toUpperCase() }, // known-good (case-insensitive)
-        { id: "e2", timestamp: "2026-01-01T00:00:00Z", ...base, sha256: "f".repeat(64) },        // unknown
+        { id: "e2", timestamp: "2026-01-01T00:00:00Z", ...base, sha256: "f".repeat(64) }, // unknown
       ],
     });
     const applied = await request(app).post("/cases/c1/nsrl/apply");
@@ -193,14 +229,26 @@ describe("NSRL RDS SQLite backend (#63)", () => {
   it("400s on a bad DB path and when the path is missing", async () => {
     const root = await tmp();
     const app = createApp(new CaseStore(root), { nsrlDbConfigFile: join(root, "nsrl", "db-path.txt") });
-    expect((await request(app).post("/nsrl/db").send({})).status).toBe(400);                 // no path
-    expect((await request(app).post("/nsrl/db").send({ path: join(root, "ghost.db") })).status).toBe(400); // unopenable
+    expect((await request(app).post("/nsrl/db").send({})).status).toBe(400); // no path
+    expect(
+      (
+        await request(app)
+          .post("/nsrl/db")
+          .send({ path: join(root, "ghost.db") })
+      ).status,
+    ).toBe(400); // unopenable
   });
 
   it("rejects connect/disconnect when the path is env-managed", async () => {
     const root = await tmp();
-    const app = createApp(new CaseStore(root), { nsrlDbConfigFile: join(root, "nsrl", "db-path.txt"), nsrlDbEnvManaged: true });
-    expect((await request(app).get("/nsrl")).body).toMatchObject({ dbEnvManaged: true, dbConfigurable: false });
+    const app = createApp(new CaseStore(root), {
+      nsrlDbConfigFile: join(root, "nsrl", "db-path.txt"),
+      nsrlDbEnvManaged: true,
+    });
+    expect((await request(app).get("/nsrl")).body).toMatchObject({
+      dbEnvManaged: true,
+      dbConfigurable: false,
+    });
     expect((await request(app).post("/nsrl/db").send({ path: "x" })).status).toBe(400);
     expect((await request(app).delete("/nsrl/db")).status).toBe(400);
   });

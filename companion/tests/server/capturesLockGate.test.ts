@@ -52,13 +52,17 @@ describe("POST /captures — case-password gate", () => {
 
   it("401s with a wrong casePassword in the body", async () => {
     await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
-    const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: "wrong" });
+    const res = await request(app)
+      .post("/captures")
+      .send({ ...CAPTURE_BODY, casePassword: "wrong" });
     expect(res.status).toBe(401);
   });
 
   it("accepts the right casePassword in the body (browser-extension flow)", async () => {
     await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
-    const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: "secret123" });
+    const res = await request(app)
+      .post("/captures")
+      .send({ ...CAPTURE_BODY, casePassword: "secret123" });
     expect(res.status).toBe(201);
   });
 
@@ -75,7 +79,9 @@ describe("POST /captures — case-password gate", () => {
   });
 
   it("400s an invalid caseId before ever touching the store", async () => {
-    const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, caseId: "../../etc/passwd" });
+    const res = await request(app)
+      .post("/captures")
+      .send({ ...CAPTURE_BODY, caseId: "../../etc/passwd" });
     expect(res.status).toBe(400);
   });
 
@@ -84,14 +90,18 @@ describe("POST /captures — case-password gate", () => {
     // Hammer /captures with wrong passwords (the previously-unthrottled second entry point).
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) {
-      const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
+      const res = await request(app)
+        .post("/captures")
+        .send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
       statuses.push(res.status);
     }
     // First 5 are 401 (failures), 6th triggers the lockout → 429.
     expect(statuses.filter((s) => s === 401).length).toBeLessThanOrEqual(5);
     expect(statuses).toContain(429);
     // After lockout, even the CORRECT password is rejected with 429 (lockout takes precedence).
-    const locked = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: "secret123" });
+    const locked = await request(app)
+      .post("/captures")
+      .send({ ...CAPTURE_BODY, casePassword: "secret123" });
     expect(locked.status).toBe(429);
   });
 
@@ -99,7 +109,9 @@ describe("POST /captures — case-password gate", () => {
     await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
     // Burn attempts on /captures, then /unlock should already be locked out (shared counter).
     for (let i = 0; i < 6; i++) {
-      await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
+      await request(app)
+        .post("/captures")
+        .send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
     }
     const unlock = await request(app).post("/cases/c1/unlock").send({ password: "secret123" });
     expect(unlock.status).toBe(429);

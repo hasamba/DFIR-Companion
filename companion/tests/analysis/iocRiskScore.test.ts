@@ -63,37 +63,75 @@ describe("scoreIoc — composite tiers", () => {
     expect(scoreIoc(sig()).score).toBe("low");
   });
   it("factors list every contributing signal", () => {
-    const r = scoreIoc(sig({ verdictClass: "corroborated", maxSeverityRank: 4, distinctTools: 3, kevMatch: true }));
+    const r = scoreIoc(
+      sig({ verdictClass: "corroborated", maxSeverityRank: 4, distinctTools: 3, kevMatch: true }),
+    );
     expect(r.factors.length).toBeGreaterThanOrEqual(3);
   });
 });
 
 describe("scoreIocs — batch orchestration over real IOCs/events", () => {
   const ev = (p: Partial<ForensicEvent> & { id: string }): ForensicEvent => ({
-    timestamp: "2026-01-01T00:00:00Z", description: "x", severity: "Info", mitreTechniques: [],
-    relatedFindingIds: [], sourceScreenshots: [], ...p,
+    timestamp: "2026-01-01T00:00:00Z",
+    description: "x",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
   });
-  const ioc = (p: Partial<IOC> & { id: string; value: string; type: IOC["type"] }): IOC => ({ firstSeen: "", ...p });
+  const ioc = (p: Partial<IOC> & { id: string; value: string; type: IOC["type"] }): IOC => ({
+    firstSeen: "",
+    ...p,
+  });
 
   it("scores a corroborated-malicious IP seen in a High event as high/critical", () => {
-    const iocs: IOC[] = [ioc({ id: "i1", type: "ip", value: "9.9.9.9", enrichments: [
-      { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
-      { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
-    ] })];
-    const events: ForensicEvent[] = [ev({ id: "e1", severity: "High", description: "C2 to 9.9.9.9", srcIp: "9.9.9.9", sources: ["EDR", "Firewall"] })];
-    const out = scoreIocs(iocs, events, { hostNames: new Set(), kevCveIds: new Set(), nsrlHashes: new Set(), whitelistRules: [] });
+    const iocs: IOC[] = [
+      ioc({
+        id: "i1",
+        type: "ip",
+        value: "9.9.9.9",
+        enrichments: [
+          { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
+          { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
+        ],
+      }),
+    ];
+    const events: ForensicEvent[] = [
+      ev({
+        id: "e1",
+        severity: "High",
+        description: "C2 to 9.9.9.9",
+        srcIp: "9.9.9.9",
+        sources: ["EDR", "Firewall"],
+      }),
+    ];
+    const out = scoreIocs(iocs, events, {
+      hostNames: new Set(),
+      kevCveIds: new Set(),
+      nsrlHashes: new Set(),
+      whitelistRules: [],
+    });
     expect(["high", "critical"]).toContain(out["i1"].score);
   });
 
   it("marks a whitelisted / NSRL hash benign via the real lookups", () => {
     const iocs: IOC[] = [
-      ioc({ id: "i1", type: "hash", value: "a".repeat(64), enrichments: [{ source: "VT", verdict: "malicious", fetchedAt: "" }] }),
+      ioc({
+        id: "i1",
+        type: "hash",
+        value: "a".repeat(64),
+        enrichments: [{ source: "VT", verdict: "malicious", fetchedAt: "" }],
+      }),
       ioc({ id: "i2", type: "domain", value: "safe.example.com" }),
     ];
     const out = scoreIocs(iocs, [], {
-      hostNames: new Set(), kevCveIds: new Set(),
+      hostNames: new Set(),
+      kevCveIds: new Set(),
       nsrlHashes: new Set(["a".repeat(64)]),
-      whitelistRules: [{ id: "w1", match: "exact", pattern: "safe.example.com", iocType: "domain", addedAt: "" }],
+      whitelistRules: [
+        { id: "w1", match: "exact", pattern: "safe.example.com", iocType: "domain", addedAt: "" },
+      ],
     });
     expect(out["i1"].score).toBe("benign"); // NSRL known-good beats the malicious verdict
     expect(out["i2"].score).toBe("benign"); // whitelisted

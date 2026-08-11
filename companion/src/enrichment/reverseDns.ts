@@ -10,8 +10,8 @@ import type { EnrichmentProvider, EnrichmentResult, IocKind } from "./provider.j
 export type DnsReverseFn = (ip: string) => Promise<string[]>;
 
 export interface ReverseDnsOptions {
-  resolve?: DnsReverseFn;   // injected in tests; default = node:dns reverse()
-  timeoutMs?: number;       // per-lookup ceiling (default 8s)
+  resolve?: DnsReverseFn; // injected in tests; default = node:dns reverse()
+  timeoutMs?: number; // per-lookup ceiling (default 8s)
 }
 
 // Resolver error codes that mean "this IP simply has no PTR record" — a definitive MISS we
@@ -29,7 +29,9 @@ export class ReverseDnsProvider implements EnrichmentProvider {
     this.timeoutMs = opts.timeoutMs ?? 8_000;
   }
 
-  supports(kind: IocKind): boolean { return kind === "ip"; }
+  supports(kind: IocKind): boolean {
+    return kind === "ip";
+  }
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "ip") return null;
@@ -58,7 +60,10 @@ export class ReverseDnsProvider implements EnrichmentProvider {
     return Promise.race([
       p,
       new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error(`Reverse DNS timed out after ${this.timeoutMs}ms`)), this.timeoutMs),
+        setTimeout(
+          () => reject(new Error(`Reverse DNS timed out after ${this.timeoutMs}ms`)),
+          this.timeoutMs,
+        ),
       ),
     ]);
   }

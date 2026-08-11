@@ -13,7 +13,9 @@ import type { IocKind } from "../src/enrichment/provider.js";
 
 const values = process.argv.slice(2).filter(Boolean);
 if (values.length === 0) {
-  console.error("usage: npm run yeti -- <indicator> [<indicator> ...]\n       e.g. npm run yeti -- 43.134.22.100");
+  console.error(
+    "usage: npm run yeti -- <indicator> [<indicator> ...]\n       e.g. npm run yeti -- 43.134.22.100",
+  );
   process.exit(2);
 }
 
@@ -26,7 +28,7 @@ if (!baseUrl || !apiKey) {
 
 // Best-effort kind detection (YETI searches by value, so this only labels the output).
 function guessKind(v: string): IocKind {
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v) || v.includes(":") && /^[0-9a-f:]+$/i.test(v)) return "ip";
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v) || (v.includes(":") && /^[0-9a-f:]+$/i.test(v))) return "ip";
   if (/^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(v)) return "hash";
   if (/^[a-z]+:\/\//i.test(v)) return "url";
   if (/\.[a-z]{2,}$/i.test(v)) return "domain";
@@ -44,7 +46,10 @@ for (const value of values) {
   const kind = guessKind(value);
   try {
     const r = await yeti.lookup(kind, value);
-    if (!r) { console.log(`  ✗ ${value}  [${kind}]  not found in YETI`); continue; }
+    if (!r) {
+      console.log(`  ✗ ${value}  [${kind}]  not found in YETI`);
+      continue;
+    }
     console.log(`  ✓ ${value}  [${kind}]  ${r.verdict.toUpperCase()}`);
     if (r.score) console.log(`      ${r.score}`);
     if (r.tags?.length) console.log(`      tags: ${r.tags.join(", ")}`);

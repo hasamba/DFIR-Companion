@@ -17,17 +17,17 @@ export interface SmtpReply {
 // The line-oriented duplex the SMTP dialog needs. The real impl buffers the socket; the test fake
 // returns scripted replies.
 export interface SmtpSocketLike {
-  readonly secure: boolean;          // is the transport currently TLS?
+  readonly secure: boolean; // is the transport currently TLS?
   write(data: string): void;
-  readReply(): Promise<SmtpReply>;   // read one complete (possibly multiline) SMTP reply
-  startTls(opts: { host: string; rejectUnauthorized: boolean }): Promise<void>;  // STARTTLS upgrade
+  readReply(): Promise<SmtpReply>; // read one complete (possibly multiline) SMTP reply
+  startTls(opts: { host: string; rejectUnauthorized: boolean }): Promise<void>; // STARTTLS upgrade
   close(): void;
 }
 
 export interface SmtpConnectOptions {
   host: string;
   port: number;
-  secure: boolean;            // implicit TLS from the first byte (port 465)
+  secure: boolean; // implicit TLS from the first byte (port 465)
   rejectUnauthorized: boolean;
   timeoutMs: number;
 }
@@ -46,8 +46,8 @@ export class SmtpError extends Error {
 }
 
 export interface SendSmtpOptions {
-  clientName?: string;   // EHLO hostname (default "dfir-companion")
-  timeoutMs?: number;    // connect/read timeout (default 20s)
+  clientName?: string; // EHLO hostname (default "dfir-companion")
+  timeoutMs?: number; // connect/read timeout (default 20s)
 }
 
 // Send one already-built RFC 5322 message (see emailFormat.buildRfc822Message) to the configured
@@ -63,7 +63,13 @@ export async function sendSmtp(
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const rejectUnauthorized = config.rejectUnauthorized ?? true;
 
-  const sock = await connect({ host: config.host, port: config.port, secure: config.secure, rejectUnauthorized, timeoutMs });
+  const sock = await connect({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    rejectUnauthorized,
+    timeoutMs,
+  });
   try {
     await expect(sock, [220], "greeting");
 
@@ -81,7 +87,10 @@ export async function sendSmtp(
     if (config.username && config.password) {
       if (!sock.secure) {
         // Refuse to send a plaintext password over an unencrypted link.
-        throw new SmtpError("server does not support STARTTLS — refusing to send credentials in plaintext", "auth");
+        throw new SmtpError(
+          "server does not support STARTTLS — refusing to send credentials in plaintext",
+          "auth",
+        );
       }
       await authLogin(sock, config.username, config.password);
     }
@@ -117,7 +126,8 @@ async function ehlo(sock: SmtpSocketLike, clientName: string): Promise<Set<strin
     // Fall back to HELO for ancient servers.
     sock.write(`HELO ${clientName}\r\n`);
     const helo = await sock.readReply();
-    if (helo.code !== 250) throw new SmtpError(`EHLO/HELO refused: ${helo.code} ${helo.lines.join(" ")}`, "protocol", helo.code);
+    if (helo.code !== 250)
+      throw new SmtpError(`EHLO/HELO refused: ${helo.code} ${helo.lines.join(" ")}`, "protocol", helo.code);
     return new Set();
   }
   const caps = new Set<string>();
@@ -135,13 +145,18 @@ async function authLogin(sock: SmtpSocketLike, username: string, password: strin
   await expect(sock, [334], "AUTH username");
   sock.write(`${Buffer.from(password, "utf8").toString("base64")}\r\n`);
   const reply = await sock.readReply();
-  if (reply.code !== 235) throw new SmtpError(`authentication failed: ${reply.code} ${reply.lines.join(" ")}`, "auth", reply.code);
+  if (reply.code !== 235)
+    throw new SmtpError(`authentication failed: ${reply.code} ${reply.lines.join(" ")}`, "auth", reply.code);
 }
 
 async function expect(sock: SmtpSocketLike, codes: number[], stage: string): Promise<SmtpReply> {
   const reply = await sock.readReply();
   if (!codes.includes(reply.code)) {
-    throw new SmtpError(`SMTP ${stage} failed: ${reply.code} ${reply.lines.join(" ")}`, "protocol", reply.code);
+    throw new SmtpError(
+      `SMTP ${stage} failed: ${reply.code} ${reply.lines.join(" ")}`,
+      "protocol",
+      reply.code,
+    );
   }
   return reply;
 }
@@ -161,14 +176,18 @@ export function dotStuff(message: string): string {
 export function parseReplies(buffer: string): { replies: SmtpReply[]; rest: string } {
   const replies: SmtpReply[] = [];
   const lines = buffer.split("\r\n");
-  const rest = lines.pop() ?? "";   // trailing partial line (no CRLF yet)
+  const rest = lines.pop() ?? ""; // trailing partial line (no CRLF yet)
 
   let current: string[] = [];
   let code = 0;
   const consumed: string[] = [];
   for (const line of lines) {
     const m = /^(\d{3})([ -])(.*)$/.exec(line);
-    if (!m) { current.push(line); consumed.push(line); continue; }
+    if (!m) {
+      current.push(line);
+      consumed.push(line);
+      continue;
+    }
     code = Number(m[1]);
     current.push(m[3]);
     consumed.push(line);
@@ -194,7 +213,10 @@ class NodeSmtpSocket implements SmtpSocketLike {
   private waiter: { resolve: (r: SmtpReply) => void; reject: (e: Error) => void } | null = null;
   private fatal: Error | null = null;
 
-  constructor(private socket: net.Socket | tls.TLSSocket, public secure: boolean) {
+  constructor(
+    private socket: net.Socket | tls.TLSSocket,
+    public secure: boolean,
+  ) {
     this.attach();
   }
 
@@ -210,15 +232,22 @@ class NodeSmtpSocket implements SmtpSocketLike {
     const { replies, rest } = parseReplies(this.buffer);
     this.buffer = rest;
     for (const reply of replies) {
-      if (this.waiter) { const w = this.waiter; this.waiter = null; w.resolve(reply); }
-      else this.queue.push(reply);
+      if (this.waiter) {
+        const w = this.waiter;
+        this.waiter = null;
+        w.resolve(reply);
+      } else this.queue.push(reply);
     }
   }
 
   private onFatal(err: Error): void {
     if (this.fatal) return;
     this.fatal = err;
-    if (this.waiter) { const w = this.waiter; this.waiter = null; w.reject(err); }
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = null;
+      w.reject(err);
+    }
   }
 
   write(data: string): void {
@@ -228,7 +257,9 @@ class NodeSmtpSocket implements SmtpSocketLike {
   readReply(): Promise<SmtpReply> {
     if (this.queue.length) return Promise.resolve(this.queue.shift()!);
     if (this.fatal) return Promise.reject(this.fatal);
-    return new Promise((resolve, reject) => { this.waiter = { resolve, reject }; });
+    return new Promise((resolve, reject) => {
+      this.waiter = { resolve, reject };
+    });
   }
 
   startTls(opts: { host: string; rejectUnauthorized: boolean }): Promise<void> {
@@ -247,13 +278,23 @@ class NodeSmtpSocket implements SmtpSocketLike {
           resolve();
         },
       );
-      secure.once("error", (err) => reject(new SmtpError(`STARTTLS upgrade failed: ${err.message}`, "connect")));
+      secure.once("error", (err) =>
+        reject(new SmtpError(`STARTTLS upgrade failed: ${err.message}`, "connect")),
+      );
     });
   }
 
   close(): void {
-    try { this.socket.end(); } catch { /* ignore */ }
-    try { this.socket.destroy(); } catch { /* ignore */ }
+    try {
+      this.socket.end();
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.socket.destroy();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -264,16 +305,27 @@ export const nodeSmtpConnect: SmtpConnect = (opts) =>
     const onError = (err: Error): void => reject(new SmtpError(`connect failed: ${err.message}`, "connect"));
     if (opts.secure) {
       const socket = tls.connect(
-        { host: opts.host, port: opts.port, rejectUnauthorized: opts.rejectUnauthorized, timeout: opts.timeoutMs },
+        {
+          host: opts.host,
+          port: opts.port,
+          rejectUnauthorized: opts.rejectUnauthorized,
+          timeout: opts.timeoutMs,
+        },
         () => resolve(new NodeSmtpSocket(socket, true)),
       );
       socket.once("error", onError);
-      socket.once("timeout", () => { socket.destroy(); reject(new SmtpError("connect timed out", "timeout")); });
+      socket.once("timeout", () => {
+        socket.destroy();
+        reject(new SmtpError("connect timed out", "timeout"));
+      });
     } else {
       const socket = net.createConnection({ host: opts.host, port: opts.port, timeout: opts.timeoutMs }, () =>
         resolve(new NodeSmtpSocket(socket, false)),
       );
       socket.once("error", onError);
-      socket.once("timeout", () => { socket.destroy(); reject(new SmtpError("connect timed out", "timeout")); });
+      socket.once("timeout", () => {
+        socket.destroy();
+        reject(new SmtpError("connect timed out", "timeout"));
+      });
     }
   });

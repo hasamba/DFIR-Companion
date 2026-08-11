@@ -52,7 +52,7 @@ describe("VeloMonitorStore", () => {
     await store.upsert("c1", b);
     await store.upsert("c1", { ...a, cursor: 999, addedEvents: 5 });
     const list = await store.list("c1");
-    expect(list.map((m) => m.id)).toEqual(["a", "b"]);   // order preserved
+    expect(list.map((m) => m.id)).toEqual(["a", "b"]); // order preserved
     expect((await store.get("c1", "a"))!.cursor).toBe(999);
     expect((await store.get("c1", "a"))!.addedEvents).toBe(5);
   });

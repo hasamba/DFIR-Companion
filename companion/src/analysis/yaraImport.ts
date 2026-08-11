@@ -18,7 +18,13 @@
 // hash meta → hash IOC. Pure, no AI. Reuses siemImport's helpers.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+import {
+  aggregateEvents,
+  addIoc,
+  oneLine,
+  type MappedEvent,
+  type SiemIoc,
+  type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 
@@ -53,9 +59,13 @@ function splitMeta(block: string): string[] {
   let cur = "";
   let inQ = false;
   for (const ch of block) {
-    if (ch === '"') { inQ = !inQ; cur += ch; }
-    else if (ch === "," && !inQ) { parts.push(cur); cur = ""; }
-    else cur += ch;
+    if (ch === '"') {
+      inQ = !inQ;
+      cur += ch;
+    } else if (ch === "," && !inQ) {
+      parts.push(cur);
+      cur = "";
+    } else cur += ch;
   }
   if (cur.trim()) parts.push(cur);
   return parts;
@@ -85,7 +95,10 @@ function parseHeader(line: string): YaraMatch | null {
         if (k) meta[k] = v;
       }
     } else {
-      for (const t of block.split(",")) { const tt = t.trim(); if (tt) tags.push(tt); }
+      for (const t of block.split(",")) {
+        const tt = t.trim();
+        if (tt) tags.push(tt);
+      }
     }
   }
   const file = rest.trim();
@@ -96,12 +109,19 @@ function parseHeader(line: string): YaraMatch | null {
 // Is this text YARA CLI scan output? True when a meaningful share of the first lines are match-headers
 // (with a path-ish target) or `-s` string lines. Pure. Conservative so a stray log line doesn't trip it.
 export function looksLikeYara(text: string): boolean {
-  const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+$/, "")).filter((l) => l.trim()).slice(0, 100);
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim())
+    .slice(0, 100);
   if (!lines.length) return false;
   let headers = 0;
   let strings = 0;
   for (const l of lines) {
-    if (STRING_LINE.test(l)) { strings++; continue; }
+    if (STRING_LINE.test(l)) {
+      strings++;
+      continue;
+    }
     if (HEADER_LINE.test(l)) {
       const h = parseHeader(l.trim());
       if (h && PATHISH.test(h.file)) headers++;
@@ -134,10 +154,17 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
     const line = raw.replace(/\s+$/, "");
     if (!line.trim()) continue;
     const sm = line.match(STRING_LINE);
-    if (sm) { if (cur && cur.strings.length < 20) cur.strings.push(sm[1]); continue; }
+    if (sm) {
+      if (cur && cur.strings.length < 20) cur.strings.push(sm[1]);
+      continue;
+    }
     const h = HEADER_LINE.test(line.trim()) ? parseHeader(line.trim()) : null;
-    if (h) { cur = h; matches.push(h); continue; }
-    cur = null;   // an unrecognized line ends the current match's string run
+    if (h) {
+      cur = h;
+      matches.push(h);
+      continue;
+    }
+    cur = null; // an unrecognized line ends the current match's string run
   }
 
   const sink = new Map<string, SiemIoc>();
@@ -147,13 +174,16 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
       const v = ev.meta[key]?.trim();
       if (v && HEX_HASH.test(v)) addIoc(sink, "hash", v.toLowerCase());
     }
-    const sha = HEX_HASH.test((ev.meta.sha256 ?? "").trim()) ? ev.meta.sha256.trim().toLowerCase() : undefined;
+    const sha = HEX_HASH.test((ev.meta.sha256 ?? "").trim())
+      ? ev.meta.sha256.trim().toLowerCase()
+      : undefined;
     const md5 = HEX_HASH.test((ev.meta.md5 ?? "").trim()) ? ev.meta.md5.trim().toLowerCase() : undefined;
-    const desc = `YARA: ${ev.rule} matched ${ev.file}` +
+    const desc =
+      `YARA: ${ev.rule} matched ${ev.file}` +
       (ev.tags.length ? ` [${ev.tags.join(", ")}]` : "") +
       (ev.strings.length ? ` (${ev.strings.slice(0, 8).join(", ")})` : "");
     return {
-      timestamp: "",   // no event time in YARA output — mergeDelta stamps it at import time
+      timestamp: "", // no event time in YARA output — mergeDelta stamps it at import time
       description: oneLine(desc).slice(0, 600),
       severity: severityFromMeta(ev.meta),
       mitre: mitreFromYara(ev.tags, ev.meta),

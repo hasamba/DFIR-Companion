@@ -15,7 +15,7 @@ import { ChildOutputCollector } from "../childOutput.js";
 export interface ToolRunResult {
   stdout: string;
   stderr: string;
-  code: number;   // process exit code (0 on success; some tools exit non-zero yet still produce output)
+  code: number; // process exit code (0 on success; some tools exit non-zero yet still produce output)
 }
 
 // A runner spawns `binary` with the given argv and returns the captured output. The binary is a
@@ -33,7 +33,9 @@ export type ToolRunner = (
 
 // An Error tagged with the OS code of a spawn-LAUNCH failure, so retryTransientSpawn can retry a
 // transient one (EPERM/EBUSY/…). Mirrors the private type in velociraptorApi.ts.
-interface SpawnLaunchError extends Error { spawnCode?: string }
+interface SpawnLaunchError extends Error {
+  spawnCode?: string;
+}
 
 // Build the message for a spawn-launch failure. EPERM/EACCES on a binary that otherwise runs is almost
 // always the OS security stack (AV/EDR) denying CreateProcess — retrying can't clear a policy block, so
@@ -42,12 +44,17 @@ interface SpawnLaunchError extends Error { spawnCode?: string }
 export function toolSpawnErrorMessage(binary: string, err: { message?: string; code?: string }): string {
   const base = `Failed to run tool binary "${binary}": ${err?.message ?? "spawn failed"}`;
   if (err?.code === "ENOENT") {
-    return base + " — the binary was not found. Check the path in Settings → Tools (and that the tool is installed).";
+    return (
+      base +
+      " — the binary was not found. Check the path in Settings → Tools (and that the tool is installed)."
+    );
   }
   if (err?.code === "EPERM" || err?.code === "EACCES") {
-    return base +
+    return (
+      base +
       " — the OS denied launching it. Your antivirus/EDR may be blocking the process; add an exclusion" +
-      " for the tool binary, or run it manually and import its output.";
+      " for the tool binary, or run it manually and import its output."
+    );
   }
   return base;
 }
@@ -59,8 +66,11 @@ export function toolSpawnErrorMessage(binary: string, err: { message?: string; c
 // never touches plain brackets in the text (the canonical `ansi-regex` pattern). The regex is built via
 // fromCharCode so no raw control byte lives in this source file. Pure + exported for testing.
 const ANSI_RE = new RegExp(
-  "[" + String.fromCharCode(0x1b, 0x9b) + "][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?" +
-    String.fromCharCode(0x07) + ")|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))",
+  "[" +
+    String.fromCharCode(0x1b, 0x9b) +
+    "][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?" +
+    String.fromCharCode(0x07) +
+    ")|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))",
   "g",
 );
 export function stripAnsi(s: string): string {
@@ -92,11 +102,11 @@ export function tokenizeArgs(template: string): string[] {
 }
 
 export interface ArgVars {
-  target?: string;       // the input file
-  targetdir?: string;    // a folder CONTAINING the input file under its original name (Velociraptor --ROOT)
-  output?: string;       // server-owned output file/dir
-  rules?: string;        // analyst's rules path (Snort/YARA)
-  definitions?: string;  // extra artifact-definitions path (Velociraptor --definitions, for non-built-in artifacts)
+  target?: string; // the input file
+  targetdir?: string; // a folder CONTAINING the input file under its original name (Velociraptor --ROOT)
+  output?: string; // server-owned output file/dir
+  rules?: string; // analyst's rules path (Snort/YARA)
+  definitions?: string; // extra artifact-definitions path (Velociraptor --definitions, for non-built-in artifacts)
 }
 
 // Substitute the placeholders (`<target>`/`<targetdir>`/`<output>`/`<rules>`/`<definitions>`) into the
@@ -135,14 +145,29 @@ function spawnToolOnce(
     // Optional native `> file` redirect: send the child's stdout straight to a file descriptor.
     let outFd: number | null = null;
     if (opts.stdoutFile) {
-      try { outFd = openSync(opts.stdoutFile, "w"); }
-      catch (e) { reject(new Error(`cannot open output file "${opts.stdoutFile}": ${(e as Error).message}`)); return; }
+      try {
+        outFd = openSync(opts.stdoutFile, "w");
+      } catch (e) {
+        reject(new Error(`cannot open output file "${opts.stdoutFile}": ${(e as Error).message}`));
+        return;
+      }
     }
-    const closeFd = (): void => { if (outFd !== null) { try { closeSync(outFd); } catch { /* ignore */ } outFd = null; } };
+    const closeFd = (): void => {
+      if (outFd !== null) {
+        try {
+          closeSync(outFd);
+        } catch {
+          /* ignore */
+        }
+        outFd = null;
+      }
+    };
     const launchFailed = (e: unknown): void => {
       closeFd();
       const code = (e as NodeJS.ErrnoException).code || "ESPAWN";
-      const err = new Error(toolSpawnErrorMessage(binary, { message: (e as Error).message, code })) as SpawnLaunchError;
+      const err = new Error(
+        toolSpawnErrorMessage(binary, { message: (e as Error).message, code }),
+      ) as SpawnLaunchError;
       err.spawnCode = code;
       reject(err);
     };
@@ -156,7 +181,7 @@ function spawnToolOnce(
       const stdio: ["ignore", number | "pipe", "pipe"] = ["ignore", outFd !== null ? outFd : "pipe", "pipe"];
       child = spawn(binary, args, { windowsHide: true, stdio, ...(cwd ? { cwd } : {}) });
     } catch (e) {
-      launchFailed(e);   // Windows throws EPERM synchronously — not via the 'error' event
+      launchFailed(e); // Windows throws EPERM synchronously — not via the 'error' event
       return;
     }
     // Raw BYTES under one budget, decoded once at the end — see integrations/childOutput.ts for why
@@ -177,7 +202,11 @@ function spawnToolOnce(
         child.kill();
         clearTimeout(timer);
         closeFd();
-        reject(new Error(`Tool "${binary}" output exceeded ${opts.maxOutputBytes} bytes — raise the tool's MAX_OUTPUT, or narrow the run`));
+        reject(
+          new Error(
+            `Tool "${binary}" output exceeded ${opts.maxOutputBytes} bytes — raise the tool's MAX_OUTPUT, or narrow the run`,
+          ),
+        );
       }
     });
     // Never fatal, never unbounded: a bounded tail keeps the diagnostics a failure message needs
@@ -186,7 +215,7 @@ function spawnToolOnce(
     child.on("error", (e) => {
       if (killed) return;
       clearTimeout(timer);
-      launchFailed(e);   // async spawn failure (e.g. ENOENT) — tagged so a transient one is retried
+      launchFailed(e); // async spawn failure (e.g. ENOENT) — tagged so a transient one is retried
     });
     child.on("close", (code) => {
       if (killed) return;

@@ -86,7 +86,8 @@ const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
 function worstVerdict(i: IOC): string | undefined {
   let best: string | undefined;
   for (const e of i.enrichments ?? []) {
-    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best)) best = e.verdict;
+    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best))
+      best = e.verdict;
   }
   return best;
 }
@@ -101,10 +102,8 @@ function colorFor(sev: Severity, legit: boolean): GeoColor {
 
 // Extract a country signal from a GeoIP-ish enrichment (handles old data without structured country).
 function enrichmentCountry(i: IOC): string | undefined {
-  const geo = (i.enrichments ?? []).filter(
-    (e) => /geoip/i.test(e.source) || /geoip/i.test(e.provider ?? ""),
-  );
-  for (const e of geo) if (e.country && e.country.trim()) return e.country.trim();   // structured field (code or name)
+  const geo = (i.enrichments ?? []).filter((e) => /geoip/i.test(e.source) || /geoip/i.test(e.provider ?? ""));
+  for (const e of geo) if (e.country && e.country.trim()) return e.country.trim(); // structured field (code or name)
   for (const e of geo) {
     for (const t of e.tags ?? []) if (/^[A-Za-z]{2}$/.test(t.trim())) return t.trim().toUpperCase();
     const head = e.score?.split(/[·|,;]/)[0]?.trim();
@@ -114,9 +113,16 @@ function enrichmentCountry(i: IOC): string | undefined {
 }
 
 // Coordinates from the first enrichment that carries them; falls back to country centroid.
-export function iocGeo(i: IOC): { lat: number; lon: number; country?: string; city?: string; approximate: boolean } | undefined {
+export function iocGeo(
+  i: IOC,
+): { lat: number; lon: number; country?: string; city?: string; approximate: boolean } | undefined {
   for (const e of i.enrichments ?? []) {
-    if (typeof e.lat === "number" && typeof e.lon === "number" && Number.isFinite(e.lat) && Number.isFinite(e.lon)) {
+    if (
+      typeof e.lat === "number" &&
+      typeof e.lon === "number" &&
+      Number.isFinite(e.lat) &&
+      Number.isFinite(e.lon)
+    ) {
       return { lat: e.lat, lon: e.lon, country: e.country, city: e.city, approximate: false };
     }
   }
@@ -235,9 +241,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   }
   all.sort(
     (x, y) =>
-      SEV_RANK[x.severity] - SEV_RANK[y.severity] ||
-      y.eventCount - x.eventCount ||
-      x.ip.localeCompare(y.ip),
+      SEV_RANK[x.severity] - SEV_RANK[y.severity] || y.eventCount - x.eventCount || x.ip.localeCompare(y.ip),
   );
   const resolved = all.length;
   const markers = all.slice(0, maxMarkers);
@@ -265,9 +269,25 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       const si = isInternalIp(s);
       const di = isInternalIp(d);
       const direction: GeoFlow["direction"] = si && !di ? "outgoing" : !si && di ? "incoming" : "lateral";
-      return { srcIp: s, dstIp: d, srcLat: sc.lat, srcLon: sc.lon, dstLat: dc.lat, dstLon: dc.lon, direction, count: fa.count, severity: fa.sev };
+      return {
+        srcIp: s,
+        dstIp: d,
+        srcLat: sc.lat,
+        srcLon: sc.lon,
+        dstLat: dc.lat,
+        dstLon: dc.lon,
+        direction,
+        count: fa.count,
+        severity: fa.sev,
+      };
     })
-    .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.count - a.count || a.srcIp.localeCompare(b.srcIp) || a.dstIp.localeCompare(b.dstIp));
+    .sort(
+      (a, b) =>
+        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        b.count - a.count ||
+        a.srcIp.localeCompare(b.srcIp) ||
+        a.dstIp.localeCompare(b.dstIp),
+    );
   const flows = allFlows.slice(0, maxFlows);
 
   // Country aggregation over all resolved markers.
@@ -284,7 +304,12 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   }
   const countries: GeoCountry[] = [...cAgg.entries()]
     .map(([country, v]) => ({ country, count: v.count, severity: v.sev }))
-    .sort((a, b) => b.count - a.count || SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.country.localeCompare(b.country))
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        a.country.localeCompare(b.country),
+    )
     .slice(0, topN);
 
   const asns = new Set(all.map((m) => m.asn).filter((x): x is string => Boolean(x)));

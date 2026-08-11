@@ -81,7 +81,9 @@ export class CaseStore {
 
   constructor(private readonly root: string) {}
 
-  get casesRoot(): string { return this.root; }
+  get casesRoot(): string {
+    return this.root;
+  }
 
   /** Register the (single) listener notified after each artifact write. */
   onArtifactStored(listener: ArtifactStoredListener): void {
@@ -97,7 +99,11 @@ export class CaseStore {
   }
 
   /** Reserve the next never-yet-used sequence number for this case+kind. */
-  private reserveSequence(kind: "capture" | "import" | "custody", caseId: string, countOnDisk: () => Promise<number>): Promise<number> {
+  private reserveSequence(
+    kind: "capture" | "import" | "custody",
+    caseId: string,
+    countOnDisk: () => Promise<number>,
+  ): Promise<number> {
     const key = `${kind}:${caseId}`;
     return this.seqLock.runExclusive(key, async () => {
       // Disk is authoritative across restarts (the map starts empty); the map is authoritative
@@ -286,12 +292,23 @@ export class CaseStore {
   // `wx` = create-exclusive: fail if the file exists rather than overwrite it (#214). Sequence
   // numbers are unique now, so a collision should be impossible — which is exactly why hitting one
   // must raise instead of destroying evidence that is already on disk.
-  async saveScreenshot(caseId: string, filename: string, bytes: Buffer, provenance?: ArtifactProvenance): Promise<string> {
+  async saveScreenshot(
+    caseId: string,
+    filename: string,
+    bytes: Buffer,
+    provenance?: ArtifactProvenance,
+  ): Promise<string> {
     const path = join(this.screenshotsDir(caseId), filename);
     await writeFile(path, bytes, { flag: "wx" });
     // Hash the buffer we just wrote rather than re-reading the file: same bytes, no second pass
     // over evidence that can run to hundreds of megabytes.
-    await this.announceArtifact({ caseId, path, sha256: createHash("sha256").update(bytes).digest("hex"), kind: "screenshot", provenance });
+    await this.announceArtifact({
+      caseId,
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      kind: "screenshot",
+      provenance,
+    });
     return path;
   }
 
@@ -316,13 +333,24 @@ export class CaseStore {
 
   // Persist an uploaded CSV verbatim as evidence (mkdirs for cases created before
   // the imports/ dir existed). Returns the stored absolute path.
-  async saveImport(caseId: string, filename: string, text: string, provenance?: ArtifactProvenance): Promise<string> {
+  async saveImport(
+    caseId: string,
+    filename: string,
+    text: string,
+    provenance?: ArtifactProvenance,
+  ): Promise<string> {
     await mkdir(this.importsDir(caseId), { recursive: true });
     const path = join(this.importsDir(caseId), filename);
     // Create-exclusive, for the same reason as saveScreenshot above (#214).
     await writeFile(path, text, { encoding: "utf8", flag: "wx" });
     // utf8 in, utf8 on disk — so this matches what a later re-read hashes during verification.
-    await this.announceArtifact({ caseId, path, sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"), kind: "import", provenance });
+    await this.announceArtifact({
+      caseId,
+      path,
+      sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"),
+      kind: "import",
+      provenance,
+    });
     return path;
   }
 
@@ -334,7 +362,13 @@ export class CaseStore {
 
   /** Atomically patch case.json with the given fields. Unknown fields are preserved. */
   async updateCaseMeta(caseId: string, patch: Partial<CaseMeta>): Promise<CaseMeta> {
-    const existing = (await this.getCaseMeta(caseId)) ?? { caseId, name: "", createdAt: "", investigator: "", aiProvider: null };
+    const existing = (await this.getCaseMeta(caseId)) ?? {
+      caseId,
+      name: "",
+      createdAt: "",
+      investigator: "",
+      aiProvider: null,
+    };
     const updated = { ...existing, ...patch, caseId };
     await atomicWrite(this.caseMetaPath(caseId), JSON.stringify(updated, null, 2));
     return updated;

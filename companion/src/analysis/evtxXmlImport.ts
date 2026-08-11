@@ -12,10 +12,7 @@
 // avoids pulling an XML parser into the Node runtime / bundler graph. Pure.
 
 import { buildSiemResult, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
-import {
-  buildSiemResultProgress,
-  throwIfImportAborted,
-} from "./siemBuildProgress.js";
+import { buildSiemResultProgress, throwIfImportAborted } from "./siemBuildProgress.js";
 
 type Row = Record<string, unknown>;
 
@@ -24,15 +21,19 @@ type Row = Record<string, unknown>;
 export function decodeXmlEntities(s: string): string {
   return s.replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos);/g, (m, ent: string) => {
     switch (ent) {
-      case "amp": return "&";
-      case "lt": return "<";
-      case "gt": return ">";
-      case "quot": return '"';
-      case "apos": return "'";
+      case "amp":
+        return "&";
+      case "lt":
+        return "<";
+      case "gt":
+        return ">";
+      case "quot":
+        return '"';
+      case "apos":
+        return "'";
       default: {
-        const code = ent[1] === "x" || ent[1] === "X"
-          ? parseInt(ent.slice(2), 16)
-          : parseInt(ent.slice(1), 10);
+        const code =
+          ent[1] === "x" || ent[1] === "X" ? parseInt(ent.slice(2), 16) : parseInt(ent.slice(1), 10);
         return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : m;
       }
     }
@@ -188,12 +189,5 @@ export async function parseEvtxXmlProgress(
   signal?: AbortSignal,
 ): Promise<SiemParseResult> {
   const records = await parseWinEventXmlProgress(text, onParseProgress, signal);
-  return buildSiemResultProgress(
-    records,
-    "winevent-xml",
-    opts,
-    text,
-    onProcessProgress,
-    signal,
-  );
+  return buildSiemResultProgress(records, "winevent-xml", opts, text, onProcessProgress, signal);
 }

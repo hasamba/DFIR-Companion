@@ -119,9 +119,7 @@ describe("CustodyStore.verifyChain", () => {
 
     await writeFile(logPath, JSON.stringify(tampered) + "\n" + second + "\n", "utf8");
 
-    expect(await store.verifyChain("c1")).toEqual([
-      { line: 2, seq: 2, reason: "prev-hash-mismatch" },
-    ]);
+    expect(await store.verifyChain("c1")).toEqual([{ line: 2, seq: 2, reason: "prev-hash-mismatch" }]);
   });
 
   it("flags the gap when a record is deleted from the middle", async () => {
@@ -132,9 +130,7 @@ describe("CustodyStore.verifyChain", () => {
 
     await writeFile(logPath, first + "\n" + third + "\n", "utf8");
 
-    expect(await store.verifyChain("c1")).toEqual([
-      { line: 2, seq: 3, reason: "prev-hash-mismatch" },
-    ]);
+    expect(await store.verifyChain("c1")).toEqual([{ line: 2, seq: 3, reason: "prev-hash-mismatch" }]);
   });
 
   it("flags a record whose seq does not advance", async () => {
@@ -145,9 +141,7 @@ describe("CustodyStore.verifyChain", () => {
 
     await appendFile(logPath, JSON.stringify(replay) + "\n", "utf8");
 
-    expect(await store.verifyChain("c1")).toEqual([
-      { line: 2, seq: 1, reason: "seq-out-of-order" },
-    ]);
+    expect(await store.verifyChain("c1")).toEqual([{ line: 2, seq: 1, reason: "seq-out-of-order" }]);
   });
 
   it("allows a gap in seq, which a failed append leaves behind by design", async () => {

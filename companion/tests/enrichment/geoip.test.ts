@@ -2,13 +2,20 @@ import { describe, it, expect } from "vitest";
 import { GeoIpProvider } from "../../src/enrichment/geoip.js";
 
 function mockFetch(body: unknown) {
-  return async () =>
-    ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+  return async () => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
 }
 
 describe("GeoIpProvider coordinates (#133)", () => {
   it("parses ipinfo loc 'lat,lon' and country/city", async () => {
-    const p = new GeoIpProvider({ fetchFn: mockFetch({ city: "Mountain View", region: "California", country: "US", loc: "37.3860,-122.0838", org: "AS15169 Google LLC" }) });
+    const p = new GeoIpProvider({
+      fetchFn: mockFetch({
+        city: "Mountain View",
+        region: "California",
+        country: "US",
+        loc: "37.3860,-122.0838",
+        org: "AS15169 Google LLC",
+      }),
+    });
     const r = await p.lookup("ip", "8.8.8.8");
     expect(r).not.toBeNull();
     expect(r!.lat).toBeCloseTo(37.386, 2);
@@ -18,7 +25,17 @@ describe("GeoIpProvider coordinates (#133)", () => {
   });
 
   it("parses ip-api numeric lat/lon", async () => {
-    const p = new GeoIpProvider({ fetchFn: mockFetch({ status: "success", country: "Germany", countryCode: "DE", city: "Berlin", lat: 52.52, lon: 13.405, as: "AS3320 Deutsche Telekom AG" }) });
+    const p = new GeoIpProvider({
+      fetchFn: mockFetch({
+        status: "success",
+        country: "Germany",
+        countryCode: "DE",
+        city: "Berlin",
+        lat: 52.52,
+        lon: 13.405,
+        as: "AS3320 Deutsche Telekom AG",
+      }),
+    });
     const r = await p.lookup("ip", "1.2.3.4");
     expect(r!.lat).toBeCloseTo(52.52, 2);
     expect(r!.lon).toBeCloseTo(13.405, 3);
@@ -27,7 +44,17 @@ describe("GeoIpProvider coordinates (#133)", () => {
   });
 
   it("parses ipwho.is latitude/longitude", async () => {
-    const p = new GeoIpProvider({ fetchFn: mockFetch({ success: true, country: "Japan", country_code: "JP", city: "Tokyo", latitude: 35.6895, longitude: 139.6917, connection: { asn: 2497, org: "IIJ" } }) });
+    const p = new GeoIpProvider({
+      fetchFn: mockFetch({
+        success: true,
+        country: "Japan",
+        country_code: "JP",
+        city: "Tokyo",
+        latitude: 35.6895,
+        longitude: 139.6917,
+        connection: { asn: 2497, org: "IIJ" },
+      }),
+    });
     const r = await p.lookup("ip", "5.6.7.8");
     expect(r!.lat).toBeCloseTo(35.6895, 3);
     expect(r!.lon).toBeCloseTo(139.6917, 3);

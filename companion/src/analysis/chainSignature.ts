@@ -27,12 +27,22 @@ export function normalizeCommandLine(raw: string): string {
   let rest: string;
   if (collapsed[0] === '"') {
     const end = collapsed.indexOf('"', 1);
-    if (end === -1) { image = collapsed.slice(1); rest = ""; }
-    else { image = collapsed.slice(1, end); rest = collapsed.slice(end + 1).trim(); }
+    if (end === -1) {
+      image = collapsed.slice(1);
+      rest = "";
+    } else {
+      image = collapsed.slice(1, end);
+      rest = collapsed.slice(end + 1).trim();
+    }
   } else {
     const sp = collapsed.indexOf(" ");
-    if (sp === -1) { image = collapsed; rest = ""; }
-    else { image = collapsed.slice(0, sp); rest = collapsed.slice(sp + 1).trim(); }
+    if (sp === -1) {
+      image = collapsed;
+      rest = "";
+    } else {
+      image = collapsed.slice(0, sp);
+      rest = collapsed.slice(sp + 1).trim();
+    }
   }
   const base = image.split(/[\\/]/).pop() || image;
   return (rest ? `${base} ${rest}` : base).toLowerCase();

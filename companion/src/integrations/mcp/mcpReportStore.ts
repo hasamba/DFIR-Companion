@@ -88,7 +88,9 @@ export class McpReportStore {
   async list(caseId: string): Promise<McpAnalysisReport[]> {
     let names: string[];
     try {
-      names = (await readdir(this.dir(caseId))).filter((name) => isReportId(name.slice(0, -5)) && name.endsWith(".json"));
+      names = (await readdir(this.dir(caseId))).filter(
+        (name) => isReportId(name.slice(0, -5)) && name.endsWith(".json"),
+      );
     } catch {
       return [];
     }

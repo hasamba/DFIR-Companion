@@ -57,13 +57,13 @@ const NAVIGATION: RegExp[] = [
 // this allowlist OVERRIDES the work-log filter. Tuned to avoid common tool-chrome words.
 const INCIDENT_SIGNAL: RegExp[] = [
   /\.(?:exe|dll|ps1|psm1|bat|cmd|vbs|js|jse|wsf|hta|scr|lnk|msi|sys|dmp|com|jar|py|sh|elf|bin|iso|img)\b/i, // executable/script/artifact file
-  /\b\d{1,3}(?:\.\d{1,3}){3}\b/,                                  // IPv4
-  /\b[a-f0-9]{32,64}\b/i,                                         // md5/sha1/sha256 hash
+  /\b\d{1,3}(?:\.\d{1,3}){3}\b/, // IPv4
+  /\b[a-f0-9]{32,64}\b/i, // md5/sha1/sha256 hash
   /\b(?:malware|trojan|ransomware|virus|virtool|backdoor|rootkit|webshell|keylogger|exploit|payload|implant|beacon|c2|cobalt\s*strike|mimikatz|rubeus|kekeo|lsass|wce|procdump|psexec|bloodhound|sharphound)\b/i, // threat/tooling
   /\b(?:defender|sysmon|amsi|edr|xdr|antivirus|quarantine(?:d)?|threat\s+(?:detected|name))\b/i, // detection products / verdicts
   /\b(?:crowdstrike|falcon|sentinelone|carbon\s*black|cylance|cortex\s*xdr|\bIOA\b|malicious\s+file|parent\s+process\s+killed|process\s+(?:blocked|killed|terminated|quarantined))\b/i, // EDR/XDR detections & responses
   /\b(?:logon|logged on|logon type|authentication|kerberos|ntlm|tgt|tgs|golden ticket|privilege escalation|persistence|lateral movement|exfil\w*|command and control)\b/i, // ATT&CK-ish activity
-  /\bT\d{4}(?:\.\d{3})?\b/,                                       // MITRE ATT&CK technique id (e.g. T1059, T1110.001)
+  /\bT\d{4}(?:\.\d{3})?\b/, // MITRE ATT&CK technique id (e.g. T1059, T1110.001)
   /\b(?:notable event|correlation (?:search|rule)|detection rule|sigma rule|rule (?:triggered|fired|matched)|alert (?:fired|triggered|raised)|offense|brute[\s-]?force)\b/i, // SIEM alert content (NOT bare tool names — "Access to Splunk" must still drop)
   /\b(?:powershell|wmic|certutil|rundll32|regsvr32|mshta|bitsadmin|schtasks|wscript|cscript|net1?|reg)\.exe\b/i, // LOLBins (also caught by .exe; listed for clarity)
   /\bpowershell\b(?:\.exe)?[^.]*\b(?:-enc|encodedcommand|-nop|-noprofile|downloadstring|iex|invoke-expression|frombase64)\b/i, // suspicious PowerShell even without .exe
@@ -76,9 +76,9 @@ export function hasIncidentSignal(description: string): boolean {
 // Analyst-process verbs paired with a tool/UI noun, matched in EITHER order.
 const PROCESS_NARRATION: RegExp[] = [
   OWN_TOOL,
-  /\bdata collection\b/i,                                  // "performed/continued/initial data collection"
+  /\bdata collection\b/i, // "performed/continued/initial data collection"
   /\bcollecting data\b/i,
-  /\bdata (?:was |were )?analy[sz]\w*\b/i,                 // "data analyzed", "data was analysed"
+  /\bdata (?:was |were )?analy[sz]\w*\b/i, // "data analyzed", "data was analysed"
   /\bdata analysis\b/i,
   /\binvestigation context\b/i,
   // "<process verb> … <tool>"  e.g. "Further data analyzed in Velociraptor"
@@ -125,9 +125,11 @@ export function hasStructuredEvidence(event: WorkLogEvent): boolean {
 }
 
 function matchesWorkLogPattern(description: string): boolean {
-  return TOOL_PATTERNS.some((re) => re.test(description))
-    || PROCESS_NARRATION.some((re) => re.test(description))
-    || NAVIGATION.some((re) => re.test(description));
+  return (
+    TOOL_PATTERNS.some((re) => re.test(description)) ||
+    PROCESS_NARRATION.some((re) => re.test(description)) ||
+    NAVIGATION.some((re) => re.test(description))
+  );
 }
 
 // True when an event describes analyst/tool usage, investigation-process narration,
@@ -149,7 +151,10 @@ export function isAnalystWorkLog(input: string | WorkLogEvent): boolean {
   return matchesWorkLogPattern(description);
 }
 
-export function partitionWorkLog(events: ForensicEvent[]): { keep: ForensicEvent[]; removed: ForensicEvent[] } {
+export function partitionWorkLog(events: ForensicEvent[]): {
+  keep: ForensicEvent[];
+  removed: ForensicEvent[];
+} {
   const keep: ForensicEvent[] = [];
   const removed: ForensicEvent[] = [];
   for (const e of events) (isAnalystWorkLog(e) ? removed : keep).push(e);

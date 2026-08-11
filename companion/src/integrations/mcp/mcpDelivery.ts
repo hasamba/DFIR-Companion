@@ -78,7 +78,9 @@ export interface DeliveryContext {
  * reduced to a charset with nothing to quote. Mirrors persistEvidence's rule for stored evidence.
  */
 export function safeRemoteName(localPath: string): string {
-  const cleaned = basename(localPath).replace(/[^\w.\-]+/g, "_").slice(0, 120);
+  const cleaned = basename(localPath)
+    .replace(/[^\w.\-]+/g, "_")
+    .slice(0, 120);
   // "." and ".." survive the charset filter and are not filenames.
   return /^\.+$/.test(cleaned) ? "evidence.dat" : cleaned || "evidence.dat";
 }
@@ -102,7 +104,11 @@ export function rewriteToRemote(server: McpServer, localPath: string): string {
       `"${localPath}" is not under this server's local prefix "${localPrefix}", so the analysis host cannot reach it`,
     );
   }
-  const rest = localPath.slice(localPrefix.length).replace(/^[/\\]+/, "").split(/[/\\]+/).filter(Boolean);
+  const rest = localPath
+    .slice(localPrefix.length)
+    .replace(/^[/\\]+/, "")
+    .split(/[/\\]+/)
+    .filter(Boolean);
   return posix.join(remotePrefix || "/", ...rest);
 }
 
@@ -110,7 +116,8 @@ function scpBaseArgs(server: McpServer): string[] {
   const args: string[] = [
     // Never prompt: no password, no host-key confirmation. Without this a first connection to an
     // unknown host hangs forever on a prompt nobody can answer.
-    "-o", "BatchMode=yes",
+    "-o",
+    "BatchMode=yes",
   ];
   if (server.delivery.identityFile) args.push("-i", server.delivery.identityFile);
   return args;
@@ -128,7 +135,11 @@ function remoteLogin(server: McpServer): string {
  * best-effort, because failing an analysis whose result already arrived, over a leftover temp file,
  * helps nobody.
  */
-export async function deliver(server: McpServer, localPath: string, ctx: DeliveryContext): Promise<DeliveredTarget> {
+export async function deliver(
+  server: McpServer,
+  localPath: string,
+  ctx: DeliveryContext,
+): Promise<DeliveredTarget> {
   if (server.delivery.mode === "remote-path") {
     const remotePath = rewriteToRemote(server, localPath);
     const destination = `${server.label} (shared path ${remotePath})`;
@@ -147,7 +158,9 @@ export async function deliver(server: McpServer, localPath: string, ctx: Deliver
   if (port && port !== 22) args.push("-P", String(port));
   args.push("--", localPath, `${login}:${remotePath}`);
 
-  const total = await stat(localPath).then((s) => s.size).catch(() => 0);
+  const total = await stat(localPath)
+    .then((s) => s.size)
+    .catch(() => 0);
   if (total > 0) ctx.onProgress?.(0, total);
   let probing = false;
   const probe = async (): Promise<void> => {
@@ -171,9 +184,12 @@ export async function deliver(server: McpServer, localPath: string, ctx: Deliver
       probing = false;
     }
   };
-  const progressTimer = ctx.onProgress && total > 0
-    ? setInterval(() => { void probe(); }, ctx.progressIntervalMs ?? 2_000)
-    : undefined;
+  const progressTimer =
+    ctx.onProgress && total > 0
+      ? setInterval(() => {
+          void probe();
+        }, ctx.progressIntervalMs ?? 2_000)
+      : undefined;
   progressTimer?.unref();
   let result: TransferResult;
   try {
@@ -184,7 +200,7 @@ export async function deliver(server: McpServer, localPath: string, ctx: Deliver
   if (result.code !== 0) {
     throw new Error(
       `scp to ${destination} failed (exit ${result.code})` +
-      `${result.stderr.trim() ? `: ${result.stderr.trim().split("\n").slice(0, 3).join(" ")}` : ""}`,
+        `${result.stderr.trim() ? `: ${result.stderr.trim().split("\n").slice(0, 3).join(" ")}` : ""}`,
     );
   }
   if (total > 0) ctx.onProgress?.(total, total);
@@ -217,14 +233,19 @@ export async function deliver(server: McpServer, localPath: string, ctx: Deliver
 export function spawnTransferRunner(): TransferRunner {
   return (binary, args, opts) =>
     new Promise<TransferResult>((resolve, reject) => {
-      if (opts.signal?.aborted) { reject(new Error(`${binary} cancelled before it started`)); return; }
+      if (opts.signal?.aborted) {
+        reject(new Error(`${binary} cancelled before it started`));
+        return;
+      }
 
       let child;
       try {
         child = spawn(binary, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
       } catch (e) {
         // Windows throws EPERM synchronously rather than via the 'error' event.
-        const err = new Error(`cannot run "${binary}": ${(e as Error).message}`) as Error & { spawnCode?: string };
+        const err = new Error(`cannot run "${binary}": ${(e as Error).message}`) as Error & {
+          spawnCode?: string;
+        };
         err.spawnCode = (e as NodeJS.ErrnoException).code || "ESPAWN";
         reject(err);
         return;
@@ -233,7 +254,13 @@ export function spawnTransferRunner(): TransferRunner {
       let stdout = "";
       let stderr = "";
       let done = false;
-      const finish = (fn: () => void): void => { if (!done) { done = true; cleanup(); fn(); } };
+      const finish = (fn: () => void): void => {
+        if (!done) {
+          done = true;
+          cleanup();
+          fn();
+        }
+      };
 
       const timer = setTimeout(() => {
         child.kill();
@@ -251,10 +278,14 @@ export function spawnTransferRunner(): TransferRunner {
         opts.signal?.removeEventListener("abort", onAbort);
       }
 
-      child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+      child.stdout?.on("data", (d: Buffer) => {
+        stdout += d.toString();
+      });
       // scp is quiet on success and terse on failure, so stderr is the whole diagnostic. Cap it so a
       // pathological failure loop cannot grow it without bound.
-      child.stderr?.on("data", (d: Buffer) => { if (stderr.length < 64 * 1024) stderr += d.toString(); });
+      child.stderr?.on("data", (d: Buffer) => {
+        if (stderr.length < 64 * 1024) stderr += d.toString();
+      });
 
       child.on("error", (e) => {
         const err = new Error(`cannot run "${binary}": ${e.message}`) as Error & { spawnCode?: string };

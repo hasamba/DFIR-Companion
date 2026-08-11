@@ -11,7 +11,11 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 
 function fakeProvider(rawText: string): AIProvider {
-  return { name: "fake", model: "mock-model", analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }) };
+  return {
+    name: "fake",
+    model: "mock-model",
+    analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }),
+  };
 }
 
 function ev(id: string, ts: string, overrides: Partial<ForensicEvent> = {}): ForensicEvent {
@@ -58,19 +62,31 @@ describe("POST /cases/:id/false-positive/suggest", () => {
     state.forensicTimeline.push(
       ev("e1", "2026-01-01T00:00:00Z"),
       ev("e2", "2026-01-01T00:05:00Z", { description: "PsExec run again" }),
-      ev("e3", "2026-01-01T00:10:00Z", { description: "unrelated login", severity: "Low", mitreTechniques: [], processName: undefined }),
+      ev("e3", "2026-01-01T00:10:00Z", {
+        description: "unrelated login",
+        severity: "Low",
+        mitreTechniques: [],
+        processName: undefined,
+      }),
     );
     state.findings.push(
       finding("f1"),
       finding("f2", { title: "Lateral movement via PsExec (second host)", relatedIocs: ["ioc-1", "ioc-2"] }),
-      finding("f3", { title: "Unrelated phishing email opened", description: "User opened a phishing attachment", relatedIocs: ["ioc-9"], mitreTechniques: ["T1566.001"] }),
+      finding("f3", {
+        title: "Unrelated phishing email opened",
+        description: "User opened a phishing attachment",
+        relatedIocs: ["ioc-9"],
+        mitreTechniques: ["T1566.001"],
+      }),
     );
     await stateStore.save(state);
     app = createApp(store, { stateStore });
   });
 
   it("returns deterministic candidates for an event anchor, excluding the anchor itself", async () => {
-    const res = await request(app).post("/cases/c1/false-positive/suggest").send({ kind: "event", ref: "e1" });
+    const res = await request(app)
+      .post("/cases/c1/false-positive/suggest")
+      .send({ kind: "event", ref: "e1" });
     expect(res.status).toBe(200);
     expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["e2"]);
   });
@@ -81,13 +97,17 @@ describe("POST /cases/:id/false-positive/suggest", () => {
   });
 
   it("returns deterministic candidates for a finding anchor, excluding the anchor itself", async () => {
-    const res = await request(app).post("/cases/c1/false-positive/suggest").send({ kind: "finding", ref: "f1" });
+    const res = await request(app)
+      .post("/cases/c1/false-positive/suggest")
+      .send({ kind: "finding", ref: "f1" });
     expect(res.status).toBe(200);
     expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["f2"]);
   });
 
   it("returns aiUnavailable:true alongside deterministic candidates when no AI provider is configured", async () => {
-    const res = await request(app).post("/cases/c1/false-positive/suggest").send({ kind: "event", ref: "e1", ai: true });
+    const res = await request(app)
+      .post("/cases/c1/false-positive/suggest")
+      .send({ kind: "event", ref: "e1", ai: true });
     expect(res.status).toBe(200);
     expect(res.body.aiUnavailable).toBe(true);
     expect(res.body.candidates.map((c: { id: string }) => c.id)).toEqual(["e2"]);
@@ -106,7 +126,9 @@ describe("POST /cases/:id/false-positive/suggest", () => {
     });
     const aiApp = createApp(store, { stateStore, pipeline });
 
-    const res = await request(aiApp).post("/cases/c1/false-positive/suggest").send({ kind: "event", ref: "e1", ai: true });
+    const res = await request(aiApp)
+      .post("/cases/c1/false-positive/suggest")
+      .send({ kind: "event", ref: "e1", ai: true });
 
     expect(res.status).toBe(200);
     expect(res.body.aiUnavailable).toBeUndefined();

@@ -36,7 +36,14 @@ function mockJiraClient(): JiraClientLike {
   let n = 0;
   return {
     me: async () => ({ id: "u1", displayName: "Analyst" }),
-    createIssue: async () => { n += 1; return { id: `issue-10${n}`, key: n === 1 ? "IR-42" : `IR-${42 + n}`, url: `https://jira.example.com/browse/IR-${n === 1 ? 42 : 42 + n}` }; },
+    createIssue: async () => {
+      n += 1;
+      return {
+        id: `issue-10${n}`,
+        key: n === 1 ? "IR-42" : `IR-${42 + n}`,
+        url: `https://jira.example.com/browse/IR-${n === 1 ? 42 : 42 + n}`,
+      };
+    },
     updateIssue: async (idOrKey) => ({ id: "", key: idOrKey, url: undefined }),
   };
 }
@@ -45,8 +52,19 @@ function mockServiceNowClient(): ServiceNowClientLike {
   let n = 0;
   return {
     me: async () => ({ userId: "admin", userName: "admin" }),
-    createIncident: async () => { n += 1; return { id: `sys-10${n}`, number: n === 1 ? "INC0012345" : `INC001234${5 + n}`, url: `https://snow.example.com/incident.do?sys_id=sys-10${n}` }; },
-    updateIncident: async (sysId) => ({ id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` }),
+    createIncident: async () => {
+      n += 1;
+      return {
+        id: `sys-10${n}`,
+        number: n === 1 ? "INC0012345" : `INC001234${5 + n}`,
+        url: `https://snow.example.com/incident.do?sys_id=sys-10${n}`,
+      };
+    },
+    updateIncident: async (sysId) => ({
+      id: sysId,
+      number: "INC0012345",
+      url: `https://snow.example.com/incident.do?sys_id=${sysId}`,
+    }),
   };
 }
 
@@ -57,7 +75,10 @@ async function makeApp(opts: { jiraClient?: JiraClientLike; servicenowClient?: S
   const jiraExportStore = new JiraExportStore(store);
   const servicenowExportStore = new ServiceNowExportStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
@@ -70,7 +91,9 @@ async function makeApp(opts: { jiraClient?: JiraClientLike; servicenowClient?: S
     servicenowExportStore,
     servicenowOptions: { caller: "admin", category: "Security", subcategory: "IR" },
   });
-  await request(app).post("/cases").send({ caseId: "c1", name: "Ransomware FS01", investigator: "i", aiProvider: null });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c1", name: "Ransomware FS01", investigator: "i", aiProvider: null });
   // Seed a minimal state with one finding.
   const state: InvestigationState = {
     caseId: "c1",
@@ -125,7 +148,12 @@ describe("Jira / ServiceNow ticket push routes (#272)", () => {
     const app = await makeApp({ servicenowClient: mockServiceNowClient() });
     const res = await request(app).get("/servicenow/status");
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ configured: true, caller: "admin", category: "Security", subcategory: "IR" });
+    expect(res.body).toMatchObject({
+      configured: true,
+      caller: "admin",
+      category: "Security",
+      subcategory: "IR",
+    });
   });
 
   it("POST /cases/:id/push/servicenow creates an incident for a finding", async () => {
@@ -151,22 +179,33 @@ describe("Jira / ServiceNow ticket push routes (#272)", () => {
 describe("Jira / ServiceNow bulk push routes (#297)", () => {
   it("POST /cases/:id/push/jira/bulk files an issue per selected finding", async () => {
     const app = await makeApp({ jiraClient: mockJiraClient() });
-    const res = await request(app).post("/cases/c1/push/jira/bulk").send({ findingIds: ["finding-1", "finding-2"] });
+    const res = await request(app)
+      .post("/cases/c1/push/jira/bulk")
+      .send({ findingIds: ["finding-1", "finding-2"] });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ created: 2, updated: 0, skipped: 0 });
-    expect(res.body.issues.map((i: { findingId: string }) => i.findingId)).toEqual(["finding-1", "finding-2"]);
+    expect(res.body.issues.map((i: { findingId: string }) => i.findingId)).toEqual([
+      "finding-1",
+      "finding-2",
+    ]);
   });
 
   it("POST /cases/:id/push/jira/bulk re-push UPDATES instead of duplicating", async () => {
     const app = await makeApp({ jiraClient: mockJiraClient() });
-    await request(app).post("/cases/c1/push/jira/bulk").send({ findingIds: ["finding-1", "finding-2"] });
-    const res = await request(app).post("/cases/c1/push/jira/bulk").send({ findingIds: ["finding-1", "finding-2"] });
+    await request(app)
+      .post("/cases/c1/push/jira/bulk")
+      .send({ findingIds: ["finding-1", "finding-2"] });
+    const res = await request(app)
+      .post("/cases/c1/push/jira/bulk")
+      .send({ findingIds: ["finding-1", "finding-2"] });
     expect(res.body).toMatchObject({ created: 0, updated: 2, skipped: 0 });
   });
 
   it("POST /cases/:id/push/jira/bulk skips an unknown finding rather than failing the batch", async () => {
     const app = await makeApp({ jiraClient: mockJiraClient() });
-    const res = await request(app).post("/cases/c1/push/jira/bulk").send({ findingIds: ["finding-1", "missing"] });
+    const res = await request(app)
+      .post("/cases/c1/push/jira/bulk")
+      .send({ findingIds: ["finding-1", "missing"] });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ created: 1, skipped: 1 });
     expect(res.body.warnings.join(" ")).toContain("missing");
@@ -180,28 +219,41 @@ describe("Jira / ServiceNow bulk push routes (#297)", () => {
 
   it("POST /cases/:id/push/jira/bulk 501s when not configured", async () => {
     const app = await makeApp();
-    const res = await request(app).post("/cases/c1/push/jira/bulk").send({ findingIds: ["finding-1"] });
+    const res = await request(app)
+      .post("/cases/c1/push/jira/bulk")
+      .send({ findingIds: ["finding-1"] });
     expect(res.status).toBe(501);
   });
 
   it("POST /cases/:id/push/servicenow/bulk opens an incident per selected finding", async () => {
     const app = await makeApp({ servicenowClient: mockServiceNowClient() });
-    const res = await request(app).post("/cases/c1/push/servicenow/bulk").send({ findingIds: ["finding-1", "finding-2"] });
+    const res = await request(app)
+      .post("/cases/c1/push/servicenow/bulk")
+      .send({ findingIds: ["finding-1", "finding-2"] });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ created: 2, updated: 0, skipped: 0 });
-    expect(res.body.incidents.map((i: { findingId: string }) => i.findingId)).toEqual(["finding-1", "finding-2"]);
+    expect(res.body.incidents.map((i: { findingId: string }) => i.findingId)).toEqual([
+      "finding-1",
+      "finding-2",
+    ]);
   });
 
   it("POST /cases/:id/push/servicenow/bulk re-push UPDATES instead of duplicating", async () => {
     const app = await makeApp({ servicenowClient: mockServiceNowClient() });
-    await request(app).post("/cases/c1/push/servicenow/bulk").send({ findingIds: ["finding-1", "finding-2"] });
-    const res = await request(app).post("/cases/c1/push/servicenow/bulk").send({ findingIds: ["finding-1", "finding-2"] });
+    await request(app)
+      .post("/cases/c1/push/servicenow/bulk")
+      .send({ findingIds: ["finding-1", "finding-2"] });
+    const res = await request(app)
+      .post("/cases/c1/push/servicenow/bulk")
+      .send({ findingIds: ["finding-1", "finding-2"] });
     expect(res.body).toMatchObject({ created: 0, updated: 2, skipped: 0 });
   });
 
   it("POST /cases/:id/push/servicenow/bulk skips an unknown finding rather than failing the batch", async () => {
     const app = await makeApp({ servicenowClient: mockServiceNowClient() });
-    const res = await request(app).post("/cases/c1/push/servicenow/bulk").send({ findingIds: ["finding-1", "missing"] });
+    const res = await request(app)
+      .post("/cases/c1/push/servicenow/bulk")
+      .send({ findingIds: ["finding-1", "missing"] });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ created: 1, skipped: 1 });
     expect(res.body.warnings.join(" ")).toContain("missing");
@@ -214,7 +266,9 @@ describe("Jira / ServiceNow bulk push routes (#297)", () => {
 
   it("POST /cases/:id/push/servicenow/bulk 501s when not configured", async () => {
     const app = await makeApp();
-    const res = await request(app).post("/cases/c1/push/servicenow/bulk").send({ findingIds: ["finding-1"] });
+    const res = await request(app)
+      .post("/cases/c1/push/servicenow/bulk")
+      .send({ findingIds: ["finding-1"] });
     expect(res.status).toBe(501);
   });
 });

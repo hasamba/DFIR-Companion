@@ -5,7 +5,9 @@ import { buildProviderFrom } from "../../src/server.js";
 
 describe("LiteLlmProvider", () => {
   it("targets the local LiteLLM proxy by default and is OpenAI-compatible", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: '{"summary":"ok"}' } }] }));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({ choices: [{ message: { content: '{"summary":"ok"}' } }] }),
+    );
     const p = new LiteLlmProvider({ apiKey: "", model: "ollama/llama3.1", fetchFn });
     expect(p.name).toBe("litellm");
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
@@ -20,11 +22,17 @@ describe("LiteLlmProvider", () => {
 
   it("honours a custom base URL (remote / non-default port)", async () => {
     const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
-    const p = new LiteLlmProvider({ apiKey: "sk-virtual", model: "gpt-4o", baseUrl: "http://10.0.0.5:8000/v1", fetchFn });
+    const p = new LiteLlmProvider({
+      apiKey: "sk-virtual",
+      model: "gpt-4o",
+      baseUrl: "http://10.0.0.5:8000/v1",
+      fetchFn,
+    });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(fetchFn.mock.calls[0][0]).toBe("http://10.0.0.5:8000/v1/chat/completions");
-    expect((fetchFn.mock.calls[0][1] as RequestInit).headers as Record<string, string>)
-      .toMatchObject({ authorization: "Bearer sk-virtual" });
+    expect((fetchFn.mock.calls[0][1] as RequestInit).headers as Record<string, string>).toMatchObject({
+      authorization: "Bearer sk-virtual",
+    });
   });
 
   it("labels its errors 'LiteLLM', not 'OpenAI'", async () => {

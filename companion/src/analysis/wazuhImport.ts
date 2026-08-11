@@ -49,11 +49,11 @@ export interface WazuhImportOptions {
 export interface WazuhParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;    // alert records found in the input
-  kept: number;     // events emitted (after aggregation + cap)
-  dropped: number;  // records not represented (below floor / capped / noise)
-  groups: number;   // distinct event groups before the cap
-  format: string;   // "array" | "ndjson" | "api-export" | "empty"
+  total: number; // alert records found in the input
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // records not represented (below floor / capped / noise)
+  groups: number; // distinct event groups before the cap
+  format: string; // "array" | "ndjson" | "api-export" | "empty"
   hostname: string; // best-effort dominant agent host
 }
 
@@ -108,8 +108,15 @@ function mapAlert(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent | null {
   const ruleId = str(getCI(rule, "id")).trim();
   const groups: string[] = [];
   const rawGroups = getCI(rule, "groups");
-  if (Array.isArray(rawGroups)) for (const g of rawGroups) { const s = str(g).trim(); if (s) groups.push(s); }
-  else if (rawGroups) { const s = str(rawGroups).trim(); if (s) groups.push(s); }
+  if (Array.isArray(rawGroups))
+    for (const g of rawGroups) {
+      const s = str(g).trim();
+      if (s) groups.push(s);
+    }
+  else if (rawGroups) {
+    const s = str(rawGroups).trim();
+    if (s) groups.push(s);
+  }
 
   let desc = description;
   if (ruleId) desc += ` [rule ${ruleId}]`;
@@ -169,7 +176,11 @@ function mapAlert(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent | null {
 // Unwrap the Wazuh API export envelope: { data: { affected_items: [...] } }.
 function unwrapApiExport(text: string): { records: Row[]; format: string } | null {
   let root: unknown;
-  try { root = JSON.parse(text.trim()); } catch { return null; }
+  try {
+    root = JSON.parse(text.trim());
+  } catch {
+    return null;
+  }
   if (!isObject(root)) return null;
   const data = getCI(root, "data");
   if (!isObject(data)) return null;
@@ -216,7 +227,10 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
     if (isObject(rule)) {
       const levelRaw = getCI(rule, "level");
       const level = typeof levelRaw === "number" ? levelRaw : Number(levelRaw);
-      if (Number.isFinite(level) && level < minLevel) { noise++; continue; }
+      if (Number.isFinite(level) && level < minLevel) {
+        noise++;
+        continue;
+      }
     }
     const m = mapAlert(rec, iocSink);
     if (m) mapped.push(m);
@@ -240,7 +254,12 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
   }
   let hostname = "";
   let best = 0;
-  for (const [h, n] of hostCount) { if (n > best) { best = n; hostname = h; } }
+  for (const [h, n] of hostCount) {
+    if (n > best) {
+      best = n;
+      hostname = h;
+    }
+  }
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
