@@ -17,9 +17,9 @@ export interface ClickUpClientLike {
 }
 
 export interface ClickUpPushInput {
-  caseId: string;            // the Companion case id (key for the export pointer store)
-  listId: string;           // target ClickUp list id
-  tasks: PlaybookTask[];     // the playbook tasks to export
+  caseId: string; // the Companion case id (key for the export pointer store)
+  listId: string; // target ClickUp list id
+  tasks: PlaybookTask[]; // the playbook tasks to export
 }
 
 export interface ClickUpPushResult {
@@ -27,7 +27,7 @@ export interface ClickUpPushResult {
   created: number;
   updated: number;
   skipped: number;
-  taskUrl?: string;          // a sample task url for an "Open in ClickUp" link
+  taskUrl?: string; // a sample task url for an "Open in ClickUp" link
   warnings: string[];
 }
 
@@ -45,12 +45,17 @@ export async function pushPlaybookToClickUp(
   // 2. Read the list's real status names so we can map playbook statuses onto them (non-fatal —
   //    if we can't read them, tasks are created with the list's default status).
   let listStatuses: string[] = [];
-  try { listStatuses = await client.listStatuses(input.listId); }
-  catch (err) { warnings.push(`statuses: ${(err as Error).message} — tasks will use the list default status`); }
+  try {
+    listStatuses = await client.listStatuses(input.listId);
+  } catch (err) {
+    warnings.push(`statuses: ${(err as Error).message} — tasks will use the list default status`);
+  }
 
   const prev = await store.load(input.caseId);
   const taskIds: Record<string, string> = { ...prev.taskIds };
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0,
+    updated = 0,
+    skipped = 0;
   let taskUrl: string | undefined;
 
   for (const task of input.tasks) {
@@ -73,7 +78,12 @@ export async function pushPlaybookToClickUp(
     }
   }
 
-  await store.record(input.caseId, { listId: input.listId, taskIds, lastExportedAt: now, ...(taskUrl ? { lastTaskUrl: taskUrl } : {}) });
+  await store.record(input.caseId, {
+    listId: input.listId,
+    taskIds,
+    lastExportedAt: now,
+    ...(taskUrl ? { lastTaskUrl: taskUrl } : {}),
+  });
 
   return { listId: input.listId, created, updated, skipped, taskUrl, warnings };
 }

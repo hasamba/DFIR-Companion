@@ -98,10 +98,14 @@ describe("stripAnsi / cleanToolOutput", () => {
 
 describe("toolSpawnErrorMessage", () => {
   it("gives ENOENT a not-found hint", () => {
-    expect(toolSpawnErrorMessage("hayabusa", { code: "ENOENT", message: "spawn ENOENT" })).toMatch(/not found/i);
+    expect(toolSpawnErrorMessage("hayabusa", { code: "ENOENT", message: "spawn ENOENT" })).toMatch(
+      /not found/i,
+    );
   });
   it("gives EPERM an AV/EDR hint", () => {
-    expect(toolSpawnErrorMessage("yara", { code: "EPERM", message: "spawn EPERM" })).toMatch(/antivirus|EDR/i);
+    expect(toolSpawnErrorMessage("yara", { code: "EPERM", message: "spawn EPERM" })).toMatch(
+      /antivirus|EDR/i,
+    );
   });
 });
 
@@ -118,20 +122,35 @@ describe("loadToolConfig / loadAllToolConfigs", () => {
     expect(cfg.importKind).toBe("hayabusa");
     expect(cfg.runArgs).toBe(TOOL_DEFS.hayabusa.defaultRunArgs);
     expect(cfg.timeoutMs).toBe(12345);
-    expect(cfg.autoRun).toBe(false);   // opt-in: default off so imports/drops ask first
+    expect(cfg.autoRun).toBe(false); // opt-in: default off so imports/drops ask first
     // default update command reuses the binary (no spaces → unquoted) + subcommand
     expect(cfg.updateCommand).toBe("C:\\tools\\hayabusa.exe update-rules");
   });
   it("auto-run is opt-in (on only when explicitly set) and gated by the master switch", () => {
-    expect(loadToolConfig("snort", { DFIR_TOOL_SNORT_BINARY: "snort", DFIR_TOOL_SNORT_AUTO_RUN: "on" })!.autoRun).toBe(true);
+    expect(
+      loadToolConfig("snort", { DFIR_TOOL_SNORT_BINARY: "snort", DFIR_TOOL_SNORT_AUTO_RUN: "on" })!.autoRun,
+    ).toBe(true);
     expect(loadToolConfig("snort", { DFIR_TOOL_SNORT_BINARY: "snort" })!.autoRun).toBe(false);
     // master kill-switch overrides an explicit per-tool on
-    expect(loadToolConfig("snort", { DFIR_TOOL_SNORT_BINARY: "snort", DFIR_TOOL_SNORT_AUTO_RUN: "on", DFIR_TOOL_AUTO_RUN: "false" })!.autoRun).toBe(false);
+    expect(
+      loadToolConfig("snort", {
+        DFIR_TOOL_SNORT_BINARY: "snort",
+        DFIR_TOOL_SNORT_AUTO_RUN: "on",
+        DFIR_TOOL_AUTO_RUN: "false",
+      })!.autoRun,
+    ).toBe(false);
   });
   it("has no default update command for suricata (suricata-update is Linux-only)", () => {
-    expect(loadToolConfig("suricata", { DFIR_TOOL_SURICATA_BINARY: "suricata" })!.updateCommand).toBeUndefined();
+    expect(
+      loadToolConfig("suricata", { DFIR_TOOL_SURICATA_BINARY: "suricata" })!.updateCommand,
+    ).toBeUndefined();
     // ...but an explicit standalone command is honored verbatim (first token = its own binary).
-    expect(loadToolConfig("suricata", { DFIR_TOOL_SURICATA_BINARY: "suricata", DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update" })!.updateCommand).toBe("suricata-update");
+    expect(
+      loadToolConfig("suricata", {
+        DFIR_TOOL_SURICATA_BINARY: "suricata",
+        DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update",
+      })!.updateCommand,
+    ).toBe("suricata-update");
   });
   it("loadAllToolConfigs returns only configured tools", () => {
     const all = loadAllToolConfigs({ DFIR_TOOL_YARA_BINARY: "yara", DFIR_TOOL_SNORT_BINARY: "snort" });
@@ -179,7 +198,10 @@ describe("runToolAgainstFile", () => {
   it("runs a stdout tool and returns its output + importKind", async () => {
     const caseDir = await mkdtemp(join(tmpdir(), "case-"));
     await writeFile(join(caseDir, "a.bin"), "sample");
-    const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara", DFIR_TOOL_YARA_RULES: "/rules/r.yar" })!;
+    const cfg = loadToolConfig("yara", {
+      DFIR_TOOL_YARA_BINARY: "yara",
+      DFIR_TOOL_YARA_RULES: "/rules/r.yar",
+    })!;
     let seenBinary = "";
     let seenArgs: string[] = [];
     const runner: ToolRunner = async (binary, args) => {
@@ -210,7 +232,12 @@ describe("runToolAgainstFile", () => {
     expect(cfg.outputMode).toBe("stdout");
     const runner: ToolRunner = async () => ({ stdout: "x", stderr: "", code: 0 });
     await expect(
-      runToolAgainstFile({ cfg, runner, targetPath: join(caseDir, "Security.evtx"), workDir: join(caseDir, ".toolwork") }),
+      runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, "Security.evtx"),
+        workDir: join(caseDir, ".toolwork"),
+      }),
     ).rejects.toThrow(/definitions path is required/i);
 
     // With definitions set, <targetdir> resolves to a folder holding the file under its original name.
@@ -229,10 +256,15 @@ describe("runToolAgainstFile", () => {
       expect(args).not.toContain(">");
       expect(args).not.toContain("<output>");
       expect(opts.stdoutFile).toBeTruthy();
-      await writeFile(opts.stdoutFile as string, '[{"a":1}]');   // the tool "writes" its stdout to the file
+      await writeFile(opts.stdoutFile as string, '[{"a":1}]'); // the tool "writes" its stdout to the file
       return { stdout: "", stderr: "", code: 0 };
     };
-    const res = await runToolAgainstFile({ cfg: cfg2, runner: runner2, targetPath: join(caseDir, "Security.evtx"), workDir: join(caseDir, ".toolwork") });
+    const res = await runToolAgainstFile({
+      cfg: cfg2,
+      runner: runner2,
+      targetPath: join(caseDir, "Security.evtx"),
+      workDir: join(caseDir, ".toolwork"),
+    });
     expect(res.importKind).toBe("velociraptor");
     expect(res.outputText).toBe('[{"a":1}]');
   });
@@ -264,7 +296,12 @@ describe("runToolAgainstFile", () => {
     const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara" })!;
     const runner: ToolRunner = async () => ({ stdout: "x", stderr: "", code: 0 });
     await expect(
-      runToolAgainstFile({ cfg, runner, targetPath: join(caseDir, "a.bin"), workDir: join(caseDir, ".toolwork") }),
+      runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, "a.bin"),
+        workDir: join(caseDir, ".toolwork"),
+      }),
     ).rejects.toThrow(/rules file is required/i);
   });
 
@@ -274,14 +311,22 @@ describe("runToolAgainstFile", () => {
     const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara", DFIR_TOOL_YARA_RULES: "/r.yar" })!;
     const runner: ToolRunner = async () => ({ stdout: "   ", stderr: "bad rule syntax", code: 1 });
     await expect(
-      runToolAgainstFile({ cfg, runner, targetPath: join(caseDir, "a.bin"), workDir: join(caseDir, ".toolwork") }),
+      runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, "a.bin"),
+        workDir: join(caseDir, ".toolwork"),
+      }),
     ).rejects.toThrow(/no output.*bad rule syntax/i);
   });
 });
 
 describe("updateToolRules", () => {
   it("runs the standalone update command (own binary) and returns output", async () => {
-    const cfg = loadToolConfig("suricata", { DFIR_TOOL_SURICATA_BINARY: "suricata", DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update" })!;
+    const cfg = loadToolConfig("suricata", {
+      DFIR_TOOL_SURICATA_BINARY: "suricata",
+      DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update",
+    })!;
     let seenBinary = "";
     const runner: ToolRunner = async (binary) => {
       seenBinary = binary;
@@ -320,7 +365,7 @@ describe("SO-CRATES as an http-transport tool", () => {
     const cfg = loadToolConfig("socrates", { DFIR_TOOL_SOCRATES_URL: "http://localhost:8000/" });
     expect(cfg).not.toBeNull();
     expect(cfg!.transport).toBe("http");
-    expect(cfg!.baseUrl).toBe("http://localhost:8000");   // trailing slash trimmed
+    expect(cfg!.baseUrl).toBe("http://localhost:8000"); // trailing slash trimmed
     expect(cfg!.importKind).toBe("socrates");
   });
 

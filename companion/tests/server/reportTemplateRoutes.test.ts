@@ -27,7 +27,13 @@ async function harness() {
     reportTemplates: reportTemplateStore,
     reportTemplateControl: reportTemplateControlStore,
   });
-  const app = createApp(store, { stateStore, reportWriter, reportMetaStore, reportTemplateStore, reportTemplateControlStore });
+  const app = createApp(store, {
+    stateStore,
+    reportWriter,
+    reportMetaStore,
+    reportTemplateStore,
+    reportTemplateControlStore,
+  });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store };
 }
@@ -47,7 +53,9 @@ describe("report template CRUD routes", () => {
 
   it("creates, fetches, and deletes a custom template", async () => {
     const { app } = await harness();
-    const created = await request(app).post("/report-templates").send({ name: "Client Brief", accentColor: "#ff8800" });
+    const created = await request(app)
+      .post("/report-templates")
+      .send({ name: "Client Brief", accentColor: "#ff8800" });
     expect(created.status).toBe(201);
     expect(created.body.id).toBeTruthy();
     expect(created.body.accentColor).toBe("#ff8800");
@@ -69,7 +77,9 @@ describe("report template CRUD routes", () => {
 
   it("edits a built-in in place and resets it on delete", async () => {
     const { app } = await harness();
-    const saved = await request(app).post("/report-templates").send({ id: "standard", name: "Standard", accentColor: "#101010" });
+    const saved = await request(app)
+      .post("/report-templates")
+      .send({ id: "standard", name: "Standard", accentColor: "#101010" });
     expect(saved.body.customized).toBe(true);
     expect((await request(app).get("/report-templates/standard")).body.accentColor).toBe("#101010");
     // delete resets the built-in (still 204, not 404)
@@ -105,7 +115,9 @@ describe("per-case template selection drives report rendering", () => {
 
   it("a custom template's branded header/footer/cover interpolate report metadata", async () => {
     const { app, store } = await harness();
-    await request(app).put("/cases/c1/report-meta").send({ organization: "ExampleCorp", incidentId: "INC-9", restrictions: "TLP:RED" });
+    await request(app)
+      .put("/cases/c1/report-meta")
+      .send({ organization: "ExampleCorp", incidentId: "INC-9", restrictions: "TLP:RED" });
     const tpl = await request(app).post("/report-templates").send({
       name: "Branded",
       coverTitle: "Investigation for {{organization}}",
@@ -118,8 +130,8 @@ describe("per-case template selection drives report rendering", () => {
     await request(app).post("/cases/c1/report");
     const md = await reportMd(store);
     expect(md).toContain("# Investigation for ExampleCorp");
-    expect(md).toContain("> ExampleCorp · INC-9");   // running header banner
-    expect(md).toContain("_TLP:RED_");                // footer banner
+    expect(md).toContain("> ExampleCorp · INC-9"); // running header banner
+    expect(md).toContain("_TLP:RED_"); // footer banner
 
     // The accent colour flows into the HTML export's stylesheet.
     const html = await readFile(join(store.reportsDir("c1"), "report.html"), "utf8");
@@ -128,7 +140,15 @@ describe("per-case template selection drives report rendering", () => {
 
   it("falls back to the default template when the selected one was deleted", async () => {
     const { app, store } = await harness();
-    const tpl = await request(app).post("/report-templates").send({ name: "Temp", sections: [{ key: "titlePage", enabled: true }, { key: "timeline", enabled: false }] });
+    const tpl = await request(app)
+      .post("/report-templates")
+      .send({
+        name: "Temp",
+        sections: [
+          { key: "titlePage", enabled: true },
+          { key: "timeline", enabled: false },
+        ],
+      });
     await request(app).put("/cases/c1/report-template").send({ templateId: tpl.body.id });
     await request(app).delete(`/report-templates/${tpl.body.id}`);
 

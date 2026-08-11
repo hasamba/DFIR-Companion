@@ -20,7 +20,8 @@ export const GLOSSARY_DICTIONARY: Record<string, string> = {
   LOLBIN: "Living-Off-the-Land Binary — a legitimate system binary abused for malicious purposes.",
   RDP: "Remote Desktop Protocol — Windows remote graphical session protocol.",
   SMB: "Server Message Block — Windows file/printer sharing protocol, often abused for lateral movement.",
-  LSASS: "Local Security Authority Subsystem Service — Windows process holding credentials; a credential-theft target.",
+  LSASS:
+    "Local Security Authority Subsystem Service — Windows process holding credentials; a credential-theft target.",
   Mimikatz: "A credential-dumping tool that extracts secrets from LSASS.",
   PsExec: "A Sysinternals remote-execution tool, frequently abused for lateral movement.",
   "Cobalt Strike": "A commercial adversary-emulation framework widely abused by threat actors for C2.",

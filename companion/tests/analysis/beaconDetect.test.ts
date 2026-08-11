@@ -53,9 +53,7 @@ function beaconEvents(
 describe("detectBeacons", () => {
   it("returns nothing for an empty or non-network timeline", () => {
     expect(detectBeacons([])).toEqual([]);
-    expect(
-      detectBeacons([ev("e1", "2026-05-20T14:00:00Z"), ev("e2", "2026-05-20T14:05:00Z")]),
-    ).toEqual([]);
+    expect(detectBeacons([ev("e1", "2026-05-20T14:00:00Z"), ev("e2", "2026-05-20T14:05:00Z")])).toEqual([]);
   });
 
   it("flags a perfectly periodic outbound channel as a beacon", () => {
@@ -82,7 +80,10 @@ describe("detectBeacons", () => {
     // Mean/stddev would be wrecked by the outlier; median/MAD shrugs it off and still flags it.
     const hourly = beaconEvents("h", "WKSTN-1", "185.220.101.47", 443, "2026-05-15T10:00:00Z", 3600, 10);
     const outlier = ev("late", "2026-05-16T09:30:00Z", {
-      asset: "WKSTN-1", dstIp: "185.220.101.47", port: 443, action: "network_send",
+      asset: "WKSTN-1",
+      dstIp: "185.220.101.47",
+      port: 443,
+      action: "network_send",
     });
     const beacons = detectBeacons([...hourly, outlier]);
     expect(beacons).toHaveLength(1);
@@ -95,14 +96,26 @@ describe("detectBeacons", () => {
   it("tolerates small jitter under the threshold but rejects irregular traffic", () => {
     // ~5% jitter around a 60s beacon → kept.
     const regular = beaconEvents(
-      "r", "host1", "203.0.113.5", 8443, "2026-05-20T00:00:00Z", 60, 6,
+      "r",
+      "host1",
+      "203.0.113.5",
+      8443,
+      "2026-05-20T00:00:00Z",
+      60,
+      6,
       [3, -2, 2, -3, 1, 0],
     );
     expect(detectBeacons(regular)).toHaveLength(1);
 
     // Wildly varying gaps → human browsing, not a beacon.
     const irregular = beaconEvents(
-      "i", "host1", "203.0.113.6", 80, "2026-05-20T00:00:00Z", 60, 6,
+      "i",
+      "host1",
+      "203.0.113.6",
+      80,
+      "2026-05-20T00:00:00Z",
+      60,
+      6,
       [600, 5, 1200, 30, 900, 0],
     );
     expect(detectBeacons(irregular)).toEqual([]);
@@ -138,8 +151,9 @@ describe("detectBeacons", () => {
   });
 
   it("excludes inbound (network_receive) and destination-less events", () => {
-    const inbound = beaconEvents("rx", "host1", "185.10.20.30", 443, "2026-05-20T00:00:00Z", 60, 6)
-      .map((e) => ({ ...e, action: "network_receive" as const }));
+    const inbound = beaconEvents("rx", "host1", "185.10.20.30", 443, "2026-05-20T00:00:00Z", 60, 6).map(
+      (e) => ({ ...e, action: "network_receive" as const }),
+    );
     expect(detectBeacons(inbound)).toEqual([]);
 
     const noDest = Array.from({ length: 6 }, (_, i) =>
@@ -161,14 +175,18 @@ describe("detectBeacons", () => {
   });
 
   it("falls back to srcIp for the source when asset is absent, else (unknown)", () => {
-    const bySrc = beaconEvents("s", "", "185.10.20.30", 443, "2026-05-20T00:00:00Z", 60, 6).map(
-      (e) => ({ ...e, asset: undefined, srcIp: "10.1.2.3" }),
-    );
+    const bySrc = beaconEvents("s", "", "185.10.20.30", 443, "2026-05-20T00:00:00Z", 60, 6).map((e) => ({
+      ...e,
+      asset: undefined,
+      srcIp: "10.1.2.3",
+    }));
     expect(detectBeacons(bySrc)[0].source).toBe("10.1.2.3");
 
-    const none = beaconEvents("u", "", "185.10.20.30", 443, "2026-05-20T00:00:00Z", 60, 6).map(
-      (e) => ({ ...e, asset: undefined, srcIp: undefined }),
-    );
+    const none = beaconEvents("u", "", "185.10.20.30", 443, "2026-05-20T00:00:00Z", 60, 6).map((e) => ({
+      ...e,
+      asset: undefined,
+      srcIp: undefined,
+    }));
     expect(detectBeacons(none)[0].source).toBe("(unknown)");
   });
 

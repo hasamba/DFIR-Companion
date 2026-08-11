@@ -7,13 +7,7 @@ import type { SynthMeta } from "./synthMeta.js";
 
 export type CockpitPhase = "triage" | "active-investigation" | "report-preparation";
 export type CockpitCardKind =
-  | "lead"
-  | "hypothesis"
-  | "contradiction"
-  | "gap"
-  | "change"
-  | "activity"
-  | "blocker";
+  "lead" | "hypothesis" | "contradiction" | "gap" | "change" | "activity" | "blocker";
 export type CockpitAction = "pin" | "unpin" | "dismiss" | "restore" | "defer" | "assign" | "review";
 
 export interface CockpitActionInput {
@@ -132,7 +126,11 @@ const SEVERITY_SCORE: Record<Severity, number> = {
 const SEVERITIES = new Set<string>(Object.keys(SEVERITY_SCORE));
 
 function cleanIdentity(value: unknown): string {
-  return String(value ?? "").trim().slice(0, 120) || "analyst";
+  return (
+    String(value ?? "")
+      .trim()
+      .slice(0, 120) || "analyst"
+  );
 }
 
 function identityKey(value: unknown): string {
@@ -141,7 +139,7 @@ function identityKey(value: unknown): string {
 
 function normalizeSeverity(value: unknown): Severity {
   const severity = String(value ?? "");
-  return SEVERITIES.has(severity) ? severity as Severity : "Info";
+  return SEVERITIES.has(severity) ? (severity as Severity) : "Info";
 }
 
 function isAfter(value: string | undefined, threshold: string | null): boolean {
@@ -196,12 +194,13 @@ function leadCards(input: CockpitInput): ScoredCard[] {
   const hypotheses: ScoredCard[] = (input.hypotheses ?? [])
     .filter((item) => item.status === "open" || item.status === "unknown")
     .map((item) => ({
-      score: 275 + (item.relatedEventIds.length * 5) - (item.exhausted ? 100 : 0),
+      score: 275 + item.relatedEventIds.length * 5 - (item.exhausted ? 100 : 0),
       card: {
         id: `lead:hypothesis:${item.id}`,
         kind: "lead",
         title: item.title,
-        summary: item.expectedOutcome || item.description || "Test this open hypothesis against the evidence.",
+        summary:
+          item.expectedOutcome || item.description || "Test this open hypothesis against the evidence.",
         severity: "Medium",
         occurredAt: item.updatedAt,
         evidenceIds: [...item.relatedEventIds],
@@ -213,9 +212,7 @@ function leadCards(input: CockpitInput): ScoredCard[] {
         ...(item.assignee ? { assignee: item.assignee } : {}),
       },
     }));
-  return [...findings, ...hypotheses].sort(
-    (a, b) => b.score - a.score || a.card.id.localeCompare(b.card.id),
-  );
+  return [...findings, ...hypotheses].sort((a, b) => b.score - a.score || a.card.id.localeCompare(b.card.id));
 }
 
 function hypothesisCards(hypotheses: readonly Hypothesis[]): CockpitCard[] {
@@ -224,7 +221,8 @@ function hypothesisCards(hypotheses: readonly Hypothesis[]): CockpitCard[] {
     .map((item) => {
       const history = item.statusHistory ?? [];
       const previous = history.length > 1 ? history[history.length - 2].status : "";
-      const change = previous && previous !== item.status ? ` Status changed from ${previous} to ${item.status}.` : "";
+      const change =
+        previous && previous !== item.status ? ` Status changed from ${previous} to ${item.status}.` : "";
       return {
         id: `hypothesis:${item.id}`,
         kind: "hypothesis",
@@ -281,7 +279,8 @@ function contradictionCards(input: CockpitInput): CockpitCard[] {
       kind: "contradiction" as const,
       title: `${item.topic} remains ${item.status}`,
       summary: item.basis || item.gap || "The case does not yet support a firm conclusion.",
-      severity: item.status === "speculated" || item.status === "unknown" ? "High" as const : "Medium" as const,
+      severity:
+        item.status === "speculated" || item.status === "unknown" ? ("High" as const) : ("Medium" as const),
       evidenceIds: [],
       target: { panel: "uncertainties" },
     }));
@@ -299,16 +298,18 @@ function collectionAction(collect: CollectDirective | undefined, fallback: strin
 function gapCards(state: InvestigationState): CockpitCard[] {
   const hasEvidence = state.forensicTimeline.length > 0 || state.timeline.length > 0;
   if (!hasEvidence && state.findings.length === 0 && state.iocs.length === 0) {
-    return [{
-      id: "gap:import-evidence",
-      kind: "gap",
-      title: "Import the first evidence",
-      summary: "This case has no events, findings, or IOCs yet.",
-      severity: "High",
-      evidenceIds: [],
-      target: { panel: "import" },
-      action: "Import evidence",
-    }];
+    return [
+      {
+        id: "gap:import-evidence",
+        kind: "gap",
+        title: "Import the first evidence",
+        summary: "This case has no events, findings, or IOCs yet.",
+        severity: "High",
+        evidenceIds: [],
+        target: { panel: "import" },
+        action: "Import evidence",
+      },
+    ];
   }
   const questions = state.keyQuestions
     .filter((question) => question.status !== "answered")
@@ -317,10 +318,13 @@ function gapCards(state: InvestigationState): CockpitCard[] {
       kind: "gap" as const,
       title: question.question,
       summary: question.answer || "This key question is not answered by the current evidence.",
-      severity: question.status === "unknown" ? "High" as const : "Medium" as const,
+      severity: question.status === "unknown" ? ("High" as const) : ("Medium" as const),
       evidenceIds: question.contradicted?.eventIds ? [...question.contradicted.eventIds] : [],
       target: { panel: "questions", questionId: question.id },
-      action: collectionAction(question.collect, question.pointer || "Review the key question and collect the missing source."),
+      action: collectionAction(
+        question.collect,
+        question.pointer || "Review the key question and collect the missing source.",
+      ),
     }));
   const uncertainties = state.uncertainties
     .filter((item) => item.status !== "confirmed" && item.gap)
@@ -341,7 +345,12 @@ function gapCards(state: InvestigationState): CockpitCard[] {
       kind: "gap" as const,
       title: step.action,
       summary: step.rationale,
-      severity: step.priority === "critical" ? "Critical" as const : step.priority === "high" ? "High" as const : "Medium" as const,
+      severity:
+        step.priority === "critical"
+          ? ("Critical" as const)
+          : step.priority === "high"
+            ? ("High" as const)
+            : ("Medium" as const),
       evidenceIds: [],
       target: { panel: "playbook" },
       action: collectionAction(step.collect, step.pointer),
@@ -386,7 +395,9 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
       severity: forensicCount > 0 || superTimelineCount > 0 ? "Medium" : "Low",
       occurredAt: meta.lastImportedAt,
       evidenceIds: [],
-      target: { panel: forensicCount > 0 ? "timeline" : superTimelineCount > 0 ? "super-timeline" : "timeline" },
+      target: {
+        panel: forensicCount > 0 ? "timeline" : superTimelineCount > 0 ? "super-timeline" : "timeline",
+      },
     });
   }
   if (input.synthMeta && isAfter(input.synthMeta.lastSynthesizedAt, lastReviewedAt)) {
@@ -410,11 +421,12 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
 
 function activityCards(jobs: readonly Job[]): CockpitCard[] {
   return jobs
-    .filter((job) =>
-      job.status === "running" ||
-      job.status === "queued" ||
-      job.status === "failed" ||
-      job.status === "interrupted",
+    .filter(
+      (job) =>
+        job.status === "running" ||
+        job.status === "queued" ||
+        job.status === "failed" ||
+        job.status === "interrupted",
     )
     .map((job) => {
       const needsAttention = job.status === "failed" || job.status === "interrupted";
@@ -427,7 +439,7 @@ function activityCards(jobs: readonly Job[]): CockpitCard[] {
         summary: needsAttention
           ? job.error || job.detail || job.label || "Background work needs attention."
           : job.label || "Background work is in progress.",
-        severity: needsAttention ? "High" as const : "Medium" as const,
+        severity: needsAttention ? ("High" as const) : ("Medium" as const),
         occurredAt: job.endedAt || job.startedAt,
         evidenceIds: [],
         target: { panel: "jobs", jobId: job.id },
@@ -457,7 +469,9 @@ function blockerCards(state: InvestigationState, jobs: readonly Job[]): CockpitC
       id: "blocker:no-findings",
       kind: "blocker",
       title: "No findings have been established",
-      summary: hasEvidence ? "Synthesize or manually assess the imported evidence." : "Import and assess evidence first.",
+      summary: hasEvidence
+        ? "Synthesize or manually assess the imported evidence."
+        : "Import and assess evidence first.",
       severity: "High",
       evidenceIds: [],
       target: { panel: hasEvidence ? "findings" : "import" },
@@ -471,16 +485,19 @@ function blockerCards(state: InvestigationState, jobs: readonly Job[]): CockpitC
     cards.push({
       id: "blocker:untriaged-high",
       kind: "blocker",
-      title: highImpact.length > 0
-        ? `${highImpact.length} high-impact finding${highImpact.length === 1 ? "" : "s"} still open`
-        : `${untriaged.length} finding${untriaged.length === 1 ? "" : "s"} still open`,
+      title:
+        highImpact.length > 0
+          ? `${highImpact.length} high-impact finding${highImpact.length === 1 ? "" : "s"} still open`
+          : `${untriaged.length} finding${untriaged.length === 1 ? "" : "s"} still open`,
       summary: "Confirm or dismiss open findings before treating the report as ready.",
       severity: highImpact.length > 0 ? "High" : "Medium",
       evidenceIds: untriaged.flatMap((finding) => finding.relatedEventIds ?? []).slice(0, 20),
       target: { panel: "findings", findingId: untriaged[0].id },
     });
   }
-  const unanswered = state.keyQuestions.filter((question) => question.status !== "answered" || question.contradicted);
+  const unanswered = state.keyQuestions.filter(
+    (question) => question.status !== "answered" || question.contradicted,
+  );
   if (unanswered.length > 0) {
     cards.push({
       id: "blocker:questions",
@@ -555,7 +572,7 @@ function prioritize(cards: readonly CockpitCard[]): CockpitCard[] {
   return [...cards].sort(
     (a, b) =>
       Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
-      (SEVERITY_SCORE[b.severity ?? "Info"] - SEVERITY_SCORE[a.severity ?? "Info"]) ||
+      SEVERITY_SCORE[b.severity ?? "Info"] - SEVERITY_SCORE[a.severity ?? "Info"] ||
       a.id.localeCompare(b.id),
   );
 }
@@ -589,11 +606,12 @@ export function deriveCockpit(input: CockpitInput): CockpitSnapshot {
   ) as unknown as CockpitSections;
   const hasEvidence = input.state.forensicTimeline.length > 0 || input.state.timeline.length > 0;
   const readinessReady = blockers.length === 0;
-  const phase: CockpitPhase = !hasEvidence || input.state.findings.length === 0
-    ? "triage"
-    : readinessReady
-      ? "report-preparation"
-      : "active-investigation";
+  const phase: CockpitPhase =
+    !hasEvidence || input.state.findings.length === 0
+      ? "triage"
+      : readinessReady
+        ? "report-preparation"
+        : "active-investigation";
   return {
     caseId: input.state.caseId,
     investigator,

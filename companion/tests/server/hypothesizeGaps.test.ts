@@ -14,7 +14,8 @@ const cannedHypotheses = JSON.stringify({
   hypotheses: [
     {
       gapId: "gap-1",
-      hypothesis: "The Security log was cleared after the RDP logon to hide credential access during the silence.",
+      hypothesis:
+        "The Security log was cleared after the RDP logon to hide credential access during the silence.",
       attackerActions: ["Cleared the Windows Security event log", "Dumped LSASS"],
       confidence: 55,
       severity: "High",
@@ -29,24 +30,45 @@ async function makeApp(provider: MockProvider | undefined) {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: Boolean(provider) });
-  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
   return { app, stateStore };
 }
 
 function ev(id: string, ts: string): ForensicEvent {
-  return { id, timestamp: ts, description: `event ${id}`, severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WEB01", sources: ["EventLog"] };
+  return {
+    id,
+    timestamp: ts,
+    description: `event ${id}`,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: "WEB01",
+    sources: ["EventLog"],
+  };
 }
 
 // A dense one-minute cadence cluster, then a 4-hour hole, then activity resumes — a complete-silence
 // gap that clears the density + floor bars, so detectTimelineGaps flags exactly one gap (gap-1).
 async function seedGappyTimeline(stateStore: StateStore) {
   const s = emptyState("c1");
-  for (let i = 0; i < 6; i++) s.forensicTimeline.push(ev(`a${i}`, new Date(Date.parse("2026-05-20T08:00:00Z") + i * 60_000).toISOString()));
-  for (let i = 0; i < 4; i++) s.forensicTimeline.push(ev(`b${i}`, new Date(Date.parse("2026-05-20T12:00:00Z") + i * 60_000).toISOString()));
+  for (let i = 0; i < 6; i++)
+    s.forensicTimeline.push(
+      ev(`a${i}`, new Date(Date.parse("2026-05-20T08:00:00Z") + i * 60_000).toISOString()),
+    );
+  for (let i = 0; i < 4; i++)
+    s.forensicTimeline.push(
+      ev(`b${i}`, new Date(Date.parse("2026-05-20T12:00:00Z") + i * 60_000).toISOString()),
+    );
   await stateStore.save(s);
 }
 

@@ -15,9 +15,9 @@ import { StateLock } from "./stateLock.js";
 
 export const tagSchema = z.object({
   id: z.string(),
-  targetType: z.string(),       // "event" | "finding" | "ioc" | "question" | "asset" | …
+  targetType: z.string(), // "event" | "finding" | "ioc" | "question" | "asset" | …
   targetId: z.string(),
-  label: z.string(),            // normalized: lowercase, trimmed, internal whitespace → "-"
+  label: z.string(), // normalized: lowercase, trimmed, internal whitespace → "-"
   author: z.string(),
   createdAt: z.string(),
 });
@@ -117,7 +117,10 @@ export class TagsStore {
       const tags = await this.load(caseId);
       const removed = tags.find((t) => t.id === tagId) ?? null;
       if (!removed) return null;
-      await this.save(caseId, tags.filter((t) => t.id !== tagId));
+      await this.save(
+        caseId,
+        tags.filter((t) => t.id !== tagId),
+      );
       return removed;
     });
   }

@@ -35,21 +35,37 @@ import { createApp } from "../../src/server.js";
 
 function findingPipeline(stateStore: StateStore): AnalysisPipeline {
   return new AnalysisPipeline({
-    provider: new MockProvider("mock", JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-      timelineNote: "n", summary: "s",
-    })),
+    provider: new MockProvider(
+      "mock",
+      JSON.stringify({
+        findings: [],
+        iocs: [],
+        mitreTechniques: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        timelineNote: "n",
+        summary: "s",
+      }),
+    ),
     stateStore,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
 }
 
-const VELO_EVIDENCE = JSON.stringify([{
-  _Source: "Windows.Detection.X", Detection: { Name: "Bad" },
-  EventTime: "2026-01-01T00:00:00Z", EntryPath: "c:\\x.exe",
-}]);
+const VELO_EVIDENCE = JSON.stringify([
+  {
+    _Source: "Windows.Detection.X",
+    Detection: { Name: "Bad" },
+    EventTime: "2026-01-01T00:00:00Z",
+    EntryPath: "c:\\x.exe",
+  },
+]);
 
-async function runDropSweep(caseId: string, dropDir: string, seedSecretLinks: (dropDir: string, secretFile: string) => Promise<void>) {
+async function runDropSweep(
+  caseId: string,
+  dropDir: string,
+  seedSecretLinks: (dropDir: string, secretFile: string) => Promise<void>,
+) {
   const prevPoll = process.env.DFIR_DROP_POLL_S;
   process.env.DFIR_DROP_POLL_S = "2"; // minimum settle: seen at poll 1, imported at poll 2
   try {
@@ -58,7 +74,9 @@ async function runDropSweep(caseId: string, dropDir: string, seedSecretLinks: (d
     const stateStore = new StateStore(store);
     const jobManager = new JobManager();
     const app = createApp(store, {
-      pipeline: findingPipeline(stateStore), stateStore, jobManager,
+      pipeline: findingPipeline(stateStore),
+      stateStore,
+      jobManager,
       dropStatusStore: new DropStatusStore(store), // presence ARMS the drop-folder poller
     });
     await request(app).post("/cases").send({ caseId, name: "n", investigator: "i", aiProvider: "mock" });

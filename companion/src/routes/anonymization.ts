@@ -53,7 +53,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
-  const visionIsLocal = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
+  const visionIsLocal = isLocalAiProvider(
+    visionEnv(process.env, "PROVIDER"),
+    visionEnv(process.env, "BASE_URL"),
+  );
   // Whether the optional Presidio layer is wired. Reported to the dashboard because the anonymization
   // panel otherwise overstates its coverage: PERSON is minted ONLY from Presidio findings, so with
   // Presidio off nothing detects people's names. Derived from the SAME variable startServer reads to
@@ -70,7 +73,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/anon-control", async (req: Request, res: Response) => {
     try {
       const c = await anonControl.load(req.params.id);
-      return res.status(200).json({ ...c, screenshotWarning: c.enabled && !visionIsLocal, presidioConfigured });
+      return res
+        .status(200)
+        .json({ ...c, screenshotWarning: c.enabled && !visionIsLocal, presidioConfigured });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -89,7 +94,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const next: AnonControl = {
         enabled: typeof req.body?.enabled === "boolean" ? req.body.enabled : cur.enabled,
         categories,
-        redactSecrets: typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
+        redactSecrets:
+          typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
       };
       await anonControl.save(req.params.id, next);
       if (next.enabled !== cur.enabled && options.pipeline && options.pipeline.hasSynthesisProvider()) {
@@ -97,10 +103,14 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       }
       if (next.enabled !== cur.enabled) {
         void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-          category: "anonymization", action: "anon-control", detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
+          category: "anonymization",
+          action: "anon-control",
+          detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
         });
       }
-      return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal, presidioConfigured });
+      return res
+        .status(200)
+        .json({ ...next, screenshotWarning: next.enabled && !visionIsLocal, presidioConfigured });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -116,8 +126,20 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const disc = await discoveredEntities.load(req.params.id);
       const suppressed = new Set(disc.suppressed);
       const groups: Record<AnonTokenCategory, string[]> = {
-        IP: [], EXTIP: [], EMAIL: [], USER: [], HOST: [], DOMAIN: [], PATH: [], CMD: [], REG: [],
-        CARD: [], PHONE: [], NATID: [], PERSON: [], OTHER: [],
+        IP: [],
+        EXTIP: [],
+        EMAIL: [],
+        USER: [],
+        HOST: [],
+        DOMAIN: [],
+        PATH: [],
+        CMD: [],
+        REG: [],
+        CARD: [],
+        PHONE: [],
+        NATID: [],
+        PERSON: [],
+        OTHER: [],
       };
       if (options.stateStore) {
         const d = deriveKnownEntities(await options.stateStore.load(req.params.id));
@@ -139,9 +161,14 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         return out;
       };
       const auto = {
-        hosts: clean(groups.HOST), accounts: clean(groups.USER), internalDomains: clean(groups.DOMAIN),
-        ips: clean(groups.IP), extIps: clean(groups.EXTIP), emails: clean(groups.EMAIL),
-        paths: clean(groups.PATH), other: clean(groups.OTHER),
+        hosts: clean(groups.HOST),
+        accounts: clean(groups.USER),
+        internalDomains: clean(groups.DOMAIN),
+        ips: clean(groups.IP),
+        extIps: clean(groups.EXTIP),
+        emails: clean(groups.EMAIL),
+        paths: clean(groups.PATH),
+        other: clean(groups.OTHER),
       };
       return res.status(200).json({ auto, custom, suppressed: disc.suppressed });
     } catch (err) {
@@ -228,7 +255,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       await presidioPending.save(caseId, rest);
       logLine(`[presidio] approved a ${entities[0].category} finding for case ${caseId}`);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "anonymization", action: "presidio-approve", detail: `Approved a Presidio ${entities[0].category} finding for masking`,
+        category: "anonymization",
+        action: "presidio-approve",
+        detail: `Approved a Presidio ${entities[0].category} finding for masking`,
       });
       return res.json({ pending: rest });
     } catch (err) {
@@ -253,7 +282,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       await presidioPending.save(caseId, rest);
       logLine(`[presidio] suppressed a finding for case ${caseId}`);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "anonymization", action: "presidio-suppress", detail: "Suppressed a Presidio finding (marked not PII)",
+        category: "anonymization",
+        action: "presidio-suppress",
+        detail: "Suppressed a Presidio finding (marked not PII)",
       });
       return res.json({ pending: rest });
     } catch (err) {
@@ -298,7 +329,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       // The package carries redacted derivatives rather than the originals, but the evidence still
       // left the instance — so each artifact under custody gets an `exported` event naming the
       // redacted package as its destination (#231).
-      await options.custodyStore?.recordExport(req.params.id, { exportedBy: "analyst", destination: "redacted export package" });
+      await options.custodyStore?.recordExport(req.params.id, {
+        exportedBy: "analyst",
+        destination: "redacted export package",
+      });
       res.type("application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${redactedExportFilename(req.params.id)}"`);
       res.setHeader("Cache-Control", "private, no-cache");
@@ -317,7 +351,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     try {
       const result = await ctx.applyDeobfuscationToCase(caseId);
       if (result.deobfuscated > 0) ctx.resynthesizeInBackground(caseId);
-      logLine(`[deobfuscate] ${caseId} apply — decoded ${result.deobfuscated} event(s), +${result.newIocs} new IOC(s)`);
+      logLine(
+        `[deobfuscate] ${caseId} apply — decoded ${result.deobfuscated} event(s), +${result.newIocs} new IOC(s)`,
+      );
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -330,7 +366,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   // `platforms` is an optional analyst-chosen subset; both it and the result are bounded by the
   // server's DFIR_HUNT_PLATFORMS allowlist so a disabled platform is never generated.
   app.post("/cases/:id/translate-query", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for query translation" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for query translation" });
     const request = typeof req.body?.request === "string" ? req.body.request.trim() : "";
     if (!request) return res.status(400).json({ error: "request is required" });
     const enabled = options.huntPlatforms ?? [...HUNT_PLATFORMS];
@@ -345,7 +382,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const result = await options.pipeline.translateQuery(req.params.id, request, platforms);
       logLine(`[translate-query] produced ${result.queries.length} query/ies for ${req.params.id}`);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "translate-query", detail: `translated: "${request.slice(0, 120)}" — ${result.queries.length} quer(y/ies)`,
+        category: "ai",
+        action: "translate-query",
+        detail: `translated: "${request.slice(0, 120)}" — ${result.queries.length} quer(y/ies)`,
       });
       return res.status(200).json(result);
     } catch (err) {

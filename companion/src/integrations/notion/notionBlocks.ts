@@ -8,8 +8,16 @@
 // represented here and never touched on re-export.
 
 import type {
-  InvestigationState, IOC, IocEnrichment, ForensicEvent, Severity, Finding, Technique,
-  InvestigationQuestion, NextStep, Thread,
+  InvestigationState,
+  IOC,
+  IocEnrichment,
+  ForensicEvent,
+  Severity,
+  Finding,
+  Technique,
+  InvestigationQuestion,
+  NextStep,
+  Thread,
 } from "../../analysis/stateTypes.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import { executiveSummaryMarkdown } from "../iris/irisMap.js";
@@ -30,14 +38,35 @@ export interface NotionRichText {
 
 // Notion named colors used for severity. The `_background` variants tint the whole callout.
 export type NotionColor =
-  | "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red"
-  | "gray_background" | "red_background" | "orange_background" | "yellow_background" | "blue_background";
+  | "default"
+  | "gray"
+  | "brown"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "purple"
+  | "pink"
+  | "red"
+  | "gray_background"
+  | "red_background"
+  | "orange_background"
+  | "yellow_background"
+  | "blue_background";
 
 const SEV_BG: Record<Severity, NotionColor> = {
-  Critical: "red_background", High: "orange_background", Medium: "yellow_background", Low: "blue_background", Info: "gray_background",
+  Critical: "red_background",
+  High: "orange_background",
+  Medium: "yellow_background",
+  Low: "blue_background",
+  Info: "gray_background",
 };
 const SEV_EMOJI: Record<Severity, string> = {
-  Critical: "🔴", High: "🟠", Medium: "🟡", Low: "🔵", Info: "⚪",
+  Critical: "🔴",
+  High: "🟠",
+  Medium: "🟡",
+  Low: "🔵",
+  Info: "⚪",
 };
 
 // Default title of the managed container the Companion owns on the page.
@@ -54,7 +83,8 @@ export function richText(text: string): NotionRichText[] {
   const s = text ?? "";
   if (s.length === 0) return [{ type: "text", text: { content: "" } }];
   const runs: NotionRichText[] = [];
-  for (let i = 0; i < s.length; i += 2000) runs.push({ type: "text", text: { content: s.slice(i, i + 2000) } });
+  for (let i = 0; i < s.length; i += 2000)
+    runs.push({ type: "text", text: { content: s.slice(i, i + 2000) } });
   return runs;
 }
 
@@ -62,12 +92,24 @@ function block(type: string, body: Record<string, unknown>): NotionBlock {
   return { object: "block", type, [type]: body };
 }
 
-export function heading2(text: string): NotionBlock { return block("heading_2", { rich_text: richText(text) }); }
-export function heading3(text: string): NotionBlock { return block("heading_3", { rich_text: richText(text) }); }
-export function paragraph(text: string): NotionBlock { return block("paragraph", { rich_text: richText(text) }); }
-export function bulleted(text: string): NotionBlock { return block("bulleted_list_item", { rich_text: richText(text) }); }
-export function bulletedRich(rich: NotionRichText[]): NotionBlock { return block("bulleted_list_item", { rich_text: rich }); }
-export function divider(): NotionBlock { return block("divider", {}); }
+export function heading2(text: string): NotionBlock {
+  return block("heading_2", { rich_text: richText(text) });
+}
+export function heading3(text: string): NotionBlock {
+  return block("heading_3", { rich_text: richText(text) });
+}
+export function paragraph(text: string): NotionBlock {
+  return block("paragraph", { rich_text: richText(text) });
+}
+export function bulleted(text: string): NotionBlock {
+  return block("bulleted_list_item", { rich_text: richText(text) });
+}
+export function bulletedRich(rich: NotionRichText[]): NotionBlock {
+  return block("bulleted_list_item", { rich_text: rich });
+}
+export function divider(): NotionBlock {
+  return block("divider", {});
+}
 
 export function callout(text: string, emoji: string, color: NotionColor = "default"): NotionBlock {
   return block("callout", { rich_text: richText(text), icon: { type: "emoji", emoji }, color });
@@ -121,7 +163,8 @@ const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
 function worstVerdict(enrichments: readonly IocEnrichment[]): string | undefined {
   let best: string | undefined;
   for (const e of enrichments) {
-    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best)) best = e.verdict;
+    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best))
+      best = e.verdict;
   }
   return best;
 }
@@ -130,7 +173,7 @@ function worstVerdict(enrichments: readonly IocEnrichment[]): string | undefined
 
 export interface BuildBlocksOptions {
   caseId: string;
-  exportedAt: string;            // ISO time stamped by the orchestrator (keeps this pure/testable)
+  exportedAt: string; // ISO time stamped by the orchestrator (keeps this pure/testable)
   maxTimelineRows?: number;
 }
 
@@ -179,8 +222,12 @@ function timelineBlocks(events: readonly ForensicEvent[], maxRows: number): Noti
     e.asset || "",
     (e.sources ?? []).join(", "),
   ]);
-  const out: NotionBlock[] = [heading2("Incident Timeline"), ...tables(["Time", "Severity", "Event", "Asset", "Sources"], rows)];
-  if (events.length > shown.length) out.push(paragraph(`+${events.length - shown.length} more events — see the full report.`));
+  const out: NotionBlock[] = [
+    heading2("Incident Timeline"),
+    ...tables(["Time", "Severity", "Event", "Asset", "Sources"], rows),
+  ];
+  if (events.length > shown.length)
+    out.push(paragraph(`+${events.length - shown.length} more events — see the full report.`));
   return out;
 }
 
@@ -197,7 +244,10 @@ function iocsBlocks(iocs: readonly IOC[]): NotionBlock[] {
     worstVerdict(i.enrichments ?? []) ?? "",
     iocSourceLabel(i.enrichments ?? []),
   ]);
-  return [heading2("Indicators of Compromise"), ...tables(["Type", "Value", "First seen", "Verdict", "Source"], rows)];
+  return [
+    heading2("Indicators of Compromise"),
+    ...tables(["Type", "Value", "First seen", "Verdict", "Source"], rows),
+  ];
 }
 
 function mitreBlocks(techniques: readonly Technique[]): NotionBlock[] {
@@ -206,7 +256,10 @@ function mitreBlocks(techniques: readonly Technique[]): NotionBlock[] {
     const url = attackTechniqueUrl(t.id);
     const suffix = `${t.name ? ` ${t.name}` : ""}${t.findingIds.length ? ` (${t.findingIds.length} finding(s))` : ""}`;
     const rich: NotionRichText[] = url
-      ? [{ type: "text", text: { content: t.id, link: { url } } }, { type: "text", text: { content: suffix } }]
+      ? [
+          { type: "text", text: { content: t.id, link: { url } } },
+          { type: "text", text: { content: suffix } },
+        ]
       : richText(`${t.id}${suffix}`);
     return bulletedRich(rich);
   });
@@ -233,7 +286,9 @@ function questionsBlocks(qs: readonly InvestigationQuestion[]): NotionBlock[] {
 function nextStepsBlocks(steps: readonly NextStep[]): NotionBlock[] {
   if (!steps.length) return [];
   const items = steps.map((s) =>
-    bulleted(`[${s.priority}] ${s.action}${s.rationale ? ` — ${s.rationale}` : ""}${s.pointer ? ` (Where: ${s.pointer})` : ""}`),
+    bulleted(
+      `[${s.priority}] ${s.action}${s.rationale ? ` — ${s.rationale}` : ""}${s.pointer ? ` (Where: ${s.pointer})` : ""}`,
+    ),
   );
   return [heading2("Recommended Next Steps"), ...items];
 }
@@ -241,7 +296,9 @@ function nextStepsBlocks(steps: readonly NextStep[]): NotionBlock[] {
 function threadsBlocks(threads: readonly Thread[]): NotionBlock[] {
   if (!threads.length) return [];
   const items = threads.map((t) =>
-    bulleted(`[${t.status}] ${t.description} (opened ${t.openedAt}${t.closedAt ? `, closed ${t.closedAt}` : ""})`),
+    bulleted(
+      `[${t.status}] ${t.description} (opened ${t.openedAt}${t.closedAt ? `, closed ${t.closedAt}` : ""})`,
+    ),
   );
   return [heading2("Open Threads"), ...items];
 }
@@ -263,7 +320,11 @@ function glossaryBlocks(meta: ReportMeta): NotionBlock[] {
 
 // Assemble the full managed-container content: the banner, then every non-empty section in
 // report order, separated by dividers. This is the single source of the Companion's content.
-export function buildCompanionBlocks(state: InvestigationState, meta: ReportMeta, opts: BuildBlocksOptions): NotionBlock[] {
+export function buildCompanionBlocks(
+  state: InvestigationState,
+  meta: ReportMeta,
+  opts: BuildBlocksOptions,
+): NotionBlock[] {
   const maxRows = opts.maxTimelineRows ?? MAX_TIMELINE_ROWS;
   const sections: NotionBlock[][] = [
     summaryBlocks(state, meta),
@@ -284,7 +345,10 @@ export function buildCompanionBlocks(state: InvestigationState, meta: ReportMeta
   ];
   const out: NotionBlock[] = [...managedBanner(opts)];
   for (const sec of sections) {
-    if (sec.length) { out.push(divider()); out.push(...sec); }
+    if (sec.length) {
+      out.push(divider());
+      out.push(...sec);
+    }
   }
   return out;
 }
@@ -298,7 +362,11 @@ export function batchBlocks(blocks: readonly NotionBlock[], budget = 100): Notio
   let curWeight = 0;
   for (const b of blocks) {
     const weight = blockWeight(b);
-    if (cur.length && curWeight + weight > budget) { batches.push(cur); cur = []; curWeight = 0; }
+    if (cur.length && curWeight + weight > budget) {
+      batches.push(cur);
+      cur = [];
+      curWeight = 0;
+    }
     cur.push(b);
     curWeight += weight;
   }

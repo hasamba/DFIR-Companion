@@ -3,8 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
-  runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider,
-  loadRealScreenshotFixtures, runRealScreenshotFixture,
+  runExtractionFixture,
+  runScreenshotFixture,
+  runSynthesisFixture,
+  mockProvider,
+  loadRealScreenshotFixtures,
+  runRealScreenshotFixture,
 } from "./harness.js";
 import { scoreExtraction, checkSynthesis, passesExtraction, passesSynthesis } from "./scorer.js";
 import { EXTRACTION_FIXTURES, SCREENSHOT_FIXTURES, SYNTHESIS_FIXTURES } from "./fixtures.js";
@@ -16,7 +20,7 @@ describe("eval harness — extraction fixtures (#64)", () => {
   for (const fx of EXTRACTION_FIXTURES) {
     it(`${fx.modality}: ${fx.name} meets its golden precision/recall`, async () => {
       const produced = await runExtractionFixture(fx, mockProvider(fx.canned));
-      expect(produced.length).toBeGreaterThan(0);       // the pipeline actually emitted events
+      expect(produced.length).toBeGreaterThan(0); // the pipeline actually emitted events
       const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
       expect(passesExtraction(score, fx.thresholds)).toBe(true);
     });
@@ -39,7 +43,7 @@ describe("eval harness — screenshot fixtures (#64)", () => {
   for (const fx of SCREENSHOT_FIXTURES) {
     it(`screenshot: ${fx.name} meets its golden precision/recall`, async () => {
       const produced = await runScreenshotFixture(fx, mockProvider(fx.canned));
-      expect(produced.length).toBeGreaterThan(0);       // analyzeWindow actually emitted events
+      expect(produced.length).toBeGreaterThan(0); // analyzeWindow actually emitted events
       const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
       expect(passesExtraction(score, fx.thresholds)).toBe(true);
     });
@@ -59,11 +63,14 @@ describe("eval harness — real screenshot loader (#135)", () => {
   it("loads image+sidecar pairs and skips an image with no valid sidecar", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dfir-eval-screenshots-"));
     await writeFile(join(dir, "task.webp"), "not a real image, just bytes");
-    await writeFile(join(dir, "task.json"), JSON.stringify({
-      tabTitle: "Velociraptor — Task Scheduler",
-      url: "https://velociraptor.local/app",
-      golden: [{ keywords: ["powershell"], mitreTechniques: ["T1053.005"] }],
-    }));
+    await writeFile(
+      join(dir, "task.json"),
+      JSON.stringify({
+        tabTitle: "Velociraptor — Task Scheduler",
+        url: "https://velociraptor.local/app",
+        golden: [{ keywords: ["powershell"], mitreTechniques: ["T1053.005"] }],
+      }),
+    );
     await writeFile(join(dir, "orphan.png"), "no sidecar for this one");
     await writeFile(join(dir, "notes.txt"), "not an image — ignored entirely");
 
@@ -84,9 +91,23 @@ describe("eval harness — real screenshot loader (#135)", () => {
     const [fx] = await loadRealScreenshotFixtures(dir);
 
     const canned = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-      timelineNote: "", summary: "eval",
-      forensicEvents: [{ id: "e1", timestamp: "2026-06-01T02:13:00Z", description: "Scheduled task launches hidden powershell", severity: "High", mitreTechniques: ["T1053.005"], asset: "WS02" }],
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "eval",
+      forensicEvents: [
+        {
+          id: "e1",
+          timestamp: "2026-06-01T02:13:00Z",
+          description: "Scheduled task launches hidden powershell",
+          severity: "High",
+          mitreTechniques: ["T1053.005"],
+          asset: "WS02",
+        },
+      ],
     });
     const produced = await runRealScreenshotFixture(fx, mockProvider(canned));
     expect(produced).toHaveLength(1);

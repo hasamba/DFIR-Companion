@@ -22,34 +22,50 @@ function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
 describe("buildEvidenceGraph — spawned (process tree)", () => {
   it("builds the process edge from canonical identities without legacy process fields or prose", () => {
     const s = emptyState("c1");
-    s.forensicTimeline.push(ev({
-      id: "canonical-process",
-      description: "wording has no structured identity",
-      canonical: createCanonicalEvent({
-        event: { category: "process", type: "start" },
-        target: { kind: "host", name: "HOST-CANONICAL" },
-        process: { name: "child.exe", parent: { name: "parent.exe" } },
-        time: { observed: "2026-05-20T09:00:00Z", normalized: "2026-05-20T09:00:00Z" },
-        evidence: { rawRecords: [{ source: "test", locator: "row:0" }] },
-        producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+    s.forensicTimeline.push(
+      ev({
+        id: "canonical-process",
+        description: "wording has no structured identity",
+        canonical: createCanonicalEvent({
+          event: { category: "process", type: "start" },
+          target: { kind: "host", name: "HOST-CANONICAL" },
+          process: { name: "child.exe", parent: { name: "parent.exe" } },
+          time: { observed: "2026-05-20T09:00:00Z", normalized: "2026-05-20T09:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:0" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
       }),
-    }));
+    );
 
     const graph = buildEvidenceGraph(s);
     expect(graph.edges).toHaveLength(2);
-    expect(graph.edges).toContainEqual(expect.objectContaining({
-      type: "spawned",
-      source: "proc:host-canonical:parent.exe",
-      target: "proc:host-canonical:child.exe",
-    }));
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        type: "spawned",
+        source: "proc:host-canonical:parent.exe",
+        target: "proc:host-canonical:child.exe",
+      }),
+    );
     expect(graph.edges).toContainEqual(expect.objectContaining({ type: "ran_on" }));
   });
 
   it("chains parent→child→grandchild into one tree via shared process nodes", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "ALCLIENT07", parentName: "excel.exe", processName: "powershell.exe", severity: "High" }),
-      ev({ id: "e2", asset: "ALCLIENT07", parentName: "powershell.exe", processName: "cmd.exe", severity: "Medium" }),
+      ev({
+        id: "e1",
+        asset: "ALCLIENT07",
+        parentName: "excel.exe",
+        processName: "powershell.exe",
+        severity: "High",
+      }),
+      ev({
+        id: "e2",
+        asset: "ALCLIENT07",
+        parentName: "powershell.exe",
+        processName: "cmd.exe",
+        severity: "Medium",
+      }),
     );
 
     const g = buildEvidenceGraph(s);
@@ -89,7 +105,9 @@ describe("buildEvidenceGraph — spawned (process tree)", () => {
 
   it("skips a self-spawn (parent === child)", () => {
     const s = emptyState("c1");
-    s.forensicTimeline.push(ev({ id: "e1", asset: "H", parentName: "svchost.exe", processName: "svchost.exe" }));
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "H", parentName: "svchost.exe", processName: "svchost.exe" }),
+    );
     expect(buildEvidenceGraph(s).edges).toHaveLength(0);
   });
 });
@@ -97,19 +115,24 @@ describe("buildEvidenceGraph — spawned (process tree)", () => {
 describe("buildEvidenceGraph — lateral_move", () => {
   it("correlates canonical accounts even when descriptions contain no account", () => {
     const s = emptyState("c1");
-    for (const [id, host] of [["e1", "HOST-A"], ["e2", "HOST-B"]] as const) {
-      s.forensicTimeline.push(ev({
-        id,
-        description: "authentication display text changed",
-        canonical: createCanonicalEvent({
-          event: { category: "authentication", type: "logon", outcome: "success" },
-          actor: { kind: "account", name: "CORP\\structured-user" },
-          target: { kind: "host", name: host },
-          time: { observed: "2026-05-20T09:00:00Z", normalized: "2026-05-20T09:00:00Z" },
-          evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
-          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+    for (const [id, host] of [
+      ["e1", "HOST-A"],
+      ["e2", "HOST-B"],
+    ] as const) {
+      s.forensicTimeline.push(
+        ev({
+          id,
+          description: "authentication display text changed",
+          canonical: createCanonicalEvent({
+            event: { category: "authentication", type: "logon", outcome: "success" },
+            actor: { kind: "account", name: "CORP\\structured-user" },
+            target: { kind: "host", name: host },
+            time: { observed: "2026-05-20T09:00:00Z", normalized: "2026-05-20T09:00:00Z" },
+            evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
+            producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+          }),
         }),
-      }));
+      );
     }
 
     const edges = buildEvidenceGraph(s).edges.filter((edge) => edge.rule === "shared-account");
@@ -169,16 +192,34 @@ describe("buildEvidenceGraph — ran_on (host anchoring connects the two halves)
   it("anchors each process tree to its host so lateral movement bridges them into one graph", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "HOST-A", parentName: "wmiprvse.exe", processName: "evil.exe", sha256: HASH, severity: "Critical" }),
-      ev({ id: "e2", asset: "HOST-B", parentName: "services.exe", processName: "evil.exe", sha256: HASH, severity: "High" }),
+      ev({
+        id: "e1",
+        asset: "HOST-A",
+        parentName: "wmiprvse.exe",
+        processName: "evil.exe",
+        sha256: HASH,
+        severity: "Critical",
+      }),
+      ev({
+        id: "e2",
+        asset: "HOST-B",
+        parentName: "services.exe",
+        processName: "evil.exe",
+        sha256: HASH,
+        severity: "High",
+      }),
       ev({ id: "e3", asset: "HOST-B", parentName: "evil.exe", processName: "powershell.exe" }),
     );
     const g = buildEvidenceGraph(s);
 
     // Each tree ROOT (not its children) anchors to its host via ran_on.
     const ranOn = g.edges.filter((e) => e.type === "ran_on");
-    expect(ranOn.some((e) => e.source === "host:host-a" && e.target === "proc:host-a:wmiprvse.exe")).toBe(true);
-    expect(ranOn.some((e) => e.source === "host:host-b" && e.target === "proc:host-b:services.exe")).toBe(true);
+    expect(ranOn.some((e) => e.source === "host:host-a" && e.target === "proc:host-a:wmiprvse.exe")).toBe(
+      true,
+    );
+    expect(ranOn.some((e) => e.source === "host:host-b" && e.target === "proc:host-b:services.exe")).toBe(
+      true,
+    );
     expect(ranOn.every((e) => e.confidence === "high" && e.rule === "process-on-host")).toBe(true);
     // A non-root (evil.exe on HOST-B has a parent) does NOT get a host anchor.
     expect(ranOn.some((e) => e.target === "proc:host-b:evil.exe")).toBe(false);
@@ -193,9 +234,13 @@ describe("buildEvidenceGraph — ran_on (host anchoring connects the two halves)
     const queue = ["proc:host-a:evil.exe"];
     while (queue.length) {
       const u = queue.shift()!;
-      for (const v of adj.get(u) ?? []) if (!seen.has(v)) { seen.add(v); queue.push(v); }
+      for (const v of adj.get(u) ?? [])
+        if (!seen.has(v)) {
+          seen.add(v);
+          queue.push(v);
+        }
     }
-    expect(seen.has("proc:host-b:powershell.exe")).toBe(true);   // reachable across hosts
+    expect(seen.has("proc:host-b:powershell.exe")).toBe(true); // reachable across hosts
   });
 });
 
@@ -203,7 +248,14 @@ describe("buildEvidenceGraph — file_lineage (wrote→executed)", () => {
   it("creates a file node and two edges when a hash is both written and executed", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "HOST-A", action: "write", sha256: HASH, path: "C:\\Temp\\evil.exe", severity: "High" }),
+      ev({
+        id: "e1",
+        asset: "HOST-A",
+        action: "write",
+        sha256: HASH,
+        path: "C:\\Temp\\evil.exe",
+        severity: "High",
+      }),
       ev({ id: "e2", asset: "HOST-B", action: "execute", sha256: HASH, severity: "Critical" }),
     );
     const g = buildEvidenceGraph(s);
@@ -213,7 +265,7 @@ describe("buildEvidenceGraph — file_lineage (wrote→executed)", () => {
 
     const fileNode = g.nodes.find((n) => n.kind === "file");
     expect(fileNode).toBeDefined();
-    expect(fileNode!.label).toBe("evil.exe");   // filename derived from path
+    expect(fileNode!.label).toBe("evil.exe"); // filename derived from path
     // The file node is the common hub: one edge points IN (wrote), one OUT (exec).
     const intoFile = lineage.find((e) => e.target === fileNode!.id);
     const outOfFile = lineage.find((e) => e.source === fileNode!.id);
@@ -289,7 +341,7 @@ describe("buildEvidenceGraph — network_flow (src→dst)", () => {
     expect(flows).toHaveLength(1);
     const srcNode = g.nodes.find((n) => n.id === flows[0].source);
     expect(srcNode?.label).toBe("HOST-A");
-    expect(srcNode?.kind).toBe("host");  // asset → host node, not a network node
+    expect(srcNode?.kind).toBe("host"); // asset → host node, not a network node
   });
 
   it("deduplicates flows between the same src→dst pair", () => {
@@ -333,8 +385,20 @@ describe("buildEvidenceGraph — kill-chain tactic per node (#93)", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
       // T1059 (Command-Line Interpreter) → Execution, on both events backing the powershell node.
-      ev({ id: "e1", asset: "HOST-A", parentName: "excel.exe", processName: "powershell.exe", mitreTechniques: ["T1059"] }),
-      ev({ id: "e2", asset: "HOST-A", parentName: "powershell.exe", processName: "cmd.exe", mitreTechniques: ["T1059.001"] }),
+      ev({
+        id: "e1",
+        asset: "HOST-A",
+        parentName: "excel.exe",
+        processName: "powershell.exe",
+        mitreTechniques: ["T1059"],
+      }),
+      ev({
+        id: "e2",
+        asset: "HOST-A",
+        parentName: "powershell.exe",
+        processName: "cmd.exe",
+        mitreTechniques: ["T1059.001"],
+      }),
     );
     const g = buildEvidenceGraph(s);
     const ps = g.nodes.find((n) => n.kind === "process" && /powershell/.test(n.label))!;
@@ -367,7 +431,13 @@ describe("buildEvidenceGraph — kill-chain tactic per node (#93)", () => {
   it("derives a tactic from the keyword fallback when no technique id is present", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "HOST-A", parentName: "svc.exe", processName: "rclone.exe", description: "rclone copy to remote — data staged for exfiltration" }),
+      ev({
+        id: "e1",
+        asset: "HOST-A",
+        parentName: "svc.exe",
+        processName: "rclone.exe",
+        description: "rclone copy to remote — data staged for exfiltration",
+      }),
     );
     const g = buildEvidenceGraph(s);
     const proc = g.nodes.find((n) => n.kind === "process" && /rclone/.test(n.label))!;
@@ -437,8 +507,18 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
     s.forensicTimeline.push(
       ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
       ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
-      ev({ id: "e3", asset: "HOST-B", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T11:00:00Z" }),
-      ev({ id: "e4", asset: "HOST-C", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T12:00:00Z" }),
+      ev({
+        id: "e3",
+        asset: "HOST-B",
+        description: "logon by CORP\\jdoe",
+        timestamp: "2026-05-20T11:00:00Z",
+      }),
+      ev({
+        id: "e4",
+        asset: "HOST-C",
+        description: "logon by CORP\\jdoe",
+        timestamp: "2026-05-20T12:00:00Z",
+      }),
     );
     const paths = buildLateralPaths(s);
     expect(paths).toHaveLength(1);
@@ -453,8 +533,18 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
       ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
       ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T12:00:00Z" }),
       // A different account ties HOST-B back to HOST-C, but earlier than the hop that reached HOST-B.
-      ev({ id: "e3", asset: "HOST-B", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T08:00:00Z" }),
-      ev({ id: "e4", asset: "HOST-C", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T08:30:00Z" }),
+      ev({
+        id: "e3",
+        asset: "HOST-B",
+        description: "logon by CORP\\jdoe",
+        timestamp: "2026-05-20T08:00:00Z",
+      }),
+      ev({
+        id: "e4",
+        asset: "HOST-C",
+        description: "logon by CORP\\jdoe",
+        timestamp: "2026-05-20T08:30:00Z",
+      }),
     );
     const paths = buildLateralPaths(s);
     // The hash hop A→B stands alone; the account hop is a separate, earlier, unrelated root/chain.
@@ -489,8 +579,18 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
   it("names the account that carried a shared-account hop", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "WKSTN-JSMITH", description: "logon by GLOBALTECH\\admin-deploy", timestamp: "2026-05-20T09:00:00Z" }),
-      ev({ id: "e2", asset: "FS01", description: "logon by GLOBALTECH\\admin-deploy", timestamp: "2026-05-20T10:00:00Z" }),
+      ev({
+        id: "e1",
+        asset: "WKSTN-JSMITH",
+        description: "logon by GLOBALTECH\\admin-deploy",
+        timestamp: "2026-05-20T09:00:00Z",
+      }),
+      ev({
+        id: "e2",
+        asset: "FS01",
+        description: "logon by GLOBALTECH\\admin-deploy",
+        timestamp: "2026-05-20T10:00:00Z",
+      }),
     );
     const hop = buildLateralPaths(s)[0].hops[0];
     expect(hop.actor).toBe("GLOBALTECH\\admin-deploy");
@@ -505,7 +605,7 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
       ev({ id: "e2", asset: "WS-02", sha256: HASH, path, timestamp: "2026-05-20T10:00:00Z" }),
     );
     const hop = buildLateralPaths(s)[0].hops[0];
-    expect(hop.actor).toBe("psexec.exe");        // not a hash prefix — the analyst reads a name
+    expect(hop.actor).toBe("psexec.exe"); // not a hash prefix — the analyst reads a name
     expect(hop.actorKind).toBe("binary");
   });
 
@@ -569,7 +669,9 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
     withIoc.iocs.push({ id: "i1", type: "hash", value: HASH, firstSeen: "2026-05-20T09:00:00Z" });
     expect(buildLateralPaths(withIoc)).toEqual([]);
 
-    const withMitre = estateWide("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", { mitreTechniques: ["T1021"] });
+    const withMitre = estateWide("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", {
+      mitreTechniques: ["T1021"],
+    });
     expect(buildLateralPaths(withMitre)).toEqual([]);
   });
 
@@ -588,7 +690,9 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
   });
 
   it("keeps a trusted-directory binary that the content tagger graded High (LOLbin abuse)", () => {
-    const paths = buildLateralPaths(estateWide("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", { severity: "High" }));
+    const paths = buildLateralPaths(
+      estateWide("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", { severity: "High" }),
+    );
     expect(paths.length).toBeGreaterThan(0);
   });
 
@@ -624,12 +728,14 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
       for (let h = 0; h < 10; h++) {
         // Same per-host timestamp across every account, so all 8 accounts' hops are freely
         // interchangeable at each step — that is what creates the combinatorial fan-out.
-        s.forensicTimeline.push(ev({
-          id: `e-${a}-${h}`,
-          asset: `HOST-${h}`,
-          description: `logon by CORP\\user${a}`,
-          timestamp: new Date(base + h * 3600_000).toISOString(),
-        }));
+        s.forensicTimeline.push(
+          ev({
+            id: `e-${a}-${h}`,
+            asset: `HOST-${h}`,
+            description: `logon by CORP\\user${a}`,
+            timestamp: new Date(base + h * 3600_000).toISOString(),
+          }),
+        );
       }
     }
 
@@ -647,7 +753,12 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
     // pair AUTHORITY\LOCAL — which slipped past a filter listing only the untruncated
     // "nt authority" / "local service". Every Windows host runs these, so letting them through
     // chains unrelated hosts into a confident-looking attack path.
-    for (const acct of ["NT AUTHORITY\\LOCAL SERVICE", "NT AUTHORITY\\NETWORK SERVICE", "NT AUTHORITY\\ANONYMOUS LOGON", "NT SERVICE\\TrustedInstaller"]) {
+    for (const acct of [
+      "NT AUTHORITY\\LOCAL SERVICE",
+      "NT AUTHORITY\\NETWORK SERVICE",
+      "NT AUTHORITY\\ANONYMOUS LOGON",
+      "NT SERVICE\\TrustedInstaller",
+    ]) {
       const s = emptyState("c1");
       s.forensicTimeline.push(
         ev({ id: "e1", asset: "HOST-A", description: `logon by ${acct}`, timestamp: "2026-05-20T09:00:00Z" }),
@@ -660,8 +771,18 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
   it("still derives a path for a real account whose name merely resembles a service principal", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "HOST-A", description: "logon by CORP\\network.admin", timestamp: "2026-05-20T09:00:00Z" }),
-      ev({ id: "e2", asset: "HOST-B", description: "logon by CORP\\network.admin", timestamp: "2026-05-20T10:00:00Z" }),
+      ev({
+        id: "e1",
+        asset: "HOST-A",
+        description: "logon by CORP\\network.admin",
+        timestamp: "2026-05-20T09:00:00Z",
+      }),
+      ev({
+        id: "e2",
+        asset: "HOST-B",
+        description: "logon by CORP\\network.admin",
+        timestamp: "2026-05-20T10:00:00Z",
+      }),
     );
     expect(buildLateralPaths(s)).toHaveLength(1);
   });
@@ -695,8 +816,18 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
       ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
       ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
       ev({ id: "e3", asset: "HOST-D", sha256: HASH, timestamp: "2026-05-20T12:00:00Z" }), // hash: A→B→D
-      ev({ id: "e4", asset: "HOST-B", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T10:30:00Z" }),
-      ev({ id: "e5", asset: "HOST-C", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T11:00:00Z" }), // account: B→C
+      ev({
+        id: "e4",
+        asset: "HOST-B",
+        description: "logon by CORP\\jdoe",
+        timestamp: "2026-05-20T10:30:00Z",
+      }),
+      ev({
+        id: "e5",
+        asset: "HOST-C",
+        description: "logon by CORP\\jdoe",
+        timestamp: "2026-05-20T11:00:00Z",
+      }), // account: B→C
     );
     const paths = buildLateralPaths(s);
     const reached = new Set(paths.flatMap((p) => p.hostIds));
@@ -716,14 +847,23 @@ describe("buildEvidenceGraph — time window (#83)", () => {
   function seeded() {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "ALCLIENT07", sha256: HASH, severity: "Critical", timestamp: "2026-05-20T09:00:00Z" }),
+      ev({
+        id: "e1",
+        asset: "ALCLIENT07",
+        sha256: HASH,
+        severity: "Critical",
+        timestamp: "2026-05-20T09:00:00Z",
+      }),
       ev({ id: "e2", asset: "DC01", sha256: HASH, severity: "High", timestamp: "2026-05-20T15:00:00Z" }),
     );
     return s;
   }
 
   it("narrows the graph to events inside the window", () => {
-    const scoped = buildEvidenceGraph(seeded(), { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
+    const scoped = buildEvidenceGraph(seeded(), {
+      from: "2026-05-20T08:00:00Z",
+      until: "2026-05-20T10:00:00Z",
+    });
     // Only e1 is in range → the second host never appears → no lateral_move edge survives.
     expect(scoped.edges.filter((e) => e.type === "lateral_move")).toHaveLength(0);
     expect(scoped.nodes.some((n) => n.id === "host:dc01")).toBe(false);
@@ -731,7 +871,7 @@ describe("buildEvidenceGraph — time window (#83)", () => {
 
   it("an absent/empty window is identical to no window", () => {
     const full = buildEvidenceGraph(seeded());
-    expect(full.edges.filter((e) => e.type === "lateral_move")).toHaveLength(1);   // both hosts in range
+    expect(full.edges.filter((e) => e.type === "lateral_move")).toHaveLength(1); // both hosts in range
     expect(buildEvidenceGraph(seeded(), {})).toEqual(full);
     expect(buildEvidenceGraph(seeded(), { from: "", until: "" })).toEqual(full);
   });
@@ -742,6 +882,6 @@ describe("buildEvidenceGraph — time window (#83)", () => {
       ev({ id: "e1", asset: "H", parentName: "excel.exe", processName: "powershell.exe", timestamp: "" }),
     );
     const g = buildEvidenceGraph(s, { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
-    expect(g.edges.filter((e) => e.type === "spawned")).toHaveLength(1);   // undated → kept
+    expect(g.edges.filter((e) => e.type === "spawned")).toHaveLength(1); // undated → kept
   });
 });

@@ -27,8 +27,8 @@ export interface ProvenanceExtractionEvent {
   description: string;
   severity: ForensicEvent["severity"];
   sources?: string[];
-  artifactName?: string;   // the specific artifact/source-tool identifier (e.g. "Windows.Network.DNS"),
-                           // finer-grained than `sources` (e.g. "Velociraptor") — set by importers that know it
+  artifactName?: string; // the specific artifact/source-tool identifier (e.g. "Windows.Network.DNS"),
+  // finer-grained than `sources` (e.g. "Velociraptor") — set by importers that know it
 }
 
 export interface ProvenanceEnrichmentLookup {
@@ -52,9 +52,9 @@ export interface IocProvenanceChain {
   value: string;
   type: IOC["type"];
   extraction: ProvenanceExtractionEvent[];
-  extractionTruncated: number;   // count of matching events dropped past MAX_EXTRACTION_EVENTS, 0 if none
+  extractionTruncated: number; // count of matching events dropped past MAX_EXTRACTION_EVENTS, 0 if none
   extractionAuthoritative: boolean; // true when extraction came from IOC.extractedFrom (a real link),
-                                     // false when it's the value-match guess below
+  // false when it's the value-match guess below
   enrichment: ProvenanceEnrichmentLookup[];
   findings: ProvenanceFindingRef[];
 }
@@ -76,11 +76,18 @@ export function buildIocProvenanceChains(
     const key = raw.trim().toLowerCase();
     if (key.length < 3) return;
     let list = eventIndex.get(key);
-    if (!list) { list = []; eventIndex.set(key, list); }
+    if (!list) {
+      list = [];
+      eventIndex.set(key, list);
+    }
     list.push(e);
   };
   for (const e of events) {
-    addEvent(e.sha256, e); addEvent(e.md5, e); addEvent(e.srcIp, e); addEvent(e.dstIp, e); addEvent(e.path, e);
+    addEvent(e.sha256, e);
+    addEvent(e.md5, e);
+    addEvent(e.srcIp, e);
+    addEvent(e.dstIp, e);
+    addEvent(e.path, e);
     const tokens = (e.description || "").match(TOKEN_RE);
     if (tokens) for (const t of tokens) addEvent(t, e);
   }
@@ -92,7 +99,10 @@ export function buildIocProvenanceChains(
   for (const f of findings) {
     for (const iocId of f.relatedIocs || []) {
       let list = findingIndex.get(iocId);
-      if (!list) { list = []; findingIndex.set(iocId, list); }
+      if (!list) {
+        list = [];
+        findingIndex.set(iocId, list);
+      }
       list.push(f);
     }
   }
@@ -105,19 +115,30 @@ export function buildIocProvenanceChains(
       const seen = new Set<string>();
       dedup = [];
       for (const id of authoritativeIds) {
-        if (!seen.has(id)) { seen.add(id); dedup.push(eventById.get(id)!); }
+        if (!seen.has(id)) {
+          seen.add(id);
+          dedup.push(eventById.get(id)!);
+        }
       }
     } else {
       const key = ioc.value.trim().toLowerCase();
       const matched = key.length >= 3 ? (eventIndex.get(key) ?? []) : [];
       const seenIds = new Set<string>();
       dedup = [];
-      for (const e of matched) { if (!seenIds.has(e.id)) { seenIds.add(e.id); dedup.push(e); } }
+      for (const e of matched) {
+        if (!seenIds.has(e.id)) {
+          seenIds.add(e.id);
+          dedup.push(e);
+        }
+      }
     }
     dedup.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const extractionTruncated = Math.max(0, dedup.length - MAX_EXTRACTION_EVENTS);
     const extraction: ProvenanceExtractionEvent[] = dedup.slice(0, MAX_EXTRACTION_EVENTS).map((e) => ({
-      eventId: e.id, timestamp: e.timestamp, description: e.description, severity: e.severity,
+      eventId: e.id,
+      timestamp: e.timestamp,
+      description: e.description,
+      severity: e.severity,
       sources: e.sources && e.sources.length ? e.sources : undefined,
       artifactName: e.artifactName,
     }));
@@ -125,16 +146,34 @@ export function buildIocProvenanceChains(
     const enrichment: ProvenanceEnrichmentLookup[] = (ioc.enrichments ?? [])
       .slice()
       .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))
-      .map((en) => ({ source: en.source, verdict: en.verdict, score: en.score, fetchedAt: en.fetchedAt, link: en.link }));
+      .map((en) => ({
+        source: en.source,
+        verdict: en.verdict,
+        score: en.score,
+        fetchedAt: en.fetchedAt,
+        link: en.link,
+      }));
 
     const citing: ProvenanceFindingRef[] = (findingIndex.get(ioc.id) ?? [])
       .slice()
       .sort((a, b) => a.firstSeen.localeCompare(b.firstSeen))
-      .map((f) => ({ findingId: f.id, title: f.title, severity: f.severity, status: f.status, firstSeen: f.firstSeen }));
+      .map((f) => ({
+        findingId: f.id,
+        title: f.title,
+        severity: f.severity,
+        status: f.status,
+        firstSeen: f.firstSeen,
+      }));
 
     out[ioc.id] = {
-      iocId: ioc.id, value: ioc.value, type: ioc.type, extraction, extractionTruncated,
-      extractionAuthoritative, enrichment, findings: citing,
+      iocId: ioc.id,
+      value: ioc.value,
+      type: ioc.type,
+      extraction,
+      extractionTruncated,
+      extractionAuthoritative,
+      enrichment,
+      findings: citing,
     };
   }
   return out;

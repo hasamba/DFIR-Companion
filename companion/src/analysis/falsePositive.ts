@@ -26,14 +26,14 @@ export const FALSE_POSITIVE_REASONS = [
 export type FalsePositiveReason = (typeof FALSE_POSITIVE_REASONS)[number];
 
 export interface FalsePositiveMarker {
-  id: string;                    // natural key: `${kind}:${ref}`
+  id: string; // natural key: `${kind}:${ref}`
   kind: FalsePositiveKind;
-  ref: string;                   // IOC value | finding title/keyword | forensic event id
+  ref: string; // IOC value | finding title/keyword | forensic event id
   reason: FalsePositiveReason;
-  note: string;                  // free-text elaboration (required by callers when reason === "other")
+  note: string; // free-text elaboration (required by callers when reason === "other")
   markedAt: string;
-  markedBy: string;              // analyst name/id; "anonymous" when not supplied
-  label?: string;                // optional human-readable label (e.g. an event's description) for display
+  markedBy: string; // analyst name/id; "anonymous" when not supplied
+  label?: string; // optional human-readable label (e.g. an event's description) for display
   // Proactive FP-pattern propagation (investigation-guidance #15b): the normalized prevalence pattern key
   // of the anchor event, captured when an EVENT is marked false positive. After each import, new events
   // whose pattern key equals this are surfaced as a one-click bulk-mark suggestion (never auto-applied).
@@ -47,9 +47,7 @@ export function markerId(kind: FalsePositiveKind, ref: string): string {
 
 // The set of forensic event ids the client confirmed false-positive (lowercased).
 export function falsePositiveEventIds(markers: FalsePositiveMarker[]): Set<string> {
-  return new Set(
-    markers.filter((m) => m.kind === "event").map((m) => m.ref.trim().toLowerCase()),
-  );
+  return new Set(markers.filter((m) => m.kind === "event").map((m) => m.ref.trim().toLowerCase()));
 }
 
 // Drop forensic events the client confirmed false-positive, matched by event id. Pure and
@@ -68,10 +66,16 @@ export function filterFalsePositiveEvents<T extends { id: string }>(
 // match when the marker ref appears in (or equals) the finding title. Forensic events are handled
 // separately (filterFalsePositiveEvents) so the raw evidence is preserved rather than stripped
 // from saved state.
-export function applyFalsePositive(state: InvestigationState, markers: FalsePositiveMarker[]): InvestigationState {
+export function applyFalsePositive(
+  state: InvestigationState,
+  markers: FalsePositiveMarker[],
+): InvestigationState {
   if (markers.length === 0) return state;
   const iocRefs = new Set(markers.filter((m) => m.kind === "ioc").map((m) => m.ref.trim().toLowerCase()));
-  const findingRefs = markers.filter((m) => m.kind === "finding").map((m) => m.ref.trim().toLowerCase()).filter(Boolean);
+  const findingRefs = markers
+    .filter((m) => m.kind === "finding")
+    .map((m) => m.ref.trim().toLowerCase())
+    .filter(Boolean);
 
   const iocs = state.iocs.filter((i) => !iocRefs.has(i.value.trim().toLowerCase()));
   const findings = state.findings.filter((f) => {
@@ -115,7 +119,9 @@ export function buildFalsePositiveContext(markers: FalsePositiveMarker[]): strin
 // are opaque ids already removed from the timeline).
 export function buildAuthorizedContextBlock(markers: FalsePositiveMarker[]): string {
   const relevant = markers.filter(
-    (m) => (m.reason === "authorized-test" || m.reason === "known-good-tool") && (m.kind === "finding" || m.kind === "ioc"),
+    (m) =>
+      (m.reason === "authorized-test" || m.reason === "known-good-tool") &&
+      (m.kind === "finding" || m.kind === "ioc"),
   );
   if (relevant.length === 0) return "";
   const lines = relevant
@@ -152,7 +158,12 @@ export class FalsePositiveStore {
     // persist under the new filename, and leave the legacy file in place as a safety net.
     try {
       const legacyRaw = JSON.parse(await readFile(this.legacyPath(caseId), "utf8")) as Array<{
-        id: string; kind: FalsePositiveKind; ref: string; note: string; markedAt: string; label?: string;
+        id: string;
+        kind: FalsePositiveKind;
+        ref: string;
+        note: string;
+        markedAt: string;
+        label?: string;
       }>;
       const migrated: FalsePositiveMarker[] = legacyRaw.map((m) => ({
         id: m.id,

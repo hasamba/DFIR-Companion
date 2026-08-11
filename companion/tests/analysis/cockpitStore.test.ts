@@ -15,17 +15,39 @@ async function makeStore(): Promise<CockpitStore> {
 describe("CockpitStore", () => {
   it("keeps the full action history while updating current card state", async () => {
     const store = await makeStore();
-    await store.recordAction("c1", "lead:finding:f1", { action: "pin", actor: "Alice" }, "2026-07-30T10:00:00.000Z");
-    await store.recordAction("c1", "lead:finding:f1", { action: "assign", actor: "Alice", value: "Bob" }, "2026-07-30T10:01:00.000Z");
-    await store.recordAction("c1", "lead:finding:f1", { action: "dismiss", actor: "Bob" }, "2026-07-30T10:02:00.000Z");
-    await store.recordAction("c1", "lead:finding:f1", { action: "restore", actor: "Bob" }, "2026-07-30T10:03:00.000Z");
+    await store.recordAction(
+      "c1",
+      "lead:finding:f1",
+      { action: "pin", actor: "Alice" },
+      "2026-07-30T10:00:00.000Z",
+    );
+    await store.recordAction(
+      "c1",
+      "lead:finding:f1",
+      { action: "assign", actor: "Alice", value: "Bob" },
+      "2026-07-30T10:01:00.000Z",
+    );
+    await store.recordAction(
+      "c1",
+      "lead:finding:f1",
+      { action: "dismiss", actor: "Bob" },
+      "2026-07-30T10:02:00.000Z",
+    );
+    await store.recordAction(
+      "c1",
+      "lead:finding:f1",
+      { action: "restore", actor: "Bob" },
+      "2026-07-30T10:03:00.000Z",
+    );
 
     const saved = await store.load("c1");
-    expect(saved.cards).toEqual([expect.objectContaining({
-      cardId: "lead:finding:f1",
-      pinned: true,
-      assignee: "Bob",
-    })]);
+    expect(saved.cards).toEqual([
+      expect.objectContaining({
+        cardId: "lead:finding:f1",
+        pinned: true,
+        assignee: "Bob",
+      }),
+    ]);
     expect(saved.cards[0].dismissedAt).toBeUndefined();
     expect(saved.history.map((entry) => entry.action)).toEqual(["pin", "assign", "dismiss", "restore"]);
     expect(saved.history.map((entry) => entry.actor)).toEqual(["Alice", "Alice", "Bob", "Bob"]);

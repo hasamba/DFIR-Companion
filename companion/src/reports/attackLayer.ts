@@ -49,12 +49,20 @@ const SEVERITY_COLOR: Record<Severity, string> = {
 
 // Heatmap score so the layer is still meaningful if the analyst switches to gradient coloring.
 const SEVERITY_SCORE: Record<Severity, number> = {
-  Critical: 100, High: 75, Medium: 50, Low: 25, Info: 10,
+  Critical: 100,
+  High: 75,
+  Medium: 50,
+  Low: 25,
+  Info: 10,
 };
 
 // Worst-wins ordering (higher = worse) when several findings/events touch the same technique.
 const SEVERITY_RANK: Record<Severity, number> = {
-  Critical: 5, High: 4, Medium: 3, Low: 2, Info: 1,
+  Critical: 5,
+  High: 4,
+  Medium: 3,
+  Low: 2,
+  Info: 1,
 };
 
 const SEVERITIES: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
@@ -80,7 +88,7 @@ function parentTechnique(id: string): string | null {
 
 interface TechniqueAcc {
   worst: Severity;
-  findingTitles: string[];   // de-duped, insertion order preserved for a stable comment
+  findingTitles: string[]; // de-duped, insertion order preserved for a stable comment
   eventCount: number;
 }
 
@@ -103,8 +111,8 @@ function commentFor(acc: TechniqueAcc): string {
 export const DEFAULT_ATTACK_VERSION = "19";
 
 export interface AttackLayerOptions {
-  name?: string;             // layer name shown in the Navigator tab (default derived from the case id)
-  attackVersion?: string;    // ATT&CK version tag stamped in the layer (default DEFAULT_ATTACK_VERSION)
+  name?: string; // layer name shown in the Navigator tab (default derived from the case id)
+  attackVersion?: string; // ATT&CK version tag stamped in the layer (default DEFAULT_ATTACK_VERSION)
 }
 
 /**
@@ -182,7 +190,11 @@ export function buildAttackLayer(state: InvestigationState, opts: AttackLayerOpt
 
   return {
     name,
-    versions: { attack: opts.attackVersion?.trim() || DEFAULT_ATTACK_VERSION, navigator: "5.1.0", layer: "4.5" },
+    versions: {
+      attack: opts.attackVersion?.trim() || DEFAULT_ATTACK_VERSION,
+      navigator: "5.1.0",
+      layer: "4.5",
+    },
     domain: "enterprise-attack",
     description,
     techniques,

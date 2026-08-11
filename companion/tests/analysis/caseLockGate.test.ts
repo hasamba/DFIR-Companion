@@ -66,7 +66,9 @@ describe("createCaseLockGate", () => {
   it("allows a gated route through with a valid unlock cookie", async () => {
     const meta = await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
     const token = signUnlockToken("c1", meta.password!.salt, secret, 60_000, false);
-    const res = await request(app).get("/cases/c1/state").set("Cookie", `${unlockCookieName("c1")}=${token}`);
+    const res = await request(app)
+      .get("/cases/c1/state")
+      .set("Cookie", `${unlockCookieName("c1")}=${token}`);
     expect(res.status).toBe(200);
   });
 
@@ -74,7 +76,9 @@ describe("createCaseLockGate", () => {
     const meta = await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
     const staleToken = signUnlockToken("c1", meta.password!.salt, secret, 60_000, false);
     await store.updateCaseMeta("c1", { password: hashCasePassword("new-password") }); // new salt
-    const res = await request(app).get("/cases/c1/state").set("Cookie", `${unlockCookieName("c1")}=${staleToken}`);
+    const res = await request(app)
+      .get("/cases/c1/state")
+      .set("Cookie", `${unlockCookieName("c1")}=${staleToken}`);
     expect(res.status).toBe(401);
   });
 

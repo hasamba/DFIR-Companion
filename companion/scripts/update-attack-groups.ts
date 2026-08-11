@@ -129,7 +129,8 @@ async function main(): Promise<void> {
   // Creation") so the emulation panel can say WHERE to look when hunting that technique (#121).
   const dataSourceName = new Map<string, string>(); // x-mitre-data-source stix id → name
   for (const o of objects) {
-    if (o.type === "x-mitre-data-source" && o.id && o.name && isLive(o)) dataSourceName.set(o.id, o.name.trim());
+    if (o.type === "x-mitre-data-source" && o.id && o.name && isLive(o))
+      dataSourceName.set(o.id, o.name.trim());
   }
   const componentLabel = new Map<string, string>(); // x-mitre-data-component stix id → "Source: Component"
   for (const o of objects) {
@@ -144,7 +145,10 @@ async function main(): Promise<void> {
     const tech = o.target_ref ? techniqueById.get(o.target_ref) : undefined;
     if (!label || !tech) continue;
     let set = dataSourcesByTechnique.get(tech);
-    if (!set) { set = new Set<string>(); dataSourcesByTechnique.set(tech, set); }
+    if (!set) {
+      set = new Set<string>();
+      dataSourcesByTechnique.set(tech, set);
+    }
     set.add(label);
   }
 
@@ -155,9 +159,15 @@ async function main(): Promise<void> {
     const gid = attackId(o);
     const name = o.name?.trim();
     if (!gid || !name) continue;
-    const aliasSource = o.aliases?.length ? o.aliases : o.x_mitre_aliases ?? [];
+    const aliasSource = o.aliases?.length ? o.aliases : (o.x_mitre_aliases ?? []);
     const aliases = [...new Set(aliasSource.map((a) => a.trim()).filter((a) => a && a !== name))];
-    groupById.set(o.id, { id: gid, name, aliases, description: cleanDescription(o.description), techniques: [] });
+    groupById.set(o.id, {
+      id: gid,
+      name,
+      aliases,
+      description: cleanDescription(o.description),
+      techniques: [],
+    });
   }
 
   // 3. "uses" relationships intrusion-set → attack-pattern accumulate the group's technique set.
@@ -169,7 +179,10 @@ async function main(): Promise<void> {
     const tech = techniqueById.get(o.target_ref);
     if (!tech) continue;
     let set = techSets.get(o.source_ref);
-    if (!set) { set = new Set<string>(); techSets.set(o.source_ref, set); }
+    if (!set) {
+      set = new Set<string>();
+      techSets.set(o.source_ref, set);
+    }
     set.add(tech);
   }
 

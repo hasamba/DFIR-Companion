@@ -101,7 +101,8 @@ export const DEFAULT_MAX_PER_TECHNIQUE = 12;
 export const D3FEND_TACTIC_ORDER = ["Model", "Harden", "Detect", "Isolate", "Deceive", "Evict", "Restore"];
 
 // The standing disclaimer, shared by every surface that renders countermeasures (issue #178).
-export const D3FEND_NOTE = "Suggested D3FEND countermeasures inferred from ATT&CK technique — review for fit, not a complete or guaranteed list.";
+export const D3FEND_NOTE =
+  "Suggested D3FEND countermeasures inferred from ATT&CK technique — review for fit, not a complete or guaranteed list.";
 
 // Which lifecycle band a D3FEND tactic belongs to, so the UI can separate "the hardening you
 // implement now" from "things you do while responding to THIS incident" and "prerequisite context".
@@ -123,13 +124,15 @@ export const D3FEND_ACTION_INFO: Record<string, D3fendActionInfo> = {
   Harden: {
     label: "Prevent",
     blurb: "stop it happening again",
-    guidance: "Apply the config / credential / patch change that removes the weakness the attacker used (e.g. enable MFA, disable the abused feature, restrict permissions).",
+    guidance:
+      "Apply the config / credential / patch change that removes the weakness the attacker used (e.g. enable MFA, disable the abused feature, restrict permissions).",
     tier: "harden",
   },
   Detect: {
     label: "Detect",
     blurb: "spot it if it recurs",
-    guidance: "Make sure logging or an EDR/SIEM rule will catch this behaviour next time, then verify the alert fires.",
+    guidance:
+      "Make sure logging or an EDR/SIEM rule will catch this behaviour next time, then verify the alert fires.",
     tier: "harden",
   },
   Isolate: {
@@ -141,25 +144,29 @@ export const D3FEND_ACTION_INFO: Record<string, D3fendActionInfo> = {
   Evict: {
     label: "Evict",
     blurb: "remove the attacker's foothold",
-    guidance: "Do this during THIS incident: kill the malicious processes, delete persistence, reset compromised credentials.",
+    guidance:
+      "Do this during THIS incident: kill the malicious processes, delete persistence, reset compromised credentials.",
     tier: "respond",
   },
   Restore: {
     label: "Restore",
     blurb: "recover affected systems",
-    guidance: "Do this during THIS incident: restore affected data, configs, and accounts from a known-good state.",
+    guidance:
+      "Do this during THIS incident: restore affected data, configs, and accounts from a known-good state.",
     tier: "respond",
   },
   Model: {
     label: "Model",
     blurb: "know your attack surface",
-    guidance: "Prerequisite hygiene, not a fix: keep asset/data/account inventories so you can find and scope what's affected.",
+    guidance:
+      "Prerequisite hygiene, not a fix: keep asset/data/account inventories so you can find and scope what's affected.",
     tier: "context",
   },
   Deceive: {
     label: "Deceive",
     blurb: "lure and mislead the attacker",
-    guidance: "Optional / advanced: deploy decoys or honeytokens to detect and study intruders — only if your program is mature.",
+    guidance:
+      "Optional / advanced: deploy decoys or honeytokens to detect and study intruders — only if your program is mature.",
     tier: "context",
   },
 };
@@ -186,7 +193,10 @@ function sortCountermeasures<T extends D3fendCountermeasure>(cms: T[]): T[] {
 // Gather the countermeasures mapped to one case technique, deduped by D3FEND id — bidirectionally:
 // a sub-technique also pulls in its base's countermeasures, and a base technique also pulls in every
 // mapped sub-technique's (D3FEND maps most techniques only at one granularity, so we bridge both).
-function lookupTechnique(technique: string, map: Record<string, D3fendCountermeasure[]>): D3fendCountermeasure[] {
+function lookupTechnique(
+  technique: string,
+  map: Record<string, D3fendCountermeasure[]>,
+): D3fendCountermeasure[] {
   const seen = new Set<string>();
   const out: D3fendCountermeasure[] = [];
   const add = (cms: D3fendCountermeasure[] | undefined): void => {
@@ -225,7 +235,9 @@ export function buildD3fendResult(
   // Enrich a raw countermeasure with its d3fend URL + plain-English definition (omitted when absent).
   const viewOf = (cm: D3fendCountermeasure): D3fendCountermeasureView => {
     const def = defs[cm.id];
-    return def ? { ...cm, url: d3fendTechniqueUrl(cm.id), definition: def } : { ...cm, url: d3fendTechniqueUrl(cm.id) };
+    return def
+      ? { ...cm, url: d3fendTechniqueUrl(cm.id), definition: def }
+      : { ...cm, url: d3fendTechniqueUrl(cm.id) };
   };
 
   const techniques: D3fendTechniqueMatch[] = [];

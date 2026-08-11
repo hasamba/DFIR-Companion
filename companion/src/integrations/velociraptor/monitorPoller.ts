@@ -8,7 +8,12 @@ import type { VeloMonitor } from "../../analysis/veloMonitorStore.js";
 
 // Read a monitoring artifact's rows for one client in a half-open-ish time window [start, end] (epoch
 // seconds). Returns just the rows (the server's VelociraptorClient.monitorResults adapts to this).
-export type MonitorReader = (clientId: string, artifact: string, startEpoch: number, endEpoch: number) => Promise<unknown[]>;
+export type MonitorReader = (
+  clientId: string,
+  artifact: string,
+  startEpoch: number,
+  endEpoch: number,
+) => Promise<unknown[]>;
 
 // Ingest the new rows for a monitor; resolves to the number of forensic events actually added (for the
 // running "+N events" stat). Throwing is fine — pollMonitorOnce catches it into the monitor's lastError.
@@ -17,8 +22,8 @@ export type MonitorIngestor = (monitor: VeloMonitor, rows: unknown[]) => Promise
 export interface PollDeps {
   read: MonitorReader;
   ingest: MonitorIngestor;
-  now: () => number;                 // epoch SECONDS (injected → testable / resume-safe)
-  defaultLookbackSeconds?: number;    // window start when a monitor has no cursor yet (default = pollSeconds)
+  now: () => number; // epoch SECONDS (injected → testable / resume-safe)
+  defaultLookbackSeconds?: number; // window start when a monitor has no cursor yet (default = pollSeconds)
   log?: (msg: string) => void;
 }
 
@@ -63,8 +68,13 @@ export function extractRowTime(row: unknown): number | null {
 
 // The query window for the next poll. start = the monitor's cursor (last poll's end), or now−lookback
 // the first time (no cursor). end = now. Guarded so end ≥ start even if the clock went backwards.
-export function computeWindow(monitor: VeloMonitor, nowEpoch: number, defaultLookbackSeconds: number): { start: number; end: number } {
-  const start = monitor.cursor && monitor.cursor > 0 ? monitor.cursor : Math.max(0, nowEpoch - defaultLookbackSeconds);
+export function computeWindow(
+  monitor: VeloMonitor,
+  nowEpoch: number,
+  defaultLookbackSeconds: number,
+): { start: number; end: number } {
+  const start =
+    monitor.cursor && monitor.cursor > 0 ? monitor.cursor : Math.max(0, nowEpoch - defaultLookbackSeconds);
   return { start, end: Math.max(start, nowEpoch) };
 }
 
@@ -109,7 +119,9 @@ export async function pollMonitorOnce(monitor: VeloMonitor, deps: PollDeps): Pro
       lastError: undefined,
     };
   } catch (err) {
-    deps.log?.(`[velo-monitor] poll failed (${monitor.clientId} / ${monitor.artifact}): ${(err as Error).message}`);
+    deps.log?.(
+      `[velo-monitor] poll failed (${monitor.clientId} / ${monitor.artifact}): ${(err as Error).message}`,
+    );
     return {
       ...monitor,
       status: "error",

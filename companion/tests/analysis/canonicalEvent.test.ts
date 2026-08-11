@@ -63,15 +63,17 @@ describe("canonical forensic-event envelope", () => {
         },
       },
     };
-    expect(canonicalConformanceIssues(unknownRecord))
-      .toContain("field provenance references an unknown record: actor.name -> row:missing");
+    expect(canonicalConformanceIssues(unknownRecord)).toContain(
+      "field provenance references an unknown record: actor.name -> row:missing",
+    );
   });
 
   it("upgrades a legacy event without changing its display contract or discarding legacy fields", () => {
     const legacy: ForensicEvent = {
       id: "legacy-1",
       timestamp: "2026-07-30T10:00:00Z",
-      description: "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - IpAddress=10.0.0.5 @ SRV-01",
+      description:
+        "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - IpAddress=10.0.0.5 @ SRV-01",
       severity: "Low",
       mitreTechniques: [],
       relatedFindingIds: [],
@@ -107,8 +109,9 @@ describe("canonical forensic-event envelope", () => {
     } as unknown as ForensicEvent;
 
     expect(upgradeForensicEvent(future)).toBe(future);
-    expect((upgradeForensicEvent(future).canonical as unknown as Record<string, unknown>).opaqueFutureField)
-      .toEqual({ keep: true });
+    expect(
+      (upgradeForensicEvent(future).canonical as unknown as Record<string, unknown>).opaqueFutureField,
+    ).toEqual({ keep: true });
 
     const current = createCanonicalEvent({
       event: { category: "other", type: "event" },
@@ -124,20 +127,24 @@ describe("canonical forensic-event envelope", () => {
 
 describe("representative importer conformance", () => {
   it("maps Windows authentication identity and session context", () => {
-    const [event] = parseSiemExport(JSON.stringify([{
-      EventID: 4624,
-      Channel: "Security",
-      Computer: "SRV-01",
-      "@timestamp": "2026-07-30T10:00:00Z",
-      EventData: {
-        TargetUserName: "jdoe",
-        TargetDomainName: "CORP",
-        LogonType: "10",
-        IpAddress: "203.0.113.10",
-        WorkstationName: "WKSTN-01",
-        TargetLogonId: "0x123",
-      },
-    }])).events;
+    const [event] = parseSiemExport(
+      JSON.stringify([
+        {
+          EventID: 4624,
+          Channel: "Security",
+          Computer: "SRV-01",
+          "@timestamp": "2026-07-30T10:00:00Z",
+          EventData: {
+            TargetUserName: "jdoe",
+            TargetDomainName: "CORP",
+            LogonType: "10",
+            IpAddress: "203.0.113.10",
+            WorkstationName: "WKSTN-01",
+            TargetLogonId: "0x123",
+          },
+        },
+      ]),
+    ).events;
 
     expect(expectConformant(event)).toMatchObject({
       event: { category: "authentication", type: "logon", outcome: "success" },
@@ -164,19 +171,23 @@ describe("representative importer conformance", () => {
   });
 
   it("maps a cloud principal and API target", () => {
-    const [event] = parseCloudTrail(JSON.stringify([{
-      eventTime: "2026-07-30T10:00:00Z",
-      eventName: "CreateAccessKey",
-      eventSource: "iam.amazonaws.com",
-      awsRegion: "us-east-1",
-      sourceIPAddress: "203.0.113.11",
-      userIdentity: {
-        type: "IAMUser",
-        userName: "incident-user",
-        arn: "arn:aws:iam::123456789012:user/incident-user",
-      },
-      requestParameters: { userName: "target-user" },
-    }])).events;
+    const [event] = parseCloudTrail(
+      JSON.stringify([
+        {
+          eventTime: "2026-07-30T10:00:00Z",
+          eventName: "CreateAccessKey",
+          eventSource: "iam.amazonaws.com",
+          awsRegion: "us-east-1",
+          sourceIPAddress: "203.0.113.11",
+          userIdentity: {
+            type: "IAMUser",
+            userName: "incident-user",
+            arn: "arn:aws:iam::123456789012:user/incident-user",
+          },
+          requestParameters: { userName: "target-user" },
+        },
+      ]),
+    ).events;
 
     expect(expectConformant(event)).toMatchObject({
       event: { category: "cloud", type: "api", action: "CreateAccessKey" },
@@ -187,16 +198,20 @@ describe("representative importer conformance", () => {
   });
 
   it("maps source and destination network entities", () => {
-    const [event] = parseNetworkLogs(JSON.stringify([{
-      timestamp: "2026-07-30T10:00:00.000Z",
-      event_type: "alert",
-      src_ip: "10.0.0.5",
-      src_port: 51515,
-      dest_ip: "203.0.113.12",
-      dest_port: 443,
-      proto: "TCP",
-      alert: { signature: "Test alert", signature_id: 42, severity: 1 },
-    }])).events;
+    const [event] = parseNetworkLogs(
+      JSON.stringify([
+        {
+          timestamp: "2026-07-30T10:00:00.000Z",
+          event_type: "alert",
+          src_ip: "10.0.0.5",
+          src_port: 51515,
+          dest_ip: "203.0.113.12",
+          dest_port: 443,
+          proto: "TCP",
+          alert: { signature: "Test alert", signature_id: 42, severity: 1 },
+        },
+      ]),
+    ).events;
 
     expect(expectConformant(event)).toMatchObject({
       event: { category: "network", type: "alert" },
@@ -210,15 +225,17 @@ describe("representative importer conformance", () => {
   });
 
   it("maps mailbox principals and message identity", () => {
-    const [event] = parseEmail([
-      "From: Sender <sender@example.invalid>",
-      "To: Recipient <recipient@example.test>",
-      "Date: Thu, 30 Jul 2026 10:00:00 +0000",
-      "Message-ID: <message-1@example.invalid>",
-      "Subject: Quarterly review",
-      "",
-      "Please review the attachment.",
-    ].join("\r\n")).events;
+    const [event] = parseEmail(
+      [
+        "From: Sender <sender@example.invalid>",
+        "To: Recipient <recipient@example.test>",
+        "Date: Thu, 30 Jul 2026 10:00:00 +0000",
+        "Message-ID: <message-1@example.invalid>",
+        "Subject: Quarterly review",
+        "",
+        "Please review the attachment.",
+      ].join("\r\n"),
+    ).events;
 
     expect(expectConformant(event)).toMatchObject({
       event: { category: "email", type: "message" },
@@ -234,13 +251,18 @@ describe("representative importer conformance", () => {
   });
 
   it("maps memory process identity", () => {
-    const [event] = parseMemory(JSON.stringify([{
-      PID: 4242,
-      PPID: 4,
-      ImageFileName: "powershell.exe",
-      CreateTime: "2026-07-30T10:00:00Z",
-      CommandLine: "powershell.exe -NoProfile",
-    }]), { filename: "windows.pslist.json" }).events;
+    const [event] = parseMemory(
+      JSON.stringify([
+        {
+          PID: 4242,
+          PPID: 4,
+          ImageFileName: "powershell.exe",
+          CreateTime: "2026-07-30T10:00:00Z",
+          CommandLine: "powershell.exe -NoProfile",
+        },
+      ]),
+      { filename: "windows.pslist.json" },
+    ).events;
 
     expect(expectConformant(event)).toMatchObject({
       event: { category: "process", type: "observation" },
@@ -250,18 +272,22 @@ describe("representative importer conformance", () => {
   });
 
   it("maps EDR process identity", () => {
-    const [event] = parseEcarJson(JSON.stringify([{
-      timestamp_ms: 1785405600000,
-      hostname: "EDR-01",
-      object: "PROCESS",
-      action: "CREATE",
-      pid: 4242,
-      properties: {
-        image_path: "C:\\Windows\\System32\\cmd.exe",
-        parent_image_path: "C:\\Windows\\explorer.exe",
-        command_line: "cmd.exe /c whoami",
-      },
-    }])).events;
+    const [event] = parseEcarJson(
+      JSON.stringify([
+        {
+          timestamp_ms: 1785405600000,
+          hostname: "EDR-01",
+          object: "PROCESS",
+          action: "CREATE",
+          pid: 4242,
+          properties: {
+            image_path: "C:\\Windows\\System32\\cmd.exe",
+            parent_image_path: "C:\\Windows\\explorer.exe",
+            command_line: "cmd.exe /c whoami",
+          },
+        },
+      ]),
+    ).events;
 
     expect(expectConformant(event)).toMatchObject({
       event: { category: "process", type: "start", action: "create" },

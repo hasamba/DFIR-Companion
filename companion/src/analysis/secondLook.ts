@@ -27,13 +27,13 @@ import { shortHost } from "./iocAnchors.js";
 // matched anywhere.
 export interface SecondLookRequest {
   source: "hypothesis" | "question" | "connective-ioc" | "model";
-  tag: string;         // e.g. "[second-look: h2]"
-  label: string;       // human summary of what this request looked for
-  keywords: string[];  // lowercased, deduped, non-empty
-  host?: string;       // optional host restriction (matched against shortHost of event.asset)
-  from?: string;       // ISO lower bound (inclusive); undated events are kept
-  to?: string;         // ISO upper bound (inclusive)
-  reason: string;      // surfaced as a collection lead when matchedEventIds is empty
+  tag: string; // e.g. "[second-look: h2]"
+  label: string; // human summary of what this request looked for
+  keywords: string[]; // lowercased, deduped, non-empty
+  host?: string; // optional host restriction (matched against shortHost of event.asset)
+  from?: string; // ISO lower bound (inclusive); undated events are kept
+  to?: string; // ISO upper bound (inclusive)
+  reason: string; // surfaced as a collection lead when matchedEventIds is empty
 }
 
 // One model-issued evidence request as parsed from the synthesis delta (all fields best-effort).
@@ -46,25 +46,25 @@ export interface ModelEvidenceRequest {
 
 export interface SecondLookResolution {
   request: SecondLookRequest;
-  matchedEventIds: string[];    // every matched candidate id (incl. events already in the timeline)
-  promotable: ForensicEvent[];  // matched events NOT already in the analyzed timeline (the real gain)
+  matchedEventIds: string[]; // every matched candidate id (incl. events already in the timeline)
+  promotable: ForensicEvent[]; // matched events NOT already in the analyzed timeline (the real gain)
 }
 
 export interface SecondLookPlan {
-  promotions: ForensicEvent[];         // deduped across requests + capped to the sweep budget
-  tagById: Record<string, string[]>;   // event id → provenance tags to stamp on promotion
+  promotions: ForensicEvent[]; // deduped across requests + capped to the sweep budget
+  tagById: Record<string, string[]>; // event id → provenance tags to stamp on promotion
   resolutions: SecondLookResolution[];
-  leads: SecondLookRequest[];          // requests that matched nothing anywhere — collection leads
-  truncated: boolean;                  // true when the sweep cap dropped some promotable events
+  leads: SecondLookRequest[]; // requests that matched nothing anywhere — collection leads
+  truncated: boolean; // true when the sweep cap dropped some promotable events
 }
 
 export interface SecondLookCaps {
-  perTerm?: number;               // max events promoted from a single request (default 50)
-  sweep?: number;                 // max events promoted across the whole sweep (default 200)
-  maxHypotheses?: number;         // open hypotheses turned into requests (default 6)
-  maxQuestions?: number;          // unknown/partial collect-bearing questions → requests (default 6)
-  maxConnectiveIocs?: number;     // top connective IOCs → requests (default 5)
-  maxModel?: number;              // model evidenceRequests honored (default 5)
+  perTerm?: number; // max events promoted from a single request (default 50)
+  sweep?: number; // max events promoted across the whole sweep (default 200)
+  maxHypotheses?: number; // open hypotheses turned into requests (default 6)
+  maxQuestions?: number; // unknown/partial collect-bearing questions → requests (default 6)
+  maxConnectiveIocs?: number; // top connective IOCs → requests (default 5)
+  maxModel?: number; // model evidenceRequests honored (default 5)
   maxKeywordsPerRequest?: number; // keyword count cap per request (default 8)
 }
 
@@ -80,16 +80,109 @@ const MAX_KEYWORDS_DEFAULT = 8;
 // transfer") but carry no search signal. Kept deliberately small — only words that would otherwise
 // match half the timeline. Case-folded before lookup.
 const STOPWORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "from", "into", "onto", "was", "were", "would", "could",
-  "should", "have", "has", "had", "been", "being", "will", "shall", "may", "might", "before", "after",
-  "shortly", "then", "than", "also", "when", "where", "which", "what", "whom", "whose", "there", "here",
-  "outbound", "inbound", "transfer", "activity", "evidence", "shows", "show", "showing", "confirm",
-  "confirms", "confirmed", "prove", "proves", "disprove", "indicat", "indicate", "indicates", "logs",
-  "log", "event", "events", "host", "hosts", "user", "users", "account", "accounts", "file", "files",
-  "malicious", "attacker", "collect", "collected", "check", "checks", "look", "looking", "written",
-  "write", "writes", "access", "click", "clicked", "session", "process", "processes", "command",
-  "commands", "network", "connection", "connections", "around", "first", "last", "same", "other",
-  "still", "unknown", "gateway", "proxy", "server", "servers", "client", "clients", "system", "systems",
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "this",
+  "from",
+  "into",
+  "onto",
+  "was",
+  "were",
+  "would",
+  "could",
+  "should",
+  "have",
+  "has",
+  "had",
+  "been",
+  "being",
+  "will",
+  "shall",
+  "may",
+  "might",
+  "before",
+  "after",
+  "shortly",
+  "then",
+  "than",
+  "also",
+  "when",
+  "where",
+  "which",
+  "what",
+  "whom",
+  "whose",
+  "there",
+  "here",
+  "outbound",
+  "inbound",
+  "transfer",
+  "activity",
+  "evidence",
+  "shows",
+  "show",
+  "showing",
+  "confirm",
+  "confirms",
+  "confirmed",
+  "prove",
+  "proves",
+  "disprove",
+  "indicat",
+  "indicate",
+  "indicates",
+  "logs",
+  "log",
+  "event",
+  "events",
+  "host",
+  "hosts",
+  "user",
+  "users",
+  "account",
+  "accounts",
+  "file",
+  "files",
+  "malicious",
+  "attacker",
+  "collect",
+  "collected",
+  "check",
+  "checks",
+  "look",
+  "looking",
+  "written",
+  "write",
+  "writes",
+  "access",
+  "click",
+  "clicked",
+  "session",
+  "process",
+  "processes",
+  "command",
+  "commands",
+  "network",
+  "connection",
+  "connections",
+  "around",
+  "first",
+  "last",
+  "same",
+  "other",
+  "still",
+  "unknown",
+  "gateway",
+  "proxy",
+  "server",
+  "servers",
+  "client",
+  "clients",
+  "system",
+  "systems",
 ]);
 
 // Extract SPECIFIC identifier-like tokens from prose: hostnames, filenames, paths, IPs, domains,
@@ -107,7 +200,7 @@ export function extractSignalTokens(text: string | undefined, max = MAX_KEYWORDS
     if (tok.length < 3) continue;
     const structured = /[./\\:]/.test(tok) || /\d/.test(tok);
     if (!structured) {
-      if (tok.length < 5) continue;          // short bare words are too noisy
+      if (tok.length < 5) continue; // short bare words are too noisy
       if (STOPWORDS.has(tok)) continue;
     }
     if (seen.has(tok)) continue;
@@ -122,7 +215,9 @@ function cleanKeywords(values: readonly (string | undefined)[], max: number): st
   const out: string[] = [];
   const seen = new Set<string>();
   for (const v of values) {
-    const tok = String(v ?? "").trim().toLowerCase();
+    const tok = String(v ?? "")
+      .trim()
+      .toLowerCase();
     if (!tok || seen.has(tok)) continue;
     seen.add(tok);
     out.push(tok);
@@ -139,11 +234,11 @@ function requestSignature(r: SecondLookRequest): string {
 
 export interface BuildRequestsInput {
   hypotheses?: readonly Hypothesis[];
-  iocValueById?: ReadonlyMap<string, string>;   // ioc id → value, to resolve a hypothesis's relatedIocIds
+  iocValueById?: ReadonlyMap<string, string>; // ioc id → value, to resolve a hypothesis's relatedIocIds
   keyQuestions?: readonly InvestigationQuestion[];
   connectiveIocs?: readonly IocAnchor[];
   modelRequests?: readonly ModelEvidenceRequest[];
-  window?: { from?: string; to?: string };      // the case's active window (scope or derived)
+  window?: { from?: string; to?: string }; // the case's active window (scope or derived)
   caps?: SecondLookCaps;
 }
 
@@ -212,18 +307,20 @@ export function buildSecondLookRequests(input: BuildRequestsInput): SecondLookRe
   });
 
   // (c) Top connective IOCs — the backbone indicators; search the raw record for every mention.
-  (input.connectiveIocs ?? []).slice(0, caps.maxConnectiveIocs ?? MAX_CONNECTIVE_IOCS_DEFAULT).forEach((a) => {
-    const keywords = cleanKeywords([a.value], maxKw);
-    push({
-      source: "connective-ioc",
-      tag: `[second-look: ${a.value.slice(0, 40)}]`,
-      label: `connective indicator: ${a.value}`.slice(0, 160),
-      keywords,
-      from: win.from,
-      to: win.to,
-      reason: `every raw mention of the connective indicator ${a.value}`,
+  (input.connectiveIocs ?? [])
+    .slice(0, caps.maxConnectiveIocs ?? MAX_CONNECTIVE_IOCS_DEFAULT)
+    .forEach((a) => {
+      const keywords = cleanKeywords([a.value], maxKw);
+      push({
+        source: "connective-ioc",
+        tag: `[second-look: ${a.value.slice(0, 40)}]`,
+        label: `connective indicator: ${a.value}`.slice(0, 160),
+        keywords,
+        from: win.from,
+        to: win.to,
+        reason: `every raw mention of the connective indicator ${a.value}`,
+      });
     });
-  });
 
   // (d) Model-issued evidence requests — data the model knows it was not shown. Its own timeWindow
   // (when given) overrides the active window; otherwise it inherits it.
@@ -248,8 +345,15 @@ export function buildSecondLookRequests(input: BuildRequestsInput): SecondLookRe
 // eventMatchesSearch — includes message/path/process names/artifact, which carry recon/exfil signal).
 function eventHaystack(e: ForensicEvent): string {
   return [
-    e.description, e.message, e.asset, e.path, e.processName, e.parentName, e.artifactName,
-    ...(e.sources ?? []), ...(e.mitreTechniques ?? []),
+    e.description,
+    e.message,
+    e.asset,
+    e.path,
+    e.processName,
+    e.parentName,
+    e.artifactName,
+    ...(e.sources ?? []),
+    ...(e.mitreTechniques ?? []),
   ]
     .filter(Boolean)
     .join("  ")
@@ -258,9 +362,15 @@ function eventHaystack(e: ForensicEvent): string {
 
 function inWindow(e: ForensicEvent, from: string | undefined, to: string | undefined): boolean {
   const t = Date.parse(e.timestamp);
-  if (Number.isNaN(t)) return true;                 // undated kept — can't be proven out of range
-  if (from) { const f = Date.parse(from); if (!Number.isNaN(f) && t < f) return false; }
-  if (to) { const u = Date.parse(to); if (!Number.isNaN(u) && t > u) return false; }
+  if (Number.isNaN(t)) return true; // undated kept — can't be proven out of range
+  if (from) {
+    const f = Date.parse(from);
+    if (!Number.isNaN(f) && t < f) return false;
+  }
+  if (to) {
+    const u = Date.parse(to);
+    if (!Number.isNaN(u) && t > u) return false;
+  }
   return true;
 }
 
@@ -283,14 +393,20 @@ export function resolveSecondLookRequests(
   const perTerm = caps.perTerm ?? SECOND_LOOK_PER_TERM_DEFAULT;
   // Precompute haystacks once — a sweep can scan tens of thousands of raw rows per request.
   const hay = new Map<string, string>();
-  const ms = (e: ForensicEvent): number => { const t = Date.parse(e.timestamp); return Number.isNaN(t) ? Infinity : t; };
+  const ms = (e: ForensicEvent): number => {
+    const t = Date.parse(e.timestamp);
+    return Number.isNaN(t) ? Infinity : t;
+  };
   return requests.map((request) => {
     const matched: ForensicEvent[] = [];
     for (const e of candidates) {
       if (!inWindow(e, request.from, request.to)) continue;
       if (!hostMatches(e, request.host)) continue;
       let h = hay.get(e.id);
-      if (h === undefined) { h = eventHaystack(e); hay.set(e.id, h); }
+      if (h === undefined) {
+        h = eventHaystack(e);
+        hay.set(e.id, h);
+      }
       if (!request.keywords.some((k) => h.includes(k))) continue;
       matched.push(e);
     }
@@ -322,7 +438,10 @@ export function buildSecondLookPlan(
   for (const res of resolutions) {
     for (const e of res.promotable) {
       if (!(e.id in tagById)) {
-        if (promotions.length >= sweep) { truncated = true; continue; }
+        if (promotions.length >= sweep) {
+          truncated = true;
+          continue;
+        }
         index.set(e.id, promotions.length);
         promotions.push(e);
         tagById[e.id] = [res.request.tag];

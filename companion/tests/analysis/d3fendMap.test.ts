@@ -10,7 +10,12 @@ import {
   type D3fendCountermeasure,
 } from "../../src/analysis/d3fendMap.js";
 import { loadD3fendDataset } from "../../src/analysis/d3fendData.js";
-import { emptyState, type InvestigationState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type InvestigationState,
+  type Finding,
+  type ForensicEvent,
+} from "../../src/analysis/stateTypes.js";
 
 const finding = (id: string, mitreTechniques: string[]): Finding => ({
   id,
@@ -35,9 +40,17 @@ const ev = (id: string, mitreTechniques: string[]): ForensicEvent => ({
   sourceScreenshots: [],
 });
 
-const cm = (id: string, tactic: string, name = id, category = "Cat"): D3fendCountermeasure => ({ id, name, tactic, category });
+const cm = (id: string, tactic: string, name = id, category = "Cat"): D3fendCountermeasure => ({
+  id,
+  name,
+  tactic,
+  category,
+});
 
-function dataset(map: Record<string, D3fendCountermeasure[]>, over: Partial<D3fendDatasetView> = {}): D3fendDatasetView {
+function dataset(
+  map: Record<string, D3fendCountermeasure[]>,
+  over: Partial<D3fendDatasetView> = {},
+): D3fendDatasetView {
   const ids = new Set<string>();
   for (const cms of Object.values(map)) for (const c of cms) ids.add(c.id);
   return {
@@ -58,7 +71,9 @@ function stateWith(techniques: string[]): InvestigationState {
 describe("d3fendTechniqueUrl", () => {
   it("builds the d3fend.mitre.org technique link", () => {
     expect(d3fendTechniqueUrl("TokenBinding")).toBe("https://d3fend.mitre.org/technique/d3f:TokenBinding/");
-    expect(d3fendTechniqueUrl("  TokenBinding ")).toBe("https://d3fend.mitre.org/technique/d3f:TokenBinding/");
+    expect(d3fendTechniqueUrl("  TokenBinding ")).toBe(
+      "https://d3fend.mitre.org/technique/d3f:TokenBinding/",
+    );
   });
 });
 
@@ -200,7 +215,10 @@ describe("buildD3fendResult", () => {
   });
 
   it("carries dataset provenance and the standing note through", () => {
-    const ds = dataset({ T1059: [cm("DetectA", "Detect")] }, { d3fendVersion: "1.4.0", countermeasureCount: 149 });
+    const ds = dataset(
+      { T1059: [cm("DetectA", "Detect")] },
+      { d3fendVersion: "1.4.0", countermeasureCount: 149 },
+    );
     const result = buildD3fendResult(stateWith(["T1059"]), ds);
     expect(result.d3fendVersion).toBe("1.4.0");
     expect(result.mappedTechniqueCount).toBe(1);
@@ -218,7 +236,15 @@ describe("buildD3fendResult", () => {
 
 describe("D3FEND_TACTIC_ORDER", () => {
   it("is the canonical D3FEND defensive lifecycle", () => {
-    expect(D3FEND_TACTIC_ORDER).toEqual(["Model", "Harden", "Detect", "Isolate", "Deceive", "Evict", "Restore"]);
+    expect(D3FEND_TACTIC_ORDER).toEqual([
+      "Model",
+      "Harden",
+      "Detect",
+      "Isolate",
+      "Deceive",
+      "Evict",
+      "Restore",
+    ]);
   });
 });
 

@@ -1,6 +1,11 @@
 import type { Express, Request, Response } from "express";
 import type { AssetType } from "../analysis/assetGraph.js";
-import { LoginGraphBuilder, loginEdgeEvents, DEFAULT_MAX_EDGES, type LoginEdgeEvent } from "../analysis/loginGraph.js";
+import {
+  LoginGraphBuilder,
+  loginEdgeEvents,
+  DEFAULT_MAX_EDGES,
+  type LoginEdgeEvent,
+} from "../analysis/loginGraph.js";
 import { mergeIocs } from "../analysis/iocMerge.js";
 import type { RouteContext } from "./context.js";
 
@@ -71,7 +76,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   // graph reads. Returns undefined when neither bound is present, so the builders take their
   // unfiltered path. Non-string (repeated) params narrow away to undefined and are simply ignored.
   const timeWindow = (req: Request): { from?: string; until?: string } | undefined => {
-    const from = s(req.query.from), until = s(req.query.until);
+    const from = s(req.query.from),
+      until = s(req.query.until);
     return from || until ? { from, until } : undefined;
   };
 
@@ -109,15 +115,19 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     // Non-string (repeated/array) params narrow to undefined and hit the 400 below instead
     // of a data-dependent 500 inside loginEdgeEvents.
-    const account = s(req.query.account), host = s(req.query.host), type = s(req.query.type), outcome = s(req.query.outcome);
+    const account = s(req.query.account),
+      host = s(req.query.host),
+      type = s(req.query.type),
+      outcome = s(req.query.outcome);
     if (!account || !host) return res.status(400).json({ error: "account and host are required" });
     try {
       const rawLimit = Number(s(req.query.limit));
       const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 50;
       const query = {
-        account, host,
+        account,
+        host,
         type: type || "Unknown",
-        outcome: outcome === "failed" ? "failed" as const : "success" as const,
+        outcome: outcome === "failed" ? ("failed" as const) : ("success" as const),
         limit,
       };
       let total = 0;
@@ -154,7 +164,9 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const includeDismissed = req.query.includeDismissed === "1" || req.query.includeDismissed === "true";
-      return res.status(200).json(await options.reportWriter.lateralPaths(req.params.id, timeWindow(req), includeDismissed));
+      return res
+        .status(200)
+        .json(await options.reportWriter.lateralPaths(req.params.id, timeWindow(req), includeDismissed));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -165,7 +177,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   // evidence, which is usually real and still belongs in the timeline. Keyed on the ordered host
   // sequence because paths are derived per read and their ids are positional (see lateralPathDismiss.ts).
   app.get("/cases/:id/lateral-path-dismissals", async (req: Request, res: Response) => {
-    if (!options.lateralPathDismissStore) return res.status(501).json({ error: "lateral path dismissals not configured" });
+    if (!options.lateralPathDismissStore)
+      return res.status(501).json({ error: "lateral path dismissals not configured" });
     try {
       return res.status(200).json(await options.lateralPathDismissStore.load(req.params.id));
     } catch (err) {
@@ -174,10 +187,17 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   });
 
   app.post("/cases/:id/lateral-path-dismissals", async (req: Request, res: Response) => {
-    if (!options.lateralPathDismissStore) return res.status(501).json({ error: "lateral path dismissals not configured" });
+    if (!options.lateralPathDismissStore)
+      return res.status(501).json({ error: "lateral path dismissals not configured" });
     try {
-      const hostIds = Array.isArray(req.body?.hostIds) ? (req.body.hostIds as unknown[]).filter((h): h is string => typeof h === "string") : [];
-      const dismissal = await options.lateralPathDismissStore.add(req.params.id, hostIds, typeof req.body?.note === "string" ? req.body.note : "");
+      const hostIds = Array.isArray(req.body?.hostIds)
+        ? (req.body.hostIds as unknown[]).filter((h): h is string => typeof h === "string")
+        : [];
+      const dismissal = await options.lateralPathDismissStore.add(
+        req.params.id,
+        hostIds,
+        typeof req.body?.note === "string" ? req.body.note : "",
+      );
       if (!dismissal) return res.status(400).json({ error: "hostIds must name at least two hosts" });
       return res.status(201).json(dismissal);
     } catch (err) {
@@ -187,7 +207,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Restore a dismissed chain. The key is the ordered host sequence (a>b>c), URL-encoded.
   app.delete("/cases/:id/lateral-path-dismissals/:key", async (req: Request, res: Response) => {
-    if (!options.lateralPathDismissStore) return res.status(501).json({ error: "lateral path dismissals not configured" });
+    if (!options.lateralPathDismissStore)
+      return res.status(501).json({ error: "lateral path dismissals not configured" });
     try {
       const removed = await options.lateralPathDismissStore.remove(req.params.id, req.params.key);
       if (!removed) return res.status(404).json({ error: "dismissal not found" });
@@ -312,7 +333,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   // Manual asset-graph edits (renames, additions, suppressions, link overrides). Each write
   // pings live dashboard clients so the graph refreshes without a page reload.
   app.get("/cases/:id/asset-overrides", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     try {
       return res.status(200).json(await options.assetOverridesStore.load(req.params.id));
     } catch (err) {
@@ -322,7 +344,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Rename (or un-rename) an asset by its graph id. Pass an empty name to clear the rename.
   app.put("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     const name = typeof req.body?.name === "string" ? req.body.name : "";
     try {
       const ov = await options.assetOverridesStore.rename(req.params.id, req.params.assetId, name);
@@ -335,12 +358,16 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Create a manual asset (one not auto-derived from the forensic timeline).
   app.post("/cases/:id/asset-overrides/assets", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
     const type = typeof req.body?.type === "string" ? req.body.type.trim() : "host";
     if (!name) return res.status(400).json({ error: "name is required" });
     try {
-      const result = await options.assetOverridesStore.addAsset(req.params.id, { name, type: type as AssetType });
+      const result = await options.assetOverridesStore.addAsset(req.params.id, {
+        name,
+        type: type as AssetType,
+      });
       options.onAssetOverrides?.(req.params.id);
       return res.status(201).json(result);
     } catch (err) {
@@ -350,7 +377,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Suppress an auto-derived asset or delete a manual one.
   app.delete("/cases/:id/asset-overrides/assets/:assetId", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     try {
       const ov = await options.assetOverridesStore.removeAsset(req.params.id, req.params.assetId);
       options.onAssetOverrides?.(req.params.id);
@@ -362,7 +390,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Restore a suppressed auto-derived asset (remove it from the removed list).
   app.post("/cases/:id/asset-overrides/assets/:assetId/restore", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     try {
       const ov = await options.assetOverridesStore.restoreAsset(req.params.id, req.params.assetId);
       options.onAssetOverrides?.(req.params.id);
@@ -375,7 +404,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   // Merge a duplicate asset onto a canonical one (#82). Body: { into }. Folds the duplicate's
   // IOC/finding/event links onto the canonical node on the next graph build.
   app.post("/cases/:id/asset-overrides/assets/:assetId/merge", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     const into = typeof req.body?.into === "string" ? req.body.into.trim() : "";
     if (!into) return res.status(400).json({ error: "into is required" });
     try {
@@ -389,7 +419,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Un-merge a duplicate asset (remove it from the merge map).
   app.post("/cases/:id/asset-overrides/assets/:assetId/unmerge", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     try {
       const ov = await options.assetOverridesStore.unmergeAsset(req.params.id, req.params.assetId);
       options.onAssetOverrides?.(req.params.id);
@@ -401,7 +432,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Add a manual link between an asset and an IoC. Body: { asset, ioc }.
   app.post("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     const asset = typeof req.body?.asset === "string" ? req.body.asset.trim() : "";
     const ioc = typeof req.body?.ioc === "string" ? req.body.ioc.trim() : "";
     if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc are required" });
@@ -416,7 +448,8 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
 
   // Suppress (or delete) a link. Query params: ?asset=...&ioc=...
   app.delete("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
-    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    if (!options.assetOverridesStore)
+      return res.status(501).json({ error: "asset overrides not configured" });
     const asset = typeof req.query?.asset === "string" ? req.query.asset : "";
     const ioc = typeof req.query?.ioc === "string" ? req.query.ioc : "";
     if (!asset || !ioc) return res.status(400).json({ error: "asset and ioc query params are required" });
@@ -446,11 +479,16 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
       await ctx.runStateExclusive(caseId, async () => {
         const state = await stateStore.load(caseId);
         result = mergeIocs(state, from, into);
-        await ctx.pushImportCheckpoint(caseId, state, `merge IOC ${result.from.value} -> ${result.into.value}`);
+        await ctx.pushImportCheckpoint(
+          caseId,
+          state,
+          `merge IOC ${result.from.value} -> ${result.into.value}`,
+        );
         await stateStore.save(result.state);
         options.onState?.(result.state);
       });
-      if (options.iocAliasStore && result) await options.iocAliasStore.add(caseId, result.from.value, result.into.id);
+      if (options.iocAliasStore && result)
+        await options.iocAliasStore.add(caseId, result.from.value, result.into.id);
       options.onIocMerge?.(caseId);
       return res.status(200).json({ from: result!.from, into: result!.into });
     } catch (err) {
@@ -489,7 +527,9 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.dwellWindowStore) return res.status(501).json({ error: "dwell windows not configured" });
     try {
       const window = await options.dwellWindowStore.add(req.params.id, {
-        label: req.body?.label, start: req.body?.start, end: req.body?.end,
+        label: req.body?.label,
+        start: req.body?.start,
+        end: req.body?.end,
       });
       options.onDwellWindow?.(req.params.id);
       return res.status(201).json(window);
@@ -502,7 +542,9 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.dwellWindowStore) return res.status(501).json({ error: "dwell windows not configured" });
     try {
       const updated = await options.dwellWindowStore.update(req.params.id, req.params.windowId, {
-        label: req.body?.label, start: req.body?.start, end: req.body?.end,
+        label: req.body?.label,
+        start: req.body?.start,
+        end: req.body?.end,
       });
       if (!updated) return res.status(404).json({ error: "window not found" });
       options.onDwellWindow?.(req.params.id);

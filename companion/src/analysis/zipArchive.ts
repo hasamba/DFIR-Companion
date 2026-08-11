@@ -1,6 +1,11 @@
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
-  zipCryptoDecrypt, verifyZipCryptoCheckByte, parseAesExtra, aesDecrypt, ZipPasswordError, ZipAuthenticationError,
+  zipCryptoDecrypt,
+  verifyZipCryptoCheckByte,
+  parseAesExtra,
+  aesDecrypt,
+  ZipPasswordError,
+  ZipAuthenticationError,
 } from "./zipCrypto.js";
 
 // A tiny, dependency-free ZIP writer/reader. The redacted case export (#54) bundles the
@@ -36,8 +41,8 @@ const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
 const METHOD_DEFLATE = 8;
-const METHOD_AES = 99;          // WinZip AE-x; the real method lives in the 0x9901 extra field
-const FLAG_ENCRYPTED = 0x0001;  // general-purpose bit 0
+const METHOD_AES = 99; // WinZip AE-x; the real method lives in the 0x9901 extra field
+const FLAG_ENCRYPTED = 0x0001; // general-purpose bit 0
 const ZIPCRYPTO_HEADER_LEN = 12;
 const VERSION = 20; // 2.0 — the minimum that supports DEFLATE
 const FLAG_UTF8 = 0x0800; // general-purpose bit 11: filenames are UTF-8
@@ -198,12 +203,18 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
     if (encrypted) {
       const password = opts.password;
       if (password === undefined || password === "") {
-        throw new ZipPasswordError(`zip entry "${name}" is encrypted — a password is required`, "password-required");
+        throw new ZipPasswordError(
+          `zip entry "${name}" is encrypted — a password is required`,
+          "password-required",
+        );
       }
       if (method === METHOD_AES) {
         const params = parseAesExtra(extra);
         if (!params) {
-          throw new ZipPasswordError(`zip entry "${name}" uses AES but has no readable AE header`, "unsupported-encryption");
+          throw new ZipPasswordError(
+            `zip entry "${name}" uses AES but has no readable AE header`,
+            "unsupported-encryption",
+          );
         }
         const { plaintext, macOk } = aesDecrypt(compressed, password, params.strength);
         // Fail closed on the HMAC, for BOTH AE-1 and AE-2. The tag is the only cryptographic
@@ -218,7 +229,7 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
         if (!macOk) {
           throw new ZipAuthenticationError(
             `zip entry "${name}" failed AES authentication — the archive was modified after it was ` +
-            `created (or, once in 65536, the password is wrong in a way the verifier missed)`,
+              `created (or, once in 65536, the password is wrong in a way the verifier missed)`,
           );
         }
         compressed = plaintext;
@@ -250,7 +261,9 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
         data = inflateRawSync(compressed, { maxOutputLength: budget });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
-          throw new Error(`zip entry "${name}" inflates past the ${budget} byte cap for this archive — possible zip bomb`);
+          throw new Error(
+            `zip entry "${name}" inflates past the ${budget} byte cap for this archive — possible zip bomb`,
+          );
         }
         throw err;
       }

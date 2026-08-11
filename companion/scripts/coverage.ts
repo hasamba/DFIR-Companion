@@ -20,14 +20,20 @@ async function main(): Promise<void> {
   const root = casesRoot();
 
   const logText = await readFile(join(root, caseId, "metadata", "captures.jsonl"), "utf8");
-  const captures: CaptureMetadata[] = logText.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const captures: CaptureMetadata[] = logText
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
   const dup = captures.filter((c) => c.isDuplicate).length;
   const uniq = captures.length - dup;
 
   let state: InvestigationState | null = null;
   try {
     state = JSON.parse(await readFile(join(root, caseId, "state", "investigation.json"), "utf8"));
-  } catch { /* none yet */ }
+  } catch {
+    /* none yet */
+  }
 
   console.log(`Case "${caseId}":`);
   console.log(`  total captures:          ${captures.length}`);
@@ -46,14 +52,18 @@ async function main(): Promise<void> {
   const nonDup = captures.filter((c) => !c.isDuplicate).map((c) => c.screenshotFile);
   const analyzed = nonDup.filter((f) => referenced.has(f)).length;
 
-  console.log(`\n  findings=${state.findings.length} iocs=${state.iocs.length} timeline=${state.timeline.length} techniques=${state.mitreTechniques.length}`);
+  console.log(
+    `\n  findings=${state.findings.length} iocs=${state.iocs.length} timeline=${state.timeline.length} techniques=${state.mitreTechniques.length}`,
+  );
   console.log(`\n  COVERAGE (non-duplicate screenshots):`);
   console.log(`    analyzed:              ${analyzed} / ${uniq}`);
   console.log(`    NOT analyzed:          ${uniq - analyzed}`);
   if (uniq - analyzed > 0) {
     console.log(`\n  ${uniq - analyzed} eligible screenshots were never analyzed.`);
     console.log(`  Run:  npm run reanalyze -- ${caseId}        (analyze the gap)`);
-    console.log(`  Or:   npm run reanalyze -- ${caseId} --all --reset   (re-do everything, incl. duplicates)`);
+    console.log(
+      `  Or:   npm run reanalyze -- ${caseId} --all --reset   (re-do everything, incl. duplicates)`,
+    );
   }
 }
 

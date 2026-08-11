@@ -12,7 +12,10 @@ import type { ToolRunner } from "../../src/integrations/tools/toolRunner.js";
 
 // A canned yara config (stdout mode, rules set so runToolAgainstFile doesn't reject).
 function yaraCfg(): Map<ToolId, ToolConfig> {
-  const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara", DFIR_TOOL_YARA_RULES: "/rules/r.yar" })!;
+  const cfg = loadToolConfig("yara", {
+    DFIR_TOOL_YARA_BINARY: "yara",
+    DFIR_TOOL_YARA_RULES: "/rules/r.yar",
+  })!;
   return new Map<ToolId, ToolConfig>([["yara", cfg]]);
 }
 
@@ -27,12 +30,17 @@ async function harness(opts: { withTools?: boolean } = {}) {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const importUndoStore = new ImportUndoStore(store);
   const app = createApp(store, {
-    pipeline, stateStore, importUndoStore,
+    pipeline,
+    stateStore,
+    importUndoStore,
     ...(opts.withTools ? { toolRunner: stubRunner, loadToolConfigs: yaraCfg } : {}),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -69,7 +77,9 @@ describe("external tools routes (#211)", () => {
     expect(r.body.addedEvents).toBeGreaterThan(0);
 
     const state = await request(app).get("/cases/c1/state");
-    expect(state.body.forensicTimeline.some((e: { description: string }) => /YARA: EvilRule/.test(e.description))).toBe(true);
+    expect(
+      state.body.forensicTimeline.some((e: { description: string }) => /YARA: EvilRule/.test(e.description)),
+    ).toBe(true);
   });
 
   it("a manual tool run pushes an undo checkpoint, and undo reverts the import", async () => {
@@ -116,13 +126,20 @@ describe("external tools routes (#211)", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const pipeline = buildRuntimePipeline({
-      provider: undefined, synthesisProvider: undefined, stateStore, store,
+      provider: undefined,
+      synthesisProvider: undefined,
+      stateStore,
+      store,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     // Suricata has no DEFAULT update command (suricata-update is Linux-only) → configure one explicitly.
-    const suricata = loadToolConfig("suricata", { DFIR_TOOL_SURICATA_BINARY: "suricata", DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update" })!;
+    const suricata = loadToolConfig("suricata", {
+      DFIR_TOOL_SURICATA_BINARY: "suricata",
+      DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update",
+    })!;
     const app = createApp(store, {
-      pipeline, stateStore,
+      pipeline,
+      stateStore,
       toolRunner: stubRunner,
       loadToolConfigs: () => new Map<ToolId, ToolConfig>([["suricata", suricata]]),
     });

@@ -16,7 +16,12 @@ const word = (text: string, confidence = 90): OcrWord => ({
 function indexOf(entries: Array<{ file: string; text: string }>): OcrIndex {
   const idx: OcrIndex = {};
   for (const e of entries) {
-    idx[e.file] = { screenshotFile: e.file, text: e.text, ocrAt: "2026-06-29T00:00:00Z", wordCount: e.text.split(" ").length };
+    idx[e.file] = {
+      screenshotFile: e.file,
+      text: e.text,
+      ocrAt: "2026-06-29T00:00:00Z",
+      wordCount: e.text.split(" ").length,
+    };
   }
   return idx;
 }

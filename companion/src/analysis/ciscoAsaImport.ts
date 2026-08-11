@@ -22,7 +22,14 @@
 // siemImport's aggregation + IOC sink.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+import {
+  aggregateEvents,
+  addIoc,
+  cleanIp,
+  oneLine,
+  type MappedEvent,
+  type SiemIoc,
+  type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 
@@ -46,7 +53,11 @@ const ASA_LINE = /%ASA-\d-\d{6}:/;
 // Is this text a Cisco ASA syslog export? True when a meaningful share of the first non-blank
 // lines carry the `%ASA-#-######:` tag.
 export function looksLikeCiscoAsa(text: string): boolean {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 50);
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 50);
   if (!lines.length) return false;
   const hits = lines.filter((l) => ASA_LINE.test(l)).length;
   return hits >= 1 && hits >= lines.length * 0.5;
@@ -65,8 +76,18 @@ function isPrivateIp(ip: string): boolean {
 }
 
 const MONTHS: Record<string, string> = {
-  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  Jan: "01",
+  Feb: "02",
+  Mar: "03",
+  Apr: "04",
+  May: "05",
+  Jun: "06",
+  Jul: "07",
+  Aug: "08",
+  Sep: "09",
+  Oct: "10",
+  Nov: "11",
+  Dec: "12",
 };
 
 // Parse the year-less "MMM DD HH:MM:SS" timestamp into an ISO string at `year`. "" if unparseable.
@@ -82,7 +103,8 @@ function parseAsaTime(ts: string, year: number): string {
 
 // Full line shape: optional `<PRI>` framing, the year-less timestamp, hostname, then the ASA tag
 // and message body.
-const LINE_RE = /^(?:<\d+>)?\s*([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+%ASA-(\d)-(\d{6}):\s*(.*)$/;
+const LINE_RE =
+  /^(?:<\d+>)?\s*([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+%ASA-(\d)-(\d{6}):\s*(.*)$/;
 
 // Any `<zone>:<ip>/<port>` token — the shared shape across "for inside:X/Y to outside:A/B",
 // "src inside:X/Y dst outside:A/B", regardless of the exact phrasing per message id. The FIRST
@@ -92,7 +114,12 @@ const ZONE_IP_PORT = /\b[a-zA-Z][\w-]*:(\d{1,3}(?:\.\d{1,3}){3})\/(\d+)\b/g;
 const DURATION_BYTES = /duration\s+(\d+:\d+:\d+)(?:\s+bytes\s+(\d+))?/i;
 const PROTO_RE = /\b(TCP|UDP|ICMP)\b/i;
 
-interface Flow { srcIp: string; srcPort?: number; dstIp: string; dstPort?: number; }
+interface Flow {
+  srcIp: string;
+  srcPort?: number;
+  dstIp: string;
+  dstPort?: number;
+}
 
 function extractFlow(body: string): Flow | null {
   const matches = [...body.matchAll(ZONE_IP_PORT)];
@@ -102,8 +129,10 @@ function extractFlow(body: string): Flow | null {
   const dstIp = cleanIp(dst[1]);
   if (!srcIp || !dstIp) return null;
   return {
-    srcIp, srcPort: Number(src[2]) || undefined,
-    dstIp, dstPort: Number(dst[2]) || undefined,
+    srcIp,
+    srcPort: Number(src[2]) || undefined,
+    dstIp,
+    dstPort: Number(dst[2]) || undefined,
   };
 }
 
@@ -137,9 +166,19 @@ export function mapCiscoAsaLine(line: string, year: number, sink: Map<string, Si
   const flowStr = flow
     ? ` ${flow.srcIp}${flow.srcPort ? `:${flow.srcPort}` : ""} → ${flow.dstIp}${flow.dstPort ? `:${flow.dstPort}` : ""}`
     : "";
-  const verb = action === "built" ? "Built" : action === "teardown" ? "Teardown" : action === "deny" ? "Denied" : oneLine(body).slice(0, 60);
+  const verb =
+    action === "built"
+      ? "Built"
+      : action === "teardown"
+        ? "Teardown"
+        : action === "deny"
+          ? "Denied"
+          : oneLine(body).slice(0, 60);
   const detail = durMatch ? ` (duration ${durMatch[1]}${durMatch[2] ? `, ${durMatch[2]}b` : ""})` : "";
-  const description = `ASA: ${verb}${proto ? ` ${proto}` : ""} connection${flowStr}${detail} @ ${host}`.slice(0, 600);
+  const description = `ASA: ${verb}${proto ? ` ${proto}` : ""} connection${flowStr}${detail} @ ${host}`.slice(
+    0,
+    600,
+  );
 
   const timestamp = parseAsaTime(tsRaw, year);
   const port = flow?.dstPort && flow.dstPort > 0 && flow.dstPort <= 65535 ? flow.dstPort : undefined;

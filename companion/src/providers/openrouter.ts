@@ -16,7 +16,8 @@ export class OpenRouterProvider extends OpenAIProvider {
   // ignores it server-side — graceful no-op. The final answer still arrives in message.content, so
   // response parsing is unchanged.
   protected override reasoningBody(req: AnalyzeRequest): Record<string, unknown> {
-    const budget = req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS ? Math.floor(req.thinkingTokens) : 0;
+    const budget =
+      req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS ? Math.floor(req.thinkingTokens) : 0;
     return budget > 0 ? { reasoning: { max_tokens: budget } } : {};
   }
 }

@@ -1,9 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { SEVERITY_RANK, demoteBelowSeverity, resolveForensicMinSeverity } from "../../src/analysis/forensicGate.js";
+import {
+  SEVERITY_RANK,
+  demoteBelowSeverity,
+  resolveForensicMinSeverity,
+} from "../../src/analysis/forensicGate.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, severity: ForensicEvent["severity"]): ForensicEvent {
-  return { id, timestamp: "2026-06-01T00:00:00Z", description: id, severity, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+  return {
+    id,
+    timestamp: "2026-06-01T00:00:00Z",
+    description: id,
+    severity,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 describe("SEVERITY_RANK", () => {
@@ -17,8 +29,8 @@ describe("demoteBelowSeverity", () => {
   const events = [ev("info", "Info"), ev("low", "Low"), ev("high", "High")];
   it("with min=Low keeps Low+ and demotes Info", () => {
     const { kept, demoted } = demoteBelowSeverity(events, "Low");
-    expect(kept.map(e => e.id)).toEqual(["low", "high"]);
-    expect(demoted.map(e => e.id)).toEqual(["info"]);
+    expect(kept.map((e) => e.id)).toEqual(["low", "high"]);
+    expect(demoted.map((e) => e.id)).toEqual(["info"]);
   });
   it("with min=Info keeps everything (old behavior)", () => {
     const { kept, demoted } = demoteBelowSeverity(events, "Info");
@@ -27,7 +39,7 @@ describe("demoteBelowSeverity", () => {
   });
   it("with min=Medium demotes Info and Low", () => {
     const { demoted } = demoteBelowSeverity(events, "Medium");
-    expect(demoted.map(e => e.id).sort()).toEqual(["info", "low"]);
+    expect(demoted.map((e) => e.id).sort()).toEqual(["info", "low"]);
   });
 });
 

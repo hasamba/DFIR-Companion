@@ -29,7 +29,8 @@ beforeEach(async () => {
   const store = new CaseStore(root);
   setServerLogger(createConsoleLogger("info"));
   app = createApp(store, {});
-  for (const k of ["DFIR_IRIS_URL", "DFIR_IRIS_KEY", "DFIR_VT_KEY", "DFIR_NSRL_DB", "DFIR_NSRL_FILE"]) delete process.env[k];
+  for (const k of ["DFIR_IRIS_URL", "DFIR_IRIS_KEY", "DFIR_VT_KEY", "DFIR_NSRL_DB", "DFIR_NSRL_FILE"])
+    delete process.env[k];
 });
 
 afterEach(async () => {
@@ -68,7 +69,11 @@ describe("/setup/status", () => {
     expect(before.body.enrichment.virustotal).toBe(false);
 
     // Save + reload IRIS + a VT key, then re-check — status reflects the live env (no restart).
-    await writeFile(envPath, "DFIR_IRIS_URL=https://iris.example\nDFIR_IRIS_KEY=abc\nDFIR_VT_KEY=zzz\n", "utf8");
+    await writeFile(
+      envPath,
+      "DFIR_IRIS_URL=https://iris.example\nDFIR_IRIS_KEY=abc\nDFIR_VT_KEY=zzz\n",
+      "utf8",
+    );
     await request(app).post("/settings/reload").send({ prefix: "DFIR_IRIS_" });
     await request(app).post("/settings/reload").send({ prefix: "DFIR_VT_" });
 

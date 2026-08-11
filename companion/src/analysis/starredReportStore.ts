@@ -9,9 +9,9 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 // Deliberately NOT in SNAPSHOT_STATE_FILES — nothing mutates this file during synthesis/import,
 // so the rollback snapshot adds no protection.
 export interface SavedStarredReport {
-  markdown: string;     // the report as raw Markdown
-  savedAt: string;      // ISO timestamp of the save
-  eventCount: number;   // starred events the report was generated from (0 when unknown)
+  markdown: string; // the report as raw Markdown
+  savedAt: string; // ISO timestamp of the save
+  eventCount: number; // starred events the report was generated from (0 when unknown)
 }
 
 export class StarredReportStore {
@@ -31,7 +31,7 @@ export class StarredReportStore {
         eventCount: Number(raw.eventCount) || 0,
       };
     } catch {
-      return null;   // absent or malformed: treat as nothing saved rather than break the case
+      return null; // absent or malformed: treat as nothing saved rather than break the case
     }
   }
 

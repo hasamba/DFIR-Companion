@@ -45,13 +45,21 @@ describe("parseSlashCommand", () => {
       expect.objectContaining({ name: "finding", tokens: ["case-42", "f3"] }),
     );
     expect(parseSlashCommand("/dfir ask case-1 what was the initial access vector?").tokens).toEqual([
-      "case-1", "what", "was", "the", "initial", "access", "vector?",
+      "case-1",
+      "what",
+      "was",
+      "the",
+      "initial",
+      "access",
+      "vector?",
     ]);
   });
 
   it("tolerates a bare command, a leading slash, and the echoed trigger word", () => {
     for (const text of ["findings c1", "/findings c1", "dfir findings c1", "/dfir findings c1"]) {
-      expect(parseSlashCommand(text), text).toEqual(expect.objectContaining({ name: "findings", tokens: ["c1"] }));
+      expect(parseSlashCommand(text), text).toEqual(
+        expect.objectContaining({ name: "findings", tokens: ["c1"] }),
+      );
     }
   });
 
@@ -65,7 +73,18 @@ describe("parseSlashCommand", () => {
   });
 
   it("recognizes every command name", () => {
-    for (const name of ["ask", "findings", "finding", "iocs", "hunt", "status", "synthesize", "bind", "unbind", "help"]) {
+    for (const name of [
+      "ask",
+      "findings",
+      "finding",
+      "iocs",
+      "hunt",
+      "status",
+      "synthesize",
+      "bind",
+      "unbind",
+      "help",
+    ]) {
       expect(parseSlashCommand(`/dfir ${name} c1`).name, name).toBe(name);
     }
   });
@@ -157,7 +176,12 @@ describe("resolveCommand", () => {
 });
 
 describe("command formatters", () => {
-  const finding = (id: string, severity: Finding["severity"], title: string, extra: Partial<Finding> = {}): Finding => ({
+  const finding = (
+    id: string,
+    severity: Finding["severity"],
+    title: string,
+    extra: Partial<Finding> = {},
+  ): Finding => ({
     id,
     severity,
     title,
@@ -173,7 +197,11 @@ describe("command formatters", () => {
   });
 
   const ioc = (id: string, value: string, enrichments: IocEnrichment[] = []): IOC => ({
-    id, type: "ip", value, firstSeen: "2026-07-01T00:00:00Z", enrichments,
+    id,
+    type: "ip",
+    value,
+    firstSeen: "2026-07-01T00:00:00Z",
+    enrichments,
   });
 
   const state: InvestigationState = {
@@ -184,9 +212,19 @@ describe("command formatters", () => {
       finding("f3", "Medium", "Suspicious PowerShell", { confidence: 55, status: "dismissed" }),
     ],
     iocs: [
-      ioc("i1", "5.6.7.8", [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "2026-07-01T00:00:00Z", detections: 47, total: 60 }]),
+      ioc("i1", "5.6.7.8", [
+        {
+          source: "VirusTotal",
+          verdict: "malicious",
+          fetchedAt: "2026-07-01T00:00:00Z",
+          detections: 47,
+          total: 60,
+        },
+      ]),
       ioc("i2", "evil.com", [{ source: "MISP", verdict: "suspicious", fetchedAt: "2026-07-01T00:00:00Z" }]),
-      ioc("i3", "clean.com", [{ source: "VirusTotal", verdict: "harmless", fetchedAt: "2026-07-01T00:00:00Z" }]),
+      ioc("i3", "clean.com", [
+        { source: "VirusTotal", verdict: "harmless", fetchedAt: "2026-07-01T00:00:00Z" },
+      ]),
     ],
   };
 
@@ -214,7 +252,7 @@ describe("command formatters", () => {
     expect(formatFindingCommand(state, "f99").title).toMatch(/not found/);
   });
 
-  it("formatFindingCommand asks for an id instead of reporting \"not found\" for a blank one", () => {
+  it('formatFindingCommand asks for an id instead of reporting "not found" for a blank one', () => {
     expect(formatFindingCommand(state, "").title).toMatch(/which finding/i);
   });
 
@@ -293,20 +331,37 @@ describe("access control", () => {
 
 describe("isCaseAccessAllowed", () => {
   it("is open when no allowlist is configured", () => {
-    expect(isCaseAccessAllowed({ userId: "u", caseId: "any", boundCaseId: "other", actionAllowlist: [] })).toBe(true);
-    expect(isCaseAccessAllowed({ userId: "u", caseId: "any", boundCaseId: undefined, actionAllowlist: undefined })).toBe(true);
+    expect(
+      isCaseAccessAllowed({ userId: "u", caseId: "any", boundCaseId: "other", actionAllowlist: [] }),
+    ).toBe(true);
+    expect(
+      isCaseAccessAllowed({ userId: "u", caseId: "any", boundCaseId: undefined, actionAllowlist: undefined }),
+    ).toBe(true);
   });
 
   it("lets an allowlisted responder reach any case", () => {
-    expect(isCaseAccessAllowed({ userId: "admin", caseId: "unrelated", boundCaseId: "c1", actionAllowlist: ["admin"] })).toBe(true);
+    expect(
+      isCaseAccessAllowed({
+        userId: "admin",
+        caseId: "unrelated",
+        boundCaseId: "c1",
+        actionAllowlist: ["admin"],
+      }),
+    ).toBe(true);
   });
 
   // Without this, any chat member could read any case on the server just by naming it.
   it("confines everyone else to the channel's bound case", () => {
     const allowlist = ["admin"];
-    expect(isCaseAccessAllowed({ userId: "u", caseId: "c1", boundCaseId: "c1", actionAllowlist: allowlist })).toBe(true);
-    expect(isCaseAccessAllowed({ userId: "u", caseId: "secret", boundCaseId: "c1", actionAllowlist: allowlist })).toBe(false);
-    expect(isCaseAccessAllowed({ userId: "u", caseId: "c1", boundCaseId: undefined, actionAllowlist: allowlist })).toBe(false);
+    expect(
+      isCaseAccessAllowed({ userId: "u", caseId: "c1", boundCaseId: "c1", actionAllowlist: allowlist }),
+    ).toBe(true);
+    expect(
+      isCaseAccessAllowed({ userId: "u", caseId: "secret", boundCaseId: "c1", actionAllowlist: allowlist }),
+    ).toBe(false);
+    expect(
+      isCaseAccessAllowed({ userId: "u", caseId: "c1", boundCaseId: undefined, actionAllowlist: allowlist }),
+    ).toBe(false);
   });
 });
 
@@ -314,31 +369,66 @@ describe("verifySlackSignature", () => {
   const secret = "shhhh";
   // The base string Slack signs is `v0:<timestamp>:<rawBody>`, HMAC-SHA256, hex, prefixed "v0=".
   const ts = "1700000000";
-  const rawBody = "token=abc&team_id=T1&channel_id=C1&user_id=U1&text=findings%20case-1&response_url=https%3A%2F%2Fhooks.slack.com%2Fx";
+  const rawBody =
+    "token=abc&team_id=T1&channel_id=C1&user_id=U1&text=findings%20case-1&response_url=https%3A%2F%2Fhooks.slack.com%2Fx";
   const validSig = "v0=" + createHmac("sha256", secret).update(`v0:${ts}:${rawBody}`).digest("hex");
 
   it("accepts a valid signature within the replay window", () => {
-    expect(verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) }).ok).toBe(true);
+    expect(
+      verifySlackSignature({
+        signingSecret: secret,
+        timestamp: ts,
+        rawBody,
+        signature: validSig,
+        now: () => Number(ts),
+      }).ok,
+    ).toBe(true);
   });
 
   it("rejects a tampered body (signature mismatch)", () => {
-    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody: rawBody + "tampered", signature: validSig, now: () => Number(ts) });
+    const r = verifySlackSignature({
+      signingSecret: secret,
+      timestamp: ts,
+      rawBody: rawBody + "tampered",
+      signature: validSig,
+      now: () => Number(ts),
+    });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/mismatch/);
   });
 
   it("rejects a stale timestamp (outside the 5-minute replay window)", () => {
-    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) + 600 });
+    const r = verifySlackSignature({
+      signingSecret: secret,
+      timestamp: ts,
+      rawBody,
+      signature: validSig,
+      now: () => Number(ts) + 600,
+    });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/replay/);
   });
 
   it("rejects when no signing secret is configured", () => {
-    expect(verifySlackSignature({ signingSecret: "", timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) }).ok).toBe(false);
+    expect(
+      verifySlackSignature({
+        signingSecret: "",
+        timestamp: ts,
+        rawBody,
+        signature: validSig,
+        now: () => Number(ts),
+      }).ok,
+    ).toBe(false);
   });
 
   it("rejects a signature of the wrong length without throwing", () => {
-    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: "v0=short", now: () => Number(ts) });
+    const r = verifySlackSignature({
+      signingSecret: secret,
+      timestamp: ts,
+      rawBody,
+      signature: "v0=short",
+      now: () => Number(ts),
+    });
     expect(r.ok).toBe(false);
   });
 });
@@ -408,7 +498,9 @@ describe("isAllowedResponseUrl", () => {
   });
 
   it("honors an operator-configured extra host (self-hosted Mattermost)", () => {
-    expect(isAllowedResponseUrl("slack", "https://chat.corp.example/hooks/x", ["chat.corp.example"])).toBe(true);
+    expect(isAllowedResponseUrl("slack", "https://chat.corp.example/hooks/x", ["chat.corp.example"])).toBe(
+      true,
+    );
   });
 
   it("parseHostList trims and drops empties", () => {

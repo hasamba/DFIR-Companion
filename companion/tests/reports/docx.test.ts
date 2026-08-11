@@ -39,10 +39,16 @@ describe("renderDocxReport", () => {
     state.lastSummary = "Host compromised via phishing.";
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
     state.findings.push({
-      id: "f1", severity: "High", title: "Beacon callout",
+      id: "f1",
+      severity: "High",
+      title: "Beacon callout",
       description: "Attacker C2 callback observed.",
-      relatedIocs: ["i1"], mitreTechniques: [], sourceScreenshots: [],
-      firstSeen: "2026-05-20T09:00:00Z", lastUpdated: "2026-05-20T09:00:00Z", status: "open",
+      relatedIocs: ["i1"],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-20T09:00:00Z",
+      lastUpdated: "2026-05-20T09:00:00Z",
+      status: "open",
     });
 
     const buf = await renderDocxReport(state);
@@ -77,10 +83,16 @@ describe("renderDocxReport", () => {
     // regression test that confirms angle-bracket payloads land as text, not as elements.
     const state = emptyState("c1");
     state.findings.push({
-      id: "f1", severity: "High", title: "XSS attempt",
+      id: "f1",
+      severity: "High",
+      title: "XSS attempt",
       description: "<script>alert(1)</script>",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [],
-      firstSeen: "", lastUpdated: "", status: "open",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
     });
     const buf = await renderDocxReport(state);
     const xml = await unzipDocumentXml(buf);
@@ -267,8 +279,8 @@ describe("image embedding", () => {
     // to the alt text — the company name still shows on the title page, no broken file.
     const md = "![Acme Inc. logo](data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAAA=)";
     const xml = await packAndUnzip(md);
-    expect(xml).toContain("Acme Inc. logo");                  // alt text rendered as text
-    expect(xml).not.toContain("<w:drawing>");                 // no embedded drawing
+    expect(xml).toContain("Acme Inc. logo"); // alt text rendered as text
+    expect(xml).not.toContain("<w:drawing>"); // no embedded drawing
   });
 
   it("falls back to alt text for non-data URIs and malformed data URIs", async () => {

@@ -31,7 +31,9 @@ let app: ReturnType<typeof createApp>;
 async function pngBase64(): Promise<string> {
   const buf = await sharp({
     create: { width: 16, height: 16, channels: 3, background: { r: 10, g: 20, b: 30 } },
-  }).png().toBuffer();
+  })
+    .png()
+    .toBuffer();
   return buf.toString("base64");
 }
 
@@ -41,7 +43,10 @@ async function pngBase64(): Promise<string> {
 // verifiable as two distinct steps.
 class TextModelStub implements AIProvider {
   readonly model = "mock-model";
-  constructor(readonly name: string, private readonly canned: { extract: string; synth: string }) {}
+  constructor(
+    readonly name: string,
+    private readonly canned: { extract: string; synth: string },
+  ) {}
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     const isExtraction = req.systemPrompt === getCsvPrompt() || req.systemPrompt === getLogPrompt();
     return { rawText: isExtraction ? this.canned.extract : this.canned.synth };
@@ -84,7 +89,9 @@ describe("HTTP server", () => {
 
   it("POST /cases returns 409 for a duplicate caseId", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "A", investigator: "y", aiProvider: null });
-    const res = await request(app).post("/cases").send({ caseId: "c1", name: "A again", investigator: "y", aiProvider: null });
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: "c1", name: "A again", investigator: "y", aiProvider: null });
     expect(res.status).toBe(409);
   });
 
@@ -107,31 +114,37 @@ describe("HTTP server", () => {
   });
 
   it("POST /cases rejects path-like case IDs before touching storage paths", async () => {
-    const res = await request(app).post("/cases").send({ caseId: "..\\outside", name: "A", investigator: "y", aiProvider: null });
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: "..\\outside", name: "A", investigator: "y", aiProvider: null });
     expect(res.status).toBe(400);
   });
 
   it("GET /cases lists created cases", async () => {
-    await request(app).post("/cases").send({ caseId: "c1", name: "Incident A", investigator: "y", aiProvider: null });
-    await request(app).post("/cases").send({ caseId: "c2", name: "Incident B", investigator: "y", aiProvider: null });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "c1", name: "Incident A", investigator: "y", aiProvider: null });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "c2", name: "Incident B", investigator: "y", aiProvider: null });
     const res = await request(app).get("/cases");
     expect(res.status).toBe(200);
     expect(res.body.map((c: { caseId: string }) => c.caseId).sort()).toEqual(["c1", "c2"]);
   });
 
   it("POST /captures ingests a capture and returns metadata", async () => {
-    await request(app)
-      .post("/cases")
-      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
-    const res = await request(app).post("/captures").send({
-      caseId: "c1",
-      timestamp: "2026-05-28T10:00:00.000Z",
-      url: "https://velociraptor.local/hunts",
-      tabTitle: "Hunts",
-      triggerType: "timer",
-      imageBase64: await pngBase64(),
-    });
+    const res = await request(app)
+      .post("/captures")
+      .send({
+        caseId: "c1",
+        timestamp: "2026-05-28T10:00:00.000Z",
+        url: "https://velociraptor.local/hunts",
+        tabTitle: "Hunts",
+        triggerType: "timer",
+        imageBase64: await pngBase64(),
+      });
     expect(res.status).toBe(201);
     expect(res.body.sequenceNumber).toBe(1);
     // pngBase64() posts PNG bytes, so the stored name says .png (#425).
@@ -146,29 +159,49 @@ describe("HTTP server", () => {
   it("POST /captures returns 400 (not 500) when the bytes are not an image", async () => {
     // Junk bytes are the CALLER's mistake, so this must not surface as a server fault.
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    const res = await request(app).post("/captures").send({
-      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "timer", imageBase64: Buffer.from("not an image at all").toString("base64"),
-    });
+    const res = await request(app)
+      .post("/captures")
+      .send({
+        caseId: "c1",
+        timestamp: "2026-05-28T10:00:00.000Z",
+        url: "u",
+        tabTitle: "t",
+        triggerType: "timer",
+        imageBase64: Buffer.from("not an image at all").toString("base64"),
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/not a recognized image format/);
   });
 
   it("POST /captures returns 404 for a case that does not exist", async () => {
-    const res = await request(app).post("/captures").send({
-      caseId: "ghost", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "timer", imageBase64: await pngBase64(),
-    });
+    const res = await request(app)
+      .post("/captures")
+      .send({
+        caseId: "ghost",
+        timestamp: "2026-05-28T10:00:00.000Z",
+        url: "u",
+        tabTitle: "t",
+        triggerType: "timer",
+        imageBase64: await pngBase64(),
+      });
     expect(res.status).toBe(404);
   });
 
   it("POST /captures returns 423 for an archived case", async () => {
-    await request(app).post("/cases").send({ caseId: "c-arch", name: "n", investigator: "i", aiProvider: null });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "c-arch", name: "n", investigator: "i", aiProvider: null });
     await request(app).post("/cases/c-arch/archive").send({ removeFromList: true });
-    const res = await request(app).post("/captures").send({
-      caseId: "c-arch", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "timer", imageBase64: await pngBase64(),
-    });
+    const res = await request(app)
+      .post("/captures")
+      .send({
+        caseId: "c-arch",
+        timestamp: "2026-05-28T10:00:00.000Z",
+        url: "u",
+        tabTitle: "t",
+        triggerType: "timer",
+        imageBase64: await pngBase64(),
+      });
     expect(res.status).toBe(423);
   });
 
@@ -179,25 +212,40 @@ describe("HTTP server", () => {
     const calls: string[] = [];
     const provider: CustomerExposureProvider = {
       name: "MockExposure",
-      lookupDomain: async (domain) => { calls.push(`domain:${domain}`); return []; },
+      lookupDomain: async (domain) => {
+        calls.push(`domain:${domain}`);
+        return [];
+      },
       lookupEmail: async (email) => {
         calls.push(`email:${email}`);
         return [{ provider: "MockExposure", targetType: "email", target: email, email, breach: "Breach" }];
       },
     };
-    const app = createApp(store, { stateStore, customerExposureProviders: [provider], customerExposureDelayMs: 0 });
+    const app = createApp(store, {
+      stateStore,
+      customerExposureProviders: [provider],
+      customerExposureDelayMs: 0,
+    });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save({
       ...emptyState("c1"),
-      forensicTimeline: [{
-        id: "e1", timestamp: "2026-06-01T00:00:00Z",
-        description: "alice@example.com received a phish from attacker@evil.test",
-        severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
-      }],
+      forensicTimeline: [
+        {
+          id: "e1",
+          timestamp: "2026-06-01T00:00:00Z",
+          description: "alice@example.com received a phish from attacker@evil.test",
+          severity: "Medium",
+          mitreTechniques: [],
+          relatedFindingIds: [],
+          sourceScreenshots: [],
+        },
+      ],
       iocs: [{ id: "i1", type: "domain", value: "evil.test", firstSeen: "2026-06-01T00:00:00Z" }],
     });
 
-    const saved = await request(app).put("/cases/c1/customer-exposure/targets").send({ domains: "example.com", emails: "" });
+    const saved = await request(app)
+      .put("/cases/c1/customer-exposure/targets")
+      .send({ domains: "example.com", emails: "" });
     expect(saved.status).toBe(200);
     expect(saved.body.targets).toEqual({ domains: ["example.com"], emails: [] });
 
@@ -215,21 +263,34 @@ describe("HTTP server", () => {
     const calls: string[] = [];
     const mk = (name: string): CustomerExposureProvider => ({
       name,
-      lookupDomain: async (d) => { calls.push(`${name}:${d}`); return []; },
+      lookupDomain: async (d) => {
+        calls.push(`${name}:${d}`);
+        return [];
+      },
       lookupEmail: async () => [],
     });
-    const app = createApp(store, { stateStore, customerExposureProviders: [mk("LeakCheck"), mk("Shodan")], customerExposureDelayMs: 0 });
+    const app = createApp(store, {
+      stateStore,
+      customerExposureProviders: [mk("LeakCheck"), mk("Shodan")],
+      customerExposureDelayMs: 0,
+    });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(emptyState("c1"));
-    await request(app).put("/cases/c1/customer-exposure/targets").send({ domains: "example.com", emails: "" });
+    await request(app)
+      .put("/cases/c1/customer-exposure/targets")
+      .send({ domains: "example.com", emails: "" });
 
     // Body override: run only Shodan this time.
     calls.length = 0;
-    await request(app).post("/cases/c1/customer-exposure/check").send({ providers: ["Shodan"] });
+    await request(app)
+      .post("/cases/c1/customer-exposure/check")
+      .send({ providers: ["Shodan"] });
     expect(calls).toEqual(["Shodan:example.com"]);
 
     // Persisted selection: save providers=[LeakCheck]; a check with no override uses it.
-    await request(app).put("/cases/c1/customer-exposure/targets").send({ domains: "example.com", emails: "", providers: ["LeakCheck"] });
+    await request(app)
+      .put("/cases/c1/customer-exposure/targets")
+      .send({ domains: "example.com", emails: "", providers: ["LeakCheck"] });
     calls.length = 0;
     await request(app).post("/cases/c1/customer-exposure/check").send({});
     expect(calls).toEqual(["LeakCheck:example.com"]);
@@ -249,156 +310,301 @@ describe("HTTP server", () => {
 });
 
 describe("server analysis wiring", () => {
-  it("flushes a window on a navigation trigger and updates state", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-an-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "Hit", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open" }],
-        iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "n", summary: "s",
-      })),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const app = createApp(store, { pipeline, windowSize: 10 });
+  it(
+    "flushes a window on a navigation trigger and updates state",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-an-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider(
+          "mock",
+          JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "Hit",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "n",
+            summary: "s",
+          }),
+        ),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const app = createApp(store, { pipeline, windowSize: 10 });
 
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
-    await request(app).post("/captures").send({
-      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "navigation", imageBase64: await pngBase64(),
-    });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
+      await request(app)
+        .post("/captures")
+        .send({
+          caseId: "c1",
+          timestamp: "2026-05-28T10:00:00.000Z",
+          url: "u",
+          tabTitle: "t",
+          triggerType: "navigation",
+          imageBase64: await pngBase64(),
+        });
 
-    // analysis runs async after the response; poll the state briefly.
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.findings).toHaveLength(1);
-  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
+      // analysis runs async after the response; poll the state briefly.
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.findings).toHaveLength(1);
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one poll budget, doubled to leave room for setup + assertions
 
-  it("periodic flush analyzes a lone buffered capture that never fills a window", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-flush-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "Hit", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open" }],
-        iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "n", summary: "s",
-      })),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    // windowSize 10 so a single capture never fills a window; a short flush interval is the
-    // only thing that can drain it. `timer` is NOT a SIGNIFICANT trigger, so it stays buffered.
-    const app = createApp(store, { pipeline, windowSize: 10, flushIntervalMs: 40 });
+  it(
+    "periodic flush analyzes a lone buffered capture that never fills a window",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-flush-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider(
+          "mock",
+          JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "Hit",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "n",
+            summary: "s",
+          }),
+        ),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      // windowSize 10 so a single capture never fills a window; a short flush interval is the
+      // only thing that can drain it. `timer` is NOT a SIGNIFICANT trigger, so it stays buffered.
+      const app = createApp(store, { pipeline, windowSize: 10, flushIntervalMs: 40 });
 
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
-    await request(app).post("/captures").send({
-      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "timer", imageBase64: await pngBase64(),
-    });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
+      await request(app)
+        .post("/captures")
+        .send({
+          caseId: "c1",
+          timestamp: "2026-05-28T10:00:00.000Z",
+          url: "u",
+          tabTitle: "t",
+          triggerType: "timer",
+          imageBase64: await pngBase64(),
+        });
 
-    // No navigation/tab_switch and the window is far from full, so analysis only happens once
-    // the periodic sweep fires. Poll the state until the finding lands.
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.findings).toHaveLength(1);
-  }, POLL_TIMEOUT_MS * 2);
+      // No navigation/tab_switch and the window is far from full, so analysis only happens once
+      // the periodic sweep fires. Poll the state until the finding lands.
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.findings).toHaveLength(1);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-  it("auto-synthesizes (debounced) after a capture window when enabled", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-autosynth-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    // Per-window extraction returns a forensic event but NO findings; synthesis
-    // turns the event into a finding — so a finding only appears if auto-synth ran.
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("extract", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "reviewed", summary: "",
-        forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened",
-          severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
-      })),
-      synthesisProvider: new MockProvider("synth", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "synth finding", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] }],
-        iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const app = createApp(store, { pipeline, windowSize: 10, autoSynthesize: true, autoSynthesizeDebounceMs: 10 });
+  it(
+    "auto-synthesizes (debounced) after a capture window when enabled",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-autosynth-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      // Per-window extraction returns a forensic event but NO findings; synthesis
+      // turns the event into a finding — so a finding only appears if auto-synth ran.
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider(
+          "extract",
+          JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "reviewed",
+            summary: "",
+            forensicEvents: [
+              {
+                id: "e1",
+                timestamp: "2026-05-20T09:00:00Z",
+                description: "phish opened",
+                severity: "High",
+                mitreTechniques: [],
+                relatedFindingIds: [],
+              },
+            ],
+          }),
+        ),
+        synthesisProvider: new MockProvider(
+          "synth",
+          JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "synth finding",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+                relatedEventIds: ["e1"],
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "path",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
+        ),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const app = createApp(store, {
+        pipeline,
+        windowSize: 10,
+        autoSynthesize: true,
+        autoSynthesizeDebounceMs: 10,
+      });
 
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
-    await request(app).post("/captures").send({
-      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "navigation", imageBase64: await pngBase64(),
-    });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
+      await request(app)
+        .post("/captures")
+        .send({
+          caseId: "c1",
+          timestamp: "2026-05-28T10:00:00.000Z",
+          url: "u",
+          tabTitle: "t",
+          triggerType: "navigation",
+          imageBase64: await pngBase64(),
+        });
 
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.forensicTimeline.length).toBe(1);          // extraction ran
-    expect(state.findings).toHaveLength(1);                  // auto-synthesis ran
-    expect(state.findings[0].title).toBe("synth finding");
-    expect(state.attackerPath).toBe("path");
-  }, POLL_TIMEOUT_MS * 2);
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.forensicTimeline.length).toBe(1); // extraction ran
+      expect(state.findings).toHaveLength(1); // auto-synthesis ran
+      expect(state.findings[0].title).toBe("synth finding");
+      expect(state.attackerPath).toBe("path");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-  it("imports a CSV: persists it as evidence, extracts events, then synthesizes findings", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-csv-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("vision", "{}"), // screenshots only — unused by this test
-      // The text model serves both legs: extraction (per CSV batch) returns a forensic event but no
-      // findings… and synthesis turns the timeline into a finding.
-      synthesisProvider: new TextModelStub("text", {
-        extract: JSON.stringify({
-          findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-          timelineNote: "read rows", summary: "",
-          forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "process from CSV row",
-            severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
+  it(
+    "imports a CSV: persists it as evidence, extracts events, then synthesizes findings",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-csv-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider("vision", "{}"), // screenshots only — unused by this test
+        // The text model serves both legs: extraction (per CSV batch) returns a forensic event but no
+        // findings… and synthesis turns the timeline into a finding.
+        synthesisProvider: new TextModelStub("text", {
+          extract: JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "read rows",
+            summary: "",
+            forensicEvents: [
+              {
+                id: "e1",
+                timestamp: "2026-05-20T09:00:00Z",
+                description: "process from CSV row",
+                severity: "Medium",
+                mitreTechniques: [],
+                relatedFindingIds: [],
+              },
+            ], // Medium: isolates this test from the high-severity backfill
+          }),
+          synth: JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "finding from CSV",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "path",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
         }),
-        synth: JSON.stringify({
-          findings: [{ id: "f1", severity: "High", title: "finding from CSV", description: "d",
-            relatedIocs: [], mitreTechniques: [], status: "open" }],
-          iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
-          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-        }),
-      }),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const csvApp = createApp(store, { pipeline, stateStore });
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const csvApp = createApp(store, { pipeline, stateStore });
 
-    await request(csvApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(csvApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
-    const csv = "Timestamp,Process,PID\n2026-05-20T09:00:00Z,mimikatz.exe,1234\n2026-05-20T09:01:00Z,rubeus.exe,5678\n";
-    const res = await request(csvApp).post("/cases/c1/import-csv").send({ filename: "results.csv", csv });
+      await request(csvApp)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(csvApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
+      const csv =
+        "Timestamp,Process,PID\n2026-05-20T09:00:00Z,mimikatz.exe,1234\n2026-05-20T09:01:00Z,rubeus.exe,5678\n";
+      const res = await request(csvApp).post("/cases/c1/import-csv").send({ filename: "results.csv", csv });
 
-    expect(res.status).toBe(202);
-    expect(res.body.rows).toBe(2);
+      expect(res.status).toBe(202);
+      expect(res.body.rows).toBe(2);
 
-    // Evidence-first: the raw CSV + an audit line are written before analysis.
-    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
-    expect(auditLog.trim().split("\n")).toHaveLength(1);
-    const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
-    expect(stored).toBe(csv);
+      // Evidence-first: the raw CSV + an audit line are written before analysis.
+      const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+      expect(auditLog.trim().split("\n")).toHaveLength(1);
+      const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
+      expect(stored).toBe(csv);
 
-    // Background: extraction then synthesis populate the state.
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1); // extracted from rows
-    expect(state.findings).toHaveLength(1);                          // synthesized
-    expect(state.findings[0].title).toBe("finding from CSV");
-  }, POLL_TIMEOUT_MS * 2);
+      // Background: extraction then synthesis populate the state.
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1); // extracted from rows
+      expect(state.findings).toHaveLength(1); // synthesized
+      expect(state.findings[0].title).toBe("finding from CSV");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("serves screenshot + CSV evidence by filename and blocks traversal/invalid names", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-ev-"));
     const store = new CaseStore(root);
     const evApp = createApp(store);
-    await request(evApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await request(evApp)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
     // Screenshot evidence → served with an image content-type.
     const png = Buffer.from(await pngBase64(), "base64");
@@ -416,53 +622,90 @@ describe("server analysis wiring", () => {
 
     expect((await request(evApp).get("/cases/c1/evidence/missing.png")).status).toBe(404);
     expect((await request(evApp).get("/cases/c1/evidence/bad@name.png")).status).toBe(400); // bad charset
-    expect((await request(evApp).get("/cases/c1/evidence/a..b.png")).status).toBe(400);     // traversal guard
+    expect((await request(evApp).get("/cases/c1/evidence/a..b.png")).status).toBe(400); // traversal guard
   });
 
-  it("imports a generic log file: persists as evidence, extracts events, then synthesizes findings", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-log-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("vision", "{}"), // screenshots only — unused by this test
-      synthesisProvider: new TextModelStub("text", {
-        extract: JSON.stringify({
-          findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-          timelineNote: "read lines", summary: "",
-          forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "event from log line",
-            severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
+  it(
+    "imports a generic log file: persists as evidence, extracts events, then synthesizes findings",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-log-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider("vision", "{}"), // screenshots only — unused by this test
+        synthesisProvider: new TextModelStub("text", {
+          extract: JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "read lines",
+            summary: "",
+            forensicEvents: [
+              {
+                id: "e1",
+                timestamp: "2026-05-28T09:00:00Z",
+                description: "event from log line",
+                severity: "Medium",
+                mitreTechniques: [],
+                relatedFindingIds: [],
+              },
+            ], // Medium: isolates this test from the high-severity backfill
+          }),
+          synth: JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "finding from log",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "path",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
         }),
-        synth: JSON.stringify({
-          findings: [{ id: "f1", severity: "High", title: "finding from log", description: "d",
-            relatedIocs: [], mitreTechniques: [], status: "open" }],
-          iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
-          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-        }),
-      }),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const logApp = createApp(store, { pipeline, stateStore });
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const logApp = createApp(store, { pipeline, stateStore });
 
-    await request(logApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(logApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
-    const log = "May 28 09:00:01 host sshd[1]: Failed password for root from 10.0.0.5\nMay 28 09:00:02 host sshd[2]: Accepted password for admin from 10.0.0.5\n";
-    const res = await request(logApp).post("/cases/c1/import-log").send({ filename: "auth.log", text: log });
+      await request(logApp)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(logApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
+      const log =
+        "May 28 09:00:01 host sshd[1]: Failed password for root from 10.0.0.5\nMay 28 09:00:02 host sshd[2]: Accepted password for admin from 10.0.0.5\n";
+      const res = await request(logApp)
+        .post("/cases/c1/import-log")
+        .send({ filename: "auth.log", text: log });
 
-    expect(res.status).toBe(202);
-    expect(res.body.lines).toBe(2);
+      expect(res.status).toBe(202);
+      expect(res.body.lines).toBe(2);
 
-    // Evidence-first: raw file + audit line written before analysis.
-    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
-    expect(auditLog.trim().split("\n")).toHaveLength(1);
-    const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
-    expect(stored).toBe(log);
+      // Evidence-first: raw file + audit line written before analysis.
+      const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+      expect(auditLog.trim().split("\n")).toHaveLength(1);
+      const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
+      expect(stored).toBe(log);
 
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1);
-    expect(state.findings).toHaveLength(1);
-    expect(state.findings[0].title).toBe("finding from log");
-  }, POLL_TIMEOUT_MS * 2);
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1);
+      expect(state.findings).toHaveLength(1);
+      expect(state.findings[0].title).toBe("finding from log");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("rejects a log import with empty text (no non-empty lines)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-log-empty-"));
@@ -474,60 +717,106 @@ describe("server analysis wiring", () => {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const emptyApp = createApp(store, { pipeline, stateStore });
-    await request(emptyApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(emptyApp)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
 
     // text empty string → 400 from the early guard
     const res1 = await request(emptyApp).post("/cases/c1/import-log").send({ filename: "x.log", text: "" });
     expect(res1.status).toBe(400);
 
     // text non-empty but all-whitespace lines → 400 from the parser guard
-    const res2 = await request(emptyApp).post("/cases/c1/import-log").send({ filename: "x.log", text: "   \n   \n" });
+    const res2 = await request(emptyApp)
+      .post("/cases/c1/import-log")
+      .send({ filename: "x.log", text: "   \n   \n" });
     expect(res2.status).toBe(400);
   });
 
-  it("imports a THOR JSON report: drops info/lifecycle noise, maps findings to the timeline, then synthesizes", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-thor-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      // No per-finding AI extraction (THOR mapping is deterministic); synthesis still runs.
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [{ id: "f1", severity: "Critical", title: "Mimikatz present", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: [] }],
-        iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const thorApp = createApp(store, { pipeline, stateStore });
-    await request(thorApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(thorApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
+  it(
+    "imports a THOR JSON report: drops info/lifecycle noise, maps findings to the timeline, then synthesizes",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-thor-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        // No per-finding AI extraction (THOR mapping is deterministic); synthesis still runs.
+        provider: new MockProvider(
+          "mock",
+          JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "Critical",
+                title: "Mimikatz present",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+                relatedEventIds: [],
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "p",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
+        ),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const thorApp = createApp(store, { pipeline, stateStore });
+      await request(thorApp)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(thorApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
 
-    const jsonl = [
-      JSON.stringify({ time: "t", hostname: "WIN11", level: "Info", module: "Init", message: "startup noise" }),
-      JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan", message: "Malware file found",
-        file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z", reason_1: "YARA Powerkatz",
-        sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef" }),
-    ].join("\n") + "\n";
-    const res = await request(thorApp).post("/cases/c1/import-thor").send({ filename: "WIN11_thor.json", json: jsonl });
+      const jsonl =
+        [
+          JSON.stringify({
+            time: "t",
+            hostname: "WIN11",
+            level: "Info",
+            module: "Init",
+            message: "startup noise",
+          }),
+          JSON.stringify({
+            time: "t",
+            hostname: "WIN11",
+            level: "Alert",
+            module: "Filescan",
+            message: "Malware file found",
+            file: "C:\\Tools\\mimikatz.exe",
+            modified: "2025-03-14T21:18:18Z",
+            reason_1: "YARA Powerkatz",
+            sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
+          }),
+        ].join("\n") + "\n";
+      const res = await request(thorApp)
+        .post("/cases/c1/import-thor")
+        .send({ filename: "WIN11_thor.json", json: jsonl });
 
-    expect(res.status).toBe(202);
-    expect(res.body.findings).toBe(1);   // the Alert
-    expect(res.body.dropped).toBe(1);    // the Init/Info line
+      expect(res.status).toBe(202);
+      expect(res.body.findings).toBe(1); // the Alert
+      expect(res.body.dropped).toBe(1); // the Init/Info line
 
-    // Evidence-first: raw report + audit line written.
-    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
-    expect(auditLog.trim().split("\n")).toHaveLength(1);
+      // Evidence-first: raw report + audit line written.
+      const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+      expect(auditLog.trim().split("\n")).toHaveLength(1);
 
-    // Deterministic mapping populated the timeline; background synthesis adds findings.
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.forensicTimeline.length).toBe(1);
-    expect(state.forensicTimeline[0].severity).toBe("Critical");
-    expect(state.forensicTimeline[0].timestamp).toBe("2025-03-14T21:18:18Z"); // artifact time, not scan time
-    expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
-    expect(state.findings.length).toBeGreaterThanOrEqual(1);
-  }, POLL_TIMEOUT_MS * 2);
+      // Deterministic mapping populated the timeline; background synthesis adds findings.
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.forensicTimeline.length).toBe(1);
+      expect(state.forensicTimeline[0].severity).toBe("Critical");
+      expect(state.forensicTimeline[0].timestamp).toBe("2025-03-14T21:18:18Z"); // artifact time, not scan time
+      expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
+      expect(state.findings.length).toBeGreaterThanOrEqual(1);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("rejects a THOR import that has only info/lifecycle rows (no findings)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-thor-empty-"));
@@ -539,161 +828,261 @@ describe("server analysis wiring", () => {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app2 = createApp(store, { pipeline, stateStore });
-    await request(app2).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app2)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
 
     const onlyNoise = [
       JSON.stringify({ time: "t", hostname: "H", level: "Info", module: "Init", message: "x" }),
       JSON.stringify({ time: "t", hostname: "H", level: "Info", module: "Startup", message: "y" }),
     ].join("\n");
-    const res = await request(app2).post("/cases/c1/import-thor").send({ filename: "t.json", json: onlyNoise });
+    const res = await request(app2)
+      .post("/cases/c1/import-thor")
+      .send({ filename: "t.json", json: onlyNoise });
     expect(res.status).toBe(400);
   });
 
-  it("unified /import applies the minimum-severity floor (THOR: keeps the Critical, drops the Medium Notice)", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-floor-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", "synthesis must not run (AI off)"),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const app = createApp(store, { pipeline, stateStore });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    // AI defaults OFF → deterministic mapping only, no synthesis to confuse the count.
+  it(
+    "unified /import applies the minimum-severity floor (THOR: keeps the Critical, drops the Medium Notice)",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-import-floor-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider("mock", "synthesis must not run (AI off)"),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const app = createApp(store, { pipeline, stateStore });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      // AI defaults OFF → deterministic mapping only, no synthesis to confuse the count.
 
-    const jsonl = [
-      JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan",
-        message: "Malware file found", file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z" }),
-      JSON.stringify({ time: "t", hostname: "WIN11", level: "Notice", module: "Filescan",
-        message: "Minor finding", file: "C:\\Tools\\note.txt", modified: "2025-03-14T20:00:00Z" }),
-    ].join("\n") + "\n";
+      const jsonl =
+        [
+          JSON.stringify({
+            time: "t",
+            hostname: "WIN11",
+            level: "Alert",
+            module: "Filescan",
+            message: "Malware file found",
+            file: "C:\\Tools\\mimikatz.exe",
+            modified: "2025-03-14T21:18:18Z",
+          }),
+          JSON.stringify({
+            time: "t",
+            hostname: "WIN11",
+            level: "Notice",
+            module: "Filescan",
+            message: "Minor finding",
+            file: "C:\\Tools\\note.txt",
+            modified: "2025-03-14T20:00:00Z",
+          }),
+        ].join("\n") + "\n";
 
-    // The single Import button posts to /import with the chosen floor.
-    const res = await request(app).post("/cases/c1/import")
-      .send({ filename: "WIN11_thor.json", text: jsonl, minSeverity: "critical" });
-    expect(res.status).toBe(202);
-    expect(res.body.kind).toBe("thor");
-    expect(res.body.minSeverity).toBe("Critical"); // normalized + echoed back
+      // The single Import button posts to /import with the chosen floor.
+      const res = await request(app)
+        .post("/cases/c1/import")
+        .send({ filename: "WIN11_thor.json", text: jsonl, minSeverity: "critical" });
+      expect(res.status).toBe(202);
+      expect(res.body.kind).toBe("thor");
+      expect(res.body.minSeverity).toBe("Critical"); // normalized + echoed back
 
-    let state = await pollForForensicEvents(stateStore, "c1");
-    await new Promise((r) => setTimeout(r, 100)); // settle — the Medium Notice must never land
-    state = await stateStore.load("c1");
-    expect(state.forensicTimeline).toHaveLength(1);          // Alert(Critical) kept, Notice(Medium) dropped
-    expect(state.forensicTimeline[0].severity).toBe("Critical");
-  }, POLL_TIMEOUT_MS * 2);
+      let state = await pollForForensicEvents(stateStore, "c1");
+      await new Promise((r) => setTimeout(r, 100)); // settle — the Medium Notice must never land
+      state = await stateStore.load("c1");
+      expect(state.forensicTimeline).toHaveLength(1); // Alert(Critical) kept, Notice(Medium) dropped
+      expect(state.forensicTimeline[0].severity).toBe("Critical");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-  it("unified /import keeps an ungraded (all-Info) import in full despite a high floor (the 'no severities → import everything' rule)", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-gate-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", "synthesis must not run (AI off)"),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const app = createApp(store, { pipeline, stateStore });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  it(
+    "unified /import keeps an ungraded (all-Info) import in full despite a high floor (the 'no severities → import everything' rule)",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-import-gate-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider("mock", "synthesis must not run (AI off)"),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const app = createApp(store, { pipeline, stateStore });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
 
-    // KAPE Prefetch (PECmd) CSV — every row maps to an Info evidence event (host triage, no grading).
-    const kape = [
-      "SourceFilename,ExecutableName,Hash,Size,RunCount,LastRun,PreviousRun0",
-      "C:\\Windows\\Prefetch\\EVIL.EXE-1234.pf,EVIL.EXE,ABCD,10000,3,2023-04-01 10:00:00,2023-03-31 09:00:00",
-      "C:\\Windows\\Prefetch\\CALC.EXE-5678.pf,CALC.EXE,EF01,9000,7,2023-04-02 11:00:00,2023-03-30 08:00:00",
-    ].join("\n");
+      // KAPE Prefetch (PECmd) CSV — every row maps to an Info evidence event (host triage, no grading).
+      const kape = [
+        "SourceFilename,ExecutableName,Hash,Size,RunCount,LastRun,PreviousRun0",
+        "C:\\Windows\\Prefetch\\EVIL.EXE-1234.pf,EVIL.EXE,ABCD,10000,3,2023-04-01 10:00:00,2023-03-31 09:00:00",
+        "C:\\Windows\\Prefetch\\CALC.EXE-5678.pf,CALC.EXE,EF01,9000,7,2023-04-02 11:00:00,2023-03-30 08:00:00",
+      ].join("\n");
 
-    const res = await request(app).post("/cases/c1/import")
-      .send({ filename: "Prefetch.csv", text: kape, minSeverity: "high" });
-    expect(res.status).toBe(202);
-    expect(res.body.kind).toBe("kape");
+      const res = await request(app)
+        .post("/cases/c1/import")
+        .send({ filename: "Prefetch.csv", text: kape, minSeverity: "high" });
+      expect(res.status).toBe(202);
+      expect(res.body.kind).toBe("kape");
 
-    // Waits for BOTH rows, not just the first: the assertion below is a count, so polling for
-    // ">0" and then sleeping 100ms would report a second row that merely landed late as
-    // `expected 1 to be 2` — the very failure shape this conversion exists to remove.
-    let state = await pollForForensicEvents(stateStore, "c1", 2);
-    await new Promise((r) => setTimeout(r, 100));   // settle — no third event may appear
-    state = await stateStore.load("c1");
-    // The floor was "high" but this import grades nothing (all Info) → it is kept whole.
-    expect(state.forensicTimeline).toHaveLength(2);
-    expect(state.forensicTimeline.every((e) => e.severity === "Info")).toBe(true);
-  }, POLL_TIMEOUT_MS * 2);
+      // Waits for BOTH rows, not just the first: the assertion below is a count, so polling for
+      // ">0" and then sleeping 100ms would report a second row that merely landed late as
+      // `expected 1 to be 2` — the very failure shape this conversion exists to remove.
+      let state = await pollForForensicEvents(stateStore, "c1", 2);
+      await new Promise((r) => setTimeout(r, 100)); // settle — no third event may appear
+      state = await stateStore.load("c1");
+      // The floor was "high" but this import grades nothing (all Info) → it is kept whole.
+      expect(state.forensicTimeline).toHaveLength(2);
+      expect(state.forensicTimeline.every((e) => e.severity === "Info")).toBe(true);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-  it("imports a SIEM/EDR JSON export (Elastic envelope): unwraps, maps Windows events, then synthesizes", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-siem-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      // No per-event AI extraction (SIEM mapping is deterministic); synthesis still runs.
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "Service install", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: [] }],
-        iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const siemApp = createApp(store, { pipeline, stateStore });
-    await request(siemApp).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(siemApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
+  it(
+    "imports a SIEM/EDR JSON export (Elastic envelope): unwraps, maps Windows events, then synthesizes",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-siem-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        // No per-event AI extraction (SIEM mapping is deterministic); synthesis still runs.
+        provider: new MockProvider(
+          "mock",
+          JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "Service install",
+                description: "d",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+                relatedEventIds: [],
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "p",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
+        ),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const siemApp = createApp(store, { pipeline, stateStore });
+      await request(siemApp)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(siemApp).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on so synthesis runs
 
-    const elastic = JSON.stringify({ data: [
-      { _source: { "@timestamp": "2017-03-20T06:33:40Z", log_name: "Security", computer_name: "DC1",
-        event_id: 4624, event_data: { TargetUserName: "martin", TargetDomainName: "WINDMILL", LogonType: "3", IpAddress: "::ffff:10.10.200.11" } } },
-      { _source: { "@timestamp": "2017-03-20T10:00:00Z", log_name: "System", computer_name: "DC1",
-        event_id: 7045, event_data: { ServiceName: "EvilSvc", ServiceFileName: "C:\\Temp\\evil.exe" } } },
-    ] });
-    const res = await request(siemApp).post("/cases/c1/import-siem").send({ filename: "windmill_elastic.json", json: elastic });
+      const elastic = JSON.stringify({
+        data: [
+          {
+            _source: {
+              "@timestamp": "2017-03-20T06:33:40Z",
+              log_name: "Security",
+              computer_name: "DC1",
+              event_id: 4624,
+              event_data: {
+                TargetUserName: "martin",
+                TargetDomainName: "WINDMILL",
+                LogonType: "3",
+                IpAddress: "::ffff:10.10.200.11",
+              },
+            },
+          },
+          {
+            _source: {
+              "@timestamp": "2017-03-20T10:00:00Z",
+              log_name: "System",
+              computer_name: "DC1",
+              event_id: 7045,
+              event_data: { ServiceName: "EvilSvc", ServiceFileName: "C:\\Temp\\evil.exe" },
+            },
+          },
+        ],
+      });
+      const res = await request(siemApp)
+        .post("/cases/c1/import-siem")
+        .send({ filename: "windmill_elastic.json", json: elastic });
 
-    expect(res.status).toBe(202);
-    expect(res.body.format).toBe("elastic-data");
-    expect(res.body.records).toBe(2);
-    expect(res.body.events).toBe(2);
+      expect(res.status).toBe(202);
+      expect(res.body.format).toBe("elastic-data");
+      expect(res.body.records).toBe(2);
+      expect(res.body.events).toBe(2);
 
-    // Evidence-first: raw export + audit line written before analysis.
-    const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
-    expect(auditLog.trim().split("\n")).toHaveLength(1);
+      // Evidence-first: raw export + audit line written before analysis.
+      const auditLog = await readFile(store.importsLogPath("c1"), "utf8");
+      expect(auditLog.trim().split("\n")).toHaveLength(1);
 
-    // Deterministic mapping populated the timeline; the ::ffff: IP was unwrapped.
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.forensicTimeline.length).toBe(2);
-    expect(state.forensicTimeline.some((e) => e.severity === "High" && e.description.includes("7045"))).toBe(true);
-    expect(state.iocs.some((i) => i.type === "ip" && i.value === "10.10.200.11")).toBe(true);
-    expect(state.findings.length).toBeGreaterThanOrEqual(1);
-  }, POLL_TIMEOUT_MS * 2);
+      // Deterministic mapping populated the timeline; the ::ffff: IP was unwrapped.
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.forensicTimeline.length).toBe(2);
+      expect(
+        state.forensicTimeline.some((e) => e.severity === "High" && e.description.includes("7045")),
+      ).toBe(true);
+      expect(state.iocs.some((i) => i.type === "ip" && i.value === "10.10.200.11")).toBe(true);
+      expect(state.findings.length).toBeGreaterThanOrEqual(1);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-  it("import with AI OFF populates the timeline + IOCs deterministically but does NOT synthesize", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-import-aioff-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      // Synthesis must never run while AI is off — if this provider is invoked, the response
-      // is unparseable and the test would surface it (but the gate means it's never called).
-      provider: new MockProvider("mock", "AI synthesis must not run when AI is off"),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const app = createApp(store, { pipeline, stateStore });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    // AI defaults OFF for a fresh case — leave it off (this is the scenario under test).
+  it(
+    "import with AI OFF populates the timeline + IOCs deterministically but does NOT synthesize",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-import-aioff-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        // Synthesis must never run while AI is off — if this provider is invoked, the response
+        // is unparseable and the test would surface it (but the gate means it's never called).
+        provider: new MockProvider("mock", "AI synthesis must not run when AI is off"),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const app = createApp(store, { pipeline, stateStore });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      // AI defaults OFF for a fresh case — leave it off (this is the scenario under test).
 
-    const jsonl = JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan",
-      message: "Malware file found", file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z",
-      reason_1: "YARA Powerkatz", sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef" }) + "\n";
-    const res = await request(app).post("/cases/c1/import-thor").send({ filename: "WIN11_thor.json", json: jsonl });
-    expect(res.status).toBe(202);
+      const jsonl =
+        JSON.stringify({
+          time: "t",
+          hostname: "WIN11",
+          level: "Alert",
+          module: "Filescan",
+          message: "Malware file found",
+          file: "C:\\Tools\\mimikatz.exe",
+          modified: "2025-03-14T21:18:18Z",
+          reason_1: "YARA Powerkatz",
+          sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
+        }) + "\n";
+      const res = await request(app)
+        .post("/cases/c1/import-thor")
+        .send({ filename: "WIN11_thor.json", json: jsonl });
+      expect(res.status).toBe(202);
 
-    // Deterministic THOR mapping runs in the background; give it time, then confirm the
-    // timeline + IOCs landed but synthesis never produced findings (AI is off).
-    let state = await pollForForensicEvents(stateStore, "c1");
-    // Settle: ensure no delayed synthesis sneaks a finding in afterwards.
-    await new Promise((r) => setTimeout(r, 150));
-    state = await stateStore.load("c1");
-    expect(state.forensicTimeline.length).toBe(1);                       // deterministic mapping populated it
-    expect(state.forensicTimeline[0].severity).toBe("Critical");
-    expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
-    expect(state.findings).toHaveLength(0);                              // synthesis was gated off — no findings
-  }, POLL_TIMEOUT_MS * 2);
+      // Deterministic THOR mapping runs in the background; give it time, then confirm the
+      // timeline + IOCs landed but synthesis never produced findings (AI is off).
+      let state = await pollForForensicEvents(stateStore, "c1");
+      // Settle: ensure no delayed synthesis sneaks a finding in afterwards.
+      await new Promise((r) => setTimeout(r, 150));
+      state = await stateStore.load("c1");
+      expect(state.forensicTimeline.length).toBe(1); // deterministic mapping populated it
+      expect(state.forensicTimeline[0].severity).toBe("Critical");
+      expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
+      expect(state.findings).toHaveLength(0); // synthesis was gated off — no findings
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("CSV/log import via /import is gated by the AI toggle — saved as evidence, NOT sent to the model, when AI is off", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-import-csv-aioff-"));
@@ -707,7 +1096,9 @@ describe("server analysis wiring", () => {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app = createApp(store, { pipeline, stateStore });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     // AI defaults OFF for a fresh case — leave it off (the scenario under test).
 
     const csv = "Timestamp,Process,PID\n2026-05-20T09:00:00Z,mimikatz.exe,1234\n";
@@ -741,11 +1132,22 @@ describe("server analysis wiring", () => {
     const app = createApp(store, { pipeline, stateStore });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
-    const jsonl = JSON.stringify({ time: "t", hostname: "WIN11", level: "Alert", module: "Filescan",
-      message: "Malware file found", file: "C:\\Tools\\mimikatz.exe", modified: "2025-03-14T21:18:18Z",
-      reason_1: "YARA Powerkatz", sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef" }) + "\n";
+    const jsonl =
+      JSON.stringify({
+        time: "t",
+        hostname: "WIN11",
+        level: "Alert",
+        module: "Filescan",
+        message: "Malware file found",
+        file: "C:\\Tools\\mimikatz.exe",
+        modified: "2025-03-14T21:18:18Z",
+        reason_1: "YARA Powerkatz",
+        sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
+      }) + "\n";
 
-    const res = await request(app).post("/cases/c1/import-thor").send({ filename: "WIN11_thor.json", json: jsonl });
+    const res = await request(app)
+      .post("/cases/c1/import-thor")
+      .send({ filename: "WIN11_thor.json", json: jsonl });
 
     expect(res.status).toBe(202);
   });
@@ -760,9 +1162,13 @@ describe("server analysis wiring", () => {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app3 = createApp(store, { pipeline, stateStore });
-    await request(app3).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app3)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
 
-    const res = await request(app3).post("/cases/c1/import-siem").send({ filename: "x.json", json: "garbage not json" });
+    const res = await request(app3)
+      .post("/cases/c1/import-siem")
+      .send({ filename: "x.json", json: "garbage not json" });
     expect(res.status).toBe(400);
   });
 
@@ -781,12 +1187,15 @@ describe("server analysis wiring", () => {
       const app4 = createApp(store, { pipeline, stateStore });
 
       // A ~1.5 MB JSON string field, over the 1 MB cap → rejected by the body parser.
-      const res = await request(app4).post("/cases/c1/import-siem").send({ filename: "big.json", json: "x".repeat(1_500_000) });
+      const res = await request(app4)
+        .post("/cases/c1/import-siem")
+        .send({ filename: "big.json", json: "x".repeat(1_500_000) });
       expect(res.status).toBe(413);
       expect(res.body.error).toMatch(/exceeds the 1 MB limit/);
       expect(res.body.error).toMatch(/DFIR_MAX_BODY_MB/);
     } finally {
-      if (prev === undefined) delete process.env.DFIR_MAX_BODY_MB; else process.env.DFIR_MAX_BODY_MB = prev;
+      if (prev === undefined) delete process.env.DFIR_MAX_BODY_MB;
+      else process.env.DFIR_MAX_BODY_MB = prev;
     }
   });
 
@@ -795,26 +1204,47 @@ describe("server analysis wiring", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
-    seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "client admin task", severity: "Medium",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-    );
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-28T09:00:00Z",
+      description: "client admin task",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     await stateStore.save(seeded);
 
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "", summary: "", forensicEvents: [],
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [],
+          iocs: [],
+          mitreTechniques: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "",
+          summary: "",
+          forensicEvents: [],
+        }),
+      ),
       stateStore,
       falsePositiveStore: new (await import("../src/analysis/falsePositive.js")).FalsePositiveStore(store),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp).post("/cases/c1/false-positive")
-      .send({ kind: "event", ref: "e1", reason: "authorized-test", note: "client's own admin", label: "client admin task" });
+    const res = await request(legitApp)
+      .post("/cases/c1/false-positive")
+      .send({
+        kind: "event",
+        ref: "e1",
+        reason: "authorized-test",
+        note: "client's own admin",
+        label: "client admin task",
+      });
     expect(res.status).toBe(200);
     const stored = res.body.find((m: { kind: string }) => m.kind === "event");
     expect(stored).toMatchObject({ kind: "event", ref: "e1", label: "client admin task" });
@@ -827,39 +1257,70 @@ describe("server analysis wiring", () => {
     const stateStore = new StateStore(store);
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "admin task 1", severity: "Medium",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "admin task 2", severity: "Medium",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "admin task 1",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "admin task 2",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     await stateStore.save(seeded);
 
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "", summary: "", forensicEvents: [],
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [],
+          iocs: [],
+          mitreTechniques: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "",
+          summary: "",
+          forensicEvents: [],
+        }),
+      ),
       stateStore,
       falsePositiveStore: new (await import("../src/analysis/falsePositive.js")).FalsePositiveStore(store),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp).post("/cases/c1/false-positive/batch").send({
-      reason: "authorized-test",
-      note: "client's own admin",
-      items: [
-        { kind: "event", ref: "e1", label: "admin task 1" },
-        { kind: "event", ref: "e2", label: "admin task 2", note: "specific reason" },
-        { kind: "event", ref: "" }, // skipped: no ref
-      ],
-    });
+    const res = await request(legitApp)
+      .post("/cases/c1/false-positive/batch")
+      .send({
+        reason: "authorized-test",
+        note: "client's own admin",
+        items: [
+          { kind: "event", ref: "e1", label: "admin task 1" },
+          { kind: "event", ref: "e2", label: "admin task 2", note: "specific reason" },
+          { kind: "event", ref: "" }, // skipped: no ref
+        ],
+      });
     expect(res.status).toBe(200);
     const events = res.body.filter((m: { kind: string }) => m.kind === "event");
     expect(events).toHaveLength(2);
-    expect(events.find((m: { ref: string }) => m.ref === "e1")).toMatchObject({ id: "event:e1", note: "client's own admin" });
-    expect(events.find((m: { ref: string }) => m.ref === "e2")).toMatchObject({ id: "event:e2", note: "specific reason" });
+    expect(events.find((m: { ref: string }) => m.ref === "e1")).toMatchObject({
+      id: "event:e1",
+      note: "client's own admin",
+    });
+    expect(events.find((m: { ref: string }) => m.ref === "e2")).toMatchObject({
+      id: "event:e2",
+      note: "specific reason",
+    });
 
     // Persisted (one write) — reload via GET reflects the same two markers.
     const after = await request(legitApp).get("/cases/c1/false-positive");
@@ -870,37 +1331,45 @@ describe("server analysis wiring", () => {
     expect(bad.status).toBe(400);
   });
 
-  it("enriches IOCs via configured providers and annotates them in state", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-enrich-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
-    seeded.iocs.push(
-      { id: "i1", type: "hash", value: "deadbeefdeadbeef", firstSeen: "t0" },
-      { id: "i2", type: "file", value: "C:\\evil.exe", firstSeen: "t0" }, // not enrichable
-    );
-    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    await stateStore.save(seeded);
+  it(
+    "enriches IOCs via configured providers and annotates them in state",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-enrich-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+      seeded.iocs.push(
+        { id: "i1", type: "hash", value: "deadbeefdeadbeef", firstSeen: "t0" },
+        { id: "i2", type: "file", value: "C:\\evil.exe", firstSeen: "t0" }, // not enrichable
+      );
+      await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await stateStore.save(seeded);
 
-    const provider = {
-      name: "VirusTotal",
-      scope: "external" as const,
-      supports: () => true,
-      lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const, score: "60/72" }),
-    };
-    const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
+      const provider = {
+        name: "VirusTotal",
+        scope: "external" as const,
+        supports: () => true,
+        lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const, score: "60/72" }),
+      };
+      const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
 
-    // Enable VirusTotal for this case (external is opt-in), then enrich.
-    await request(app2).post("/cases/c1/enrich-control").send({ providers: ["VirusTotal"] });
-    const res = await request(app2).post("/cases/c1/enrich").send({});
-    expect(res.status).toBe(202);
-    expect(res.body.iocs).toBe(2);
+      // Enable VirusTotal for this case (external is opt-in), then enrich.
+      await request(app2)
+        .post("/cases/c1/enrich-control")
+        .send({ providers: ["VirusTotal"] });
+      const res = await request(app2).post("/cases/c1/enrich").send({});
+      expect(res.status).toBe(202);
+      expect(res.body.iocs).toBe(2);
 
-    // Background enrichment annotates the hash (not the file) — poll until it lands.
-    const state = await pollForFirstIocEnrichment(stateStore, "c1");
-    expect(state.iocs[0].enrichments).toEqual([{ source: "VirusTotal", verdict: "malicious", score: "60/72", fetchedAt: expect.any(String) }]);
-    expect(state.iocs[1].enrichments).toBeUndefined(); // file path not enrichable
-  }, POLL_TIMEOUT_MS * 2);
+      // Background enrichment annotates the hash (not the file) — poll until it lands.
+      const state = await pollForFirstIocEnrichment(stateStore, "c1");
+      expect(state.iocs[0].enrichments).toEqual([
+        { source: "VirusTotal", verdict: "malicious", score: "60/72", fetchedAt: expect.any(String) },
+      ]);
+      expect(state.iocs[1].enrichments).toBeUndefined(); // file path not enrichable
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("returns 501 for enrich when no providers are configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-noenrich-"));
@@ -917,7 +1386,12 @@ describe("server analysis wiring", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    const provider = { name: "VirusTotal", scope: "external" as const, supports: () => true, lookup: async () => null };
+    const provider = {
+      name: "VirusTotal",
+      scope: "external" as const,
+      supports: () => true,
+      lookup: async () => null,
+    };
     const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
     // enrich-control defaults to no external providers enabled — never turned on here.
     const res = await request(app2).post("/cases/c1/enrich").send({});
@@ -925,36 +1399,48 @@ describe("server analysis wiring", () => {
     expect(res.body.error).toMatch(/no enrichment providers enabled/);
   });
 
-  it("enrichment toggle is OFF by default and enriches current IOCs when turned ON", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-enrichtoggle-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
-    seeded.iocs.push({ id: "i1", type: "hash", value: "abc123", firstSeen: "t0" });
-    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    await stateStore.save(seeded);
+  it(
+    "enrichment toggle is OFF by default and enriches current IOCs when turned ON",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-enrichtoggle-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+      seeded.iocs.push({ id: "i1", type: "hash", value: "abc123", firstSeen: "t0" });
+      await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await stateStore.save(seeded);
 
-    const provider = { name: "VirusTotal", scope: "external" as const, supports: () => true, lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const }) };
-    const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
-    const vtState = async () => (await request(app2).get("/cases/c1/enrich-control")).body.providers.find((p: { name: string }) => p.name === "VirusTotal");
+      const provider = {
+        name: "VirusTotal",
+        scope: "external" as const,
+        supports: () => true,
+        lookup: async () => ({ source: "VirusTotal", verdict: "malicious" as const }),
+      };
+      const app2 = createApp(store, { stateStore, enrichmentProviders: [provider], enrichDelayMs: 0 });
+      const vtState = async () =>
+        (await request(app2).get("/cases/c1/enrich-control")).body.providers.find(
+          (p: { name: string }) => p.name === "VirusTotal",
+        );
 
-    // External provider is OFF by default (local-only default; VT is external).
-    const get0 = await request(app2).get("/cases/c1/enrich-control");
-    expect(get0.status).toBe(200);
-    expect(get0.body.anyConfigured).toBe(true);
-    expect(await vtState()).toMatchObject({ scope: "external", enabled: false });
+      // External provider is OFF by default (local-only default; VT is external).
+      const get0 = await request(app2).get("/cases/c1/enrich-control");
+      expect(get0.status).toBe(200);
+      expect(get0.body.anyConfigured).toBe(true);
+      expect(await vtState()).toMatchObject({ scope: "external", enabled: false });
 
-    // Turn ON via the legacy { enabled } shape → enables all configured (just VirusTotal).
-    const on = await request(app2).post("/cases/c1/enrich-control").send({ enabled: true });
-    expect(on.status).toBe(200);
-    expect(on.body.providers).toEqual(["VirusTotal"]);
+      // Turn ON via the legacy { enabled } shape → enables all configured (just VirusTotal).
+      const on = await request(app2).post("/cases/c1/enrich-control").send({ enabled: true });
+      expect(on.status).toBe(200);
+      expect(on.body.providers).toEqual(["VirusTotal"]);
 
-    const state = await pollForFirstIocEnrichment(stateStore, "c1");
-    expect(state.iocs[0].enrichments?.[0]).toMatchObject({ source: "VirusTotal", verdict: "malicious" });
+      const state = await pollForFirstIocEnrichment(stateStore, "c1");
+      expect(state.iocs[0].enrichments?.[0]).toMatchObject({ source: "VirusTotal", verdict: "malicious" });
 
-    // Persisted ON.
-    expect((await vtState()).enabled).toBe(true);
-  }, POLL_TIMEOUT_MS * 2);
+      // Persisted ON.
+      expect((await vtState()).enabled).toBe(true);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("rejects a log import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -964,49 +1450,72 @@ describe("server analysis wiring", () => {
 
   it("rejects a CSV import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    const res = await request(app).post("/cases/c1/import-csv").send({ filename: "x.csv", csv: "a,b\n1,2\n" });
+    const res = await request(app)
+      .post("/cases/c1/import-csv")
+      .send({ filename: "x.csv", csv: "a,b\n1,2\n" });
     expect(res.status).toBe(501);
   });
 
-  it("emits AI status (analyzing then idle) around a window flush", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-server-ai-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "n", summary: "s",
-      })),
-      stateStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-    const events: { status: string; phase?: string }[] = [];
-    const app = createApp(store, {
-      pipeline,
-      windowSize: 10,
-      onAiStatus: (_caseId, e) => events.push({ status: e.status, phase: e.phase }),
-    });
+  it(
+    "emits AI status (analyzing then idle) around a window flush",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-server-ai-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const pipeline = new AnalysisPipeline({
+        provider: new MockProvider(
+          "mock",
+          JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "n",
+            summary: "s",
+          }),
+        ),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+      const events: { status: string; phase?: string }[] = [];
+      const app = createApp(store, {
+        pipeline,
+        windowSize: 10,
+        onAiStatus: (_caseId, e) => events.push({ status: e.status, phase: e.phase }),
+      });
 
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
-    await request(app).post("/captures").send({
-      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
-      triggerType: "navigation", imageBase64: await pngBase64(),
-    });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true }); // AI defaults off — turn it on
+      await request(app)
+        .post("/captures")
+        .send({
+          caseId: "c1",
+          timestamp: "2026-05-28T10:00:00.000Z",
+          url: "u",
+          tabTitle: "t",
+          triggerType: "navigation",
+          imageBase64: await pngBase64(),
+        });
 
-    // AI is toggled on for the still-empty case first, which now ALSO emits a terminal idle
-    // (backfill always reports a final status). So wait for the window flush's own analyzing→idle
-    // pair — not just "any idle", which the backfill would satisfy before the flush even runs.
-    const flushed = () => {
-      const ai = events.findIndex((e) => e.status === "analyzing" && e.phase === "extracting");
-      return ai >= 0 && events.slice(ai + 1).some((e) => e.status === "idle");
-    };
-    await pollFor(
-      () => `the window flush to report analyzing(extracting) → idle, saw [${events.map((e) => `${e.status}/${e.phase ?? "-"}`).join(", ")}]`,
-      async () => (flushed() ? true : undefined),
-    );
-    expect(flushed()).toBe(true); // the window flush reported analyzing(extracting) → idle
-  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
+      // AI is toggled on for the still-empty case first, which now ALSO emits a terminal idle
+      // (backfill always reports a final status). So wait for the window flush's own analyzing→idle
+      // pair — not just "any idle", which the backfill would satisfy before the flush even runs.
+      const flushed = () => {
+        const ai = events.findIndex((e) => e.status === "analyzing" && e.phase === "extracting");
+        return ai >= 0 && events.slice(ai + 1).some((e) => e.status === "idle");
+      };
+      await pollFor(
+        () =>
+          `the window flush to report analyzing(extracting) → idle, saw [${events.map((e) => `${e.status}/${e.phase ?? "-"}`).join(", ")}]`,
+        async () => (flushed() ? true : undefined),
+      );
+      expect(flushed()).toBe(true); // the window flush reported analyzing(extracting) → idle
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one poll budget, doubled to leave room for setup + assertions
 
   it("GET /health reports aiEnabled false without a pipeline, true with one", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-ai-health-"));
@@ -1014,13 +1523,15 @@ describe("server analysis wiring", () => {
     const noAi = await request(createApp(store)).get("/health");
     expect(noAi.body.aiEnabled).toBe(false);
 
-    const withAi = await request(createApp(store, {
-      pipeline: new AnalysisPipeline({
-        provider: new MockProvider("mock", "{}"),
-        stateStore: new StateStore(store),
-        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    const withAi = await request(
+      createApp(store, {
+        pipeline: new AnalysisPipeline({
+          provider: new MockProvider("mock", "{}"),
+          stateStore: new StateStore(store),
+          imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+        }),
       }),
-    })).get("/health");
+    ).get("/health");
     expect(withAi.body.aiEnabled).toBe(true);
   });
 });
@@ -1034,8 +1545,13 @@ describe("state and report routes", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const state = emptyState("c1");
     state.forensicTimeline = Array.from({ length: 3 }, (_, index) => ({
-      id: `e${index}`, timestamp: `2026-07-30T0${index}:00:00Z`, description: `event ${index}`,
-      severity: "Info" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      id: `e${index}`,
+      timestamp: `2026-07-30T0${index}:00:00Z`,
+      description: `event ${index}`,
+      severity: "Info" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
     }));
     await stateStore.save(state);
 
@@ -1097,7 +1613,7 @@ describe("state and report routes", () => {
     expect(print.headers["content-type"]).toContain("text/html");
     expect(print.text).toContain("window.print()");
     expect(print.headers["content-disposition"]).toBeUndefined(); // viewed in a tab, not downloaded
-    expect(html.text).not.toContain("window.print()");            // the plain view is untouched
+    expect(html.text).not.toContain("window.print()"); // the plain view is untouched
 
     // Only known report files are served.
     expect((await request(app).get("/cases/c1/report/secrets.txt")).status).toBe(400);
@@ -1107,7 +1623,12 @@ describe("state and report routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-enrich-ctl-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
-    const mkP = (name: string, scope: "local" | "external") => ({ name, scope, supports: () => true, lookup: async () => null });
+    const mkP = (name: string, scope: "local" | "external") => ({
+      name,
+      scope,
+      supports: () => true,
+      lookup: async () => null,
+    });
     const enrichmentProviders = [mkP("VirusTotal", "external"), mkP("MISP", "local"), mkP("YETI", "local")];
     const app = createApp(store, { stateStore, enrichmentProviders });
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -1122,7 +1643,9 @@ describe("state and report routes", () => {
     expect(byName.VirusTotal).toMatchObject({ scope: "external", enabled: false });
 
     // Select VirusTotal + MISP (unknown name dropped).
-    const post = await request(app).post("/cases/c1/enrich-control").send({ providers: ["VirusTotal", "MISP", "bogus"] });
+    const post = await request(app)
+      .post("/cases/c1/enrich-control")
+      .send({ providers: ["VirusTotal", "MISP", "bogus"] });
     expect(post.status).toBe(200);
     expect([...post.body.providers].sort()).toEqual(["MISP", "VirusTotal"]);
 
@@ -1139,11 +1662,26 @@ describe("state and report routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-enrich-health-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
-    const base = (name: string, scope: "local" | "external") => ({ name, scope, supports: () => true, lookup: async () => null });
+    const base = (name: string, scope: "local" | "external") => ({
+      name,
+      scope,
+      supports: () => true,
+      lookup: async () => null,
+    });
     const enrichmentProviders = [
-      { ...base("MISP", "local"), probe: async () => { /* up */ } },
-      { ...base("YETI", "local"), probe: async () => { throw new Error("YETI auth HTTP 405"); } },
-      base("VirusTotal", "external"),   // no probe() → reported up, not probed
+      {
+        ...base("MISP", "local"),
+        probe: async () => {
+          /* up */
+        },
+      },
+      {
+        ...base("YETI", "local"),
+        probe: async () => {
+          throw new Error("YETI auth HTTP 405");
+        },
+      },
+      base("VirusTotal", "external"), // no probe() → reported up, not probed
     ];
     const app = createApp(store, { stateStore, enrichmentProviders });
 
@@ -1160,15 +1698,29 @@ describe("state and report routes", () => {
     const store = new CaseStore(root);
     const commentsStore = new CommentsStore(store);
     let pinged = 0;
-    const app = createApp(store, { commentsStore, onComments: () => { pinged++; } });
+    const app = createApp(store, {
+      commentsStore,
+      onComments: () => {
+        pinged++;
+      },
+    });
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
     // text is required.
-    expect((await request(app).post("/cases/c1/comments").send({ targetType: "ioc", targetId: "i1" })).status).toBe(400);
+    expect(
+      (await request(app).post("/cases/c1/comments").send({ targetType: "ioc", targetId: "i1" })).status,
+    ).toBe(400);
 
-    const post = await request(app).post("/cases/c1/comments").send({ targetType: "ioc", targetId: "i1", author: "Alice", text: "Possible C2?" });
+    const post = await request(app)
+      .post("/cases/c1/comments")
+      .send({ targetType: "ioc", targetId: "i1", author: "Alice", text: "Possible C2?" });
     expect(post.status).toBe(201);
-    expect(post.body).toMatchObject({ targetType: "ioc", targetId: "i1", author: "Alice", text: "Possible C2?" });
+    expect(post.body).toMatchObject({
+      targetType: "ioc",
+      targetId: "i1",
+      author: "Alice",
+      text: "Possible C2?",
+    });
     expect(pinged).toBe(1);
 
     const list = await request(app).get("/cases/c1/comments");
@@ -1182,55 +1734,79 @@ describe("state and report routes", () => {
     expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
   });
 
-  it("comments: an @mention fires one notification via a configured channel", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-comments-mention-"));
-    const store = new CaseStore(root);
-    const commentsStore = new CommentsStore(store);
-    const notificationStore = new NotificationConfigStore(join(root, "notifications", "config.json"));
-    const sent: string[] = [];
-    const fetchFn = (async (u: string) => { sent.push(String(u)); return new Response("ok", { status: 200 }); }) as typeof fetch;
-    const notifier = createNotifier({ store: notificationStore, fetchFn });
-    const app = createApp(store, { commentsStore, notificationStore, notifier });
-    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    await request(app).post("/notifications").send({ type: "slack", webhookUrl: "https://hooks.slack.com/services/mentions" });
+  it(
+    "comments: an @mention fires one notification via a configured channel",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-comments-mention-"));
+      const store = new CaseStore(root);
+      const commentsStore = new CommentsStore(store);
+      const notificationStore = new NotificationConfigStore(join(root, "notifications", "config.json"));
+      const sent: string[] = [];
+      const fetchFn = (async (u: string) => {
+        sent.push(String(u));
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch;
+      const notifier = createNotifier({ store: notificationStore, fetchFn });
+      const app = createApp(store, { commentsStore, notificationStore, notifier });
+      await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await request(app)
+        .post("/notifications")
+        .send({ type: "slack", webhookUrl: "https://hooks.slack.com/services/mentions" });
 
-    const post = await request(app).post("/cases/c1/comments")
-      .send({ targetType: "finding", targetId: "f1", author: "Alice", text: "cc @bob can you take a look?" });
-    expect(post.status).toBe(201);
-    expect(post.body.mentions).toEqual(["bob"]);
+      const post = await request(app)
+        .post("/cases/c1/comments")
+        .send({
+          targetType: "finding",
+          targetId: "f1",
+          author: "Alice",
+          text: "cc @bob can you take a look?",
+        });
+      expect(post.status).toBe(201);
+      expect(post.body.mentions).toEqual(["bob"]);
 
-    // dispatchNotify is fire-and-forget AND the notifier loads its channel config from disk before
-    // it fetches, so one microtask tick isn't enough — poll until the send lands.
-    await pollFor(
-      "the @mention notification to reach the configured webhook",
-      async () => (sent.length ? sent : undefined),
-    );
-    expect(sent).toEqual(["https://hooks.slack.com/services/mentions"]);
-  }, POLL_TIMEOUT_MS * 2);
+      // dispatchNotify is fire-and-forget AND the notifier loads its channel config from disk before
+      // it fetches, so one microtask tick isn't enough — poll until the send lands.
+      await pollFor("the @mention notification to reach the configured webhook", async () =>
+        sent.length ? sent : undefined,
+      );
+      expect(sent).toEqual(["https://hooks.slack.com/services/mentions"]);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("false-positive: onFalsePositive callback fires on add, batch add, and remove", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-legit-cb-"));
     const store = new CaseStore(root);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     let pinged = 0;
-    const app = createApp(store, { onFalsePositive: () => { pinged++; } });
+    const app = createApp(store, {
+      onFalsePositive: () => {
+        pinged++;
+      },
+    });
 
     // Single add fires the callback.
-    const add = await request(app).post("/cases/c1/false-positive")
+    const add = await request(app)
+      .post("/cases/c1/false-positive")
       .send({ kind: "ioc", ref: "1.2.3.4", reason: "known-good-tool", note: "internal scanner" });
     expect(add.status).toBe(200);
     expect(pinged).toBe(1);
 
     // Batch add fires once (not per item).
-    const batch = await request(app).post("/cases/c1/false-positive/batch")
-      .send({ items: [{ kind: "finding", ref: "f1", reason: "detection-misfire", note: "fp" }, { kind: "finding", ref: "f2", reason: "detection-misfire" }] });
+    const batch = await request(app)
+      .post("/cases/c1/false-positive/batch")
+      .send({
+        items: [
+          { kind: "finding", ref: "f1", reason: "detection-misfire", note: "fp" },
+          { kind: "finding", ref: "f2", reason: "detection-misfire" },
+        ],
+      });
     expect(batch.status).toBe(200);
     expect(pinged).toBe(2);
 
     // Remove fires the callback.
     const markerId = add.body.find((m: { kind: string }) => m.kind === "ioc")?.id;
-    const remove = await request(app).post("/cases/c1/false-positive/remove")
-      .send({ id: markerId });
+    const remove = await request(app).post("/cases/c1/false-positive/remove").send({ id: markerId });
     expect(remove.status).toBe(200);
     expect(pinged).toBe(3);
   });
@@ -1241,40 +1817,60 @@ describe("state and report routes", () => {
     const stateStore = new StateStore(store);
     const enrichCalls: string[] = [];
     const provider = {
-      name: "VirusTotal", scope: "local" as const,
+      name: "VirusTotal",
+      scope: "local" as const,
       supports: () => true,
-      lookup: async (_k: string, v: string) => { enrichCalls.push(v); return null; },
+      lookup: async (_k: string, v: string) => {
+        enrichCalls.push(v);
+        return null;
+      },
     };
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "n", summary: "s",
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [],
+          iocs: [],
+          mitreTechniques: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "n",
+          summary: "s",
+        }),
+      ),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const statuses: Array<{ status: string; detail?: string }> = [];
     const app2 = createApp(store, {
-      stateStore, pipeline, enrichmentProviders: [provider],
+      stateStore,
+      pipeline,
+      enrichmentProviders: [provider],
       onAiStatus: (_c, s) => statuses.push(s),
     });
-    await request(app2).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app2)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
 
     // Seed one IOC already checked by the only configured (and enabled-by-default local) provider.
     const before = await stateStore.load("c1");
-    await stateStore.save({ ...before, iocs: [{ id: "i1", type: "ip", value: "1.2.3.4", firstSeen: "t0", enrichedBy: ["VirusTotal"] }] });
+    await stateStore.save({
+      ...before,
+      iocs: [{ id: "i1", type: "ip", value: "1.2.3.4", firstSeen: "t0", enrichedBy: ["VirusTotal"] }],
+    });
 
-    const res = await request(app2).post("/cases/c1/false-positive")
+    const res = await request(app2)
+      .post("/cases/c1/false-positive")
       .send({ kind: "event", ref: "nonexistent-event", reason: "known-good-tool", note: "internal tool" });
     expect(res.status).toBe(200);
 
     // Wait for the background re-synthesis (and, if it ran, enrichment) to settle.
     await new Promise((r) => setTimeout(r, 200));
 
-    expect(enrichCalls).toEqual([]);                                        // no provider lookups
+    expect(enrichCalls).toEqual([]); // no provider lookups
     expect(statuses.some((s) => s.detail?.includes("enriching"))).toBe(false); // no enrich job surfaced
     const final = await stateStore.load("c1");
-    expect(final.iocs[0].enrichedBy).toEqual(["VirusTotal"]);               // untouched
+    expect(final.iocs[0].enrichedBy).toEqual(["VirusTotal"]); // untouched
   });
 
   it("promotes an IOC false-positive to the global whitelist when addToWhitelist is set", async () => {
@@ -1288,7 +1884,11 @@ describe("state and report routes", () => {
     // seed an IOC on the case first
     await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "10.0.0.5" });
     const res = await request(app).post("/cases/c1/false-positive").send({
-      kind: "ioc", ref: "10.0.0.5", reason: "known-good-tool", note: "internal scanner IP", addToWhitelist: true,
+      kind: "ioc",
+      ref: "10.0.0.5",
+      reason: "known-good-tool",
+      note: "internal scanner IP",
+      addToWhitelist: true,
     });
     expect(res.status).toBe(200);
     const rules = await request(app).get("/ioc-whitelist");
@@ -1310,7 +1910,10 @@ describe("state and report routes", () => {
     const app = createApp(store, { stateStore, iocWhitelistStore });
 
     const res = await request(app).post("/cases/c1/false-positive").send({
-      kind: "ioc", ref: "10.0.0.7", reason: "known-good-tool", addToWhitelist: true,
+      kind: "ioc",
+      ref: "10.0.0.7",
+      reason: "known-good-tool",
+      addToWhitelist: true,
     });
     expect(res.status).toBe(200);
 
@@ -1330,7 +1933,10 @@ describe("state and report routes", () => {
 
     // No IOC seeded — the ref refers to a value already removed/renamed from the case.
     const res = await request(app).post("/cases/c1/false-positive").send({
-      kind: "ioc", ref: "203.0.113.9", reason: "known-good-tool", addToWhitelist: true,
+      kind: "ioc",
+      ref: "203.0.113.9",
+      reason: "known-good-tool",
+      addToWhitelist: true,
     });
     expect(res.status).toBe(200);
 
@@ -1350,13 +1956,18 @@ describe("state and report routes", () => {
 
     // IOC marker without addToWhitelist → no promotion.
     const noFlag = await request(app).post("/cases/c1/false-positive").send({
-      kind: "ioc", ref: "10.0.0.6", reason: "known-good-tool",
+      kind: "ioc",
+      ref: "10.0.0.6",
+      reason: "known-good-tool",
     });
     expect(noFlag.status).toBe(200);
 
     // Finding marker WITH addToWhitelist → still no promotion (only "ioc" kind qualifies).
     const findingFlag = await request(app).post("/cases/c1/false-positive").send({
-      kind: "finding", ref: "f1", reason: "detection-misfire", addToWhitelist: true,
+      kind: "finding",
+      ref: "f1",
+      reason: "detection-misfire",
+      addToWhitelist: true,
     });
     expect(findingFlag.status).toBe(200);
 
@@ -1371,32 +1982,41 @@ describe("state and report routes", () => {
     const app = createApp(store, {});
 
     // No ref at all → 400.
-    const noRef = await request(app).post("/cases/c1/false-positive")
+    const noRef = await request(app)
+      .post("/cases/c1/false-positive")
       .send({ kind: "ioc", reason: "known-good-tool" });
     expect(noRef.status).toBe(400);
 
     // reason "other" with an empty note → 400.
-    const otherNoNote = await request(app).post("/cases/c1/false-positive")
+    const otherNoNote = await request(app)
+      .post("/cases/c1/false-positive")
       .send({ kind: "ioc", ref: "9.9.9.9", reason: "other" });
     expect(otherNoNote.status).toBe(400);
 
     // reason "other" WITH a note → accepted.
-    const otherWithNote = await request(app).post("/cases/c1/false-positive")
+    const otherWithNote = await request(app)
+      .post("/cases/c1/false-positive")
       .send({ kind: "ioc", ref: "9.9.9.9", reason: "other", note: "one-off manual exclusion" });
     expect(otherWithNote.status).toBe(200);
-    expect(otherWithNote.body.find((m: { ref: string }) => m.ref === "9.9.9.9")).toMatchObject({ reason: "other" });
+    expect(otherWithNote.body.find((m: { ref: string }) => m.ref === "9.9.9.9")).toMatchObject({
+      reason: "other",
+    });
 
     // Batch: an item with reason "other" and no note is silently skipped, not the whole batch rejected —
     // unless it's the only item, in which case the batch itself has nothing valid to add → 400.
-    const batchAllInvalid = await request(app).post("/cases/c1/false-positive/batch")
+    const batchAllInvalid = await request(app)
+      .post("/cases/c1/false-positive/batch")
       .send({ items: [{ kind: "finding", ref: "f1", reason: "other" }] });
     expect(batchAllInvalid.status).toBe(400);
 
-    const batchMixed = await request(app).post("/cases/c1/false-positive/batch")
-      .send({ items: [
-        { kind: "finding", ref: "f1", reason: "other" },                          // skipped: no note
-        { kind: "finding", ref: "f2", reason: "detection-misfire" },              // accepted
-      ] });
+    const batchMixed = await request(app)
+      .post("/cases/c1/false-positive/batch")
+      .send({
+        items: [
+          { kind: "finding", ref: "f1", reason: "other" }, // skipped: no note
+          { kind: "finding", ref: "f2", reason: "detection-misfire" }, // accepted
+        ],
+      });
     expect(batchMixed.status).toBe(200);
     expect(batchMixed.body.some((m: { ref: string }) => m.ref === "f1")).toBe(false);
     expect(batchMixed.body.some((m: { ref: string }) => m.ref === "f2")).toBe(true);
@@ -1407,9 +2027,14 @@ describe("state and report routes", () => {
     const store = new CaseStore(root);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const received: Array<{ start: string | null; end: string | null }> = [];
-    const app = createApp(store, { onScope: (_caseId, s) => { received.push(s); } });
+    const app = createApp(store, {
+      onScope: (_caseId, s) => {
+        received.push(s);
+      },
+    });
 
-    const res = await request(app).post("/cases/c1/scope")
+    const res = await request(app)
+      .post("/cases/c1/scope")
       .send({ start: "2026-01-01T00:00:00Z", end: "2026-06-01T00:00:00Z" });
     expect(res.status).toBe(200);
     expect(received).toHaveLength(1);
@@ -1427,14 +2052,30 @@ describe("state and report routes", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({ answer: "No evidence of exfiltration.", status: "unknown", pointer: "Check egress proxy/firewall logs.", relatedEventIds: [] })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          answer: "No evidence of exfiltration.",
+          status: "unknown",
+          pointer: "Check egress proxy/firewall logs.",
+          relatedEventIds: [],
+        }),
+      ),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app = createApp(store, { pipeline, stateStore });
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "", description: "evt", severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "",
+      description: "evt",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(seeded);
 
     const ask = await request(app).post("/cases/c1/ask").send({ question: "Was data exfiltrated?" });
@@ -1444,7 +2085,8 @@ describe("state and report routes", () => {
 
     expect((await request(app).post("/cases/c1/ask").send({ question: "" })).status).toBe(400); // empty question
 
-    const add = await request(app).post("/cases/c1/questions")
+    const add = await request(app)
+      .post("/cases/c1/questions")
       .send({ question: "Was data exfiltrated?", status: "unknown", pointer: ask.body.pointer });
     expect(add.status).toBe(201);
     expect(add.body.pinned).toBe(true);
@@ -1469,14 +2111,19 @@ describe("state and report routes", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     await stateStore.save((await import("../src/analysis/stateTypes.js")).emptyState("c1"));
 
-    const adds = await Promise.all(Array.from({ length: 8 }, (_, i) =>
-      request(app).post("/cases/c1/questions").send({ question: `q${i}` })));
+    const adds = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        request(app)
+          .post("/cases/c1/questions")
+          .send({ question: `q${i}` }),
+      ),
+    );
     expect(adds.every((r) => r.status === 201)).toBe(true);
 
     const state = await request(app).get("/cases/c1/state");
     const questions = state.body.keyQuestions as { id: string; question: string }[];
     expect(questions).toHaveLength(8);
-    expect(new Set(questions.map((q) => q.id)).size).toBe(8);          // no id collisions either
+    expect(new Set(questions.map((q) => q.id)).size).toBe(8); // no id collisions either
     expect(new Set(questions.map((q) => q.question)).size).toBe(8);
   });
 
@@ -1489,8 +2136,16 @@ describe("state and report routes", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     seeded.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "" });
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "", description: "beacon to 10.0.0.5", severity: "High",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "",
+      description: "beacon to 10.0.0.5",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+    });
     await stateStore.save(seeded);
 
     const res = await request(app).get("/cases/c1/asset-graph");
@@ -1509,13 +2164,34 @@ describe("state and report routes", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "phishing email opened", severity: "High",
-        mitreTechniques: ["T1566"], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-20T14:02:00Z", description: "powershell spawned", severity: "Medium",
-        mitreTechniques: ["T1059"], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-20T14:01:00Z",
+        description: "phishing email opened",
+        severity: "High",
+        mitreTechniques: ["T1566"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-20T14:02:00Z",
+        description: "powershell spawned",
+        severity: "Medium",
+        mitreTechniques: ["T1059"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
       // > 5 min gap → a second phase
-      { id: "e3", timestamp: "2026-05-20T16:30:00Z", description: "ransomware encryptor", severity: "Critical",
-        mitreTechniques: ["T1486"], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e3",
+        timestamp: "2026-05-20T16:30:00Z",
+        description: "ransomware encryptor",
+        severity: "Critical",
+        mitreTechniques: ["T1486"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(seeded);
 
@@ -1541,19 +2217,45 @@ describe("state and report routes", () => {
       { id: "i2", type: "domain", value: "lonely.example", firstSeen: "2026-05-20T14:00:00Z" },
     );
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "malware", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: "abcdef123456", sources: ["THOR"] },
-      { id: "e2", timestamp: "2026-05-20T14:02:00Z", description: "same file flagged", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sha256: "abcdef123456", sources: ["Velociraptor"] },
-      { id: "e3", timestamp: "2026-05-20T14:03:00Z", description: "dns for lonely.example", severity: "Low",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["Zeek"] },
+      {
+        id: "e1",
+        timestamp: "2026-05-20T14:01:00Z",
+        description: "malware",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sha256: "abcdef123456",
+        sources: ["THOR"],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-20T14:02:00Z",
+        description: "same file flagged",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sha256: "abcdef123456",
+        sources: ["Velociraptor"],
+      },
+      {
+        id: "e3",
+        timestamp: "2026-05-20T14:03:00Z",
+        description: "dns for lonely.example",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sources: ["Zeek"],
+      },
     );
     await stateStore.save(seeded);
 
     const res = await request(app).get("/cases/c1/ioc-sources");
     expect(res.status).toBe(200);
-    expect(res.body.i1.sort()).toEqual(["THOR", "Velociraptor"]);   // corroborated by 2 tools
-    expect(res.body.i2).toEqual(["Zeek"]);                            // single tool
+    expect(res.body.i1.sort()).toEqual(["THOR", "Velociraptor"]); // corroborated by 2 tools
+    expect(res.body.i2).toEqual(["Zeek"]); // single tool
   });
 
   it("ranks adversary group hints by technique overlap against the bundled MITRE dataset", async () => {
@@ -1566,14 +2268,27 @@ describe("state and report routes", () => {
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     // A broad set of very common techniques (incl. a sub-technique, to exercise base-rollup) so
     // multiple real groups clear the default 3-overlap threshold.
-    seeded.findings.push(
-      { id: "f1", severity: "High", title: "intrusion", description: "", relatedIocs: [], sourceScreenshots: [],
-        mitreTechniques: ["T1566", "T1059.001", "T1078"], firstSeen: "2026-05-20T14:00:00Z", lastUpdated: "2026-05-20T14:00:00Z", status: "open" },
-    );
-    seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "cred dumping", severity: "High",
-        mitreTechniques: ["T1003", "T1021", "T1053"], relatedFindingIds: [], sourceScreenshots: [] },
-    );
+    seeded.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "intrusion",
+      description: "",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: ["T1566", "T1059.001", "T1078"],
+      firstSeen: "2026-05-20T14:00:00Z",
+      lastUpdated: "2026-05-20T14:00:00Z",
+      status: "open",
+    });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T14:01:00Z",
+      description: "cred dumping",
+      severity: "High",
+      mitreTechniques: ["T1003", "T1021", "T1053"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(seeded);
 
     const res = await request(app).get("/cases/c1/adversary-hints");
@@ -1584,8 +2299,8 @@ describe("state and report routes", () => {
     expect(Array.isArray(res.body.hints)).toBe(true);
     expect(res.body.hints.length).toBeGreaterThan(0);
     for (const h of res.body.hints) {
-      expect(h.overlapCount).toBeGreaterThanOrEqual(3);          // meets the threshold (breadth)
-      expect(h.overlapCount).toBeLessThanOrEqual(6);             // can't exceed the case set
+      expect(h.overlapCount).toBeGreaterThanOrEqual(3); // meets the threshold (breadth)
+      expect(h.overlapCount).toBeLessThanOrEqual(6); // can't exceed the case set
       expect(h.overlapTechniques.length).toBe(h.overlapCount);
       expect(h.exactCount).toBeLessThanOrEqual(h.overlapCount);
       expect(h.exactTechniques.length).toBe(h.exactCount);
@@ -1606,10 +2321,15 @@ describe("state and report routes", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     // Only two techniques → no group can overlap by the default minimum of 3.
-    seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "x", severity: "Low",
-        mitreTechniques: ["T1566", "T1059"], relatedFindingIds: [], sourceScreenshots: [] },
-    );
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T14:01:00Z",
+      description: "x",
+      severity: "Low",
+      mitreTechniques: ["T1566", "T1059"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(seeded);
 
     const res = await request(app).get("/cases/c1/adversary-hints");
@@ -1664,8 +2384,13 @@ describe("state and report routes", () => {
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     // Encryption alone ends every ransomware playbook — an overlap, not a sequence.
     seeded.forensicTimeline.push({
-      id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "ransom note", severity: "High",
-      mitreTechniques: ["T1486"], relatedFindingIds: [], sourceScreenshots: [],
+      id: "e1",
+      timestamp: "2026-05-20T14:01:00Z",
+      description: "ransom note",
+      severity: "High",
+      mitreTechniques: ["T1486"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
     });
     await stateStore.save(seeded);
 
@@ -1708,8 +2433,15 @@ describe("state and report routes", () => {
     const app = createApp(store, { stateStore, reportWriter });
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "Phishing email opened",
-      severity: "High", mitreTechniques: ["T1566"], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "Phishing email opened",
+      severity: "High",
+      mitreTechniques: ["T1566"],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     const res = await request(app).get("/cases/c1/incident-timeline.csv");
@@ -1773,8 +2505,18 @@ describe("state and report routes", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     seeded.iocs.push({ id: "i1", type: "domain", value: "c2.evil.com", firstSeen: "2026-05-20T09:00:00Z" });
-    seeded.findings.push({ id: "f1", severity: "High", title: "C2 beacon", description: "d", relatedIocs: ["i1"],
-      sourceScreenshots: [], mitreTechniques: ["T1071"], firstSeen: "t", lastUpdated: "t", status: "open" });
+    seeded.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "C2 beacon",
+      description: "d",
+      relatedIocs: ["i1"],
+      sourceScreenshots: [],
+      mitreTechniques: ["T1071"],
+      firstSeen: "t",
+      lastUpdated: "t",
+      status: "open",
+    });
     seeded.mitreTechniques.push({ id: "T1071", name: "Application Layer Protocol", findingIds: ["f1"] });
     await stateStore.save(seeded);
     await reportMetaStore.save("c1", { organization: "Acme Corp" });
@@ -1786,11 +2528,17 @@ describe("state and report routes", () => {
     const bundle = JSON.parse(res.text);
     expect(bundle.type).toBe("bundle");
     const types = bundle.objects.map((o: { type: string }) => o.type);
-    expect(types).toEqual(expect.arrayContaining(["identity", "report", "indicator", "attack-pattern", "relationship"]));
-    expect(bundle.objects.filter((o: { type: string }) => o.type === "identity")
-      .map((o: { name: string }) => o.name)).toContain("Acme Corp");
-    expect(bundle.objects.find((o: { type: string }) => o.type === "indicator").pattern)
-      .toBe("[domain-name:value = 'c2.evil.com']");
+    expect(types).toEqual(
+      expect.arrayContaining(["identity", "report", "indicator", "attack-pattern", "relationship"]),
+    );
+    expect(
+      bundle.objects
+        .filter((o: { type: string }) => o.type === "identity")
+        .map((o: { name: string }) => o.name),
+    ).toContain("Acme Corp");
+    expect(bundle.objects.find((o: { type: string }) => o.type === "indicator").pattern).toBe(
+      "[domain-name:value = 'c2.evil.com']",
+    );
   });
 
   it("returns 501 for the STIX export when no reportWriter is configured", async () => {
@@ -1818,12 +2566,14 @@ describe("state and report routes", () => {
     expect(initial.body.organization).toBe("");
 
     // Save human-authored fields (unknown keys are dropped by normalization).
-    const put = await request(app).put("/cases/c1/report-meta").send({
-      organization: "ExampleCorp",
-      executiveSummary: "Human-authored summary.",
-      recommendations: ["Deploy EDR everywhere"],
-      bogus: "dropped",
-    });
+    const put = await request(app)
+      .put("/cases/c1/report-meta")
+      .send({
+        organization: "ExampleCorp",
+        executiveSummary: "Human-authored summary.",
+        recommendations: ["Deploy EDR everywhere"],
+        bogus: "dropped",
+      });
     expect(put.status).toBe(200);
     expect(put.body.organization).toBe("ExampleCorp");
     expect(put.body).not.toHaveProperty("bogus");
@@ -1848,18 +2598,43 @@ describe("state and report routes", () => {
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     // Seed a forensic timeline so synthesize has something to work from.
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "conclusion", description: "d",
-          relatedIocs: [], mitreTechniques: ["T1566"], status: "open", relatedEventIds: ["e1"] }],
-        iocs: [], mitreTechniques: [{ id: "T1566", name: "Phishing" }],
-        attackerPath: "phish then run", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [
+            {
+              id: "f1",
+              severity: "High",
+              title: "conclusion",
+              description: "d",
+              relatedIocs: [],
+              mitreTechniques: ["T1566"],
+              status: "open",
+              relatedEventIds: ["e1"],
+            },
+          ],
+          iocs: [],
+          mitreTechniques: [{ id: "T1566", name: "Phishing" }],
+          attackerPath: "phish then run",
+          summary: "s",
+          forensicEvents: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "",
+        }),
+      ),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
@@ -1882,165 +2657,249 @@ describe("state and report routes", () => {
 describe("AI on/off control", () => {
   function findingPipeline(stateStore: StateStore) {
     return new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "Hit", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open" }],
-        iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "n", summary: "s",
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [
+            {
+              id: "f1",
+              severity: "High",
+              title: "Hit",
+              description: "d",
+              relatedIocs: [],
+              mitreTechniques: [],
+              status: "open",
+            },
+          ],
+          iocs: [],
+          mitreTechniques: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "n",
+          summary: "s",
+        }),
+      ),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
   }
 
-  it("does NOT analyze captures while AI is off, then backfills them when turned on", async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-aioff-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const app = createApp(store, { pipeline: findingPipeline(stateStore), stateStore, windowSize: 1 });
+  it(
+    "does NOT analyze captures while AI is off, then backfills them when turned on",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-aioff-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const app = createApp(store, { pipeline: findingPipeline(stateStore), stateStore, windowSize: 1 });
 
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    // turn AI OFF
-    await request(app).post("/cases/c1/ai-control").send({ enabled: false });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      // turn AI OFF
+      await request(app).post("/cases/c1/ai-control").send({ enabled: false });
 
-    // capture two screenshots while off
-    for (let i = 0; i < 2; i++) {
-      await request(app).post("/captures").send({
-        caseId: "c1", timestamp: `2026-05-28T10:0${i}:00.000Z`, url: "u", tabTitle: "t",
-        triggerType: "navigation", imageBase64: await pngBase64(),
+      // capture two screenshots while off
+      for (let i = 0; i < 2; i++) {
+        await request(app)
+          .post("/captures")
+          .send({
+            caseId: "c1",
+            timestamp: `2026-05-28T10:0${i}:00.000Z`,
+            url: "u",
+            tabTitle: "t",
+            triggerType: "navigation",
+            imageBase64: await pngBase64(),
+          });
+      }
+      // evidence stored, but nothing analyzed
+      await new Promise((r) => setTimeout(r, 100));
+      expect((await stateStore.load("c1")).findings).toHaveLength(0);
+
+      // turn AI ON → backfill analyzes the two captured-while-off screenshots
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+      const state = await pollForFinding(stateStore, "c1");
+      expect(state.findings).toHaveLength(1);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "emits a terminal idle status when AI is turned on with nothing to catch up on",
+    async () => {
+      // Regression: the dashboard optimistically shows "AI on — catching up on un-analyzed
+      // screenshots…" the moment you toggle. backfill used to `return` silently when there was
+      // nothing pending, so no terminal event was ever sent and that message hung forever
+      // ("this message is stuck, I don't know if it finished"). It must always report idle.
+      const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-idle-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const events: { status: string; detail?: string }[] = [];
+      const app = createApp(store, {
+        pipeline: findingPipeline(stateStore),
+        stateStore,
+        windowSize: 1,
+        onAiStatus: (_c, e) => events.push({ status: e.status, detail: e.detail }),
       });
-    }
-    // evidence stored, but nothing analyzed
-    await new Promise((r) => setTimeout(r, 100));
-    expect((await stateStore.load("c1")).findings).toHaveLength(0);
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
 
-    // turn AI ON → backfill analyzes the two captured-while-off screenshots
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    const state = await pollForFinding(stateStore, "c1");
-    expect(state.findings).toHaveLength(1);
-  }, POLL_TIMEOUT_MS * 2);
+      // Fresh case, zero captures → toggling AI on has nothing to analyze, but must still emit idle.
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+      await pollFor(
+        () => `a terminal idle status after the AI toggle, saw [${events.map((e) => e.status).join(", ")}]`,
+        async () => (events.some((e) => e.status === "idle") ? true : undefined),
+      );
+      expect(events.some((e) => e.status === "idle")).toBe(true);
+      // …and it must not have falsely claimed it was analyzing when there was nothing to do.
+      expect(events.some((e) => e.status === "analyzing")).toBe(false);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-  it("emits a terminal idle status when AI is turned on with nothing to catch up on", async () => {
-    // Regression: the dashboard optimistically shows "AI on — catching up on un-analyzed
-    // screenshots…" the moment you toggle. backfill used to `return` silently when there was
-    // nothing pending, so no terminal event was ever sent and that message hung forever
-    // ("this message is stuck, I don't know if it finished"). It must always report idle.
-    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-idle-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const events: { status: string; detail?: string }[] = [];
-    const app = createApp(store, {
-      pipeline: findingPipeline(stateStore), stateStore, windowSize: 1,
-      onAiStatus: (_c, e) => events.push({ status: e.status, detail: e.detail }),
-    });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  it(
+    "synthesizes evidence imported while AI was off when AI is turned on (no screenshots)",
+    async () => {
+      // Bug: importing a Velociraptor table with AI off populates the timeline deterministically, but
+      // turning AI on only "caught up" on screenshots — with none, backfill idled and never synthesized
+      // the imported data (only a fresh import did). With autosynthesis on, AI-on must trigger synthesis.
+      const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-import-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const phases: string[] = [];
+      const app = createApp(store, {
+        pipeline: findingPipeline(stateStore),
+        stateStore,
+        autoSynthesize: true,
+        autoSynthesizeDebounceMs: 10,
+        onAiStatus: (_c, e) => {
+          if (e.phase) phases.push(e.phase);
+        },
+      });
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      // No capture log at all (import-only case). Turning AI on must trigger synthesis, not idle.
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+      await pollFor(
+        () => `the AI toggle to trigger synthesis, saw phases [${phases.join(", ")}]`,
+        async () => (phases.includes("synthesizing") ? true : undefined),
+      );
+      expect(phases).toContain("synthesizing");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
-    // Fresh case, zero captures → toggling AI on has nothing to analyze, but must still emit idle.
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    await pollFor(
-      () => `a terminal idle status after the AI toggle, saw [${events.map((e) => e.status).join(", ")}]`,
-      async () => (events.some((e) => e.status === "idle") ? true : undefined),
-    );
-    expect(events.some((e) => e.status === "idle")).toBe(true);
-    // …and it must not have falsely claimed it was analyzing when there was nothing to do.
-    expect(events.some((e) => e.status === "analyzing")).toBe(false);
-  }, POLL_TIMEOUT_MS * 2);
-
-  it("synthesizes evidence imported while AI was off when AI is turned on (no screenshots)", async () => {
-    // Bug: importing a Velociraptor table with AI off populates the timeline deterministically, but
-    // turning AI on only "caught up" on screenshots — with none, backfill idled and never synthesized
-    // the imported data (only a fresh import did). With autosynthesis on, AI-on must trigger synthesis.
-    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-import-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const phases: string[] = [];
-    const app = createApp(store, {
-      pipeline: findingPipeline(stateStore), stateStore,
-      autoSynthesize: true, autoSynthesizeDebounceMs: 10,
-      onAiStatus: (_c, e) => { if (e.phase) phases.push(e.phase); },
-    });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    // No capture log at all (import-only case). Turning AI on must trigger synthesis, not idle.
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    await pollFor(
-      () => `the AI toggle to trigger synthesis, saw phases [${phases.join(", ")}]`,
-      async () => (phases.includes("synthesizing") ? true : undefined),
-    );
-    expect(phases).toContain("synthesizing");
-  }, POLL_TIMEOUT_MS * 2);
-
-  it("tracks AI off→on backfill synthesis as a job, not just an onAiStatus ping", async () => {
-    // Bug: turning AI on ran synthesis via the debounced auto path (scheduleSynthesis), which never
-    // registered with the jobManager — so it showed the "AI: synthesizing…" banner but never appeared
-    // in the Jobs panel, unlike the manual "re-synthesize" button. Both must be trackable/cancellable.
-    const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-job-"));
-    const store = new CaseStore(root);
-    const stateStore = new StateStore(store);
-    const jobManager = new JobManager();
-    const app = createApp(store, {
-      pipeline: findingPipeline(stateStore), stateStore, jobManager,
-      autoSynthesize: true, autoSynthesizeDebounceMs: 10,
-    });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    let jobs: { kind: string; status: string }[] = [];
-    await pollFor(
-      () => `a synthesis job to be registered, saw kinds [${jobs.map((j) => j.kind).join(", ")}]`,
-      async () => {
-        jobs = jobManager.list("c1");
-        return jobs.some((j) => j.kind === "synthesis") ? jobs : undefined;
-      },
-    );
-    expect(jobs.some((j) => j.kind === "synthesis")).toBe(true);
-  }, POLL_TIMEOUT_MS * 2);
-
-  it("tracks a drop-folder auto-import as a job so the Jobs panel shows it (parity with /import)", async () => {
-    // Bug: the evidence drop-folder poller (scanCaseDrops) imported files through the SAME chain as
-    // the Import button, but never registered with the jobManager — so an auto-import ran invisibly,
-    // with nothing in the dashboard Jobs panel, unlike a manual /import. The sweep must register a job.
-    const prevPoll = process.env.DFIR_DROP_POLL_S;
-    process.env.DFIR_DROP_POLL_S = "2"; // minimum settle: seen at poll 1, imported at poll 2 (~4s)
-    try {
-      const root = await mkdtemp(join(tmpdir(), "dfir-dropjob-"));
+  it(
+    "tracks AI off→on backfill synthesis as a job, not just an onAiStatus ping",
+    async () => {
+      // Bug: turning AI on ran synthesis via the debounced auto path (scheduleSynthesis), which never
+      // registered with the jobManager — so it showed the "AI: synthesizing…" banner but never appeared
+      // in the Jobs panel, unlike the manual "re-synthesize" button. Both must be trackable/cancellable.
+      const root = await mkdtemp(join(tmpdir(), "dfir-aibackfill-job-"));
       const store = new CaseStore(root);
       const stateStore = new StateStore(store);
       const jobManager = new JobManager();
       const app = createApp(store, {
-        pipeline: findingPipeline(stateStore), stateStore, jobManager,
-        dropStatusStore: new DropStatusStore(store), // presence ARMS the drop-folder poller
+        pipeline: findingPipeline(stateStore),
+        stateStore,
+        jobManager,
+        autoSynthesize: true,
+        autoSynthesizeDebounceMs: 10,
       });
-      await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-      // Drop a deterministic Velociraptor JSON into the case drop folder (imports without AI).
-      const dropDir = join(store.caseDir("c1"), "drop");
-      await mkdir(dropDir, { recursive: true });
-      const velo = JSON.stringify([{ _Source: "Windows.Detection.X", Detection: { Name: "Bad" }, EventTime: "2026-01-01T00:00:00Z", EntryPath: "c:\\x.exe" }]);
-      await writeFile(join(dropDir, "evidence.json"), velo, "utf8");
-
-      let jobs: { kind: string; label?: string }[] = [];
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await request(app).post("/cases/c1/ai-control").send({ enabled: true });
+      let jobs: { kind: string; status: string }[] = [];
       await pollFor(
-        () => `the drop-folder sweep to register an import job, saw kinds [${jobs.map((j) => j.kind).join(", ")}]`,
+        () => `a synthesis job to be registered, saw kinds [${jobs.map((j) => j.kind).join(", ")}]`,
         async () => {
           jobs = jobManager.list("c1");
-          return jobs.some((j) => j.kind === "import") ? jobs : undefined;
+          return jobs.some((j) => j.kind === "synthesis") ? jobs : undefined;
         },
       );
-      expect(jobs.some((j) => j.kind === "import" && /drop/i.test(j.label ?? ""))).toBe(true);
-    } finally {
-      if (prevPoll === undefined) delete process.env.DFIR_DROP_POLL_S;
-      else process.env.DFIR_DROP_POLL_S = prevPoll;
-    }
-    // The drop poller needs ~4s to settle a file before importing it, so this poll genuinely uses
-    // most of its budget — leave a SECOND full poll budget on top (20s total), not the 15s default.
-  }, POLL_TIMEOUT_MS * 2);
+      expect(jobs.some((j) => j.kind === "synthesis")).toBe(true);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "tracks a drop-folder auto-import as a job so the Jobs panel shows it (parity with /import)",
+    async () => {
+      // Bug: the evidence drop-folder poller (scanCaseDrops) imported files through the SAME chain as
+      // the Import button, but never registered with the jobManager — so an auto-import ran invisibly,
+      // with nothing in the dashboard Jobs panel, unlike a manual /import. The sweep must register a job.
+      const prevPoll = process.env.DFIR_DROP_POLL_S;
+      process.env.DFIR_DROP_POLL_S = "2"; // minimum settle: seen at poll 1, imported at poll 2 (~4s)
+      try {
+        const root = await mkdtemp(join(tmpdir(), "dfir-dropjob-"));
+        const store = new CaseStore(root);
+        const stateStore = new StateStore(store);
+        const jobManager = new JobManager();
+        const app = createApp(store, {
+          pipeline: findingPipeline(stateStore),
+          stateStore,
+          jobManager,
+          dropStatusStore: new DropStatusStore(store), // presence ARMS the drop-folder poller
+        });
+        await request(app)
+          .post("/cases")
+          .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+        // Drop a deterministic Velociraptor JSON into the case drop folder (imports without AI).
+        const dropDir = join(store.caseDir("c1"), "drop");
+        await mkdir(dropDir, { recursive: true });
+        const velo = JSON.stringify([
+          {
+            _Source: "Windows.Detection.X",
+            Detection: { Name: "Bad" },
+            EventTime: "2026-01-01T00:00:00Z",
+            EntryPath: "c:\\x.exe",
+          },
+        ]);
+        await writeFile(join(dropDir, "evidence.json"), velo, "utf8");
+
+        let jobs: { kind: string; label?: string }[] = [];
+        await pollFor(
+          () =>
+            `the drop-folder sweep to register an import job, saw kinds [${jobs.map((j) => j.kind).join(", ")}]`,
+          async () => {
+            jobs = jobManager.list("c1");
+            return jobs.some((j) => j.kind === "import") ? jobs : undefined;
+          },
+        );
+        expect(jobs.some((j) => j.kind === "import" && /drop/i.test(j.label ?? ""))).toBe(true);
+      } finally {
+        if (prevPoll === undefined) delete process.env.DFIR_DROP_POLL_S;
+        else process.env.DFIR_DROP_POLL_S = prevPoll;
+      }
+      // The drop poller needs ~4s to settle a file before importing it, so this poll genuinely uses
+      // most of its budget — leave a SECOND full poll budget on top (20s total), not the 15s default.
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("POST /import fires onImport(caseId) so dashboards can warn cross-case (parity with captures)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-onimport-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const imported: string[] = [];
-    const app = createApp(store, { pipeline: findingPipeline(stateStore), stateStore, onImport: (c) => imported.push(c) });
-    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-    const velo = JSON.stringify([{ _Source: "Windows.Detection.X", Detection: { Name: "Bad" }, EventTime: "2026-01-01T00:00:00Z", EntryPath: "c:\\x.exe" }]);
+    const app = createApp(store, {
+      pipeline: findingPipeline(stateStore),
+      stateStore,
+      onImport: (c) => imported.push(c),
+    });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const velo = JSON.stringify([
+      {
+        _Source: "Windows.Detection.X",
+        Detection: { Name: "Bad" },
+        EventTime: "2026-01-01T00:00:00Z",
+        EntryPath: "c:\\x.exe",
+      },
+    ]);
     const res = await request(app).post("/cases/c1/import").send({ json: velo, filename: "v.json" });
     expect(res.status).toBe(202);
     expect(imported).toContain("c1"); // → startServer broadcasts { type:"import_ingest", caseId } to all dashboards
@@ -2069,8 +2928,11 @@ describe("manual entry (events / IOCs the AI didn't catch)", () => {
   it("POST /cases/:id/events appends a manual forensic event (sorted, tagged manual)", async () => {
     const { app, stateStore } = await freshApp();
     const res = await request(app).post("/cases/c1/events").send({
-      timestamp: "2026-06-04T10:00:00Z", description: "manual logon to DC01", severity: "High",
-      asset: "DC01", mitreTechniques: "T1059.001",
+      timestamp: "2026-06-04T10:00:00Z",
+      description: "manual logon to DC01",
+      severity: "High",
+      asset: "DC01",
+      mitreTechniques: "T1059.001",
     });
     expect(res.status).toBe(201);
     expect(res.body.id).toMatch(/^manual-/);
@@ -2106,16 +2968,35 @@ describe("playbook routes (issue #36)", () => {
     const playbookStore = new PlaybookStore(store);
     const playbookControlStore = new PlaybookControlStore(store);
     const events: string[] = [];
-    const app = createApp(store, { stateStore, playbookStore, playbookControlStore, onPlaybook: () => events.push("changed") });
+    const app = createApp(store, {
+      stateStore,
+      playbookStore,
+      playbookControlStore,
+      onPlaybook: () => events.push("changed"),
+    });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     if (seed) await stateStore.save({ ...emptyState("c1"), ...seed });
     return { app, stateStore, playbookStore, playbookControlStore, events };
   }
 
-  const NEXT_STEP = { id: "ns1", priority: "high" as const, action: "Pull 4624/4672", rationale: "confirm logon", pointer: "ALClient07" };
+  const NEXT_STEP = {
+    id: "ns1",
+    priority: "high" as const,
+    action: "Pull 4624/4672",
+    rationale: "confirm logon",
+    pointer: "ALClient07",
+  };
   const CRIT_FINDING = {
-    id: "f1", severity: "Critical" as const, title: "Ransomware staged", description: "lockbit.exe",
-    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-06-10T00:00:00Z", lastUpdated: "2026-06-10T00:00:00Z", status: "open" as const,
+    id: "f1",
+    severity: "Critical" as const,
+    title: "Ransomware staged",
+    description: "lockbit.exe",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "2026-06-10T00:00:00Z",
+    lastUpdated: "2026-06-10T00:00:00Z",
+    status: "open" as const,
   };
 
   it("GET auto-derives tasks from next steps + Critical/High findings and returns completion stats", async () => {
@@ -2128,26 +3009,32 @@ describe("playbook routes (issue #36)", () => {
 
   it("PATCH updates status and the GET stats reflect completion (preserved across re-sync)", async () => {
     const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
-    await request(app).get("/cases/c1/playbook");                       // materialize
-    const patch = await request(app).patch("/cases/c1/playbook/next_step:ns1").send({ status: "done", assignee: "ana" });
+    await request(app).get("/cases/c1/playbook"); // materialize
+    const patch = await request(app)
+      .patch("/cases/c1/playbook/next_step:ns1")
+      .send({ status: "done", assignee: "ana" });
     expect(patch.status).toBe(200);
-    const res = await request(app).get("/cases/c1/playbook");           // re-syncs, must preserve status
+    const res = await request(app).get("/cases/c1/playbook"); // re-syncs, must preserve status
     expect(res.body.tasks[0]).toMatchObject({ status: "done", assignee: "ana" });
     expect(res.body.stats).toMatchObject({ total: 1, done: 1, completionPct: 100 });
   });
 
   it("POST adds a custom task; POST /sync re-derives; PATCH /order reorders; DELETE removes", async () => {
     const { app, events } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
-    const add = await request(app).post("/cases/c1/playbook").send({ title: "Call client", priority: "high" });
+    const add = await request(app)
+      .post("/cases/c1/playbook")
+      .send({ title: "Call client", priority: "high" });
     expect(add.status).toBe(201);
     const customId = add.body.id;
     expect(customId).toMatch(/^custom:/);
 
     const sync = await request(app).post("/cases/c1/playbook/sync");
     expect(sync.status).toBe(200);
-    expect(sync.body.tasks).toHaveLength(2);                            // derived next step + custom
+    expect(sync.body.tasks).toHaveLength(2); // derived next step + custom
 
-    const order = await request(app).patch("/cases/c1/playbook/order").send({ ids: [customId, "next_step:ns1"] });
+    const order = await request(app)
+      .patch("/cases/c1/playbook/order")
+      .send({ ids: [customId, "next_step:ns1"] });
     expect(order.status).toBe(200);
     expect(order.body.tasks.map((t: { id: string }) => t.id)).toEqual([customId, "next_step:ns1"]);
 
@@ -2155,12 +3042,12 @@ describe("playbook routes (issue #36)", () => {
     expect(del.status).toBe(204);
     const after = await request(app).get("/cases/c1/playbook");
     expect(after.body.tasks.map((t: { id: string }) => t.id)).toEqual(["next_step:ns1"]);
-    expect(events.length).toBeGreaterThan(0);                          // WS broadcast fired
+    expect(events.length).toBeGreaterThan(0); // WS broadcast fired
   });
 
   it("DELETE on an auto-derived task marks it skipped so it survives re-sync", async () => {
     const { app } = await freshPlaybookApp({ nextSteps: [NEXT_STEP] });
-    await request(app).get("/cases/c1/playbook");                        // prime the derived task
+    await request(app).get("/cases/c1/playbook"); // prime the derived task
     const del = await request(app).delete("/cases/c1/playbook/next_step:ns1");
     expect(del.status).toBe(204);
     const after = await request(app).get("/cases/c1/playbook");
@@ -2188,13 +3075,16 @@ describe("playbook routes (issue #36)", () => {
     const { app } = await freshPlaybookApp({ findings: [CRIT_FINDING] });
     const before = await request(app).get("/cases/c1/playbook");
     expect(before.body.control).toEqual({ useTemplates: false });
-    expect(before.body.tasks.map((t: { id: string }) => t.id)).toEqual(["finding:f1"]);   // single task by default
+    expect(before.body.tasks.map((t: { id: string }) => t.id)).toEqual(["finding:f1"]); // single task by default
 
     const put = await request(app).put("/cases/c1/playbook/control").send({ useTemplates: true });
     expect(put.status).toBe(200);
     expect(put.body.control).toEqual({ useTemplates: true });
     expect(put.body.tasks.map((t: { id: string }) => t.id)).toEqual([
-      "finding:f1:contain", "finding:f1:investigate", "finding:f1:eradicate", "finding:f1:recover",
+      "finding:f1:contain",
+      "finding:f1:investigate",
+      "finding:f1:eradicate",
+      "finding:f1:recover",
     ]);
 
     // GET reflects the persisted setting and keeps the expanded tasks.
@@ -2205,6 +3095,8 @@ describe("playbook routes (issue #36)", () => {
 
   it("PUT /playbook/control rejects a non-boolean body (400)", async () => {
     const { app } = await freshPlaybookApp({});
-    expect((await request(app).put("/cases/c1/playbook/control").send({ useTemplates: "yes" })).status).toBe(400);
+    expect((await request(app).put("/cases/c1/playbook/control").send({ useTemplates: "yes" })).status).toBe(
+      400,
+    );
   });
 });

@@ -6,10 +6,7 @@
 
 import { randomUUID } from "node:crypto";
 import { sanitizeManifestValue } from "./analysisRunHash.js";
-import {
-  manifestValueSchema,
-  type ManifestValue,
-} from "./analysisRunTypes.js";
+import { manifestValueSchema, type ManifestValue } from "./analysisRunTypes.js";
 import type { JobLedgerStore } from "./jobLedgerStore.js";
 import {
   emptyJobTable,
@@ -78,8 +75,7 @@ export interface RegisteredJob {
 }
 
 export type CancelResult =
-  | { ok: true; job: Job }
-  | { ok: false; reason: "unknown" | "terminal" | "not-cancellable" };
+  { ok: true; job: Job } | { ok: false; reason: "unknown" | "terminal" | "not-cancellable" };
 
 export type ResumeResult =
   | { ok: true; job: Job }
@@ -163,26 +159,17 @@ export class JobManager {
     this.max = Math.max(1, Math.floor(opts.max ?? 100));
     this.globalConcurrency = Math.max(
       1,
-      Math.floor(
-        opts.globalConcurrency ?? (opts.ledger ? 4 : Number.MAX_SAFE_INTEGER),
-      ),
+      Math.floor(opts.globalConcurrency ?? (opts.ledger ? 4 : Number.MAX_SAFE_INTEGER)),
     );
     this.perCaseConcurrency = Math.max(
       1,
-      Math.floor(
-        opts.perCaseConcurrency ?? (opts.ledger ? 1 : Number.MAX_SAFE_INTEGER),
-      ),
+      Math.floor(opts.perCaseConcurrency ?? (opts.ledger ? 1 : Number.MAX_SAFE_INTEGER)),
     );
     this.now = opts.now ?? (() => new Date().toISOString());
     let sequence = 0;
-    this.id = opts.id ?? (
-      opts.ledger
-        ? () => `job_${randomUUID()}`
-        : () => `job_${++sequence}`
-    );
+    this.id = opts.id ?? (opts.ledger ? () => `job_${randomUUID()}` : () => `job_${++sequence}`);
     this.initialization = this.restore().catch((error: unknown) => {
-      this.initializationError =
-        error instanceof Error ? error : new Error(String(error));
+      this.initializationError = error instanceof Error ? error : new Error(String(error));
       this.reportError(this.initializationError);
     });
   }
@@ -201,24 +188,16 @@ export class JobManager {
     return this.prepareRegistration(jobId, input);
   }
 
-  private reusedRegistration(
-    input: RegisterInput,
-    caseId: string | null,
-  ): RegisteredJob | undefined {
+  private reusedRegistration(input: RegisterInput, caseId: string | null): RegisteredJob | undefined {
     if (!input.idempotencyKey) return undefined;
-    const existing = findJobByIdempotencyKey(
-      this.table,
-      caseId,
-      input.idempotencyKey,
-    );
+    const existing = findJobByIdempotencyKey(this.table, caseId, input.idempotencyKey);
     if (!existing) return undefined;
     const controller = this.controllers.get(existing.id);
     return {
       jobId: existing.id,
       ...(controller ? { signal: controller.signal } : {}),
       ready: this.admissions.get(existing.id)?.promise ?? Promise.resolve(),
-      durable:
-        this.durabilities.get(existing.id)?.promise ?? Promise.resolve(),
+      durable: this.durabilities.get(existing.id)?.promise ?? Promise.resolve(),
       reused: true,
     };
   }
@@ -237,35 +216,30 @@ export class JobManager {
     const parameters = input.parameters
       ? (sanitizeManifestValue(input.parameters) as Record<string, ManifestValue>)
       : undefined;
-    this.table = this.limitTable(createJob(this.table, {
-      id: jobId,
-      caseId,
-      kind: input.kind,
-      ...(input.label !== undefined ? { label: input.label } : {}),
-      ...(input.detail !== undefined ? { detail: input.detail } : {}),
-      ...(input.priority ? { priority: input.priority } : {}),
-      ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
-      ...(input.idempotencyKey
-        ? { idempotencyKey: input.idempotencyKey }
-        : {}),
-      ...(parameters ? { parameters } : {}),
-      ...(input.runManifestId ? { runManifestId: input.runManifestId } : {}),
-      ...(input.maxRetries !== undefined
-        ? { maxRetries: input.maxRetries }
-        : {}),
-      ...(input.resourceBudget ? { resourceBudget: input.resourceBudget } : {}),
-      resumable: input.resumable ?? false,
-      cancellable: input.cancellable ?? false,
-      status: "queued",
-      now: this.now(),
-    }));
+    this.table = this.limitTable(
+      createJob(this.table, {
+        id: jobId,
+        caseId,
+        kind: input.kind,
+        ...(input.label !== undefined ? { label: input.label } : {}),
+        ...(input.detail !== undefined ? { detail: input.detail } : {}),
+        ...(input.priority ? { priority: input.priority } : {}),
+        ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+        ...(parameters ? { parameters } : {}),
+        ...(input.runManifestId ? { runManifestId: input.runManifestId } : {}),
+        ...(input.maxRetries !== undefined ? { maxRetries: input.maxRetries } : {}),
+        ...(input.resourceBudget ? { resourceBudget: input.resourceBudget } : {}),
+        resumable: input.resumable ?? false,
+        cancellable: input.cancellable ?? false,
+        status: "queued",
+        now: this.now(),
+      }),
+    );
     return jobId;
   }
 
-  private prepareRegistration(
-    jobId: string,
-    input: RegisterInput,
-  ): RegisteredJob {
+  private prepareRegistration(jobId: string, input: RegisterInput): RegisteredJob {
     if (input.cancellable || input.resourceBudget?.maxRuntimeMs) {
       this.controllers.set(jobId, new AbortController());
     }
@@ -281,8 +255,7 @@ export class JobManager {
       this.startInMemoryWhenPossible();
     } else {
       void this.persistNewAndSchedule(jobId).catch((error: unknown) => {
-        const normalized =
-          error instanceof Error ? error : new Error(String(error));
+        const normalized = error instanceof Error ? error : new Error(String(error));
         durability.reject(normalized);
         admission.reject(normalized);
         this.reportError(normalized);
@@ -290,9 +263,7 @@ export class JobManager {
     }
     return {
       jobId,
-      ...(this.controllers.get(jobId)
-        ? { signal: this.controllers.get(jobId)!.signal }
-        : {}),
+      ...(this.controllers.get(jobId) ? { signal: this.controllers.get(jobId)!.signal } : {}),
       ready: admission.promise,
       durable: durability.promise,
       reused: false,
@@ -301,13 +272,7 @@ export class JobManager {
 
   progress(jobId: string, done: number, total: number, detail?: string): void {
     const before = getJob(this.table, jobId);
-    this.table = progressJob(
-      this.table,
-      jobId,
-      { done, total },
-      detail,
-      this.now(),
-    );
+    this.table = progressJob(this.table, jobId, { done, total }, detail, this.now());
     const updated = getJob(this.table, jobId);
     if (!before || !updated || updated === before) return;
     if (!this.ledger) {
@@ -316,9 +281,7 @@ export class JobManager {
     }
     void this.persistUpdate(updated)
       .then(() => this.emit(updated.caseId))
-      .catch((error: unknown) =>
-        this.reportError(error instanceof Error ? error : new Error(String(error))),
-      );
+      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
   }
 
   async checkpoint(jobId: string, input: CheckpointInput): Promise<void> {
@@ -333,9 +296,7 @@ export class JobManager {
         ...(input.detail !== undefined ? { detail: input.detail } : {}),
         ...(input.cursor !== undefined
           ? {
-              cursor: sanitizeManifestValue(
-                manifestValueSchema.parse(input.cursor),
-              ),
+              cursor: sanitizeManifestValue(manifestValueSchema.parse(input.cursor)),
             }
           : {}),
       },
@@ -359,16 +320,10 @@ export class JobManager {
   }
 
   async finish(jobId: string): Promise<void> {
-    await this.terminalTransition(jobId, (table, now) =>
-      finishJob(table, jobId, now),
-    );
+    await this.terminalTransition(jobId, (table, now) => finishJob(table, jobId, now));
   }
 
-  async fail(
-    jobId: string,
-    error: unknown,
-    options: FailureOptions = {},
-  ): Promise<void> {
+  async fail(jobId: string, error: unknown, options: FailureOptions = {}): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     await this.terminalTransition(jobId, (table, now) => {
       const failure: JobFailure = {
@@ -402,11 +357,7 @@ export class JobManager {
     return { ok: true, job: cancelled };
   }
 
-  registerResumeHandler(
-    kind: JobKind,
-    handler: ResumeHandler,
-    options: ResumeHandlerOptions = {},
-  ): void {
+  registerResumeHandler(kind: JobKind, handler: ResumeHandler, options: ResumeHandlerOptions = {}): void {
     this.resumeHandlers.set(kind, { handler, options });
   }
 
@@ -449,16 +400,11 @@ export class JobManager {
   }
 
   list(caseId?: string): Job[] {
-    return listJobs(
-      this.table,
-      caseId !== undefined ? { caseId } : {},
-    );
+    return listJobs(this.table, caseId !== undefined ? { caseId } : {});
   }
 
   hasActive(caseId: string, kind: JobKind): boolean {
-    return listJobs(this.table, { caseId }).some(
-      (job) => job.kind === kind && !isTerminal(job.status),
-    );
+    return listJobs(this.table, { caseId }).some((job) => job.kind === kind && !isTerminal(job.status));
   }
 
   get(jobId: string): Job | undefined {
@@ -474,9 +420,7 @@ export class JobManager {
     const jobs = this.ledger ? await this.ledger.listAll() : [];
     const registeredDuringRestore = [...this.table.jobs];
     this.table = {
-      jobs: [...jobs, ...registeredDuringRestore].sort((a, b) =>
-        a.queuedAt.localeCompare(b.queuedAt),
-      ),
+      jobs: [...jobs, ...registeredDuringRestore].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)),
     };
     for (const job of jobs) {
       if (job.status !== "queued" && job.status !== "running") continue;
@@ -520,9 +464,7 @@ export class JobManager {
     this.emit(cancelled.caseId);
     void this.persistUpdate(cancelled)
       .then(() => this.scheduleQueued())
-      .catch((error: unknown) =>
-        this.reportError(error instanceof Error ? error : new Error(String(error))),
-      );
+      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
   }
 
   private startInMemoryWhenPossible(): void {
@@ -538,11 +480,7 @@ export class JobManager {
 
   private scheduleQueued(): Promise<void> {
     this.scheduling = this.scheduling
-      .catch((error: unknown) =>
-        this.reportError(
-          error instanceof Error ? error : new Error(String(error)),
-        ),
-      )
+      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))))
       .then(async () => {
         while (true) {
           const next = this.nextAdmissible();
@@ -562,8 +500,7 @@ export class JobManager {
             // gets its chance — breaking here would strand them until some later registration or
             // terminal transition happened to schedule another pass. The failure is retryable, so
             // if the ledger is genuinely down each job fails visibly and can be resumed.
-            const normalized =
-              error instanceof Error ? error : new Error(String(error));
+            const normalized = error instanceof Error ? error : new Error(String(error));
             this.table = failJob(
               this.table,
               next.id,
@@ -603,8 +540,7 @@ export class JobManager {
     return this.table.jobs
       .filter((job) => {
         if (job.status !== "queued") return false;
-        return (runningByScope.get(job.caseId ?? "global") ?? 0) <
-          this.perCaseConcurrency;
+        return (runningByScope.get(job.caseId ?? "global") ?? 0) < this.perCaseConcurrency;
       })
       .sort(
         (a, b) =>
@@ -640,9 +576,7 @@ export class JobManager {
   }
 
   private limitTable(table: JobTable): JobTable {
-    return this.ledger
-      ? capJobsByScope(table, this.max)
-      : capJobs(table, this.max);
+    return this.ledger ? capJobsByScope(table, this.max) : capJobs(table, this.max);
   }
 
   private async runResumedJob(
@@ -672,14 +606,11 @@ export class JobManager {
     this.clearBudgetTimer(job.id);
     const timer = setTimeout(() => {
       this.controllers.get(job.id)?.abort();
-      void this.fail(
-        job.id,
-        new Error(`job exceeded its ${maxRuntimeMs} ms runtime budget`),
-        { code: "runtime_budget_exceeded", retryable: false },
-      ).catch((error: unknown) =>
-        this.reportError(
-          error instanceof Error ? error : new Error(String(error)),
-        ),
+      void this.fail(job.id, new Error(`job exceeded its ${maxRuntimeMs} ms runtime budget`), {
+        code: "runtime_budget_exceeded",
+        retryable: false,
+      }).catch((error: unknown) =>
+        this.reportError(error instanceof Error ? error : new Error(String(error))),
       );
     }, maxRuntimeMs);
     timer.unref();

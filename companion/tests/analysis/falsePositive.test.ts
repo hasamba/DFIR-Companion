@@ -21,7 +21,15 @@ function marker(
   reason: FalsePositiveMarker["reason"] = "other",
   note = "",
 ): FalsePositiveMarker {
-  return { id: markerId(kind, ref), kind, ref, reason, note, markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous" };
+  return {
+    id: markerId(kind, ref),
+    kind,
+    ref,
+    reason,
+    note,
+    markedAt: "2026-05-28T10:00:00Z",
+    markedBy: "anonymous",
+  };
 }
 
 describe("applyFalsePositive", () => {
@@ -32,10 +40,30 @@ describe("applyFalsePositive", () => {
       { id: "i2", type: "ip", value: "10.0.0.5", firstSeen: "" },
     );
     state.findings.push(
-      { id: "f1", severity: "High", title: "SharpHound AD reconnaissance", description: "", relatedIocs: [],
-        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
-      { id: "f2", severity: "Critical", title: "Mimikatz credential dumping", description: "", relatedIocs: [],
-        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+      {
+        id: "f1",
+        severity: "High",
+        title: "SharpHound AD reconnaissance",
+        description: "",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
+      {
+        id: "f2",
+        severity: "Critical",
+        title: "Mimikatz credential dumping",
+        description: "",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
     );
 
     const filtered = applyFalsePositive(state, [
@@ -54,12 +82,42 @@ describe("applyFalsePositive", () => {
   it("keeps an untitled finding — an empty title must not match every marker", () => {
     const state = emptyState("c1");
     state.findings.push(
-      { id: "f1", severity: "High", title: "", description: "extractor produced no title", relatedIocs: [],
-        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
-      { id: "f2", severity: "Low", title: "   ", description: "whitespace-only title", relatedIocs: [],
-        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
-      { id: "f3", severity: "High", title: "SharpHound AD reconnaissance", description: "the real match",
-        relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+      {
+        id: "f1",
+        severity: "High",
+        title: "",
+        description: "extractor produced no title",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
+      {
+        id: "f2",
+        severity: "Low",
+        title: "   ",
+        description: "whitespace-only title",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
+      {
+        id: "f3",
+        severity: "High",
+        title: "SharpHound AD reconnaissance",
+        description: "the real match",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
     );
 
     const filtered = applyFalsePositive(state, [
@@ -72,7 +130,9 @@ describe("applyFalsePositive", () => {
 
   it("buildFalsePositiveContext lists finding/ioc markers with their reason, empty when none", () => {
     expect(buildFalsePositiveContext([])).toBe("");
-    const ctx = buildFalsePositiveContext([marker("finding", "SharpHound recon", "authorized-test", "authorized")]);
+    const ctx = buildFalsePositiveContext([
+      marker("finding", "SharpHound recon", "authorized-test", "authorized"),
+    ]);
     expect(ctx).toContain("CONFIRMED");
     expect(ctx).toContain("SharpHound recon");
     expect(ctx).toContain("authorized-test");
@@ -91,17 +151,39 @@ describe("applyFalsePositive", () => {
 
   it("leaves the forensic timeline untouched (events are filtered separately, not stripped from state)", () => {
     const state = emptyState("c1");
-    state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "a", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-    );
+    state.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-28T09:00:00Z",
+      description: "a",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     const filtered = applyFalsePositive(state, [marker("event", "e1")]);
     expect(filtered.forensicTimeline).toHaveLength(1); // preserved — evidence is never deleted here
   });
 
   it("filterFalsePositiveEvents drops marked event ids from a copy, case-insensitively", () => {
     const events = [
-      { id: "E1", timestamp: "", description: "", severity: "Low" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "", description: "", severity: "Low" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "E1",
+        timestamp: "",
+        description: "",
+        severity: "Low" as const,
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "",
+        description: "",
+        severity: "Low" as const,
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     ];
     const out = filterFalsePositiveEvents(events, [marker("event", "e1")]);
     expect(out.map((e) => e.id)).toEqual(["e2"]);
@@ -135,12 +217,28 @@ describe("FalsePositiveStore", () => {
     const legacyDir = store.stateDir(caseId);
     await writeFile(
       join(legacyDir, "legitimate.json"),
-      JSON.stringify([{ id: "ioc:10.0.0.5", kind: "ioc", ref: "10.0.0.5", note: "jump box", markedAt: "2026-01-01T00:00:00Z" }]),
+      JSON.stringify([
+        {
+          id: "ioc:10.0.0.5",
+          kind: "ioc",
+          ref: "10.0.0.5",
+          note: "jump box",
+          markedAt: "2026-01-01T00:00:00Z",
+        },
+      ]),
     );
     const fp = new FalsePositiveStore(store);
     const loaded = await fp.load(caseId);
     expect(loaded).toEqual([
-      { id: "ioc:10.0.0.5", kind: "ioc", ref: "10.0.0.5", reason: "other", note: "jump box", markedAt: "2026-01-01T00:00:00Z", markedBy: "anonymous" },
+      {
+        id: "ioc:10.0.0.5",
+        kind: "ioc",
+        ref: "10.0.0.5",
+        reason: "other",
+        note: "jump box",
+        markedAt: "2026-01-01T00:00:00Z",
+        markedBy: "anonymous",
+      },
     ]);
     // migration persisted the new file, and left the legacy file untouched
     const migrated = JSON.parse(await readFile(join(legacyDir, "false-positive.json"), "utf8"));
@@ -151,7 +249,10 @@ describe("FalsePositiveStore", () => {
 
   it("prefers false-positive.json over a legacy legitimate.json when both exist", async () => {
     const legacyDir = store.stateDir(caseId);
-    await writeFile(join(legacyDir, "legitimate.json"), JSON.stringify([{ id: "x", kind: "ioc", ref: "x", note: "", markedAt: "" }]));
+    await writeFile(
+      join(legacyDir, "legitimate.json"),
+      JSON.stringify([{ id: "x", kind: "ioc", ref: "x", note: "", markedAt: "" }]),
+    );
     await writeFile(join(legacyDir, "false-positive.json"), JSON.stringify([]));
     const fp = new FalsePositiveStore(store);
     expect(await fp.load(caseId)).toEqual([]);

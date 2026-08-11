@@ -11,9 +11,7 @@ export interface ConfidenceControl {
   minConfidence?: number;
 }
 
-const schema = z
-  .object({ minConfidence: z.number().min(0).max(100).optional().catch(undefined) })
-  .catch({});
+const schema = z.object({ minConfidence: z.number().min(0).max(100).optional().catch(undefined) }).catch({});
 
 export class ConfidenceControlStore {
   constructor(private readonly cases: CaseStore) {}

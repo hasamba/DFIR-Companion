@@ -53,7 +53,9 @@ describe("authorizeWsUpgrade (#212)", () => {
 
   it("refuses a locked case when the unlock cookie is forged", async () => {
     await lockCase();
-    const result = await upgrade("/ws?caseId=locked", { cookie: `${unlockCookieName("locked")}=not-a-real-token` });
+    const result = await upgrade("/ws?caseId=locked", {
+      cookie: `${unlockCookieName("locked")}=not-a-real-token`,
+    });
     expect(result.ok).toBe(false);
   });
 
@@ -85,7 +87,10 @@ describe("authorizeWsUpgrade (#212)", () => {
 
   it("admits the dashboard and the extension", async () => {
     expect((await upgrade("/ws?caseId=open", { origin: "http://127.0.0.1:4773" })).ok).toBe(true);
-    expect((await upgrade("/ws?caseId=open", { origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop" })).ok).toBe(true);
+    expect(
+      (await upgrade("/ws?caseId=open", { origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop" }))
+        .ok,
+    ).toBe(true);
   });
 
   it("refuses a case id that could escape the cases directory", async () => {
@@ -116,7 +121,10 @@ describe("authorizeWsUpgrade (#212)", () => {
     const result = await authorizeWsUpgrade(
       {
         url: "/ws?caseId=open",
-        headers: { host: "abc123-4773.env.lab.example.com", origin: "https://abc123-4773.env.lab.example.com" },
+        headers: {
+          host: "abc123-4773.env.lab.example.com",
+          origin: "https://abc123-4773.env.lab.example.com",
+        },
       },
       { ...deps(), allowedHostSuffixes: [".lab.example.com"] },
     );
@@ -143,13 +151,19 @@ describe("authorizeWsUpgrade (#212)", () => {
     );
     expect(anonymous).toEqual({ ok: false, reason: "authentication or case access denied" });
     const cookie = `dfir_session=${created.token}`;
-    expect((await authorizeWsUpgrade(
-      { url: "/ws?caseId=open", headers: { host: "127.0.0.1:4773", cookie } },
-      teamDeps,
-    )).ok).toBe(true);
-    expect(await authorizeWsUpgrade(
-      { url: "/ws?caseId=unknown", headers: { host: "127.0.0.1:4773", cookie } },
-      teamDeps,
-    )).toEqual({ ok: false, reason: "case \"unknown\" not found" });
+    expect(
+      (
+        await authorizeWsUpgrade(
+          { url: "/ws?caseId=open", headers: { host: "127.0.0.1:4773", cookie } },
+          teamDeps,
+        )
+      ).ok,
+    ).toBe(true);
+    expect(
+      await authorizeWsUpgrade(
+        { url: "/ws?caseId=unknown", headers: { host: "127.0.0.1:4773", cookie } },
+        teamDeps,
+      ),
+    ).toEqual({ ok: false, reason: 'case "unknown" not found' });
   });
 });

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, luhnValid, israeliIdValid, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import {
+  createAnonymizer,
+  luhnValid,
+  israeliIdValid,
+  type AnonPolicy,
+  type KnownEntities,
+} from "../../src/analysis/anonymize.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
 
@@ -9,8 +15,17 @@ function policy(over: Partial<AnonPolicy["categories"]> = {}): AnonPolicy {
     redactSecrets: false,
     maskPublicIps: false,
     categories: {
-      IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false,
-      PATH: false, CMD: false, REG: false, CARD: false, PHONE: false, NATID: false,
+      IP: false,
+      EMAIL: false,
+      USER: false,
+      HOST: false,
+      DOMAIN: false,
+      PATH: false,
+      CMD: false,
+      REG: false,
+      CARD: false,
+      PHONE: false,
+      NATID: false,
       ...over,
     },
   };
@@ -128,16 +143,12 @@ describe("PHONE detector", () => {
 
   it("does not fire on SemVer build metadata", () => {
     const a = createAnonymizer(policy({ PHONE: true }), NONE);
-    expect(a.apply("release 1.0.0+20130313144700 metadata")).toBe(
-      "release 1.0.0+20130313144700 metadata",
-    );
+    expect(a.apply("release 1.0.0+20130313144700 metadata")).toBe("release 1.0.0+20130313144700 metadata");
   });
 
   it("does not fire on a tool version+timestamp build tag", () => {
     const a = createAnonymizer(policy({ PHONE: true }), NONE);
-    expect(a.apply("Autoruns v14.11+20260726120000 build")).toBe(
-      "Autoruns v14.11+20260726120000 build",
-    );
+    expect(a.apply("Autoruns v14.11+20260726120000 build")).toBe("Autoruns v14.11+20260726120000 build");
   });
 
   // Pins the boundary of the module+offset/SemVer guard above: a "+" preceded by punctuation

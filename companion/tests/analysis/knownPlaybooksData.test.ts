@@ -1,8 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  loadKnownPlaybooks,
-  _resetKnownPlaybooksCache,
-} from "../../src/analysis/knownPlaybooksData.js";
+import { loadKnownPlaybooks, _resetKnownPlaybooksCache } from "../../src/analysis/knownPlaybooksData.js";
 import { normalizeTechniqueId } from "../../src/analysis/adversaryHints.js";
 import { matchPlaybook, observedSequences, stepTactic } from "../../src/analysis/playbookMatch.js";
 

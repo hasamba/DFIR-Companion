@@ -61,9 +61,7 @@ export class ComplianceControlStore {
       ...current,
       // `in` rather than a truthiness test: passing an explicit undefined/empty is how the analyst
       // CLEARS the date or narrows to no frameworks, and that must not read as "leave unchanged".
-      ...("discoveredAt" in patch
-        ? { discoveredAt: normalizeDiscoveredAt(patch.discoveredAt) }
-        : {}),
+      ...("discoveredAt" in patch ? { discoveredAt: normalizeDiscoveredAt(patch.discoveredAt) } : {}),
       ...("frameworks" in patch
         ? { frameworks: Array.isArray(patch.frameworks) ? patch.frameworks : undefined }
         : {}),

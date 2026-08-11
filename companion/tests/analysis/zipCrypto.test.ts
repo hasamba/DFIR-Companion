@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { inflateRawSync } from "node:zlib";
 import {
-  zipCryptoDecrypt, parseAesExtra, aesDecrypt, ZipPasswordError,
+  zipCryptoDecrypt,
+  parseAesExtra,
+  aesDecrypt,
+  ZipPasswordError,
 } from "../../src/analysis/zipCrypto.js";
 import { crc32 } from "../../src/analysis/zipArchive.js";
 
@@ -17,14 +20,18 @@ const ZC_ZIP_B64 =
 function rawEntry(archive: Buffer): { data: Buffer; crc: number; modTime: number } {
   let eocd = -1;
   for (let i = archive.length - 22; i >= 0; i--) {
-    if (archive.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    if (archive.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
   }
   const ptr = archive.readUInt32LE(eocd + 16);
   const modTime = archive.readUInt16LE(ptr + 12);
   const crc = archive.readUInt32LE(ptr + 16);
   const compSize = archive.readUInt32LE(ptr + 20);
   const localOffset = archive.readUInt32LE(ptr + 42);
-  const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+  const dataStart =
+    localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
   return { data: archive.subarray(dataStart, dataStart + compSize), crc, modTime };
 }
 
@@ -76,14 +83,18 @@ const AES_BIG_ZIP_B64 =
 function rawEntryWithExtra(archive: Buffer): { data: Buffer; extra: Buffer } {
   let eocd = -1;
   for (let i = archive.length - 22; i >= 0; i--) {
-    if (archive.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    if (archive.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
   }
   const ptr = archive.readUInt32LE(eocd + 16);
   const compSize = archive.readUInt32LE(ptr + 20);
   const nameLen = archive.readUInt16LE(ptr + 28);
   const extraLen = archive.readUInt16LE(ptr + 30);
   const localOffset = archive.readUInt32LE(ptr + 42);
-  const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+  const dataStart =
+    localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
   return {
     data: archive.subarray(dataStart, dataStart + compSize),
     extra: archive.subarray(ptr + 46 + nameLen, ptr + 46 + nameLen + extraLen),
@@ -115,7 +126,7 @@ describe("aesDecrypt", () => {
     const { data, extra } = rawEntryWithExtra(Buffer.from(AES_BIG_ZIP_B64, "base64"));
     const params = parseAesExtra(extra);
     expect(params).not.toBeNull();
-    expect(params!.actualMethod).toBe(8);   // deflated before encryption
+    expect(params!.actualMethod).toBe(8); // deflated before encryption
     const { plaintext, macOk } = aesDecrypt(data, "infected", params!.strength);
     expect(macOk).toBe(true);
     const expected = Buffer.from(Array.from({ length: 1000 }, (_, i) => (i * 7 + 3) % 256));

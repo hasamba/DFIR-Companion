@@ -13,16 +13,16 @@
 //  • server.ts: /kev/* routes + Settings → KEV panel.
 
 export interface KevEntry {
-  cveID: string;                       // "CVE-2024-38094" — normalised to upper-case
-  vendorProject: string;               // "Microsoft"
-  product: string;                     // "SharePoint Server"
-  vulnerabilityName: string;           // short title
-  dateAdded: string;                   // ISO date added to KEV, e.g. "2024-10-22"
+  cveID: string; // "CVE-2024-38094" — normalised to upper-case
+  vendorProject: string; // "Microsoft"
+  product: string; // "SharePoint Server"
+  vulnerabilityName: string; // short title
+  dateAdded: string; // ISO date added to KEV, e.g. "2024-10-22"
   shortDescription: string;
-  requiredAction: string;              // the patch / workaround instruction
-  dueDate: string;                     // CISA due date for federal agencies
-  knownRansomwareCampaignUse: string;  // "Known" | "Unknown"
-  notes?: string;                      // reference URLs (space/semicolon separated)
+  requiredAction: string; // the patch / workaround instruction
+  dueDate: string; // CISA due date for federal agencies
+  knownRansomwareCampaignUse: string; // "Known" | "Unknown"
+  notes?: string; // reference URLs (space/semicolon separated)
 }
 
 // Keyed by normalised (upper-cased) CVE id so lookups are O(1).
@@ -53,14 +53,16 @@ export function parseKevJson(json: unknown): KevEntry[] {
   const vulns: unknown[] = Array.isArray(json)
     ? json
     : Array.isArray((json as Record<string, unknown>).vulnerabilities)
-      ? (json as Record<string, unknown>).vulnerabilities as unknown[]
+      ? ((json as Record<string, unknown>).vulnerabilities as unknown[])
       : [];
 
   const out: KevEntry[] = [];
   for (const v of vulns) {
     if (typeof v !== "object" || v === null) continue;
     const r = v as Record<string, unknown>;
-    const cveID = String(r.cveID ?? "").trim().toUpperCase();
+    const cveID = String(r.cveID ?? "")
+      .trim()
+      .toUpperCase();
     if (!/^CVE-(1999|20\d{2})-\d{4,}$/.test(cveID)) continue;
     out.push({
       cveID,

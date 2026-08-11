@@ -8,8 +8,8 @@ import type { ForensicEvent } from "./stateTypes.js";
 // derived from them) are excluded — useful when the evidence includes earlier,
 // unrelated activity. Null bounds mean "unbounded on that side".
 export interface ScopeWindow {
-  start: string | null;   // ISO-8601, inclusive lower bound
-  end: string | null;     // ISO-8601, inclusive upper bound
+  start: string | null; // ISO-8601, inclusive lower bound
+  end: string | null; // ISO-8601, inclusive upper bound
 }
 
 export const NO_SCOPE: ScopeWindow = { start: null, end: null };
@@ -23,8 +23,14 @@ export function inScope(timestamp: string, scope: ScopeWindow): boolean {
   if (!hasScope(scope)) return true;
   const t = Date.parse(timestamp);
   if (Number.isNaN(t)) return true;
-  if (scope.start) { const s = Date.parse(scope.start); if (!Number.isNaN(s) && t < s) return false; }
-  if (scope.end) { const e = Date.parse(scope.end); if (!Number.isNaN(e) && t > e) return false; }
+  if (scope.start) {
+    const s = Date.parse(scope.start);
+    if (!Number.isNaN(s) && t < s) return false;
+  }
+  if (scope.end) {
+    const e = Date.parse(scope.end);
+    if (!Number.isNaN(e) && t > e) return false;
+  }
   return true;
 }
 

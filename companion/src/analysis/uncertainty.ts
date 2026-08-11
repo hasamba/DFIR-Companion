@@ -20,17 +20,25 @@ export function sanitizeUncertainties(
   const out: Uncertainty[] = [];
   for (const item of raw ?? []) {
     const u = (item ?? {}) as Record<string, unknown>;
-    const topic = String(u.topic ?? "").trim().slice(0, MAX_TOPIC_LEN);
+    const topic = String(u.topic ?? "")
+      .trim()
+      .slice(0, MAX_TOPIC_LEN);
     if (!topic) continue;
     const key = topic.replace(/\s+/g, " ").toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    const status = String(u.status ?? "").trim().toLowerCase();
+    const status = String(u.status ?? "")
+      .trim()
+      .toLowerCase();
     out.push({
       topic,
       status: VALID_STATUS.has(status) ? (status as UncertaintyStatus) : "unknown",
-      basis: String(u.basis ?? "").trim().slice(0, MAX_TEXT_LEN),
-      gap: String(u.gap ?? "").trim().slice(0, MAX_TEXT_LEN),
+      basis: String(u.basis ?? "")
+        .trim()
+        .slice(0, MAX_TEXT_LEN),
+      gap: String(u.gap ?? "")
+        .trim()
+        .slice(0, MAX_TEXT_LEN),
     });
     if (out.length >= cap) break;
   }

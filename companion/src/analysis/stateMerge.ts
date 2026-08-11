@@ -1,5 +1,12 @@
 import type { AnalysisDelta } from "./responseSchema.js";
-import type { InvestigationState, Finding, IOC, Technique, ForensicEvent, CollectDirective } from "./stateTypes.js";
+import type {
+  InvestigationState,
+  Finding,
+  IOC,
+  Technique,
+  ForensicEvent,
+  CollectDirective,
+} from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
 import { correlateEvents } from "./correlate.js";
@@ -92,7 +99,9 @@ export function mergeDelta(
     // exact-match anything currently in state.iocs (the merge already dropped the duplicate row)
     // still routes onto the canonical IOC it was merged into, rather than recreating it.
     const aliasTarget = ctx.iocAliases?.[incomingLower];
-    const dup = iocs.find((i) => i.value.toLowerCase() === incomingLower || (aliasTarget !== undefined && i.id === aliasTarget));
+    const dup = iocs.find(
+      (i) => i.value.toLowerCase() === incomingLower || (aliasTarget !== undefined && i.id === aliasTarget),
+    );
     const canonical = dup ? dup.id : (aliasTarget ?? padIocId(nextSeq++));
     if (dup) {
       // Union (not overwrite): the same value can legitimately be extracted from
@@ -103,7 +112,10 @@ export function mergeDelta(
       }
       // Routed here via an alias, not an exact-value match: record the incoming value too, so
       // value-keyed lookups (assetGraph's byValue) resolve it without a second manual merge.
-      if (dup.value.toLowerCase() !== incomingLower && !(dup.aliasValues ?? []).some((a) => a.toLowerCase() === incomingLower)) {
+      if (
+        dup.value.toLowerCase() !== incomingLower &&
+        !(dup.aliasValues ?? []).some((a) => a.toLowerCase() === incomingLower)
+      ) {
         dup.aliasValues = [...(dup.aliasValues ?? []), incoming.value];
       }
       // The annotation the value carried is context the existing row may not have yet — keep the
@@ -111,7 +123,10 @@ export function mergeDelta(
       if (repaired.note && !dup.note) dup.note = repaired.note;
     } else {
       iocs.push({
-        id: canonical, type: incoming.type, value: incoming.value, firstSeen: ctx.timestamp,
+        id: canonical,
+        type: incoming.type,
+        value: incoming.value,
+        firstSeen: ctx.timestamp,
         ...(repaired.note ? { note: repaired.note } : {}),
         ...(incoming.extractedFrom?.length ? { extractedFrom: [...incoming.extractedFrom] } : {}),
       });
@@ -121,8 +136,7 @@ export function mergeDelta(
     // the first one it emitted, not whichever happened to be last.
     if (!iocIdRemap.has(incoming.id)) iocIdRemap.set(incoming.id, canonical);
   }
-  const remapIocRefs = (ids: string[]): string[] =>
-    uniq(ids.map((id) => iocIdRemap.get(id) ?? id));
+  const remapIocRefs = (ids: string[]): string[] => uniq(ids.map((id) => iocIdRemap.get(id) ?? id));
 
   const findings: Finding[] = state.findings.map((f) => ({ ...f }));
 
@@ -152,7 +166,9 @@ export function mergeDelta(
         description: incoming.description,
         relatedIocs: remapIocRefs(incoming.relatedIocs),
         mitreTechniques: uniq(incoming.mitreTechniques),
-        ...(incoming.relatedEventIds !== undefined ? { relatedEventIds: uniq(incoming.relatedEventIds) } : {}),
+        ...(incoming.relatedEventIds !== undefined
+          ? { relatedEventIds: uniq(incoming.relatedEventIds) }
+          : {}),
         sourceScreenshots: uniq(ctx.sourceScreenshots),
         firstSeen: ctx.timestamp,
         lastUpdated: ctx.timestamp,
@@ -161,7 +177,10 @@ export function mergeDelta(
     }
   }
 
-  const mitreTechniques: Technique[] = state.mitreTechniques.map((t) => ({ ...t, findingIds: [...t.findingIds] }));
+  const mitreTechniques: Technique[] = state.mitreTechniques.map((t) => ({
+    ...t,
+    findingIds: [...t.findingIds],
+  }));
   for (const incoming of delta.mitreTechniques) {
     const existing = mitreTechniques.find((t) => t.id === incoming.id);
     const findingIds = delta.findings.filter((f) => f.mitreTechniques.includes(incoming.id)).map((f) => f.id);
@@ -175,7 +194,13 @@ export function mergeDelta(
   const openThreads = state.openThreads.map((t) => ({ ...t }));
   for (const t of delta.threadsOpened) {
     if (!openThreads.some((x) => x.id === t.id)) {
-      openThreads.push({ id: t.id, description: t.description, status: "open", openedAt: ctx.timestamp, closedAt: null });
+      openThreads.push({
+        id: t.id,
+        description: t.description,
+        status: "open",
+        openedAt: ctx.timestamp,
+        closedAt: null,
+      });
     }
   }
   for (const closedId of delta.threadsClosed) {
@@ -234,7 +259,8 @@ export function mergeDelta(
       if (incoming.md5) existing.md5 = incoming.md5;
       if (incoming.path) existing.path = incoming.path;
       if (incoming.asset) existing.asset = incoming.asset;
-      if (incoming.sources?.length) existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
+      if (incoming.sources?.length)
+        existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
       if (incoming.artifactName) existing.artifactName = incoming.artifactName;
       if (incoming.message) existing.message = incoming.message;
       if (incoming.veloUrl) existing.veloUrl = incoming.veloUrl;
@@ -303,29 +329,38 @@ export function mergeDelta(
 
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
-  const keyQuestions = delta.keyQuestions !== undefined
-    ? delta.keyQuestions.map((q) => ({
-        id: q.id, question: q.question, status: q.status, answer: q.answer, pointer: q.pointer,
-        ...(q.relatedFindingIds?.length ? { relatedFindingIds: q.relatedFindingIds } : {}),
-        ...(cleanCollect(q.collect) ? { collect: cleanCollect(q.collect) } : {}),
-      }))
-    : state.keyQuestions;
+  const keyQuestions =
+    delta.keyQuestions !== undefined
+      ? delta.keyQuestions.map((q) => ({
+          id: q.id,
+          question: q.question,
+          status: q.status,
+          answer: q.answer,
+          pointer: q.pointer,
+          ...(q.relatedFindingIds?.length ? { relatedFindingIds: q.relatedFindingIds } : {}),
+          ...(cleanCollect(q.collect) ? { collect: cleanCollect(q.collect) } : {}),
+        }))
+      : state.keyQuestions;
 
   // Next steps are likewise a holistic recommendation — replaced wholesale by
   // synthesis, preserved when a per-window delta omits them.
-  const nextSteps = delta.nextSteps !== undefined
-    ? delta.nextSteps.map((s) => ({
-        id: s.id, priority: s.priority, action: s.action, rationale: s.rationale, pointer: s.pointer,
-        ...(cleanCollect(s.collect) ? { collect: cleanCollect(s.collect) } : {}),
-        ...(s.relatedFindingIds?.length ? { relatedFindingIds: s.relatedFindingIds } : {}),
-      }))
-    : state.nextSteps;
+  const nextSteps =
+    delta.nextSteps !== undefined
+      ? delta.nextSteps.map((s) => ({
+          id: s.id,
+          priority: s.priority,
+          action: s.action,
+          rationale: s.rationale,
+          pointer: s.pointer,
+          ...(cleanCollect(s.collect) ? { collect: cleanCollect(s.collect) } : {}),
+          ...(s.relatedFindingIds?.length ? { relatedFindingIds: s.relatedFindingIds } : {}),
+        }))
+      : state.nextSteps;
 
   // Uncertainty ledger (#73) is a holistic reassessment — replaced wholesale when synthesis provides
   // it, preserved when a per-window delta omits it (same posture as keyQuestions / nextSteps).
-  const uncertainties = delta.uncertainties !== undefined
-    ? sanitizeUncertainties(delta.uncertainties)
-    : state.uncertainties;
+  const uncertainties =
+    delta.uncertainties !== undefined ? sanitizeUncertainties(delta.uncertainties) : state.uncertainties;
 
   return {
     caseId: state.caseId,
@@ -339,8 +374,12 @@ export function mergeDelta(
     nextSteps,
     uncertainties,
     lastSummary: delta.summary.trim().length > 0 ? delta.summary : state.lastSummary,
-    attackerPath: (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
-    narrativeTimeline: (delta.narrativeTimeline ?? "").trim().length > 0 ? (delta.narrativeTimeline as string) : state.narrativeTimeline,
+    attackerPath:
+      (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
+    narrativeTimeline:
+      (delta.narrativeTimeline ?? "").trim().length > 0
+        ? (delta.narrativeTimeline as string)
+        : state.narrativeTimeline,
     iocExcludeRules: state.iocExcludeRules,
     updatedAt: ctx.timestamp,
   };

@@ -11,7 +11,16 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
-  return { id, timestamp, description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...extra };
+  return {
+    id,
+    timestamp,
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...extra,
+  };
 }
 
 // Three anchors: one artifact each, recorded by the endpoint (30s fast) and by the DC.
@@ -19,8 +28,16 @@ function anchoredTimeline(hostSkewSec: number): ForensicEvent[] {
   return [0, 1, 2].flatMap((i) => {
     const at = Date.parse("2026-05-20T14:00:00Z") + i * 600_000;
     return [
-      ev(`h-${i}`, new Date(at + hostSkewSec * 1000).toISOString(), { asset: "WS-01", sha256: `hash${i}`, sources: ["Velociraptor"] }),
-      ev(`dc-${i}`, new Date(at).toISOString(), { asset: "DC01", sha256: `hash${i}`, sources: ["Windows Security"] }),
+      ev(`h-${i}`, new Date(at + hostSkewSec * 1000).toISOString(), {
+        asset: "WS-01",
+        sha256: `hash${i}`,
+        sources: ["Velociraptor"],
+      }),
+      ev(`dc-${i}`, new Date(at).toISOString(), {
+        asset: "DC01",
+        sha256: `hash${i}`,
+        sources: ["Windows Security"],
+      }),
     ];
   });
 }
@@ -31,9 +48,15 @@ async function makeApp(opts: { withStore?: boolean; timeline?: ForensicEvent[] }
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const clockSkewStore = new ClockSkewStore(store);
-  const pipeline = buildRuntimePipeline({ stateStore, store, imageLoader: async () => ({ base64: "AA", mimeType: "image/webp" }) });
+  const pipeline = buildRuntimePipeline({
+    stateStore,
+    store,
+    imageLoader: async () => ({ base64: "AA", mimeType: "image/webp" }),
+  });
   const app = createApp(store, {
-    pipeline, stateStore, aiConfigured: false,
+    pipeline,
+    stateStore,
+    aiConfigured: false,
     activityLogStore: new ActivityLogStore(store),
     ...(withStore ? { clockSkewStore } : {}),
   });
@@ -69,7 +92,7 @@ describe("clock-skew routes (#228)", () => {
     const res = await request(app).post("/cases/c1/clock-skew/recompute").send({});
     expect(res.status).toBe(200);
     const byHost = Object.fromEntries(res.body.results.map((r: { hostKey: string }) => [r.hostKey, r]));
-    expect(byHost["ws-01"].offsetMs).toBe(120_000);   // relative to the reference clock, DC01
+    expect(byHost["ws-01"].offsetMs).toBe(120_000); // relative to the reference clock, DC01
     expect(byHost["dc01"].offsetMs).toBe(0);
     expect(res.body.referenceHost).toBe("DC01");
     expect(byHost["ws-01"].skewed).toBe(true);
@@ -89,8 +112,12 @@ describe("clock-skew routes (#228)", () => {
 
     const log = await request(app).get("/cases/c1/activity-log");
     const entries = Array.isArray(log.body) ? log.body : log.body.entries;
-    expect(entries.some((e: { action: string; detail: string }) =>
-      e.action === "clock-skew-align" && e.detail.includes("enabled"))).toBe(true);
+    expect(
+      entries.some(
+        (e: { action: string; detail: string }) =>
+          e.action === "clock-skew-align" && e.detail.includes("enabled"),
+      ),
+    ).toBe(true);
 
     const off = await request(app).post("/cases/c1/clock-skew/align").send({ enable: false });
     expect(off.body.alignEnabled).toBe(false);
@@ -104,26 +131,39 @@ describe("clock-skew routes (#228)", () => {
 
   it("stores, then clears, a manual per-host override", async () => {
     const { app } = await makeApp({ timeline: anchoredTimeline(120) });
-    const set = await request(app).put("/cases/c1/clock-skew/override").send({ host: "WS-01.corp.local", offsetMs: 45_000 });
+    const set = await request(app)
+      .put("/cases/c1/clock-skew/override")
+      .send({ host: "WS-01.corp.local", offsetMs: 45_000 });
     expect(set.status).toBe(200);
     expect(set.body.overrides).toEqual({ "ws-01": 45_000 });
 
-    const cleared = await request(app).put("/cases/c1/clock-skew/override").send({ host: "ws-01", offsetMs: null });
+    const cleared = await request(app)
+      .put("/cases/c1/clock-skew/override")
+      .send({ host: "ws-01", offsetMs: null });
     expect(cleared.body.overrides).toEqual({});
   });
 
   it("rejects a malformed override", async () => {
     const { app } = await makeApp();
-    expect((await request(app).put("/cases/c1/clock-skew/override").send({ offsetMs: 1000 })).status).toBe(400);
-    expect((await request(app).put("/cases/c1/clock-skew/override").send({ host: "ws-01", offsetMs: "soon" })).status).toBe(400);
-    expect((await request(app).put("/cases/c1/clock-skew/override").send({ host: "  ", offsetMs: 1 })).status).toBe(400);
+    expect((await request(app).put("/cases/c1/clock-skew/override").send({ offsetMs: 1000 })).status).toBe(
+      400,
+    );
+    expect(
+      (await request(app).put("/cases/c1/clock-skew/override").send({ host: "ws-01", offsetMs: "soon" }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await request(app).put("/cases/c1/clock-skew/override").send({ host: "  ", offsetMs: 1 })).status,
+    ).toBe(400);
   });
 
   it("501s cleanly when the store is not configured", async () => {
     const { app } = await makeApp({ withStore: false });
     expect((await request(app).get("/cases/c1/clock-skew")).status).toBe(501);
     expect((await request(app).post("/cases/c1/clock-skew/align").send({})).status).toBe(501);
-    expect((await request(app).put("/cases/c1/clock-skew/override").send({ host: "a", offsetMs: 1 })).status).toBe(501);
+    expect(
+      (await request(app).put("/cases/c1/clock-skew/override").send({ host: "a", offsetMs: 1 })).status,
+    ).toBe(501);
   });
 });
 
@@ -138,7 +178,7 @@ describe("clock-skew alignment as a read-path projection (#228)", () => {
     await request(app).post("/cases/c1/clock-skew/align").send({ enable: true });
     const after = await request(app).get("/cases/c1/state");
     const shifted = after.body.forensicTimeline.filter((e: ForensicEvent) => e.originalTimestamp);
-    expect(shifted).toHaveLength(3);                       // the three WS-01 rows; DC01 is the reference
+    expect(shifted).toHaveLength(3); // the three WS-01 rows; DC01 is the reference
     expect(shifted.every((e: ForensicEvent) => e.asset === "WS-01")).toBe(true);
     expect(shifted[0].skewOffsetMs).toBe(120_000);
     expect(Date.parse(shifted[0].timestamp)).toBe(Date.parse(shifted[0].originalTimestamp) - 120_000);
@@ -155,9 +195,12 @@ describe("clock-skew alignment as a read-path projection (#228)", () => {
     await request(app).get("/cases/c1/state");
 
     const stored = await stateStore.load("c1");
-    expect(stored.forensicTimeline.every((e) => !e.originalTimestamp && e.skewOffsetMs === undefined)).toBe(true);
-    expect(stored.forensicTimeline.find((e) => e.id === "h-0")!.timestamp)
-      .toBe(new Date(Date.parse("2026-05-20T14:00:00Z") + 120_000).toISOString());
+    expect(stored.forensicTimeline.every((e) => !e.originalTimestamp && e.skewOffsetMs === undefined)).toBe(
+      true,
+    );
+    expect(stored.forensicTimeline.find((e) => e.id === "h-0")!.timestamp).toBe(
+      new Date(Date.parse("2026-05-20T14:00:00Z") + 120_000).toISOString(),
+    );
   });
 
   it("turning alignment off restores the recorded times", async () => {
@@ -173,8 +216,9 @@ describe("clock-skew alignment as a read-path projection (#228)", () => {
     const { app } = await makeApp({ timeline: anchoredTimeline(0) });
     await request(app).put("/cases/c1/clock-skew/override").send({ host: "WS-01", offsetMs: 300_000 });
     await request(app).post("/cases/c1/clock-skew/align").send({ enable: true });
-    const shifted = (await request(app).get("/cases/c1/state")).body.forensicTimeline
-      .filter((e: ForensicEvent) => e.originalTimestamp);
+    const shifted = (await request(app).get("/cases/c1/state")).body.forensicTimeline.filter(
+      (e: ForensicEvent) => e.originalTimestamp,
+    );
     expect(shifted).toHaveLength(3);
     expect(shifted[0].skewOffsetMs).toBe(300_000);
   });

@@ -1,19 +1,39 @@
 import { describe, it, expect } from "vitest";
-import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "../../src/analysis/synthEvidence.js";
+import {
+  renderStructuredTags,
+  buildBeaconDigest,
+  buildAttackPhaseDigest,
+} from "../../src/analysis/synthEvidence.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { BeaconCandidate } from "../../src/analysis/beaconDetect.js";
 import type { AttackPhase } from "../../src/analysis/burstDetect.js";
 
 function ev(p: Partial<ForensicEvent>): ForensicEvent {
   return {
-    id: p.id ?? "e1", timestamp: p.timestamp ?? "2026-01-01T00:00:00Z", description: p.description ?? "x",
-    severity: p.severity ?? "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p,
+    id: p.id ?? "e1",
+    timestamp: p.timestamp ?? "2026-01-01T00:00:00Z",
+    description: p.description ?? "x",
+    severity: p.severity ?? "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
   };
 }
 
 describe("renderStructuredTags", () => {
   it("emits host/proc/net/src tags only for set fields", () => {
-    const t = renderStructuredTags(ev({ asset: "WS07", processName: "powershell.exe", parentName: "excel.exe", srcIp: "10.1.2.3", dstIp: "52.1.1.1", port: 443, sources: ["a", "b", "c"] }));
+    const t = renderStructuredTags(
+      ev({
+        asset: "WS07",
+        processName: "powershell.exe",
+        parentName: "excel.exe",
+        srcIp: "10.1.2.3",
+        dstIp: "52.1.1.1",
+        port: 443,
+        sources: ["a", "b", "c"],
+      }),
+    );
     expect(t).toContain("<host:WS07>");
     expect(t).toContain("<proc:powershell.exe←excel.exe>");
     expect(t).toContain("<net:10.1.2.3→52.1.1.1:443>");
@@ -38,10 +58,19 @@ describe("renderStructuredTags", () => {
 
 function beacon(p: Partial<BeaconCandidate>): BeaconCandidate {
   return {
-    id: p.id ?? "beacon-1", source: p.source ?? "WS04", destIp: p.destIp ?? "203.0.113.7", destPort: p.destPort,
-    eventCount: p.eventCount ?? 214, intervalSeconds: p.intervalSeconds ?? 62, jitterSeconds: p.jitterSeconds ?? 1,
-    jitterPct: p.jitterPct ?? 3, firstSeen: "", lastSeen: "", severity: p.severity ?? "High",
-    external: p.external ?? true, eventIds: p.eventIds ?? ["e1", "e2"],
+    id: p.id ?? "beacon-1",
+    source: p.source ?? "WS04",
+    destIp: p.destIp ?? "203.0.113.7",
+    destPort: p.destPort,
+    eventCount: p.eventCount ?? 214,
+    intervalSeconds: p.intervalSeconds ?? 62,
+    jitterSeconds: p.jitterSeconds ?? 1,
+    jitterPct: p.jitterPct ?? 3,
+    firstSeen: "",
+    lastSeen: "",
+    severity: p.severity ?? "High",
+    external: p.external ?? true,
+    eventIds: p.eventIds ?? ["e1", "e2"],
   };
 }
 
@@ -61,9 +90,14 @@ describe("buildBeaconDigest", () => {
 
 function phase(p: Partial<AttackPhase>): AttackPhase {
   return {
-    id: p.id ?? "phase-1", label: p.label ?? "Discovery", startTimestamp: p.startTimestamp ?? "2026-05-20T09:02:00Z",
-    endTimestamp: p.endTimestamp ?? "2026-05-20T09:15:00Z", eventIds: p.eventIds ?? ["e1", "e2"],
-    inferredTechniques: p.inferredTechniques ?? ["T1087"], eventCount: p.eventCount ?? 41, maxSeverity: p.maxSeverity ?? "Medium",
+    id: p.id ?? "phase-1",
+    label: p.label ?? "Discovery",
+    startTimestamp: p.startTimestamp ?? "2026-05-20T09:02:00Z",
+    endTimestamp: p.endTimestamp ?? "2026-05-20T09:15:00Z",
+    eventIds: p.eventIds ?? ["e1", "e2"],
+    inferredTechniques: p.inferredTechniques ?? ["T1087"],
+    eventCount: p.eventCount ?? 41,
+    maxSeverity: p.maxSeverity ?? "Medium",
   };
 }
 

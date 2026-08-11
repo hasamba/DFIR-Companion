@@ -6,25 +6,38 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
-import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import {
+  VelociraptorClient,
+  type VqlRunner,
+  type VelociraptorApiConfig,
+} from "../../src/integrations/velociraptor/velociraptorApi.js";
 
 const cfg: VelociraptorApiConfig = {
-  apiConfigPath: "/x/api.yaml", binary: "velociraptor", timeoutMs: 5000, maxRows: 1000, maxOutputBytes: 1024 * 1024,
+  apiConfigPath: "/x/api.yaml",
+  binary: "velociraptor",
+  timeoutMs: 5000,
+  maxRows: 1000,
+  maxOutputBytes: 1024 * 1024,
 };
 
 // A runner that returns one enrolled client for clients(), or throws (server down).
 const upRunner: VqlRunner = async (statements) => {
-  if (statements[0].includes("clients()")) return { rows: [{ client_id: "C.111", os_info: { hostname: "WS1", fqdn: "ws1.lab" } }], raw: "" };
+  if (statements[0].includes("clients()"))
+    return { rows: [{ client_id: "C.111", os_info: { hostname: "WS1", fqdn: "ws1.lab" } }], raw: "" };
   return { rows: [], raw: "" };
 };
-const downRunner: VqlRunner = async () => { throw new Error("connection refused"); };
+const downRunner: VqlRunner = async () => {
+  throw new Error("connection refused");
+};
 
 async function makeApp(rebuild: () => VelociraptorClient | undefined) {
   const root = await mkdtemp(join(tmpdir(), "dfir-veloreconnect-"));
   const store = new CaseStore(root);
-  const velociraptorClientStore = new VelociraptorClientStore(join(dirname(root), "velociraptor", "clients.json"));
+  const velociraptorClientStore = new VelociraptorClientStore(
+    join(dirname(root), "velociraptor", "clients.json"),
+  );
   const app = createApp(store, {
-    velociraptorClient: undefined,            // not configured / down at boot
+    velociraptorClient: undefined, // not configured / down at boot
     velociraptorClientStore,
     rebuildVelociraptorClient: rebuild,
   });

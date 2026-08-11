@@ -31,7 +31,12 @@ export async function pollUntilImported(
   const sleep = deps.sleep ?? defaultSleep;
 
   const fail = async (message: string): Promise<SocratesJob> => {
-    const failed: SocratesJob = { ...job, status: "error", error: message, finishedAt: new Date().toISOString() };
+    const failed: SocratesJob = {
+      ...job,
+      status: "error",
+      error: message,
+      finishedAt: new Date().toISOString(),
+    };
     await deps.store.upsert(caseId, failed);
     return failed;
   };
@@ -45,7 +50,8 @@ export async function pollUntilImported(
       return await fail(`SO-CRATES status check failed: ${(err as Error).message}`);
     }
 
-    if (status.status === "error") return await fail(status.message ?? "SO-CRATES reported an analysis failure");
+    if (status.status === "error")
+      return await fail(status.message ?? "SO-CRATES reported an analysis failure");
 
     if (status.status === "ready") {
       current = { ...current, status: "importing", phase: status.phase };
@@ -55,7 +61,10 @@ export async function pollUntilImported(
         const name = `${current.zipEntry ?? current.sourceName}.socrates.json`;
         const r = await deps.ingest(caseId, verdicts.text, name);
         const done: SocratesJob = {
-          ...current, status: "imported", addedEvents: r.addedEvents, addedIocs: r.addedIocs,
+          ...current,
+          status: "imported",
+          addedEvents: r.addedEvents,
+          addedIocs: r.addedIocs,
           finishedAt: new Date().toISOString(),
         };
         await deps.store.upsert(caseId, done);
@@ -75,6 +84,6 @@ export async function pollUntilImported(
 
   return await fail(
     `SO-CRATES analysis timed out after ${maxAttempts} checks. The server never reported this ` +
-    `analysis ready — note that it returns "processing" for an unknown MD5 rather than a 404.`,
+      `analysis ready — note that it returns "processing" for an unknown MD5 rather than a 404.`,
   );
 }

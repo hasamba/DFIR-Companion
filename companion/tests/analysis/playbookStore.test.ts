@@ -27,7 +27,14 @@ describe("PlaybookStore", () => {
   it("adds a custom task (server id/order/timestamps) and lists it", async () => {
     const t = await store.add("c1", { title: "Notify client", priority: "high", assignee: "ana" });
     expect(t.id).toMatch(/^custom:/);
-    expect(t).toMatchObject({ title: "Notify client", priority: "high", assignee: "ana", status: "todo", source: "custom", order: 0 });
+    expect(t).toMatchObject({
+      title: "Notify client",
+      priority: "high",
+      assignee: "ana",
+      status: "todo",
+      source: "custom",
+      order: 0,
+    });
     expect(await store.load("c1")).toHaveLength(1);
   });
 
@@ -61,7 +68,9 @@ describe("PlaybookStore", () => {
   });
 
   it("remove on an auto-derived task marks it skipped (not removed) so sync cannot re-add it as todo", async () => {
-    const state = stateWith({ nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }] });
+    const state = stateWith({
+      nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }],
+    });
     await store.sync("c1", state);
     expect(await store.remove("c1", "next_step:ns1")).toBe(true);
     const tasks = await store.load("c1");
@@ -82,7 +91,9 @@ describe("PlaybookStore", () => {
   });
 
   it("sync derives tasks from state and is idempotent (no rewrite on no-op)", async () => {
-    const state = stateWith({ nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }] });
+    const state = stateWith({
+      nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }],
+    });
     const first = await store.sync("c1", state);
     expect(first.map((t) => t.id)).toEqual(["next_step:ns1"]);
     const before = JSON.stringify(await store.load("c1"));
@@ -91,7 +102,9 @@ describe("PlaybookStore", () => {
   });
 
   it("sync preserves analyst status across a re-derive", async () => {
-    const state = stateWith({ nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }] });
+    const state = stateWith({
+      nextSteps: [{ id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" }],
+    });
     await store.sync("c1", state);
     await store.update("c1", "next_step:ns1", { status: "done", assignee: "ana" });
     const after = await store.sync("c1", state);
@@ -100,7 +113,9 @@ describe("PlaybookStore", () => {
 
   it("sync keeps custom tasks alongside derived ones", async () => {
     await store.add("c1", { title: "Call client" });
-    const state = stateWith({ nextSteps: [{ id: "ns1", priority: "low", action: "Pull logs", rationale: "", pointer: "" }] });
+    const state = stateWith({
+      nextSteps: [{ id: "ns1", priority: "low", action: "Pull logs", rationale: "", pointer: "" }],
+    });
     const out = await store.sync("c1", state);
     expect(out.map((t) => t.source).sort()).toEqual(["custom", "next_step"]);
   });
@@ -123,7 +138,9 @@ describe("PlaybookStore", () => {
 
     it("rejects a dependency on an unknown task id", async () => {
       const a = await store.add("c1", { title: "a" });
-      await expect(store.update("c1", a.id, { dependsOn: ["nope"] })).rejects.toThrow(PlaybookValidationError);
+      await expect(store.update("c1", a.id, { dependsOn: ["nope"] })).rejects.toThrow(
+        PlaybookValidationError,
+      );
     });
 
     it("rejects an edge that would create a cycle", async () => {

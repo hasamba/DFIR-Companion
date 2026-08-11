@@ -69,7 +69,10 @@ export class LiveHub {
     if (!set) return;
     const data = JSON.stringify(message);
     for (const socket of set) {
-      if (socket.readyState !== socket.OPEN) { set.delete(socket); continue; }
+      if (socket.readyState !== socket.OPEN) {
+        set.delete(socket);
+        continue;
+      }
       try {
         socket.send(data);
       } catch {
@@ -87,7 +90,10 @@ export class LiveHub {
     const data = JSON.stringify(message);
     for (const set of this.subs.values()) {
       for (const socket of set) {
-        if (socket.readyState !== socket.OPEN) { set.delete(socket); continue; }
+        if (socket.readyState !== socket.OPEN) {
+          set.delete(socket);
+          continue;
+        }
         try {
           socket.send(data);
         } catch {

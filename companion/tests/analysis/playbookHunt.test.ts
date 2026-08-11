@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { emptyState, type ForensicEvent, type Finding, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type ForensicEvent,
+  type Finding,
+  type InvestigationState,
+} from "../../src/analysis/stateTypes.js";
 import type { PlaybookTask } from "../../src/analysis/playbook.js";
 import {
   playbookHuntResponseSchema,
@@ -99,9 +104,9 @@ describe("playbookHuntResponseSchema", () => {
     const parsed = playbookHuntResponseSchema.parse({
       suggestions: [{ taskId: "t1", vql: "SELECT * FROM pslist()", severity: "Catastrophic" }],
     });
-    expect(parsed.suggestions[0].severity).toBe("Medium");      // unknown enum → fallback
-    expect(parsed.suggestions[0].endpointRelated).toBe(false);  // missing → false
-    expect(parsed.suggestions[0].targetHost).toBe("");          // missing → ""
+    expect(parsed.suggestions[0].severity).toBe("Medium"); // unknown enum → fallback
+    expect(parsed.suggestions[0].endpointRelated).toBe(false); // missing → false
+    expect(parsed.suggestions[0].targetHost).toBe(""); // missing → ""
     expect(parsed.suggestions[0].mitreTechniques).toEqual([]);
   });
 
@@ -116,9 +121,9 @@ describe("knownEndpoints", () => {
     const s = state({
       forensicTimeline: [
         event({ id: "e1", asset: "ALClient07" }),
-        event({ id: "e2", asset: "alclient07" }),   // same host, different case → collapsed
+        event({ id: "e2", asset: "alclient07" }), // same host, different case → collapsed
         event({ id: "e3", asset: "WEB01" }),
-        event({ id: "e4", asset: "  " }),            // blank → ignored
+        event({ id: "e4", asset: "  " }), // blank → ignored
       ],
     });
     expect(knownEndpoints(s)).toEqual(["ALClient07", "WEB01"]);
@@ -134,7 +139,7 @@ describe("deriveTaskEndpoints", () => {
     const s = state({
       forensicTimeline: [
         event({ id: "e1", asset: "WEB01", relatedFindingIds: ["f1"] }),
-        event({ id: "e2", asset: "DC02", relatedFindingIds: ["f9"] }),   // other finding → ignored
+        event({ id: "e2", asset: "DC02", relatedFindingIds: ["f9"] }), // other finding → ignored
       ],
     });
     expect(deriveTaskEndpoints(s, task())).toEqual(["WEB01"]);
@@ -142,7 +147,14 @@ describe("deriveTaskEndpoints", () => {
 
   it("falls back to host names mentioned in the task text (next_step / custom tasks)", () => {
     const s = state({ forensicTimeline: [event({ asset: "ALCLIENT07", relatedFindingIds: [] })] });
-    const t = task({ id: "next_step:n1", source: "next_step", sourceKey: "next_step:n1", relatedFindingId: undefined, title: "Pull Security.evtx on ALCLIENT07", description: "" });
+    const t = task({
+      id: "next_step:n1",
+      source: "next_step",
+      sourceKey: "next_step:n1",
+      relatedFindingId: undefined,
+      title: "Pull Security.evtx on ALCLIENT07",
+      description: "",
+    });
     expect(deriveTaskEndpoints(s, t)).toEqual(["ALCLIENT07"]);
   });
 
@@ -198,12 +210,16 @@ describe("sanitizePlaybookHuntSuggestions", () => {
   const epMap = new Map<string, string[]>([["finding:f1", ["WEB01"]]]);
 
   it("drops non-endpoint suggestions and empty vql/title", () => {
-    const out = sanitizePlaybookHuntSuggestions([
-      rawSuggestion(),
-      rawSuggestion({ endpointRelated: false }),   // not endpoint-related → dropped
-      rawSuggestion({ vql: "  " }),                 // empty query → dropped
-      rawSuggestion({ title: "" }),                 // empty title → dropped
-    ], epMap, known);
+    const out = sanitizePlaybookHuntSuggestions(
+      [
+        rawSuggestion(),
+        rawSuggestion({ endpointRelated: false }), // not endpoint-related → dropped
+        rawSuggestion({ vql: "  " }), // empty query → dropped
+        rawSuggestion({ title: "" }), // empty title → dropped
+      ],
+      epMap,
+      known,
+    );
     expect(out).toHaveLength(1);
   });
 
@@ -215,25 +231,38 @@ describe("sanitizePlaybookHuntSuggestions", () => {
 
   it("falls back to a fleet hunt (no targetHost) for a multi-endpoint task", () => {
     const epMulti = new Map<string, string[]>([["finding:f1", ["WEB01", "WEB02"]]]);
-    const out = sanitizePlaybookHuntSuggestions([rawSuggestion({ targetHost: "" })], epMulti, ["WEB01", "WEB02"]);
+    const out = sanitizePlaybookHuntSuggestions([rawSuggestion({ targetHost: "" })], epMulti, [
+      "WEB01",
+      "WEB02",
+    ]);
     expect(out[0].mode).toBe("hunt");
     expect(out[0].targetHost).toBeUndefined();
   });
 
   it("trims, dedupes techniques, and caps lengths + count", () => {
-    const out = sanitizePlaybookHuntSuggestions([
-      rawSuggestion({ title: "  Spaced  ", mitreTechniques: ["T1059", "T1059", " T1003 "] }),
-    ], epMap, known);
+    const out = sanitizePlaybookHuntSuggestions(
+      [rawSuggestion({ title: "  Spaced  ", mitreTechniques: ["T1059", "T1059", " T1003 "] })],
+      epMap,
+      known,
+    );
     expect(out[0].title).toBe("Spaced");
     expect(out[0].mitreTechniques).toEqual(["T1059", "T1003"]);
 
-    const many = Array.from({ length: PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT + 10 }, (_, i) => rawSuggestion({ title: `h${i}` }));
+    const many = Array.from({ length: PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT + 10 }, (_, i) =>
+      rawSuggestion({ title: `h${i}` }),
+    );
     expect(sanitizePlaybookHuntSuggestions(many, epMap, known, 3)).toHaveLength(3);
-    expect(sanitizePlaybookHuntSuggestions(many, epMap, known)).toHaveLength(PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT);
+    expect(sanitizePlaybookHuntSuggestions(many, epMap, known)).toHaveLength(
+      PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
+    );
   });
 
   it("truncates a runaway VQL blob", () => {
-    const out = sanitizePlaybookHuntSuggestions([rawSuggestion({ vql: "SELECT * FROM scope() -- " + "x".repeat(8000) })], epMap, known);
+    const out = sanitizePlaybookHuntSuggestions(
+      [rawSuggestion({ vql: "SELECT * FROM scope() -- " + "x".repeat(8000) })],
+      epMap,
+      known,
+    );
     expect(out[0].vql.length).toBeLessThanOrEqual(4000);
   });
 
@@ -248,7 +277,10 @@ describe("renderPlaybookHuntTasks", () => {
       task({ id: "finding:f1" }),
       task({ id: "finding:f2", status: "done", title: "Already handled" }),
     ];
-    const epMap = new Map<string, string[]>([["finding:f1", ["WEB01"]], ["finding:f2", []]]);
+    const epMap = new Map<string, string[]>([
+      ["finding:f1", ["WEB01"]],
+      ["finding:f2", []],
+    ]);
     const text = renderPlaybookHuntTasks(tasks, epMap);
     expect(text).toContain("[finding:f1]");
     expect(text).toContain("[endpoints: WEB01]");
@@ -261,7 +293,9 @@ describe("renderPlaybookHuntTasks", () => {
   });
 
   it("returns a placeholder when there are no open tasks", () => {
-    expect(renderPlaybookHuntTasks([task({ status: "skipped" })], new Map())).toBe("(no open playbook tasks)");
+    expect(renderPlaybookHuntTasks([task({ status: "skipped" })], new Map())).toBe(
+      "(no open playbook tasks)",
+    );
   });
 });
 
@@ -274,21 +308,29 @@ describe("renderKnownEndpoints", () => {
 
 describe("renderAvailableArtifacts", () => {
   it("dedupes and notes when empty", () => {
-    expect(renderAvailableArtifacts(["Windows.EventLogs.Evtx", "Windows.EventLogs.Evtx", "Generic.System.Pstree"]))
-      .toBe("Windows.EventLogs.Evtx, Generic.System.Pstree");
+    expect(
+      renderAvailableArtifacts(["Windows.EventLogs.Evtx", "Windows.EventLogs.Evtx", "Generic.System.Pstree"]),
+    ).toBe("Windows.EventLogs.Evtx, Generic.System.Pstree");
     expect(renderAvailableArtifacts([])).toContain("use raw VQL plugins only");
   });
 
   it("ranks Windows/DetectRaptor/Custom first and drops Admin/Server/Demo", () => {
-    const out = renderAvailableArtifacts(["Linux.Sys.X", "Admin.Client.Uninstall", "Windows.System.Pslist", "DetectRaptor.Windows.Detection.MFT", "Custom.DFIR.Y", "Generic.System.Pstree"]);
-    expect(out).not.toContain("Admin.Client.Uninstall");                 // dropped (never an endpoint hunt)
-    expect(out.indexOf("Windows.System.Pslist")).toBeLessThan(out.indexOf("Linux.Sys.X"));        // Windows before Linux
+    const out = renderAvailableArtifacts([
+      "Linux.Sys.X",
+      "Admin.Client.Uninstall",
+      "Windows.System.Pslist",
+      "DetectRaptor.Windows.Detection.MFT",
+      "Custom.DFIR.Y",
+      "Generic.System.Pstree",
+    ]);
+    expect(out).not.toContain("Admin.Client.Uninstall"); // dropped (never an endpoint hunt)
+    expect(out.indexOf("Windows.System.Pslist")).toBeLessThan(out.indexOf("Linux.Sys.X")); // Windows before Linux
     expect(out.indexOf("DetectRaptor.Windows.Detection.MFT")).toBeLessThan(out.indexOf("Custom.DFIR.Y")); // detect before custom
   });
 
   it("caps after ranking so the high-value artifacts survive", () => {
     const out = renderAvailableArtifacts(["Linux.A", "Linux.B", "Windows.X"], 1);
-    expect(out).toBe("Windows.X");   // Windows wins the single slot despite coming last in the input
+    expect(out).toBe("Windows.X"); // Windows wins the single slot despite coming last in the input
   });
 });
 
@@ -303,10 +345,10 @@ describe("buildTaskEndpointsMap", () => {
 describe("hasPlaybookHuntMaterial", () => {
   it("is false with no open tasks, true once an open task + material exists", () => {
     const withMaterial = state({ findings: [finding()] });
-    expect(hasPlaybookHuntMaterial(withMaterial, [])).toBe(false);                 // no tasks
-    expect(hasPlaybookHuntMaterial(withMaterial, [task()])).toBe(true);            // open task + finding
-    expect(hasPlaybookHuntMaterial(withMaterial, [task({ status: "done" })])).toBe(false);  // closed task
-    expect(hasPlaybookHuntMaterial(state(), [task()])).toBe(false);               // open task, but no material
+    expect(hasPlaybookHuntMaterial(withMaterial, [])).toBe(false); // no tasks
+    expect(hasPlaybookHuntMaterial(withMaterial, [task()])).toBe(true); // open task + finding
+    expect(hasPlaybookHuntMaterial(withMaterial, [task({ status: "done" })])).toBe(false); // closed task
+    expect(hasPlaybookHuntMaterial(state(), [task()])).toBe(false); // open task, but no material
   });
 
   it("counts a forensic event as material", () => {
@@ -316,15 +358,24 @@ describe("hasPlaybookHuntMaterial", () => {
 });
 
 function sug(over: Partial<PlaybookHuntSuggestion> = {}): PlaybookHuntSuggestion {
-  return { taskId: "finding:f1", title: "Hunt", rationale: "", vql: "SELECT * FROM pslist()", severity: "High", mitreTechniques: [], mode: "hunt", ...over };
+  return {
+    taskId: "finding:f1",
+    title: "Hunt",
+    rationale: "",
+    vql: "SELECT * FROM pslist()",
+    severity: "High",
+    mitreTechniques: [],
+    mode: "hunt",
+    ...over,
+  };
 }
 
 describe("taskFingerprint", () => {
   it("is stable for the same text and changes when title/description change", () => {
     const a = taskFingerprint({ title: "Investigate X", description: "do the thing" });
-    expect(taskFingerprint({ title: "Investigate X", description: "do the thing" })).toBe(a);   // stable
+    expect(taskFingerprint({ title: "Investigate X", description: "do the thing" })).toBe(a); // stable
     expect(taskFingerprint({ title: "  Investigate   X ", description: "do the thing" })).toBe(a); // whitespace-normalized
-    expect(taskFingerprint({ title: "Investigate Y", description: "do the thing" })).not.toBe(a);  // title change
+    expect(taskFingerprint({ title: "Investigate Y", description: "do the thing" })).not.toBe(a); // title change
     expect(taskFingerprint({ title: "Investigate X", description: "do something else" })).not.toBe(a); // desc change
   });
 });
@@ -332,7 +383,11 @@ describe("taskFingerprint", () => {
 describe("selectFreshHunts (persistence staleness)", () => {
   it("keeps a suggestion while its task is UNCHANGED", () => {
     const t = task({ id: "finding:f1", title: "T", description: "D" });
-    const persisted = { generatedAt: "t0", suggestions: [sug()], taskHashes: buildHuntTaskHashes([sug()], [t]) };
+    const persisted = {
+      generatedAt: "t0",
+      suggestions: [sug()],
+      taskHashes: buildHuntTaskHashes([sug()], [t]),
+    };
     const out = selectFreshHunts(persisted, [t]);
     expect(out.suggestions).toHaveLength(1);
     expect(out.changed).toBe(false);
@@ -340,7 +395,11 @@ describe("selectFreshHunts (persistence staleness)", () => {
 
   it("drops a suggestion once its task is reworded", () => {
     const t = task({ id: "finding:f1", title: "T", description: "D" });
-    const persisted = { generatedAt: "t0", suggestions: [sug()], taskHashes: buildHuntTaskHashes([sug()], [t]) };
+    const persisted = {
+      generatedAt: "t0",
+      suggestions: [sug()],
+      taskHashes: buildHuntTaskHashes([sug()], [t]),
+    };
     const edited = task({ id: "finding:f1", title: "T (edited)", description: "D" });
     const out = selectFreshHunts(persisted, [edited]);
     expect(out.suggestions).toHaveLength(0);
@@ -349,15 +408,23 @@ describe("selectFreshHunts (persistence staleness)", () => {
 
   it("drops a suggestion whose task was deleted", () => {
     const t = task({ id: "finding:f1" });
-    const persisted = { generatedAt: "t0", suggestions: [sug()], taskHashes: buildHuntTaskHashes([sug()], [t]) };
-    expect(selectFreshHunts(persisted, []).suggestions).toHaveLength(0);   // task gone
+    const persisted = {
+      generatedAt: "t0",
+      suggestions: [sug()],
+      taskHashes: buildHuntTaskHashes([sug()], [t]),
+    };
+    expect(selectFreshHunts(persisted, []).suggestions).toHaveLength(0); // task gone
   });
 
   it("keeps only the fresh ones in a mixed set", () => {
     const keep = task({ id: "finding:f1", title: "Keep", description: "k" });
     const drop = task({ id: "finding:f2", title: "Drop", description: "d" });
     const suggestions = [sug({ taskId: "finding:f1" }), sug({ taskId: "finding:f2" })];
-    const persisted = { generatedAt: "t0", suggestions, taskHashes: buildHuntTaskHashes(suggestions, [keep, drop]) };
+    const persisted = {
+      generatedAt: "t0",
+      suggestions,
+      taskHashes: buildHuntTaskHashes(suggestions, [keep, drop]),
+    };
     const editedDrop = task({ id: "finding:f2", title: "Drop CHANGED", description: "d" });
     const out = selectFreshHunts(persisted, [keep, editedDrop]);
     expect(out.suggestions.map((s) => s.taskId)).toEqual(["finding:f1"]);
@@ -366,15 +433,18 @@ describe("selectFreshHunts (persistence staleness)", () => {
 
   it("preserves the evaluated marker for an unchanged task that produced NO suggestion (so it isn't re-evaluated)", () => {
     const endpointTask = task({ id: "finding:f1", title: "Has hunt", description: "x" });
-    const skippedTask = task({ id: "next_step:n1", title: "Notify legal", description: "no hunt" });   // evaluated, no suggestion
+    const skippedTask = task({ id: "next_step:n1", title: "Notify legal", description: "no hunt" }); // evaluated, no suggestion
     const persisted = {
       generatedAt: "t0",
       suggestions: [sug({ taskId: "finding:f1" })],
-      taskHashes: { "finding:f1": taskFingerprint(endpointTask), "next_step:n1": taskFingerprint(skippedTask) },
+      taskHashes: {
+        "finding:f1": taskFingerprint(endpointTask),
+        "next_step:n1": taskFingerprint(skippedTask),
+      },
     };
     const out = selectFreshHunts(persisted, [endpointTask, skippedTask]);
     expect(out.suggestions).toHaveLength(1);
-    expect(out.taskHashes["next_step:n1"]).toBeDefined();   // skipped task still marked evaluated
+    expect(out.taskHashes["next_step:n1"]).toBeDefined(); // skipped task still marked evaluated
     expect(out.changed).toBe(false);
   });
 });
@@ -391,7 +461,7 @@ describe("pendingHuntTasks (incremental generation)", () => {
       "finding:f2": taskFingerprint(task({ id: "finding:f2", title: "Old text", description: "d" })),
     };
     const pending = pendingHuntTasks([covered, changed, fresh, done], evaluatedHashes);
-    expect(pending.map((t) => t.id)).toEqual(["finding:f2", "finding:f3"]);   // changed + new only; covered + done excluded
+    expect(pending.map((t) => t.id)).toEqual(["finding:f2", "finding:f3"]); // changed + new only; covered + done excluded
   });
 });
 
@@ -401,8 +471,8 @@ describe("mergePersistedHunts", () => {
     const newTask = task({ id: "finding:f3", title: "New", description: "n" });
     const out = mergePersistedHunts(fresh, [sug({ taskId: "finding:f3" })], [newTask], "now");
     expect(out.suggestions.map((s) => s.taskId)).toEqual(["finding:f1", "finding:f3"]);
-    expect(out.taskHashes["finding:f1"]).toBe("h1");                       // kept
-    expect(out.taskHashes["finding:f3"]).toBe(taskFingerprint(newTask));   // newly evaluated
+    expect(out.taskHashes["finding:f1"]).toBe("h1"); // kept
+    expect(out.taskHashes["finding:f3"]).toBe(taskFingerprint(newTask)); // newly evaluated
     expect(out.generatedAt).toBe("now");
   });
 });

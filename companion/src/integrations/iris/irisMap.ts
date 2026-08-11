@@ -4,8 +4,16 @@
 // resolved name→id map (built at runtime from the client's iocTypeMap/assetTypeMap).
 
 import type {
-  InvestigationState, IOC, IocEnrichment, ForensicEvent, Severity, Finding, Technique,
-  InvestigationQuestion, NextStep, Thread,
+  InvestigationState,
+  IOC,
+  IocEnrichment,
+  ForensicEvent,
+  Severity,
+  Finding,
+  Technique,
+  InvestigationQuestion,
+  NextStep,
+  Thread,
 } from "../../analysis/stateTypes.js";
 import type { GraphAsset } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
@@ -31,9 +39,12 @@ export function irisEventDate(iso: string): string | null {
 // Candidate IRIS type names (MISP taxonomy) for a Companion IOC, most-specific first.
 function iocTypeCandidates(ioc: IOC): string[] {
   switch (ioc.type) {
-    case "ip": return ["ip-dst", "ip-src", "ip"];
-    case "domain": return ["domain", "hostname"];
-    case "url": return ["url", "uri"];
+    case "ip":
+      return ["ip-dst", "ip-src", "ip"];
+    case "domain":
+      return ["domain", "hostname"];
+    case "url":
+      return ["url", "uri"];
     case "hash": {
       const hex = ioc.value.replace(/[^a-f0-9]/gi, "");
       if (hex.length === 32) return ["md5"];
@@ -42,10 +53,14 @@ function iocTypeCandidates(ioc: IOC): string[] {
       if (hex.length === 128) return ["sha512"];
       return ["sha256", "sha1", "md5"];
     }
-    case "file": return ["filename"];
-    case "process": return ["filename", "process-state"];
-    case "other": return ["other", "text", "comment"];
-    default: return ["other"];
+    case "file":
+      return ["filename"];
+    case "process":
+      return ["filename", "process-state"];
+    case "other":
+      return ["other", "text", "comment"];
+    default:
+      return ["other"];
   }
 }
 
@@ -61,7 +76,8 @@ const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
 function worstVerdict(enrichments: readonly IocEnrichment[]): string | undefined {
   let best: string | undefined;
   for (const e of enrichments) {
-    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best)) best = e.verdict;
+    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best))
+      best = e.verdict;
   }
   return best;
 }
@@ -73,7 +89,9 @@ export function mapIoc(ioc: IOC, typeMap: ReadonlyMap<string, number>): IrisIocB
 
   const enr = ioc.enrichments ?? [];
   const verdict = worstVerdict(enr);
-  const intelLines = enr.map((e) => `- ${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}${e.link ? ` ${e.link}` : ""}`);
+  const intelLines = enr.map(
+    (e) => `- ${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}${e.link ? ` ${e.link}` : ""}`,
+  );
   const description = intelLines.length
     ? `Threat intel:\n${intelLines.join("\n")}`
     : `Observed by DFIR Companion (first seen ${ioc.firstSeen}).`;
@@ -83,7 +101,7 @@ export function mapIoc(ioc: IOC, typeMap: ReadonlyMap<string, number>): IrisIocB
   return {
     ioc_value: ioc.value,
     ioc_type_id: typeId,
-    ioc_tlp_id: 2,                 // amber (default)
+    ioc_tlp_id: 2, // amber (default)
     ioc_description: description,
     ioc_tags: [...new Set(tags)].join(","),
   };
@@ -93,14 +111,19 @@ export function mapIoc(ioc: IOC, typeMap: ReadonlyMap<string, number>): IrisIocB
 
 function assetTypeCandidates(asset: GraphAsset): string[] {
   switch (asset.type) {
-    case "host": return ["windows - computer", "windows - server", "linux - computer"];
+    case "host":
+      return ["windows - computer", "windows - server", "linux - computer"];
     case "account":
       return /[\\@]/.test(asset.name) ? ["windows account - ad", "account"] : ["account"];
-    default: return ["account"];
+    default:
+      return ["account"];
   }
 }
 
-export function resolveAssetTypeId(asset: GraphAsset, typeMap: ReadonlyMap<string, number>): number | undefined {
+export function resolveAssetTypeId(
+  asset: GraphAsset,
+  typeMap: ReadonlyMap<string, number>,
+): number | undefined {
   for (const name of assetTypeCandidates(asset)) {
     const id = typeMap.get(name);
     if (id !== undefined) return id;
@@ -119,7 +142,7 @@ export function mapAsset(asset: GraphAsset, typeMap: ReadonlyMap<string, number>
     asset_type_id: typeId,
     analysis_status_id: 1,
     asset_description: `DFIR Companion: ${asset.compromised ? "compromised" : "observed"}; max severity ${asset.maxSeverity}; ${asset.eventCount} event(s); ${asset.iocIds.length} linked IoC(s).`,
-    asset_compromise_status_id: asset.compromised ? 1 : 3,   // 1 compromised, 3 unknown
+    asset_compromise_status_id: asset.compromised ? 1 : 3, // 1 compromised, 3 unknown
     asset_tags: [TAG, asset.maxSeverity.toLowerCase(), asset.type].join(","),
   };
   if (IP_RE.test(asset.name)) body.asset_ip = asset.name;
@@ -130,7 +153,11 @@ export function mapAsset(asset: GraphAsset, typeMap: ReadonlyMap<string, number>
 // ---- timeline --------------------------------------------------------------
 
 const SEV_COLOR: Record<Severity, string> = {
-  Critical: "#ef4444", High: "#f97316", Medium: "#eab308", Low: "#3b82f6", Info: "#6b7280",
+  Critical: "#ef4444",
+  High: "#f97316",
+  Medium: "#eab308",
+  Low: "#3b82f6",
+  Info: "#6b7280",
 };
 
 function firstLine(s: string): string {
@@ -150,9 +177,18 @@ function eventTitle(description: string, max = 300): string {
 // Resolve which IRIS IOC ids an event references: by structured hash/path/process fields, by
 // value appearing in the description, and (extraValues) by IOCs linked through the event's
 // findings — all looked up in a lowercased value→id map of already-created IOCs.
-function eventIocIds(event: ForensicEvent, iocByValue: ReadonlyMap<string, number>, extraValues: readonly string[] = []): number[] {
+function eventIocIds(
+  event: ForensicEvent,
+  iocByValue: ReadonlyMap<string, number>,
+  extraValues: readonly string[] = [],
+): number[] {
   const ids = new Set<number>();
-  const tryAdd = (v?: string) => { if (v) { const id = iocByValue.get(v.toLowerCase()); if (id !== undefined) ids.add(id); } };
+  const tryAdd = (v?: string) => {
+    if (v) {
+      const id = iocByValue.get(v.toLowerCase());
+      if (id !== undefined) ids.add(id);
+    }
+  };
   tryAdd(event.sha256);
   tryAdd(event.md5);
   tryAdd(event.path);
@@ -165,9 +201,9 @@ function eventIocIds(event: ForensicEvent, iocByValue: ReadonlyMap<string, numbe
 }
 
 export interface MapEventContext {
-  assetByName: ReadonlyMap<string, number>;          // lowercased asset name → iris asset id
-  iocByValue: ReadonlyMap<string, number>;            // lowercased ioc value → iris ioc id
-  categoryByName?: ReadonlyMap<string, number>;       // lowercased IRIS event-category name → id (MITRE tactics)
+  assetByName: ReadonlyMap<string, number>; // lowercased asset name → iris asset id
+  iocByValue: ReadonlyMap<string, number>; // lowercased ioc value → iris ioc id
+  categoryByName?: ReadonlyMap<string, number>; // lowercased IRIS event-category name → id (MITRE tactics)
   findingIocValues?: (event: ForensicEvent) => string[]; // IOC values linked to the event via its findings
 }
 
@@ -181,7 +217,8 @@ export function mapEvent(event: ForensicEvent, ctx: MapEventContext): IrisEventB
   const categoryId = (tactic && ctx.categoryByName?.get(tactic.toLowerCase())) ?? 1; // 1 = Unspecified
 
   const parts: string[] = [event.description];
-  if (event.count && event.count > 1) parts.push(`Occurrences: ${event.count}${event.endTimestamp ? ` (until ${event.endTimestamp})` : ""}`);
+  if (event.count && event.count > 1)
+    parts.push(`Occurrences: ${event.count}${event.endTimestamp ? ` (until ${event.endTimestamp})` : ""}`);
   if (event.asset) parts.push(`Asset: ${event.asset}`);
   if (event.sources?.length) parts.push(`Sources: ${event.sources.join(", ")}`);
   if (event.sha256) parts.push(`SHA256: ${event.sha256}`);
@@ -189,7 +226,9 @@ export function mapEvent(event: ForensicEvent, ctx: MapEventContext): IrisEventB
   if (event.path) parts.push(`Path: ${event.path}`);
   if (event.mitreTechniques?.length) parts.push(`MITRE: ${event.mitreTechniques.join(", ")}`);
 
-  const assetIds = event.asset ? [ctx.assetByName.get(event.asset.trim().toLowerCase())].filter((x): x is number => x !== undefined) : [];
+  const assetIds = event.asset
+    ? [ctx.assetByName.get(event.asset.trim().toLowerCase())].filter((x): x is number => x !== undefined)
+    : [];
 
   return {
     event_title: eventTitle(event.description),
@@ -212,9 +251,11 @@ export function mapEvent(event: ForensicEvent, ctx: MapEventContext): IrisEventB
 // adds task_status_id (resolved "To do") and task_assignees_id ([] = unassigned).
 export function mapNextStepTask(step: NextStep): IrisTaskBody {
   const title = `[${step.priority}] ${step.action}`.trim();
-  const description = [step.rationale, step.pointer ? `Where: ${step.pointer}` : ""].filter(Boolean).join("\n\n");
+  const description = [step.rationale, step.pointer ? `Where: ${step.pointer}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
   return {
-    task_title: title.length >= 2 ? title : `${title} (next step)`,   // IRIS requires ≥2 chars
+    task_title: title.length >= 2 ? title : `${title} (next step)`, // IRIS requires ≥2 chars
     task_description: description,
     task_tags: [TAG, step.priority].join(","),
   };
@@ -232,7 +273,9 @@ export function mapPlaybookTask(task: PlaybookTask): IrisTaskBody {
     task.assignee ? `Assignee: ${task.assignee}` : "",
     task.dueDate ? `Due: ${task.dueDate}` : "",
     task.notes ? `Notes: ${task.notes}` : "",
-  ].filter(Boolean).join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return {
     task_title: title.length >= 2 ? title : `${title} (task)`,
     task_description: description,
@@ -244,10 +287,14 @@ export function mapPlaybookTask(task: PlaybookTask): IrisTaskBody {
 // status ids vary per install, so the push resolves these against the live taskStatusMap.
 export function playbookStatusCandidates(status: PlaybookStatus): string[] {
   switch (status) {
-    case "done": return ["done", "completed", "closed"];
-    case "in_progress": return ["in progress", "in_progress", "wip", "open"];
-    case "skipped": return ["canceled", "cancelled", "done", "closed"];
-    default: return ["to do", "open", "todo", "not started"];
+    case "done":
+      return ["done", "completed", "closed"];
+    case "in_progress":
+      return ["in progress", "in_progress", "wip", "open"];
+    case "skipped":
+      return ["canceled", "cancelled", "done", "closed"];
+    default:
+      return ["to do", "open", "todo", "not started"];
   }
 }
 
@@ -258,37 +305,59 @@ export function executiveSummaryMarkdown(state: InvestigationState, meta: Report
   return (meta.executiveSummary || "").trim() || state.lastSummary || "_No executive summary yet._";
 }
 
-export interface IrisNote { title: string; content: string }
+export interface IrisNote {
+  title: string;
+  content: string;
+}
 
 function findingsNote(findings: readonly Finding[]): string {
-  return findings.map((f) =>
-    `### [${f.severity}] ${f.title}\n\n${f.description}\n` +
-    (f.mitreTechniques.length ? `\n**MITRE:** ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}` : "") +
-    (f.relatedIocs.length ? `\n**Related IOCs:** ${f.relatedIocs.join(", ")}` : "") +
-    `\n**Status:** ${f.status}`,
-  ).join("\n\n---\n\n");
+  return findings
+    .map(
+      (f) =>
+        `### [${f.severity}] ${f.title}\n\n${f.description}\n` +
+        (f.mitreTechniques.length
+          ? `\n**MITRE:** ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`
+          : "") +
+        (f.relatedIocs.length ? `\n**Related IOCs:** ${f.relatedIocs.join(", ")}` : "") +
+        `\n**Status:** ${f.status}`,
+    )
+    .join("\n\n---\n\n");
 }
 
 function mitreNote(techniques: readonly Technique[]): string {
-  return techniques.map((t) => {
-    const url = attackTechniqueUrl(t.id);
-    const label = url ? `[${t.id}](${url})` : t.id;
-    return `- **${label}** ${t.name}${t.findingIds.length ? ` (${t.findingIds.length} finding(s))` : ""}`;
-  }).join("\n");
+  return techniques
+    .map((t) => {
+      const url = attackTechniqueUrl(t.id);
+      const label = url ? `[${t.id}](${url})` : t.id;
+      return `- **${label}** ${t.name}${t.findingIds.length ? ` (${t.findingIds.length} finding(s))` : ""}`;
+    })
+    .join("\n");
 }
 
 function questionsNote(qs: readonly InvestigationQuestion[]): string {
-  return qs.map((q) => `### ${q.question}\n\n- **Status:** ${q.status}\n- **Answer:** ${q.answer || "—"}\n- **Pointer:** ${q.pointer || "—"}`).join("\n\n");
+  return qs
+    .map(
+      (q) =>
+        `### ${q.question}\n\n- **Status:** ${q.status}\n- **Answer:** ${q.answer || "—"}\n- **Pointer:** ${q.pointer || "—"}`,
+    )
+    .join("\n\n");
 }
 
 function threadsNote(threads: readonly Thread[]): string {
-  return threads.map((t) => `- [${t.status}] ${t.description} _(opened ${t.openedAt}${t.closedAt ? `, closed ${t.closedAt}` : ""})_`).join("\n");
+  return threads
+    .map(
+      (t) =>
+        `- [${t.status}] ${t.description} _(opened ${t.openedAt}${t.closedAt ? `, closed ${t.closedAt}` : ""})_`,
+    )
+    .join("\n");
 }
 
 // Assemble the "everything else" notes — one per non-empty section. Order is report-friendly.
 export function buildNotes(state: InvestigationState, meta: ReportMeta): IrisNote[] {
   const notes: IrisNote[] = [];
-  const push = (title: string, content: string) => { if (content && content.trim()) notes.push({ title, content }); };
+  const push = (title: string, content: string) => {
+    if (content && content.trim()) notes.push({ title, content });
+  };
 
   if (state.attackerPath) push("Attack Path", state.attackerPath);
   if (state.findings.length) push("Findings", findingsNote(state.findings));
@@ -302,8 +371,10 @@ export function buildNotes(state: InvestigationState, meta: ReportMeta): IrisNot
   push("Investigation Limitations", meta.investigationLimitations);
   push("Investigation Goals & Targets", meta.investigationGoals);
   push("Conclusions", meta.conclusions);
-  if (meta.recommendations.length) push("Recommendations", meta.recommendations.map((r) => `- ${r}`).join("\n"));
-  if (meta.glossary.length) push("Glossary", meta.glossary.map((g) => `- **${g.term}** — ${g.explanation}`).join("\n"));
+  if (meta.recommendations.length)
+    push("Recommendations", meta.recommendations.map((r) => `- ${r}`).join("\n"));
+  if (meta.glossary.length)
+    push("Glossary", meta.glossary.map((g) => `- **${g.term}** — ${g.explanation}`).join("\n"));
 
   return notes;
 }

@@ -79,7 +79,12 @@ describe("renderRefutedHypothesesBlock", () => {
 
   it("includes analyst-authored refuted hypotheses with notes", () => {
     const block = renderRefutedHypothesesBlock([
-      hyp({ title: "Access was RDP from DMZ", status: "refuted", source: "analyst", notes: "no 4624 type 10" }),
+      hyp({
+        title: "Access was RDP from DMZ",
+        status: "refuted",
+        source: "analyst",
+        notes: "no 4624 type 10",
+      }),
     ]);
     expect(block).toContain("Access was RDP from DMZ");
     expect(block).toContain("no 4624 type 10");
@@ -104,7 +109,9 @@ describe("renderRefutedHypothesesBlock", () => {
 describe("demoteCompletedNextSteps", () => {
   it("demotes a step that repeats a completed task (shared specific token)", () => {
     const steps = [step({ id: "n1", action: "Pull Security.evtx 4624 on ALCLIENT07", priority: "high" })];
-    const { steps: out, demotedIds } = demoteCompletedNextSteps(steps, ["Pull Security.evtx 4624 on ALCLIENT07 and timeline it"]);
+    const { steps: out, demotedIds } = demoteCompletedNextSteps(steps, [
+      "Pull Security.evtx 4624 on ALCLIENT07 and timeline it",
+    ]);
     expect(demotedIds).toEqual(["n1"]);
     expect(out[0].priority).toBe("low");
     expect(out[0].rationale).toMatch(/already done/i);
@@ -123,7 +130,9 @@ describe("demoteCompletedNextSteps", () => {
   });
 
   it("uses the pointer to identify the target when the action is generic", () => {
-    const steps = [step({ id: "n1", action: "collect logs", pointer: "pull $MFT on WKSTN-DB-01", priority: "critical" })];
+    const steps = [
+      step({ id: "n1", action: "collect logs", pointer: "pull $MFT on WKSTN-DB-01", priority: "critical" }),
+    ];
     const { demotedIds, steps: out } = demoteCompletedNextSteps(steps, ["Pull $MFT on WKSTN-DB-01"]);
     expect(demotedIds).toEqual(["n1"]);
     expect(out[0].priority).toBe("low");

@@ -60,7 +60,10 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     const units = ["B", "KiB", "MiB", "GiB", "TiB"];
     let value = Math.max(0, bytes);
     let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
     return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
   }
 
@@ -72,24 +75,47 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * Everything a run needs, or an HTTP failure. Shared by the on-disk and upload routes so their
    * refusals cannot drift apart.
    */
-  async function resolveRun(req: Request, res: Response): Promise<{ server: McpServer; tool: string; args: Record<string, unknown> } | null> {
+  async function resolveRun(
+    req: Request,
+    res: Response,
+  ): Promise<{ server: McpServer; tool: string; args: Record<string, unknown> } | null> {
     const caseId = req.params.id;
-    if (!options.mcpServerStore) { res.status(501).json({ error: "MCP servers not enabled" }); return null; }
-    if (!(await store.caseExists(caseId))) { res.status(404).json({ error: `case ${caseId} does not exist` }); return null; }
+    if (!options.mcpServerStore) {
+      res.status(501).json({ error: "MCP servers not enabled" });
+      return null;
+    }
+    if (!(await store.caseExists(caseId))) {
+      res.status(404).json({ error: `case ${caseId} does not exist` });
+      return null;
+    }
     // Same write guard as every other evidence route: a closed or archived case takes no new imports.
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running a tool` });
+      res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running a tool` });
       return null;
     }
     const server = await options.mcpServerStore.get(req.params.serverId);
-    if (!server) { res.status(400).json({ error: `unknown MCP server "${req.params.serverId}"` }); return null; }
-    if (!server.enabled) { res.status(400).json({ error: `MCP server "${server.id}" is disabled` }); return null; }
+    if (!server) {
+      res.status(400).json({ error: `unknown MCP server "${req.params.serverId}"` });
+      return null;
+    }
+    if (!server.enabled) {
+      res.status(400).json({ error: `MCP server "${server.id}" is disabled` });
+      return null;
+    }
     const tool = typeof req.body?.tool === "string" ? req.body.tool.trim() : "";
-    if (!tool) { res.status(400).json({ error: "tool is required" }); return null; }
+    if (!tool) {
+      res.status(400).json({ error: "tool is required" });
+      return null;
+    }
     const args = (req.body?.args ?? {}) as Record<string, unknown>;
-    if (typeof args !== "object" || Array.isArray(args)) { res.status(400).json({ error: "args must be an object" }); return null; }
+    if (typeof args !== "object" || Array.isArray(args)) {
+      res.status(400).json({ error: "args must be an object" });
+      return null;
+    }
     return { server, tool, args };
   }
 
@@ -99,11 +125,22 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * write or what they make reversible.
    */
   async function ingestMcpOutput(
-    caseId: string, serverId: string, tool: string, label: string,
-    kind: string, text: string, outName: string,
+    caseId: string,
+    serverId: string,
+    tool: string,
+    label: string,
+    kind: string,
+    text: string,
+    outName: string,
   ): Promise<{ addedEvents: number; addedIocs: number }> {
     let before: InvestigationState | null = null;
-    if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
+    if (options.stateStore) {
+      try {
+        before = await options.stateStore.load(caseId);
+      } catch {
+        /* keep null */
+      }
+    }
     const r = await ingestStreamed(caseId, kind, text, outName);
     // An MCP tool can produce reference data as readily as evidence — a capability listing looks
     // exactly like a Volatility table to any detector — so the checkpoint matters more here than on
@@ -124,7 +161,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * saw came from tool output, which is untrusted.
    */
   async function applyAgentDelta(
-    caseId: string, serverLabel: string, delta: AnalysisDelta,
+    caseId: string,
+    serverLabel: string,
+    delta: AnalysisDelta,
   ): Promise<McpImportCounts> {
     if (!options.stateStore) throw new Error("state store not configured");
     const before = await options.stateStore.load(caseId);
@@ -156,8 +195,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
   // A job id is the preview's filename, and it arrives from the client on the approve/discard
   // routes. Only the shape JobManager mints is accepted, so nothing can walk out of the directory.
-  const isJobId = (v: string): boolean =>
-    /^job_[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/.test(v);
+  const isJobId = (v: string): boolean => /^job_[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/.test(v);
   const previewDir = (caseId: string): string => join(store.caseDir(caseId), ".mcpwork", "preview");
 
   interface StagedPreview {
@@ -171,7 +209,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   }
 
   async function stagePreview(
-    caseId: string, jobId: string, p: StagedPreview & { text: string; reportText?: string },
+    caseId: string,
+    jobId: string,
+    p: StagedPreview & { text: string; reportText?: string },
   ): Promise<void> {
     if (!isJobId(jobId)) return;
     const dir = previewDir(caseId);
@@ -184,7 +224,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   }
 
   async function readPreview(
-    caseId: string, jobId: string,
+    caseId: string,
+    jobId: string,
   ): Promise<(StagedPreview & { text: string; reportText?: string }) | null> {
     if (!isJobId(jobId)) return null;
     const dir = previewDir(caseId);
@@ -201,19 +242,32 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   async function dropPreview(caseId: string, jobId: string): Promise<void> {
     if (!isJobId(jobId)) return;
     const dir = previewDir(caseId);
-    await rm(join(dir, `${jobId}.out`), { force: true }).catch(() => { /* best-effort */ });
-    await rm(join(dir, `${jobId}.report`), { force: true }).catch(() => { /* best-effort */ });
-    await rm(join(dir, `${jobId}.json`), { force: true }).catch(() => { /* best-effort */ });
+    await rm(join(dir, `${jobId}.out`), { force: true }).catch(() => {
+      /* best-effort */
+    });
+    await rm(join(dir, `${jobId}.report`), { force: true }).catch(() => {
+      /* best-effort */
+    });
+    await rm(join(dir, `${jobId}.json`), { force: true }).catch(() => {
+      /* best-effort */
+    });
   }
 
   async function markPreviewImported(
-    caseId: string, jobId: string, preview: StagedPreview, reportId: string, importedAt: string,
+    caseId: string,
+    jobId: string,
+    preview: StagedPreview,
+    reportId: string,
+    importedAt: string,
   ): Promise<void> {
-    await atomicWrite(join(previewDir(caseId), `${jobId}.json`), JSON.stringify({
-      ...preview,
-      reportId,
-      importedAt,
-    }));
+    await atomicWrite(
+      join(previewDir(caseId), `${jobId}.json`),
+      JSON.stringify({
+        ...preview,
+        reportId,
+        importedAt,
+      }),
+    );
   }
 
   /**
@@ -225,38 +279,54 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * caller staged, once the run is genuinely finished rather than when the request returned.
    */
   function startRun(
-    caseId: string, server: McpServer, tool: string, args: Record<string, unknown>,
-    targetPath: string | undefined, label: string, preview: boolean, onDone?: () => Promise<void>,
+    caseId: string,
+    server: McpServer,
+    tool: string,
+    args: Record<string, unknown>,
+    targetPath: string | undefined,
+    label: string,
+    preview: boolean,
+    onDone?: () => Promise<void>,
   ): string | null {
     const job = options.jobManager?.register({
-      caseId, kind: "mcp", label: `${server.id}/${tool}${preview ? " (preview)" : ""}`, detail: "starting", cancellable: true,
+      caseId,
+      kind: "mcp",
+      label: `${server.id}/${tool}${preview ? " (preview)" : ""}`,
+      detail: "starting",
+      cancellable: true,
     });
 
     void (async () => {
       try {
         await job?.ready;
-        const outcome = await runMcpTool({
-          server,
-          ...(options.mcpClaudeRunner ? { claudeRunner: options.mcpClaudeRunner } : {}),
-          ...(claudeBin ? { claudeBin } : {}),
-          ...(claudeModel ? { model: claudeModel } : {}),
-          transferRunner,
-          signal: job?.signal,
-          onProgress: (detail) => { if (job) options.jobManager?.progress(job.jobId, 0, 1, detail); },
-          // Where recordTransfer (#231) meets its producer: evidence leaving this box for an
-          // analysis host is the canonical `transferred` event, and the chain records it before the
-          // tool ever runs.
-          recordTransfer: options.custodyStore && targetPath
-            ? async (destination) => {
-              await options.custodyStore!.recordTransfer(caseId, {
-                artifactPaths: [targetPath],
-                transferredBy: "analyst",
-                destination,
-                trigger: `mcp:${server.id}`,
-              });
-            }
-            : undefined,
-        }, { tool, args, targetPath });
+        const outcome = await runMcpTool(
+          {
+            server,
+            ...(options.mcpClaudeRunner ? { claudeRunner: options.mcpClaudeRunner } : {}),
+            ...(claudeBin ? { claudeBin } : {}),
+            ...(claudeModel ? { model: claudeModel } : {}),
+            transferRunner,
+            signal: job?.signal,
+            onProgress: (detail) => {
+              if (job) options.jobManager?.progress(job.jobId, 0, 1, detail);
+            },
+            // Where recordTransfer (#231) meets its producer: evidence leaving this box for an
+            // analysis host is the canonical `transferred` event, and the chain records it before the
+            // tool ever runs.
+            recordTransfer:
+              options.custodyStore && targetPath
+                ? async (destination) => {
+                    await options.custodyStore!.recordTransfer(caseId, {
+                      artifactPaths: [targetPath],
+                      transferredBy: "analyst",
+                      destination,
+                      trigger: `mcp:${server.id}`,
+                    });
+                  }
+                : undefined,
+          },
+          { tool, args, targetPath },
+        );
 
         // §8's rough edge: the tool-runner's generic "could not detect the tool output's format"
         // names neither the server nor the tool, and with several of each configured that is most
@@ -274,7 +344,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         if (kind === "unknown") {
           throw new Error(
             `${server.id}/${tool}: returned ${outcome.text.length} byte(s) in no recognized format` +
-            ` — have the tool emit JSON, or add a custom importer for it`,
+              ` — have the tool emit JSON, or add a custom importer for it`,
           );
         }
 
@@ -282,40 +352,61 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           // Held on disk rather than re-run on approval: importing must not mean executing the tool
           // a second time. That would double the cost of a Volatility run and, for a tool with side
           // effects, do the thing twice.
-          await stagePreview(caseId, job?.jobId ?? "", { server: server.id, tool, label, kind, outName, text: outcome.text });
+          await stagePreview(caseId, job?.jobId ?? "", {
+            server: server.id,
+            tool,
+            label,
+            kind,
+            outName,
+            text: outcome.text,
+          });
           if (job) await options.jobManager?.finish(job.jobId);
           void logActivity(options.activityLogStore, options.onActivity, caseId, {
-            category: "import", action: "mcp-preview",
-            detail: `${server.id}/${tool} on ${label} → ${outcome.text.length} byte(s), detected as "${kind}" — awaiting review`
-              + (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
+            category: "import",
+            action: "mcp-preview",
+            detail:
+              `${server.id}/${tool} on ${label} → ${outcome.text.length} byte(s), detected as "${kind}" — awaiting review` +
+              (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
           });
           return;
         }
 
         const r = await ingestMcpOutput(caseId, server.id, tool, label, kind, outcome.text, outName);
         await reportStore.save(caseId, {
-          server: server.id, tool, label, kind, text: outcome.text,
+          server: server.id,
+          tool,
+          label,
+          kind,
+          text: outcome.text,
           counts: {
-            addedFindings: 0, updatedFindings: 0,
-            addedEvents: r.addedEvents, updatedEvents: 0,
-            addedIocs: r.addedIocs, updatedIocs: 0,
+            addedFindings: 0,
+            updatedFindings: 0,
+            addedEvents: r.addedEvents,
+            updatedEvents: 0,
+            addedIocs: r.addedIocs,
+            updatedIocs: 0,
           },
         });
         if (job) await options.jobManager?.finish(job.jobId);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
-          category: "import", action: "mcp-run",
-          detail: `${server.id}/${tool} on ${label} → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`
-            + (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
+          category: "import",
+          action: "mcp-run",
+          detail:
+            `${server.id}/${tool} on ${label} → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)` +
+            (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
         });
       } catch (err) {
         if (job) await options.jobManager?.fail(job.jobId, err);
         recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
-          category: "import", action: "mcp-run",
+          category: "import",
+          action: "mcp-run",
           detail: `${server.id}/${tool} on ${label} FAILED: ${(err as Error).message}`,
         });
       } finally {
-        await onDone?.().catch(() => { /* best-effort */ });
+        await onDone?.().catch(() => {
+          /* best-effort */
+        });
       }
     })();
 
@@ -343,8 +434,18 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     }
 
     const preview = req.body?.preview === true;
-    const jobId = startRun(caseId, resolved.server, resolved.tool, resolved.args, targetPath, raw || resolved.tool, preview);
-    return res.status(202).json({ ok: true, jobId, server: resolved.server.id, tool: resolved.tool, preview });
+    const jobId = startRun(
+      caseId,
+      resolved.server,
+      resolved.tool,
+      resolved.args,
+      targetPath,
+      raw || resolved.tool,
+      preview,
+    );
+    return res
+      .status(202)
+      .json({ ok: true, jobId, server: resolved.server.id, tool: resolved.tool, preview });
   });
 
   /**
@@ -359,13 +460,15 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    */
   const PREVIEW_CHARS = 8 * 1024;
   app.get("/cases/:id/mcp/reports", async (req: Request, res: Response) => {
-    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    if (!(await store.caseExists(req.params.id)))
+      return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const reports = (await reportStore.list(req.params.id)).map(({ text: _text, ...report }) => report);
     return res.status(200).json({ reports });
   });
 
   app.get("/cases/:id/mcp/reports/:reportId", async (req: Request, res: Response) => {
-    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    if (!(await store.caseExists(req.params.id)))
+      return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const report = await reportStore.get(req.params.id, req.params.reportId);
     return report
       ? res.status(200).json(report)
@@ -374,13 +477,23 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
   app.get("/cases/:id/mcp/preview/:jobId", async (req: Request, res: Response) => {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
-    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    if (!(await store.caseExists(req.params.id)))
+      return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const p = await readPreview(req.params.id, req.params.jobId);
-    if (!p) return res.status(404).json({ error: "no preview for that run — it may have been imported, discarded, or lost to a restart" });
+    if (!p)
+      return res
+        .status(404)
+        .json({
+          error: "no preview for that run — it may have been imported, discarded, or lost to a restart",
+        });
     const displayText = p.reportText ?? p.text;
     return res.status(200).json({
-      server: p.server, tool: p.tool, kind: p.kind, bytes: displayText.length,
-      text: displayText.slice(0, PREVIEW_CHARS), truncated: displayText.length > PREVIEW_CHARS,
+      server: p.server,
+      tool: p.tool,
+      kind: p.kind,
+      bytes: displayText.length,
+      text: displayText.slice(0, PREVIEW_CHARS),
+      truncated: displayText.length > PREVIEW_CHARS,
       imported: !!p.importedAt,
       ...(p.importedAt ? { importedAt: p.importedAt, reportId: p.reportId } : {}),
     });
@@ -390,43 +503,66 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/mcp/preview/:jobId/import", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing` });
+      return res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing` });
     }
     const p = await readPreview(caseId, req.params.jobId);
-    if (!p) return res.status(404).json({ error: "no preview for that run — it may have been imported, discarded, or lost to a restart" });
-    if (p.importedAt) return res.status(409).json({ error: "this analysis was already imported", reportId: p.reportId });
+    if (!p)
+      return res
+        .status(404)
+        .json({
+          error: "no preview for that run — it may have been imported, discarded, or lost to a restart",
+        });
+    if (p.importedAt)
+      return res.status(409).json({ error: "this analysis was already imported", reportId: p.reportId });
     try {
       // An agent preview holds a delta, not tool output — merge it rather than routing it through
       // importers that have no format to detect.
       if (p.kind === AGENT_DELTA_KIND) {
         const r = await applyAgentDelta(caseId, p.tool, deltaSchema.parse(JSON.parse(p.text)));
         const report = await reportStore.save(caseId, {
-          server: p.server, tool: p.tool, label: p.label, kind: p.kind,
-          text: p.reportText ?? p.text, counts: r,
+          server: p.server,
+          tool: p.tool,
+          label: p.label,
+          kind: p.kind,
+          text: p.reportText ?? p.text,
+          counts: r,
         });
         await markPreviewImported(caseId, req.params.jobId, p, report.id, report.importedAt);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
-          category: "ai", action: "mcp-agent",
+          category: "ai",
+          action: "mcp-agent",
           detail: `agent on ${p.tool} imported after review → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
         return res.status(200).json({ ok: true, reportId: report.id, ...r });
       }
       const r = await ingestMcpOutput(caseId, p.server, p.tool, p.label, p.kind, p.text, p.outName);
       const counts: McpImportCounts = {
-        addedFindings: 0, updatedFindings: 0,
-        addedEvents: r.addedEvents, updatedEvents: 0,
-        addedIocs: r.addedIocs, updatedIocs: 0,
+        addedFindings: 0,
+        updatedFindings: 0,
+        addedEvents: r.addedEvents,
+        updatedEvents: 0,
+        addedIocs: r.addedIocs,
+        updatedIocs: 0,
       };
       const report = await reportStore.save(caseId, {
-        server: p.server, tool: p.tool, label: p.label, kind: p.kind, text: p.text, counts,
+        server: p.server,
+        tool: p.tool,
+        label: p.label,
+        kind: p.kind,
+        text: p.text,
+        counts,
       });
       await markPreviewImported(caseId, req.params.jobId, p, report.id, report.importedAt);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "import", action: "mcp-run",
+        category: "import",
+        action: "mcp-run",
         detail: `${p.server}/${p.tool} on ${p.label} imported after review → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`,
       });
       return res.status(200).json({ ok: true, reportId: report.id, ...counts });
@@ -439,13 +575,16 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   /** Reject a preview: the fetched output is thrown away and the case is untouched. */
   app.delete("/cases/:id/mcp/preview/:jobId", async (req: Request, res: Response) => {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
-    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    if (!(await store.caseExists(req.params.id)))
+      return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const p = await readPreview(req.params.id, req.params.jobId);
-    if (p?.importedAt) return res.status(409).json({ error: "an imported analysis report cannot be discarded" });
+    if (p?.importedAt)
+      return res.status(409).json({ error: "an imported analysis report cannot be discarded" });
     await dropPreview(req.params.id, req.params.jobId);
     if (p) {
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "import", action: "mcp-preview",
+        category: "import",
+        action: "mcp-preview",
         detail: `${p.server}/${p.tool} on ${p.label} discarded after review — nothing imported`,
       });
     }
@@ -464,10 +603,14 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
     const filename = String(req.body?.filename ?? "").trim();
     const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
-    if (!filename || !dataBase64) return res.status(400).json({ error: "filename and dataBase64 are required" });
+    if (!filename || !dataBase64)
+      return res.status(400).json({ error: "filename and dataBase64 are required" });
 
     const work = join(store.caseDir(caseId), ".mcpwork");
-    const safe = basename(filename).replace(/[^\w.\-]+/g, "_").slice(0, 120) || "raw.bin";
+    const safe =
+      basename(filename)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 120) || "raw.bin";
     let stageDir = "";
     try {
       await mkdir(work, { recursive: true });
@@ -478,12 +621,23 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       const dir = stageDir;
       const preview = req.body?.preview === true;
       const jobId = startRun(
-        caseId, resolved.server, resolved.tool, resolved.args, staged, filename, preview,
+        caseId,
+        resolved.server,
+        resolved.tool,
+        resolved.args,
+        staged,
+        filename,
+        preview,
         () => rm(dir, { recursive: true, force: true }),
       );
-      return res.status(202).json({ ok: true, jobId, server: resolved.server.id, tool: resolved.tool, preview });
+      return res
+        .status(202)
+        .json({ ok: true, jobId, server: resolved.server.id, tool: resolved.tool, preview });
     } catch (err) {
-      if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+      if (stageDir)
+        await rm(stageDir, { recursive: true, force: true }).catch(() => {
+          /* best-effort */
+        });
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
   });
@@ -501,16 +655,29 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    */
   async function resolveAgentRequest(req: Request, res: Response): Promise<AgentRequest | null> {
     const caseId = req.params.id;
-    if (!options.mcpServerStore) { res.status(501).json({ error: "MCP servers not enabled" }); return null; }
-    if (!(await store.caseExists(caseId))) { res.status(404).json({ error: `case ${caseId} does not exist` }); return null; }
+    if (!options.mcpServerStore) {
+      res.status(501).json({ error: "MCP servers not enabled" });
+      return null;
+    }
+    if (!(await store.caseExists(caseId))) {
+      res.status(404).json({ error: `case ${caseId} does not exist` });
+      return null;
+    }
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the investigation` });
+      res
+        .status(423)
+        .json({
+          error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the investigation`,
+        });
       return null;
     }
     const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
-    if (!prompt) { res.status(400).json({ error: "an investigation instruction is required" }); return null; }
+    if (!prompt) {
+      res.status(400).json({ error: "an investigation instruction is required" });
+      return null;
+    }
 
     const wanted = Array.isArray(req.body?.servers) ? (req.body.servers as unknown[]).map(String) : null;
     const all = await options.mcpServerStore.load();
@@ -528,13 +695,18 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * different path; silently giving several agents one server's path would analyze the wrong file.
    */
   function startAgent(
-    caseId: string, request: AgentRequest, targetPath?: string,
+    caseId: string,
+    request: AgentRequest,
+    targetPath?: string,
     onDone?: () => Promise<void>,
   ): string | null {
     const { servers, preview } = request;
     const job = options.jobManager?.register({
-      caseId, kind: "mcp", label: `agent (${servers.map((s) => s.id).join(", ")})${preview ? " (preview)" : ""}`,
-      detail: "starting", cancellable: true,
+      caseId,
+      kind: "mcp",
+      label: `agent (${servers.map((s) => s.id).join(", ")})${preview ? " (preview)" : ""}`,
+      detail: "starting",
+      cancellable: true,
     });
     const startedAt = Date.now();
     const timeoutMs = mcpAgentTimeoutMs();
@@ -545,7 +717,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       phase = nextPhase;
       if (job) {
         options.jobManager?.progress(
-          job.jobId, phase, 4,
+          job.jobId,
+          phase,
+          4,
           `${activity} — ${compactDuration(Date.now() - startedAt)} elapsed (limit ${compactDuration(timeoutMs)})`,
         );
       }
@@ -559,9 +733,15 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         await job?.ready;
         let prompt = request.prompt;
         if (targetPath) {
-          if (servers.length !== 1) throw new Error("choose one MCP server when investigating an evidence file");
-          const bytes = await stat(targetPath).then((s) => s.size).catch(() => 0);
-          reportProgress(`transferring evidence${bytes ? ` (${compactBytes(bytes)})` : ""} to ${servers[0].label}`, 1);
+          if (servers.length !== 1)
+            throw new Error("choose one MCP server when investigating an evidence file");
+          const bytes = await stat(targetPath)
+            .then((s) => s.size)
+            .catch(() => 0);
+          reportProgress(
+            `transferring evidence${bytes ? ` (${compactBytes(bytes)})` : ""} to ${servers[0].label}`,
+            1,
+          );
           const delivered = await deliver(servers[0], targetPath, {
             runner: transferRunner,
             signal: job?.signal,
@@ -574,13 +754,13 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             },
             recordTransfer: options.custodyStore
               ? async (destination) => {
-                await options.custodyStore!.recordTransfer(caseId, {
-                  artifactPaths: [targetPath],
-                  transferredBy: "analyst",
-                  destination,
-                  trigger: `mcp:${servers[0].id}`,
-                });
-              }
+                  await options.custodyStore!.recordTransfer(caseId, {
+                    artifactPaths: [targetPath],
+                    transferredBy: "analyst",
+                    destination,
+                    trigger: `mcp:${servers[0].id}`,
+                  });
+                }
               : undefined,
           });
           cleanupRemote = delivered.cleanup;
@@ -595,7 +775,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         }
         if (!targetPath) reportProgress("starting investigation", 2);
         const result = await runMcpAgent({
-          servers, prompt,
+          servers,
+          prompt,
           ...(claudeBin ? { bin: claudeBin } : {}),
           ...(process.env.DFIR_MCP_AGENT_MODEL ? { model: process.env.DFIR_MCP_AGENT_MODEL } : {}),
           timeoutMs,
@@ -606,13 +787,18 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
         if (preview) {
           await stagePreview(caseId, job?.jobId ?? "", {
-            server: "agent", tool: servers.map((s) => s.id).join("+"), label: prompt.slice(0, 80),
-            kind: AGENT_DELTA_KIND, outName: `agent.${Date.now()}.json`, text: JSON.stringify(result.delta, null, 2),
+            server: "agent",
+            tool: servers.map((s) => s.id).join("+"),
+            label: prompt.slice(0, 80),
+            kind: AGENT_DELTA_KIND,
+            outName: `agent.${Date.now()}.json`,
+            text: JSON.stringify(result.delta, null, 2),
             reportText: result.rawText,
           });
           if (job) await options.jobManager?.finish(job.jobId);
           void logActivity(options.activityLogStore, options.onActivity, caseId, {
-            category: "ai", action: "mcp-agent",
+            category: "ai",
+            action: "mcp-agent",
             detail: `agent on ${servers.map((s) => s.id).join(", ")} → awaiting review`,
           });
           return;
@@ -629,19 +815,25 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         });
         if (job) await options.jobManager?.finish(job.jobId);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
-          category: "ai", action: "mcp-agent",
+          category: "ai",
+          action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
       } catch (err) {
         if (job) await options.jobManager?.fail(job.jobId, err);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
-          category: "ai", action: "mcp-agent",
+          category: "ai",
+          action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} FAILED: ${(err as Error).message}`,
         });
       } finally {
         clearInterval(heartbeat);
-        await cleanupRemote?.().catch(() => { /* best-effort */ });
-        await onDone?.().catch(() => { /* best-effort */ });
+        await cleanupRemote?.().catch(() => {
+          /* best-effort */
+        });
+        await onDone?.().catch(() => {
+          /* best-effort */
+        });
       }
     })();
 
@@ -670,7 +862,10 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     }
     const jobId = startAgent(caseId, request, targetPath);
     return res.status(202).json({
-      ok: true, jobId, servers: request.servers.map((s) => s.id), preview: request.preview,
+      ok: true,
+      jobId,
+      servers: request.servers.map((s) => s.id),
+      preview: request.preview,
     });
   });
 
@@ -683,11 +878,15 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     }
     const filename = String(req.body?.filename ?? "").trim();
     const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
-    if (!filename || !dataBase64) return res.status(400).json({ error: "filename and dataBase64 are required" });
+    if (!filename || !dataBase64)
+      return res.status(400).json({ error: "filename and dataBase64 are required" });
 
     const caseId = req.params.id;
     const work = join(store.caseDir(caseId), ".mcpwork");
-    const safe = basename(filename).replace(/[^\w.\-]+/g, "_").slice(0, 120) || "evidence.dat";
+    const safe =
+      basename(filename)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 120) || "evidence.dat";
     let stageDir = "";
     try {
       await mkdir(work, { recursive: true });
@@ -697,12 +896,17 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       const dir = stageDir;
       const jobId = startAgent(caseId, request, staged, () => rm(dir, { recursive: true, force: true }));
       return res.status(202).json({
-        ok: true, jobId, servers: request.servers.map((s) => s.id), preview: request.preview,
+        ok: true,
+        jobId,
+        servers: request.servers.map((s) => s.id),
+        preview: request.preview,
       });
     } catch (err) {
-      if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+      if (stageDir)
+        await rm(stageDir, { recursive: true, force: true }).catch(() => {
+          /* best-effort */
+        });
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
   });
-
 }

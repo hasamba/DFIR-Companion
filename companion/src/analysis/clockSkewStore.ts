@@ -13,14 +13,20 @@ export interface ClockSkewRecord {
   // Analyst-set offsets keyed by normalized short hostname. Always win over a detected offset; an
   // explicit 0 means "this clock is right, leave it alone".
   overrides: Record<string, number>;
-  detectedAt: string;   // when `results` were measured ("" if never)
+  detectedAt: string; // when `results` were measured ("" if never)
   anchorGroups: number; // anchors behind `results`, kept so a weaker re-run can be recognised
   referenceHost: string; // the clock `results` are expressed against (see detectClockSkew)
   updatedAt: string;
 }
 
 const EMPTY: ClockSkewRecord = {
-  alignEnabled: false, results: [], overrides: {}, detectedAt: "", anchorGroups: 0, referenceHost: "", updatedAt: "",
+  alignEnabled: false,
+  results: [],
+  overrides: {},
+  detectedAt: "",
+  anchorGroups: 0,
+  referenceHost: "",
+  updatedAt: "",
 };
 
 const CONFIDENCES: SkewConfidence[] = ["high", "medium", "low"];
@@ -37,7 +43,9 @@ function cleanResult(raw: unknown): ClockSkewResult | undefined {
   const host = typeof r.host === "string" ? r.host : "";
   const key = typeof r.hostKey === "string" && r.hostKey ? hostKey(r.hostKey) : hostKey(host);
   if (!key) return undefined;
-  const confidence = CONFIDENCES.includes(r.confidence as SkewConfidence) ? (r.confidence as SkewConfidence) : "low";
+  const confidence = CONFIDENCES.includes(r.confidence as SkewConfidence)
+    ? (r.confidence as SkewConfidence)
+    : "low";
   return {
     host: host || key,
     hostKey: key,
@@ -74,7 +82,9 @@ export class ClockSkewStore {
       return {
         alignEnabled: parsed.alignEnabled === true,
         results: Array.isArray(parsed.results)
-          ? (parsed.results as unknown[]).map(cleanResult).filter((r): r is ClockSkewResult => r !== undefined)
+          ? (parsed.results as unknown[])
+              .map(cleanResult)
+              .filter((r): r is ClockSkewResult => r !== undefined)
           : [],
         overrides: cleanOverrides(parsed.overrides),
         detectedAt: typeof parsed.detectedAt === "string" ? parsed.detectedAt : "",
@@ -93,7 +103,8 @@ export class ClockSkewStore {
     const clean: ClockSkewRecord = {
       alignEnabled: record.alignEnabled === true,
       results: (Array.isArray(record.results) ? record.results : [])
-        .map(cleanResult).filter((r): r is ClockSkewResult => r !== undefined),
+        .map(cleanResult)
+        .filter((r): r is ClockSkewResult => r !== undefined),
       overrides: cleanOverrides(record.overrides),
       detectedAt: typeof record.detectedAt === "string" ? record.detectedAt : "",
       anchorGroups: num(record.anchorGroups),
@@ -113,7 +124,11 @@ export class ClockSkewStore {
    * Per host the better-anchored result wins; `replace` forces the fresh one in wholesale, which is
    * what an explicit analyst-triggered recompute wants after new evidence lands.
    */
-  async recordDetection(caseId: string, report: ClockSkewReport, opts: { replace?: boolean } = {}): Promise<ClockSkewRecord> {
+  async recordDetection(
+    caseId: string,
+    report: ClockSkewReport,
+    opts: { replace?: boolean } = {},
+  ): Promise<ClockSkewRecord> {
     const current = await this.load(caseId);
     let results = report.results;
     if (!opts.replace) {

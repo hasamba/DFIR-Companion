@@ -48,10 +48,12 @@ export function buildGraphContext(state: InvestigationState, opts: GraphContextO
   const edgeRank = (e: EvidenceEdge): number =>
     Math.min(sevRank.get(e.source) ?? SEV_RANK.Info, sevRank.get(e.target) ?? SEV_RANK.Info);
 
-  const ranked = [...graph.edges].sort((a, b) =>
-    edgeRank(a) - edgeRank(b) ||
-    TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type) ||
-    a.basis.localeCompare(b.basis));
+  const ranked = [...graph.edges].sort(
+    (a, b) =>
+      edgeRank(a) - edgeRank(b) ||
+      TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type) ||
+      a.basis.localeCompare(b.basis),
+  );
   const kept = ranked.slice(0, maxEdges);
 
   const lines: string[] = [];
@@ -71,8 +73,9 @@ export function buildGraphContext(state: InvestigationState, opts: GraphContextO
   const header =
     "ATTACK GRAPH (deterministic causal relationships — follow these edges to trace multi-hop " +
     "attack paths end-to-end; cite the [event ids] in relatedEventIds):";
-  const footer = kept.length < graph.edges.length
-    ? `\n(showing ${kept.length} of ${graph.edges.length} graph edges, highest-severity first)`
-    : "";
+  const footer =
+    kept.length < graph.edges.length
+      ? `\n(showing ${kept.length} of ${graph.edges.length} graph edges, highest-severity first)`
+      : "";
   return `${header}\n${lines.join("\n")}${footer}\n\n`;
 }

@@ -6,32 +6,67 @@ import type { ForensicEvent, Finding } from "../../src/analysis/stateTypes.js";
 
 function ev(partial: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    timestamp: "2026-06-01T10:00:00Z", description: "", severity: "High", mitreTechniques: [],
-    relatedFindingIds: [], sourceScreenshots: [], ...partial,
+    timestamp: "2026-06-01T10:00:00Z",
+    description: "",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...partial,
   };
 }
 
 function finding(partial: Partial<Finding> & { id: string }): Finding {
   return {
-    severity: "High", title: "t", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-    firstSeen: "2026-06-01T00:00:00Z", lastUpdated: "2026-06-01T00:00:00Z", status: "open", ...partial,
+    severity: "High",
+    title: "t",
+    description: "d",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "2026-06-01T00:00:00Z",
+    lastUpdated: "2026-06-01T00:00:00Z",
+    status: "open",
+    ...partial,
   };
 }
 
 describe("correlate mergeGroup prefers the high-trust description (#66)", () => {
   it("takes the higher-trust tool's wording over a longer low-trust one (same severity)", () => {
     const sha = "a".repeat(64);
-    const velo = ev({ id: "e1", sources: ["Velociraptor"], sha256: sha, description: "velociraptor raw artifact row with a very long verbose descriptive text here" });
-    const cs = ev({ id: "e2", sources: ["CrowdStrike Falcon"], sha256: sha, description: "CrowdStrike: credential theft" });
+    const velo = ev({
+      id: "e1",
+      sources: ["Velociraptor"],
+      sha256: sha,
+      description: "velociraptor raw artifact row with a very long verbose descriptive text here",
+    });
+    const cs = ev({
+      id: "e2",
+      sources: ["CrowdStrike Falcon"],
+      sha256: sha,
+      description: "CrowdStrike: credential theft",
+    });
     const [merged] = correlateEvents([velo, cs], { sourceTrust: effectiveTrustMap() });
-    expect(merged.description).toBe("CrowdStrike: credential theft");   // trust beats length
+    expect(merged.description).toBe("CrowdStrike: credential theft"); // trust beats length
     expect(merged.sources).toEqual(expect.arrayContaining(["Velociraptor", "CrowdStrike Falcon"]));
   });
 
   it("severity still dominates trust (a Critical low-trust row wins the wording over an Info high-trust one)", () => {
     const sha = "b".repeat(64);
-    const critLow = ev({ id: "e1", severity: "Critical", sources: ["generic log"], sha256: sha, description: "ransomware note dropped" });
-    const infoHigh = ev({ id: "e2", severity: "Info", sources: ["CrowdStrike"], sha256: sha, description: "benign file access" });
+    const critLow = ev({
+      id: "e1",
+      severity: "Critical",
+      sources: ["generic log"],
+      sha256: sha,
+      description: "ransomware note dropped",
+    });
+    const infoHigh = ev({
+      id: "e2",
+      severity: "Info",
+      sources: ["CrowdStrike"],
+      sha256: sha,
+      description: "benign file access",
+    });
     const [merged] = correlateEvents([critLow, infoHigh], { sourceTrust: effectiveTrustMap() });
     expect(merged.description).toBe("ransomware note dropped");
     expect(merged.severity).toBe("Critical");
@@ -50,7 +85,10 @@ describe("groundAndScoreFindings low-trust cap (#66)", () => {
     ];
     const [scored] = groundAndScoreFindings({
       findings: [finding({ id: "f1", confidence: 95 })],
-      scopedEvents, iocs: [], graphLinkedEventIds, sourceTrust: effectiveTrustMap(),
+      scopedEvents,
+      iocs: [],
+      graphLinkedEventIds,
+      sourceTrust: effectiveTrustMap(),
     });
     expect(scored.confidence).toBe(LOW_TRUST_CONFIDENCE_CAP);
     expect(scored.confidenceReason).toMatch(/low-trust source/);
@@ -63,9 +101,12 @@ describe("groundAndScoreFindings low-trust cap (#66)", () => {
     ];
     const [scored] = groundAndScoreFindings({
       findings: [finding({ id: "f1", confidence: 95 })],
-      scopedEvents, iocs: [], graphLinkedEventIds, sourceTrust: effectiveTrustMap(),
+      scopedEvents,
+      iocs: [],
+      graphLinkedEventIds,
+      sourceTrust: effectiveTrustMap(),
     });
-    expect(scored.confidence).toBe(95);   // untouched
+    expect(scored.confidence).toBe(95); // untouched
   });
 
   it("never applies the trust cap when no trust map is supplied (back-compat)", () => {
@@ -75,7 +116,9 @@ describe("groundAndScoreFindings low-trust cap (#66)", () => {
     ];
     const [scored] = groundAndScoreFindings({
       findings: [finding({ id: "f1", confidence: 95 })],
-      scopedEvents, iocs: [], graphLinkedEventIds,   // no sourceTrust
+      scopedEvents,
+      iocs: [],
+      graphLinkedEventIds, // no sourceTrust
     });
     expect(scored.confidence).toBe(95);
   });

@@ -13,10 +13,10 @@ import { compileRuleset } from "./taggerRules.js";
 export const suggestedRuleResponseSchema = z.object({
   ruleId: z.string().catch(""),
   explanation: z.string().catch(""),
-  decline: z.string().catch(""),   // non-empty ⇒ the model refused; `rule` is ignored
-  rule: z.unknown(),               // raw rule object (also allows undefined); the real null-guard is
-                                   // the explicit `parsed.rule == null` check in sanitizeSuggestedRule.
-                                   // No .catch() here — z.unknown() never throws, so it would be dead.
+  decline: z.string().catch(""), // non-empty ⇒ the model refused; `rule` is ignored
+  rule: z.unknown(), // raw rule object (also allows undefined); the real null-guard is
+  // the explicit `parsed.rule == null` check in sanitizeSuggestedRule.
+  // No .catch() here — z.unknown() never throws, so it would be dead.
 });
 export type SuggestedRuleResponse = z.infer<typeof suggestedRuleResponseSchema>;
 
@@ -32,7 +32,11 @@ const MAX_RULE_YAML_LEN = 8000;
 /** Normalize a proposed id to `[a-z0-9_]` (tagger ids are YAML keys). Empty → `fallback`. */
 export function slugifyRuleId(raw: string, fallback = "rule"): string {
   // Trim underscores AFTER the slice so truncation can't reintroduce a trailing "_".
-  const s = raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, MAX_ID_LEN).replace(/^_+|_+$/g, "");
+  const s = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .slice(0, MAX_ID_LEN)
+    .replace(/^_+|_+$/g, "");
   return s || fallback;
 }
 
@@ -56,7 +60,10 @@ export function sanitizeSuggestedRule(parsed: SuggestedRuleResponse): SuggestOut
   } catch (err) {
     return {
       kind: "decline",
-      reason: `Couldn't turn that into a valid rule — try rephrasing. (${(err as Error).message})`.slice(0, MAX_TEXT_LEN),
+      reason: `Couldn't turn that into a valid rule — try rephrasing. (${(err as Error).message})`.slice(
+        0,
+        MAX_TEXT_LEN,
+      ),
     };
   }
   const ruleYaml = stringifyYaml(singleEntry);

@@ -27,7 +27,10 @@ export function demoteBelowSeverity(
 }
 
 // per-case override ?? global env ?? "Low". An unrecognized env value falls back to "Low".
-export function resolveForensicMinSeverity(perCase: Severity | undefined, envValue: string | undefined): Severity {
+export function resolveForensicMinSeverity(
+  perCase: Severity | undefined,
+  envValue: string | undefined,
+): Severity {
   if (perCase && VALID.includes(perCase)) return perCase;
   if (envValue && (VALID as readonly string[]).includes(envValue)) return envValue as Severity;
   return "Low";

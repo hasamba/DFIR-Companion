@@ -30,7 +30,11 @@ export class LearnedPatternStore {
 
   // Record one reasoned dismissal. Returns the updated ledger (persisted only when it actually changed —
   // an opaque/too-short signature is a no-op). `now` is injectable for deterministic tests.
-  async record(caseId: string, input: LearnedPatternInput, now: string = new Date().toISOString()): Promise<LearnedPattern[]> {
+  async record(
+    caseId: string,
+    input: LearnedPatternInput,
+    now: string = new Date().toISOString(),
+  ): Promise<LearnedPattern[]> {
     const existing = await this.load(caseId);
     const { patterns, changed } = mergeLearnedPattern(existing, input, now);
     if (changed) await this.save(caseId, patterns);

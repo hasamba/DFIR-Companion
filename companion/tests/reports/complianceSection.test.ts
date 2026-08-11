@@ -41,9 +41,17 @@ function render(findings: Finding[], control?: { discoveredAt?: string; framewor
   return renderMarkdownReport(
     { ...emptyState("c1"), findings },
     emptyReportMeta(),
-    undefined, undefined, undefined, undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
     complianceOnly,
-    undefined, undefined, [], undefined, undefined, undefined,
+    undefined,
+    undefined,
+    [],
+    undefined,
+    undefined,
+    undefined,
     control,
   );
 }
@@ -103,7 +111,12 @@ describe("Compliance Impact report section", () => {
     // CP-9 (backups) is a control, not a notification clock — it must carry neither.
     const cp9 = md.split("\n").findIndex((l) => l.includes("**CP-9**"));
     expect(cp9).toBeGreaterThan(-1);
-    expect(md.split("\n").slice(cp9, cp9 + 3).join("\n")).not.toContain("Notification clock");
+    expect(
+      md
+        .split("\n")
+        .slice(cp9, cp9 + 3)
+        .join("\n"),
+    ).not.toContain("Notification clock");
   });
 
   it("honours the framework filter", () => {
@@ -117,14 +130,17 @@ describe("compliance section registration", () => {
   it("is a canonical section, so saved templates pick it up instead of silently hiding it", () => {
     expect(REPORT_SECTION_DEFS.map((s) => s.key)).toContain("compliance");
     // normalizeSections appends unknown-to-the-template canonical keys as enabled.
-    const legacy = normalizeReportTemplate({ id: "old", name: "saved before #336", sections: [{ key: "titlePage", enabled: true }] });
+    const legacy = normalizeReportTemplate({
+      id: "old",
+      name: "saved before #336",
+      sections: [{ key: "titlePage", enabled: true }],
+    });
     expect(legacy.sections.find((s) => s.key === "compliance")).toEqual({ key: "compliance", enabled: true });
   });
 
   it("is enabled in the built-in templates that should carry it", () => {
     const byId = Object.fromEntries(BUILT_IN_REPORT_TEMPLATES.map((t) => [t.id, t]));
-    const enabled = (id: string) =>
-      byId[id].sections.find((s) => s.key === "compliance")?.enabled;
+    const enabled = (id: string) => byId[id].sections.find((s) => s.key === "compliance")?.enabled;
     expect(enabled("standard")).toBe(true);
     expect(enabled("technical-detailed")).toBe(true);
     // The exec brief is precisely where "are we obligated to report this?" gets asked (#234).

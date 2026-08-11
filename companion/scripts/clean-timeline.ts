@@ -26,7 +26,9 @@ async function main(): Promise<void> {
   const state = await stateStore.load(caseId);
 
   const { keep, removed } = partitionWorkLog(state.forensicTimeline);
-  console.log(`Case "${caseId}": ${state.forensicTimeline.length} forensic events → keep ${keep.length}, remove ${removed.length}.\n`);
+  console.log(
+    `Case "${caseId}": ${state.forensicTimeline.length} forensic events → keep ${keep.length}, remove ${removed.length}.\n`,
+  );
 
   if (removed.length === 0) {
     console.log("Nothing matched the work-log patterns. Timeline is clean.");

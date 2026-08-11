@@ -1,4 +1,11 @@
-import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind } from "./provider.js";
+import {
+  RateLimitError,
+  parseRetryAfterMs,
+  type EnrichmentProvider,
+  type EnrichmentResult,
+  type FetchFn,
+  type IocKind,
+} from "./provider.js";
 
 // Shodan host lookup for an IP IOC — "what is hosted on this address?". Surfaces the web
 // properties / services Shodan has seen: hostnames + domains, open ports, the running
@@ -11,7 +18,7 @@ import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type Enrich
 // rides in `score`/`tags`. Injectable fetchFn so tests never hit the network.
 export interface ShodanOptions {
   apiKey: string;
-  baseUrl?: string;     // default https://api.shodan.io
+  baseUrl?: string; // default https://api.shodan.io
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
@@ -43,7 +50,9 @@ export class ShodanProvider implements EnrichmentProvider {
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
-  supports(kind: IocKind): boolean { return kind === "ip"; }
+  supports(kind: IocKind): boolean {
+    return kind === "ip";
+  }
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "ip") return null;
@@ -52,9 +61,11 @@ export class ShodanProvider implements EnrichmentProvider {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
-    if (res.status === 404) return null;                          // "No information available for that IP"
-    if (res.status === 401 || res.status === 403) throw new Error("Shodan auth failed (check DFIR_SHODAN_KEY)");
-    if (res.status === 429) throw new RateLimitError("Shodan rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
+    if (res.status === 404) return null; // "No information available for that IP"
+    if (res.status === 401 || res.status === 403)
+      throw new Error("Shodan auth failed (check DFIR_SHODAN_KEY)");
+    if (res.status === 429)
+      throw new RateLimitError("Shodan rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`Shodan HTTP ${res.status}`);
 
     const h = (await res.json()) as ShodanHost;

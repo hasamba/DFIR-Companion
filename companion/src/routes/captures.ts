@@ -6,7 +6,12 @@ import { ingestCapture, CaseNotFoundError, InvalidImageError } from "../ingest/c
 import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { detectImageFormat } from "../ingest/imageFormat.js";
-import { parseCookieHeader, unlockCookieName, verifyUnlockToken, verifyCasePassword } from "../analysis/casePassword.js";
+import {
+  parseCookieHeader,
+  unlockCookieName,
+  verifyUnlockToken,
+  verifyCasePassword,
+} from "../analysis/casePassword.js";
 import { getUnlockLimiter } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 
@@ -15,16 +20,23 @@ import type { RouteContext } from "./context.js";
 function evidenceContentType(file: string): string {
   const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
   switch (ext) {
-    case ".webp": return "image/webp";
-    case ".png": return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".png":
+      return "image/png";
     case ".jpg":
-    case ".jpeg": return "image/jpeg";
-    case ".gif": return "image/gif";
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
     case ".csv":
     case ".log":
-    case ".txt": return "text/plain; charset=utf-8";
-    case ".json": return "application/json; charset=utf-8";
-    default: return "application/octet-stream";
+    case ".txt":
+      return "text/plain; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    default:
+      return "application/octet-stream";
   }
 }
 
@@ -83,7 +95,11 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
         const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
         if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
           const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-          return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots` });
+          return res
+            .status(423)
+            .json({
+              error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots`,
+            });
         }
         // Case-password gate: when a case has a password, verify the unlock cookie OR the
         // case password in the request body. The browser extension sends the password the
@@ -100,11 +116,14 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
           const remaining = limiter.remainingLockout(rawCaseId);
           if (remaining > 0) {
             res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
-            return res.status(429).json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
+            return res
+              .status(429)
+              .json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
           }
           const cookies = parseCookieHeader(req.headers.cookie);
           const token = cookies[unlockCookieName(rawCaseId)];
-          const cookieOk = token && verifyUnlockToken(token, rawCaseId, caseMeta.password.salt, ctx.instanceSecret);
+          const cookieOk =
+            token && verifyUnlockToken(token, rawCaseId, caseMeta.password.salt, ctx.instanceSecret);
           const bodyPassword = typeof req.body?.casePassword === "string" ? req.body.casePassword : "";
           const passwordOk = bodyPassword && verifyCasePassword(bodyPassword, caseMeta.password);
           if (!cookieOk && !passwordOk) {
@@ -113,7 +132,9 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
             const lockout = limiter.recordFailure(rawCaseId);
             if (lockout > 0) {
               res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
-              return res.status(429).json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
+              return res
+                .status(429)
+                .json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
             }
             return res.status(401).json({ error: "locked", caseId: rawCaseId });
           }
@@ -124,13 +145,18 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
       const metadata = await ingestCapture(store, req.body);
       // Pre-evaluate the analysis condition before responding so the dashboard knows whether
       // this capture will produce timeline events (mirrors the analyzed/reason pattern on /import).
-      const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider()
-        && (await getControl(metadata.caseId)).enabled;
-      res.status(201).json(
-        !metadata.isDuplicate && !willAnalyze
-          ? { ...metadata, analyzed: false, reason: "ai-off" as const }
-          : metadata,
-      );
+      const willAnalyze =
+        !metadata.isDuplicate &&
+        Boolean(options.pipeline) &&
+        hasAiProvider() &&
+        (await getControl(metadata.caseId)).enabled;
+      res
+        .status(201)
+        .json(
+          !metadata.isDuplicate && !willAnalyze
+            ? { ...metadata, analyzed: false, reason: "ai-off" as const }
+            : metadata,
+        );
       serverLogger.debug(
         `screenshot captured seq=${metadata.sequenceNumber} trigger=${metadata.triggerType} ` +
           `file=${metadata.screenshotFile || "(none)"}${metadata.isDuplicate ? " (duplicate — not analyzed)" : ""}`,
@@ -155,10 +181,13 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
       }
       return;
     } catch (err) {
-      if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+      if (err instanceof ZodError)
+        return res.status(400).json({ error: "invalid payload", details: err.issues });
       if (err instanceof InvalidImageError) return res.status(400).json({ error: err.message });
       if (err instanceof CaseNotFoundError) {
-        return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
+        return res
+          .status(404)
+          .json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
       }
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -209,7 +238,9 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
       if (q.trim().length === 0) return res.status(400).json({ error: "missing query parameter q" });
       const index = await store.loadOcrIndex(req.params.id);
       const hits = searchOcrIndex(index, q);
-      return res.status(200).json({ enabled: isOcrSearchEnabled(), indexed: Object.keys(index).length, hits });
+      return res
+        .status(200)
+        .json({ enabled: isOcrSearchEnabled(), indexed: Object.keys(index).length, hits });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

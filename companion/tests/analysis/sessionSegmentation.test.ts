@@ -64,9 +64,19 @@ describe("segmentSessions", () => {
 
   it("auto-generates a dominant-tactic label and reports worst-first severity range", () => {
     const sessions = segmentSessions([
-      ev("e1", "2026-05-20T14:01:00Z", { asset: "DC01", mitreTechniques: ["T1566"], description: "phishing email", severity: "High" }),
+      ev("e1", "2026-05-20T14:01:00Z", {
+        asset: "DC01",
+        mitreTechniques: ["T1566"],
+        description: "phishing email",
+        severity: "High",
+      }),
       ev("e2", "2026-05-20T14:02:00Z", { asset: "DC01", mitreTechniques: ["T1566.001"], severity: "Medium" }),
-      ev("e3", "2026-05-20T14:02:30Z", { asset: "DC01", mitreTechniques: ["T1059"], description: "powershell", severity: "Low" }),
+      ev("e3", "2026-05-20T14:02:30Z", {
+        asset: "DC01",
+        mitreTechniques: ["T1059"],
+        description: "powershell",
+        severity: "Low",
+      }),
     ]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0].dominantTactic).toBe("Initial Access");
@@ -87,7 +97,7 @@ describe("segmentSessions", () => {
   it("honors a custom gapSeconds threshold", () => {
     const events = [
       ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01" }),
-      ev("e2", "2026-05-20T14:00:30Z", { asset: "DC01" }),   // 30s apart
+      ev("e2", "2026-05-20T14:00:30Z", { asset: "DC01" }), // 30s apart
     ];
     expect(segmentSessions(events, { gapSeconds: 10 })).toHaveLength(2); // 30s > 10s → split
     expect(segmentSessions(events, { gapSeconds: 60 })).toHaveLength(1); // 30s ≤ 60s → one session
@@ -100,7 +110,7 @@ describe("segmentSessions", () => {
       ev("e2", "2026-05-20T14:05:00Z", { asset: "DC01" }),
     ]);
     expect(sessions).toHaveLength(1);
-    expect(sessions[0].eventCount).toBe(21);                    // 20 (aggregated) + 1
+    expect(sessions[0].eventCount).toBe(21); // 20 (aggregated) + 1
     expect(sessions[0].endTime).toBe("2026-05-20T14:05:00Z");
   });
 
@@ -122,8 +132,8 @@ describe("segmentSessions", () => {
 
   it("buckets events with no asset under a named unknown host, not a blank one", () => {
     const sessions = segmentSessions([
-      ev("e1", "2026-05-20T14:00:00Z"),                          // no asset at all
-      ev("e2", "2026-05-20T14:00:30Z", { asset: "" }),           // empty-string asset means the same
+      ev("e1", "2026-05-20T14:00:00Z"), // no asset at all
+      ev("e2", "2026-05-20T14:00:30Z", { asset: "" }), // empty-string asset means the same
     ]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0].host).toBe(UNKNOWN_HOST);
@@ -136,7 +146,7 @@ describe("segmentSessions", () => {
   it("keeps the unknown-host bucket separate from real hosts", () => {
     const sessions = segmentSessions([
       ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01" }),
-      ev("e2", "2026-05-20T14:00:30Z"),                          // unknown host, back-to-back
+      ev("e2", "2026-05-20T14:00:30Z"), // unknown host, back-to-back
       ev("e3", "2026-05-20T14:01:00Z", { asset: "DC01" }),
     ]);
     expect(sessions).toHaveLength(2);
@@ -215,7 +225,7 @@ describe("segmentSessions — account binding (#344)", () => {
     ]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0].eventCount).toBe(3);
-    expect(sessions[0].account).toBeUndefined();   // a rejected logon establishes nothing
+    expect(sessions[0].account).toBeUndefined(); // a rejected logon establishes nothing
   });
 });
 
@@ -261,17 +271,26 @@ describe("segmentSessions — shared-IOC gap resistance (#344)", () => {
     expect(byIp).toHaveLength(1);
 
     const byIoc = segmentSessions([
-      ev("c1", "2026-05-20T14:00:00Z", { asset: "DC01", deobfuscated: { decoded: "x", method: "base64", iocs: ["i12"] } }),
-      ev("c2", "2026-05-20T14:08:00Z", { asset: "DC01", deobfuscated: { decoded: "y", method: "base64", iocs: ["i12"] } }),
+      ev("c1", "2026-05-20T14:00:00Z", {
+        asset: "DC01",
+        deobfuscated: { decoded: "x", method: "base64", iocs: ["i12"] },
+      }),
+      ev("c2", "2026-05-20T14:08:00Z", {
+        asset: "DC01",
+        deobfuscated: { decoded: "y", method: "base64", iocs: ["i12"] },
+      }),
     ]);
     expect(byIoc).toHaveLength(1);
   });
 
   it("iocGraceFactor: 1 disables the grace entirely", () => {
-    const sessions = segmentSessions([
-      ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01", sha256: "aabb" }),
-      ev("e2", "2026-05-20T14:08:00Z", { asset: "DC01", sha256: "aabb" }),
-    ], { iocGraceFactor: 1 });
+    const sessions = segmentSessions(
+      [
+        ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01", sha256: "aabb" }),
+        ev("e2", "2026-05-20T14:08:00Z", { asset: "DC01", sha256: "aabb" }),
+      ],
+      { iocGraceFactor: 1 },
+    );
     expect(sessions).toHaveLength(2);
   });
 

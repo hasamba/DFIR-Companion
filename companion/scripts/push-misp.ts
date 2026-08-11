@@ -39,8 +39,12 @@ async function main(): Promise<void> {
   const res = await pushCaseToMisp(client, { caseId, state }, mispPushOptions());
 
   console.log(`\nMISP event #${res.eventId} ${res.created ? "CREATED" : "UPDATED"} ("${res.eventInfo}")`);
-  console.log(`  attributes: +${res.attributes.added}  (${res.attributes.existing} existing, ${res.attributes.skipped} skipped)`);
-  console.log(`  timeline:   +${res.timeline.added}  (${res.timeline.existing} existing, ${res.timeline.skipped} skipped)`);
+  console.log(
+    `  attributes: +${res.attributes.added}  (${res.attributes.existing} existing, ${res.attributes.skipped} skipped)`,
+  );
+  console.log(
+    `  timeline:   +${res.timeline.added}  (${res.timeline.existing} existing, ${res.timeline.skipped} skipped)`,
+  );
   console.log(`  tags:       +${res.tags}`);
   if (res.eventUrl) console.log(`  open:       ${res.eventUrl}`);
   if (res.warnings.length) {
@@ -50,4 +54,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => { console.error("misp push error:", (e as Error).message); process.exit(1); });
+main().catch((e) => {
+  console.error("misp push error:", (e as Error).message);
+  process.exit(1);
+});

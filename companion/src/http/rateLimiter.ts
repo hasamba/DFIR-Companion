@@ -8,7 +8,10 @@ import type { Request, Response, NextFunction } from "express";
 
 /** Per-key attempt tracker with exponential backoff + lockout. */
 export class AttemptLimiter {
-  private attempts = new Map<string, { count: number; lockedUntil: number; cycles: number; lastSeen: number }>();
+  private attempts = new Map<
+    string,
+    { count: number; lockedUntil: number; cycles: number; lastSeen: number }
+  >();
   private readonly maxAttempts: number;
   private readonly lockoutMs: number;
 
@@ -65,7 +68,10 @@ export class AttemptLimiter {
   sweep(now = Date.now(), maxIdleMs = 3_600_000): number {
     let removed = 0;
     for (const [key, rec] of this.attempts) {
-      if (now - rec.lastSeen > maxIdleMs) { this.attempts.delete(key); removed++; }
+      if (now - rec.lastSeen > maxIdleMs) {
+        this.attempts.delete(key);
+        removed++;
+      }
     }
     return removed;
   }
@@ -117,7 +123,10 @@ export class SlidingWindowLimiter {
   sweep(now = Date.now()): number {
     let removed = 0;
     for (const [key, rec] of this.counts) {
-      if (rec.windowStart + this.windowMs <= now) { this.counts.delete(key); removed++; }
+      if (rec.windowStart + this.windowMs <= now) {
+        this.counts.delete(key);
+        removed++;
+      }
     }
     return removed;
   }

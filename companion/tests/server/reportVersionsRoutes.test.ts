@@ -77,14 +77,47 @@ describe("report-versions routes", () => {
     const { emptyState } = await import("../../src/analysis/stateTypes.js");
 
     const s1 = emptyState("c1");
-    s1.findings.push({ id: "f1", severity: "Low", title: "Suspicious login", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "t0", lastUpdated: "t1", status: "open" });
+    s1.findings.push({
+      id: "f1",
+      severity: "Low",
+      title: "Suspicious login",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "t0",
+      lastUpdated: "t1",
+      status: "open",
+    });
     await stateStore.save(s1);
     await request(app).post("/cases/c1/report");
     const v1 = (await request(app).get("/cases/c1/report-versions")).body[0];
 
     const s2 = emptyState("c1");
-    s2.findings.push({ id: "f1", severity: "Critical", title: "Suspicious login", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "t0", lastUpdated: "t1", status: "open" });
-    s2.findings.push({ id: "f2", severity: "High", title: "Ransomware deployed", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "t0", lastUpdated: "t1", status: "open" });
+    s2.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Suspicious login",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "t0",
+      lastUpdated: "t1",
+      status: "open",
+    });
+    s2.findings.push({
+      id: "f2",
+      severity: "High",
+      title: "Ransomware deployed",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "t0",
+      lastUpdated: "t1",
+      status: "open",
+    });
     await stateStore.save(s2);
     await request(app).post("/cases/c1/report");
     const v2 = (await request(app).get("/cases/c1/report-versions")).body[0];
@@ -92,7 +125,9 @@ describe("report-versions routes", () => {
     const diff = await request(app).get(`/cases/c1/report-versions/diff?from=${v1.id}&to=${v2.id}`);
     expect(diff.status).toBe(200);
     expect(diff.body.findings.added).toEqual(["Ransomware deployed"]);
-    expect(diff.body.findings.severityChanged).toEqual([{ title: "Suspicious login", from: "Low", to: "Critical" }]);
+    expect(diff.body.findings.severityChanged).toEqual([
+      { title: "Suspicious login", from: "Low", to: "Critical" },
+    ]);
   });
 
   it("restores a prior version's editable report-meta", async () => {
@@ -140,13 +175,14 @@ describe("report-versions routes", () => {
     const version = (await request(app).get("/cases/c1/report-versions")).body[0];
     expect(version.workflow.status).toBe("draft");
 
-    const workflow = await request(app)
-      .get(`/cases/c1/report-versions/${version.id}/workflow`);
+    const workflow = await request(app).get(`/cases/c1/report-versions/${version.id}/workflow`);
     expect(workflow.body.reviewMode).toBe("solo");
     expect(
-      (await request(app)
-        .post(`/cases/c1/report-versions/${version.id}/workflow/submit`)
-        .send({ reviewerId: "someone" })).status,
+      (
+        await request(app)
+          .post(`/cases/c1/report-versions/${version.id}/workflow/submit`)
+          .send({ reviewerId: "someone" })
+      ).status,
     ).toBe(409);
 
     const approved = await request(app)
@@ -163,9 +199,7 @@ describe("report-versions routes", () => {
     expect(released.body.snapshot.meta.organization).toBe("ExampleCorp");
     expect((await request(app).get("/cases/c1/report-releases/integrity")).body.ok).toBe(true);
     expect(
-      (await request(app).get(
-        `/cases/c1/report-releases/${released.body.id}/packs/technical`,
-      )).text,
+      (await request(app).get(`/cases/c1/report-releases/${released.body.id}/packs/technical`)).text,
     ).toContain("ExampleCorp");
   });
 
@@ -177,9 +211,9 @@ describe("report-versions routes", () => {
     await request(app)
       .post(`/cases/c1/report-versions/${firstVersion.id}/workflow/self-approve`)
       .send({ note: "Self-reviewed" });
-    const firstRelease = (await request(app)
-      .post(`/cases/c1/report-versions/${firstVersion.id}/workflow/release`)
-      .send({})).body;
+    const firstRelease = (
+      await request(app).post(`/cases/c1/report-versions/${firstVersion.id}/workflow/release`).send({})
+    ).body;
 
     await request(app).put("/cases/c1/report-meta").send({ organization: "Corrected version" });
     await request(app).post("/cases/c1/report");
@@ -188,9 +222,8 @@ describe("report-versions routes", () => {
       .post(`/cases/c1/report-versions/${secondVersion.id}/workflow/self-approve`)
       .send({ note: "Self-reviewed correction" });
     expect(
-      (await request(app)
-        .post(`/cases/c1/report-versions/${secondVersion.id}/workflow/release`)
-        .send({})).status,
+      (await request(app).post(`/cases/c1/report-versions/${secondVersion.id}/workflow/release`).send({}))
+        .status,
     ).toBe(409);
 
     const secondRelease = await request(app)

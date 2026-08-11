@@ -1,14 +1,16 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
 
 export interface OpenCtiOptions {
-  baseUrl: string;          // your OpenCTI instance, e.g. https://opencti.example.org
-  apiKey: string;           // OpenCTI API token (Settings → your profile)
+  baseUrl: string; // your OpenCTI instance, e.g. https://opencti.example.org
+  apiKey: string; // OpenCTI API token (Settings → your profile)
   fetchFn?: FetchFn;
   timeoutMs?: number;
-  maliciousScore?: number;  // x_opencti_score >= this → malicious (default 75)
+  maliciousScore?: number; // x_opencti_score >= this → malicious (default 75)
 }
 
-interface OctiLabel { value?: string }
+interface OctiLabel {
+  value?: string;
+}
 interface OctiObservable {
   id?: string;
   entity_type?: string;
@@ -23,7 +25,8 @@ interface GraphQlResponse<T> {
 }
 
 // Labels that mark an observable as known-bad (vs merely tracked). Mirrors YETI's check.
-const MALICIOUS_LABELS = /\b(malware|malicious|c2|c&c|botnet|trojan|ransom\w*|phishing|exploit|apt|backdoor|stealer)\b/i;
+const MALICIOUS_LABELS =
+  /\b(malware|malicious|c2|c&c|botnet|trojan|ransom\w*|phishing|exploit|apt|backdoor|stealer)\b/i;
 
 const DEFAULT_MALICIOUS_SCORE = 75;
 
@@ -53,7 +56,7 @@ const PROBE_QUERY = `query { me { id name } }`;
 // AND the GraphQL errors array.
 export class OpenCtiProvider implements EnrichmentProvider {
   readonly name = "OpenCTI";
-  readonly scope = "local" as const;     // your own instance — OPSEC-safe
+  readonly scope = "local" as const; // your own instance — OPSEC-safe
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   private readonly maliciousScore: number;
@@ -63,7 +66,9 @@ export class OpenCtiProvider implements EnrichmentProvider {
     this.maliciousScore = opts.maliciousScore ?? DEFAULT_MALICIOUS_SCORE;
   }
 
-  supports(kind: IocKind): boolean { return kind !== "process"; } // hash/ip/domain/url observables
+  supports(kind: IocKind): boolean {
+    return kind !== "process";
+  } // hash/ip/domain/url observables
 
   // Cheap reachability + auth check: `me { id name }` requires a valid token but sends no
   // indicator. Throws on unreachable / bad token, gating us from query-storming a dead instance.
@@ -82,7 +87,8 @@ export class OpenCtiProvider implements EnrichmentProvider {
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
-    if (res.status === 401 || res.status === 403) throw new Error("OpenCTI auth failed (check DFIR_OPENCTI_KEY)");
+    if (res.status === 401 || res.status === 403)
+      throw new Error("OpenCTI auth failed (check DFIR_OPENCTI_KEY)");
     if (!res.ok) throw new Error(`OpenCTI HTTP ${res.status}`);
     const json = (await res.json()) as GraphQlResponse<T>;
     if (json.errors && json.errors.length > 0) {
@@ -100,20 +106,17 @@ export class OpenCtiProvider implements EnrichmentProvider {
     const nodes = (data.stixCyberObservables?.edges ?? [])
       .map((e) => e.node)
       .filter((n): n is OctiObservable => !!n);
-    if (nodes.length === 0) return null;                       // not tracked in OpenCTI
+    if (nodes.length === 0) return null; // not tracked in OpenCTI
 
     // `search` is full-text and may return near matches — prefer an exact value match, else first.
     const lower = value.toLowerCase();
     const node = nodes.find((n) => (n.observable_value ?? "").toLowerCase() === lower) ?? nodes[0];
 
-    const labels = (node.objectLabel ?? [])
-      .map((l) => l.value ?? "")
-      .filter((v) => v.length > 0);
+    const labels = (node.objectLabel ?? []).map((l) => l.value ?? "").filter((v) => v.length > 0);
     const indicatorCount = node.indicators?.edges?.length ?? 0;
     const score = typeof node.x_opencti_score === "number" ? node.x_opencti_score : undefined;
     const malicious =
-      (score !== undefined && score >= this.maliciousScore) ||
-      labels.some((l) => MALICIOUS_LABELS.test(l));
+      (score !== undefined && score >= this.maliciousScore) || labels.some((l) => MALICIOUS_LABELS.test(l));
     const verdict: Verdict = malicious ? "malicious" : "suspicious"; // present in OpenCTI = at least suspicious
 
     const parts: string[] = [];

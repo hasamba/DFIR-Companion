@@ -37,7 +37,11 @@ export function inputTokenBudget(ctx = contextTokens(), maxOut = maxOutputTokens
 // How many items from the FRONT of an already-prioritized list fit within a token budget.
 // Always returns ≥1 (a single oversized item is still sent — the provider guard then trims
 // the output room or raises a clear error). budgetTokens ≤ 0 disables trimming (keep all).
-export function fitItemsToBudget<T>(items: readonly T[], render: (t: T) => string, budgetTokens: number): number {
+export function fitItemsToBudget<T>(
+  items: readonly T[],
+  render: (t: T) => string,
+  budgetTokens: number,
+): number {
   if (budgetTokens <= 0 || items.length === 0) return items.length;
   let used = 0;
   let n = 0;

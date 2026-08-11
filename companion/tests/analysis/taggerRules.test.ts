@@ -26,9 +26,9 @@ function one(rule: unknown): CompiledRule {
 
 describe("compileRuleset — validation", () => {
   it("rejects an unknown field (load error, not a silent no-op)", () => {
-    expect(() =>
-      compileRuleset({ r: { any: [{ field: "key_path", contains: "x" }], tags: ["t"] } }),
-    ).toThrow(/key_path/);
+    expect(() => compileRuleset({ r: { any: [{ field: "key_path", contains: "x" }], tags: ["t"] } })).toThrow(
+      /key_path/,
+    );
   });
 
   it("lists a valid ForensicEvent field in MATCHABLE_FIELDS", () => {
@@ -52,15 +52,11 @@ describe("compileRuleset — validation", () => {
   });
 
   it("rejects a condition with no operator", () => {
-    expect(() =>
-      compileRuleset({ r: { any: [{ field: "message" }], tags: ["t"] } }),
-    ).toThrow();
+    expect(() => compileRuleset({ r: { any: [{ field: "message" }], tags: ["t"] } })).toThrow();
   });
 
   it("rejects an invalid regex pattern", () => {
-    expect(() =>
-      compileRuleset({ r: { any: [{ field: "message", regex: "(" }], tags: ["t"] } }),
-    ).toThrow();
+    expect(() => compileRuleset({ r: { any: [{ field: "message", regex: "(" }], tags: ["t"] } })).toThrow();
   });
 
   it("rejects an invalid severity", () => {
@@ -123,13 +119,18 @@ describe("matchEvent — any/all/none semantics", () => {
   it("all requires every condition; any requires at least one; none forbids all", () => {
     const r = one({
       all: [{ field: "asset", exists: true }],
-      any: [{ field: "message", contains: "7045" }, { field: "message", contains: "4697" }],
+      any: [
+        { field: "message", contains: "7045" },
+        { field: "message", contains: "4697" },
+      ],
       none: [{ field: "message", contains: "svchost.exe -k" }],
       tags: ["t"],
     });
     expect(matchEvent(ev({ id: "e", asset: "HOST1", message: "id 7045" }), r)).toBe(true);
     // none blocks it
-    expect(matchEvent(ev({ id: "e", asset: "HOST1", message: "7045 svchost.exe -k netsvcs" }), r)).toBe(false);
+    expect(matchEvent(ev({ id: "e", asset: "HOST1", message: "7045 svchost.exe -k netsvcs" }), r)).toBe(
+      false,
+    );
     // all fails (no asset)
     expect(matchEvent(ev({ id: "e", message: "id 7045" }), r)).toBe(false);
     // any fails

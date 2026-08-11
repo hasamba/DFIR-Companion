@@ -42,7 +42,9 @@ export class ReportTemplateControlStore {
   async set(caseId: string, patch: Partial<ReportTemplateControl>): Promise<ReportTemplateControl> {
     const next: ReportTemplateControl = {
       ...(await this.load(caseId)),
-      ...(typeof patch.templateId === "string" ? { templateId: patch.templateId.trim() || DEFAULT_TEMPLATE_ID } : {}),
+      ...(typeof patch.templateId === "string"
+        ? { templateId: patch.templateId.trim() || DEFAULT_TEMPLATE_ID }
+        : {}),
     };
     await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
     return next;

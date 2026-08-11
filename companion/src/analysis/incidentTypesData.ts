@@ -13,11 +13,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  BUILT_IN_INCIDENT_TYPE_IDS,
-  parseIncidentType,
-  type IncidentType,
-} from "./incidentTypes.js";
+import { BUILT_IN_INCIDENT_TYPE_IDS, parseIncidentType, type IncidentType } from "./incidentTypes.js";
 
 const DATA_SUBDIR = join("data", "incident-types");
 

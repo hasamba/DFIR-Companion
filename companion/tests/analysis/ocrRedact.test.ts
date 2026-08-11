@@ -25,7 +25,19 @@ const ENABLED_POLICY: AnonPolicy = {
   enabled: true,
   // Every category ON — CARD/PHONE/NATID used to be missing, silently disabling those detectors
   // in every OCR-redaction test. See tsconfig.test.json.
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
+  categories: {
+    IP: true,
+    EMAIL: true,
+    USER: true,
+    HOST: true,
+    DOMAIN: true,
+    PATH: true,
+    CMD: true,
+    REG: true,
+    CARD: true,
+    PHONE: true,
+    NATID: true,
+  },
   redactSecrets: false,
   maskPublicIps: true, // AI-wire OCR pass — matches the AI-wire policy this pass always runs under
 };
@@ -50,9 +62,7 @@ describe("ocrRedactImage", () => {
 
   it("returns original buffer when no word matches the entity set", async () => {
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "unrelated", bbox: { x: 10, y: 10, w: 60, h: 20 }, confidence: 95 },
-    ];
+    const words: OcrWord[] = [{ text: "unrelated", bbox: { x: 10, y: 10, w: 60, h: 20 }, confidence: 95 }];
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
     expect(result.buffer).toBe(img);
     expect(result.changed).toBe(false);
@@ -62,9 +72,7 @@ describe("ocrRedactImage", () => {
 
   it("returns a different buffer when a hostname matches", async () => {
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 },
-    ];
+    const words: OcrWord[] = [{ text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 }];
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
     expect(result.buffer).not.toBe(img);
     expect(result.buffer.length).toBeGreaterThan(0);
@@ -77,9 +85,7 @@ describe("ocrRedactImage", () => {
     // screenshot must still be boxed out (one-way — pipeline.ts then warns it can't be recovered
     // as an IOC from this capture), not left visible just because it isn't victim-internal.
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "45.61.136.10", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 },
-    ];
+    const words: OcrWord[] = [{ text: "45.61.136.10", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 }];
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
     expect(result.changed).toBe(true);
     expect(result.redactions.map((w) => w.text)).toEqual(["45.61.136.10"]);
@@ -88,9 +94,7 @@ describe("ocrRedactImage", () => {
 
   it("leaves a public IP visible when maskPublicIps is off (redacted export policy)", async () => {
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "45.61.136.10", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 },
-    ];
+    const words: OcrWord[] = [{ text: "45.61.136.10", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 }];
     const exportPolicy: AnonPolicy = { ...ENABLED_POLICY, maskPublicIps: false };
     const result = await ocrRedactImage(img, exportPolicy, KNOWN, mockRunner(words));
     expect(result.changed).toBe(false);
@@ -99,9 +103,7 @@ describe("ocrRedactImage", () => {
 
   it("skips words below the confidence threshold", async () => {
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 30 },
-    ];
+    const words: OcrWord[] = [{ text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 30 }];
     const result = await ocrRedactImage(
       img,
       ENABLED_POLICY,
@@ -136,9 +138,7 @@ describe("ocrRedactImage", () => {
 
   it("returns original buffer when policy is disabled", async () => {
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 95 },
-    ];
+    const words: OcrWord[] = [{ text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 95 }];
     const result = await ocrRedactImage(img, DISABLED_POLICY, KNOWN, mockRunner(words));
     expect(result.buffer).toBe(img);
     expect(result.changed).toBe(false);
@@ -162,9 +162,7 @@ describe("ocrRedactImage", () => {
 
   it("skips overlay entries with zero-size bboxes", async () => {
     const img = await whiteImage();
-    const words: OcrWord[] = [
-      { text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 0, h: 20 }, confidence: 90 },
-    ];
+    const words: OcrWord[] = [{ text: "VICTIM-PC", bbox: { x: 10, y: 10, w: 0, h: 20 }, confidence: 90 }];
     // zero-width bbox filtered out → nothing to composite → original returned
     const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
     expect(result.buffer).toBe(img);
@@ -200,8 +198,12 @@ describe("TesseractOcrRunner", () => {
           seen.errorHandler = options?.errorHandler;
           return {
             // A WASM abort surfaces here as a rejection once an errorHandler is installed.
-            recognize: async () => { throw new Error("Aborted(). Build with -sASSERTIONS"); },
-            terminate: async () => { seen.terminated = true; },
+            recognize: async () => {
+              throw new Error("Aborted(). Build with -sASSERTIONS");
+            },
+            terminate: async () => {
+              seen.terminated = true;
+            },
           };
         },
       },
@@ -212,7 +214,7 @@ describe("TesseractOcrRunner", () => {
     try {
       await expect(new Runner().recognize(Buffer.from("not a real png"))).rejects.toThrow(/Aborted/);
       expect(typeof seen.errorHandler).toBe("function"); // without this the library throws uncaught
-      expect(seen.terminated).toBe(true);                // and the worker is not leaked
+      expect(seen.terminated).toBe(true); // and the worker is not leaked
     } finally {
       vi.doUnmock("tesseract.js");
       vi.resetModules();

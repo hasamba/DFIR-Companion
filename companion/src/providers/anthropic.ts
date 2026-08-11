@@ -1,4 +1,13 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import {
+  type AIProvider,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+  type ProviderUsage,
+  ProviderError,
+  httpErrorKind,
+  httpErrorMessage,
+  requestSignal,
+} from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
 
 type FetchFn = typeof fetch;
@@ -10,7 +19,7 @@ const THINKING_OUTPUT_HEADROOM = 4096;
 
 export interface AnthropicOptions {
   apiKey: string;
-  model: string;       // e.g. "claude-haiku-4-5-20251001", "claude-sonnet-4-6"
+  model: string; // e.g. "claude-haiku-4-5-20251001", "claude-sonnet-4-6"
   baseUrl?: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
@@ -47,9 +56,8 @@ export class AnthropicProvider implements AIProvider {
     // max_tokens to keep output headroom above the budget. Thinking forces temperature=1 — we never
     // send a custom temperature, so the default is already compatible. Prompt caching is UNAFFECTED:
     // the cache breakpoint stays on the static system prompt (OPSEC) and thinking happens in the reply.
-    const thinkingBudget = req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS
-      ? Math.floor(req.thinkingTokens)
-      : 0;
+    const thinkingBudget =
+      req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS ? Math.floor(req.thinkingTokens) : 0;
     if (thinkingBudget > 0) maxTokens = Math.max(maxTokens, thinkingBudget + THINKING_OUTPUT_HEADROOM);
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
@@ -78,9 +86,10 @@ export class AnthropicProvider implements AIProvider {
         signal: requestSignal(timeoutMs, req.signal),
       });
     } catch (err) {
-      const msg = (err as Error).name === "TimeoutError"
-        ? `Anthropic request timed out after ${timeoutMs}ms`
-        : `Anthropic transport error: ${(err as Error).message}`;
+      const msg =
+        (err as Error).name === "TimeoutError"
+          ? `Anthropic request timed out after ${timeoutMs}ms`
+          : `Anthropic transport error: ${(err as Error).message}`;
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
@@ -98,20 +107,28 @@ export class AnthropicProvider implements AIProvider {
         cache_read_input_tokens?: number;
       };
     };
-    const text = json.content?.find(b => b.type === "text")?.text;
+    const text = json.content?.find((b) => b.type === "text")?.text;
     if (!text) throw new ProviderError("Anthropic returned no content", "other");
     const u = json.usage;
     const usage: ProviderUsage | undefined = u && {
       ...(u.input_tokens !== undefined ? { inputTokens: u.input_tokens } : {}),
       ...(u.output_tokens !== undefined ? { outputTokens: u.output_tokens } : {}),
-      ...(u.cache_creation_input_tokens !== undefined ? { cacheCreationTokens: u.cache_creation_input_tokens } : {}),
+      ...(u.cache_creation_input_tokens !== undefined
+        ? { cacheCreationTokens: u.cache_creation_input_tokens }
+        : {}),
       ...(u.cache_read_input_tokens !== undefined ? { cacheReadTokens: u.cache_read_input_tokens } : {}),
     };
     // Confirm prompt caching actually fired (default-quiet: extraction makes many calls).
     // Set DFIR_AI_DEBUG_USAGE to see per-call cache read/write so a sub-threshold no-op is
     // visible rather than silently assumed.
-    if (process.env.DFIR_AI_DEBUG_USAGE && usage && ((usage.cacheReadTokens ?? 0) > 0 || (usage.cacheCreationTokens ?? 0) > 0)) {
-      console.warn(`[DFIR] anthropic cache: read=${usage.cacheReadTokens ?? 0} write=${usage.cacheCreationTokens ?? 0} input=${usage.inputTokens ?? 0} tokens`);
+    if (
+      process.env.DFIR_AI_DEBUG_USAGE &&
+      usage &&
+      ((usage.cacheReadTokens ?? 0) > 0 || (usage.cacheCreationTokens ?? 0) > 0)
+    ) {
+      console.warn(
+        `[DFIR] anthropic cache: read=${usage.cacheReadTokens ?? 0} write=${usage.cacheCreationTokens ?? 0} input=${usage.inputTokens ?? 0} tokens`,
+      );
     }
     return { rawText: text, ...(usage ? { usage } : {}) };
   }

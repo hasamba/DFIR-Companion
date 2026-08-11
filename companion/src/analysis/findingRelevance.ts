@@ -39,12 +39,12 @@ function findingEventIds(finding: Finding, reverseByFinding: ReadonlyMap<string,
 // about linkage (a real edge is a fact); the AI only refines a DISCONNECTED finding into a genuine-
 // but-unrelated issue vs undetermined noise, and classifies findings the graph couldn't place.
 function resolveRelevance(deterministic: FindingRelevance, ai: AiRelevance | undefined): FindingRelevance {
-  if (deterministic === "connected") return "connected";               // linkage is a fact; AI can't override
+  if (deterministic === "connected") return "connected"; // linkage is a fact; AI can't override
   if (deterministic === "disconnected") {
-    if (ai === "unrelated-but-real") return "unrelated-but-real";       // real, but a separate issue → Parked
+    if (ai === "unrelated-but-real") return "unrelated-but-real"; // real, but a separate issue → Parked
     if (ai === "undetermined") return "undetermined";
-    if (ai === "connected") return "undetermined";                     // AI↔graph conflict → don't brand a rabbit hole
-    return "disconnected";                                              // no AI signal → rabbit-hole candidate
+    if (ai === "connected") return "undetermined"; // AI↔graph conflict → don't brand a rabbit hole
+    return "disconnected"; // no AI signal → rabbit-hole candidate
   }
   // deterministic 'undetermined' (evidence not in the causal graph): defer to the AI when it spoke.
   return ai ?? "undetermined";
@@ -52,7 +52,7 @@ function resolveRelevance(deterministic: FindingRelevance, ai: AiRelevance | und
 
 export interface ScoreRelevanceInput {
   findings: readonly Finding[];
-  scopedEvents: readonly ForensicEvent[];  // in-scope events (for reverse finding links)
+  scopedEvents: readonly ForensicEvent[]; // in-scope events (for reverse finding links)
   graph: EvidenceGraph;
   aiRelevanceById?: ReadonlyMap<string, AiRelevance>;
 }

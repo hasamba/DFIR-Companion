@@ -110,7 +110,10 @@ function lookupTechnique(technique: string, map: Record<string, MitigationMapLin
 
 // End-to-end: collect the case's techniques, resolve them against the ATT&CK Mitigations mapping, and
 // wrap with provenance + note. Shared by the route and the report so both agree. Pure.
-export function buildMitigationsResult(state: InvestigationState, dataset: MitigationsDatasetView): MitigationsResult {
+export function buildMitigationsResult(
+  state: InvestigationState,
+  dataset: MitigationsDatasetView,
+): MitigationsResult {
   const map = dataset.map ?? {};
   const dict = dataset.mitigations ?? {};
   const caseTechniques = collectCaseTechniques(state);

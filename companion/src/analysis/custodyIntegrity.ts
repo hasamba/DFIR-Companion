@@ -132,7 +132,9 @@ export class EvidenceIntegrityMonitor {
       artifacts: results.reduce((n, r) => n + r.artifacts, 0),
       failedArtifacts: results.reduce((n, r) => n + r.mismatches.length, 0),
       chainBreaks: results.reduce((n, r) => n + r.chainBreaks.length, 0),
-      problemCaseIds: results.filter((r) => r.mismatches.length > 0 || r.chainBreaks.length > 0).map((r) => r.caseId),
+      problemCaseIds: results
+        .filter((r) => r.mismatches.length > 0 || r.chainBreaks.length > 0)
+        .map((r) => r.caseId),
     };
   }
 
@@ -235,7 +237,12 @@ export class EvidenceIntegrityMonitor {
     return result;
   }
 
-  private alert(results: CaseVerification[], startedAt: number, finishedAt: number, casesChecked: number): void {
+  private alert(
+    results: CaseVerification[],
+    startedAt: number,
+    finishedAt: number,
+    casesChecked: number,
+  ): void {
     const problems = results.filter((r) => r.mismatches.length > 0 || r.chainBreaks.length > 0);
     this.onProblem?.(this.buildSweep(results, problems, startedAt, finishedAt, casesChecked));
   }
@@ -255,7 +262,11 @@ export class EvidenceIntegrityMonitor {
       artifacts: results.reduce((n, r) => n + r.artifacts, 0),
       failedArtifacts: results.reduce((n, r) => n + r.mismatches.length, 0),
       chainBreaks: results.reduce((n, r) => n + r.chainBreaks.length, 0),
-      problemCases: problems.map((r) => ({ caseId: r.caseId, mismatches: r.mismatches, chainBreaks: r.chainBreaks })),
+      problemCases: problems.map((r) => ({
+        caseId: r.caseId,
+        mismatches: r.mismatches,
+        chainBreaks: r.chainBreaks,
+      })),
     };
   }
 }

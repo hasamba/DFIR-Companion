@@ -7,10 +7,10 @@ import { escapeHtml } from "./escapeHtml.js";
 // is the static, report-grade counterpart so a printed/exported report carries the timeline.
 
 const SVG_W = 900;
-const LABEL_W = 150;        // left lane-label column
-const LANE_H = 22;          // px per lane row
-const AXIS_H = 22;          // px for the time axis strip
-const TOP_PAD = 26;         // room for the column header + legend
+const LABEL_W = 150; // left lane-label column
+const LANE_H = 22; // px per lane row
+const AXIS_H = 22; // px for the time axis strip
+const TOP_PAD = 26; // room for the column header + legend
 const RIGHT_PAD = 12;
 const PLOT_X = LABEL_W;
 const PLOT_W = SVG_W - LABEL_W - RIGHT_PAD;
@@ -20,11 +20,19 @@ const LABEL_TRUNC = 22;
 
 // Darker than the dashboard's dark-bg palette so the dots read on the light report page.
 const SEV_COLOR: Record<string, string> = {
-  Critical: "#d64545", High: "#e0852b", Medium: "#c9a000", Low: "#3f9c54", Info: "#3d6cc0",
+  Critical: "#d64545",
+  High: "#e0852b",
+  Medium: "#c9a000",
+  Low: "#3f9c54",
+  Info: "#3d6cc0",
 };
 
 const LANE_LABEL_COLOR: Record<string, string> = {
-  host: "#2d6cdf", account: "#7b2fc8", severity: "#44506a", tactic: "#44506a", unassigned: "#8d9aac",
+  host: "#2d6cdf",
+  account: "#7b2fc8",
+  severity: "#44506a",
+  tactic: "#44506a",
+  unassigned: "#8d9aac",
 };
 
 // The shared escaper, not a fourth copy: this SVG is embedded in the same report document and

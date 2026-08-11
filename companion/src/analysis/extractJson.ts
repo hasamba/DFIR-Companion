@@ -93,7 +93,9 @@ function repairInsideFirstObject(s: string): string {
     try {
       JSON.parse(c);
       return c;
-    } catch { /* try the next candidate */ }
+    } catch {
+      /* try the next candidate */
+    }
   }
   return candidates[candidates.length - 1];
 }

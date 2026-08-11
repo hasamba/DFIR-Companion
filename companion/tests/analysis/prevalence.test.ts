@@ -13,7 +13,15 @@ import { selectSynthesisEventsAnnotated } from "../../src/analysis/synthSelect.j
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(partial: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { timestamp: "2026-01-02T10:00:00.000Z", description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...partial };
+  return {
+    timestamp: "2026-01-02T10:00:00.000Z",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...partial,
+  };
 }
 
 describe("commandShape", () => {
@@ -34,16 +42,32 @@ describe("commandShape", () => {
 describe("patternKey", () => {
   it("prefers a content hash, then process+shape, then description shape", () => {
     expect(patternKey(ev({ id: "e", sha256: "ABCDEF" }))).toBe("hash:abcdef");
-    expect(patternKey(ev({ id: "e", processName: "robocopy.exe", description: "robocopy C:\\a \\\\s\\b" }))).toMatch(/^proc:robocopy\.exe\|/);
+    expect(
+      patternKey(ev({ id: "e", processName: "robocopy.exe", description: "robocopy C:\\a \\\\s\\b" })),
+    ).toMatch(/^proc:robocopy\.exe\|/);
     expect(patternKey(ev({ id: "e", description: "some line" }))).toMatch(/^desc:/);
-    expect(patternKey(ev({ id: "e" }))).toBe("");   // no stable pattern
+    expect(patternKey(ev({ id: "e" }))).toBe(""); // no stable pattern
   });
 });
 
 describe("buildPrevalenceIndex + eventPrevalence", () => {
   const events = [
-    ...Array.from({ length: 30 }, (_, i) => ev({ id: `r${i}`, processName: "robocopy.exe", description: `robocopy C:\\d\\${i} \\\\srv${i % 12}\\bak`, asset: `HOST-${i % 12}`, timestamp: `2026-01-${String((i % 9) + 1).padStart(2, "0")}T02:00:00.000Z` })),
-    ev({ id: "rare1", processName: "mimikatz.exe", description: "mimikatz sekurlsa::logonpasswords", asset: "DC01", timestamp: "2026-01-05T12:00:00.000Z" }),
+    ...Array.from({ length: 30 }, (_, i) =>
+      ev({
+        id: `r${i}`,
+        processName: "robocopy.exe",
+        description: `robocopy C:\\d\\${i} \\\\srv${i % 12}\\bak`,
+        asset: `HOST-${i % 12}`,
+        timestamp: `2026-01-${String((i % 9) + 1).padStart(2, "0")}T02:00:00.000Z`,
+      }),
+    ),
+    ev({
+      id: "rare1",
+      processName: "mimikatz.exe",
+      description: "mimikatz sekurlsa::logonpasswords",
+      asset: "DC01",
+      timestamp: "2026-01-05T12:00:00.000Z",
+    }),
   ];
   const index = buildPrevalenceIndex(events);
 
@@ -74,8 +98,20 @@ describe("buildPrevalenceIndex + eventPrevalence", () => {
 describe("selectSynthesisEvents rarity bias (#15)", () => {
   it("gives a rare Info event a seat it would otherwise lose, and is a no-op without rarityOf", () => {
     // 40 common Info events + 1 rare Info event; cap forces selection.
-    const common = Array.from({ length: 40 }, (_, i) => ev({ id: `c${i}`, description: "nightly backup run", severity: "Info", timestamp: `2026-01-02T10:${String(i).padStart(2, "0")}:00.000Z` }));
-    const rare = ev({ id: "rareEvt", description: "psexec lateral tool copied", severity: "Info", timestamp: "2026-01-02T10:20:30.000Z" });
+    const common = Array.from({ length: 40 }, (_, i) =>
+      ev({
+        id: `c${i}`,
+        description: "nightly backup run",
+        severity: "Info",
+        timestamp: `2026-01-02T10:${String(i).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+    const rare = ev({
+      id: "rareEvt",
+      description: "psexec lateral tool copied",
+      severity: "Info",
+      timestamp: "2026-01-02T10:20:30.000Z",
+    });
     const all = [...common, rare];
     const index = buildPrevalenceIndex(all);
     const rarityOf = (e: ForensicEvent) => rarityScore(e, index);

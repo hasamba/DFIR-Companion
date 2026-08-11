@@ -18,7 +18,11 @@ export interface DwellWindowInput {
 
 // Trim/validate raw create/update input. Throws a descriptive Error on the first problem found —
 // callers (the store, the route) surface err.message directly.
-export function sanitizeDwellWindowInput(raw: { label?: unknown; start?: unknown; end?: unknown }): DwellWindowInput {
+export function sanitizeDwellWindowInput(raw: {
+  label?: unknown;
+  start?: unknown;
+  end?: unknown;
+}): DwellWindowInput {
   const label = String(raw.label ?? "").trim();
   if (!label) throw new Error("label is required");
 

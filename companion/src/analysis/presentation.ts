@@ -23,16 +23,16 @@ const TOKEN_RE = /[\w.@:/\\-]{3,}/g;
 // Branding for the deck cover + accent, resolved by the ReportWriter from the case's report
 // template (issue #60) so the presentation inherits the same look as the report.
 export interface PresentationBranding {
-  title: string;            // cover title (placeholders already rendered)
-  subtitle: string;         // cover subtitle (placeholders already rendered)
-  accentColor: string;      // #rrggbb
-  companyName: string;      // firm/org name shown on the cover when showCompanyName is on
+  title: string; // cover title (placeholders already rendered)
+  subtitle: string; // cover subtitle (placeholders already rendered)
+  accentColor: string; // #rrggbb
+  companyName: string; // firm/org name shown on the cover when showCompanyName is on
 }
 
 export interface PresentationIoc {
   value: string;
   type: IOC["type"];
-  verdict: IocVerdict | null;   // worst enrichment verdict across engines; null = not enriched
+  verdict: IocVerdict | null; // worst enrichment verdict across engines; null = not enriched
 }
 
 export type PresentationSlideKind = "title" | "summary" | "section" | "finding" | "event";
@@ -43,7 +43,7 @@ export interface PresentationSlide {
   // title slide
   branding?: PresentationBranding;
   counts?: PresentationCounts;
-  severityCounts?: Record<Severity, number>;   // FINDINGS by severity (title slide)
+  severityCounts?: Record<Severity, number>; // FINDINGS by severity (title slide)
   // summary / section slide
   body?: string;
   // finding / event slide
@@ -55,21 +55,21 @@ export interface PresentationSlide {
   sources?: string[];
   mitreTechniques?: string[];
   iocs?: PresentationIoc[];
-  screenshot?: string;          // screenshot filename, if any (rendered as evidence)
-  confidence?: number;          // finding only
-  count?: number;               // event aggregation count
+  screenshot?: string; // screenshot filename, if any (rendered as evidence)
+  confidence?: number; // finding only
+  count?: number; // event aggregation count
 }
 
 export interface PresentationCounts {
-  findings: number;             // post-filter
-  events: number;               // post-filter
+  findings: number; // post-filter
+  events: number; // post-filter
   iocs: number;
 }
 
 export interface PresentationDeck {
   caseId: string;
   caseName: string;
-  generatedAt: string;          // stamped by the caller (the pure builder never reads the clock)
+  generatedAt: string; // stamped by the caller (the pure builder never reads the clock)
   minSeverity: Severity | null; // the severity floor the deck was built with (null = all)
   branding: PresentationBranding;
   slides: PresentationSlide[];
@@ -79,11 +79,11 @@ export interface PresentationDeck {
 export interface PresentationOptions {
   branding: PresentationBranding;
   caseName?: string;
-  generatedAt?: string;         // ISO; stamped onto the deck (kept out of the pure logic)
-  minSeverity?: Severity;       // severity floor for findings + events; absent/Info = include all
-  maxFindings?: number;         // default 40
-  maxEvents?: number;           // default 200
-  maxIocsPerSlide?: number;     // default 8
+  generatedAt?: string; // ISO; stamped onto the deck (kept out of the pure logic)
+  minSeverity?: Severity; // severity floor for findings + events; absent/Info = include all
+  maxFindings?: number; // default 40
+  maxEvents?: number; // default 200
+  maxIocsPerSlide?: number; // default 8
 }
 
 const DEFAULTS = { maxFindings: 40, maxEvents: 200, maxIocsPerSlide: 8 } as const;
@@ -134,7 +134,7 @@ function compareEventsChrono(a: ForensicEvent, b: ForensicEvent): number {
   if (va && vb) return 0;
   if (va) return 1;
   if (vb) return -1;
-  return ta - tb;   // earliest first
+  return ta - tb; // earliest first
 }
 
 // Index IOCs by their lowercased value so an event's supporting indicators resolve in O(tokens).
@@ -163,7 +163,10 @@ function eventIocs(event: ForensicEvent, index: Map<string, IOC>, cap: number): 
     const key = raw.trim().toLowerCase();
     if (key.length < 3 || seen.has(key)) return;
     const ioc = index.get(key);
-    if (ioc) { seen.add(key); matched.push(ioc); }
+    if (ioc) {
+      seen.add(key);
+      matched.push(ioc);
+    }
   };
   consider(event.sha256);
   consider(event.md5);
@@ -234,8 +237,12 @@ export function buildPresentationDeck(
   const allEvents = state.forensicTimeline ?? [];
   const iocs = state.iocs ?? [];
 
-  const findings = atOrAbove([...allFindings], minSeverity).sort(compareFindings).slice(0, maxFindings);
-  const events = atOrAbove([...allEvents], minSeverity).sort(compareEventsChrono).slice(0, maxEvents);
+  const findings = atOrAbove([...allFindings], minSeverity)
+    .sort(compareFindings)
+    .slice(0, maxFindings);
+  const events = atOrAbove([...allEvents], minSeverity)
+    .sort(compareEventsChrono)
+    .slice(0, maxEvents);
 
   const iocById = new Map<string, IOC>(iocs.map((i) => [i.id, i]));
   const valueIndex = indexIocs(iocs);

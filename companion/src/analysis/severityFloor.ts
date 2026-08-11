@@ -32,9 +32,12 @@ export function hasGradedSeverity(events: ReadonlyArray<{ severity: Severity }>)
 // Apply the minimum-severity floor with the gate above. Returns the input unchanged when there is
 // no meaningful floor to apply (no/Info floor, or an ungraded import); otherwise keeps only events
 // at or above `minSeverity`. Pure — never mutates the input array.
-export function applySeverityFloor<T extends { severity: Severity }>(events: T[], minSeverity?: Severity): T[] {
-  if (!minSeverity || minSeverity === "Info") return events;   // no floor / "import everything"
-  if (!hasGradedSeverity(events)) return events;               // no severities → import everything
+export function applySeverityFloor<T extends { severity: Severity }>(
+  events: T[],
+  minSeverity?: Severity,
+): T[] {
+  if (!minSeverity || minSeverity === "Info") return events; // no floor / "import everything"
+  if (!hasGradedSeverity(events)) return events; // no severities → import everything
   const floor = SEVERITY_RANK[minSeverity];
   return events.filter((e) => SEVERITY_RANK[e.severity] <= floor);
 }
@@ -42,12 +45,22 @@ export function applySeverityFloor<T extends { severity: Severity }>(events: T[]
 // Normalize free-form user input (a dashboard prompt / request body) to a canonical Severity.
 // Unrecognized input → undefined (treated as "import everything"), so a typo never drops evidence.
 export function parseMinSeverity(raw: unknown): Severity | undefined {
-  switch (String(raw ?? "").trim().toLowerCase()) {
-    case "critical": return "Critical";
-    case "high": return "High";
-    case "medium": return "Medium";
-    case "low": return "Low";
-    case "info": return "Info";
-    default: return undefined;
+  switch (
+    String(raw ?? "")
+      .trim()
+      .toLowerCase()
+  ) {
+    case "critical":
+      return "Critical";
+    case "high":
+      return "High";
+    case "medium":
+      return "Medium";
+    case "low":
+      return "Low";
+    case "info":
+      return "Info";
+    default:
+      return undefined;
   }
 }

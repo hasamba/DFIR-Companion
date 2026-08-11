@@ -23,13 +23,27 @@ export type HuntPlatform = (typeof HUNT_PLATFORMS)[number];
 // Forgiving aliases so the env var accepts the names analysts actually type (product/query-language
 // synonyms), not just the canonical key. Case-insensitive (input is lowercased before lookup).
 const ALIASES: Readonly<Record<string, HuntPlatform>> = {
-  velociraptor: "velociraptor", velo: "velociraptor", vql: "velociraptor",
-  defender: "defender", kql: "defender", sentinel: "defender", microsoft: "defender", mde: "defender", "msde": "defender",
-  elastic: "elastic", esql: "elastic", kibana: "elastic", elasticsearch: "elastic", "elk": "elastic",
-  splunk: "splunk", spl: "splunk",
+  velociraptor: "velociraptor",
+  velo: "velociraptor",
+  vql: "velociraptor",
+  defender: "defender",
+  kql: "defender",
+  sentinel: "defender",
+  microsoft: "defender",
+  mde: "defender",
+  msde: "defender",
+  elastic: "elastic",
+  esql: "elastic",
+  kibana: "elastic",
+  elasticsearch: "elastic",
+  elk: "elastic",
+  splunk: "splunk",
+  spl: "splunk",
   sigma: "sigma",
   yara: "yara",
-  suricata: "suricata", snort: "suricata", ids: "suricata",
+  suricata: "suricata",
+  snort: "suricata",
+  ids: "suricata",
 };
 
 /**

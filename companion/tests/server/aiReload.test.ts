@@ -41,7 +41,11 @@ afterEach(async () => {
 
 describe("/settings/ai-reload", () => {
   it("applies saved DFIR_AI_* values from .env into process.env and reports them", async () => {
-    await writeFile(envPath, "DFIR_AI_PROVIDER=openai\nDFIR_AI_MODEL=gpt-4o-mini\nUNRELATED=keepme\n", "utf8");
+    await writeFile(
+      envPath,
+      "DFIR_AI_PROVIDER=openai\nDFIR_AI_MODEL=gpt-4o-mini\nUNRELATED=keepme\n",
+      "utf8",
+    );
 
     const res = await request(app).post("/settings/ai-reload");
     expect(res.status).toBe(200);

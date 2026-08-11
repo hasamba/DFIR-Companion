@@ -27,7 +27,9 @@ async function main(): Promise<void> {
   const state = await stateStore.load(caseId);
 
   const { state: repaired, removed } = dedupeIocsById(state);
-  console.log(`Case "${caseId}": ${state.iocs.length} IOC(s) -> ${repaired.iocs.length} after de-dup (${removed} duplicate row(s)).\n`);
+  console.log(
+    `Case "${caseId}": ${state.iocs.length} IOC(s) -> ${repaired.iocs.length} after de-dup (${removed} duplicate row(s)).\n`,
+  );
 
   if (removed === 0) {
     console.log("No duplicate-id IOC rows found.");

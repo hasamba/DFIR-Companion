@@ -13,7 +13,9 @@ let artifactPath: string;
 let logPath: string;
 
 const recordIt = (body: Record<string, unknown> = {}) =>
-  request(app).post("/cases/c1/custody").send({ artifactPath, collectedBy: "alice", ...body });
+  request(app)
+    .post("/cases/c1/custody")
+    .send({ artifactPath, collectedBy: "alice", ...body });
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-custodychainroute-"));

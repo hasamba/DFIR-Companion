@@ -1,10 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { parseNotionPageId, NotionApiError, type NotionParent, type NotionPageRef, type NotionBlockRef, type NotionBotUser } from "../../src/integrations/notion/notionClient.js";
 import {
-  buildCompanionBlocks, batchBlocks, tables, paragraph, richText, type NotionBlock,
+  parseNotionPageId,
+  NotionApiError,
+  type NotionParent,
+  type NotionPageRef,
+  type NotionBlockRef,
+  type NotionBotUser,
+} from "../../src/integrations/notion/notionClient.js";
+import {
+  buildCompanionBlocks,
+  batchBlocks,
+  tables,
+  paragraph,
+  richText,
+  type NotionBlock,
 } from "../../src/integrations/notion/notionBlocks.js";
 import {
-  pushCaseToNotion, type NotionClientLike, type NotionExportStoreLike,
+  pushCaseToNotion,
+  type NotionClientLike,
+  type NotionExportStoreLike,
 } from "../../src/integrations/notion/notionPush.js";
 import { notionExportSchema, type NotionExport } from "../../src/integrations/notion/notionExportStore.js";
 import { emptyState, type InvestigationState, type Finding } from "../../src/analysis/stateTypes.js";
@@ -15,7 +29,8 @@ const noop = async (): Promise<void> => {};
 
 // Plain text of a built block (reads block[type].rich_text), for assertions / the mock.
 function plainTextOf(b: NotionBlock): string | undefined {
-  const body = (b as Record<string, unknown>)[b.type] as { rich_text?: Array<{ text?: { content?: string } }> } | undefined;
+  const body = (b as Record<string, unknown>)[b.type] as
+    { rich_text?: Array<{ text?: { content?: string } }> } | undefined;
   const rt = body?.rich_text;
   if (!Array.isArray(rt)) return undefined;
   return rt.map((r) => r.text?.content ?? "").join("");
@@ -37,12 +52,15 @@ describe("parseNotionPageId", () => {
   });
 
   it("takes the PAGE id from the path, not the ?v= view id, on an app.notion.com copy link", () => {
-    const url = "https://app.notion.com/p/acme/Monthly-Threat-Hunting-Report-0f1e2d3c4b5a69788796a5b4c3d2e1f0?v=9a8b7c6d5e4f30211f2e3d4c5b6a7089&source=copy_link";
+    const url =
+      "https://app.notion.com/p/acme/Monthly-Threat-Hunting-Report-0f1e2d3c4b5a69788796a5b4c3d2e1f0?v=9a8b7c6d5e4f30211f2e3d4c5b6a7089&source=copy_link";
     expect(parseNotionPageId(url)).toBe("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"); // NOT the 9a8b7c6d… view id
   });
 
   it("drops a #block fragment and trailing query params", () => {
-    expect(parseNotionPageId(`https://www.notion.so/Title-${ID32}?pvs=4#abc123def456abc123def456abc12345`)).toBe(DASHED);
+    expect(
+      parseNotionPageId(`https://www.notion.so/Title-${ID32}?pvs=4#abc123def456abc123def456abc12345`),
+    ).toBe(DASHED);
   });
 });
 
@@ -57,14 +75,23 @@ describe("notionBlocks", () => {
   });
 
   it("builds a table with a header row and caps rows per table block", () => {
-    const one = tables(["A", "B"], [["1", "2"], ["3", "4"]]);
+    const one = tables(
+      ["A", "B"],
+      [
+        ["1", "2"],
+        ["3", "4"],
+      ],
+    );
     expect(one).toHaveLength(1);
     const t = one[0].table as { table_width: number; has_column_header: boolean; children: unknown[] };
     expect(t.table_width).toBe(2);
     expect(t.has_column_header).toBe(true);
     expect(t.children).toHaveLength(3); // header + 2 data rows
 
-    const big = tables(["A"], Array.from({ length: 200 }, (_, i) => [String(i)]));
+    const big = tables(
+      ["A"],
+      Array.from({ length: 200 }, (_, i) => [String(i)]),
+    );
     expect(big).toHaveLength(3); // 200 rows split into 90/90/20
   });
 
@@ -81,14 +108,24 @@ describe("notionBlocks", () => {
     const batched = batchBlocks(Array.from({ length: 150 }, () => paragraph("x")));
     expect(batched).toHaveLength(2);
     expect(batched[0]).toHaveLength(100);
-    const tableBlock = tables(["A"], Array.from({ length: 90 }, () => ["x"]))[0];
+    const tableBlock = tables(
+      ["A"],
+      Array.from({ length: 90 }, () => ["x"]),
+    )[0];
     expect(batchBlocks([tableBlock])).toHaveLength(1); // weight 91 ≤ 100
   });
 });
 
 // ---- orchestrator with a recording in-memory mock --------------------------
 
-interface MockBlock { id: string; type: string; archived: boolean; plainText?: string; parentId: string; children: string[] }
+interface MockBlock {
+  id: string;
+  type: string;
+  archived: boolean;
+  plainText?: string;
+  parentId: string;
+  children: string[];
+}
 
 class MockNotion implements NotionClientLike {
   private seq = 0;
@@ -100,7 +137,9 @@ class MockNotion implements NotionClientLike {
   failArchive = false;
   failDatabaseCreate = false; // simulate "this id is a page, not a database" (Notion 400)
 
-  private newId(prefix: string): string { return `${prefix}-${++this.seq}`; }
+  private newId(prefix: string): string {
+    return `${prefix}-${++this.seq}`;
+  }
   private childrenOf(parentId: string): string[] {
     const p = this.pages.get(parentId);
     if (p) return p.children;
@@ -109,7 +148,9 @@ class MockNotion implements NotionClientLike {
     throw new Error(`unknown parent ${parentId}`);
   }
 
-  seedPage(id: string): void { this.pages.set(id, { id, url: `https://notion.so/${id}`, children: [] }); }
+  seedPage(id: string): void {
+    this.pages.set(id, { id, url: `https://notion.so/${id}`, children: [] });
+  }
   seedBlock(parentId: string, type: string, plainText?: string): string {
     const id = this.newId("blk");
     this.blocks.set(id, { id, type, archived: false, plainText, parentId, children: [] });
@@ -117,7 +158,10 @@ class MockNotion implements NotionClientLike {
     return id;
   }
 
-  async me(): Promise<NotionBotUser> { this.meCalled = true; return { id: "bot", name: "test" }; }
+  async me(): Promise<NotionBotUser> {
+    this.meCalled = true;
+    return { id: "bot", name: "test" };
+  }
 
   async retrievePage(pageId: string): Promise<NotionPageRef> {
     const p = this.pages.get(pageId);
@@ -143,7 +187,14 @@ class MockNotion implements NotionClientLike {
     const refs: NotionBlockRef[] = [];
     for (const c of children) {
       const id = this.newId("blk");
-      this.blocks.set(id, { id, type: c.type, archived: false, plainText: plainTextOf(c), parentId: blockId, children: [] });
+      this.blocks.set(id, {
+        id,
+        type: c.type,
+        archived: false,
+        plainText: plainTextOf(c),
+        parentId: blockId,
+        children: [],
+      });
       this.childrenOf(blockId).push(id);
       refs.push({ id, type: c.type });
     }
@@ -158,7 +209,8 @@ class MockNotion implements NotionClientLike {
 
   async createPage(parent: NotionParent, title: string): Promise<NotionPageRef> {
     this.createPageCalls.push({ parent, title });
-    if (this.failDatabaseCreate && "database_id" in parent) throw new NotionApiError("not a database", 400, "validation");
+    if (this.failDatabaseCreate && "database_id" in parent)
+      throw new NotionApiError("not a database", 400, "validation");
     const id = this.newId("page");
     this.pages.set(id, { id, url: `https://notion.so/${id}`, children: [] });
     return { id, url: `https://notion.so/${id}` };
@@ -167,7 +219,9 @@ class MockNotion implements NotionClientLike {
 
 class MemStore implements NotionExportStoreLike {
   data = new Map<string, NotionExport>();
-  async load(caseId: string): Promise<NotionExport> { return this.data.get(caseId) ?? notionExportSchema.parse({}); }
+  async load(caseId: string): Promise<NotionExport> {
+    return this.data.get(caseId) ?? notionExportSchema.parse({});
+  }
   async record(caseId: string, patch: Partial<NotionExport>): Promise<NotionExport> {
     const next: NotionExport = { ...(this.data.get(caseId) ?? notionExportSchema.parse({})), ...patch };
     this.data.set(caseId, next);
@@ -177,9 +231,16 @@ class MemStore implements NotionExportStoreLike {
 
 function finding(i: number, severity: Finding["severity"] = "High"): Finding {
   return {
-    id: `f${i}`, severity, title: `Finding ${i}`, description: `desc ${i}`,
-    relatedIocs: [], sourceScreenshots: [`cap-${i}.png`], mitreTechniques: ["T1059"],
-    firstSeen: AT, lastUpdated: AT, status: "open",
+    id: `f${i}`,
+    severity,
+    title: `Finding ${i}`,
+    description: `desc ${i}`,
+    relatedIocs: [],
+    sourceScreenshots: [`cap-${i}.png`],
+    mitreTechniques: ["T1059"],
+    firstSeen: AT,
+    lastUpdated: AT,
+    status: "open",
   };
 }
 
@@ -189,7 +250,16 @@ function sampleState(): InvestigationState {
     findings: [finding(1, "Critical"), finding(2, "High")],
     iocs: [{ id: "i1", type: "ip", value: "8.8.8.8", firstSeen: AT }],
     forensicTimeline: [
-      { id: "e1", timestamp: "2026-06-04T10:00:00Z", description: "logon to DC01", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01" },
+      {
+        id: "e1",
+        timestamp: "2026-06-04T10:00:00Z",
+        description: "logon to DC01",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "DC01",
+      },
     ],
   };
 }
@@ -199,8 +269,11 @@ describe("pushCaseToNotion", () => {
     const m = new MockNotion();
     const store = new MemStore();
     const res = await pushCaseToNotion(
-      m, { caseName: "Case Alpha", state: sampleState() },
-      { mode: "new", databaseId: "db-123" }, { exportedAt: AT, sleep: noop }, store,
+      m,
+      { caseName: "Case Alpha", state: sampleState() },
+      { mode: "new", databaseId: "db-123" },
+      { exportedAt: AT, sleep: noop },
+      store,
     );
     expect(m.meCalled).toBe(true);
     expect(res.created).toBe(true);
@@ -220,8 +293,11 @@ describe("pushCaseToNotion", () => {
     m.seedPage("page-1");
     const store = new MemStore();
     const res = await pushCaseToNotion(
-      m, { caseName: "c1", state: sampleState() },
-      { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store,
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
     );
     expect(m.createPageCalls).toHaveLength(0);
     expect(res.created).toBe(false);
@@ -235,13 +311,25 @@ describe("pushCaseToNotion", () => {
     m.seedPage("page-1");
     const userNote = m.seedBlock("page-1", "paragraph", "my investigator note"); // OUTSIDE the container
     const store = new MemStore();
-    await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     const container = (await store.load("c1")).containerBlockId;
 
-    const res2 = await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    const res2 = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     expect(res2.containerRecreated).toBe(false);
-    expect(res2.containerBlockId).toBe(container);      // same container reused
-    expect(res2.blocksArchived).toBeGreaterThan(0);     // old container children archived
+    expect(res2.containerBlockId).toBe(container); // same container reused
+    expect(res2.blocksArchived).toBeGreaterThan(0); // old container children archived
     expect(m.blocks.get(userNote)!.archived).toBe(false); // user note survived
     expect((await m.listChildren("page-1")).some((b) => b.id === userNote)).toBe(true);
   });
@@ -250,11 +338,23 @@ describe("pushCaseToNotion", () => {
     const m = new MockNotion();
     m.seedPage("page-1");
     const store = new MemStore();
-    await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     const container = (await store.load("c1")).containerBlockId;
     await m.archiveBlock(container); // user trashed the managed block
 
-    const res = await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    const res = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     expect(res.containerRecreated).toBe(true);
     expect(res.containerBlockId).not.toBe(container);
   });
@@ -270,7 +370,13 @@ describe("pushCaseToNotion", () => {
     m.seedBlock(analystToggle, "paragraph", "analyst's own note 1");
     m.seedBlock(analystToggle, "paragraph", "analyst's own note 2");
     const store = new MemStore(); // empty — remembered container is gone
-    const res = await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    const res = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     // A fresh container was created, NOT the analyst's toggle.
     expect(res.containerBlockId).not.toBe(analystToggle);
     // The analyst's toggle + its children were NOT archived.
@@ -281,8 +387,17 @@ describe("pushCaseToNotion", () => {
   it("batches content into ≤100-block appends", async () => {
     const m = new MockNotion();
     const store = new MemStore();
-    const big: InvestigationState = { ...emptyState("big"), findings: Array.from({ length: 40 }, (_, i) => finding(i)) };
-    const res = await pushCaseToNotion(m, { caseName: "big", state: big }, { mode: "new", databaseId: "db" }, { exportedAt: AT, sleep: noop }, store);
+    const big: InvestigationState = {
+      ...emptyState("big"),
+      findings: Array.from({ length: 40 }, (_, i) => finding(i)),
+    };
+    const res = await pushCaseToNotion(
+      m,
+      { caseName: "big", state: big },
+      { mode: "new", databaseId: "db" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     const contentAppends = m.appendCalls.filter((a) => a.blockId === res.containerBlockId);
     expect(contentAppends.length).toBeGreaterThan(1);
     for (const a of contentAppends) expect(a.count).toBeLessThanOrEqual(100);
@@ -294,8 +409,11 @@ describe("pushCaseToNotion", () => {
     const store = new MemStore();
     // The dashboard sends the same id as both database and parent.
     const res = await pushCaseToNotion(
-      m, { caseName: "c1", state: sampleState() },
-      { mode: "new", databaseId: "x", parentPageId: "x" }, { exportedAt: AT, sleep: noop }, store,
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "new", databaseId: "x", parentPageId: "x" },
+      { exportedAt: AT, sleep: noop },
+      store,
     );
     expect(res.created).toBe(true);
     // First create attempt was as a database (failed), then a successful parent-page create.
@@ -308,9 +426,21 @@ describe("pushCaseToNotion", () => {
     const m = new MockNotion();
     m.seedPage("page-1");
     const store = new MemStore();
-    await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     m.failArchive = true;
-    const res = await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    const res = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId: "page-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
     expect(res.warnings.length).toBeGreaterThan(0);
     expect(res.blocksAppended).toBeGreaterThan(0);
   });

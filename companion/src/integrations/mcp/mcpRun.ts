@@ -85,7 +85,7 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
   if (input.targetPath && !mentionsTarget(input.args)) {
     throw new Error(
       `${server.id}/${input.tool}: a target file was given but the arguments never reference ${TARGET_PLACEHOLDER}` +
-      ` — put ${TARGET_PLACEHOLDER} where the tool expects the evidence path`,
+        ` — put ${TARGET_PLACEHOLDER} where the tool expects the evidence path`,
     );
   }
 
@@ -111,7 +111,9 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
 
     deps.onProgress?.(`running ${input.tool} on ${server.label}`);
     const text = await callTool({
-      server: server.id, tool: input.tool, args,
+      server: server.id,
+      tool: input.tool,
+      args,
       ...(deps.claudeRunner ? { runner: deps.claudeRunner } : {}),
       ...(deps.claudeBin ? { bin: deps.claudeBin } : {}),
       ...(deps.model ? { model: deps.model } : {}),

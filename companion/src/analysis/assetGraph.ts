@@ -11,11 +11,11 @@ import type { InvestigationState, IOC, ForensicEvent, Severity } from "./stateTy
 export type AssetType = "host" | "account" | "service" | "other";
 
 export interface GraphAsset {
-  id: string;               // stable id, e.g. "host:alclient07"
-  name: string;             // display name
+  id: string; // stable id, e.g. "host:alclient07"
+  name: string; // display name
   type: AssetType;
-  compromised: boolean;     // has a finding, or a Critical/High event
-  iocIds: string[];         // connected IoC ids
+  compromised: boolean; // has a finding, or a Critical/High event
+  iocIds: string[]; // connected IoC ids
   findingIds: string[];
   eventCount: number;
   maxSeverity: Severity;
@@ -25,15 +25,18 @@ export interface GraphIoc {
   id: string;
   type: string;
   value: string;
-  verdict?: string;         // worst threat-intel verdict, if enriched
-  assetIds: string[];       // connected asset ids
+  verdict?: string; // worst threat-intel verdict, if enriched
+  assetIds: string[]; // connected asset ids
 }
 
-export interface AssetGraphEdge { asset: string; ioc: string; }
+export interface AssetGraphEdge {
+  asset: string;
+  ioc: string;
+}
 
 export interface AssetGraph {
   assets: GraphAsset[];
-  iocs: GraphIoc[];         // only IoCs connected to ≥1 asset
+  iocs: GraphIoc[]; // only IoCs connected to ≥1 asset
   edges: AssetGraphEdge[];
 }
 
@@ -41,7 +44,10 @@ export interface AssetGraph {
 // [from, until] contribute to the graph, so brushing a range on the swimlane (or applying a saved
 // dwell-window) narrows the asset/evidence graphs to that window. Both bounds are ISO-8601 UTC and
 // independently optional (open-ended on either side). Shared by buildAssetGraph + buildEvidenceGraph.
-export interface TimeWindow { from?: string; until?: string; }
+export interface TimeWindow {
+  from?: string;
+  until?: string;
+}
 
 // True when an event is inside the window. Events with an unparseable/absent timestamp are KEPT —
 // mirrors the dashboard's client-side _evMatchesTimeRange ("undated → can't prove out of range →
@@ -50,8 +56,14 @@ function eventInWindow(e: ForensicEvent, w?: TimeWindow): boolean {
   if (!w || (!w.from && !w.until)) return true;
   const t = Date.parse(e.timestamp);
   if (Number.isNaN(t)) return true;
-  if (w.from) { const f = Date.parse(w.from); if (!Number.isNaN(f) && t < f) return false; }
-  if (w.until) { const u = Date.parse(w.until); if (!Number.isNaN(u) && t > u) return false; }
+  if (w.from) {
+    const f = Date.parse(w.from);
+    if (!Number.isNaN(f) && t < f) return false;
+  }
+  if (w.until) {
+    const u = Date.parse(w.until);
+    if (!Number.isNaN(u) && t > u) return false;
+  }
   return true;
 }
 
@@ -63,7 +75,9 @@ export function filterTimeline(events: readonly ForensicEvent[], w?: TimeWindow)
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+function worse(a: Severity, b: Severity): Severity {
+  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+}
 
 // Dotted-quad shape (loose — any 4 dot-separated 1-3 digit groups). Used only to decide whether an
 // IOC value needs boundary-aware description matching, not to validate octet ranges.
@@ -77,7 +91,10 @@ function escapeRegExp(s: string): string {
 // inside `192.168.1.10` — so we use a digit/dot-boundary regex `(?<![\d.])<ip>(?![\d.])` (mirrors the
 // geographic-map fix, #133, and the boundary-aware token match in iocCorroboration.ts). Non-IP values
 // keep the cheap substring test. Compiled once per case (not per event).
-interface DescMatcher { ioc: IOC; test: (descLower: string) => boolean; }
+interface DescMatcher {
+  ioc: IOC;
+  test: (descLower: string) => boolean;
+}
 function buildDescMatchers(iocs: readonly IOC[]): DescMatcher[] {
   const out: DescMatcher[] = [];
   for (const i of iocs) {
@@ -104,7 +121,8 @@ const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
 function worstVerdict(i: IOC): string | undefined {
   let best: string | undefined;
   for (const e of i.enrichments ?? []) {
-    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best)) best = e.verdict;
+    if (best === undefined || VERDICT_ORDER.indexOf(e.verdict) < VERDICT_ORDER.indexOf(best))
+      best = e.verdict;
   }
   return best;
 }
@@ -115,11 +133,13 @@ const UPN_ACCT = /([A-Za-z0-9._-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
 // Registry hive roots are included for the same reason as filesystem roots: "HKU\S-1-5-21-…" is a
 // path, not a logon — and because the user half is length-capped, the SID's RID gets truncated, so
 // distinct users on distinct hosts would otherwise collapse into one identical bogus "account".
-const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads|HKU|HKLM|HKCU|HKCR|HKCC|Registry)$/i;
+const PATH_DOMAINS =
+  /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads|HKU|HKLM|HKCU|HKCR|HKCC|Registry)$/i;
 // The right-hand side ends in a file extension → it's a path segment (e.g. Zip\7z.exe), not a
 // DOMAIN\user. Real Windows usernames don't end in .exe/.dll/etc. Curated (not "any dotted suffix")
 // so legitimate dotted accounts like CORP\first.last are NOT rejected.
-const FILE_EXT_USER = /\.(exe|dll|sys|drv|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|lnk|url|reg|inf|zip|rar|7z|gz|tgz|tar|cab|iso|img|txt|log|csv|tsv|json|xml|yaml|yml|ini|cfg|conf|dat|bin|db|sqlite|tmp|temp|dmp|mem|evtx|pcap|doc|docx|xls|xlsx|ppt|pptx|pdf|rtf|png|jpe?g|gif|bmp|svg|ico|md|sh|py|pl|rb|php|jar|so|dylib|key|pem|crt|cer|pfx)$/i;
+const FILE_EXT_USER =
+  /\.(exe|dll|sys|drv|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|lnk|url|reg|inf|zip|rar|7z|gz|tgz|tar|cab|iso|img|txt|log|csv|tsv|json|xml|yaml|yml|ini|cfg|conf|dat|bin|db|sqlite|tmp|temp|dmp|mem|evtx|pcap|doc|docx|xls|xlsx|ppt|pptx|pdf|rtf|png|jpe?g|gif|bmp|svg|ico|md|sh|py|pl|rb|php|jar|so|dylib|key|pem|crt|cer|pfx)$/i;
 
 // NETBIOS_ACCT's lookbehind only rejects a separator ADJACENT to the domain, so it misses every
 // path segment containing a space: in "…\Explorer\Shell Folders\Common Startup" the match begins
@@ -134,15 +154,15 @@ const FILE_EXT_USER = /\.(exe|dll|sys|drv|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|v
 // which terminates the path at a leaf. The gap is also capped — a long clean run is prose.
 const PATH_GAP_MAX = 40;
 const PATH_GAP = /^[A-Za-z0-9 ._$-]*$/;
-const PATH_ENDED = /\s-\s|\.[A-Za-z0-9]{1,4}\b/;     // spaced dash, or a filename extension
+const PATH_ENDED = /\s-\s|\.[A-Za-z0-9]{1,4}\b/; // spaced dash, or a filename extension
 function insidePathSegment(text: string, at: number): boolean {
   if (at === 0) return false;
   // Search the ORIGINAL string with a fromIndex rather than slicing off a prefix per match —
   // descriptions are long and this runs for every DOMAIN\user hit, so the prefix copies alone
   // cost ~270ms on a 10k-event report.
   const sep = Math.max(text.lastIndexOf("\\", at - 1), text.lastIndexOf("/", at - 1));
-  if (sep < 0) return false;                         // no path anywhere before this match
-  if (at - sep - 1 > PATH_GAP_MAX) return false;     // too far from the path to be part of it
+  if (sep < 0) return false; // no path anywhere before this match
+  if (at - sep - 1 > PATH_GAP_MAX) return false; // too far from the path to be part of it
   const gap = text.slice(sep + 1, at);
   return PATH_GAP.test(gap) && !PATH_ENDED.test(gap);
 }
@@ -152,9 +172,9 @@ export function extractAccounts(text: string): string[] {
   let m: RegExpExecArray | null;
   NETBIOS_ACCT.lastIndex = 0;
   while ((m = NETBIOS_ACCT.exec(text))) {
-    if (PATH_DOMAINS.test(m[1])) continue;           // skip path segments masquerading as DOMAIN\user
-    if (FILE_EXT_USER.test(m[2])) continue;          // skip Folder\file.ext (e.g. Zip\7z.exe) — a file, not a user
-    if (insidePathSegment(text, m.index)) continue;  // skip "Shell Folders\Common" — a spaced path segment, not a user
+    if (PATH_DOMAINS.test(m[1])) continue; // skip path segments masquerading as DOMAIN\user
+    if (FILE_EXT_USER.test(m[2])) continue; // skip Folder\file.ext (e.g. Zip\7z.exe) — a file, not a user
+    if (insidePathSegment(text, m.index)) continue; // skip "Shell Folders\Common" — a spaced path segment, not a user
     out.add(`${m[1]}\\${m[2]}`);
   }
   UPN_ACCT.lastIndex = 0;
@@ -185,7 +205,16 @@ export function buildAssetGraph(state: InvestigationState, window?: TimeWindow):
     const id = `${type}:${name.toLowerCase()}`;
     let a = assetMap.get(id);
     if (!a) {
-      a = { id, name, type, compromised: false, iocIds: [], findingIds: [], eventCount: 0, maxSeverity: "Info" };
+      a = {
+        id,
+        name,
+        type,
+        compromised: false,
+        iocIds: [],
+        findingIds: [],
+        eventCount: 0,
+        maxSeverity: "Info",
+      };
       assetMap.set(id, a);
     }
     return a;
@@ -202,10 +231,15 @@ export function buildAssetGraph(state: InvestigationState, window?: TimeWindow):
   // values that appear in the event description.
   function referencedIocs(e: ForensicEvent): IOC[] {
     const found = new Map<string, IOC>();
-    const add = (i?: IOC) => { if (i) found.set(i.id, i); };
+    const add = (i?: IOC) => {
+      if (i) found.set(i.id, i);
+    };
     if (e.sha256) add(byValue.get(e.sha256.toLowerCase()));
     if (e.md5) add(byValue.get(e.md5.toLowerCase()));
-    if (e.path) { add(byValue.get(e.path.toLowerCase())); add(byValue.get(basename(e.path))); }
+    if (e.path) {
+      add(byValue.get(e.path.toLowerCase()));
+      add(byValue.get(basename(e.path)));
+    }
     if (e.processName) add(byValue.get(e.processName.toLowerCase()));
     for (const fid of e.relatedFindingIds) {
       const f = findingById.get(fid);
@@ -249,10 +283,12 @@ export function buildAssetGraph(state: InvestigationState, window?: TimeWindow):
     if (i) graphIocs.push({ id: i.id, type: i.type, value: i.value, verdict: worstVerdict(i), assetIds });
   }
 
-  const assets = [...assetMap.values()].sort((a, b) =>
-    (Number(b.compromised) - Number(a.compromised)) ||
-    (SEV_RANK[a.maxSeverity] - SEV_RANK[b.maxSeverity]) ||
-    a.name.localeCompare(b.name));
+  const assets = [...assetMap.values()].sort(
+    (a, b) =>
+      Number(b.compromised) - Number(a.compromised) ||
+      SEV_RANK[a.maxSeverity] - SEV_RANK[b.maxSeverity] ||
+      a.name.localeCompare(b.name),
+  );
   graphIocs.sort((a, b) => a.value.localeCompare(b.value));
 
   return { assets, iocs: graphIocs, edges };

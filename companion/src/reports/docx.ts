@@ -40,8 +40,12 @@ const HEADING_LEVELS: Record<number, (typeof HeadingLevel)[keyof typeof HeadingL
 
 const TABLE_BORDER = { style: BorderStyle.SINGLE, size: 4, color: "BFBFBF" };
 const ALL_TABLE_BORDERS = {
-  top: TABLE_BORDER, bottom: TABLE_BORDER, left: TABLE_BORDER, right: TABLE_BORDER,
-  insideHorizontal: TABLE_BORDER, insideVertical: TABLE_BORDER,
+  top: TABLE_BORDER,
+  bottom: TABLE_BORDER,
+  left: TABLE_BORDER,
+  right: TABLE_BORDER,
+  insideHorizontal: TABLE_BORDER,
+  insideVertical: TABLE_BORDER,
 };
 
 // Twips (twentieths of a point) — Word's native unit. 240 twips = 12pt, ~one blank line
@@ -92,18 +96,31 @@ function mimeToDocxImageType(mime: string): "png" | "jpg" | "gif" | "bmp" | null
 // proportionally instead of stretching to a default square. Returns `null` if the header
 // can't be parsed — callers fall back to the alt text in that case.
 function imageDimensions(buf: Buffer, mime: string): { width: number; height: number } | null {
-  if (mime === "image/png" && buf.length >= 24 &&
-      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+  if (
+    mime === "image/png" &&
+    buf.length >= 24 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
     return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
   }
-  if ((mime === "image/jpeg" || mime === "image/jpg") && buf.length >= 4 &&
-      buf[0] === 0xff && buf[1] === 0xd8) {
+  if (
+    (mime === "image/jpeg" || mime === "image/jpg") &&
+    buf.length >= 4 &&
+    buf[0] === 0xff &&
+    buf[1] === 0xd8
+  ) {
     // Walk JPEG segments looking for an SOFn marker (frame header), which carries the
     // image's height and width. Skip standalone markers (no payload) and unwanted SOFs
     // (DHT=0xC4, DAC=0xCC, RST=0xC8).
     let i = 2;
     while (i + 9 < buf.length) {
-      if (buf[i] !== 0xff) { i++; continue; }
+      if (buf[i] !== 0xff) {
+        i++;
+        continue;
+      }
       const marker = buf[i + 1];
       if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
         i += 2;
@@ -116,8 +133,7 @@ function imageDimensions(buf: Buffer, mime: string): { width: number; height: nu
       i += 2 + segLen;
     }
   }
-  if (mime === "image/gif" && buf.length >= 10 &&
-      buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+  if (mime === "image/gif" && buf.length >= 10 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
     return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
   }
   if (mime === "image/bmp" && buf.length >= 26 && buf[0] === 0x42 && buf[1] === 0x4d) {
@@ -130,14 +146,14 @@ function imageDimensions(buf: Buffer, mime: string): { width: number; height: nu
 // Word can embed natively; otherwise degrade to a TextRun carrying the alt text so the
 // report still renders (the company name surrounding the logo on the title page stays
 // intact even when an unsupported logo is uploaded).
-function imageRunFor(
-  token: Tokens.Image,
-  ctx: { bold?: boolean; italic?: boolean },
-): (ImageRun | TextRun)[] {
-  const fallback = (): TextRun[] => [new TextRun({
-    text: token.text || token.title || "",
-    bold: ctx.bold, italics: ctx.italic,
-  })];
+function imageRunFor(token: Tokens.Image, ctx: { bold?: boolean; italic?: boolean }): (ImageRun | TextRun)[] {
+  const fallback = (): TextRun[] => [
+    new TextRun({
+      text: token.text || token.title || "",
+      bold: ctx.bold,
+      italics: ctx.italic,
+    }),
+  ];
 
   const parsed = parseDataUri(token.href);
   if (!parsed) return fallback();
@@ -148,14 +164,16 @@ function imageRunFor(
 
   // Cap the long edge at IMAGE_MAX_PX so a high-res raster doesn't blow out the page.
   const scale = Math.min(1, IMAGE_MAX_PX / Math.max(dims.width, dims.height));
-  return [new ImageRun({
-    data: parsed.buffer,
-    transformation: {
-      width: Math.max(1, Math.round(dims.width * scale)),
-      height: Math.max(1, Math.round(dims.height * scale)),
-    },
-    type: docxType,
-  })];
+  return [
+    new ImageRun({
+      data: parsed.buffer,
+      transformation: {
+        width: Math.max(1, Math.round(dims.width * scale)),
+        height: Math.max(1, Math.round(dims.height * scale)),
+      },
+      type: docxType,
+    }),
+  ];
 }
 
 // Classify a Markdown heading by its TEXT, not just its depth, so the docx outline matches
@@ -171,7 +189,10 @@ function imageRunFor(
 //  - unnumbered subsections (e.g. "### Recommendations", per-finding h4) keep their
 //    Markdown depth.
 // Pure — no I/O, easy to unit-test by inspecting `word/document.xml`.
-function classifyHeading(depth: number, text: string): {
+function classifyHeading(
+  depth: number,
+  text: string,
+): {
   level: (typeof HeadingLevel)[keyof typeof HeadingLevel];
   pageBreakBefore: boolean;
   spacingBefore: number;
@@ -225,24 +246,32 @@ function inlineRuns(
         break;
       }
       case "codespan": {
-        out.push(new TextRun({
-          text: (t as Tokens.Codespan).text,
-          font: "Consolas",
-          bold: ctx.bold, italics: ctx.italic,
-          shading: { type: ShadingType.CLEAR, color: "auto", fill: "EEF1F5" },
-        }));
+        out.push(
+          new TextRun({
+            text: (t as Tokens.Codespan).text,
+            font: "Consolas",
+            bold: ctx.bold,
+            italics: ctx.italic,
+            shading: { type: ShadingType.CLEAR, color: "auto", fill: "EEF1F5" },
+          }),
+        );
         break;
       }
       case "link": {
         const link = t as Tokens.Link;
-        out.push(new ExternalHyperlink({
-          link: link.href,
-          children: [new TextRun({
-            text: link.text || link.href,
-            style: "Hyperlink",
-            bold: ctx.bold, italics: ctx.italic,
-          })],
-        }));
+        out.push(
+          new ExternalHyperlink({
+            link: link.href,
+            children: [
+              new TextRun({
+                text: link.text || link.href,
+                style: "Hyperlink",
+                bold: ctx.bold,
+                italics: ctx.italic,
+              }),
+            ],
+          }),
+        );
         break;
       }
       case "br": {
@@ -272,19 +301,20 @@ function inlineRuns(
 }
 
 function tableCellsFor(row: Tokens.TableCell[], header: boolean): TableCell[] {
-  return row.map((c) => new TableCell({
-    children: [new Paragraph({
-      children: inlineRuns((c.tokens ?? []) as Tokens.Generic[], { bold: header }),
-    })],
-    shading: header ? { type: ShadingType.CLEAR, color: "auto", fill: "F0F3F7" } : undefined,
-  }));
+  return row.map(
+    (c) =>
+      new TableCell({
+        children: [
+          new Paragraph({
+            children: inlineRuns((c.tokens ?? []) as Tokens.Generic[], { bold: header }),
+          }),
+        ],
+        shading: header ? { type: ShadingType.CLEAR, color: "auto", fill: "F0F3F7" } : undefined,
+      }),
+  );
 }
 
-function listItemParagraphs(
-  items: Tokens.ListItem[],
-  ordered: boolean,
-  level: number,
-): Paragraph[] {
+function listItemParagraphs(items: Tokens.ListItem[], ordered: boolean, level: number): Paragraph[] {
   const out: Paragraph[] = [];
   for (const item of items) {
     const para: Tokens.Generic[] = [];
@@ -293,12 +323,12 @@ function listItemParagraphs(
       if (child.type === "list") nested.push(child as Tokens.List);
       else para.push(child);
     }
-    out.push(new Paragraph({
-      children: inlineRuns(para),
-      numbering: ordered
-        ? { reference: "ordered-list", level }
-        : { reference: "bullet-list", level },
-    }));
+    out.push(
+      new Paragraph({
+        children: inlineRuns(para),
+        numbering: ordered ? { reference: "ordered-list", level } : { reference: "bullet-list", level },
+      }),
+    );
     for (const n of nested) {
       out.push(...listItemParagraphs(n.items, !!n.ordered, level + 1));
     }
@@ -315,35 +345,43 @@ export function tokensToDocxChildren(tokens: TokensList): DocxChild[] {
       case "heading": {
         const h = tok as Tokens.Heading;
         const cls = classifyHeading(h.depth, h.text);
-        out.push(new Paragraph({
-          heading: cls.level,
-          pageBreakBefore: cls.pageBreakBefore,
-          spacing: cls.spacingBefore > 0 ? { before: cls.spacingBefore } : undefined,
-          children: inlineRuns(h.tokens),
-        }));
+        out.push(
+          new Paragraph({
+            heading: cls.level,
+            pageBreakBefore: cls.pageBreakBefore,
+            spacing: cls.spacingBefore > 0 ? { before: cls.spacingBefore } : undefined,
+            children: inlineRuns(h.tokens),
+          }),
+        );
         break;
       }
       case "paragraph": {
-        out.push(new Paragraph({
-          children: inlineRuns((tok as Tokens.Paragraph).tokens),
-        }));
+        out.push(
+          new Paragraph({
+            children: inlineRuns((tok as Tokens.Paragraph).tokens),
+          }),
+        );
         break;
       }
       case "blockquote": {
         const bq = tok as Tokens.Blockquote;
         for (const inner of bq.tokens) {
           if (inner.type === "paragraph") {
-            out.push(new Paragraph({
-              children: inlineRuns((inner as Tokens.Paragraph).tokens, { italic: true }),
-              indent: { left: 360 },
-              border: { left: { style: BorderStyle.SINGLE, size: 12, color: "C7CCD4", space: 8 } },
-            }));
+            out.push(
+              new Paragraph({
+                children: inlineRuns((inner as Tokens.Paragraph).tokens, { italic: true }),
+                indent: { left: 360 },
+                border: { left: { style: BorderStyle.SINGLE, size: 12, color: "C7CCD4", space: 8 } },
+              }),
+            );
           } else if (inner.type === "text") {
-            out.push(new Paragraph({
-              children: [new TextRun({ text: (inner as Tokens.Text).text, italics: true })],
-              indent: { left: 360 },
-              border: { left: { style: BorderStyle.SINGLE, size: 12, color: "C7CCD4", space: 8 } },
-            }));
+            out.push(
+              new Paragraph({
+                children: [new TextRun({ text: (inner as Tokens.Text).text, italics: true })],
+                indent: { left: 360 },
+                border: { left: { style: BorderStyle.SINGLE, size: 12, color: "C7CCD4", space: 8 } },
+              }),
+            );
           }
         }
         break;
@@ -358,26 +396,32 @@ export function tokensToDocxChildren(tokens: TokensList): DocxChild[] {
         const rows: TableRow[] = [];
         rows.push(new TableRow({ tableHeader: true, children: tableCellsFor(t.header, true) }));
         for (const r of t.rows) rows.push(new TableRow({ children: tableCellsFor(r, false) }));
-        out.push(new Table({
-          rows,
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          borders: ALL_TABLE_BORDERS,
-        }));
+        out.push(
+          new Table({
+            rows,
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            borders: ALL_TABLE_BORDERS,
+          }),
+        );
         break;
       }
       case "code": {
-        out.push(new Paragraph({
-          children: [new TextRun({ text: (tok as Tokens.Code).text, font: "Consolas" })],
-          shading: { type: ShadingType.CLEAR, color: "auto", fill: "F4F6F8" },
-        }));
+        out.push(
+          new Paragraph({
+            children: [new TextRun({ text: (tok as Tokens.Code).text, font: "Consolas" })],
+            shading: { type: ShadingType.CLEAR, color: "auto", fill: "F4F6F8" },
+          }),
+        );
         break;
       }
       case "hr": {
         // A thin bottom border on an empty paragraph — same look as the HTML export's <hr>.
-        out.push(new Paragraph({
-          children: [],
-          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "BFBFBF", space: 1 } },
-        }));
+        out.push(
+          new Paragraph({
+            children: [],
+            border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "BFBFBF", space: 1 } },
+          }),
+        );
         break;
       }
       case "space":
@@ -428,21 +472,46 @@ export async function renderDocxReport(
         {
           reference: "bullet-list",
           levels: [
-            { level: 0, format: "bullet", text: "•", alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 360, hanging: 260 } } } },
-            { level: 1, format: "bullet", text: "◦", alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 720, hanging: 260 } } } },
-            { level: 2, format: "bullet", text: "▪", alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 1080, hanging: 260 } } } },
+            {
+              level: 0,
+              format: "bullet",
+              text: "•",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 360, hanging: 260 } } },
+            },
+            {
+              level: 1,
+              format: "bullet",
+              text: "◦",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 720, hanging: 260 } } },
+            },
+            {
+              level: 2,
+              format: "bullet",
+              text: "▪",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 1080, hanging: 260 } } },
+            },
           ],
         },
         {
           reference: "ordered-list",
           levels: [
-            { level: 0, format: "decimal", text: "%1.", alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 360, hanging: 260 } } } },
-            { level: 1, format: "decimal", text: "%2.", alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 720, hanging: 260 } } } },
+            {
+              level: 0,
+              format: "decimal",
+              text: "%1.",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 360, hanging: 260 } } },
+            },
+            {
+              level: 1,
+              format: "decimal",
+              text: "%2.",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 720, hanging: 260 } } },
+            },
           ],
         },
       ],

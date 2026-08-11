@@ -44,7 +44,11 @@ export class SlashCommandChannelStore {
     await atomicWrite(this.file, JSON.stringify(map, null, 2));
   }
 
-  async bind(key: string, caseId: string, at: string = new Date().toISOString()): Promise<{ caseId: string; boundAt: string }> {
+  async bind(
+    key: string,
+    caseId: string,
+    at: string = new Date().toISOString(),
+  ): Promise<{ caseId: string; boundAt: string }> {
     const all = await this.loadAll();
     const next = { ...all, [key]: { caseId, boundAt: at } };
     await this.write(next);

@@ -26,19 +26,25 @@ import { parseMinSeverity } from "../src/analysis/severityFloor.js";
 
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
-  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--")
+    ? process.argv[i + 1]
+    : undefined;
 }
 
 async function main(): Promise<void> {
   const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "test1";
 
-  const provName = strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER");
+  const provName =
+    strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER");
   const model = strOpt("model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL");
   const apiKey = strOpt("key") ?? process.env.DFIR_AI_SYNTH_KEY ?? visionEnv(process.env, "KEY");
-  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL");
+  const baseUrl =
+    strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL");
   const provider = buildProviderFrom({ provider: provName, model, apiKey, baseUrl });
   if (!provider) {
-    console.error("No AI provider configured (DFIR_AI_SYNTH_PROVIDER / DFIR_VISION_PROVIDER / --provider). Aborting.");
+    console.error(
+      "No AI provider configured (DFIR_AI_SYNTH_PROVIDER / DFIR_VISION_PROVIDER / --provider). Aborting.",
+    );
     process.exit(1);
   }
 
@@ -48,11 +54,17 @@ async function main(): Promise<void> {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   const pipeline = new AnalysisPipeline({
-    provider, synthesisProvider: provider, stateStore,
-    falsePositiveStore: new FalsePositiveStore(store), scopeStore: new ScopeStore(store),
-    imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store),
-    customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store),
-    synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store),
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    falsePositiveStore: new FalsePositiveStore(store),
+    scopeStore: new ScopeStore(store),
+    imageLoader: makeImageLoader(store),
+    anonStore: new AnonControlStore(store),
+    customEntitiesStore: new CustomEntitiesStore(store),
+    discoveredStore: new DiscoveredEntitiesStore(store),
+    synthMetaStore: new SynthMetaStore(store),
+    hypothesisStore: new HypothesisStore(store),
   });
 
   // Always show the preview — it is AI-free, and it is what the floor decision should rest on.
@@ -60,7 +72,9 @@ async function main(): Promise<void> {
   console.log(`\nDeep-pass preview for "${caseId}" (rows per batch: ${cap})`);
   console.log("  floor      events     rows   batches   est.tokens");
   for (const f of floors) {
-    console.log(`  ${f.floor.padEnd(9)} ${String(f.events).padStart(7)} ${String(f.rows).padStart(8)} ${String(f.batches).padStart(9)} ${String(Math.round(f.estimatedInputTokens / 1000) + "k").padStart(12)}`);
+    console.log(
+      `  ${f.floor.padEnd(9)} ${String(f.events).padStart(7)} ${String(f.rows).padStart(8)} ${String(f.batches).padStart(9)} ${String(Math.round(f.estimatedInputTokens / 1000) + "k").padStart(12)}`,
+    );
   }
 
   const floor = parseMinSeverity(strOpt("floor"));
@@ -71,7 +85,9 @@ async function main(): Promise<void> {
 
   const maxBatches = Number(strOpt("max-batches")) || undefined;
   const chosen = floors.find((f) => f.floor === floor);
-  console.log(`\nRunning at floor ${floor}+ — ${chosen?.events ?? "?"} event(s), ${chosen?.batches ?? "?"} batch(es), provider=${provider.name} model=${model}\n`);
+  console.log(
+    `\nRunning at floor ${floor}+ — ${chosen?.events ?? "?"} event(s), ${chosen?.batches ?? "?"} batch(es), provider=${provider.name} model=${model}\n`,
+  );
 
   const started = Date.now();
   const result = await pipeline.deepPass(caseId, {
@@ -87,4 +103,7 @@ async function main(): Promise<void> {
   console.log(`\nattackerPath: ${state.attackerPath ? state.attackerPath.slice(0, 400) : "(empty)"}`);
 }
 
-main().catch((e) => { console.error("deep-pass error:", e); process.exit(1); });
+main().catch((e) => {
+  console.error("deep-pass error:", e);
+  process.exit(1);
+});

@@ -11,26 +11,45 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 
 export interface IrisClientOptions {
-  baseUrl: string;          // e.g. https://iris.example.org
-  apiKey: string;           // IRIS API key (My profile > API Key)
-  fetchFn?: FetchFn;        // injectable transport (tests pass a mock; TLS-custom in prod)
-  timeoutMs?: number;       // per-request timeout (default 30s)
+  baseUrl: string; // e.g. https://iris.example.org
+  apiKey: string; // IRIS API key (My profile > API Key)
+  fetchFn?: FetchFn; // injectable transport (tests pass a mock; TLS-custom in prod)
+  timeoutMs?: number; // per-request timeout (default 30s)
 }
 
 // Subset of the IRIS case/asset/ioc objects we read back.
-export interface IrisCaseRef { caseId: number; caseName: string }
-export interface IrisAssetRef { id: number; name: string }
-export interface IrisIocRef { id: number; value: string }
-export interface IrisEventRef { id: number; title: string; date: string }
-export interface IrisDirRef { id: number; name: string }
-export interface IrisTaskRef { id: number; title: string }
+export interface IrisCaseRef {
+  caseId: number;
+  caseName: string;
+}
+export interface IrisAssetRef {
+  id: number;
+  name: string;
+}
+export interface IrisIocRef {
+  id: number;
+  value: string;
+}
+export interface IrisEventRef {
+  id: number;
+  title: string;
+  date: string;
+}
+export interface IrisDirRef {
+  id: number;
+  name: string;
+}
+export interface IrisTaskRef {
+  id: number;
+  title: string;
+}
 
 export interface IrisCaseCreate {
   case_name: string;
   case_description: string;
-  case_customer: number;        // customer id (default seeded customer = 1)
-  classification_id: number;    // case classification id (default 1)
-  case_soc_id: string;          // may be ""
+  case_customer: number; // customer id (default seeded customer = 1)
+  classification_id: number; // case classification id (default 1)
+  case_soc_id: string; // may be ""
 }
 
 // Bodies are intentionally loose (Record) — the mappers build them and the client just
@@ -40,10 +59,18 @@ export type IrisIocBody = Record<string, unknown>;
 export type IrisEventBody = Record<string, unknown>;
 export type IrisTaskBody = Record<string, unknown>;
 
-interface Envelope<T = unknown> { status?: string; message?: string; data?: T }
+interface Envelope<T = unknown> {
+  status?: string;
+  message?: string;
+  data?: T;
+}
 
 export class IrisApiError extends Error {
-  constructor(message: string, readonly status: number, readonly kind: "auth" | "permission" | "notfound" | "http" | "api") {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly kind: "auth" | "permission" | "notfound" | "http" | "api",
+  ) {
     super(message);
     this.name = "IrisApiError";
   }
@@ -62,7 +89,11 @@ export class IrisClient {
 
   // ---- transport -----------------------------------------------------------
 
-  private async request<T>(method: "GET" | "POST", path: string, opts: { cid?: number; body?: unknown } = {}): Promise<T> {
+  private async request<T>(
+    method: "GET" | "POST",
+    path: string,
+    opts: { cid?: number; body?: unknown } = {},
+  ): Promise<T> {
     const url = new URL(this.base + path);
     if (opts.cid !== undefined) url.searchParams.set("cid", String(opts.cid));
     let res: Response;
@@ -81,7 +112,8 @@ export class IrisClient {
       throw new IrisApiError(`IRIS request failed: ${(err as Error).message}`, 0, "http");
     }
     if (res.status === 401) throw new IrisApiError("IRIS auth failed (check DFIR_IRIS_KEY)", 401, "auth");
-    if (res.status === 403) throw new IrisApiError("IRIS permission denied for this API key", 403, "permission");
+    if (res.status === 403)
+      throw new IrisApiError("IRIS permission denied for this API key", 403, "permission");
     if (res.status === 404) throw new IrisApiError(`IRIS endpoint not found: ${path}`, 404, "notfound");
     if (!res.ok) throw new IrisApiError(`IRIS HTTP ${res.status} on ${path}`, res.status, "http");
 
@@ -105,7 +137,8 @@ export class IrisClient {
   // matches exactly — never falls back to an unrelated case from the filter results.
   async findCaseByName(name: string): Promise<IrisCaseRef | null> {
     const data = await this.request<{ cases?: Array<Record<string, unknown>> }>(
-      "GET", `/manage/cases/filter?case_name=${encodeURIComponent(name)}`,
+      "GET",
+      `/manage/cases/filter?case_name=${encodeURIComponent(name)}`,
     );
     const cases = data.cases ?? [];
     const exact = cases.find((c) => String(c.case_name ?? "").toLowerCase() === name.toLowerCase());
@@ -121,10 +154,10 @@ export class IrisClient {
 
   // List all cases (used by the IMPORT picker — issue #88). Tolerant of envelope shape.
   async listCases(): Promise<IrisCaseRef[]> {
-    const data = await this.request<{ cases?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/manage/cases/list",
-    );
-    const rows = Array.isArray(data) ? data : data.cases ?? [];
+    const data = await this.request<
+      { cases?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/manage/cases/list");
+    const rows = Array.isArray(data) ? data : (data.cases ?? []);
     return rows
       .map((c) => ({ caseId: Number(c.case_id), caseName: String(c.case_name ?? `case #${c.case_id}`) }))
       .filter((c) => Number.isFinite(c.caseId));
@@ -133,13 +166,17 @@ export class IrisClient {
   // The collaborative case summary (distinct from case_description metadata). Replaces the
   // whole summary — intended for seeding an exported case.
   async setSummary(caseId: number, markdown: string): Promise<void> {
-    await this.request<unknown>("POST", "/case/summary/update", { body: { case_description: markdown, cid: caseId } });
+    await this.request<unknown>("POST", "/case/summary/update", {
+      body: { case_description: markdown, cid: caseId },
+    });
   }
 
   // ---- type-id resolution (resolve names→ids at runtime; ids vary by install) ----
 
   async iocTypeMap(): Promise<Map<string, number>> {
-    const rows = await this.request<Array<Record<string, unknown>>>("GET", "/manage/ioc-types/list", { cid: 1 });
+    const rows = await this.request<Array<Record<string, unknown>>>("GET", "/manage/ioc-types/list", {
+      cid: 1,
+    });
     const m = new Map<string, number>();
     for (const r of rows ?? []) m.set(String(r.type_name ?? "").toLowerCase(), Number(r.type_id));
     return m;
@@ -171,53 +208,62 @@ export class IrisClient {
   // ---- assets --------------------------------------------------------------
 
   async listAssets(cid: number): Promise<IrisAssetRef[]> {
-    const data = await this.request<{ assets?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/assets/list", { cid },
-    );
-    const rows = Array.isArray(data) ? data : data.assets ?? [];
+    const data = await this.request<
+      { assets?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/assets/list", { cid });
+    const rows = Array.isArray(data) ? data : (data.assets ?? []);
     return rows.map((r) => ({ id: Number(r.asset_id), name: String(r.asset_name ?? "") }));
   }
 
   async addAsset(cid: number, body: IrisAssetBody): Promise<number> {
-    const data = await this.request<Record<string, unknown>>("POST", "/case/assets/add", { cid, body: { ...body, cid } });
+    const data = await this.request<Record<string, unknown>>("POST", "/case/assets/add", {
+      cid,
+      body: { ...body, cid },
+    });
     return Number(data.asset_id);
   }
 
   // Full asset rows (every field) for the IMPORT path — listAssets() narrows to id+name.
   async getRawAssets(cid: number): Promise<Array<Record<string, unknown>>> {
-    const data = await this.request<{ assets?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/assets/list", { cid },
-    );
-    return Array.isArray(data) ? data : data.assets ?? [];
+    const data = await this.request<
+      { assets?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/assets/list", { cid });
+    return Array.isArray(data) ? data : (data.assets ?? []);
   }
 
   // ---- iocs ----------------------------------------------------------------
 
   async listIocs(cid: number): Promise<IrisIocRef[]> {
-    const data = await this.request<{ ioc?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/ioc/list", { cid },
-    );
-    const rows = Array.isArray(data) ? data : data.ioc ?? [];
+    const data = await this.request<
+      { ioc?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/ioc/list", { cid });
+    const rows = Array.isArray(data) ? data : (data.ioc ?? []);
     return rows.map((r) => ({ id: Number(r.ioc_id), value: String(r.ioc_value ?? "") }));
   }
 
   async addIoc(cid: number, body: IrisIocBody): Promise<number> {
-    const data = await this.request<Record<string, unknown>>("POST", "/case/ioc/add", { cid, body: { ...body, cid } });
+    const data = await this.request<Record<string, unknown>>("POST", "/case/ioc/add", {
+      cid,
+      body: { ...body, cid },
+    });
     return Number(data.ioc_id);
   }
 
   // Full IOC rows (value + type + tags) for the IMPORT path — listIocs() narrows to id+value.
   async getRawIocs(cid: number): Promise<Array<Record<string, unknown>>> {
-    const data = await this.request<{ ioc?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/ioc/list", { cid },
-    );
-    return Array.isArray(data) ? data : data.ioc ?? [];
+    const data = await this.request<
+      { ioc?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/ioc/list", { cid });
+    return Array.isArray(data) ? data : (data.ioc ?? []);
   }
 
   // ---- timeline ------------------------------------------------------------
 
   async addEvent(cid: number, body: IrisEventBody): Promise<number> {
-    const data = await this.request<Record<string, unknown>>("POST", "/case/timeline/events/add", { cid, body: { ...body, cid } });
+    const data = await this.request<Record<string, unknown>>("POST", "/case/timeline/events/add", {
+      cid,
+      body: { ...body, cid },
+    });
     return Number(data.event_id);
   }
 
@@ -226,29 +272,33 @@ export class IrisClient {
   // no asset filter = ALL events) — `/case/timeline/events/<id>` is single-event-by-id, so the
   // bare `/case/timeline/events` 404s.
   async listEvents(cid: number): Promise<IrisEventRef[]> {
-    const data = await this.request<{ timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/timeline/events/list/filter/0", { cid },
-    );
-    const rows = Array.isArray(data) ? data : data.timeline ?? [];
-    return rows.map((r) => ({ id: Number(r.event_id), title: String(r.event_title ?? ""), date: String(r.event_date ?? "") }));
+    const data = await this.request<
+      { timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/timeline/events/list/filter/0", { cid });
+    const rows = Array.isArray(data) ? data : (data.timeline ?? []);
+    return rows.map((r) => ({
+      id: Number(r.event_id),
+      title: String(r.event_title ?? ""),
+      date: String(r.event_date ?? ""),
+    }));
   }
 
   // Full timeline rows (title + content + date/tz + colour + tags) for the IMPORT path —
   // listEvents() narrows to id+title+date for dedupe. Same endpoint (filter/0 = all events).
   async getRawTimeline(cid: number): Promise<Array<Record<string, unknown>>> {
-    const data = await this.request<{ timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/timeline/events/list/filter/0", { cid },
-    );
-    return Array.isArray(data) ? data : data.timeline ?? [];
+    const data = await this.request<
+      { timeline?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/timeline/events/list/filter/0", { cid });
+    return Array.isArray(data) ? data : (data.timeline ?? []);
   }
 
   // ---- tasks ---------------------------------------------------------------
 
   async listTasks(cid: number): Promise<IrisTaskRef[]> {
-    const data = await this.request<{ tasks?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-      "GET", "/case/tasks/list", { cid },
-    );
-    const rows = Array.isArray(data) ? data : data.tasks ?? [];
+    const data = await this.request<
+      { tasks?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    >("GET", "/case/tasks/list", { cid });
+    const rows = Array.isArray(data) ? data : (data.tasks ?? []);
     return rows.map((r) => ({ id: Number(r.task_id), title: String(r.task_title ?? "") }));
   }
 
@@ -256,7 +306,8 @@ export class IrisClient {
   // array is accepted (creates an unassigned task) — so no real user id is needed.
   async addTask(cid: number, body: IrisTaskBody): Promise<number> {
     const data = await this.request<Record<string, unknown>>("POST", "/case/tasks/add", {
-      cid, body: { task_assignees_id: [], custom_attributes: {}, ...body, cid },
+      cid,
+      body: { task_assignees_id: [], custom_attributes: {}, ...body, cid },
     });
     return Number(data.task_id);
   }
@@ -264,15 +315,18 @@ export class IrisClient {
   // ---- notes (directories are the current API; groups were removed at 2.0.1) ----
 
   async listDirectories(cid: number): Promise<IrisDirRef[]> {
-    const data = await this.request<Array<Record<string, unknown>> | { directories?: Array<Record<string, unknown>> }>(
-      "GET", "/case/notes/directories/filter", { cid },
-    );
-    const rows = Array.isArray(data) ? data : data.directories ?? [];
+    const data = await this.request<
+      Array<Record<string, unknown>> | { directories?: Array<Record<string, unknown>> }
+    >("GET", "/case/notes/directories/filter", { cid });
+    const rows = Array.isArray(data) ? data : (data.directories ?? []);
     return rows.map((r) => ({ id: Number(r.id), name: String(r.name ?? "") }));
   }
 
   async addDirectory(cid: number, name: string): Promise<number> {
-    const data = await this.request<Record<string, unknown>>("POST", "/case/notes/directories/add", { cid, body: { name } });
+    const data = await this.request<Record<string, unknown>>("POST", "/case/notes/directories/add", {
+      cid,
+      body: { name },
+    });
     return Number(data.id);
   }
 
@@ -290,7 +344,8 @@ export class IrisClient {
 
   async addNote(cid: number, directoryId: number, title: string, content: string): Promise<number> {
     const data = await this.request<Record<string, unknown>>("POST", "/case/notes/add", {
-      cid, body: { note_title: title, note_content: content, directory_id: directoryId },
+      cid,
+      body: { note_title: title, note_content: content, directory_id: directoryId },
     });
     return Number(data.note_id ?? (data as { id?: number }).id);
   }

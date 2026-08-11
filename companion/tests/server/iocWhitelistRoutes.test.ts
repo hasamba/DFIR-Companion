@@ -30,7 +30,9 @@ describe("IOC whitelist CRUD routes", () => {
     const { app } = await harness();
     expect((await request(app).get("/ioc-whitelist")).body).toEqual([]);
 
-    const add = await request(app).post("/ioc-whitelist").send({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
+    const add = await request(app)
+      .post("/ioc-whitelist")
+      .send({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
     expect(add.status).toBe(201);
     expect(add.body.id).toBeTruthy();
     expect(add.body).toMatchObject({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
@@ -45,15 +47,23 @@ describe("IOC whitelist CRUD routes", () => {
 
   it("rejects an invalid rule (400) and a missing rule on delete (404)", async () => {
     const { app } = await harness();
-    expect((await request(app).post("/ioc-whitelist").send({ match: "cidr", pattern: "not-a-cidr" })).status).toBe(400);
-    expect((await request(app).post("/ioc-whitelist").send({ match: "bogus", pattern: "x" })).status).toBe(400);
+    expect(
+      (await request(app).post("/ioc-whitelist").send({ match: "cidr", pattern: "not-a-cidr" })).status,
+    ).toBe(400);
+    expect((await request(app).post("/ioc-whitelist").send({ match: "bogus", pattern: "x" })).status).toBe(
+      400,
+    );
     expect((await request(app).delete("/ioc-whitelist/ghost")).status).toBe(404);
   });
 
   it("is idempotent — re-adding the same rule does not duplicate", async () => {
     const { app } = await harness();
-    const a = await request(app).post("/ioc-whitelist").send({ match: "exact", pattern: "deadbeef", iocType: "hash" });
-    const b = await request(app).post("/ioc-whitelist").send({ match: "exact", pattern: "deadbeef", iocType: "hash" });
+    const a = await request(app)
+      .post("/ioc-whitelist")
+      .send({ match: "exact", pattern: "deadbeef", iocType: "hash" });
+    const b = await request(app)
+      .post("/ioc-whitelist")
+      .send({ match: "exact", pattern: "deadbeef", iocType: "hash" });
     expect(b.body.id).toBe(a.body.id);
     expect((await request(app).get("/ioc-whitelist")).body).toHaveLength(1);
   });
@@ -61,18 +71,21 @@ describe("IOC whitelist CRUD routes", () => {
   it("returns 501 when no whitelist store is configured", async () => {
     const store = new CaseStore(await tmp());
     const app = createApp(store);
-    expect((await request(app).post("/ioc-whitelist").send({ match: "exact", pattern: "x" })).status).toBe(501);
-    expect((await request(app).get("/ioc-whitelist")).body).toEqual([]);   // GET degrades to empty
+    expect((await request(app).post("/ioc-whitelist").send({ match: "exact", pattern: "x" })).status).toBe(
+      501,
+    );
+    expect((await request(app).get("/ioc-whitelist")).body).toEqual([]); // GET degrades to empty
   });
 });
 
 describe("IOC whitelist import / export", () => {
   it("imports CSV, skips duplicates, and exports CSV + JSON", async () => {
     const { app } = await harness();
-    const csv = "match,pattern,type,note\ncidr,10.0.0.0/8,ip,internal\nexact,deadbeef,hash,known good\nbad,x,,skip me\n";
+    const csv =
+      "match,pattern,type,note\ncidr,10.0.0.0/8,ip,internal\nexact,deadbeef,hash,known good\nbad,x,,skip me\n";
     const imp = await request(app).post("/ioc-whitelist/import").send({ text: csv });
     expect(imp.status).toBe(200);
-    expect(imp.body.added).toBe(2);     // the "bad" row is dropped
+    expect(imp.body.added).toBe(2); // the "bad" row is dropped
     expect(imp.body.total).toBe(2);
 
     // re-import is a no-op (dupes skipped)
@@ -89,7 +102,9 @@ describe("IOC whitelist import / export", () => {
   it("400s on empty or unparseable import text", async () => {
     const { app } = await harness();
     expect((await request(app).post("/ioc-whitelist/import").send({ text: "" })).status).toBe(400);
-    expect((await request(app).post("/ioc-whitelist/import").send({ text: "no,useful,columns\n1,2,3\n" })).status).toBe(400);
+    expect(
+      (await request(app).post("/ioc-whitelist/import").send({ text: "no,useful,columns\n1,2,3\n" })).status,
+    ).toBe(400);
   });
 });
 
@@ -99,12 +114,14 @@ describe("POST /cases/:id/ioc-whitelist/apply", () => {
     await stateStore.save({
       ...emptyState("c1"),
       iocs: [
-        { id: "i1", type: "ip", value: "10.1.2.3", firstSeen: "2026-01-01T00:00:00Z" },     // internal → whitelisted
-        { id: "i2", type: "ip", value: "8.8.8.8", firstSeen: "2026-01-01T00:00:00Z" },       // public → kept
-        { id: "i3", type: "hash", value: "deadbeef", firstSeen: "2026-01-01T00:00:00Z" },    // known-good hash → whitelisted
+        { id: "i1", type: "ip", value: "10.1.2.3", firstSeen: "2026-01-01T00:00:00Z" }, // internal → whitelisted
+        { id: "i2", type: "ip", value: "8.8.8.8", firstSeen: "2026-01-01T00:00:00Z" }, // public → kept
+        { id: "i3", type: "hash", value: "deadbeef", firstSeen: "2026-01-01T00:00:00Z" }, // known-good hash → whitelisted
       ],
     });
-    await request(app).post("/ioc-whitelist").send({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
+    await request(app)
+      .post("/ioc-whitelist")
+      .send({ match: "cidr", pattern: "10.0.0.0/8", iocType: "ip", note: "internal" });
     await request(app).post("/ioc-whitelist").send({ match: "exact", pattern: "deadbeef", iocType: "hash" });
 
     const res = await request(app).post("/cases/c1/ioc-whitelist/apply");
@@ -113,7 +130,10 @@ describe("POST /cases/:id/ioc-whitelist/apply", () => {
     expect(res.body.added).toBe(2);
 
     const markers = await legit.load("c1");
-    const refs = markers.filter((m) => m.kind === "ioc").map((m) => m.ref).sort();
+    const refs = markers
+      .filter((m) => m.kind === "ioc")
+      .map((m) => m.ref)
+      .sort();
     expect(refs).toEqual(["10.1.2.3", "deadbeef"]);
     // 8.8.8.8 must NOT be marked legitimate
     expect(refs).not.toContain("8.8.8.8");
@@ -124,7 +144,10 @@ describe("POST /cases/:id/ioc-whitelist/apply", () => {
 
   it("adds nothing when the whitelist is empty", async () => {
     const { app, stateStore } = await harness();
-    await stateStore.save({ ...emptyState("c1"), iocs: [{ id: "i1", type: "ip", value: "10.1.2.3", firstSeen: "2026-01-01T00:00:00Z" }] });
+    await stateStore.save({
+      ...emptyState("c1"),
+      iocs: [{ id: "i1", type: "ip", value: "10.1.2.3", firstSeen: "2026-01-01T00:00:00Z" }],
+    });
     const res = await request(app).post("/cases/c1/ioc-whitelist/apply");
     expect(res.status).toBe(200);
     expect(res.body.added).toBe(0);

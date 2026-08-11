@@ -42,15 +42,33 @@ async function makeApp(opts: { providers?: EnrichmentProvider[]; playbook?: bool
 function triagedState(over: Partial<InvestigationState> = {}): InvestigationState {
   return {
     ...emptyState("c1"),
-    forensicTimeline: [{
-      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "d", severity: "High",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS-01", sources: ["EVTX"],
-    }],
-    findings: [{
-      id: "f1", title: "Beacon", description: "d", severity: "High", status: "confirmed",
-      relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-      firstSeen: "2026-06-01T00:00:00Z", lastUpdated: "2026-06-01T00:00:00Z",
-    }],
+    forensicTimeline: [
+      {
+        id: "e1",
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "d",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WS-01",
+        sources: ["EVTX"],
+      },
+    ],
+    findings: [
+      {
+        id: "f1",
+        title: "Beacon",
+        description: "d",
+        severity: "High",
+        status: "confirmed",
+        relatedIocs: [],
+        sourceScreenshots: [],
+        mitreTechniques: [],
+        firstSeen: "2026-06-01T00:00:00Z",
+        lastUpdated: "2026-06-01T00:00:00Z",
+      },
+    ],
     nextSteps: [{ id: "s1", priority: "high", action: "Pull Security.evtx", rationale: "R", pointer: "P" }],
     updatedAt: new Date().toISOString(),
     ...over,
@@ -66,17 +84,25 @@ async function ids(app: Express, caseId = "c1"): Promise<string[]> {
 describe("GET /cases/:id/coach/next-actions", () => {
   it("counts only the IOCs an enrichment run would actually query", async () => {
     const { app, stateStore } = await makeApp({ providers: [provider("virustotal", ["ip", "hash"])] });
-    await stateStore.save(triagedState({
-      iocs: [
-        // Already checked by the only enabled provider.
-        { id: "i1", type: "ip", value: "185.220.101.47", firstSeen: "2026-06-01T00:00:00Z", enrichedBy: ["virustotal"] },
-        // Never queryable: no provider supports these kinds, so they are not pending work.
-        { id: "i2", type: "file", value: "C:\\Users\\j\\invoice.xlsm", firstSeen: "2026-06-01T00:00:00Z" },
-        { id: "i3", type: "sid", value: "S-1-5-21-1", firstSeen: "2026-06-01T00:00:00Z" },
-        // Pending: enabled provider supports "hash" and hasn't checked it.
-        { id: "i4", type: "hash", value: "abc", firstSeen: "2026-06-01T00:00:00Z" },
-      ],
-    }));
+    await stateStore.save(
+      triagedState({
+        iocs: [
+          // Already checked by the only enabled provider.
+          {
+            id: "i1",
+            type: "ip",
+            value: "185.220.101.47",
+            firstSeen: "2026-06-01T00:00:00Z",
+            enrichedBy: ["virustotal"],
+          },
+          // Never queryable: no provider supports these kinds, so they are not pending work.
+          { id: "i2", type: "file", value: "C:\\Users\\j\\invoice.xlsm", firstSeen: "2026-06-01T00:00:00Z" },
+          { id: "i3", type: "sid", value: "S-1-5-21-1", firstSeen: "2026-06-01T00:00:00Z" },
+          // Pending: enabled provider supports "hash" and hasn't checked it.
+          { id: "i4", type: "hash", value: "abc", firstSeen: "2026-06-01T00:00:00Z" },
+        ],
+      }),
+    );
 
     const res = await request(app).get("/cases/c1/coach/next-action");
     expect(res.status).toBe(200);
@@ -86,20 +112,30 @@ describe("GET /cases/:id/coach/next-actions", () => {
 
   it("stops recommending enrichment once every provider has checked every IOC", async () => {
     const { app, stateStore } = await makeApp({ providers: [provider("virustotal", ["ip"])] });
-    await stateStore.save(triagedState({
-      iocs: [
-        { id: "i1", type: "ip", value: "1.1.1.1", firstSeen: "2026-06-01T00:00:00Z", enrichedBy: ["virustotal"] },
-        { id: "i2", type: "other", value: "GLOBALTECH\\admin-deploy", firstSeen: "2026-06-01T00:00:00Z" },
-      ],
-    }));
+    await stateStore.save(
+      triagedState({
+        iocs: [
+          {
+            id: "i1",
+            type: "ip",
+            value: "1.1.1.1",
+            firstSeen: "2026-06-01T00:00:00Z",
+            enrichedBy: ["virustotal"],
+          },
+          { id: "i2", type: "other", value: "GLOBALTECH\\admin-deploy", firstSeen: "2026-06-01T00:00:00Z" },
+        ],
+      }),
+    );
     expect(await ids(app)).not.toContain("enrich-iocs");
   });
 
   it("recommends nothing about enrichment when no providers are configured", async () => {
     const { app, stateStore } = await makeApp();
-    await stateStore.save(triagedState({
-      iocs: [{ id: "i1", type: "ip", value: "1.1.1.1", firstSeen: "2026-06-01T00:00:00Z" }],
-    }));
+    await stateStore.save(
+      triagedState({
+        iocs: [{ id: "i1", type: "ip", value: "1.1.1.1", firstSeen: "2026-06-01T00:00:00Z" }],
+      }),
+    );
     expect(await ids(app)).not.toContain("enrich-iocs");
   });
 
@@ -107,9 +143,11 @@ describe("GET /cases/:id/coach/next-actions", () => {
     // POST /cases/:id/enrich — the card's own CTA — answers 422 in this state, so offering the card
     // would send the analyst at a button that cannot run.
     const { app, stateStore } = await makeApp({ providers: [provider("virustotal", ["ip"], "external")] });
-    await stateStore.save(triagedState({
-      iocs: [{ id: "i1", type: "ip", value: "1.1.1.1", firstSeen: "2026-06-01T00:00:00Z" }],
-    }));
+    await stateStore.save(
+      triagedState({
+        iocs: [{ id: "i1", type: "ip", value: "1.1.1.1", firstSeen: "2026-06-01T00:00:00Z" }],
+      }),
+    );
     expect(await ids(app)).not.toContain("enrich-iocs");
     expect((await request(app).post("/cases/c1/enrich").send({})).status).toBe(422);
   });

@@ -1,14 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { parseCsv, parseCsvRecords, parseCsvRecordsFromLines, chunk, chunkToCsvText } from "../../src/analysis/csvImport.js";
+import {
+  parseCsv,
+  parseCsvRecords,
+  parseCsvRecordsFromLines,
+  chunk,
+  chunkToCsvText,
+} from "../../src/analysis/csvImport.js";
 
-async function* asLines(arr: string[]): AsyncGenerator<string> { for (const l of arr) yield l; }
-async function collect<T>(it: AsyncIterable<T>): Promise<T[]> { const out: T[] = []; for await (const x of it) out.push(x); return out; }
+async function* asLines(arr: string[]): AsyncGenerator<string> {
+  for (const l of arr) yield l;
+}
+async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const x of it) out.push(x);
+  return out;
+}
 
 describe("parseCsv", () => {
   it("parses a simple header + rows", () => {
     const { headers, rows } = parseCsv("Time,Process,PID\n09:00,a.exe,12\n09:01,b.exe,34\n");
     expect(headers).toEqual(["Time", "Process", "PID"]);
-    expect(rows).toEqual([["09:00", "a.exe", "12"], ["09:01", "b.exe", "34"]]);
+    expect(rows).toEqual([
+      ["09:00", "a.exe", "12"],
+      ["09:01", "b.exe", "34"],
+    ]);
   });
 
   it("handles quoted fields with embedded commas, newlines and escaped quotes", () => {
@@ -21,7 +36,10 @@ describe("parseCsv", () => {
 
   it("tolerates CRLF line endings and a missing trailing newline", () => {
     const { rows } = parseCsv("a,b\r\n1,2\r\n3,4");
-    expect(rows).toEqual([["1", "2"], ["3", "4"]]);
+    expect(rows).toEqual([
+      ["1", "2"],
+      ["3", "4"],
+    ]);
   });
 
   it("drops blank lines and returns no rows for a header-only file", () => {
@@ -42,7 +60,10 @@ describe("parseCsvRecords (streaming)", () => {
 
   it("skips fully-empty records so the first yield is the header", () => {
     const recs = [...parseCsvRecords("a,b\n\n1,2\n")];
-    expect(recs).toEqual([["a", "b"], ["1", "2"]]);
+    expect(recs).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
   });
 
   it("is lazy — does not parse the whole file to read the first record", () => {
@@ -56,22 +77,32 @@ describe("parseCsvRecords (streaming)", () => {
 
 describe("parseCsvRecordsFromLines (streaming from a line source)", () => {
   it("yields the same records as parseCsv for simple input", async () => {
-    const recs = await collect(parseCsvRecordsFromLines(asLines(["Time,Process,PID", "09:00,a.exe,12", "09:01,b.exe,34"])));
-    expect(recs).toEqual([["Time", "Process", "PID"], ["09:00", "a.exe", "12"], ["09:01", "b.exe", "34"]]);
+    const recs = await collect(
+      parseCsvRecordsFromLines(asLines(["Time,Process,PID", "09:00,a.exe,12", "09:01,b.exe,34"])),
+    );
+    expect(recs).toEqual([
+      ["Time", "Process", "PID"],
+      ["09:00", "a.exe", "12"],
+      ["09:01", "b.exe", "34"],
+    ]);
   });
 
   it("joins a quoted field with an embedded newline that spans physical lines", async () => {
     // The "Cmd" field on the second record contains a literal newline → it arrives as two lines
     // with an unbalanced quote count; the joiner must stitch them back into one record.
-    const lines = ['Name,Cmd', '"a.exe","line1', 'line2"', '"b.exe","ok"'];
+    const lines = ["Name,Cmd", '"a.exe","line1', 'line2"', '"b.exe","ok"'];
     const recs = await collect(parseCsvRecordsFromLines(asLines(lines)));
-    expect(recs).toEqual([["Name", "Cmd"], ["a.exe", "line1\nline2"], ["b.exe", "ok"]]);
+    expect(recs).toEqual([
+      ["Name", "Cmd"],
+      ["a.exe", "line1\nline2"],
+      ["b.exe", "ok"],
+    ]);
   });
 
   it("force-flushes when a record exceeds the byte cap (runaway unbalanced quote can't OOM)", async () => {
     // A stray opening quote that never closes would otherwise swallow every following line; the cap
     // bounds the buffer instead. We just assert it terminates and produces bounded records.
-    const lines = ['h1,h2', '"oops, never closed', 'aaaa', 'bbbb', 'cccc'];
+    const lines = ["h1,h2", '"oops, never closed', "aaaa", "bbbb", "cccc"];
     const recs = await collect(parseCsvRecordsFromLines(asLines(lines), { maxRecordChars: 12 }));
     expect(recs[0]).toEqual(["h1", "h2"]);
     expect(recs.length).toBeGreaterThan(1); // did not hang collecting one giant record
@@ -89,7 +120,13 @@ describe("chunk", () => {
 
 describe("chunkToCsvText", () => {
   it("re-serializes header + rows, quoting fields that need it", () => {
-    const text = chunkToCsvText(["Time", "Cmd"], [["09:00", "a,b"], ["09:01", 'say "hi"']]);
+    const text = chunkToCsvText(
+      ["Time", "Cmd"],
+      [
+        ["09:00", "a,b"],
+        ["09:01", 'say "hi"'],
+      ],
+    );
     expect(text).toBe('Time,Cmd\n09:00,"a,b"\n09:01,"say ""hi"""');
   });
   it("returns just the header when there are no rows", () => {
@@ -100,10 +137,15 @@ describe("chunkToCsvText", () => {
     // prompt and nothing opens it in Excel. Quoting it would corrupt what the model reads — "-" is
     // the standard null placeholder in Windows event logs, and offsets/flags/negatives all lead with
     // one of these characters.
-    const text = chunkToCsvText(["Offset", "User", "CommandLine", "Delta"], [
-      ["-0500", "-", "-ExecutionPolicy Bypass", "-42"],
-      ["+0200", "jdoe", "@echo off", "0"],
-    ]);
-    expect(text).toBe("Offset,User,CommandLine,Delta\n-0500,-,-ExecutionPolicy Bypass,-42\n+0200,jdoe,@echo off,0");
+    const text = chunkToCsvText(
+      ["Offset", "User", "CommandLine", "Delta"],
+      [
+        ["-0500", "-", "-ExecutionPolicy Bypass", "-42"],
+        ["+0200", "jdoe", "@echo off", "0"],
+      ],
+    );
+    expect(text).toBe(
+      "Offset,User,CommandLine,Delta\n-0500,-,-ExecutionPolicy Bypass,-42\n+0200,jdoe,@echo off,0",
+    );
   });
 });

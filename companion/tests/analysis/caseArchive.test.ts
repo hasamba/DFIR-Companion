@@ -20,7 +20,7 @@ function findEocd(buf: Buffer): number | null {
 describe("buildZip", () => {
   it("produces a buffer with a valid local file header signature", () => {
     const zip = buildZip([{ name: "hello.txt", data: Buffer.from("hello") }]);
-    expect(readLe32(zip, 0)).toBe(0x04034b50);  // local file header sig
+    expect(readLe32(zip, 0)).toBe(0x04034b50); // local file header sig
   });
 
   it("ends with a valid end-of-central-directory record", () => {
@@ -75,12 +75,16 @@ describe("archiveCase", () => {
         // the files map is keyed with forward-slash relative paths — normalize
         // before matching so the mock is path-separator agnostic.
         const normalized = absPath.replaceAll("\\", "/");
-        const rel = Object.keys(files).find(k => normalized.endsWith(k));
+        const rel = Object.keys(files).find((k) => normalized.endsWith(k));
         if (!rel) throw new Error(`file not found: ${absPath}`);
         return Buffer.from(files[rel], "utf8");
       },
-      writeFile: async (path: string, data: Buffer) => { written = { path, data }; },
-      get written() { return written; },
+      writeFile: async (path: string, data: Buffer) => {
+        written = { path, data };
+      },
+      get written() {
+        return written;
+      },
     };
   }
 
@@ -123,11 +127,11 @@ describe("archiveCase", () => {
     await archiveCase("/cases", "c1", fs);
     const { data } = fs.written!;
     expect(data).not.toBeNull();
-    expect(readLe32(data, 0)).toBe(0x04034b50);  // local file header sig
+    expect(readLe32(data, 0)).toBe(0x04034b50); // local file header sig
   });
 
   it("includes archive-manifest.json INSIDE the zip (in the manifest entry list)", async () => {
-    const fs = makeFs({ "case.json": '{}' });
+    const fs = makeFs({ "case.json": "{}" });
     await archiveCase("/cases", "c1", fs);
     // The archive-manifest.json is added to the zip but NOT to the manifest file list
     // (it's generated, not a pre-existing file)
@@ -138,7 +142,7 @@ describe("archiveCase", () => {
 
   it("totalBytes sums the original file sizes (not manifest)", async () => {
     const files = {
-      "case.json": "abc",   // 3 bytes
+      "case.json": "abc", // 3 bytes
       "state/x.json": "de", // 2 bytes
     };
     const fs = makeFs(files);
@@ -162,8 +166,8 @@ describe("archiveCase", () => {
       try {
         const result = await archiveCase(dir, "c1");
         const written = await readFile(result.archivePath);
-        expect(written.subarray(0, 2).toString("latin1")).toBe("PK");   // a real ZIP, not a stub
-        expect(findEocd(written)).not.toBeNull();                       // complete, not truncated
+        expect(written.subarray(0, 2).toString("latin1")).toBe("PK"); // a real ZIP, not a stub
+        expect(findEocd(written)).not.toBeNull(); // complete, not truncated
         expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -206,6 +210,8 @@ describe("zipArchiveFilename", () => {
   });
 
   it("strips filesystem-unsafe characters from the name", () => {
-    expect(zipArchiveFilename("INC-1", 'Acme: "Breach"/Q4')).toBe("INC-1 - Acme_ _Breach_/Q4 (no password).zip".replace(/[<>:"/\\|?*\x00-\x1f]/g, "_"));
+    expect(zipArchiveFilename("INC-1", 'Acme: "Breach"/Q4')).toBe(
+      "INC-1 - Acme_ _Breach_/Q4 (no password).zip".replace(/[<>:"/\\|?*\x00-\x1f]/g, "_"),
+    );
   });
 });

@@ -73,7 +73,11 @@ describe("NotebookStore", () => {
   });
 
   it("stores linkedEntityIds when provided", async () => {
-    const e = await store.add("c1", { type: "question", text: "related to event", linkedEntityIds: ["e1", "e2"] });
+    const e = await store.add("c1", {
+      type: "question",
+      text: "related to event",
+      linkedEntityIds: ["e1", "e2"],
+    });
     expect(e.linkedEntityIds).toEqual(["e1", "e2"]);
   });
 

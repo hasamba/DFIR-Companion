@@ -5,33 +5,42 @@
 // so the orchestrator can be unit-tested with no network.
 
 import type { FetchFn } from "../../enrichment/provider.js";
-import { MISP_PING_PATH, mispCauseCode, mispPingBodyMessage, mispPingStatusMessage, mispTransportMessage } from "./mispConnectivity.js";
+import {
+  MISP_PING_PATH,
+  mispCauseCode,
+  mispPingBodyMessage,
+  mispPingStatusMessage,
+  mispTransportMessage,
+} from "./mispConnectivity.js";
 
 export interface MispPushClientOptions {
-  baseUrl: string;     // MISP instance, e.g. https://misp.example.org
-  apiKey: string;      // MISP Auth Key (Authorization header)
+  baseUrl: string; // MISP instance, e.g. https://misp.example.org
+  apiKey: string; // MISP Auth Key (Authorization header)
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
 
 export interface MispEventCreate {
-  info: string;             // human-readable title (= case name)
-  threat_level_id: string;  // "1"=High, "2"=Medium, "3"=Low, "4"=Undefined
-  analysis: string;         // "0"=initial, "1"=ongoing, "2"=complete
-  distribution: string;     // "0"=org, "1"=community, "2"=connected, "3"=all
-  date?: string;            // YYYY-MM-DD
+  info: string; // human-readable title (= case name)
+  threat_level_id: string; // "1"=High, "2"=Medium, "3"=Low, "4"=Undefined
+  analysis: string; // "0"=initial, "1"=ongoing, "2"=complete
+  distribution: string; // "0"=org, "1"=community, "2"=connected, "3"=all
+  date?: string; // YYYY-MM-DD
 }
 
-export interface MispAttrRef { type: string; value: string }
+export interface MispAttrRef {
+  type: string;
+  value: string;
+}
 
 export interface MispAttrBody {
   type: string;
   value: string;
   category: string;
   to_ids: boolean;
-  comment?: string;      // free-text annotation, separate from `value`
-  first_seen?: string;   // ISO8601 — start of the attribute's validity/observation window
-  last_seen?: string;    // ISO8601 — end of the window (native MISP attribute fields)
+  comment?: string; // free-text annotation, separate from `value`
+  first_seen?: string; // ISO8601 — start of the attribute's validity/observation window
+  last_seen?: string; // ISO8601 — end of the window (native MISP attribute fields)
 }
 
 // Structural subset of MispPushClient used by the orchestrator — lets tests pass a mock.
@@ -48,7 +57,11 @@ class MispApiError extends Error {
   // `transportCause` keeps the ORIGINAL fetch rejection: undici's message is always the useless
   // "fetch failed" and the actionable reason (ECONNREFUSED, a cert error, DNS) lives on its
   // `cause` chain, which ping() needs to turn into a diagnosis.
-  constructor(message: string, readonly status: number, readonly transportCause?: unknown) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly transportCause?: unknown,
+  ) {
     super(message);
     this.name = "MispApiError";
   }
@@ -58,7 +71,11 @@ class MispApiError extends Error {
 // ({"value":["IP address has an invalid format."]}). Returns "" when there's nothing useful to say.
 function flattenMispErrors(errors: unknown): string {
   if (typeof errors === "string") return errors.trim();
-  if (Array.isArray(errors)) return errors.map((e) => flattenMispErrors(e)).filter(Boolean).join("; ");
+  if (Array.isArray(errors))
+    return errors
+      .map((e) => flattenMispErrors(e))
+      .filter(Boolean)
+      .join("; ");
   if (errors && typeof errors === "object") {
     return Object.entries(errors as Record<string, unknown>)
       .map(([field, msgs]) => {
@@ -77,22 +94,26 @@ function saveFailureReason(data: unknown): string {
   if (!data || typeof data !== "object") return "";
   const d = data as { saved?: unknown; errors?: unknown; message?: unknown; name?: unknown };
   if (d.saved !== false) return "";
-  return flattenMispErrors(d.errors)
-    || (typeof d.message === "string" && d.message.trim())
-    || (typeof d.name === "string" && d.name.trim())
-    || "MISP reported saved:false with no reason";
+  return (
+    flattenMispErrors(d.errors) ||
+    (typeof d.message === "string" && d.message.trim()) ||
+    (typeof d.name === "string" && d.name.trim()) ||
+    "MISP reported saved:false with no reason"
+  );
 }
 
 // MISP's own explanation for a rejected request, when the body carries one.
 async function readErrorDetail(res: Response): Promise<string> {
   try {
-    const body = await res.json() as { errors?: unknown; message?: unknown; name?: unknown };
-    return flattenMispErrors(body.errors)
-      || (typeof body.message === "string" && body.message.trim())
-      || (typeof body.name === "string" && body.name.trim())
-      || "";
+    const body = (await res.json()) as { errors?: unknown; message?: unknown; name?: unknown };
+    return (
+      flattenMispErrors(body.errors) ||
+      (typeof body.message === "string" && body.message.trim()) ||
+      (typeof body.name === "string" && body.name.trim()) ||
+      ""
+    );
   } catch {
-    return "";   // non-JSON body (an HTML error page) — nothing to quote
+    return ""; // non-JSON body (an HTML error page) — nothing to quote
   }
 }
 
@@ -129,7 +150,11 @@ export class MispPushClient implements MispPushClientLike {
       // operator nothing about which of down/DNS/TLS it was. ping() turns it into a full
       // diagnosis; elsewhere the code alone is enough to act on.
       const code = mispCauseCode(err);
-      throw new MispApiError(`MISP request failed: ${(err as Error).message}${code ? ` (${code})` : ""}`, 0, err);
+      throw new MispApiError(
+        `MISP request failed: ${(err as Error).message}${code ? ` (${code})` : ""}`,
+        0,
+        err,
+      );
     }
     if (res.status === 401) throw new MispApiError("MISP auth failed — check DFIR_MISP_KEY", res.status);
     if (res.status === 403) {
@@ -173,8 +198,8 @@ export class MispPushClient implements MispPushClientLike {
       if (!(err instanceof MispApiError)) throw new MispApiError(mispPingBodyMessage(url, err), 0, err);
       throw new MispApiError(
         err.status === 0
-          ? mispTransportMessage(err.transportCause, url)   // never reached the instance
-          : mispPingStatusMessage(err.status, url),         // answered, but not like a MISP would
+          ? mispTransportMessage(err.transportCause, url) // never reached the instance
+          : mispPingStatusMessage(err.status, url), // answered, but not like a MISP would
         err.status,
         err.transportCause,
       );
@@ -194,15 +219,19 @@ export class MispPushClient implements MispPushClientLike {
     // Annotated rather than asserted on the `{}` fallback: without a declared type the catch
     // branch widens the awaited value to `RestSearchBody | {}`, on which `.response` does not
     // exist. A non-auth failure means "no prior event", which is what the empty object says.
-    const body: RestSearchBody | unknown[] = await this.req<RestSearchBody>(
-      "POST", "/events/restSearch", { returnFormat: "json", tags: [tag], limit: 1 },
-    ).catch((err: unknown) => {
+    const body: RestSearchBody | unknown[] = await this.req<RestSearchBody>("POST", "/events/restSearch", {
+      returnFormat: "json",
+      tags: [tag],
+      limit: 1,
+    }).catch((err: unknown) => {
       if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
       return {};
     });
     // Tolerate either wrapping — restSearch returns {response:[{Event:{...}}]}, but be lenient in
     // case a MISP version hands back the flat array instead.
-    const hits = Array.isArray(body) ? body as Array<{ Event?: { id?: string }; id?: string }> : (body.response ?? []);
+    const hits = Array.isArray(body)
+      ? (body as Array<{ Event?: { id?: string }; id?: string }>)
+      : (body.response ?? []);
     const first = hits[0] as { Event?: { id?: string }; id?: string } | undefined;
     const id = first?.Event?.id ?? first?.id;
     return id ? String(id) : null;
@@ -237,7 +266,8 @@ export class MispPushClient implements MispPushClientLike {
   // Auth errors propagate; other failures fall back to empty (dedupe fails gracefully).
   async listAttributes(eventId: string): Promise<MispAttrRef[]> {
     const data = await this.req<{ Event?: { Attribute?: Array<{ type?: string; value?: string }> } }>(
-      "GET", `/events/view/${encodeURIComponent(eventId)}`,
+      "GET",
+      `/events/view/${encodeURIComponent(eventId)}`,
     ).catch((err: unknown) => {
       if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
       return { Event: { Attribute: [] as Array<{ type?: string; value?: string }> } };

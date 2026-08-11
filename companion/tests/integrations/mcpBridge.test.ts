@@ -15,7 +15,8 @@ const LIST = [
   "broken-mcp: npx broken - ✘ Failed to connect",
 ].join("\n");
 
-const runnerReturning = (stdout: string, extra = {}): ClaudeRunner =>
+const runnerReturning =
+  (stdout: string, extra = {}): ClaudeRunner =>
   async () => ({ code: 0, stdout, stderr: "", ...extra });
 
 describe("parseServerList", () => {
@@ -40,8 +41,9 @@ describe("parseServerList", () => {
   });
 
   it("keeps a name that contains spaces", () => {
-    expect(parseServerList("claude.ai Google Drive: https://x/mcp - ✔ Connected")[0].name)
-      .toBe("claude.ai Google Drive");
+    expect(parseServerList("claude.ai Google Drive: https://x/mcp - ✔ Connected")[0].name).toBe(
+      "claude.ai Google Drive",
+    );
   });
 
   it("ignores the health-check banner and blank lines", () => {
@@ -55,24 +57,29 @@ describe("parseServerList", () => {
 
 describe("listServers", () => {
   it("returns the parsed servers", async () => {
-    expect((await listServers({ runner: runnerReturning(LIST) })).map((s) => s.name))
-      .toContain("sift-mcp");
+    expect((await listServers({ runner: runnerReturning(LIST) })).map((s) => s.name)).toContain("sift-mcp");
   });
 
   it("explains that MCP works only through Claude Code when the CLI is missing", async () => {
-    const enoent = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }) as NodeJS.ErrnoException;
-    await expect(listServers({ runner: async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent }) }))
-      .rejects.toThrow(/installed and authenticated on THIS host.*configured in it/s);
+    const enoent = Object.assign(new Error("spawn claude ENOENT"), {
+      code: "ENOENT",
+    }) as NodeJS.ErrnoException;
+    await expect(
+      listServers({ runner: async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent }) }),
+    ).rejects.toThrow(/installed and authenticated on THIS host.*configured in it/s);
   });
 
   it("reports a hanging server as a timeout rather than an empty list", async () => {
-    await expect(listServers({ runner: async () => ({ code: null, stdout: "", stderr: "", timedOut: true }) }))
-      .rejects.toThrow(/timed out/);
+    await expect(
+      listServers({ runner: async () => ({ code: null, stdout: "", stderr: "", timedOut: true }) }),
+    ).rejects.toThrow(/timed out/);
   });
 
   // The failure path must not quote stdout — that is the output holding the tokens.
   it("does not echo command output when the CLI fails", async () => {
-    const err = await listServers({ runner: runnerReturning("", { code: 1 }) }).catch((e: Error) => e.message);
+    const err = await listServers({ runner: runnerReturning("", { code: 1 }) }).catch(
+      (e: Error) => e.message,
+    );
     expect(err).toMatch(/failed \(exit 1\)/);
     expect(err).not.toContain(TOKEN);
   });

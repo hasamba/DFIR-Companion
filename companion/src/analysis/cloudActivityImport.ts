@@ -100,8 +100,11 @@ function pickStr(row: Row, keys: string[]): string {
 // ───────────────────────────── GCP ─────────────────────────────
 
 function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
-  const pp = isObject(getCI(rec, "protoPayload")) ? (getCI(rec, "protoPayload") as Row)
-    : isObject(getCI(rec, "jsonPayload")) ? (getCI(rec, "jsonPayload") as Row) : null;
+  const pp = isObject(getCI(rec, "protoPayload"))
+    ? (getCI(rec, "protoPayload") as Row)
+    : isObject(getCI(rec, "jsonPayload"))
+      ? (getCI(rec, "jsonPayload") as Row)
+      : null;
   const method = pp ? str(getCI(pp, "methodName")) : "";
   const service = pp ? str(getCI(pp, "serviceName")) : "";
   if (!method) return null;
@@ -135,7 +138,9 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
 
   return {
     timestamp: normalizeTime(str(getCI(rec, "timestamp")) || str(getCI(rec, "receiveTimestamp"))),
-    description, severity, mitre,
+    description,
+    severity,
+    mitre,
     aggKey: `gcp|${method}|${principal}|${ip}|${statusCode}`.toLowerCase().slice(0, 400),
     sources: ["GCP Audit"],
   };
@@ -148,7 +153,9 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   if (!op) return null;
 
   const caller = pickStr(rec, ["caller", "Caller", "identity.claims.name"]);
-  const ip = cleanIp(pickStr(rec, ["httpRequest.clientIpAddress", "claims.ipaddr", "CallerIpAddress", "callerIpAddress"]));
+  const ip = cleanIp(
+    pickStr(rec, ["httpRequest.clientIpAddress", "claims.ipaddr", "CallerIpAddress", "callerIpAddress"]),
+  );
   const status = pickStr(rec, ["status.value", "status", "ActivityStatusValue", "resultType", "ResultType"]);
   const resource = pickStr(rec, ["resourceId", "ResourceId", "resourceGroupName", "ResourceGroup"]);
   const failed = /fail/i.test(status);
@@ -169,7 +176,9 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"])),
-    description, severity, mitre,
+    description,
+    severity,
+    mitre,
     aggKey: `azure|${op}|${caller}|${ip}|${status}`.toLowerCase().slice(0, 400),
     sources: ["Azure Activity"],
   };
@@ -181,14 +190,30 @@ function isGcp(rec: Row): boolean {
   return !!getCI(rec, "protoPayload") || /cloudaudit/i.test(str(getCI(rec, "logName")));
 }
 function isAzure(rec: Row): boolean {
-  const hasOp = !!(getCI(rec, "operationName") || getCI(rec, "OperationNameValue") || getCI(rec, "OperationName"));
-  return hasOp && !!(getCI(rec, "caller") || getCI(rec, "Caller") || getCI(rec, "resourceId") ||
-    getCI(rec, "ResourceId") || getCI(rec, "correlationId") || /azureactivity/i.test(str(getCI(rec, "Type"))));
+  const hasOp = !!(
+    getCI(rec, "operationName") ||
+    getCI(rec, "OperationNameValue") ||
+    getCI(rec, "OperationName")
+  );
+  return (
+    hasOp &&
+    !!(
+      getCI(rec, "caller") ||
+      getCI(rec, "Caller") ||
+      getCI(rec, "resourceId") ||
+      getCI(rec, "ResourceId") ||
+      getCI(rec, "correlationId") ||
+      /azureactivity/i.test(str(getCI(rec, "Type")))
+    )
+  );
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
-export function parseCloudActivity(text: string, opts: CloudActivityImportOptions = {}): CloudActivityParseResult {
+export function parseCloudActivity(
+  text: string,
+  opts: CloudActivityImportOptions = {},
+): CloudActivityParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const { records } = extractRecords(text);
   const total = records.length;
@@ -198,12 +223,18 @@ export function parseCloudActivity(text: string, opts: CloudActivityImportOption
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  let sawGcp = false, sawAzure = false;
+  let sawGcp = false,
+    sawAzure = false;
 
   for (const rec of records) {
     let m: MappedEvent | null = null;
-    if (isGcp(rec)) { m = mapGcp(rec, iocSink); if (m) sawGcp = true; }
-    else if (isAzure(rec)) { m = mapAzure(rec, iocSink); if (m) sawAzure = true; }
+    if (isGcp(rec)) {
+      m = mapGcp(rec, iocSink);
+      if (m) sawGcp = true;
+    } else if (isAzure(rec)) {
+      m = mapAzure(rec, iocSink);
+      if (m) sawAzure = true;
+    }
     if (m) mapped.push(m);
   }
   if (mapped.length === 0) {

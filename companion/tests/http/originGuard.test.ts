@@ -108,7 +108,9 @@ describe("isHostAllowed", () => {
   it("allows the host of a configured origin, so a deployment is named only once", () => {
     // Railway sets DFIR_ALLOWED_ORIGINS=https://demo.up.railway.app; requiring the operator to
     // repeat that host in a second variable would be a footgun with no security benefit.
-    expect(isHostAllowed("demo.up.railway.app", { allowedOrigins: ["https://demo.up.railway.app"] })).toBe(true);
+    expect(isHostAllowed("demo.up.railway.app", { allowedOrigins: ["https://demo.up.railway.app"] })).toBe(
+      true,
+    );
   });
 
   it("allows a configured suffix, for platforms that hand out a fresh hostname per session", () => {
@@ -154,7 +156,9 @@ describe("isRequestAllowed", () => {
   });
 
   it("refuses a rebound request that does carry an Origin", () => {
-    expect(isRequestAllowed({ origin: "http://evil.example:4773", host: "evil.example:4773" }, {}).ok).toBe(false);
+    expect(isRequestAllowed({ origin: "http://evil.example:4773", host: "evil.example:4773" }, {}).ok).toBe(
+      false,
+    );
   });
 
   it("allows the dashboard served from a LAN address, including its writes and its WebSocket", () => {
@@ -166,7 +170,9 @@ describe("isRequestAllowed", () => {
 
   it("allows a hosted deployment once its origin is configured", () => {
     const cfg: GuardConfig = { allowedOrigins: ["https://demo.up.railway.app"] };
-    expect(isRequestAllowed({ origin: "https://demo.up.railway.app", host: "demo.up.railway.app" }, cfg).ok).toBe(true);
+    expect(
+      isRequestAllowed({ origin: "https://demo.up.railway.app", host: "demo.up.railway.app" }, cfg).ok,
+    ).toBe(true);
   });
 
   it("allows the capture extension talking to loopback", () => {
@@ -205,7 +211,10 @@ describe("parseAllowedHosts", () => {
   });
 
   it("tolerates a pasted origin or trailing slash and keeps only the host", () => {
-    expect(parseAllowedHosts("https://a.example/, http://b.example:8443/")).toEqual(["a.example", "b.example"]);
+    expect(parseAllowedHosts("https://a.example/, http://b.example:8443/")).toEqual([
+      "a.example",
+      "b.example",
+    ]);
   });
 
   it("returns an empty list for undefined or blank config", () => {
@@ -218,7 +227,10 @@ describe("parseAllowedHostSuffixes", () => {
   it("splits a comma-separated list, lowercases, and gives every entry a leading dot", () => {
     // A missing dot is the whole footgun this parser exists to remove: "acme.com" as a raw suffix
     // would also match "evilacme.com".
-    expect(parseAllowedHostSuffixes("lab.example.com, .Other.COM")).toEqual([".lab.example.com", ".other.com"]);
+    expect(parseAllowedHostSuffixes("lab.example.com, .Other.COM")).toEqual([
+      ".lab.example.com",
+      ".other.com",
+    ]);
   });
 
   it("returns an empty list for undefined or blank config", () => {
@@ -272,7 +284,9 @@ describe("createOriginGuard", () => {
       .get("/tools/custom")
       .set("Origin", "chrome-extension://abcdefghijklmnopabcdefghijklmnop");
     expect(res.status).toBe(200);
-    expect(res.headers["access-control-allow-origin"]).toBe("chrome-extension://abcdefghijklmnopabcdefghijklmnop");
+    expect(res.headers["access-control-allow-origin"]).toBe(
+      "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+    );
     expect(res.headers.vary).toMatch(/Origin/);
   });
 

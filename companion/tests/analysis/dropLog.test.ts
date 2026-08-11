@@ -3,7 +3,11 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  formatDropLogLines, appendDropLog, buildSweepLogEntries, DROP_LOG_FILE, type DropLogEntry,
+  formatDropLogLines,
+  appendDropLog,
+  buildSweepLogEntries,
+  DROP_LOG_FILE,
+  type DropLogEntry,
 } from "../../src/analysis/dropLog.js";
 
 describe("formatDropLogLines", () => {
@@ -16,10 +20,18 @@ describe("formatDropLogLines", () => {
 
   it("formats a FAILED line with a reason", () => {
     const lines = formatDropLogLines(
-      [{ status: "FAILED", relpath: "weird.csv", reason: "unrecognized file type (not a supported import format)" }],
+      [
+        {
+          status: "FAILED",
+          relpath: "weird.csv",
+          reason: "unrecognized file type (not a supported import format)",
+        },
+      ],
       at,
     );
-    expect(lines).toEqual([`${at}  FAILED     weird.csv  — unrecognized file type (not a supported import format)`]);
+    expect(lines).toEqual([
+      `${at}  FAILED     weird.csv  — unrecognized file type (not a supported import format)`,
+    ]);
   });
 
   it("formats a PENDING line with a reason", () => {
@@ -53,11 +65,19 @@ describe("formatDropLogLines", () => {
 
   it("collapses embedded newlines in a multi-line reason to a single line", () => {
     const lines = formatDropLogLines(
-      [{ status: "FAILED", relpath: "y.csv", reason: "SyntaxError: Unexpected token\n    at parse (parser.js:12)\n    at import (importer.js:5)" }],
+      [
+        {
+          status: "FAILED",
+          relpath: "y.csv",
+          reason: "SyntaxError: Unexpected token\n    at parse (parser.js:12)\n    at import (importer.js:5)",
+        },
+      ],
       at,
     );
     expect(lines[0]).not.toContain("\n");
-    expect(lines[0]).toContain("SyntaxError: Unexpected token at parse (parser.js:12) at import (importer.js:5)");
+    expect(lines[0]).toContain(
+      "SyntaxError: Unexpected token at parse (parser.js:12) at import (importer.js:5)",
+    );
   });
 });
 
@@ -210,10 +230,18 @@ describe("SUBMITTED (asynchronous tools)", () => {
 
   it("formats a SUBMITTED line, aligned with the other statuses", () => {
     const lines = formatDropLogLines(
-      [{ status: "SUBMITTED", relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" }],
+      [
+        {
+          status: "SUBMITTED",
+          relpath: "evil.exe",
+          reason: "handed to socrates; verdicts land when analysis finishes",
+        },
+      ],
       at,
     );
-    expect(lines).toEqual([`${at}  SUBMITTED  evil.exe  — handed to socrates; verdicts land when analysis finishes`]);
+    expect(lines).toEqual([
+      `${at}  SUBMITTED  evil.exe  — handed to socrates; verdicts land when analysis finishes`,
+    ]);
   });
 
   it("logs an async handoff as SUBMITTED, never as IMPORTED", () => {
@@ -222,7 +250,9 @@ describe("SUBMITTED (asynchronous tools)", () => {
     const { entries } = buildSweepLogEntries(
       {
         imported: ["alerts.csv"],
-        submitted: [{ relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" }],
+        submitted: [
+          { relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" },
+        ],
         failed: [],
         pendingRawInputs: [],
       },
@@ -230,7 +260,11 @@ describe("SUBMITTED (asynchronous tools)", () => {
     );
     expect(entries).toEqual([
       { status: "IMPORTED", relpath: "alerts.csv" },
-      { status: "SUBMITTED", relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" },
+      {
+        status: "SUBMITTED",
+        relpath: "evil.exe",
+        reason: "handed to socrates; verdicts land when analysis finishes",
+      },
     ]);
   });
 

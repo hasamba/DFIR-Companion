@@ -16,7 +16,7 @@ export const TAGGER_AUTHOR_PREFIX = "tagger:";
 export type TaggerScope = "both" | "forensic" | "super";
 
 export interface TaggerSettings {
-  auto: boolean;    // run automatically after every import
+  auto: boolean; // run automatically after every import
   scope: TaggerScope;
 }
 
@@ -30,18 +30,18 @@ export function readTaggerSettings(env: NodeJS.ProcessEnv = process.env): Tagger
 
 export interface RunAndApplyParams {
   caseId: string;
-  events: readonly ForensicEvent[];          // the scoped set to EVALUATE (already selected by scope)
+  events: readonly ForensicEvent[]; // the scoped set to EVALUATE (already selected by scope)
   ruleset: CompiledRuleset;
   forensicTimeline: readonly ForensicEvent[]; // current forensic timeline (mapped for severity/MITRE)
   tagsStore: TagsStore;
-  mutateForensic: boolean;                    // false when scope === "super" (raw timeline only)
+  mutateForensic: boolean; // false when scope === "super" (raw timeline only)
 }
 
 export interface RunAndApplyResult {
   result: TaggerResult;
   forensicTimeline: ForensicEvent[]; // new array (or the same reference when nothing changed)
-  tagsWritten: number;               // tags actually created (idempotent adds don't recount duplicates)
-  mutatedCount: number;              // forensic events whose severity/MITRE changed
+  tagsWritten: number; // tags actually created (idempotent adds don't recount duplicates)
+  mutatedCount: number; // forensic events whose severity/MITRE changed
 }
 
 /**
@@ -68,7 +68,10 @@ export async function runAndApplyTagger(params: RunAndApplyParams): Promise<RunA
       for (const label of rule.tags) {
         await tagsStore.add(caseId, { targetType: "event", targetId: eventId, label, author });
         const key = `${eventId}\n${normalizeLabel(label)}`;
-        if (!seen.has(key)) { seen.add(key); tagsWritten++; }
+        if (!seen.has(key)) {
+          seen.add(key);
+          tagsWritten++;
+        }
       }
     }
   }

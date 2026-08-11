@@ -16,7 +16,12 @@
 
 import { readFile } from "node:fs/promises";
 import type { ForensicEvent } from "../src/analysis/stateTypes.js";
-import { collapseForPrompt, groupEnvOptions, maxPromptEvents, promptCandidates } from "../src/analysis/synthGroup.js";
+import {
+  collapseForPrompt,
+  groupEnvOptions,
+  maxPromptEvents,
+  promptCandidates,
+} from "../src/analysis/synthGroup.js";
 import { selectSynthesisEventsAnnotated } from "../src/analysis/synthSelect.js";
 
 const file = process.argv[2];
@@ -48,11 +53,15 @@ const pct = nonInfo.length ? Math.round((nonInfoRepresented / nonInfo.length) * 
 
 console.log(`forensic timeline events ....... ${all.length}`);
 console.log(`non-Info events ................ ${nonInfo.length}`);
-console.log(`eligible for the prompt ........ ${eligible.length}${eligible.length < all.length ? `  (${all.length - eligible.length} Info excluded)` : ""}`);
+console.log(
+  `eligible for the prompt ........ ${eligible.length}${eligible.length < all.length ? `  (${all.length - eligible.length} Info excluded)` : ""}`,
+);
 console.log(`distinct rows after grouping ... ${collapsed.length}`);
 console.log(`prompt cap ..................... ${cap}`);
 console.log(`rows selected .................. ${selection.events.length}`);
 console.log(`NON-INFO represented ........... ${nonInfoRepresented} / ${nonInfo.length} (${pct}%)`);
-console.log(missing === 0
-  ? "\nVERDICT: every graded event reaches the model — tier 3 (batched deep pass) is NOT needed for this case."
-  : `\nVERDICT: ${missing} graded event(s) never reach the model — raise DFIR_AI_SYNTH_MAX_EVENTS (needs ${collapsed.length}) or consider tier 3.`);
+console.log(
+  missing === 0
+    ? "\nVERDICT: every graded event reaches the model — tier 3 (batched deep pass) is NOT needed for this case."
+    : `\nVERDICT: ${missing} graded event(s) never reach the model — raise DFIR_AI_SYNTH_MAX_EVENTS (needs ${collapsed.length}) or consider tier 3.`,
+);

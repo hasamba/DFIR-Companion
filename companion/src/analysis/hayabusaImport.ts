@@ -54,22 +54,25 @@ export interface HayabusaImportOptions {
 export interface HayabusaParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;   // records found
-  kept: number;    // events emitted (after aggregation + cap)
+  total: number; // records found
+  kept: number; // events emitted (after aggregation + cap)
   dropped: number; // records not represented (below floor / capped)
-  groups: number;  // distinct event groups before the cap
-  format: string;  // "json" | "csv" | "empty"
+  groups: number; // distinct event groups before the cap
+  format: string; // "json" | "csv" | "empty"
   hostname: string;
 }
 
 // Hayabusa level vocabulary → our Severity. Hayabusa abbreviates in some versions
 // (crit/med) and spells out in others (critical/medium); accept both.
 const LEVEL: Record<string, Severity> = {
-  critical: "Critical", crit: "Critical",
+  critical: "Critical",
+  crit: "Critical",
   high: "High",
-  medium: "Medium", med: "Medium",
+  medium: "Medium",
+  med: "Medium",
   low: "Low",
-  informational: "Info", info: "Info",
+  informational: "Info",
+  info: "Info",
 };
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -143,7 +146,11 @@ const PATH_KEYS = ["TgtFile", "TargetFilename", "Path", "File", "FilePath", "Ima
 // Map one Hayabusa record (already field-merged: top-level fields + the parsed details map)
 // to a forensic event, pulling IOCs into the sink. Verdict-first; null only if there is no
 // usable rule/title at all.
-function mapRecord(rec: Row, details: Row, iocSink: Map<string, SiemIoc>): { mapped: MappedEvent; host: string } | null {
+function mapRecord(
+  rec: Row,
+  details: Row,
+  iocSink: Map<string, SiemIoc>,
+): { mapped: MappedEvent; host: string } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
   const eid = firstStr(rec, ["EventID", "Event ID", "EventId", "EID"]);
@@ -182,7 +189,10 @@ function mapRecord(rec: Row, details: Row, iocSink: Map<string, SiemIoc>): { map
   if (processName) addIoc(iocSink, "process", processName);
 
   // A compact subject from the first few rendered detail fields.
-  const subject = pairs.slice(0, 6).map(([k, v]) => `${k}=${oneLine(v).slice(0, 120)}`).join(" ");
+  const subject = pairs
+    .slice(0, 6)
+    .map(([k, v]) => `${k}=${oneLine(v).slice(0, 120)}`)
+    .join(" ");
   let description = `Hayabusa: ${ruleTitle || `Event ${eid}`}`;
   if (eid || channel) description += ` (EID ${eid || "?"}${channel ? ` ${channel}` : ""})`;
   if (subject) description += ` — ${subject}`;
@@ -190,10 +200,11 @@ function mapRecord(rec: Row, details: Row, iocSink: Map<string, SiemIoc>): { map
   description = description.slice(0, 600);
 
   const timestamp = hayaTime(firstStr(rec, ["Timestamp", "@timestamp", "datetime"]));
-  const aggKey = `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject}`
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey =
+    `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject}`
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
 
   return {
     host,
@@ -225,7 +236,10 @@ function extractHayabusaRecords(text: string): { records: { rec: Row; details: R
   if (trimmed[0] === "[" || trimmed[0] === "{") {
     const { records } = extractRecords(trimmed);
     const out = records.map((rec) => {
-      const details: Row = { ...detailObj(getCI(rec, "Details")), ...detailObj(getCI(rec, "ExtraFieldInfo") ?? getCI(rec, "Extra Field Info")) };
+      const details: Row = {
+        ...detailObj(getCI(rec, "Details")),
+        ...detailObj(getCI(rec, "ExtraFieldInfo") ?? getCI(rec, "Extra Field Info")),
+      };
       return { rec, details };
     });
     return { records: out, format: "json" };
@@ -236,7 +250,9 @@ function extractHayabusaRecords(text: string): { records: { rec: Row; details: R
   if (headers.length === 0) return { records: [], format: "empty" };
   const out = rows.map((cols) => {
     const rec: Row = {};
-    headers.forEach((h, i) => { rec[h.trim()] = cols[i] ?? ""; });
+    headers.forEach((h, i) => {
+      rec[h.trim()] = cols[i] ?? "";
+    });
     const detailsCell = firstStr(rec, ["Details"]);
     const extraCell = firstStr(rec, ["ExtraFieldInfo", "Extra Field Info"]);
     const details: Row = { ...parseDetailCell(detailsCell), ...parseDetailCell(extraCell) };

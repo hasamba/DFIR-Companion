@@ -6,7 +6,7 @@ describe("pushAuth", () => {
     it("is true for equal strings, false otherwise", () => {
       expect(timingSafeEqual("abc123", "abc123")).toBe(true);
       expect(timingSafeEqual("abc123", "abc124")).toBe(false);
-      expect(timingSafeEqual("abc", "abcd")).toBe(false);   // length mismatch
+      expect(timingSafeEqual("abc", "abcd")).toBe(false); // length mismatch
       expect(timingSafeEqual("", "")).toBe(true);
     });
   });

@@ -194,7 +194,8 @@ export class CustodyStore {
           prevHash,
         };
         const rel = this.caseRelative(caseId, record.artifactPath);
-        const stored: StoredCustodyRecord = rel === null ? record : { ...record, artifactPath: rel, relativeTo: "case-dir" };
+        const stored: StoredCustodyRecord =
+          rel === null ? record : { ...record, artifactPath: rel, relativeTo: "case-dir" };
         const line = JSON.stringify(stored);
         // Each line in the batch links to the one before it, exactly as separate appends would.
         prevHash = hashLine(line);
@@ -217,7 +218,10 @@ export class CustodyStore {
    * it actually carried out. An artifact that has since been deleted is skipped, since nothing about
    * it left. Call this AFTER the export succeeds, so a failed export never logs one that happened.
    */
-  async recordExport(caseId: string, opts: { exportedBy: string; destination: string }): Promise<CustodyRecord[]> {
+  async recordExport(
+    caseId: string,
+    opts: { exportedBy: string; destination: string },
+  ): Promise<CustodyRecord[]> {
     const existing = await this.load(caseId);
     const artifactPaths = [...new Set(existing.map((r) => r.artifactPath))];
     const exportedAt = new Date().toISOString();
@@ -231,9 +235,14 @@ export class CustodyStore {
         continue;
       }
       inputs.push({
-        artifactPath, sha256, caseId, event: "exported",
-        collectedBy: opts.exportedBy, collectedAt: exportedAt,
-        source: opts.destination, trigger: "export",
+        artifactPath,
+        sha256,
+        caseId,
+        event: "exported",
+        collectedBy: opts.exportedBy,
+        collectedAt: exportedAt,
+        source: opts.destination,
+        trigger: "export",
       });
     }
     return this.appendChained(caseId, inputs);
@@ -274,8 +283,12 @@ export class CustodyStore {
         throw new Error(`cannot record transfer of "${artifactPath}": ${(err as Error).message}`);
       }
       inputs.push({
-        artifactPath, sha256, caseId, event: "transferred",
-        collectedBy: opts.transferredBy, collectedAt: transferredAt,
+        artifactPath,
+        sha256,
+        caseId,
+        event: "transferred",
+        collectedBy: opts.transferredBy,
+        collectedAt: transferredAt,
         // `source` is the chain's free-text "where" field. For a collection that is where the
         // evidence came FROM; for a transfer it is where it went — same column, read either way
         // depending on the event beside it, which is how the report appendix renders it.
@@ -371,13 +384,23 @@ export class CustodyStore {
         actual = await hashFile(record.artifactPath);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          mismatches.push({ artifactPath: record.artifactPath, recordedSha256: record.sha256, actualSha256: null, reason: "missing" });
+          mismatches.push({
+            artifactPath: record.artifactPath,
+            recordedSha256: record.sha256,
+            actualSha256: null,
+            reason: "missing",
+          });
           continue;
         }
         throw err;
       }
       if (actual !== record.sha256) {
-        mismatches.push({ artifactPath: record.artifactPath, recordedSha256: record.sha256, actualSha256: actual, reason: "hash-mismatch" });
+        mismatches.push({
+          artifactPath: record.artifactPath,
+          recordedSha256: record.sha256,
+          actualSha256: actual,
+          reason: "hash-mismatch",
+        });
       }
     }
     return mismatches;

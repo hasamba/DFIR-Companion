@@ -15,19 +15,19 @@ import { ChildOutputCollector } from "../childOutput.js";
 // enabled when DFIR_VELOCIRAPTOR_API_CONFIG is set. Localhost + analyst-driven.
 
 export interface VelociraptorApiConfig {
-  apiConfigPath: string;   // path to the api_client config yaml (velociraptor config api_client …)
-  binary: string;          // velociraptor executable (PATH name or absolute path)
-  timeoutMs: number;       // per-query timeout
-  maxRows: number;         // cap rows returned to the caller
-  maxOutputBytes: number;  // hard cap on captured stdout for interactive queries (kill the child if exceeded)
-  collectMaxOutputBytes?: number;  // larger cap for bundle-hunt collection (rows + uploaded JSON); forensic data is big
-  guiUrl?: string;         // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
-  guiOrg?: string;         // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
-  uploadVql?: string;      // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
-  flowUploadVql?: string;  // optional override for the flow-uploads VQL (DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL); __CLIENT_ID__/__FLOW_ID__ placeholders
-  monitorVql?: string;     // optional override for the per-client client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_VQL); see DEFAULT_MONITOR_VQL
-  monitorAllVql?: string;  // optional override for the ALL-clients client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL); see DEFAULT_MONITOR_ALL_VQL
-  monitoredVql?: string;   // optional override for the "configured client-event artifacts" VQL (DFIR_VELOCIRAPTOR_MONITORED_VQL); see DEFAULT_MONITORED_VQL
+  apiConfigPath: string; // path to the api_client config yaml (velociraptor config api_client …)
+  binary: string; // velociraptor executable (PATH name or absolute path)
+  timeoutMs: number; // per-query timeout
+  maxRows: number; // cap rows returned to the caller
+  maxOutputBytes: number; // hard cap on captured stdout for interactive queries (kill the child if exceeded)
+  collectMaxOutputBytes?: number; // larger cap for bundle-hunt collection (rows + uploaded JSON); forensic data is big
+  guiUrl?: string; // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
+  guiOrg?: string; // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
+  uploadVql?: string; // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
+  flowUploadVql?: string; // optional override for the flow-uploads VQL (DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL); __CLIENT_ID__/__FLOW_ID__ placeholders
+  monitorVql?: string; // optional override for the per-client client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_VQL); see DEFAULT_MONITOR_VQL
+  monitorAllVql?: string; // optional override for the ALL-clients client-event read VQL (DFIR_VELOCIRAPTOR_MONITOR_ALL_VQL); see DEFAULT_MONITOR_ALL_VQL
+  monitoredVql?: string; // optional override for the "configured client-event artifacts" VQL (DFIR_VELOCIRAPTOR_MONITORED_VQL); see DEFAULT_MONITORED_VQL
 }
 
 export interface VqlRunResult {
@@ -37,7 +37,10 @@ export interface VqlRunResult {
 
 // A runner executes one or more VQL statements (each becomes a positional `query` arg) and returns
 // the combined rows. Real impl spawns the binary; tests inject a mock.
-export type VqlRunner = (statements: string[], opts: { timeoutMs: number; maxOutputBytes: number }) => Promise<VqlRunResult>;
+export type VqlRunner = (
+  statements: string[],
+  opts: { timeoutMs: number; maxOutputBytes: number },
+) => Promise<VqlRunResult>;
 
 // Parse `velociraptor query --format json` output. Primary form is a single JSON array of row
 // objects; we also accept JSONL (one row per line) and tolerate trailing noise. Non-JSON → [].
@@ -86,12 +89,15 @@ export const HUNT_EXPIRY_HOUR = 3600;
 export const HUNT_EXPIRY_DAY = 86_400;
 export const HUNT_EXPIRY_WEEK = 604_800;
 export const DEFAULT_HUNT_EXPIRY_SECONDS = HUNT_EXPIRY_HOUR;
-const MAX_HUNT_EXPIRY_SECONDS = 2_592_000;   // 30 days — a sane ceiling
+const MAX_HUNT_EXPIRY_SECONDS = 2_592_000; // 30 days — a sane ceiling
 const MIN_HUNT_EXPIRY_SECONDS = 60;
 
 // Resolve a requested hunt expiry (seconds) to a positive integer, falling back to the one-hour default
 // and clamping to [60s, 30d]. Non-finite / non-positive input → the fallback.
-export function normalizeHuntExpirySeconds(v: unknown, fallback: number = DEFAULT_HUNT_EXPIRY_SECONDS): number {
+export function normalizeHuntExpirySeconds(
+  v: unknown,
+  fallback: number = DEFAULT_HUNT_EXPIRY_SECONDS,
+): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(MAX_HUNT_EXPIRY_SECONDS, Math.max(MIN_HUNT_EXPIRY_SECONDS, Math.floor(n)));
@@ -108,7 +114,7 @@ export function splitVqlStatements(vql: string): string[] {
     .map((chunk) =>
       chunk
         .split(/\r?\n/)
-        .filter((line) => line.trim() && !line.trim().startsWith("--"))   // drop pure-comment lines
+        .filter((line) => line.trim() && !line.trim().startsWith("--")) // drop pure-comment lines
         .join("\n")
         .trim(),
     )
@@ -123,7 +129,9 @@ const TRANSIENT_SPAWN = new Set(["EPERM", "EBUSY", "EACCES", "ETXTBSY"]);
 
 // An Error tagged with the OS code of a spawn-LAUNCH failure (binary couldn't start). Only these are
 // retried; a query/exit failure (the binary ran, then errored) carries no spawnCode and is never retried.
-interface SpawnLaunchError extends Error { spawnCode?: string }
+interface SpawnLaunchError extends Error {
+  spawnCode?: string;
+}
 
 // Build the message for a spawn-launch failure. EPERM/EACCES on a binary that otherwise runs fine is
 // almost always the OS security stack denying CreateProcess — and when it's PERSISTENT for only SPECIFIC
@@ -135,11 +143,13 @@ interface SpawnLaunchError extends Error { spawnCode?: string }
 export function spawnErrorMessage(binary: string, err: { message?: string; code?: string }): string {
   const base = `Failed to run velociraptor binary "${binary}": ${err?.message ?? "spawn failed"}`;
   if (err?.code === "EPERM" || err?.code === "EACCES") {
-    return base +
+    return (
+      base +
       " — the OS denied launching it. If this happens only for SPECIFIC hunts (others deploy fine), your" +
       " antivirus/EDR is most likely blocking the velociraptor process because that hunt's VQL command line" +
       " contains credential-dump indicators (e.g. lsass.dmp). Fix: add an exclusion for the velociraptor" +
-      " binary in your AV/EDR, or copy the VQL and run that hunt from the Velociraptor GUI.";
+      " binary in your AV/EDR, or copy the VQL and run that hunt from the Velociraptor GUI."
+    );
   }
   return base;
 }
@@ -168,12 +178,18 @@ export async function retryTransientSpawn<T>(
 // 'error' event never fires — OR the async 'error' event) rejects with `spawnCode` set so the caller can
 // retry a transient one. A timeout / output-cap / non-zero exit rejects WITHOUT spawnCode (the binary
 // ran; retrying would just repeat the failure).
-function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts: { timeoutMs: number; maxOutputBytes: number }): Promise<VqlRunResult> {
+function spawnVqlOnce(
+  config: VelociraptorApiConfig,
+  statements: string[],
+  opts: { timeoutMs: number; maxOutputBytes: number },
+): Promise<VqlRunResult> {
   return new Promise<VqlRunResult>((resolve, reject) => {
     const args = ["--api_config", config.apiConfigPath, "query", "--format", "jsonl", ...statements];
     const launchFailed = (e: unknown): void => {
       const code = (e as NodeJS.ErrnoException).code || "ESPAWN";
-      const err = new Error(spawnErrorMessage(config.binary, { message: (e as Error).message, code })) as SpawnLaunchError;
+      const err = new Error(
+        spawnErrorMessage(config.binary, { message: (e as Error).message, code }),
+      ) as SpawnLaunchError;
       err.spawnCode = code;
       reject(err);
     };
@@ -181,10 +197,10 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
     try {
       child = spawn(config.binary, args, { windowsHide: true });
     } catch (e) {
-      launchFailed(e);   // Windows throws EPERM synchronously — not via the 'error' event
+      launchFailed(e); // Windows throws EPERM synchronously — not via the 'error' event
       return;
     }
-    const output = new ChildOutputCollector(opts.maxOutputBytes);   // real bytes, bounded stderr — see integrations/childOutput.ts
+    const output = new ChildOutputCollector(opts.maxOutputBytes); // real bytes, bounded stderr — see integrations/childOutput.ts
     let killed = false;
     const timer = setTimeout(() => {
       killed = true;
@@ -196,14 +212,18 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
         killed = true;
         child.kill();
         clearTimeout(timer);
-        reject(new Error(`Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT (collection) / DFIR_VELOCIRAPTOR_MAX_OUTPUT, or narrow the query`));
+        reject(
+          new Error(
+            `Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT (collection) / DFIR_VELOCIRAPTOR_MAX_OUTPUT, or narrow the query`,
+          ),
+        );
       }
     });
-    child.stderr.on("data", (d: Buffer) => output.pushStderr(d));   // bounded tail, never fatal
+    child.stderr.on("data", (d: Buffer) => output.pushStderr(d)); // bounded tail, never fatal
     child.on("error", (e) => {
       if (killed) return;
       clearTimeout(timer);
-      launchFailed(e);   // async spawn failure (e.g. ENOENT) — tagged so a transient one is retried
+      launchFailed(e); // async spawn failure (e.g. ENOENT) — tagged so a transient one is retried
     });
     child.on("close", (code) => {
       if (killed) return;
@@ -243,23 +263,26 @@ export function translateVelociraptorError(stderr: string): string {
 export function spawnVqlRunner(config: VelociraptorApiConfig): VqlRunner {
   const retries = Number(process.env.DFIR_VELOCIRAPTOR_SPAWN_RETRIES);
   return (statements, opts) => {
-    if (statements.length === 0) return Promise.reject(new Error("No runnable VQL found (the query is empty or only comments)"));
-    return retryTransientSpawn(() => spawnVqlOnce(config, statements, opts), { retries: Number.isFinite(retries) && retries >= 0 ? retries : undefined });
+    if (statements.length === 0)
+      return Promise.reject(new Error("No runnable VQL found (the query is empty or only comments)"));
+    return retryTransientSpawn(() => spawnVqlOnce(config, statements, opts), {
+      retries: Number.isFinite(retries) && retries >= 0 ? retries : undefined,
+    });
   };
 }
 
 export interface VelociraptorRunResult {
   rows: unknown[];
-  total: number;      // total rows the query returned
+  total: number; // total rows the query returned
   truncated: boolean; // true when total > maxRows and rows was capped
 }
 
 export interface HuntLaunchResult {
   huntId: string;
-  artifact: string;     // the Custom.* artifact the hunt collects
-  sources: string[];    // its source names (one per pivot statement)
-  state: string;        // RUNNING / PAUSED / …
-  guiUrl?: string;      // deep link to the hunt in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
+  artifact: string; // the Custom.* artifact the hunt collects
+  sources: string[]; // its source names (one per pivot statement)
+  state: string; // RUNNING / PAUSED / …
+  guiUrl?: string; // deep link to the hunt in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
 }
 
 // One parameter an artifact accepts, as reported by artifact_definitions(). `type` is lowercased
@@ -267,14 +290,14 @@ export interface HuntLaunchResult {
 // reason listClientArtifacts normalizes the artifact `type` in TypeScript rather than in VQL.
 export interface VeloArtifactParam {
   name: string;
-  type?: string;  // omitted (never "") when the server reports no type for this parameter
+  type?: string; // omitted (never "") when the server reports no type for this parameter
 }
 
 // One collectable CLIENT artifact definition on the server (for the bundle builder's picker).
 export interface VeloArtifactInfo {
-  name: string;         // e.g. "Windows.System.Pslist"
-  description: string;  // one-line summary
-  parameters: VeloArtifactParam[];   // [] when the server reports none (older versions / odd shapes)
+  name: string; // e.g. "Windows.System.Pslist"
+  description: string; // one-line summary
+  parameters: VeloArtifactParam[]; // [] when the server reports none (older versions / odd shapes)
 }
 
 // Tolerant parse of a definition's `parameters` column: anything that isn't an array of named objects
@@ -288,7 +311,9 @@ export function parseArtifactParams(raw: unknown): VeloArtifactParam[] {
     const r = p as { name?: unknown; type?: unknown };
     const name = String(r.name ?? "").trim();
     if (!name) continue;
-    const type = String(r.type ?? "").trim().toLowerCase();
+    const type = String(r.type ?? "")
+      .trim()
+      .toLowerCase();
     out.push(type ? { name, type } : { name });
   }
   return out;
@@ -307,29 +332,29 @@ export interface HuntTarget {
 // from HuntLaunchResult (the pivot flow, which builds one Custom.* artifact with named sources).
 export interface ArtifactHuntLaunchResult {
   huntId: string;
-  artifacts: string[];  // the artifacts the hunt collects (echoed back, validated)
-  state: string;        // RUNNING / PAUSED / …
+  artifacts: string[]; // the artifacts the hunt collects (echoed back, validated)
+  state: string; // RUNNING / PAUSED / …
   guiUrl?: string;
 }
 
 // Result of launching a single-endpoint COLLECTION (issue #70 — collect_client on ONE host).
 // Distinct from a hunt (which fans out across the fleet): the VQL runs only on the resolved client.
 export interface CollectLaunchResult {
-  clientId: string;     // the Velociraptor client the collection runs on
-  flowId: string;       // the launched flow id (F.…)
-  hostname: string;     // the host the analyst asked for (echoed back)
-  artifact: string;     // the Custom.* artifact built from the VQL
-  sources: string[];    // its source names (one per pivot statement) — to read results back via collectionResults
-  guiUrl?: string;      // deep link to the flow in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
+  clientId: string; // the Velociraptor client the collection runs on
+  flowId: string; // the launched flow id (F.…)
+  hostname: string; // the host the analyst asked for (echoed back)
+  artifact: string; // the Custom.* artifact built from the VQL
+  sources: string[]; // its source names (one per pivot statement) — to read results back via collectionResults
+  guiUrl?: string; // deep link to the flow in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
 }
 
 // A file UPLOADED by a hunt's collections (not a result row). Some artifacts (offline collectors,
 // THOR/Hayabusa wrappers like Generic.Scanner.ThorZIP) put their real triage data in an uploaded
 // JSON file rather than result rows — that JSON is what we ingest.
 export interface HuntUpload {
-  name: string;      // file name (basename of the upload path)
-  clientId: string;  // the endpoint it came from
-  content: string;   // the file's text content (read server-side)
+  name: string; // file name (basename of the upload path)
+  clientId: string; // the endpoint it came from
+  content: string; // the file's text content (read server-side)
 }
 
 // An artifact whose hunt_results fetch FAILED (oversized output, timeout, VQL error) — distinct from
@@ -354,7 +379,9 @@ const UPLOAD_EXT_PATTERN = "(?i)\\.(json|jsonl|ndjson|csv|txt|log)$";
 const DEFAULT_UPLOAD_VQL =
   "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
   "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" + UPLOAD_EXT_PATTERN + "' AND Size < __MAX_BYTES__ AND Content";
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" +
+  UPLOAD_EXT_PATTERN +
+  "' AND Size < __MAX_BYTES__ AND Content";
 
 // Default VQL to read ONE external flow's uploaded text-report files (content included) — the
 // flow-scoped analogue of DEFAULT_UPLOAD_VQL, needed because hunt_flows(hunt_id=) has no flow-scoped
@@ -362,7 +389,9 @@ const DEFAULT_UPLOAD_VQL =
 // version with DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL (keep both placeholders + the same column shape).
 const DEFAULT_FLOW_UPLOAD_VQL =
   "LET ups = SELECT '__CLIENT_ID__' AS ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id='__CLIENT_ID__', flow_id='__FLOW_ID__')\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" + UPLOAD_EXT_PATTERN + "' AND Size < __MAX_BYTES__ AND Content";
+  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" +
+  UPLOAD_EXT_PATTERN +
+  "' AND Size < __MAX_BYTES__ AND Content";
 
 // Default VQL to read a CLIENT_EVENT (monitoring) artifact's rows for one client over a time window
 // (#84). Velociraptor's `source()` plugin reads a client's monitoring result set when given an event
@@ -389,8 +418,7 @@ const DEFAULT_MONITOR_ALL_VQL =
 // across versions (the proto nests `artifacts.artifacts` + `artifacts.specs` + per-label
 // `label_events`, casing varies). Override with DFIR_VELOCIRAPTOR_MONITORED_VQL to return either the
 // raw state (one `State` column) or simple `{ artifact }` rows — both are handled.
-const DEFAULT_MONITORED_VQL =
-  "SELECT get_client_monitoring() AS State FROM scope()";
+const DEFAULT_MONITORED_VQL = "SELECT get_client_monitoring() AS State FROM scope()";
 
 // Pure: pull the configured client-event artifact NAMES out of whatever `listMonitoredArtifacts`' VQL
 // returned. Handles (a) the raw `GetClientMonitoringState()` proto (wrapped in `State`/`state`, or bare)
@@ -402,7 +430,10 @@ export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
   const seen = new Set<string>();
   const add = (v: unknown): void => {
     const name = String(v ?? "").trim();
-    if (name && ARTIFACT_RE.test(name) && !seen.has(name)) { seen.add(name); out.push(name); }
+    if (name && ARTIFACT_RE.test(name) && !seen.has(name)) {
+      seen.add(name);
+      out.push(name);
+    }
   };
   const ci = (o: Record<string, unknown>, ...keys: string[]): unknown => {
     for (const k of keys) if (o[k] != null) return o[k];
@@ -417,18 +448,23 @@ export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
       const names = ci(a, "artifacts", "Artifacts");
       if (Array.isArray(names)) names.forEach(add);
       const specs = ci(a, "specs", "Specs");
-      if (Array.isArray(specs)) for (const s of specs) if (s && typeof s === "object") add(ci(s as Record<string, unknown>, "artifact", "Artifact"));
+      if (Array.isArray(specs))
+        for (const s of specs)
+          if (s && typeof s === "object") add(ci(s as Record<string, unknown>, "artifact", "Artifact"));
     }
     const labels = ci(t, "label_events", "labelEvents", "LabelEvents");
     if (Array.isArray(labels)) labels.forEach(walkTable);
   };
   for (const row of rows) {
-    if (typeof row === "string") { add(row); continue; }
+    if (typeof row === "string") {
+      add(row);
+      continue;
+    }
     if (!row || typeof row !== "object") continue;
     const r = row as Record<string, unknown>;
-    const simple = ci(r, "artifact", "Name", "name");           // override `{ artifact }` shape
+    const simple = ci(r, "artifact", "Name", "name"); // override `{ artifact }` shape
     if (typeof simple === "string") add(simple);
-    walkTable(ci(r, "State", "state") ?? r);                    // raw GetClientMonitoringState() proto
+    walkTable(ci(r, "State", "state") ?? r); // raw GetClientMonitoringState() proto
   }
   return out;
 }
@@ -440,11 +476,11 @@ export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
 // spawn and short enough that a server-side artifact change shows up on its own within a minute.
 export const ARTIFACT_CATALOG_TTL_MS = 45_000;
 
-export const ALL_CLIENTS = "*";             // sentinel client id meaning "every enrolled client"
-const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
-const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
-const FLOW_RE = /^F\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$/;   // flow id; hunt-launched flows carry a ".H" suffix (F.<base>.H)
-const CLIENT_RE = /^C\.[A-Za-z0-9]+$/;      // valid Velociraptor client id
+export const ALL_CLIENTS = "*"; // sentinel client id meaning "every enrolled client"
+const ARTIFACT_RE = /^[A-Za-z0-9._]+$/; // valid Velociraptor artifact / source name
+const HUNT_RE = /^H\.[A-Za-z0-9]+$/; // valid hunt id
+const FLOW_RE = /^F\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$/; // flow id; hunt-launched flows carry a ".H" suffix (F.<base>.H)
+const CLIENT_RE = /^C\.[A-Za-z0-9]+$/; // valid Velociraptor client id
 
 // One enrolled endpoint as the Companion records it in the persisted client INVENTORY (issue #70).
 export interface VeloClientRecord {
@@ -458,10 +494,17 @@ export interface VeloClientRecord {
 // `client_id`/`ClientId`, and `os_info.hostname`/`os_info.Hostname` (+ `fqdn`/`Fqdn`) differ across
 // Velociraptor versions and depending on whether the VQL aliases the columns.
 export function normalizeClientRow(row: unknown): VeloClientRecord | null {
-  const r = (row ?? {}) as { client_id?: unknown; ClientId?: unknown; os_info?: Record<string, unknown>; OsInfo?: Record<string, unknown>; last_seen_at?: unknown; LastSeen?: unknown };
+  const r = (row ?? {}) as {
+    client_id?: unknown;
+    ClientId?: unknown;
+    os_info?: Record<string, unknown>;
+    OsInfo?: Record<string, unknown>;
+    last_seen_at?: unknown;
+    LastSeen?: unknown;
+  };
   const clientId = String(r.client_id ?? r.ClientId ?? "");
   if (!CLIENT_RE.test(clientId)) return null;
-  const os = (r.os_info ?? r.OsInfo ?? {});
+  const os = r.os_info ?? r.OsInfo ?? {};
   const hostname = String(os.hostname ?? os.Hostname ?? "").trim();
   const fqdn = String(os.fqdn ?? os.Fqdn ?? "").trim();
   const last = r.last_seen_at ?? r.LastSeen;
@@ -472,8 +515,13 @@ export function normalizeClientRow(row: unknown): VeloClientRecord | null {
 // mismatches that make a naive `clients(search='host:<fqdn>')` miss: the client enrolled with its
 // SHORT name while the case asset is an FQDN (or vice-versa). Exact full match (hostname or FQDN) wins
 // over a first-label match; case-insensitive. Returns undefined when nothing matches.
-export function matchClient(records: readonly VeloClientRecord[], host: string): VeloClientRecord | undefined {
-  const target = String(host || "").trim().toLowerCase();
+export function matchClient(
+  records: readonly VeloClientRecord[],
+  host: string,
+): VeloClientRecord | undefined {
+  const target = String(host || "")
+    .trim()
+    .toLowerCase();
   if (!target) return undefined;
   const targetShort = target.split(".")[0];
   const valid = (records ?? []).filter((r) => r && CLIENT_RE.test(r.clientId));
@@ -481,7 +529,8 @@ export function matchClient(records: readonly VeloClientRecord[], host: string):
   for (const r of valid) if (r.hostname.toLowerCase() === target || r.fqdn.toLowerCase() === target) return r;
   // Pass 2: first-label match either way ("WIN11" ↔ "WIN11.windomain.local").
   for (const r of valid) {
-    const hn = r.hostname.toLowerCase(), fq = r.fqdn.toLowerCase();
+    const hn = r.hostname.toLowerCase(),
+      fq = r.fqdn.toLowerCase();
     if (hn && (hn === targetShort || hn.split(".")[0] === targetShort)) return r;
     if (fq && (fq === targetShort || fq.split(".")[0] === targetShort)) return r;
   }
@@ -490,7 +539,12 @@ export function matchClient(records: readonly VeloClientRecord[], host: string):
 
 // Slug for a generated artifact name: alphanumerics from the description, capped.
 function slugify(s: string): string {
-  return String(s || "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "Pivot";
+  return (
+    String(s || "")
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48) || "Pivot"
+  );
 }
 // Sanitize free text (e.g. an event label with a `\\.\C:\…` path) for embedding in BOTH a YAML
 // double-quoted scalar and a VQL single-quoted string: collapse to one ASCII line and strip
@@ -508,14 +562,20 @@ function oneLine(s: string): string {
 function sanitizeLabels(labels?: string[]): string[] {
   if (!Array.isArray(labels)) return [];
   return labels
-    .map((l) => String(l ?? "").replace(/[^A-Za-z0-9._\- ]/g, "").trim())
+    .map((l) =>
+      String(l ?? "")
+        .replace(/[^A-Za-z0-9._\- ]/g, "")
+        .trim(),
+    )
     .filter(Boolean)
     .slice(0, 50);
 }
 
 // Constrain a free-text OS to the three Velociraptor client OS values, else undefined (no filter).
 function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
-  const v = String(os ?? "").trim().toLowerCase();
+  const v = String(os ?? "")
+    .trim()
+    .toLowerCase();
   return v === "windows" || v === "linux" || v === "darwin" ? v : undefined;
 }
 
@@ -524,10 +584,14 @@ function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
 // in parentheses at the call site so it stays a contained boolean expression.
 function sanitizeWhere(where?: string): string {
   if (!where) return "";
-  return String(where).replace(/[\r\n]+/g, " ").replace(/;+\s*$/, "").trim().slice(0, 1000);
+  return String(where)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/;+\s*$/, "")
+    .trim()
+    .slice(0, 1000);
 }
 
-const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;   // valid Velociraptor parameter name
+const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // valid Velociraptor parameter name
 
 // Build the hunt's `spec` clause from per-artifact parameter overrides so a heavy artifact runs with
 // fewer/narrower outputs at the source (e.g. `Windows.Hayabusa.Rules`=dict(RuleLevel='Critical, High, and Medium')). Only
@@ -548,9 +612,20 @@ function buildHuntSpec(names: string[], params?: Record<string, Record<string, s
 }
 
 // A CLIENT artifact (YAML) with one source per pivot statement — collected by the hunt on every endpoint.
-function buildHuntArtifact(name: string, statements: string[], sources: string[], description: string): string {
+function buildHuntArtifact(
+  name: string,
+  statements: string[],
+  sources: string[],
+  description: string,
+): string {
   const blocks = statements
-    .map((q, i) => `  - name: ${sources[i]}\n    query: |\n${q.split(/\r?\n/).map((l) => "      " + l).join("\n")}`)
+    .map(
+      (q, i) =>
+        `  - name: ${sources[i]}\n    query: |\n${q
+          .split(/\r?\n/)
+          .map((l) => "      " + l)
+          .join("\n")}`,
+    )
     .join("\n");
   return `name: ${name}\ndescription: "${oneLine(description)}"\ntype: CLIENT\nsources:\n${blocks}\n`;
 }
@@ -569,7 +644,11 @@ export class VelociraptorClient {
   ) {}
 
   private cap(rows: unknown[]): VelociraptorRunResult {
-    return { rows: rows.slice(0, this.config.maxRows), total: rows.length, truncated: rows.length > this.config.maxRows };
+    return {
+      rows: rows.slice(0, this.config.maxRows),
+      total: rows.length,
+      truncated: rows.length > this.config.maxRows,
+    };
   }
 
   // Deep link to a hunt in the Velociraptor GUI. The `?org_id=…` MUST come before the `#` fragment
@@ -602,7 +681,10 @@ export class VelociraptorClient {
 
   // Run a single VQL program verbatim (no statement-splitting) — for internal orchestration VQL.
   // maxOutputBytes can be raised for bulk collection reads (forensic data is large).
-  private async runRaw(program: string, maxOutputBytes: number = this.config.maxOutputBytes): Promise<unknown[]> {
+  private async runRaw(
+    program: string,
+    maxOutputBytes: number = this.config.maxOutputBytes,
+  ): Promise<unknown[]> {
     const { rows } = await this.runner([program], { timeoutMs: this.config.timeoutMs, maxOutputBytes });
     return rows;
   }
@@ -617,7 +699,8 @@ export class VelociraptorClient {
   // the dashboard hunt flow uses launchHunt() instead so queries run on the endpoints.
   async run(vql: string): Promise<VelociraptorRunResult> {
     const statements = splitVqlStatements(vql);
-    if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    if (statements.length === 0)
+      throw new Error("No runnable VQL found (the query is empty or only comments)");
     const { rows } = await this.runner(statements, {
       timeoutMs: this.config.timeoutMs,
       maxOutputBytes: this.config.maxOutputBytes,
@@ -628,9 +711,14 @@ export class VelociraptorClient {
   // Launch a HUNT that runs the pivot VQL on ALL enrolled clients: package the (comment-stripped)
   // pivots as a CLIENT artifact, then create the hunt. Returns the hunt id; results arrive
   // asynchronously as endpoints check in (read them with huntResults()).
-  async launchHunt(vql: string, description: string, opts: { expirySeconds?: number } = {}): Promise<HuntLaunchResult> {
+  async launchHunt(
+    vql: string,
+    description: string,
+    opts: { expirySeconds?: number } = {},
+  ): Promise<HuntLaunchResult> {
     const statements = splitVqlStatements(sanitizeVqlDurations(vql));
-    if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    if (statements.length === 0)
+      throw new Error("No runnable VQL found (the query is empty or only comments)");
     const name = "Custom.Hunt.Companion." + slugify(description);
     const sources = statements.map((_, i) => `Pivot${i}`);
     const yaml = buildHuntArtifact(name, statements, sources, description);
@@ -644,7 +732,10 @@ export class VelociraptorClient {
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not launch the hunt (no hunt id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)");
+    if (!HUNT_RE.test(huntId))
+      throw new Error(
+        "Velociraptor did not launch the hunt (no hunt id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)",
+      );
     return {
       huntId,
       artifact: name,
@@ -659,7 +750,10 @@ export class VelociraptorClient {
   // brittle live `clients(search=...)` lookup whose index tokenizes the hostname on dots. Metadata
   // only, so the per-query row cap is NOT applied (use the larger collect cap; a server can have many).
   async listClients(): Promise<VeloClientRecord[]> {
-    const rows = await this.runRaw("SELECT client_id, os_info, last_seen_at FROM clients() LIMIT 100000", this.collectCap());
+    const rows = await this.runRaw(
+      "SELECT client_id, os_info, last_seen_at FROM clients() LIMIT 100000",
+      this.collectCap(),
+    );
     const out: VeloClientRecord[] = [];
     for (const row of rows) {
       const rec = normalizeClientRow(row);
@@ -672,10 +766,16 @@ export class VelociraptorClient {
   // the host → client_id, so this just packages the pivot(s) as a CLIENT artifact and `collect_client`
   // on that one client. clientId is CLIENT_RE-validated, so it's safe inside the VQL literal. The
   // resulting flow is reviewed in the Velociraptor GUI via the returned deep link.
-  async collectOnClient(clientId: string, vql: string, description: string, hostname = ""): Promise<CollectLaunchResult> {
+  async collectOnClient(
+    clientId: string,
+    vql: string,
+    description: string,
+    hostname = "",
+  ): Promise<CollectLaunchResult> {
     if (!CLIENT_RE.test(clientId)) throw new Error(`invalid Velociraptor client id "${clientId}"`);
     const statements = splitVqlStatements(sanitizeVqlDurations(vql));
-    if (statements.length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    if (statements.length === 0)
+      throw new Error("No runnable VQL found (the query is empty or only comments)");
     const name = "Custom.Collect.Companion." + slugify(description);
     const sources = statements.map((_, i) => `Pivot${i}`);
     const yaml = buildHuntArtifact(name, statements, sources, description);
@@ -689,15 +789,31 @@ export class VelociraptorClient {
     // collect_client returns a null flow when the custom artifact can't COMPILE — almost always the VQL
     // references a non-existent Artifact.<Name>/plugin or has a syntax error (the simple cases launch
     // fine, so it's rarely a permissions issue). Point the analyst at the VQL first.
-    if (!FLOW_RE.test(flowId)) throw new Error("Velociraptor did not launch the collection (no flow id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)");
-    return { clientId, flowId, hostname: hostname || clientId, artifact: name, sources, guiUrl: this.collectGuiUrl(clientId, flowId) };
+    if (!FLOW_RE.test(flowId))
+      throw new Error(
+        "Velociraptor did not launch the collection (no flow id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)",
+      );
+    return {
+      clientId,
+      flowId,
+      hostname: hostname || clientId,
+      artifact: name,
+      sources,
+      guiUrl: this.collectGuiUrl(clientId, flowId),
+    };
   }
 
   // Read a single COLLECTION flow's result rows (issue #70) — the per-flow analog of huntResults(),
   // so the dashboard can show a collection's results inline (and auto-poll) instead of only deep-linking
   // to the GUI. Reads each named source via `source(client_id=, flow_id=, artifact='Custom.X/Pivot0')`
   // (same `artifact/source` addressing huntResults uses). All ids are validated to stay safe in the literals.
-  async collectionResults(clientId: string, flowId: string, artifact: string, sources: string[] = [], where?: string): Promise<VelociraptorRunResult> {
+  async collectionResults(
+    clientId: string,
+    flowId: string,
+    artifact: string,
+    sources: string[] = [],
+    where?: string,
+  ): Promise<VelociraptorRunResult> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
     if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
@@ -705,10 +821,11 @@ export class VelociraptorClient {
     const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
     const w = sanitizeWhere(where);
     const whereClause = w ? ` WHERE (${w})` : "";
-    const limit = this.config.maxRows + 1;   // +1 so cap() flags truncation
-    const program = refs.length > 1
-      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
-      : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
+    const limit = this.config.maxRows + 1; // +1 so cap() flags truncation
+    const program =
+      refs.length > 1
+        ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
+        : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
     return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
@@ -717,7 +834,10 @@ export class VelociraptorClient {
   // arg process"). `flows(client_id=)` carries the per-flow `state` (RUNNING/FINISHED/ERROR) and, when
   // it errored, the message in `status`. So the dashboard can show the real failure instead of polling
   // "no results yet" forever. Returns `{ state: "" }` when the flow isn't found.
-  async flowStatus(clientId: string, flowId: string): Promise<{ state: string; error: string; rows: number }> {
+  async flowStatus(
+    clientId: string,
+    flowId: string,
+  ): Promise<{ state: string; error: string; rows: number }> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
     const program = `SELECT state, status, total_collected_rows FROM flows(client_id='${clientId}') WHERE session_id='${flowId}' LIMIT 1`;
@@ -742,7 +862,10 @@ export class VelociraptorClient {
     if (!rows.length) return null;
     const r = (rows[0] ?? {}) as { state?: unknown; expires?: unknown };
     const expiresMicros = Number(r.expires);
-    const expires = Number.isFinite(expiresMicros) && expiresMicros > 0 ? new Date(expiresMicros / 1000).toISOString() : undefined;
+    const expires =
+      Number.isFinite(expiresMicros) && expiresMicros > 0
+        ? new Date(expiresMicros / 1000).toISOString()
+        : undefined;
     return { state: String(r.state ?? "").trim(), ...(expires ? { expires } : {}) };
   }
 
@@ -752,7 +875,9 @@ export class VelociraptorClient {
   // the hunt is unknown or carries no artifacts.
   async getHuntArtifacts(huntId: string): Promise<string[]> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
-    const rows = await this.runRaw(`SELECT start_request.artifacts AS artifacts FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`);
+    const rows = await this.runRaw(
+      `SELECT start_request.artifacts AS artifacts FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`,
+    );
     const raw = (rows[0] as { artifacts?: unknown })?.artifacts;
     return Array.isArray(raw) ? raw.map((a) => String(a).trim()).filter(Boolean) : [];
   }
@@ -765,11 +890,16 @@ export class VelociraptorClient {
   async getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
-    const rows = await this.runRaw(`SELECT artifacts_with_results, request.artifacts AS req_artifacts FROM flows(client_id='${clientId}') WHERE session_id='${flowId}' LIMIT 1`);
+    const rows = await this.runRaw(
+      `SELECT artifacts_with_results, request.artifacts AS req_artifacts FROM flows(client_id='${clientId}') WHERE session_id='${flowId}' LIMIT 1`,
+    );
     const r = (rows[0] ?? {}) as { artifacts_with_results?: unknown; req_artifacts?: unknown };
-    const src = Array.isArray(r.artifacts_with_results) && r.artifacts_with_results.length
-      ? r.artifacts_with_results
-      : (Array.isArray(r.req_artifacts) ? r.req_artifacts : []);
+    const src =
+      Array.isArray(r.artifacts_with_results) && r.artifacts_with_results.length
+        ? r.artifacts_with_results
+        : Array.isArray(r.req_artifacts)
+          ? r.req_artifacts
+          : [];
     const artifacts = src.map((a) => String(a).trim()).filter(Boolean);
     const rec = (await this.listClients()).find((c) => c.clientId === clientId);
     const hostname = rec?.hostname || rec?.fqdn || "";
@@ -782,15 +912,24 @@ export class VelociraptorClient {
   async collectFromHost(hostname: string, vql: string, description: string): Promise<CollectLaunchResult> {
     const host = String(hostname ?? "").trim();
     if (!host) throw new Error("a target hostname is required for a single-endpoint collection");
-    if (splitVqlStatements(sanitizeVqlDurations(vql)).length === 0) throw new Error("No runnable VQL found (the query is empty or only comments)");
+    if (splitVqlStatements(sanitizeVqlDurations(vql)).length === 0)
+      throw new Error("No runnable VQL found (the query is empty or only comments)");
     const rec = matchClient(await this.listClients(), host);
-    if (!rec) throw new Error(`No enrolled Velociraptor client matches host "${host}" — refresh the client list or run a fleet hunt instead`);
+    if (!rec)
+      throw new Error(
+        `No enrolled Velociraptor client matches host "${host}" — refresh the client list or run a fleet hunt instead`,
+      );
     return this.collectOnClient(rec.clientId, vql, description, host);
   }
 
   // Read a hunt's collected results across its sources (combining all endpoints' rows). Validates the
   // ids to keep them safe inside the VQL string literals.
-  async huntResults(huntId: string, artifact: string, sources: string[] = [], where?: string): Promise<VelociraptorRunResult> {
+  async huntResults(
+    huntId: string,
+    artifact: string,
+    sources: string[] = [],
+    where?: string,
+  ): Promise<VelociraptorRunResult> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
     // Named sources are addressed as `artifact/source` (the `source=` param does NOT match them).
@@ -802,9 +941,10 @@ export class VelociraptorClient {
     const w = sanitizeWhere(where);
     const whereClause = w ? ` WHERE (${w})` : "";
     const limit = this.config.maxRows + 1;
-    const program = refs.length > 1
-      ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
-      : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
+    const program =
+      refs.length > 1
+        ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
+        : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
     return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
@@ -819,7 +959,10 @@ export class VelociraptorClient {
   // edits an artifact on the server, but every call costs a subprocess spawn). Pass `{ refresh: true }`
   // to bypass + repopulate — used by the picker's "Browse server artifacts" button (the analyst's
   // "I just added an artifact, why isn't it listed?" flow) and by the run-bundle pre-flight.
-  async listClientArtifacts(type: "client" | "client_event" = "client", opts: { refresh?: boolean } = {}): Promise<VeloArtifactInfo[]> {
+  async listClientArtifacts(
+    type: "client" | "client_event" = "client",
+    opts: { refresh?: boolean } = {},
+  ): Promise<VeloArtifactInfo[]> {
     const wanted = type === "client_event" ? "client_event" : "client";
     const hit = this.artifactCache.get(wanted);
     if (opts.refresh || !hit || Date.now() - hit.at >= ARTIFACT_CATALOG_TTL_MS) {
@@ -827,7 +970,9 @@ export class VelociraptorClient {
       this.artifactCache.set(wanted, { at: Date.now(), rows });
       // Never serve a failure from cache: drop the entry (unless a newer fetch already replaced it) so
       // the next call retries instead of replaying the error for the rest of the TTL.
-      rows.catch(() => { if (this.artifactCache.get(wanted)?.rows === rows) this.artifactCache.delete(wanted); });
+      rows.catch(() => {
+        if (this.artifactCache.get(wanted)?.rows === rows) this.artifactCache.delete(wanted);
+      });
     }
     // Copy: callers must not be able to mutate the cached array shared with the next caller.
     return [...(await this.artifactCache.get(wanted)!.rows)];
@@ -844,17 +989,26 @@ export class VelociraptorClient {
   // time scope maps one collection window onto each artifact's own date parameters, and it can only do
   // that from the server's own parameter metadata.
   private async fetchClientArtifacts(wanted: string): Promise<VeloArtifactInfo[]> {
-    const rows = await this.runRaw("SELECT name, description, type, parameters FROM artifact_definitions() ORDER BY name", this.collectCap());
+    const rows = await this.runRaw(
+      "SELECT name, description, type, parameters FROM artifact_definitions() ORDER BY name",
+      this.collectCap(),
+    );
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {
       const r = row as { name?: unknown; description?: unknown; type?: unknown; parameters?: unknown };
       const name = String(r.name ?? "").trim();
       if (!name) continue;
-      const t = String(r.type ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+      const t = String(r.type ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_");
       if (t !== wanted) continue;
       out.push({
         name,
-        description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300),
+        description: String(r.description ?? "")
+          .replace(/[\r\n]+/g, " ")
+          .trim()
+          .slice(0, 300),
         parameters: parseArtifactParams(r.parameters),
       });
     }
@@ -865,7 +1019,12 @@ export class VelociraptorClient {
   // on a real server: the distinct artifact `type` strings + counts (so we can see the real casing),
   // the raw `get_client_monitoring()` rows (the configured monitoring table), and how many CLIENT_EVENT
   // artifacts matched. Each probe is independent — one failing doesn't abort the others. Localhost only.
-  async diagnostics(): Promise<{ artifactTypes: Record<string, number>; clientEventCount: number; monitoringState: unknown; errors: Record<string, string> }> {
+  async diagnostics(): Promise<{
+    artifactTypes: Record<string, number>;
+    clientEventCount: number;
+    monitoringState: unknown;
+    errors: Record<string, string>;
+  }> {
     const errors: Record<string, string> = {};
     const artifactTypes: Record<string, number> = {};
     let clientEventCount = 0;
@@ -876,10 +1035,15 @@ export class VelociraptorClient {
         artifactTypes[t || "(empty)"] = (artifactTypes[t || "(empty)"] ?? 0) + 1;
         if (t.toLowerCase().replace(/[\s-]+/g, "_") === "client_event") clientEventCount++;
       }
-    } catch (e) { errors.artifactTypes = (e as Error).message; }
+    } catch (e) {
+      errors.artifactTypes = (e as Error).message;
+    }
     let monitoringState: unknown = null;
-    try { monitoringState = await this.monitoringStateRaw(); }
-    catch (e) { errors.monitoringState = (e as Error).message; }
+    try {
+      monitoringState = await this.monitoringStateRaw();
+    } catch (e) {
+      errors.monitoringState = (e as Error).message;
+    }
     return { artifactTypes, clientEventCount, monitoringState, errors };
   }
 
@@ -887,7 +1051,10 @@ export class VelociraptorClient {
   // the monitoring-table read comes back empty, so the analyst's server log shows the actual proto
   // shape (and what to put in DFIR_VELOCIRAPTOR_MONITORED_VQL). Never throws past runRaw.
   async monitoringStateRaw(): Promise<unknown[]> {
-    const program = this.config.monitoredVql && this.config.monitoredVql.trim() ? this.config.monitoredVql : DEFAULT_MONITORED_VQL;
+    const program =
+      this.config.monitoredVql && this.config.monitoredVql.trim()
+        ? this.config.monitoredVql
+        : DEFAULT_MONITORED_VQL;
     return this.runRaw(program);
   }
 
@@ -898,22 +1065,36 @@ export class VelociraptorClient {
   // all interpolated values are validated/bounded so they're safe inside the VQL literals: the artifact
   // name matches its charset regex and the times are coerced to non-negative integers. Uses the larger
   // collect cap (monitoring bursts — especially fleet-wide — can be large) and the row cap.
-  async monitorResults(clientId: string, artifact: string, startEpoch: number, endEpoch: number): Promise<VelociraptorRunResult> {
+  async monitorResults(
+    clientId: string,
+    artifact: string,
+    startEpoch: number,
+    endEpoch: number,
+  ): Promise<VelociraptorRunResult> {
     const all = clientId === ALL_CLIENTS;
     if (!all && !CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
     const start = Math.max(0, Math.floor(Number(startEpoch) || 0));
     const end = Math.max(start, Math.floor(Number(endEpoch) || 0));
-    const limit = this.config.maxRows + 1;   // +1 so cap() flags truncation
+    const limit = this.config.maxRows + 1; // +1 so cap() flags truncation
     const template = all
-      ? (this.config.monitorAllVql && this.config.monitorAllVql.trim() ? this.config.monitorAllVql : DEFAULT_MONITOR_ALL_VQL)
-      : (this.config.monitorVql && this.config.monitorVql.trim() ? this.config.monitorVql : DEFAULT_MONITOR_VQL);
+      ? this.config.monitorAllVql && this.config.monitorAllVql.trim()
+        ? this.config.monitorAllVql
+        : DEFAULT_MONITOR_ALL_VQL
+      : this.config.monitorVql && this.config.monitorVql.trim()
+        ? this.config.monitorVql
+        : DEFAULT_MONITOR_VQL;
     const program = template
-      .split("__CLIENT_ID__").join(all ? "" : clientId)
-      .split("__ARTIFACT__").join(artifact)
-      .split("__START__").join(String(start))
-      .split("__END__").join(String(end))
-      .split("__LIMIT__").join(String(limit));
+      .split("__CLIENT_ID__")
+      .join(all ? "" : clientId)
+      .split("__ARTIFACT__")
+      .join(artifact)
+      .split("__START__")
+      .join(String(start))
+      .split("__END__")
+      .join(String(end))
+      .split("__LIMIT__")
+      .join(String(limit));
     return this.cap(await this.runRaw(program, this.collectCap()));
   }
 
@@ -935,14 +1116,18 @@ export class VelociraptorClient {
     artifacts: string[],
     description: string,
     target: HuntTarget = {},
-    opts: { timeoutSeconds?: number; params?: Record<string, Record<string, string>>; expirySeconds?: number } = {},
+    opts: {
+      timeoutSeconds?: number;
+      params?: Record<string, Record<string, string>>;
+      expirySeconds?: number;
+    } = {},
   ): Promise<ArtifactHuntLaunchResult> {
     const names = (artifacts ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
     if (names.length === 0) throw new Error("no artifacts to hunt");
     for (const n of names) {
       if (!ARTIFACT_RE.test(n)) throw new Error(`invalid artifact name: ${n}`);
     }
-    const expires = normalizeHuntExpirySeconds(opts.expirySeconds);   // relative; defaults to one hour
+    const expires = normalizeHuntExpirySeconds(opts.expirySeconds); // relative; defaults to one hour
     const clauses = [
       `description='${oneLine("DFIR Companion: " + description)}'`,
       `artifacts=[${names.map((n) => `'${n}'`).join(", ")}]`,
@@ -955,14 +1140,17 @@ export class VelociraptorClient {
     const os = normalizeOs(target.os);
     if (os) clauses.push(`os='${os}'`);
     const timeout = Number(opts.timeoutSeconds);
-    if (Number.isFinite(timeout) && timeout > 0) clauses.push(`timeout=${Math.floor(timeout)}`);   // collection timeout (s)
-    const spec = buildHuntSpec(names, opts.params);   // per-artifact parameters (e.g. Hayabusa RuleLevel/RuleStatus)
+    if (Number.isFinite(timeout) && timeout > 0) clauses.push(`timeout=${Math.floor(timeout)}`); // collection timeout (s)
+    const spec = buildHuntSpec(names, opts.params); // per-artifact parameters (e.g. Hayabusa RuleLevel/RuleStatus)
     if (spec) clauses.push(spec);
     const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
     const rows = await this.runRaw(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId)) throw new Error("Velociraptor did not return a hunt id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER");
+    if (!HUNT_RE.test(huntId))
+      throw new Error(
+        "Velociraptor did not return a hunt id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER",
+      );
     return {
       huntId,
       artifacts: names,
@@ -977,13 +1165,21 @@ export class VelociraptorClient {
   // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
   // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
   // checked in yet, and the artifact-map needs non-empty arrays).
-  async huntResultsByArtifact(huntId: string, artifacts: string[], filters?: Record<string, string>, sourcesByArtifact?: Record<string, string[]>): Promise<{ results: Record<string, unknown[]>; skipped: SkippedArtifact[] }> {
+  async huntResultsByArtifact(
+    huntId: string,
+    artifacts: string[],
+    filters?: Record<string, string>,
+    sourcesByArtifact?: Record<string, string[]>,
+  ): Promise<{ results: Record<string, unknown[]>; skipped: SkippedArtifact[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
     const skipped: SkippedArtifact[] = [];
     for (const artifact of artifacts ?? []) {
       const name = String(artifact ?? "").trim();
-      if (!ARTIFACT_RE.test(name)) { skipped.push({ name: name || artifact, error: "invalid artifact name" }); continue; }
+      if (!ARTIFACT_RE.test(name)) {
+        skipped.push({ name: name || artifact, error: "invalid artifact name" });
+        continue;
+      }
       try {
         // Named sources are addressed as `artifact/source`. Bundle artifacts use a default source (empty
         // sources is correct); a Companion-launched fleet-hunt artifact stores its rows under named sources
@@ -1008,7 +1204,8 @@ export class VelociraptorClient {
   async huntUploads(huntId: string): Promise<HuntUpload[]> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const cap = this.collectCap();
-    const template = this.config.uploadVql && this.config.uploadVql.trim() ? this.config.uploadVql : DEFAULT_UPLOAD_VQL;
+    const template =
+      this.config.uploadVql && this.config.uploadVql.trim() ? this.config.uploadVql : DEFAULT_UPLOAD_VQL;
     // __MAX_BYTES__ lets the VQL skip a single upload bigger than the cap at the source (so one huge
     // file doesn't blow the read); __HUNT_ID__ is the validated hunt id.
     const program = template.split("__HUNT_ID__").join(huntId).split("__MAX_BYTES__").join(String(cap));
@@ -1036,11 +1233,17 @@ export class VelociraptorClient {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
     const cap = this.collectCap();
-    const template = this.config.flowUploadVql && this.config.flowUploadVql.trim() ? this.config.flowUploadVql : DEFAULT_FLOW_UPLOAD_VQL;
+    const template =
+      this.config.flowUploadVql && this.config.flowUploadVql.trim()
+        ? this.config.flowUploadVql
+        : DEFAULT_FLOW_UPLOAD_VQL;
     const program = template
-      .split("__CLIENT_ID__").join(clientId)
-      .split("__FLOW_ID__").join(flowId)
-      .split("__MAX_BYTES__").join(String(cap));
+      .split("__CLIENT_ID__")
+      .join(clientId)
+      .split("__FLOW_ID__")
+      .join(flowId)
+      .split("__MAX_BYTES__")
+      .join(String(cap));
     const rows = await this.runRaw(program, cap);
     const out: HuntUpload[] = [];
     for (const row of rows) {
@@ -1079,7 +1282,9 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
 }
 
 // Construct a client when configured, else undefined (mirrors buildIrisClient()).
-export function buildVelociraptorClient(env: NodeJS.ProcessEnv = process.env): VelociraptorClient | undefined {
+export function buildVelociraptorClient(
+  env: NodeJS.ProcessEnv = process.env,
+): VelociraptorClient | undefined {
   const config = loadVelociraptorConfig(env);
   return config ? new VelociraptorClient(config) : undefined;
 }

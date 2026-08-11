@@ -22,7 +22,16 @@ function fakeConsole() {
   const log: string[] = [];
   const warn: string[] = [];
   const error: string[] = [];
-  return { fns: { log: (s: string) => log.push(s), warn: (s: string) => warn.push(s), error: (s: string) => error.push(s) }, log, warn, error };
+  return {
+    fns: {
+      log: (s: string) => log.push(s),
+      warn: (s: string) => warn.push(s),
+      error: (s: string) => error.push(s),
+    },
+    log,
+    warn,
+    error,
+  };
 }
 
 describe("log-level helpers", () => {
@@ -52,12 +61,12 @@ describe("log-level helpers", () => {
 
 describe("formatLogLine", () => {
   it("produces a stable, greppable line with a padded level", () => {
-    expect(formatLogLine("info", "hello", { at: "2026-06-11T00:00:00.000Z" }))
-      .toBe("2026-06-11T00:00:00.000Z INFO  hello");
+    expect(formatLogLine("info", "hello", { at: "2026-06-11T00:00:00.000Z" })).toBe(
+      "2026-06-11T00:00:00.000Z INFO  hello",
+    );
   });
   it("includes the caseId scope when present", () => {
-    expect(formatLogLine("debug", "x", { at: "T", caseId: "INC-1" }))
-      .toBe("T DEBUG [INC-1] x");
+    expect(formatLogLine("debug", "x", { at: "T", caseId: "INC-1" })).toBe("T DEBUG [INC-1] x");
   });
 });
 
@@ -67,7 +76,13 @@ describe("LoggerImpl routing", () => {
   it("drops messages below the threshold from console AND files", () => {
     const { writer, lines } = fakeWriter();
     const c = fakeConsole();
-    const log = new LoggerImpl({ level: "info", sessionLogPath: "/s.log", writer, consoleFns: c.fns, now: at });
+    const log = new LoggerImpl({
+      level: "info",
+      sessionLogPath: "/s.log",
+      writer,
+      consoleFns: c.fns,
+      now: at,
+    });
     log.debug("quiet");
     expect(lines).toHaveLength(0);
     expect(c.log).toHaveLength(0);
@@ -79,7 +94,13 @@ describe("LoggerImpl routing", () => {
   it("emits debug to console and files once the level is lowered", () => {
     const { writer, lines } = fakeWriter();
     const c = fakeConsole();
-    const log = new LoggerImpl({ level: "info", sessionLogPath: "/s.log", writer, consoleFns: c.fns, now: at });
+    const log = new LoggerImpl({
+      level: "info",
+      sessionLogPath: "/s.log",
+      writer,
+      consoleFns: c.fns,
+      now: at,
+    });
     log.debug("hidden");
     log.setLevel("debug");
     log.debug("shown");

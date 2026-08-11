@@ -33,7 +33,11 @@ import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
-import { toolForExtension, suggestedToolForExtension, type ToolConfig } from "../integrations/tools/toolConfig.js";
+import {
+  toolForExtension,
+  suggestedToolForExtension,
+  type ToolConfig,
+} from "../integrations/tools/toolConfig.js";
 import { summarizeUndoStack, applyUndo, applyRedo } from "../analysis/importUndo.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
@@ -57,10 +61,19 @@ import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobT
  */
 export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const {
-    store, options, recordImportFailure, recordAiError, getControl,
-     pushImportCheckpoint, moveDropFile,
-    dispatchImport, demoteForensicForCase, resynthesizeInBackground,
-    applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
+    store,
+    options,
+    recordImportFailure,
+    recordAiError,
+    getControl,
+    pushImportCheckpoint,
+    moveDropFile,
+    dispatchImport,
+    demoteForensicForCase,
+    resynthesizeInBackground,
+    applyWhitelistToCase,
+    applyNsrlToCase,
+    applyDeobfuscationToCase,
   } = ctx;
   registerImportResumeHandler(ctx);
   registerImportCaseGuard(app, store); // 404 an unknown case before ANY import route touches disk
@@ -68,8 +81,18 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, operationalMetrics: options.operationalMetrics, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
-      caseId, added,
+      {
+        taggerStore: options.taggerStore,
+        tagsStore: options.tagsStore,
+        stateStore: options.stateStore,
+        analysisRunStore: options.analysisRunStore,
+        operationalMetrics: options.operationalMetrics,
+        onTags: options.onTags,
+        onState: options.onState,
+        logLine: (m) => ctx.serverLogger.info(m),
+      },
+      caseId,
+      added,
     );
 
   // Poll interval reported by GET /drop-status. Reconstructed from the same env expression createApp
@@ -83,14 +106,19 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const builtin = toolForExtension(ext, configured);
     if (builtin) return builtin;
     const e = ext.toLowerCase();
-    const custom = ctx.customTools().find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
+    const custom = ctx
+      .customTools()
+      .find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
     return custom ? custom.id : null;
   };
   // #76: restore a full investigation state from an undo/redo checkpoint, verbatim — findings, IOCs,
   // timeline, MITRE, attacker path, the lot (no AI re-synthesis; the snapshot already holds the exact
   // prior conclusions). Keeps the case id, stamps updatedAt. Returns the saved state so the caller
   // can broadcast it (null when no state store is wired — routes gate on this).
-  async function restoreImportState(caseId: string, snapState: InvestigationState): Promise<InvestigationState | null> {
+  async function restoreImportState(
+    caseId: string,
+    snapState: InvestigationState,
+  ): Promise<InvestigationState | null> {
     if (!options.stateStore) return null;
     const next: InvestigationState = { ...snapState, caseId, updatedAt: new Date().toISOString() };
     await options.stateStore.save(next);
@@ -105,12 +133,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const caseId = req.params.id;
     if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
     if (!options.dropStatusStore) return res.status(501).json({ error: "drop folder not enabled" });
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     // Serialize against the poller's scanCaseDrops sweep for this case: both are writers of
     // dropPendingLogged, and this route awaits per-file tool runs, so an overlapping sweep could
     // read a stale dropPendingLogged snapshot and clobber this route's deletes / emit a stray
     // PENDING line for a file this route just resolved.
-    if (ctx.dropScanning().has(caseId)) return res.status(409).json({ error: "a drop sweep is in progress for this case, try again shortly" });
+    if (ctx.dropScanning().has(caseId))
+      return res.status(409).json({ error: "a drop sweep is in progress for this case, try again shortly" });
     ctx.dropScanning().add(caseId);
     try {
       const pending = (await options.dropStatusStore.load(caseId)).pendingRawInputs ?? [];
@@ -119,44 +149,90 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // ONE undo checkpoint for the whole "Run all" batch (the user clicked once): snapshot before, then
       // push a single checkpoint after if anything imported — so undo reverts the batch in one step.
       let before: InvestigationState | null = null;
-      if (options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
-      let ran = 0, failed = 0, skipped = 0;
+      if (options.stateStore) {
+        try {
+          before = await options.stateStore.load(caseId);
+        } catch {
+          /* keep null */
+        }
+      }
+      let ran = 0,
+        failed = 0,
+        skipped = 0;
       const stillPending: PendingRawInput[] = [];
       const resolvedEntries: DropLogEntry[] = [];
       for (const p of pending) {
         const toolId = resolveToolForExt(p.ext, configured);
-        if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
+        if (!toolId) {
+          skipped++;
+          stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) });
+          continue;
+        }
         try {
           // Dispatch by transport: a spawn tool runs and imports inline; SO-CRATES hands off to its
           // background poller and the verdicts land when the analysis finishes.
-          const async_ = await ctx.runDropToolAndIngest(caseId, toolId, join(dropDir, p.relpath), basename(p.relpath), p.relpath);
-          await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
+          const async_ = await ctx.runDropToolAndIngest(
+            caseId,
+            toolId,
+            join(dropDir, p.relpath),
+            basename(p.relpath),
+            p.relpath,
+          );
+          await moveDropFile(dropDir, p.relpath, true).catch(() => {
+            /* best-effort */
+          });
           // SO-CRATES has only been HANDED the file at this point; the job appends the outcome when
           // its analysis resolves, so do not claim an import that has not happened.
-          resolvedEntries.push(async_
-            ? { status: "SUBMITTED", relpath: p.relpath, reason: `handed to ${toolId}; verdicts land when analysis finishes` }
-            : { status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` });
+          resolvedEntries.push(
+            async_
+              ? {
+                  status: "SUBMITTED",
+                  relpath: p.relpath,
+                  reason: `handed to ${toolId}; verdicts land when analysis finishes`,
+                }
+              : { status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` },
+          );
           ran++;
         } catch (err) {
           failed++;
           recordImportFailure(caseId, "drop-tool", p.relpath, err);
-          resolvedEntries.push({ status: "FAILED", relpath: p.relpath, reason: (err as Error)?.message ?? String(err) });
-          await moveDropFile(dropDir, p.relpath, false).catch(() => { /* best-effort */ });
+          resolvedEntries.push({
+            status: "FAILED",
+            relpath: p.relpath,
+            reason: (err as Error)?.message ?? String(err),
+          });
+          await moveDropFile(dropDir, p.relpath, false).catch(() => {
+            /* best-effort */
+          });
         }
-        ctx.dropSeen().get(caseId)?.delete(p.relpath);   // moved out of the watched area — forget it
+        ctx.dropSeen().get(caseId)?.delete(p.relpath); // moved out of the watched area — forget it
         ctx.dropPendingLogged().get(caseId)?.delete(p.relpath); // resolved — no longer pending
       }
       if (before && ran > 0) {
         const s = await options.stateStore?.load(caseId).catch(() => null);
-        if (!s || s.forensicTimeline.length !== before.forensicTimeline.length || s.iocs.length !== before.iocs.length) {
-          await pushImportCheckpoint(caseId, before, `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`);
+        if (
+          !s ||
+          s.forensicTimeline.length !== before.forensicTimeline.length ||
+          s.iocs.length !== before.iocs.length
+        ) {
+          await pushImportCheckpoint(
+            caseId,
+            before,
+            `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`,
+          );
         }
       }
       if (resolvedEntries.length > 0) {
-        await appendDropLog(dropDir, formatDropLogLines(resolvedEntries, new Date().toISOString()))
-          .catch((e) => ctx.serverLogger.info(`[drop] log append failed: ${(e as Error).message}`));
+        await appendDropLog(dropDir, formatDropLogLines(resolvedEntries, new Date().toISOString())).catch(
+          (e) => ctx.serverLogger.info(`[drop] log append failed: ${(e as Error).message}`),
+        );
       }
-      await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported: [], failed: [], pendingRawInputs: stillPending });
+      await options.dropStatusStore.record(caseId, {
+        dropPath: dropDir,
+        imported: [],
+        failed: [],
+        pendingRawInputs: stillPending,
+      });
       options.onDropStatus?.(caseId);
       return res.status(200).json({ ok: true, ran, failed, skipped });
     } finally {
@@ -176,18 +252,30 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
+      return res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
     // (the case-existence 404 is mounted by registerImportCaseGuard, ahead of this handler)
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json
-      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : typeof req.body?.csv === "string"
+            ? req.body.csv
+            : "";
     const originalName = String(req.body?.filename ?? "import.dat");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
     const kind = ctx.resolveImportKind()(originalName, text);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)" });
+      return res
+        .status(400)
+        .json({
+          error:
+            "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)",
+        });
     }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -206,13 +294,18 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: 0, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: 0,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       // CSV/log imports are themselves an LLM call (free-form data the model must interpret), so
@@ -223,25 +316,74 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // leaves for the model, and stops the dashboard from claiming the AI is analyzing while off.
       const aiDependent = kind === "csv" || kind === "log";
       if (aiDependent && !(await getControl(caseId)).enabled) {
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)` });
-        return res.status(202).json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
+        options.onAiStatus?.(caseId, {
+          status: "idle",
+          at: new Date().toISOString(),
+          detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
+        });
+        return res
+          .status(202)
+          .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
       }
 
-      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, detail: IMPORT_JOB_PENDING_DETAIL, cancellable: aiDependent || kind === "evtxxml", resumable: true, maxRetries: 2, parameters: { kind, storedName, sequence: seq, importedAt, minSeverity: minSeverity ?? null, streaming: false } });
+      const job = options.jobManager?.register({
+        caseId,
+        kind: "import",
+        label: `${kind}: ${storedName}`,
+        detail: IMPORT_JOB_PENDING_DETAIL,
+        cancellable: aiDependent || kind === "evtxxml",
+        resumable: true,
+        maxRetries: 2,
+        parameters: {
+          kind,
+          storedName,
+          sequence: seq,
+          importedAt,
+          minSeverity: minSeverity ?? null,
+          streaming: false,
+        },
+      });
       await job?.durable;
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
-      const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) => options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}` }));
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress: tracking.onProgress, ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}), minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
+      const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) =>
+        options.onAiStatus?.(caseId, {
+          status: "analyzing",
+          phase: "extracting",
+          at: new Date().toISOString(),
+          detail: `${kind} import — ${done}/${total}`,
+        }),
+      );
+      const base = {
+        label: storedName,
+        idPrefix: `${seq}`,
+        importedAt,
+        onProgress: tracking.onProgress,
+        ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}),
+        minSeverity,
+        ...(job?.signal ? { signal: job.signal } : {}),
+      };
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
+      });
 
-      const run = async (): Promise<unknown> => { await tracking.start(); return dispatchImport(kind, caseId, text, base); };
+      const run = async (): Promise<unknown> => {
+        await tracking.start();
+        return dispatchImport(kind, caseId, text, base);
+      };
 
       // Snapshot the FULL investigation state BEFORE the import so the .then() below can (a) diff what
       // this import added (the "last import" banner) and (b) push a pre-import undo checkpoint (#76 —
       // the whole state, so undo also takes back the findings/MITRE the post-import synthesis derives).
       let stateBefore: InvestigationState | null = null;
       if (options.stateStore) {
-        try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ }
+        try {
+          stateBefore = await options.stateStore.load(caseId);
+        } catch {
+          /* keep null */
+        }
       }
 
       run()
@@ -259,7 +401,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               if (options.superTimelineStore) {
                 const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
                 const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) { try { superTimelineAddedCount = await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
+                if (added.length) {
+                  try {
+                    superTimelineAddedCount = await options.superTimelineStore.append(caseId, added);
+                    options.onSuperTimeline?.(caseId);
+                  } catch {
+                    /* non-fatal */
+                  }
+                  await autoTagImported(caseId, added);
+                }
               }
               // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
               // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
@@ -277,16 +427,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   const markers = await new FalsePositiveStore(store).load(caseId);
                   fpPropagation = matchFpPropagation(newEvents, markers);
                 }
-              } catch { /* non-fatal — propagation is a suggestion, never blocks the import */ }
+              } catch {
+                /* non-fatal — propagation is a suggestion, never blocks the import */
+              }
               if (options.importMetaStore) {
                 // Cap-hit truncation (#10 trigger b): consume the log-aggregation truncation the import
                 // method stashed (log path only; null otherwise) and stamp it onto import-meta.
                 const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, superTimelineAddedCount, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
+                await options.importMetaStore.record(caseId, {
+                  kind,
+                  file: storedName,
+                  diff: tDiff,
+                  superTimelineAddedCount,
+                  iocsDiff: iDiff,
+                  linesIn: text.split(/\r?\n/).length,
+                  path: aiDependent ? "ai" : "deterministic",
+                  fpPropagation,
+                  truncation,
+                });
                 options.onImportMeta?.(caseId);
               }
               void logActivity(options.activityLogStore, options.onActivity, caseId, {
-                category: "import", action: "import",
+                category: "import",
+                action: "import",
                 detail: `${kind} (${storedName}) — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)`,
               });
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
@@ -294,33 +457,72 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
                 await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);
               }
-            } catch { /* non-fatal */ }
+            } catch {
+              /* non-fatal */
+            }
           }
           await recordImportRun(ctx, {
-            caseId, kind, storedName, startedAt: importedAt, stateBefore, minSeverity,
+            caseId,
+            kind,
+            storedName,
+            startedAt: importedAt,
+            stateBefore,
+            minSeverity,
             path: aiDependent ? "ai" : "deterministic",
           });
           // Phase 2 (#35): auto-mark IOCs that match the global whitelist as legitimate BEFORE
           // re-synthesis, so known-good indicators drop out of the analysis. Best-effort.
           try {
             const wl = await applyWhitelistToCase(caseId);
-            if (wl.added > 0) ctx.serverLogger.info(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);
-          } catch { /* non-fatal */ }
+            if (wl.added > 0)
+              ctx.serverLogger.info(
+                `[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`,
+              );
+          } catch {
+            /* non-fatal */
+          }
           // #63: auto-mark imported events/IOCs whose hash is in the global NSRL set (known-good
           // files) legitimate, also BEFORE re-synthesis, to reduce false positives. Best-effort.
           try {
             const ns = await applyNsrlToCase(caseId);
-            if (ns.added > 0) ctx.serverLogger.info(`[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`);
-          } catch { /* non-fatal */ }
+            if (ns.added > 0)
+              ctx.serverLogger.info(
+                `[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`,
+              );
+          } catch {
+            /* non-fatal */
+          }
           // #97: decode obfuscated command lines (PowerShell -enc, base64) and extract hidden IOCs.
           try {
             const deob = await applyDeobfuscationToCase(caseId);
-            if (deob.deobfuscated > 0) ctx.serverLogger.info(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);
-          } catch { /* non-fatal */ }
+            if (deob.deobfuscated > 0)
+              ctx.serverLogger.info(
+                `[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`,
+              );
+          } catch {
+            /* non-fatal */
+          }
           if (job) await options.jobManager?.finish(job.jobId);
           resynthesizeInBackground(caseId);
         })
-        .catch(async (err) => { if ((err as Error).name === "AbortError") { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "import processing cancelled; stored evidence retained" }); return; } if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true }); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+        .catch(async (err) => {
+          if ((err as Error).name === "AbortError") {
+            options.onAiStatus?.(caseId, {
+              status: "idle",
+              at: new Date().toISOString(),
+              detail: "import processing cancelled; stored evidence retained",
+            });
+            return;
+          }
+          if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
+          recordImportFailure(caseId, kind, storedName, err);
+          recordAiError(caseId, "import", err);
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          });
+        });
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
@@ -339,11 +541,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
+      return res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
     // (the case-existence 404 is mounted by registerImportCaseGuard, ahead of this handler)
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!filePath) return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
+    if (!filePath)
+      return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
 
     // Detect the import kind from a bounded HEAD sample — never read the whole file just to sniff
@@ -356,7 +561,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         const buf = Buffer.alloc(1 << 18); // 256 KB — plenty for the header + many rows
         const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
         sample = buf.subarray(0, bytesRead).toString("utf8");
-      } finally { await fh.close(); }
+      } finally {
+        await fh.close();
+      }
     } catch (err) {
       return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
     }
@@ -365,7 +572,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = basename(filePath);
     const kind = ctx.resolveImportKind()(originalName, sample);
     if (kind === "unknown") {
-      return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import format" });
+      return res
+        .status(400)
+        .json({ error: "could not detect the file type — not recognized as any supported import format" });
     }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -382,7 +591,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       } catch (err) {
         const m = (err as Error).message;
         if (/Invalid string length/i.test(m)) {
-          return res.status(413).json({ error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file` });
+          return res
+            .status(413)
+            .json({
+              error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file`,
+            });
         }
         return res.status(400).json({ error: `cannot read file: ${m}` });
       }
@@ -403,33 +616,86 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       await copyFile(filePath, join(store.importsDir(caseId), storedName), fsConstants.COPYFILE_EXCL);
       const { size } = await stat(filePath);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: 0, bytes: size,
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: 0,
+        bytes: size,
       });
 
       const aiDependent = kind === "csv" || kind === "log";
       if (aiDependent && !(await getControl(caseId)).enabled) {
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)` });
-        return res.status(202).json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
+        options.onAiStatus?.(caseId, {
+          status: "idle",
+          at: new Date().toISOString(),
+          detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
+        });
+        return res
+          .status(202)
+          .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
       }
 
       const pipeline = options.pipeline;
-      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, detail: IMPORT_JOB_PENDING_DETAIL, cancellable: aiDependent || kind === "evtxxml", resumable: true, maxRetries: 2, parameters: { kind, storedName, sequence: seq, importedAt, minSeverity: minSeverity ?? null, streaming } });
+      const job = options.jobManager?.register({
+        caseId,
+        kind: "import",
+        label: `${kind}: ${storedName}`,
+        detail: IMPORT_JOB_PENDING_DETAIL,
+        cancellable: aiDependent || kind === "evtxxml",
+        resumable: true,
+        maxRetries: 2,
+        parameters: {
+          kind,
+          storedName,
+          sequence: seq,
+          importedAt,
+          minSeverity: minSeverity ?? null,
+          streaming,
+        },
+      });
       await job?.durable;
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
-      const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) => options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}` }));
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress: tracking.onProgress, ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}), minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind}) from path${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
+      const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) =>
+        options.onAiStatus?.(caseId, {
+          status: "analyzing",
+          phase: "extracting",
+          at: new Date().toISOString(),
+          detail: `${kind} import — ${done}/${total}`,
+        }),
+      );
+      const base = {
+        label: storedName,
+        idPrefix: `${seq}`,
+        importedAt,
+        onProgress: tracking.onProgress,
+        ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}),
+        minSeverity,
+        ...(job?.signal ? { signal: job.signal } : {}),
+      };
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing (${kind}) from path${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
+      });
 
       let stateBefore: InvestigationState | null = null;
       if (options.stateStore) {
-        try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ }
+        try {
+          stateBefore = await options.stateStore.load(caseId);
+        } catch {
+          /* keep null */
+        }
       }
 
       // Plaso streams from disk; everything else dispatches the in-memory string.
       const run = async (): Promise<unknown> => {
         await tracking.start();
-        return streaming ? pipeline.importPlasoFile(caseId, join(store.importsDir(caseId), storedName), base) : dispatchImport(kind, caseId, text, base);
+        return streaming
+          ? pipeline.importPlasoFile(caseId, join(store.importsDir(caseId), storedName), base)
+          : dispatchImport(kind, caseId, text, base);
       };
 
       run()
@@ -444,7 +710,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               if (options.superTimelineStore) {
                 const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
                 const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) { try { superTimelineAddedCount = await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
+                if (added.length) {
+                  try {
+                    superTimelineAddedCount = await options.superTimelineStore.append(caseId, added);
+                    options.onSuperTimeline?.(caseId);
+                  } catch {
+                    /* non-fatal */
+                  }
+                  await autoTagImported(caseId, added);
+                }
               }
               // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
               // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
@@ -462,39 +736,90 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   const markers = await new FalsePositiveStore(store).load(caseId);
                   fpPropagation = matchFpPropagation(newEvents, markers);
                 }
-              } catch { /* non-fatal — propagation is a suggestion, never blocks the import */ }
+              } catch {
+                /* non-fatal — propagation is a suggestion, never blocks the import */
+              }
               if (options.importMetaStore) {
                 // Cap-hit truncation (#10 trigger b): consume the log-aggregation truncation the import
                 // method stashed (log path only; null otherwise) and stamp it onto import-meta.
                 const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, superTimelineAddedCount, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
+                await options.importMetaStore.record(caseId, {
+                  kind,
+                  file: storedName,
+                  diff: tDiff,
+                  superTimelineAddedCount,
+                  iocsDiff: iDiff,
+                  linesIn: text.split(/\r?\n/).length,
+                  path: aiDependent ? "ai" : "deterministic",
+                  fpPropagation,
+                  truncation,
+                });
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
                 await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);
               }
-            } catch { /* non-fatal */ }
+            } catch {
+              /* non-fatal */
+            }
           }
           await recordImportRun(ctx, {
-            caseId, kind, storedName, startedAt: importedAt, stateBefore, minSeverity,
+            caseId,
+            kind,
+            storedName,
+            startedAt: importedAt,
+            stateBefore,
+            minSeverity,
             path: aiDependent ? "ai" : "deterministic",
           });
           try {
             const wl = await applyWhitelistToCase(caseId);
-            if (wl.added > 0) ctx.serverLogger.info(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);
-          } catch { /* non-fatal */ }
+            if (wl.added > 0)
+              ctx.serverLogger.info(
+                `[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`,
+              );
+          } catch {
+            /* non-fatal */
+          }
           try {
             const ns = await applyNsrlToCase(caseId);
-            if (ns.added > 0) ctx.serverLogger.info(`[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`);
-          } catch { /* non-fatal */ }
+            if (ns.added > 0)
+              ctx.serverLogger.info(
+                `[nsrl] ${caseId} auto-marked ${ns.added} imported known-good item(s) legitimate`,
+              );
+          } catch {
+            /* non-fatal */
+          }
           try {
             const deob = await applyDeobfuscationToCase(caseId);
-            if (deob.deobfuscated > 0) ctx.serverLogger.info(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);
-          } catch { /* non-fatal */ }
+            if (deob.deobfuscated > 0)
+              ctx.serverLogger.info(
+                `[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`,
+              );
+          } catch {
+            /* non-fatal */
+          }
           if (job) await options.jobManager?.finish(job.jobId);
           resynthesizeInBackground(caseId);
         })
-        .catch(async (err) => { if ((err as Error).name === "AbortError") { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "import processing cancelled; stored evidence retained" }); return; } if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true }); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+        .catch(async (err) => {
+          if ((err as Error).name === "AbortError") {
+            options.onAiStatus?.(caseId, {
+              status: "idle",
+              at: new Date().toISOString(),
+              detail: "import processing cancelled; stored evidence retained",
+            });
+            return;
+          }
+          if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
+          recordImportFailure(caseId, kind, storedName, err);
+          recordAiError(caseId, "import", err);
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          });
+        });
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
@@ -507,7 +832,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // timeline, then synthesize findings/TTPs/attacker-path. Evidence-first: the raw
   // CSV is persisted + audit-logged BEFORE any analysis; analysis runs in background.
   app.post("/cases/:id/import-csv", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for CSV analysis" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for CSV analysis" });
     const caseId = req.params.id;
     const csv = typeof req.body?.csv === "string" ? req.body.csv : "";
     const originalName = String(req.body?.filename ?? "import.csv");
@@ -519,31 +845,54 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
       // Evidence-first: persist the raw CSV + append the audit line before analysis.
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.csv");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.csv";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, csv);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: rows.length, bytes: Buffer.byteLength(csv, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: rows.length,
+        bytes: Buffer.byteLength(csv, "utf8"),
       });
 
       // Acknowledge immediately; the dashboard watches AI status + state over the WS.
       res.status(202).json({ accepted: true, file: storedName, rows: rows.length });
 
       // Background: extract events from the rows, then synthesize conclusions.
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${rows.length} CSV row(s)` });
-      void options.pipeline.analyzeCsv(caseId, csv, {
-        label: storedName,
-        idPrefix: `m${seq}`,
-        importedAt,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `CSV import — batch ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${rows.length} CSV row(s)`,
+      });
+      void options.pipeline
+        .analyzeCsv(caseId, csv, {
+          label: storedName,
+          idPrefix: `m${seq}`,
+          importedAt,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `CSV import — batch ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -555,7 +904,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Same evidence-first pattern as import-csv: persist + audit, then analyze in the
   // background (line-batched). The CSV path stays specialized for tabular exports.
   app.post("/cases/:id/import-log", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for log analysis" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for log analysis" });
     const caseId = req.params.id;
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const originalName = String(req.body?.filename ?? "import.log");
@@ -570,29 +920,52 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const seq = await store.nextImportSeq(caseId);
       // Preserve the original extension (.log / .txt / etc.) so it round-trips through
       // the evidence endpoint with the right content-type.
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.log");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.log";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: lines.length, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: lines.length,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({ accepted: true, file: storedName, lines: lines.length });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${lines.length} log line(s)` });
-      void options.pipeline.analyzeLog(caseId, text, {
-        label: storedName,
-        idPrefix: `l${seq}`,
-        importedAt,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `log import — batch ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${lines.length} log line(s)`,
+      });
+      void options.pipeline
+        .analyzeLog(caseId, text, {
+          label: storedName,
+          idPrefix: `l${seq}`,
+          importedAt,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `log import — batch ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -605,15 +978,28 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-thor", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const json = typeof req.body?.json === "string" ? req.body.json
-      : typeof req.body?.text === "string" ? req.body.text : "";
+    const json =
+      typeof req.body?.json === "string"
+        ? req.body.json
+        : typeof req.body?.text === "string"
+          ? req.body.text
+          : "";
     const originalName = String(req.body?.filename ?? "thor.json");
     if (!json.trim()) return res.status(400).json({ error: "json is required" });
 
     // Optional severity floor: keep only Alert / Alert+Warning / Alert+Warning+Notice.
-    const rawLevel = String(req.body?.minLevel ?? "").trim().toLowerCase();
-    const minLevel = rawLevel === "alert" ? "Alert" : rawLevel === "warning" ? "Warning" : rawLevel === "notice" ? "Notice" : undefined;
-    const thorOpts = minLevel ? { minLevel } as const : undefined;
+    const rawLevel = String(req.body?.minLevel ?? "")
+      .trim()
+      .toLowerCase();
+    const minLevel =
+      rawLevel === "alert"
+        ? "Alert"
+        : rawLevel === "warning"
+          ? "Warning"
+          : rawLevel === "notice"
+            ? "Notice"
+            : undefined;
+    const thorOpts = minLevel ? ({ minLevel } as const) : undefined;
 
     try {
       // Parse up-front: reject a file with no real findings (only info/lifecycle rows),
@@ -621,34 +1007,69 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const preview = parseThorReport(json, thorOpts);
       if (preview.total === 0) return res.status(400).json({ error: "no parseable THOR JSON lines" });
       if (preview.kept === 0) {
-        return res.status(400).json({ error: `THOR report has no findings after dropping ${preview.dropped} info/lifecycle row(s)` });
+        return res
+          .status(400)
+          .json({
+            error: `THOR report has no findings after dropping ${preview.dropped} info/lifecycle row(s)`,
+          });
       }
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thor.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thor.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, json);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(json, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(json, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, findings: preview.kept, dropped: preview.dropped, total: preview.total });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          findings: preview.kept,
+          dropped: preview.dropped,
+          total: preview.total,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} THOR finding(s)` });
-      void options.pipeline.importThor(caseId, json, {
-        label: storedName,
-        idPrefix: `t${seq}`,
-        importedAt,
-        thor: thorOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `THOR import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} THOR finding(s)`,
+      });
+      void options.pipeline
+        .importThor(caseId, json, {
+          label: storedName,
+          idPrefix: `t${seq}`,
+          importedAt,
+          thor: thorOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `THOR import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -663,51 +1084,109 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-siem", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const json = typeof req.body?.json === "string" ? req.body.json
-      : typeof req.body?.text === "string" ? req.body.text : "";
+    const json =
+      typeof req.body?.json === "string"
+        ? req.body.json
+        : typeof req.body?.text === "string"
+          ? req.body.text
+          : "";
     const originalName = String(req.body?.filename ?? "siem.json");
     if (!json.trim()) return res.status(400).json({ error: "json is required" });
 
     // Optional severity floor: keep only events at/above this level (e.g. "low" drops
     // Info noise like logoffs / process-terminated). Default = keep everything.
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const siemOpts: SiemImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
       const preview = parseSiemExport(json, siemOpts);
-      if (preview.total === 0) return res.status(400).json({ error: "no parseable SIEM/EDR records found (expected a JSON array, an Elastic/Kibana export, or NDJSON)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+      if (preview.total === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable SIEM/EDR records found (expected a JSON array, an Elastic/Kibana export, or NDJSON)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "siem.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "siem.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, json);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(json, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(json, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} SIEM event(s)` });
-      void options.pipeline.importSiem(caseId, json, {
-        label: storedName,
-        idPrefix: `s${seq}`,
-        importedAt,
-        siem: siemOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `SIEM import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} SIEM event(s)`,
+      });
+      void options.pipeline
+        .importSiem(caseId, json, {
+          label: storedName,
+          idPrefix: `s${seq}`,
+          importedAt,
+          siem: siemOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `SIEM import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -722,51 +1201,110 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-chainsaw", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const json = typeof req.body?.json === "string" ? req.body.json
-      : typeof req.body?.text === "string" ? req.body.text : "";
+    const json =
+      typeof req.body?.json === "string"
+        ? req.body.json
+        : typeof req.body?.text === "string"
+          ? req.body.text
+          : "";
     const originalName = String(req.body?.filename ?? "chainsaw.json");
     if (!json.trim()) return res.status(400).json({ error: "json is required" });
 
     // Optional severity floor (e.g. "medium" drops Low/Info detections and noise events).
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const chainsawOpts: ChainsawImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
       const preview = parseChainsawReport(json, chainsawOpts);
-      if (preview.total === 0) return res.status(400).json({ error: "no parseable Chainsaw/EVTX records found (expected Chainsaw hunt JSON, or evtx_dump JSON/NDJSON)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+      if (preview.total === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable Chainsaw/EVTX records found (expected Chainsaw hunt JSON, or evtx_dump JSON/NDJSON)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "chainsaw.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "chainsaw.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, json);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(json, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(json, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, detections: preview.detections, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          detections: preview.detections,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
       const kind = preview.detections > 0 ? "Chainsaw" : "EVTX";
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} ${kind} event(s)` });
-      void options.pipeline.importChainsaw(caseId, json, {
-        label: storedName,
-        idPrefix: `c${seq}`,
-        importedAt,
-        chainsaw: chainsawOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `${kind} import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} ${kind} event(s)`,
+      });
+      void options.pipeline
+        .importChainsaw(caseId, json, {
+          label: storedName,
+          idPrefix: `c${seq}`,
+          importedAt,
+          chainsaw: chainsawOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `${kind} import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -780,50 +1318,107 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-hayabusa", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "hayabusa.csv");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
     // Optional severity floor (e.g. "medium" drops Low/Info detections + noise).
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const hayabusaOpts: HayabusaImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
       const preview = parseHayabusaTimeline(text, hayabusaOpts);
-      if (preview.total === 0) return res.status(400).json({ error: "no parseable Hayabusa records found (expected a Hayabusa json-timeline or csv-timeline)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+      if (preview.total === 0)
+        return res
+          .status(400)
+          .json({
+            error: "no parseable Hayabusa records found (expected a Hayabusa json-timeline or csv-timeline)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "hayabusa.csv");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "hayabusa.csv";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Hayabusa event(s)` });
-      void options.pipeline.importHayabusa(caseId, text, {
-        label: storedName,
-        idPrefix: `h${seq}`,
-        importedAt,
-        hayabusa: hayabusaOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Hayabusa import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} Hayabusa event(s)`,
+      });
+      void options.pipeline
+        .importHayabusa(caseId, text, {
+          label: storedName,
+          idPrefix: `h${seq}`,
+          importedAt,
+          hayabusa: hayabusaOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Hayabusa import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -836,49 +1431,108 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-velociraptor", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "velociraptor.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
     // Optional severity floor (e.g. "low" drops the Info-level raw-collection rows).
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const vrOpts: VelociraptorImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseVelociraptorJson(text, vrOpts);
-      if (preview.total === 0) return res.status(400).json({ error: "no parseable Velociraptor rows found (expected JSON array, JSONL collection results, or an artifact map)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} row(s) parsed)` });
+      if (preview.total === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable Velociraptor rows found (expected JSON array, JSONL collection results, or an artifact map)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error: `no events after the '${rawLevel}' severity floor (${preview.total} row(s) parsed)`,
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "velociraptor.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "velociraptor.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, rows: preview.total, detections: preview.detections, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          rows: preview.total,
+          detections: preview.detections,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Velociraptor event(s)` });
-      void options.pipeline.importVelociraptor(caseId, text, {
-        label: storedName,
-        idPrefix: `v${seq}`,
-        importedAt,
-        velociraptor: vrOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Velociraptor import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} Velociraptor event(s)`,
+      });
+      void options.pipeline
+        .importVelociraptor(caseId, text, {
+          label: storedName,
+          idPrefix: `v${seq}`,
+          importedAt,
+          velociraptor: vrOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Velociraptor import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -891,49 +1545,108 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-network", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "eve.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
     // Optional severity floor on the alert events (e.g. "medium" drops Suricata priority-3).
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const netOpts: NetworkImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseNetworkLogs(text, netOpts);
-      if (preview.total === 0) return res.status(400).json({ error: "no parseable Suricata/Zeek records found (expected Suricata eve.json or Zeek JSON, as NDJSON or an array)" });
-      if (preview.kept === 0 && preview.iocs.length === 0) return res.status(400).json({ error: `no detections or IOCs found (${preview.total} record(s) parsed${rawLevel ? `, after the '${rawLevel}' floor` : ""})` });
+      if (preview.total === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable Suricata/Zeek records found (expected Suricata eve.json or Zeek JSON, as NDJSON or an array)",
+          });
+      if (preview.kept === 0 && preview.iocs.length === 0)
+        return res
+          .status(400)
+          .json({
+            error: `no detections or IOCs found (${preview.total} record(s) parsed${rawLevel ? `, after the '${rawLevel}' floor` : ""})`,
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "eve.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "eve.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, alerts: preview.alerts, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          alerts: preview.alerts,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} network detection(s)` });
-      void options.pipeline.importNetwork(caseId, text, {
-        label: storedName,
-        idPrefix: `n${seq}`,
-        importedAt,
-        network: netOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Network import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} network detection(s)`,
+      });
+      void options.pipeline
+        .importNetwork(caseId, text, {
+          label: storedName,
+          idPrefix: `n${seq}`,
+          importedAt,
+          network: netOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Network import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -946,48 +1659,104 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-kape", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.csv === "string"
+          ? req.body.csv
+          : "";
     const originalName = String(req.body?.filename ?? "kape.csv");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const kapeOpts: KapeImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseKapeCsv(text, kapeOpts);
-      if (preview.artifact === "unknown") return res.status(400).json({ error: "unrecognized CSV — expected a KAPE / Eric Zimmerman Tools export (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events from the ${preview.artifact} CSV (${preview.total} row(s) parsed)` });
+      if (preview.artifact === "unknown")
+        return res
+          .status(400)
+          .json({
+            error:
+              "unrecognized CSV — expected a KAPE / Eric Zimmerman Tools export (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({ error: `no events from the ${preview.artifact} CSV (${preview.total} row(s) parsed)` });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "kape.csv");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "kape.csv";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, artifact: preview.artifact, events: preview.kept, rows: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          artifact: preview.artifact,
+          events: preview.kept,
+          rows: preview.total,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} ${preview.artifact} event(s)` });
-      void options.pipeline.importKape(caseId, text, {
-        label: storedName,
-        idPrefix: `k${seq}`,
-        importedAt,
-        kape: kapeOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `${preview.artifact} import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} ${preview.artifact} event(s)`,
+      });
+      void options.pipeline
+        .importKape(caseId, text, {
+          label: storedName,
+          idPrefix: `k${seq}`,
+          importedAt,
+          kape: kapeOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `${preview.artifact} import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1000,51 +1769,112 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-cybertriage", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json
-      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : typeof req.body?.csv === "string"
+            ? req.body.csv
+            : "";
     const originalName = String(req.body?.filename ?? "cybertriage.jsonl");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
-    const fileTelemetry = req.body?.fileTelemetry === true || /^(1|true|yes)$/i.test(String(req.body?.fileTelemetry ?? ""));
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
+    const fileTelemetry =
+      req.body?.fileTelemetry === true || /^(1|true|yes)$/i.test(String(req.body?.fileTelemetry ?? ""));
     const ctOpts: CybertriageImportOptions | undefined =
-      minSeverity || fileTelemetry ? { ...(minSeverity ? { minSeverity } : {}), ...(fileTelemetry ? { fileTelemetry } : {}) } : undefined;
+      minSeverity || fileTelemetry
+        ? { ...(minSeverity ? { minSeverity } : {}), ...(fileTelemetry ? { fileTelemetry } : {}) }
+        : undefined;
 
     try {
       const preview = parseCybertriage(text, ctOpts);
-      if (preview.format === "empty") return res.status(400).json({ error: "unrecognized file — expected a Cyber Triage timeline export (JSONL / JSON array / CSV with event_timestamp,epoch_timestamp,timestamp_description columns)" });
-      if (preview.kept === 0 && preview.iocs.length === 0) return res.status(400).json({ error: `no events or IOCs from the Cyber Triage export (${preview.total} row(s) parsed)` });
+      if (preview.format === "empty")
+        return res
+          .status(400)
+          .json({
+            error:
+              "unrecognized file — expected a Cyber Triage timeline export (JSONL / JSON array / CSV with event_timestamp,epoch_timestamp,timestamp_description columns)",
+          });
+      if (preview.kept === 0 && preview.iocs.length === 0)
+        return res
+          .status(400)
+          .json({ error: `no events or IOCs from the Cyber Triage export (${preview.total} row(s) parsed)` });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cybertriage.jsonl");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cybertriage.jsonl";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, rows: preview.total, notable: preview.notable, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          rows: preview.total,
+          notable: preview.notable,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Cyber Triage event(s)` });
-      void options.pipeline.importCybertriage(caseId, text, {
-        label: storedName,
-        idPrefix: `ct${seq}`,
-        importedAt,
-        cybertriage: ctOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Cyber Triage import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} Cyber Triage event(s)`,
+      });
+      void options.pipeline
+        .importCybertriage(caseId, text, {
+          label: storedName,
+          idPrefix: `ct${seq}`,
+          importedAt,
+          cybertriage: ctOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Cyber Triage import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1057,48 +1887,106 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-m365", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "m365.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const m365Opts: M365ImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseM365Audit(text, m365Opts);
-      if (preview.total === 0 || preview.format === "empty") return res.status(400).json({ error: "no parseable M365/Entra records found (expected a Unified Audit Log export — CSV or JSON — or Entra sign-in/audit JSON)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)` });
+      if (preview.total === 0 || preview.format === "empty")
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable M365/Entra records found (expected a Unified Audit Log export — CSV or JSON — or Entra sign-in/audit JSON)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "m365.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "m365.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} M365/Entra event(s)` });
-      void options.pipeline.importM365(caseId, text, {
-        label: storedName,
-        idPrefix: `m${seq}`,
-        importedAt,
-        m365: m365Opts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `M365 import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} M365/Entra event(s)`,
+      });
+      void options.pipeline
+        .importM365(caseId, text, {
+          label: storedName,
+          idPrefix: `m${seq}`,
+          importedAt,
+          m365: m365Opts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `M365 import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1111,47 +1999,100 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-aws", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "cloudtrail.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const awsOpts: AwsImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseCloudTrail(text, awsOpts);
-      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable CloudTrail records found (expected a { Records: [...] } envelope, NDJSON, or a JSON array of CloudTrail events)" });
+      if (preview.format === "empty" && preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable CloudTrail records found (expected a { Records: [...] } envelope, NDJSON, or a JSON array of CloudTrail events)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloudtrail.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloudtrail.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} CloudTrail event(s)` });
-      void options.pipeline.importAws(caseId, text, {
-        label: storedName,
-        idPrefix: `a${seq}`,
-        importedAt,
-        aws: awsOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `CloudTrail import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} CloudTrail event(s)`,
+      });
+      void options.pipeline
+        .importAws(caseId, text, {
+          label: storedName,
+          idPrefix: `a${seq}`,
+          importedAt,
+          aws: awsOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `CloudTrail import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1164,47 +2105,100 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-cloud-activity", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "cloud-activity.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const cloudOpts: CloudActivityImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseCloudActivity(text, cloudOpts);
-      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable GCP/Azure records found (expected GCP Cloud Audit Logs or an Azure Activity Log export, as JSON array or NDJSON)" });
+      if (preview.format === "empty" && preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable GCP/Azure records found (expected GCP Cloud Audit Logs or an Azure Activity Log export, as JSON array or NDJSON)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloud-activity.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloud-activity.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, events: preview.kept, records: preview.total, groups: preview.groups, format: preview.format, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          format: preview.format,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} ${preview.format} event(s)` });
-      void options.pipeline.importCloudActivity(caseId, text, {
-        label: storedName,
-        idPrefix: `g${seq}`,
-        importedAt,
-        cloud: cloudOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Cloud activity import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} ${preview.format} event(s)`,
+      });
+      void options.pipeline
+        .importCloudActivity(caseId, text, {
+          label: storedName,
+          idPrefix: `g${seq}`,
+          importedAt,
+          cloud: cloudOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Cloud activity import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1217,48 +2211,104 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-plaso", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.csv === "string" ? req.body.csv : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.csv === "string"
+          ? req.body.csv
+          : "";
     const originalName = String(req.body?.filename ?? "plaso.csv");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const plasoOpts: PlasoImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parsePlasoCsv(text, plasoOpts);
-      if (preview.format === "unknown") return res.status(400).json({ error: "unrecognized CSV — expected a Plaso psort export (dynamic: datetime,message,… or l2tcsv: date,time,…,desc,…)" });
-      if (preview.kept === 0) return res.status(400).json({ error: `no events from the Plaso ${preview.format} CSV (${preview.total} row(s) parsed)` });
+      if (preview.format === "unknown")
+        return res
+          .status(400)
+          .json({
+            error:
+              "unrecognized CSV — expected a Plaso psort export (dynamic: datetime,message,… or l2tcsv: date,time,…,desc,…)",
+          });
+      if (preview.kept === 0)
+        return res
+          .status(400)
+          .json({ error: `no events from the Plaso ${preview.format} CSV (${preview.total} row(s) parsed)` });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "plaso.csv");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "plaso.csv";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, rows: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          rows: preview.total,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Plaso event(s)` });
-      void options.pipeline.importPlaso(caseId, text, {
-        label: storedName,
-        idPrefix: `p${seq}`,
-        importedAt,
-        plaso: plasoOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Plaso import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} Plaso event(s)`,
+      });
+      void options.pipeline
+        .importPlaso(caseId, text, {
+          label: storedName,
+          idPrefix: `p${seq}`,
+          importedAt,
+          plaso: plasoOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Plaso import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1271,47 +2321,99 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-sandbox", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "sandbox.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const sandboxOpts: SandboxImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseSandboxReport(text, sandboxOpts);
-      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable sandbox report found (expected a CAPEv2 report.json or a CrowdStrike Falcon Sandbox summary JSON)" });
+      if (preview.format === "empty" && preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable sandbox report found (expected a CAPEv2 report.json or a CrowdStrike Falcon Sandbox summary JSON)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "sandbox.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "sandbox.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, signatures: preview.signatures, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          signatures: preview.signatures,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} sandbox event(s)` });
-      void options.pipeline.importSandbox(caseId, text, {
-        label: storedName,
-        idPrefix: `sb${seq}`,
-        importedAt,
-        sandbox: sandboxOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Sandbox import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} sandbox event(s)`,
+      });
+      void options.pipeline
+        .importSandbox(caseId, text, {
+          label: storedName,
+          idPrefix: `sb${seq}`,
+          importedAt,
+          sandbox: sandboxOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Sandbox import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1325,48 +2427,107 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-memory", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "memory.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
-    const dllTelemetry = req.body?.dllTelemetry === true || String(req.body?.dllTelemetry ?? "").toLowerCase() === "true";
-    const memoryOpts: MemoryImportOptions = { filename: originalName, ...(minSeverity ? { minSeverity } : {}), ...(dllTelemetry ? { dllTelemetry } : {}) };
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
+    const dllTelemetry =
+      req.body?.dllTelemetry === true || String(req.body?.dllTelemetry ?? "").toLowerCase() === "true";
+    const memoryOpts: MemoryImportOptions = {
+      filename: originalName,
+      ...(minSeverity ? { minSeverity } : {}),
+      ...(dllTelemetry ? { dllTelemetry } : {}),
+    };
 
     try {
       const preview = parseMemory(text, memoryOpts);
-      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)" });
+      if (preview.format === "empty" && preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "memory.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "memory.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, tool: preview.tool, events: preview.kept, injected: preview.injected, connections: preview.connections, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          tool: preview.tool,
+          events: preview.kept,
+          injected: preview.injected,
+          connections: preview.connections,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} memory event(s)` });
-      void options.pipeline.importMemory(caseId, text, {
-        label: storedName,
-        idPrefix: `mem${seq}`,
-        importedAt,
-        memory: memoryOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Memory import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} memory event(s)`,
+      });
+      void options.pipeline
+        .importMemory(caseId, text, {
+          label: storedName,
+          idPrefix: `mem${seq}`,
+          importedAt,
+          memory: memoryOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Memory import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1379,47 +2540,99 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-email", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.eml === "string" ? req.body.eml : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.eml === "string"
+          ? req.body.eml
+          : "";
     const originalName = String(req.body?.filename ?? "message.eml");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const rawLevel = String(req.body?.minSeverity ?? "").trim().toLowerCase();
+    const rawLevel = String(req.body?.minSeverity ?? "")
+      .trim()
+      .toLowerCase();
     const minSeverity: Severity | undefined =
-      rawLevel === "critical" ? "Critical" : rawLevel === "high" ? "High"
-      : rawLevel === "medium" ? "Medium" : rawLevel === "low" ? "Low"
-      : rawLevel === "info" ? "Info" : undefined;
+      rawLevel === "critical"
+        ? "Critical"
+        : rawLevel === "high"
+          ? "High"
+          : rawLevel === "medium"
+            ? "Medium"
+            : rawLevel === "low"
+              ? "Low"
+              : rawLevel === "info"
+                ? "Info"
+                : undefined;
     const emailOpts: EmailImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
       const preview = parseEmail(text, emailOpts);
-      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable email found (expected an .eml RFC 2822 message, or an Outlook .msg export)" });
+      if (preview.format === "empty" && preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error: "no parseable email found (expected an .eml RFC 2822 message, or an Outlook .msg export)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "message.eml");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "message.eml";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, subject: preview.subject, sender: preview.sender, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          subject: preview.subject,
+          sender: preview.sender,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing email "${preview.subject.slice(0, 60)}"` });
-      void options.pipeline.importEmail(caseId, text, {
-        label: storedName,
-        idPrefix: `em${seq}`,
-        importedAt,
-        email: emailOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Email import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing email "${preview.subject.slice(0, 60)}"`,
+      });
+      void options.pipeline
+        .importEmail(caseId, text, {
+          label: storedName,
+          idPrefix: `em${seq}`,
+          importedAt,
+          email: emailOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Email import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1438,7 +2651,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       const preview = parseTheHive(text);
-      if (preview.format === "empty") return res.status(400).json({ error: "no parseable TheHive records found (expected a case/alert JSON export or an observable list)" });
+      if (preview.format === "empty")
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable TheHive records found (expected a case/alert JSON export or an observable list)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thehive-export.json";
@@ -1446,24 +2665,57 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, total: preview.total, observables: preview.observables, iocs: preview.iocCount });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          total: preview.total,
+          observables: preview.observables,
+          iocs: preview.iocCount,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing TheHive export (${preview.format})` });
-      void options.pipeline.importTheHive(caseId, text, {
-        label: storedName,
-        idPrefix: `th${seq}`,
-        importedAt,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `TheHive import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing TheHive export (${preview.format})`,
+      });
+      void options.pipeline
+        .importTheHive(caseId, text, {
+          label: storedName,
+          idPrefix: `th${seq}`,
+          importedAt,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `TheHive import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1476,8 +2728,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-auditd", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.log === "string" ? req.body.log : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.log === "string"
+          ? req.body.log
+          : "";
     const originalName = String(req.body?.filename ?? "audit.log");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
@@ -1486,33 +2742,72 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       const preview = parseAuditdLog(text, auditdOpts);
-      if (preview.format === "empty") return res.status(400).json({ error: "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)" });
+      if (preview.format === "empty")
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "audit.log");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "audit.log";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} auditd event(s)` });
-      void options.pipeline.importAuditd(caseId, text, {
-        label: storedName,
-        idPrefix: `ad${seq}`,
-        importedAt,
-        auditd: auditdOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `auditd import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} auditd event(s)`,
+      });
+      void options.pipeline
+        .importAuditd(caseId, text, {
+          label: storedName,
+          idPrefix: `ad${seq}`,
+          importedAt,
+          auditd: auditdOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `auditd import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1525,8 +2820,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-journald", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "journal.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
@@ -1535,33 +2834,72 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       const preview = parseJournald(text, journaldOpts);
-      if (preview.format === "empty") return res.status(400).json({ error: "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)" });
+      if (preview.format === "empty")
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "journal.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "journal.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, entries: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          entries: preview.total,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} journald event(s)` });
-      void options.pipeline.importJournald(caseId, text, {
-        label: storedName,
-        idPrefix: `jd${seq}`,
-        importedAt,
-        journald: journaldOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `journald import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} journald event(s)`,
+      });
+      void options.pipeline
+        .importJournald(caseId, text, {
+          label: storedName,
+          idPrefix: `jd${seq}`,
+          importedAt,
+          journald: journaldOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `journald import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1574,8 +2912,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-sysdig", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "falco.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
@@ -1584,33 +2926,73 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       const preview = parseSysdig(text, sysdigOpts);
-      if (preview.format === "empty") return res.status(400).json({ error: "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)" });
+      if (preview.format === "empty")
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "falco.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "falco.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, alerts: preview.alerts, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          records: preview.total,
+          alerts: preview.alerts,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} sysdig/Falco event(s)` });
-      void options.pipeline.importSysdig(caseId, text, {
-        label: storedName,
-        idPrefix: `sd${seq}`,
-        importedAt,
-        sysdig: sysdigOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `sysdig import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} sysdig/Falco event(s)`,
+      });
+      void options.pipeline
+        .importSysdig(caseId, text, {
+          label: storedName,
+          idPrefix: `sd${seq}`,
+          importedAt,
+          sysdig: sysdigOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `sysdig import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1623,8 +3005,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-wazuh", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text
-      : typeof req.body?.json === "string" ? req.body.json : "";
+    const text =
+      typeof req.body?.text === "string"
+        ? req.body.text
+        : typeof req.body?.json === "string"
+          ? req.body.json
+          : "";
     const originalName = String(req.body?.filename ?? "wazuh-alerts.json");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
@@ -1633,33 +3019,72 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       const preview = parseWazuhAlerts(text, wazuhOpts);
-      if (preview.format === "empty" && preview.kept === 0) return res.status(400).json({ error: "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })" });
+      if (preview.format === "empty" && preview.kept === 0)
+        return res
+          .status(400)
+          .json({
+            error:
+              "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })",
+          });
 
       const seq = await store.nextImportSeq(caseId);
-      const safeName = (originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "wazuh-alerts.json");
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "wazuh-alerts.json";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
       await store.appendImport(caseId, {
-        caseId, sequenceNumber: seq, importedAt, filename: storedName,
-        originalName, rows: preview.kept, bytes: Buffer.byteLength(text, "utf8"),
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res.status(202).json({ accepted: true, file: storedName, format: preview.format, events: preview.kept, records: preview.total, groups: preview.groups, iocs: preview.iocs.length });
+      res
+        .status(202)
+        .json({
+          accepted: true,
+          file: storedName,
+          format: preview.format,
+          events: preview.kept,
+          records: preview.total,
+          groups: preview.groups,
+          iocs: preview.iocs.length,
+        });
 
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing ${preview.kept} Wazuh alert(s)` });
-      void options.pipeline.importWazuh(caseId, text, {
-        label: storedName,
-        idPrefix: `wz${seq}`,
-        importedAt,
-        wazuh: wazuhOpts,
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `Wazuh import — ${done}/${total}`,
-        }),
-      })
-        .then(() => { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); resynthesizeInBackground(caseId); })
-        .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} Wazuh alert(s)`,
+      });
+      void options.pipeline
+        .importWazuh(caseId, text, {
+          label: storedName,
+          idPrefix: `wz${seq}`,
+          importedAt,
+          wazuh: wazuhOpts,
+          onProgress: (done, total) =>
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `Wazuh import — ${done}/${total}`,
+            }),
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1688,7 +3113,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       }
       const status = await options.dropStatusStore.load(req.params.id);
       const dropPath = status.dropPath || dropDirOf(req.params.id);
-      return res.status(200).json({ enabled: ctx.dropWatchEnabled(), pollSeconds: dropPollMs / 1000, dropPath, status });
+      return res
+        .status(200)
+        .json({ enabled: ctx.dropWatchEnabled(), pollSeconds: dropPollMs / 1000, dropPath, status });
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -1713,7 +3140,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // path), push the current state to redo. No AI re-synthesis — the snapshot is the exact prior state.
   app.post("/cases/:id/import/undo", async (req: Request, res: Response) => {
     const undoStore = options.importUndoStore;
-    if (!undoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
+    if (!undoStore || !options.stateStore)
+      return res.status(501).json({ error: "import undo not configured" });
     const caseId = req.params.id;
     try {
       const state = await options.stateStore.load(caseId);
@@ -1729,7 +3157,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       if (!summary || !restore) return res.status(400).json({ error: "nothing to undo" });
       const next = await restoreImportState(caseId, restore);
       // The "last import" banner / NEW row highlights describe a change that has now been rolled back.
-      if (options.importMetaStore) { try { await options.importMetaStore.clear(caseId); options.onImportMeta?.(caseId); } catch { /* non-fatal */ } }
+      if (options.importMetaStore) {
+        try {
+          await options.importMetaStore.clear(caseId);
+          options.onImportMeta?.(caseId);
+        } catch {
+          /* non-fatal */
+        }
+      }
       options.onImportUndo?.(caseId);
       if (next) options.onState?.(next);
       return res.status(200).json(summary);
@@ -1741,7 +3176,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Redo the most-recently-undone import: re-apply its full state.
   app.post("/cases/:id/import/redo", async (req: Request, res: Response) => {
     const undoStore = options.importUndoStore;
-    if (!undoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
+    if (!undoStore || !options.stateStore)
+      return res.status(501).json({ error: "import undo not configured" });
     const caseId = req.params.id;
     try {
       const state = await options.stateStore.load(caseId);
@@ -1754,7 +3190,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       });
       if (!summary || !restore) return res.status(400).json({ error: "nothing to redo" });
       const next = await restoreImportState(caseId, restore);
-      if (options.importMetaStore) { try { await options.importMetaStore.clear(caseId); options.onImportMeta?.(caseId); } catch { /* non-fatal */ } }
+      if (options.importMetaStore) {
+        try {
+          await options.importMetaStore.clear(caseId);
+          options.onImportMeta?.(caseId);
+        } catch {
+          /* non-fatal */
+        }
+      }
       options.onImportUndo?.(caseId);
       if (next) options.onState?.(next);
       return res.status(200).json(summary);

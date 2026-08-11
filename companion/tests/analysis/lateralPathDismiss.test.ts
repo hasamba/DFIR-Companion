@@ -41,7 +41,9 @@ describe("lateralPathKey", () => {
 
   it("is stable regardless of which evidence produced the chain", () => {
     // Same route, rebuilt from different hops after a re-import — still one claim.
-    expect(lateralPathKey(["host:a", "host:b", "host:c"])).toBe(lateralPathKey(["host:a", "host:b", "host:c"]));
+    expect(lateralPathKey(["host:a", "host:b", "host:c"])).toBe(
+      lateralPathKey(["host:a", "host:b", "host:c"]),
+    );
   });
 
   it("ignores case and surrounding whitespace in host ids", () => {

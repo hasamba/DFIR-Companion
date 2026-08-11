@@ -59,11 +59,7 @@ function readBlock(lines: string[], startRe: RegExp): Record<string, string> {
 
 function hexToRgb(h: string): [number, number, number] {
   const s = h.replace("#", "");
-  return [
-    parseInt(s.slice(0, 2), 16),
-    parseInt(s.slice(2, 4), 16),
-    parseInt(s.slice(4, 6), 16),
-  ];
+  return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
 }
 
 /** HSL, with hue in degrees and saturation/lightness as percentages. */

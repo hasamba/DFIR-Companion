@@ -8,7 +8,18 @@ import type { PersistedPlaybookHunts } from "../../src/analysis/playbookHunt.js"
 
 const data: PersistedPlaybookHunts = {
   generatedAt: "2026-06-13T00:00:00.000Z",
-  suggestions: [{ taskId: "finding:f1", title: "Hunt", rationale: "r", vql: "SELECT * FROM pslist()", severity: "High", mitreTechniques: ["T1059"], mode: "collection", targetHost: "WIN11" }],
+  suggestions: [
+    {
+      taskId: "finding:f1",
+      title: "Hunt",
+      rationale: "r",
+      vql: "SELECT * FROM pslist()",
+      severity: "High",
+      mitreTechniques: ["T1059"],
+      mode: "collection",
+      targetHost: "WIN11",
+    },
+  ],
   taskHashes: { "finding:f1": "abc123" },
 };
 

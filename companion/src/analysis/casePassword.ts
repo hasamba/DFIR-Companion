@@ -49,7 +49,13 @@ interface UnlockPayload {
  * absolute expiry `ttlMs` milliseconds from now. `remember` is carried in the token itself
  * (not just the cookie's Max-Age) so a later request can tell whether THIS unlock was a
  * "remember on this computer" one — see {@link isRememberedUnlockToken}. */
-export function signUnlockToken(caseId: string, salt: string, secret: Buffer, ttlMs: number, remember: boolean): string {
+export function signUnlockToken(
+  caseId: string,
+  salt: string,
+  secret: Buffer,
+  ttlMs: number,
+  remember: boolean,
+): string {
   const payload: UnlockPayload = { caseId, salt, exp: Date.now() + ttlMs, remember };
   const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   const sig = createHmac("sha256", secret).update(payloadB64).digest("base64url");
@@ -59,7 +65,12 @@ export function signUnlockToken(caseId: string, salt: string, secret: Buffer, tt
 /** Verify signature, caseId/salt match, and expiry; return the decoded payload on success or
  * null on any mismatch, tamper, or expiry. Never throws. Shared by {@link verifyUnlockToken}
  * and {@link isRememberedUnlockToken} so there's one place that defines "valid". */
-function decodeVerifiedPayload(token: string, caseId: string, salt: string, secret: Buffer): UnlockPayload | null {
+function decodeVerifiedPayload(
+  token: string,
+  caseId: string,
+  salt: string,
+  secret: Buffer,
+): UnlockPayload | null {
   const parts = token.split(TOKEN_SEPARATOR);
   if (parts.length !== 2) return null;
   const [payloadB64, sig] = parts;
@@ -89,7 +100,12 @@ export function verifyUnlockToken(token: string, caseId: string, salt: string, s
  * False for an invalid, expired, or tampered token, same as for one that's valid but wasn't
  * remembered; callers that need to distinguish "invalid" from "valid but not remembered"
  * should call {@link verifyUnlockToken} first. */
-export function isRememberedUnlockToken(token: string, caseId: string, salt: string, secret: Buffer): boolean {
+export function isRememberedUnlockToken(
+  token: string,
+  caseId: string,
+  salt: string,
+  secret: Buffer,
+): boolean {
   return Boolean(decodeVerifiedPayload(token, caseId, salt, secret)?.remember);
 }
 

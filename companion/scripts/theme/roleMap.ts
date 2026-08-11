@@ -243,8 +243,7 @@ export const EXPLICIT: Record<string, string> = {
 };
 
 export type UsageClass = "SURFACE" | "BORDER" | "TEXT" | "CANVAS";
-export type HueName =
-  | "neutral" | "red" | "orange" | "yellow" | "green" | "cyan" | "blue" | "violet" | "pink";
+export type HueName = "neutral" | "red" | "orange" | "yellow" | "green" | "cyan" | "blue" | "violet" | "pink";
 
 /**
  * Fallback assignment for the neutral bulk — the ~90 surface, border and text hexes

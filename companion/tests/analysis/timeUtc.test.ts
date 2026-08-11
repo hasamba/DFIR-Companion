@@ -26,7 +26,7 @@ describe("toUtcIso", () => {
   });
 
   it("still emits millisecond precision when the source is millisecond-or-coarser", () => {
-    expect(toUtcIso("2026-05-28T10:00:00+02:00")).toBe("2026-05-28T08:00:00.000Z");   // no fraction → .000
+    expect(toUtcIso("2026-05-28T10:00:00+02:00")).toBe("2026-05-28T08:00:00.000Z"); // no fraction → .000
     expect(toUtcIso("2026-05-28T10:00:00.12+02:00")).toBe("2026-05-28T08:00:00.120Z"); // ≤3 digits → Date's .120
   });
 

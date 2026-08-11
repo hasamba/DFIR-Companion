@@ -11,8 +11,8 @@ export function eventMatchesSearch(event: ForensicEvent, term: string): boolean 
   return (
     ci(event.description, q) ||
     ci(event.asset, q) ||
-    (event.mitreTechniques || []).some(t => ci(t, q)) ||
-    (event.sources || []).some(s => ci(s, q))
+    (event.mitreTechniques || []).some((t) => ci(t, q)) ||
+    (event.sources || []).some((s) => ci(s, q))
   );
 }
 
@@ -23,7 +23,7 @@ export function findingMatchesSearch(finding: Finding, term: string): boolean {
   return (
     ci(finding.title, q) ||
     ci(finding.description, q) ||
-    (finding.mitreTechniques || []).some(t => ci(t, q))
+    (finding.mitreTechniques || []).some((t) => ci(t, q))
   );
 }
 
@@ -36,17 +36,17 @@ export function iocMatchesSearch(ioc: IOC, term: string): boolean {
 
 /** Whether a forensic event matches ANY of a set of exclude terms (case-insensitive substring). */
 export function eventMatchesExclude(event: ForensicEvent, terms: readonly string[]): boolean {
-  return terms.some(t => t && eventMatchesSearch(event, t));
+  return terms.some((t) => t && eventMatchesSearch(event, t));
 }
 
 /** Whether a finding matches ANY of a set of exclude terms (case-insensitive substring). */
 export function findingMatchesExclude(finding: Finding, terms: readonly string[]): boolean {
-  return terms.some(t => t && findingMatchesSearch(finding, t));
+  return terms.some((t) => t && findingMatchesSearch(finding, t));
 }
 
 /** Whether an IOC matches ANY of a set of exclude terms (case-insensitive substring). */
 export function iocMatchesExclude(ioc: IOC, terms: readonly string[]): boolean {
-  return terms.some(t => t && iocMatchesSearch(ioc, t));
+  return terms.some((t) => t && iocMatchesSearch(ioc, t));
 }
 
 /**
@@ -63,7 +63,13 @@ export function eventMatchesTimeRange(
   if (!ts) return true;
   const t = Date.parse(ts);
   if (isNaN(t)) return true;
-  if (from) { const f = Date.parse(from); if (!isNaN(f) && t < f) return false; }
-  if (to)   { const u = Date.parse(to);   if (!isNaN(u) && t > u) return false; }
+  if (from) {
+    const f = Date.parse(from);
+    if (!isNaN(f) && t < f) return false;
+  }
+  if (to) {
+    const u = Date.parse(to);
+    if (!isNaN(u) && t > u) return false;
+  }
   return true;
 }

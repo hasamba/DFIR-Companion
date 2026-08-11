@@ -27,8 +27,7 @@ export function projectScope(state: InvestigationState, scope: ScopeWindow): Inv
     const target = inScope(e.timestamp, scope) ? backedInScope : backedOutScope;
     for (const fid of e.relatedFindingIds) target.add(fid);
   }
-  const findingKept = (id: string): boolean =>
-    backedInScope.has(id) || !backedOutScope.has(id); // kept unless backed ONLY by out-of-scope events
+  const findingKept = (id: string): boolean => backedInScope.has(id) || !backedOutScope.has(id); // kept unless backed ONLY by out-of-scope events
 
   const findings = state.findings.filter((f) => findingKept(f.id));
   const survivingFindings = new Set(findings.map((f) => f.id));

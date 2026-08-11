@@ -13,8 +13,14 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(sources: string[]): ForensicEvent {
   return {
-    id: `e-${sources[0]}`, timestamp: "2026-01-01T00:00:00Z", description: "", severity: "Info",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources,
+    id: `e-${sources[0]}`,
+    timestamp: "2026-01-01T00:00:00Z",
+    description: "",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    sources,
   };
 }
 
@@ -24,7 +30,8 @@ async function makeApp() {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   const app = createApp(store, {
-    stateStore, aiConfigured: false,
+    stateStore,
+    aiConfigured: false,
     activityLogStore: new ActivityLogStore(store),
     incidentTypeStore: new IncidentTypeStore(store, join(root, "incident-types")),
     collectionPlanStore: new CollectionPlanStore(store),
@@ -54,8 +61,14 @@ describe("GET /cases/:id/collection-plan", () => {
     const res = await request(app).get("/cases/c1/collection-plan");
     expect(res.status).toBe(200);
     expect(res.body.typeId).toBe("ransomware");
-    expect(res.body.plan.steps.map((s: { id: string }) => s.id))
-      .toEqual(["edr", "memory", "windows-event-logs", "endpoint-triage", "network", "siem"]);
+    expect(res.body.plan.steps.map((s: { id: string }) => s.id)).toEqual([
+      "edr",
+      "memory",
+      "windows-event-logs",
+      "endpoint-triage",
+      "network",
+      "siem",
+    ]);
     expect(res.body.plan.steps[0].state).toBe("collected");
     expect(res.body.plan.nextStepId).toBe("memory");
   });
@@ -66,7 +79,9 @@ describe("PUT/DELETE /cases/:id/collection-plan/:stepId", () => {
     const { app } = await makeApp();
     await request(app).post("/cases/c1/incident-type").send({ typeId: "ransomware" });
 
-    const res = await request(app).put("/cases/c1/collection-plan/edr").send({ state: "na", reason: "no EDR here" });
+    const res = await request(app)
+      .put("/cases/c1/collection-plan/edr")
+      .send({ state: "na", reason: "no EDR here" });
     expect(res.status).toBe(200);
     const step = res.body.plan.steps.find((s: { id: string }) => s.id === "edr");
     expect(step.state).toBe("override-na");
@@ -89,7 +104,9 @@ describe("PUT/DELETE /cases/:id/collection-plan/:stepId", () => {
     const { app } = await makeApp();
     await request(app).post("/cases/c1/incident-type").send({ typeId: "ransomware" });
     expect((await request(app).put("/cases/c1/collection-plan/nope").send({ state: "na" })).status).toBe(404);
-    expect((await request(app).put("/cases/c1/collection-plan/edr").send({ state: "banana" })).status).toBe(400);
+    expect((await request(app).put("/cases/c1/collection-plan/edr").send({ state: "banana" })).status).toBe(
+      400,
+    );
     expect((await request(app).put("/cases/c1/collection-plan/edr").send({})).status).toBe(400);
   });
 });

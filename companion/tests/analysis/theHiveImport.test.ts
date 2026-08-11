@@ -240,7 +240,7 @@ describe("parseTheHive — counts", () => {
   it("reports correct total, kept, dropped, observables, iocCount", () => {
     const input = j([caseRecord(), alertRecord(), observableIp()]);
     const r = parseTheHive(input);
-    expect(r.total).toBe(2);      // 2 cases/alerts
+    expect(r.total).toBe(2); // 2 cases/alerts
     expect(r.kept).toBe(2);
     expect(r.dropped).toBe(0);
     expect(r.observables).toBe(1);

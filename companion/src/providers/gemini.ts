@@ -1,15 +1,23 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import {
+  type AIProvider,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+  ProviderError,
+  httpErrorKind,
+  httpErrorMessage,
+  requestSignal,
+} from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
 
 type FetchFn = typeof fetch;
 
 export interface GeminiOptions {
   apiKey: string;
-  model: string;       // e.g. "gemini-1.5-pro"
+  model: string; // e.g. "gemini-1.5-pro"
   baseUrl?: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
-  maxTokens?: number;  // cap on output tokens (maxOutputTokens)
+  maxTokens?: number; // cap on output tokens (maxOutputTokens)
 }
 
 export class GeminiProvider implements AIProvider {
@@ -50,9 +58,10 @@ export class GeminiProvider implements AIProvider {
         signal: requestSignal(timeoutMs, req.signal),
       });
     } catch (err) {
-      const msg = (err as Error).name === "TimeoutError"
-        ? `Gemini request timed out after ${timeoutMs}ms`
-        : `Gemini transport error: ${(err as Error).message}`;
+      const msg =
+        (err as Error).name === "TimeoutError"
+          ? `Gemini request timed out after ${timeoutMs}ms`
+          : `Gemini transport error: ${(err as Error).message}`;
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
@@ -61,7 +70,11 @@ export class GeminiProvider implements AIProvider {
     }
     const json = (await res.json()) as {
       candidates?: { content?: { parts?: { text?: string }[] } }[];
-      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        cachedContentTokenCount?: number;
+      };
     };
     const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new ProviderError("Gemini returned no content", "other");

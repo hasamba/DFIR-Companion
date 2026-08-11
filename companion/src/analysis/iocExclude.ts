@@ -19,11 +19,11 @@ const IOC_TYPES = ["ip", "domain", "hash", "file", "process", "url", "sid", "oth
 
 export interface IocExcludeRule {
   id: string;
-  match: ExcludeMatchMode;     // how `pattern` is compared to the IOC value
-  pattern: string;             // "client01.lan" (exact) | "lan" (suffix — normalized to ".lan") | a regex
-  iocType?: IOC["type"];       // optional: only apply to this IOC type; unset = any type
-  note?: string;               // why it's excluded (e.g. "client's internal AD domain")
-  addedAt: string;             // ISO time the rule was added
+  match: ExcludeMatchMode; // how `pattern` is compared to the IOC value
+  pattern: string; // "client01.lan" (exact) | "lan" (suffix — normalized to ".lan") | a regex
+  iocType?: IOC["type"]; // optional: only apply to this IOC type; unset = any type
+  note?: string; // why it's excluded (e.g. "client's internal AD domain")
+  addedAt: string; // ISO time the rule was added
 }
 
 // The validated core of a rule, before the caller assigns an id + addedAt.
@@ -37,7 +37,10 @@ export function normalizeSuffixPattern(pattern: string): string {
 }
 
 // ── matching ───────────────────────────────────────────────────────────────────────────────────
-export function ruleMatchesIoc(rule: IocExcludeRule | ExcludeRuleInput, ioc: { type: IOC["type"]; value: string }): boolean {
+export function ruleMatchesIoc(
+  rule: IocExcludeRule | ExcludeRuleInput,
+  ioc: { type: IOC["type"]; value: string },
+): boolean {
   if (rule.iocType && rule.iocType !== ioc.type) return false;
   const raw = String(ioc.value ?? "").trim();
   if (!raw) return false;
@@ -50,7 +53,11 @@ export function ruleMatchesIoc(rule: IocExcludeRule | ExcludeRuleInput, ioc: { t
       return val === suffix.slice(1) || val.endsWith(suffix);
     }
     case "regex":
-      try { return new RegExp(rule.pattern, "i").test(raw); } catch { return false; }
+      try {
+        return new RegExp(rule.pattern, "i").test(raw);
+      } catch {
+        return false;
+      }
     default:
       return false;
   }
@@ -77,14 +84,24 @@ export function excludeMatches(iocs: readonly IOC[], rules: readonly IocExcludeR
 export function sanitizeExcludeRuleInput(raw: unknown): ExcludeRuleInput | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  const mode = String(r.match ?? "").trim().toLowerCase();
+  const mode = String(r.match ?? "")
+    .trim()
+    .toLowerCase();
   if (!EXCLUDE_MATCH_MODES.includes(mode as ExcludeMatchMode)) return null;
   const match = mode as ExcludeMatchMode;
   let pattern = String(r.pattern ?? "").trim();
   if (!pattern || pattern.length > 500) return null;
   if (match === "suffix") pattern = normalizeSuffixPattern(pattern);
-  if (match === "regex") { try { new RegExp(pattern); } catch { return null; } }
-  const rawType = String(r.iocType ?? "").trim().toLowerCase();
+  if (match === "regex") {
+    try {
+      new RegExp(pattern);
+    } catch {
+      return null;
+    }
+  }
+  const rawType = String(r.iocType ?? "")
+    .trim()
+    .toLowerCase();
   const iocType = (IOC_TYPES as readonly string[]).includes(rawType) ? (rawType as IOC["type"]) : undefined;
   const note = r.note != null ? String(r.note).trim().slice(0, 500) : undefined;
   return { match, pattern, ...(iocType ? { iocType } : {}), ...(note ? { note } : {}) };

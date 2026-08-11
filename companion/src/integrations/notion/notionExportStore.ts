@@ -12,21 +12,27 @@ import { atomicWrite } from "../../storage/atomicWrite.js";
 // atomicWrite (Dropbox-lock tolerant) like the other side-file stores.
 
 export const notionExportSchema = z.object({
-  pageId: z.string().catch(""),              // the target Notion page (dashed UUID)
-  pageUrl: z.string().catch(""),             // cached for the dashboard's "Open in Notion" link
-  containerBlockId: z.string().catch(""),    // the managed toggle block we own on that page
-  parentPageId: z.string().catch(""),        // remembered parent for a "new page" export (audit)
-  databaseId: z.string().catch(""),          // set when the page was created as a database row
+  pageId: z.string().catch(""), // the target Notion page (dashed UUID)
+  pageUrl: z.string().catch(""), // cached for the dashboard's "Open in Notion" link
+  containerBlockId: z.string().catch(""), // the managed toggle block we own on that page
+  parentPageId: z.string().catch(""), // remembered parent for a "new page" export (audit)
+  databaseId: z.string().catch(""), // set when the page was created as a database row
   lastExportedAt: z.string().catch(""),
   lastBlocksAppended: z.number().catch(0),
-  lastMode: z.string().catch(""),            // "new" | "existing"
+  lastMode: z.string().catch(""), // "new" | "existing"
 });
 
 export type NotionExport = z.infer<typeof notionExportSchema>;
 
 const EMPTY: NotionExport = {
-  pageId: "", pageUrl: "", containerBlockId: "", parentPageId: "", databaseId: "",
-  lastExportedAt: "", lastBlocksAppended: 0, lastMode: "",
+  pageId: "",
+  pageUrl: "",
+  containerBlockId: "",
+  parentPageId: "",
+  databaseId: "",
+  lastExportedAt: "",
+  lastBlocksAppended: 0,
+  lastMode: "",
 };
 
 export class NotionExportStore {

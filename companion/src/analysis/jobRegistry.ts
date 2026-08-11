@@ -7,23 +7,10 @@
 import { z } from "zod";
 import type { ManifestValue } from "./analysisRunTypes.js";
 
-export const JOB_KINDS = [
-  "import",
-  "synthesis",
-  "enrichment",
-  "deep-pass",
-  "mcp",
-] as const;
+export const JOB_KINDS = ["import", "synthesis", "enrichment", "deep-pass", "mcp"] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
-export const JOB_STATUSES = [
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "interrupted",
-] as const;
+export const JOB_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled", "interrupted"] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 export type JobPriority = "low" | "normal" | "high";
 
@@ -88,12 +75,7 @@ export interface JobTable {
   jobs: Job[];
 }
 
-export const TERMINAL_STATUSES: readonly JobStatus[] = [
-  "succeeded",
-  "failed",
-  "cancelled",
-  "interrupted",
-];
+export const TERMINAL_STATUSES: readonly JobStatus[] = ["succeeded", "failed", "cancelled", "interrupted"];
 
 export function isTerminal(status: JobStatus): boolean {
   return TERMINAL_STATUSES.includes(status);
@@ -163,9 +145,7 @@ function patchJob(table: JobTable, id: string, patch: (job: Job) => Job): JobTab
 
 export function startJob(table: JobTable, id: string, now: string): JobTable {
   return patchJob(table, id, (job) =>
-    job.status !== "queued"
-      ? job
-      : { ...job, status: "running", startedAt: now, updatedAt: now },
+    job.status !== "queued" ? job : { ...job, status: "running", startedAt: now, updatedAt: now },
   );
 }
 
@@ -209,7 +189,8 @@ export function checkpointJob(
       job.lastCheckpoint &&
       progress.total === job.lastCheckpoint.progress.total &&
       progress.done < job.lastCheckpoint.progress.done
-    ) return job;
+    )
+      return job;
     const checkpoint: JobCheckpoint = {
       sequence: (job.lastCheckpoint?.sequence ?? 0) + 1,
       at: now,
@@ -230,12 +211,7 @@ export function checkpointJob(
   });
 }
 
-export function warnJob(
-  table: JobTable,
-  id: string,
-  warning: string,
-  now: string,
-): JobTable {
+export function warnJob(table: JobTable, id: string, warning: string, now: string): JobTable {
   const normalized = warning.trim();
   if (!normalized) return table;
   return patchJob(table, id, (job) =>
@@ -302,12 +278,7 @@ export function finishJob(table: JobTable, id: string, now: string): JobTable {
   return terminate(table, id, "succeeded", now);
 }
 
-export function failJob(
-  table: JobTable,
-  id: string,
-  failure: JobFailure | string,
-  now: string,
-): JobTable {
+export function failJob(table: JobTable, id: string, failure: JobFailure | string, now: string): JobTable {
   const normalized: JobFailure =
     typeof failure === "string"
       ? { code: "job_failed", message: failure, retryable: false, at: now }
@@ -357,9 +328,7 @@ export function requeueJob(table: JobTable, id: string, now: string): JobTable {
 }
 
 export function allowJobCancellation(table: JobTable, id: string): JobTable {
-  return patchJob(table, id, (job) =>
-    job.cancellable ? job : { ...job, cancellable: true },
-  );
+  return patchJob(table, id, (job) => (job.cancellable ? job : { ...job, cancellable: true }));
 }
 
 export function getJob(table: JobTable, id: string): Job | undefined {
@@ -376,12 +345,8 @@ export function findJobByIdempotencyKey(
 
 export function listJobs(table: JobTable, opts: { caseId?: string | null } = {}): Job[] {
   const filtered =
-    opts.caseId !== undefined
-      ? table.jobs.filter((job) => job.caseId === opts.caseId)
-      : table.jobs;
-  return [...filtered].sort(
-    (a, b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id),
-  );
+    opts.caseId !== undefined ? table.jobs.filter((job) => job.caseId === opts.caseId) : table.jobs;
+  return [...filtered].sort((a, b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id));
 }
 
 export function capJobs(table: JobTable, max: number): JobTable {
@@ -392,9 +357,7 @@ export function capJobs(table: JobTable, max: number): JobTable {
     if (evict.size >= over) break;
     if (isTerminal(job.status)) evict.add(job.id);
   }
-  return evict.size
-    ? { jobs: table.jobs.filter((job) => !evict.has(job.id)) }
-    : table;
+  return evict.size ? { jobs: table.jobs.filter((job) => !evict.has(job.id)) } : table;
 }
 
 export function capJobsByScope(table: JobTable, max: number): JobTable {
@@ -405,9 +368,7 @@ export function capJobsByScope(table: JobTable, max: number): JobTable {
     const scoped = bounded.jobs.filter((job) => job.caseId === scope);
     const kept = new Set(capJobs({ jobs: scoped }, max).jobs.map((job) => job.id));
     bounded = {
-      jobs: bounded.jobs.filter(
-        (job) => job.caseId !== scope || kept.has(job.id),
-      ),
+      jobs: bounded.jobs.filter((job) => job.caseId !== scope || kept.has(job.id)),
     };
   }
   return bounded;

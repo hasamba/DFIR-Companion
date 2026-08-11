@@ -7,16 +7,16 @@
 // scheduling on clients that check in after launch, so pinning an upper bound at launch time would
 // silently drop activity that happened in between.
 export interface TimeScope {
-  start: string;        // ISO-8601 UTC
-  end?: string;         // ISO-8601 UTC
+  start: string; // ISO-8601 UTC
+  end?: string; // ISO-8601 UTC
 }
 
 // Raw run-form input: either a relative preset or an absolute custom range.
 // Note: `preset` takes precedence over `start`/`end` — if both are supplied, dates are ignored.
 export interface TimeScopeInput {
-  preset?: unknown;     // "24h" | "7d" | "30d" | "90d" | "all" | "custom"; deliberately untyped (untrusted boundary)
-  start?: unknown;      // ISO-8601 date string; deliberately untyped (untrusted boundary)
-  end?: unknown;        // ISO-8601 date string; deliberately untyped (untrusted boundary)
+  preset?: unknown; // "24h" | "7d" | "30d" | "90d" | "all" | "custom"; deliberately untyped (untrusted boundary)
+  start?: unknown; // ISO-8601 date string; deliberately untyped (untrusted boundary)
+  end?: unknown; // ISO-8601 date string; deliberately untyped (untrusted boundary)
 }
 
 const PRESET_MS: Record<string, number> = {
@@ -28,7 +28,10 @@ const PRESET_MS: Record<string, number> = {
 
 // Resolve run-form input into an absolute window, or undefined for "collect all time" (the default).
 // Throws a descriptive Error on bad input — routes surface err.message directly, as sanitizeDwellWindowInput does.
-export function resolveTimeScope(raw: TimeScopeInput | undefined, now: Date = new Date()): TimeScope | undefined {
+export function resolveTimeScope(
+  raw: TimeScopeInput | undefined,
+  now: Date = new Date(),
+): TimeScope | undefined {
   if (!raw) return undefined;
   const preset = String(raw.preset ?? "").trim();
   if (preset && preset !== "all" && preset !== "custom") {
@@ -41,7 +44,7 @@ export function resolveTimeScope(raw: TimeScopeInput | undefined, now: Date = ne
   if (!rawStart && !rawEnd) {
     // If "custom" was explicitly selected, require a start; otherwise allow "all time"
     if (preset === "custom") throw new Error("start is required for a custom time scope");
-    return undefined;   // "all time" / nothing chosen
+    return undefined; // "all time" / nothing chosen
   }
   if (!rawStart) throw new Error("start is required for a custom time scope");
   const startMs = Date.parse(rawStart);
@@ -66,14 +69,14 @@ export interface ArtifactTimeScopeMapping {
   startParam?: string;
   endParam?: string;
   source: "correction" | "builtin" | "detected" | "none";
-  manual?: boolean;   // the bundle already sets one of these parameters by hand; that value wins
+  manual?: boolean; // the bundle already sets one of these parameters by hand; that value wins
 }
 
 export interface TimeScopePlan {
   scoped: ArtifactTimeScopeMapping[];
-  unscoped: ArtifactTimeScopeMapping[];   // no date parameter found — these collect in full
-  params: Record<string, Record<string, string>>;   // bundle params + the window, ready for buildHuntSpec
-  degraded: boolean;   // the server reported no parameter metadata for ANY bundle artifact
+  unscoped: ArtifactTimeScopeMapping[]; // no date parameter found — these collect in full
+  params: Record<string, Record<string, string>>; // bundle params + the window, ready for buildHuntSpec
+  degraded: boolean; // the server reported no parameter metadata for ANY bundle artifact
 }
 
 // Just enough of VeloArtifactInfo to map parameters — kept structural so the pure module doesn't
@@ -87,9 +90,9 @@ export interface TimeScopePlanInput {
   artifacts: string[];
   definitions: TimeScopeArtifactDef[];
   scope: TimeScope;
-  corrections?: Record<string, TimeScopeParamPair>;        // saved on the bundle by the analyst
+  corrections?: Record<string, TimeScopeParamPair>; // saved on the bundle by the analyst
   builtInCorrections?: Record<string, TimeScopeParamPair>; // shipped table (defaults to BUILT_IN_TIME_SCOPE_PARAMS)
-  bundleParams?: Record<string, Record<string, string>>;   // the bundle's existing per-artifact params
+  bundleParams?: Record<string, Record<string, string>>; // the bundle's existing per-artifact params
 }
 
 // Artifacts whose date parameters auto-detection gets wrong or can't see. Empty today: every artifact
@@ -162,14 +165,24 @@ export function buildTimeScopePlan(input: TimeScopePlanInput): TimeScopePlan {
 
     let pair: TimeScopeParamPair | undefined;
     let source: ArtifactTimeScopeMapping["source"] = "none";
-    if (corrections[artifact]?.start || corrections[artifact]?.end) { pair = corrections[artifact]; source = "correction"; }
-    else if (builtIns[artifact]?.start || builtIns[artifact]?.end) { pair = builtIns[artifact]; source = "builtin"; }
-    else {
+    if (corrections[artifact]?.start || corrections[artifact]?.end) {
+      pair = corrections[artifact];
+      source = "correction";
+    } else if (builtIns[artifact]?.start || builtIns[artifact]?.end) {
+      pair = builtIns[artifact];
+      source = "builtin";
+    } else {
       const detected = detectPair(declared);
-      if (detected.start || detected.end) { pair = detected; source = "detected"; }
+      if (detected.start || detected.end) {
+        pair = detected;
+        source = "detected";
+      }
     }
 
-    if (!pair) { unscoped.push({ artifact, source: "none" }); continue; }
+    if (!pair) {
+      unscoped.push({ artifact, source: "none" });
+      continue;
+    }
 
     const existing = params[artifact] ?? {};
     let manual = false;
@@ -182,7 +195,10 @@ export function buildTimeScopePlan(input: TimeScopePlanInput): TimeScopePlan {
     let applied = false;
     const set = (paramName: string | undefined, value: string | undefined): void => {
       if (!paramName || !value) return;
-      if (Object.prototype.hasOwnProperty.call(existing, paramName)) { manual = true; return; }   // analyst's value wins
+      if (Object.prototype.hasOwnProperty.call(existing, paramName)) {
+        manual = true;
+        return;
+      } // analyst's value wins
       existing[paramName] = value;
       applied = true;
     };
@@ -190,7 +206,13 @@ export function buildTimeScopePlan(input: TimeScopePlanInput): TimeScopePlan {
     set(pair.end, scope.end);
     if (Object.keys(existing).length) params[artifact] = existing;
     if (applied || manual) {
-      scoped.push({ artifact, startParam: pair.start, endParam: pair.end, source, ...(manual ? { manual: true } : {}) });
+      scoped.push({
+        artifact,
+        startParam: pair.start,
+        endParam: pair.end,
+        source,
+        ...(manual ? { manual: true } : {}),
+      });
     } else {
       unscoped.push({ artifact, source: "none" });
     }

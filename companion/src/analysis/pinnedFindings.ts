@@ -49,7 +49,10 @@ export class PinnedFindingsStore {
   // and the same finding pinned twice.
   private readonly lock = new StateLock();
 
-  constructor(private readonly cases: CaseStore, max?: number) {
+  constructor(
+    private readonly cases: CaseStore,
+    max?: number,
+  ) {
     this.max = max && max > 0 ? Math.floor(max) : DEFAULT_MAX_PINNED_FINDINGS;
   }
 

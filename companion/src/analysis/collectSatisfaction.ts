@@ -15,18 +15,20 @@ import { isActionableCollect, collectTargetKey, collectSummary } from "./collect
 import { shortHost } from "./iocAnchors.js";
 
 export interface OpenCollectTarget {
-  key: string;                       // collectTargetKey (host|source)
+  key: string; // collectTargetKey (host|source)
   host: string;
-  source: string;                    // logSource || artifact (what to look for)
+  source: string; // logSource || artifact (what to look for)
   from: "nextStep" | "question";
-  refId: string;                     // the nextStep/question id it came from
-  question?: string;                 // the question text (for the prompt), when from a question
-  summary: string;                   // human one-liner
+  refId: string; // the nextStep/question id it came from
+  question?: string; // the question text (for the prompt), when from a question
+  summary: string; // human one-liner
 }
 
 // The actionable collect targets currently open in the case: every nextStep with an actionable collect,
 // and every unknown/partial keyQuestion with one. De-duped by target key (first occurrence wins).
-export function openCollectTargets(state: Pick<InvestigationState, "nextSteps" | "keyQuestions">): OpenCollectTarget[] {
+export function openCollectTargets(
+  state: Pick<InvestigationState, "nextSteps" | "keyQuestions">,
+): OpenCollectTarget[] {
   const out: OpenCollectTarget[] = [];
   const seen = new Set<string>();
   const add = (t: OpenCollectTarget): void => {
@@ -36,14 +38,27 @@ export function openCollectTargets(state: Pick<InvestigationState, "nextSteps" |
   };
   for (const s of state.nextSteps ?? []) {
     if (!isActionableCollect(s.collect)) continue;
-    add({ key: collectTargetKey(s.collect), host: s.collect.host!, source: (s.collect.logSource || s.collect.artifact || "").trim(),
-      from: "nextStep", refId: s.id, summary: collectSummary(s.collect) });
+    add({
+      key: collectTargetKey(s.collect),
+      host: s.collect.host!,
+      source: (s.collect.logSource || s.collect.artifact || "").trim(),
+      from: "nextStep",
+      refId: s.id,
+      summary: collectSummary(s.collect),
+    });
   }
   for (const q of state.keyQuestions ?? []) {
     if (q.status === "answered") continue;
     if (!isActionableCollect(q.collect)) continue;
-    add({ key: collectTargetKey(q.collect), host: q.collect.host!, source: (q.collect.logSource || q.collect.artifact || "").trim(),
-      from: "question", refId: q.id, question: q.question, summary: collectSummary(q.collect) });
+    add({
+      key: collectTargetKey(q.collect),
+      host: q.collect.host!,
+      source: (q.collect.logSource || q.collect.artifact || "").trim(),
+      from: "question",
+      refId: q.id,
+      question: q.question,
+      summary: collectSummary(q.collect),
+    });
   }
   return out;
 }
@@ -53,7 +68,10 @@ const GENERIC = new Set(["log", "logs", "the", "and", "for", "from", "evtx", "ev
 // Significant lowercase tokens of a log-source string (drop generic words + very short tokens). "evtx"/
 // "event" are dropped as too generic on their own — an EVTX artifact tag would match nearly anything.
 function sourceTokens(source: string): string[] {
-  return source.toLowerCase().split(/[^a-z0-9.]+/i).filter((t) => t.length >= 3 && !GENERIC.has(t));
+  return source
+    .toLowerCase()
+    .split(/[^a-z0-9.]+/i)
+    .filter((t) => t.length >= 3 && !GENERIC.has(t));
 }
 
 // The event ids in `events` that satisfy `target`: the event is on the target host AND at least one of
@@ -66,8 +84,13 @@ export function collectSatisfiedBy(target: OpenCollectTarget, events: readonly F
   const hits: string[] = [];
   for (const e of events) {
     if (!e.asset || shortHost(e.asset) !== host) continue;
-    if (!tokens.length) { hits.push(e.id); continue; }
-    const hay = [e.sources?.join(" ") ?? "", e.artifactName ?? "", e.description ?? ""].join(" ").toLowerCase();
+    if (!tokens.length) {
+      hits.push(e.id);
+      continue;
+    }
+    const hay = [e.sources?.join(" ") ?? "", e.artifactName ?? "", e.description ?? ""]
+      .join(" ")
+      .toLowerCase();
     if (tokens.some((t) => hay.includes(t))) hits.push(e.id);
   }
   return hits;
@@ -87,7 +110,8 @@ export function detectSatisfiedCollections(
   const out: SatisfiedCollection[] = [];
   for (const target of openCollectTargets(state)) {
     const matched = collectSatisfiedBy(target, events);
-    if (matched.length) out.push({ target, matchedEventIds: matched.slice(0, Math.max(1, maxEventsPerTarget)) });
+    if (matched.length)
+      out.push({ target, matchedEventIds: matched.slice(0, Math.max(1, maxEventsPerTarget)) });
   }
   return out;
 }
@@ -97,12 +121,14 @@ export function detectSatisfiedCollections(
 export function buildSatisfiedCollectionsBlock(satisfied: readonly SatisfiedCollection[]): string {
   if (!satisfied.length) return "";
   const lines = satisfied.map((s) => {
-    const served = s.target.from === "question" && s.target.question ? ` (served: "${s.target.question}")` : "";
+    const served =
+      s.target.from === "question" && s.target.question ? ` (served: "${s.target.question}")` : "";
     return `- ${s.target.summary}${served} — evidence now present: ${s.matchedEventIds.join(", ")}`;
   });
   return (
     "SATISFIED COLLECTIONS (the investigator already collected and imported these — do NOT re-recommend " +
     "them as nextSteps; instead USE the evidence now present and re-evaluate the question each one served):\n" +
-    lines.join("\n") + "\n\n"
+    lines.join("\n") +
+    "\n\n"
   );
 }

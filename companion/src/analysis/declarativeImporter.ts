@@ -4,9 +4,18 @@
 // only declarative field bindings + length-bounded regex tests (ReDoS-guarded).
 import type { Severity } from "./stateTypes.js";
 import {
-  extractRecords, aggregateEvents, addIoc, genericIocs, cleanIp, normalizeTime,
-  getCI, getPath, str,
-  type SiemIoc, type MappedEvent, type SiemParseResult,
+  extractRecords,
+  aggregateEvents,
+  addIoc,
+  genericIocs,
+  cleanIp,
+  normalizeTime,
+  getCI,
+  getPath,
+  str,
+  type SiemIoc,
+  type MappedEvent,
+  type SiemParseResult,
 } from "./siemImport.js";
 import { parseCsv } from "./csvImport.js";
 import type { ImporterSpec } from "./importerSpec.js";
@@ -38,7 +47,11 @@ export interface ExternalImporter {
 // reached buildImporter another way (an older file on disk, a direct call).
 function safeRegex(src: string): RegExp | null {
   if (!checkRegexSafety(src).ok) return null;
-  try { return new RegExp(src); } catch { return null; }
+  try {
+    return new RegExp(src);
+  } catch {
+    return null;
+  }
 }
 function getField(rec: Row, key: string): unknown {
   return key.includes(".") ? getPath(rec, key) : getCI(rec, key);
@@ -66,14 +79,16 @@ export function buildImporter(spec: ImporterSpec): ExternalImporter {
     if (spec.match.requireHeaders || spec.match.anyHeaders) {
       const h = ctx.csvHeaders;
       if (!h) return false;
-      if (spec.match.requireHeaders && !spec.match.requireHeaders.every((x) => h.has(x.toLowerCase()))) return false;
+      if (spec.match.requireHeaders && !spec.match.requireHeaders.every((x) => h.has(x.toLowerCase())))
+        return false;
       if (spec.match.anyHeaders && !spec.match.anyHeaders.some((x) => h.has(x.toLowerCase()))) return false;
     }
 
     if (spec.match.requireKeys || spec.match.anyKeys || keyEquals.length) {
       const s = ctx.sample;
       if (!s) return false;
-      if (spec.match.requireKeys && !spec.match.requireKeys.every((k) => getField(s, k) != null)) return false;
+      if (spec.match.requireKeys && !spec.match.requireKeys.every((k) => getField(s, k) != null))
+        return false;
       if (spec.match.anyKeys && !spec.match.anyKeys.some((k) => getField(s, k) != null)) return false;
       for (const [k, re] of keyEquals) {
         if (!re || !re.test(str(getField(s, k)).slice(0, 4096))) return false;
@@ -87,13 +102,23 @@ export function buildImporter(spec: ImporterSpec): ExternalImporter {
 
 function applyTransform(v: string, t?: string): string {
   switch (t) {
-    case "trim": return v.trim();
-    case "lowercase": return v.toLowerCase();
-    case "basename": return v.trim().split(/[\\/]/).pop() || v.trim();
-    case "cleanIp": return cleanIp(v);
-    case "defang": return v.replace(/:\/\//g, "[://]").replace(/\./g, "[.]");
-    case "refang": return v.replace(/\[\.\]/g, ".").replace(/\[:\/\/\]/g, "://").replace(/hxxp/gi, "http");
-    default: return v;
+    case "trim":
+      return v.trim();
+    case "lowercase":
+      return v.toLowerCase();
+    case "basename":
+      return v.trim().split(/[\\/]/).pop() || v.trim();
+    case "cleanIp":
+      return cleanIp(v);
+    case "defang":
+      return v.replace(/:\/\//g, "[://]").replace(/\./g, "[.]");
+    case "refang":
+      return v
+        .replace(/\[\.\]/g, ".")
+        .replace(/\[:\/\/\]/g, "://")
+        .replace(/hxxp/gi, "http");
+    default:
+      return v;
   }
 }
 
@@ -150,7 +175,8 @@ function resolveTs(rec: Row, b: ImporterSpec["map"]["timestamp"]): string {
 
 function rowsOf(text: string, format: string): { rows: Row[]; format: string } {
   const t = text.trim();
-  const json = format === "json" || format === "ndjson" || (format === "auto" && (t[0] === "{" || t[0] === "["));
+  const json =
+    format === "json" || format === "ndjson" || (format === "auto" && (t[0] === "{" || t[0] === "["));
   if (json) {
     const { records, format: f } = extractRecords(text);
     return { rows: records, format: f };
@@ -158,7 +184,9 @@ function rowsOf(text: string, format: string): { rows: Row[]; format: string } {
   const { headers, rows } = parseCsv(text);
   const objs = rows.map((cells) => {
     const o: Row = {};
-    headers.forEach((h, i) => { o[h] = cells[i] ?? ""; });
+    headers.forEach((h, i) => {
+      o[h] = cells[i] ?? "";
+    });
     return o;
   });
   return { rows: objs, format: "csv" };
@@ -202,12 +230,21 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
         ...opt("parentName", "parentName"),
         ...opt("srcIp", "srcIp"),
         ...opt("dstIp", "dstIp"),
-        ...(m.port ? (() => { const v = bindStr(rec, m.port); const n = Number(v); return Number.isFinite(n) && v ? { port: n } : {}; })() : {}),
+        ...(m.port
+          ? (() => {
+              const v = bindStr(rec, m.port);
+              const n = Number(v);
+              return Number.isFinite(n) && v ? { port: n } : {};
+            })()
+          : {}),
       });
 
       for (const rule of m.iocs ?? []) {
         if ("autoExtract" in rule) {
-          genericIocs(rule.autoExtract.map((k) => [k, str(getField(rec, k))] as [string, string]), iocSink);
+          genericIocs(
+            rule.autoExtract.map((k) => [k, str(getField(rec, k))] as [string, string]),
+            iocSink,
+          );
         } else {
           for (const k of rule.from) {
             const v = applyTransform(str(getField(rec, k)).trim(), rule.transform);
@@ -223,8 +260,18 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
       maxEvents: spec.options.maxEvents,
     });
     let iocs = [...iocSink.values()];
-    if (spec.options.maxIocs && iocs.length > spec.options.maxIocs) iocs = iocs.slice(0, spec.options.maxIocs);
+    if (spec.options.maxIocs && iocs.length > spec.options.maxIocs)
+      iocs = iocs.slice(0, spec.options.maxIocs);
     const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
-    return { events, iocs, total: rows.length, kept: events.length, dropped: Math.max(0, rows.length - represented), groups, format, hostname: host };
+    return {
+      events,
+      iocs,
+      total: rows.length,
+      kept: events.length,
+      dropped: Math.max(0, rows.length - represented),
+      groups,
+      format,
+      hostname: host,
+    };
   };
 }

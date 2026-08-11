@@ -48,19 +48,23 @@ function main() {
   }
 
   const phantoms = facts.filter((f) => f.phantom);
-  console.log(`variables   ${facts.length}  (${facts.length - phantoms.length} declared, ${phantoms.length} phantom)`);
+  console.log(
+    `variables   ${facts.length}  (${facts.length - phantoms.length} declared, ${phantoms.length} phantom)`,
+  );
   console.log(`assigned    ${facts.length - unassigned.length}`);
-  console.log(`roles       ${byRole.size}  (A ${countTier(byRole, "A")} / B ${countTier(byRole, "B")} / C ${countTier(byRole, "C")})`);
+  console.log(
+    `roles       ${byRole.size}  (A ${countTier(byRole, "A")} / B ${countTier(byRole, "B")} / C ${countTier(byRole, "C")})`,
+  );
   console.log(`call sites  ${facts.reduce((s, f) => s + f.uses, 0)}`);
   if (misfiled.length) {
-    console.log(`\nWARN theme-invariant but assigned a themed role: ${misfiled.map((f) => f.name).join(", ")}`);
+    console.log(
+      `\nWARN theme-invariant but assigned a themed role: ${misfiled.map((f) => f.name).join(", ")}`,
+    );
   }
 
   console.log("\nrole                      tier  vars  calls  L-spread");
   console.log("-".repeat(58));
-  const rows = [...byRole.entries()].sort(
-    (a, b) => weight(b[1]) - weight(a[1]),
-  );
+  const rows = [...byRole.entries()].sort((a, b) => weight(b[1]) - weight(a[1]));
   const wide: Array<[string, Array<RoleAssignment & { name: string }>]> = [];
   for (const [role, g] of rows) {
     const spread = lightnessSpread(g);
@@ -131,7 +135,9 @@ function main() {
     console.log(`\nReferenced but never declared — ${phantoms.length} variables, ${sites} call sites.`);
     console.log("Currently render as inherited/initial; assigning a role makes them visible:");
     for (const f of [...phantoms].sort((a, b) => b.uses - a.uses)) {
-      console.log(`  ${f.name.padEnd(13)} ${f.dark}  n=${String(f.uses).padStart(3)}  -> ${map[f.name].role}`);
+      console.log(
+        `  ${f.name.padEnd(13)} ${f.dark}  n=${String(f.uses).padStart(3)}  -> ${map[f.name].role}`,
+      );
     }
   }
 

@@ -39,14 +39,14 @@ export interface SocratesImportOptions {
 export interface SocratesParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;    // records found
-  kept: number;     // events emitted (after aggregation + cap)
-  dropped: number;  // records not represented (telemetry / below floor / capped / unknown)
-  groups: number;   // distinct event groups before the cap
-  alerts: number;   // Suricata alerts seen
-  yara: number;     // YARA filealerts seen
-  sigma: number;    // Sigma alerts seen
-  format: string;   // "suricata" | "yara" | "sigma" | "mixed" | "empty"
+  total: number; // records found
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // records not represented (telemetry / below floor / capped / unknown)
+  groups: number; // distinct event groups before the cap
+  alerts: number; // Suricata alerts seen
+  yara: number; // YARA filealerts seen
+  sigma: number; // Sigma alerts seen
+  format: string; // "suricata" | "yara" | "sigma" | "mixed" | "empty"
 }
 
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
@@ -69,13 +69,19 @@ function mitreFrom(...vals: unknown[]): string[] {
 // Sigma/severity word → Severity (verdict-first, like the SIEM per-EID table).
 function sigmaSeverity(level: string): Severity {
   switch (level.trim().toLowerCase()) {
-    case "critical": return "Critical";
-    case "high": return "High";
-    case "medium": return "Medium";
-    case "low": return "Low";
+    case "critical":
+      return "Critical";
+    case "high":
+      return "High";
+    case "medium":
+      return "Medium";
+    case "low":
+      return "Low";
     case "informational":
-    case "info": return "Info";
-    default: return "Medium";
+    case "info":
+      return "Info";
+    default:
+      return "Medium";
   }
 }
 
@@ -124,9 +130,14 @@ function mapYara(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
 // alert event carries the real process context (CommandLine/ParentImage/…), not just the rule name.
 function parseMatchedEvent(row: Row): Row | null {
   const ol = getCI(row, "original_log");
-  if (isObject(ol)) return ol;                       // already-parsed
+  if (isObject(ol)) return ol; // already-parsed
   if (typeof ol === "string" && ol.trim()) {
-    try { const o = JSON.parse(ol); if (isObject(o)) return o; } catch { /* fall through */ }
+    try {
+      const o = JSON.parse(ol);
+      if (isObject(o)) return o;
+    } catch {
+      /* fall through */
+    }
   }
   const jd = getCI(row, "json_data");
   if (typeof jd === "string" && jd.trim()) {
@@ -134,14 +145,25 @@ function parseMatchedEvent(row: Row): Row | null {
       const o = JSON.parse(jd);
       const m = isObject(o) ? getCI(o, "matches") : null;
       if (Array.isArray(m) && isObject(m[0])) return m[0];
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
   return null;
 }
 
 // Salient process/network fields to surface from a matched event on the non-Windows path (the
 // Windows path renders these via mapWindows). Also harvests the event's own IOCs.
-const SIGMA_CTX_KEYS = ["Image", "CommandLine", "ParentImage", "ParentCommandLine", "CurrentDirectory", "User", "TargetFilename", "DestinationIp"];
+const SIGMA_CTX_KEYS = [
+  "Image",
+  "CommandLine",
+  "ParentImage",
+  "ParentCommandLine",
+  "CurrentDirectory",
+  "User",
+  "TargetFilename",
+  "DestinationIp",
+];
 function evContext(ev: Row, sink: Map<string, SiemIoc>): string {
   addHash(sink, getCI(ev, "SHA256"));
   addHash(sink, getCI(ev, "MD5"));
@@ -174,12 +196,17 @@ function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
   // Windows/Sysmon matched event → full process mapping + IOCs, then overlay the Sigma verdict.
   if (ev) {
     const host = str(getCI(ev, "Computer"));
-    const win = mapWindows({
-      event_id: getCI(ev, "EventID") ?? getCI(ev, "event_id"),
-      channel: getCI(ev, "Channel") ?? getCI(ev, "channel") ?? logsource,
-      event_data: ev,
-      "@timestamp": str(getCI(ev, "SystemTime")) || str(getCI(ev, "UtcTime")) || str(getCI(row, "timestamp")),
-    }, host, sink);
+    const win = mapWindows(
+      {
+        event_id: getCI(ev, "EventID") ?? getCI(ev, "event_id"),
+        channel: getCI(ev, "Channel") ?? getCI(ev, "channel") ?? logsource,
+        event_data: ev,
+        "@timestamp":
+          str(getCI(ev, "SystemTime")) || str(getCI(ev, "UtcTime")) || str(getCI(row, "timestamp")),
+      },
+      host,
+      sink,
+    );
     if (win) {
       // mapWindows reads hashes from the combined Sysmon `Hashes` string; some matched events
       // expose only standalone SHA256/MD5 fields — capture those defensively.
@@ -205,7 +232,10 @@ function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const parentName = ev ? baseName(str(getCI(ev, "ParentImage"))) : "";
   return {
     timestamp: normalizeTime(str(getCI(row, "timestamp")) || (ev ? str(getCI(ev, "SystemTime")) : "")),
-    description: (`Sigma: ${title}` + (logsource ? ` [${logsource}]` : "") + (ctx ? ` - ${ctx}` : "")).slice(0, 600),
+    description: (`Sigma: ${title}` + (logsource ? ` [${logsource}]` : "") + (ctx ? ` - ${ctx}` : "")).slice(
+      0,
+      600,
+    ),
     severity: sev,
     mitre,
     aggKey: `socrates-sigma|${ruleKey}`.slice(0, 400),
@@ -221,13 +251,24 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, alerts: 0, yara: 0, sigma: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      alerts: 0,
+      yara: 0,
+      sigma: 0,
+      format: "empty",
+    };
   }
 
   // Partition records by shape.
-  const eve: Row[] = [];        // Suricata/Zeek telemetry + alerts (minus YARA filealerts)
-  const yaraRows: Row[] = [];   // YARA filealerts
-  const sigmaRows: Row[] = [];  // Sigma alerts
+  const eve: Row[] = []; // Suricata/Zeek telemetry + alerts (minus YARA filealerts)
+  const yaraRows: Row[] = []; // YARA filealerts
+  const sigmaRows: Row[] = []; // Sigma alerts
   for (const row of records) {
     if (isEve(row)) {
       if (str(getCI(row, "event_type")).toLowerCase() === "filealerts" || getCI(row, "filealerts") != null) {
@@ -272,10 +313,12 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
 
   // Combine (network events are already aggregated/sorted), sort worst-first, cap.
   const combined = [...netEvents, ...fileEvents]
-    .sort((a, b) =>
-      SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
-      (b.count ?? 1) - (a.count ?? 1) ||
-      (a.timestamp || "~").localeCompare(b.timestamp || "~"))
+    .sort(
+      (a, b) =>
+        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        (b.count ?? 1) - (a.count ?? 1) ||
+        (a.timestamp || "~").localeCompare(b.timestamp || "~"),
+    )
     .slice(0, maxEvents);
 
   const present: string[] = [];

@@ -14,18 +14,27 @@ import {
 
 describe("anonDiscovered pure helpers", () => {
   it("mergeDiscovered dedupes case-insensitively and skips suppressed", () => {
-    const prev = { discovered: [{ value: "WIN11", category: "HOST" as const }], suppressed: ["config\\powershellinfo.log"] };
+    const prev = {
+      discovered: [{ value: "WIN11", category: "HOST" as const }],
+      suppressed: ["config\\powershellinfo.log"],
+    };
     const next = mergeDiscovered(prev, [
-      { value: "win11", category: "HOST" },                       // dup (ci) → skipped
-      { value: "vagrant", category: "USER" },                     // new
-      { value: "config\\PowershellInfo.log", category: "USER" },  // suppressed → skipped
+      { value: "win11", category: "HOST" }, // dup (ci) → skipped
+      { value: "vagrant", category: "USER" }, // new
+      { value: "config\\PowershellInfo.log", category: "USER" }, // suppressed → skipped
     ]);
     expect(next.discovered.map((e) => e.value)).toEqual(["WIN11", "vagrant"]);
     expect(next.suppressed).toEqual(["config\\powershellinfo.log"]);
   });
 
   it("suppressValue removes from discovered and records the veto (lowercased)", () => {
-    const prev = { discovered: [{ value: "config\\PowershellInfo.log", category: "USER" as const }, { value: "WIN11", category: "HOST" as const }], suppressed: [] };
+    const prev = {
+      discovered: [
+        { value: "config\\PowershellInfo.log", category: "USER" as const },
+        { value: "WIN11", category: "HOST" as const },
+      ],
+      suppressed: [],
+    };
     const next = suppressValue(prev, "config\\PowershellInfo.log");
     expect(next.discovered.map((e) => e.value)).toEqual(["WIN11"]);
     expect(next.suppressed).toEqual(["config\\powershellinfo.log"]);
@@ -37,7 +46,13 @@ describe("anonDiscovered pure helpers", () => {
   });
 
   it("sanitizeDiscovered drops suppressed entries from the discovered list and lowercases the veto", () => {
-    const s = sanitizeDiscovered({ discovered: [{ value: "WIN11", category: "HOST" }, { value: "bad", category: "USER" }], suppressed: ["BAD"] });
+    const s = sanitizeDiscovered({
+      discovered: [
+        { value: "WIN11", category: "HOST" },
+        { value: "bad", category: "USER" },
+      ],
+      suppressed: ["BAD"],
+    });
     expect(s.discovered.map((e) => e.value)).toEqual(["WIN11"]);
     expect(s.suppressed).toEqual(["bad"]);
   });
@@ -58,7 +73,10 @@ describe("DiscoveredEntitiesStore", () => {
   });
 
   it("adds, suppresses (removes + vetoes), and restores — round-tripping to disk", async () => {
-    await store.addDiscovered("c1", [{ value: "WIN11", category: "HOST" }, { value: "config\\PowershellInfo.log", category: "USER" }]);
+    await store.addDiscovered("c1", [
+      { value: "WIN11", category: "HOST" },
+      { value: "config\\PowershellInfo.log", category: "USER" },
+    ]);
     expect((await store.load("c1")).discovered).toHaveLength(2);
 
     await store.suppress("c1", "config\\PowershellInfo.log");

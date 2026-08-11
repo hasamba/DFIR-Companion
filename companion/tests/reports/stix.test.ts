@@ -8,9 +8,16 @@ function ioc(overrides: Partial<IOC>): IOC {
 
 function finding(overrides: Partial<Finding>): Finding {
   return {
-    id: "f1", severity: "High", title: "A finding", description: "d",
-    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],
-    firstSeen: "2026-05-20T09:00:00Z", lastUpdated: "2026-05-20T10:00:00Z", status: "open",
+    id: "f1",
+    severity: "High",
+    title: "A finding",
+    description: "d",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "2026-05-20T09:00:00Z",
+    lastUpdated: "2026-05-20T10:00:00Z",
+    status: "open",
     ...overrides,
   };
 }
@@ -25,17 +32,31 @@ const UUID_ID = /^[a-z-]+--[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3
 describe("iocToStixPattern", () => {
   it("maps each IOC kind to the right STIX observable pattern", () => {
     expect(iocToStixPattern(ioc({ type: "ip", value: "10.0.0.1" }))).toBe("[ipv4-addr:value = '10.0.0.1']");
-    expect(iocToStixPattern(ioc({ type: "ip", value: "2001:db8::1" }))).toBe("[ipv6-addr:value = '2001:db8::1']");
-    expect(iocToStixPattern(ioc({ type: "domain", value: "evil.com" }))).toBe("[domain-name:value = 'evil.com']");
-    expect(iocToStixPattern(ioc({ type: "url", value: "http://evil.com/x" }))).toBe("[url:value = 'http://evil.com/x']");
+    expect(iocToStixPattern(ioc({ type: "ip", value: "2001:db8::1" }))).toBe(
+      "[ipv6-addr:value = '2001:db8::1']",
+    );
+    expect(iocToStixPattern(ioc({ type: "domain", value: "evil.com" }))).toBe(
+      "[domain-name:value = 'evil.com']",
+    );
+    expect(iocToStixPattern(ioc({ type: "url", value: "http://evil.com/x" }))).toBe(
+      "[url:value = 'http://evil.com/x']",
+    );
     expect(iocToStixPattern(ioc({ type: "file", value: "bad.exe" }))).toBe("[file:name = 'bad.exe']");
-    expect(iocToStixPattern(ioc({ type: "process", value: "powershell -enc AAA" }))).toBe("[process:command_line = 'powershell -enc AAA']");
+    expect(iocToStixPattern(ioc({ type: "process", value: "powershell -enc AAA" }))).toBe(
+      "[process:command_line = 'powershell -enc AAA']",
+    );
   });
 
   it("picks the hash algorithm from the digest length", () => {
-    expect(iocToStixPattern(ioc({ type: "hash", value: "d".repeat(32) }))).toBe(`[file:hashes.'MD5' = '${"d".repeat(32)}']`);
-    expect(iocToStixPattern(ioc({ type: "hash", value: "a".repeat(40) }))).toBe(`[file:hashes.'SHA-1' = '${"a".repeat(40)}']`);
-    expect(iocToStixPattern(ioc({ type: "hash", value: "b".repeat(64) }))).toBe(`[file:hashes.'SHA-256' = '${"b".repeat(64)}']`);
+    expect(iocToStixPattern(ioc({ type: "hash", value: "d".repeat(32) }))).toBe(
+      `[file:hashes.'MD5' = '${"d".repeat(32)}']`,
+    );
+    expect(iocToStixPattern(ioc({ type: "hash", value: "a".repeat(40) }))).toBe(
+      `[file:hashes.'SHA-1' = '${"a".repeat(40)}']`,
+    );
+    expect(iocToStixPattern(ioc({ type: "hash", value: "b".repeat(64) }))).toBe(
+      `[file:hashes.'SHA-256' = '${"b".repeat(64)}']`,
+    );
   });
 
   it("returns null for an unrecognizable hash length and a blank value", () => {
@@ -44,13 +65,19 @@ describe("iocToStixPattern", () => {
   });
 
   it("sniffs an `other` IOC into email / url / ip / domain, else null", () => {
-    expect(iocToStixPattern(ioc({ type: "other", value: "ceo@victim.com" }))).toBe("[email-addr:value = 'ceo@victim.com']");
-    expect(iocToStixPattern(ioc({ type: "other", value: "evil.io" }))).toBe("[domain-name:value = 'evil.io']");
+    expect(iocToStixPattern(ioc({ type: "other", value: "ceo@victim.com" }))).toBe(
+      "[email-addr:value = 'ceo@victim.com']",
+    );
+    expect(iocToStixPattern(ioc({ type: "other", value: "evil.io" }))).toBe(
+      "[domain-name:value = 'evil.io']",
+    );
     expect(iocToStixPattern(ioc({ type: "other", value: "free-text not an ioc" }))).toBeNull();
   });
 
   it("escapes single quotes and backslashes inside the pattern literal", () => {
-    expect(iocToStixPattern(ioc({ type: "file", value: "C:\\Temp\\a'b.exe" }))).toBe("[file:name = 'C:\\\\Temp\\\\a\\'b.exe']");
+    expect(iocToStixPattern(ioc({ type: "file", value: "C:\\Temp\\a'b.exe" }))).toBe(
+      "[file:name = 'C:\\\\Temp\\\\a\\'b.exe']",
+    );
   });
 });
 
@@ -98,13 +125,18 @@ describe("buildStixBundle", () => {
 
   it("carries the worst threat-intel verdict into indicator_types and the description, plus valid_from", () => {
     const state = emptyState("c1");
-    state.iocs.push(ioc({
-      id: "i1", type: "hash", value: "b".repeat(64), firstSeen: "2026-05-19T08:00:00.000Z",
-      enrichments: [
-        { source: "VirusTotal", verdict: "suspicious", score: "5/70", fetchedAt: "t" },
-        { source: "MalwareBazaar", verdict: "malicious", score: "family hit", fetchedAt: "t" },
-      ],
-    }));
+    state.iocs.push(
+      ioc({
+        id: "i1",
+        type: "hash",
+        value: "b".repeat(64),
+        firstSeen: "2026-05-19T08:00:00.000Z",
+        enrichments: [
+          { source: "VirusTotal", verdict: "suspicious", score: "5/70", fetchedAt: "t" },
+          { source: "MalwareBazaar", verdict: "malicious", score: "family hit", fetchedAt: "t" },
+        ],
+      }),
+    );
     const ind = ofType(buildStixBundle(state).objects, "indicator")[0];
     expect(ind.indicator_types).toEqual(["malicious-activity"]); // worst wins
     expect(ind.description).toContain("malicious");
@@ -117,10 +149,14 @@ describe("buildStixBundle", () => {
     state.mitreTechniques.push({ id: "T1059.001", name: "PowerShell", findingIds: [] });
     state.findings.push(finding({ mitreTechniques: ["T1486"] })); // technique with no name in the list
     const aps = ofType(buildStixBundle(state).objects, "attack-pattern");
-    const ps = aps.find((a) => (a.external_references as Array<{ external_id: string }>)[0].external_id === "T1059.001")!;
+    const ps = aps.find(
+      (a) => (a.external_references as Array<{ external_id: string }>)[0].external_id === "T1059.001",
+    )!;
     expect(ps.name).toBe("PowerShell");
     expect((ps.external_references as Array<{ source_name: string }>)[0].source_name).toBe("mitre-attack");
-    const ransom = aps.find((a) => (a.external_references as Array<{ external_id: string }>)[0].external_id === "T1486")!;
+    const ransom = aps.find(
+      (a) => (a.external_references as Array<{ external_id: string }>)[0].external_id === "T1486",
+    )!;
     expect(ransom.name).toBe("T1486"); // falls back to the id when no name is known
   });
 
@@ -152,10 +188,16 @@ describe("buildStixBundle", () => {
 
   it("derives malware SDOs from enrichment family tags and links indicator →indicates→ malware", () => {
     const state = emptyState("c1");
-    state.iocs.push(ioc({
-      id: "i1", type: "hash", value: "c".repeat(64),
-      enrichments: [{ source: "ThreatFox", verdict: "malicious", tags: ["Emotet", "Loader"], fetchedAt: "t" }],
-    }));
+    state.iocs.push(
+      ioc({
+        id: "i1",
+        type: "hash",
+        value: "c".repeat(64),
+        enrichments: [
+          { source: "ThreatFox", verdict: "malicious", tags: ["Emotet", "Loader"], fetchedAt: "t" },
+        ],
+      }),
+    );
     const objects = buildStixBundle(state).objects;
     const malware = ofType(objects, "malware");
     expect(malware.map((m) => m.name).sort()).toEqual(["Emotet", "Loader"]);
@@ -169,7 +211,10 @@ describe("buildStixBundle", () => {
   it("names the report from the incident id when provided", () => {
     const plain = ofType(buildStixBundle(emptyState("c1")).objects, "report")[0];
     expect(plain.name).toBe("DFIR Companion — c1");
-    const withId = ofType(buildStixBundle(emptyState("c1"), { incidentId: "IR-2026-007" }).objects, "report")[0];
+    const withId = ofType(
+      buildStixBundle(emptyState("c1"), { incidentId: "IR-2026-007" }).objects,
+      "report",
+    )[0];
     expect(withId.name).toBe("Incident IR-2026-007 — c1");
   });
 });

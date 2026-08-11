@@ -39,11 +39,11 @@ describe("FindingWorkflowStore", () => {
   it("merges partial patches: status-only leaves the assignee intact and vice versa", async () => {
     await store.patch("c1", "f-1", { assignee: "Alice" });
     const rec = await store.patch("c1", "f-1", { status: "in_review" });
-    expect(rec!.assignee).toBe("Alice");     // preserved
+    expect(rec!.assignee).toBe("Alice"); // preserved
     expect(rec!.status).toBe("in_review");
     const rec2 = await store.patch("c1", "f-1", { assignee: "Carol" });
     expect(rec2!.assignee).toBe("Carol");
-    expect(rec2!.status).toBe("in_review");  // preserved
+    expect(rec2!.status).toBe("in_review"); // preserved
   });
 
   it("clears the record when both assignee and status become empty", async () => {

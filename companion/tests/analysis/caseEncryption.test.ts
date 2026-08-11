@@ -62,7 +62,9 @@ describe("container versioning", () => {
   });
 
   it("rejects a wrong password against a v1 archive", () => {
-    expect(() => decryptBuffer(Buffer.from(V1_CONTAINER_HEX, "hex"), "wrong-password")).toThrow(DecryptionError);
+    expect(() => decryptBuffer(Buffer.from(V1_CONTAINER_HEX, "hex"), "wrong-password")).toThrow(
+      DecryptionError,
+    );
   });
 
   it("writes new archives in v2", () => {

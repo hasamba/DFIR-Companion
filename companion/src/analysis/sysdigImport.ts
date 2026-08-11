@@ -50,8 +50,8 @@ export interface SysdigParseResult {
   kept: number;
   dropped: number;
   groups: number;
-  alerts: number;   // Falco rule hits seen
-  format: string;   // "falco" | "sysdig" | "mixed" | "empty"
+  alerts: number; // Falco rule hits seen
+  format: string; // "falco" | "sysdig" | "mixed" | "empty"
   hostname: string;
 }
 
@@ -62,16 +62,24 @@ const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}
 
 // Falco priority (also the syslog severity words) → our Severity.
 const FALCO_SEVERITY: Record<string, Severity> = {
-  emergency: "Critical", alert: "Critical", critical: "Critical",
-  error: "High", err: "High",
-  warning: "Medium", warn: "Medium",
+  emergency: "Critical",
+  alert: "Critical",
+  critical: "Critical",
+  error: "High",
+  err: "High",
+  warning: "Medium",
+  warn: "Medium",
   notice: "Low",
-  informational: "Info", info: "Info", debug: "Info",
+  informational: "Info",
+  info: "Info",
+  debug: "Info",
 };
 
 function mitreFromTags(tags: unknown): string[] {
   const out = new Set<string>();
-  const push = (s: string): void => { for (const m of s.matchAll(/\bt\d{4}(?:\.\d{3})?\b/gi)) out.add(m[0].toUpperCase()); };
+  const push = (s: string): void => {
+    for (const m of s.matchAll(/\bt\d{4}(?:\.\d{3})?\b/gi)) out.add(m[0].toUpperCase());
+  };
   if (Array.isArray(tags)) for (const t of tags) push(str(t));
   else if (tags != null) push(str(tags));
   return [...out];
@@ -80,20 +88,46 @@ function mitreFromTags(tags: unknown): string[] {
 // ───────────────────────────── Falco alert ─────────────────────────────
 
 function isFalcoAlert(rec: Row): boolean {
-  return getCI(rec, "rule") != null && getCI(rec, "priority") != null &&
-    (getCI(rec, "output") != null || getCI(rec, "output_fields") != null);
+  return (
+    getCI(rec, "rule") != null &&
+    getCI(rec, "priority") != null &&
+    (getCI(rec, "output") != null || getCI(rec, "output_fields") != null)
+  );
 }
 
 function addField(sink: Map<string, SiemIoc>, key: string, raw: unknown): void {
   const v = str(raw).trim();
   if (!v || v === "<NA>" || v === "(null)") return;
   const k = key.toLowerCase();
-  if (/proc\.(?:name|aname)|^proc$/.test(k)) { addIoc(sink, "process", baseName(v)); return; }
-  if (/proc\.(?:exepath|exe)$/.test(k) && v.includes("/")) { addIoc(sink, "file", v.slice(0, 300)); addIoc(sink, "process", baseName(v)); return; }
-  if (/proc\.cmdline$/.test(k)) { const bn = baseName(v.split(/\s+/)[0] ?? ""); if (bn) addIoc(sink, "process", bn); return; }
-  if (/(?:fd\.name|fd\.filename|fs\.path\.name|file)$/.test(k) && v.includes("/")) { addIoc(sink, "file", v.slice(0, 300)); return; }
-  if (/(?:fd\.[sc]?ip|^.*\.ip|connection)/.test(k)) { for (const m of v.matchAll(IPV4_G)) { const ip = cleanIp(m[0]); if (ip) addIoc(sink, "ip", ip); } return; }
-  if (/(?:fd\.[sc]?_?domain|domain|dns)/.test(k) && DOMAIN.test(v) && !IPV4.test(v)) { addIoc(sink, "domain", v.toLowerCase()); return; }
+  if (/proc\.(?:name|aname)|^proc$/.test(k)) {
+    addIoc(sink, "process", baseName(v));
+    return;
+  }
+  if (/proc\.(?:exepath|exe)$/.test(k) && v.includes("/")) {
+    addIoc(sink, "file", v.slice(0, 300));
+    addIoc(sink, "process", baseName(v));
+    return;
+  }
+  if (/proc\.cmdline$/.test(k)) {
+    const bn = baseName(v.split(/\s+/)[0] ?? "");
+    if (bn) addIoc(sink, "process", bn);
+    return;
+  }
+  if (/(?:fd\.name|fd\.filename|fs\.path\.name|file)$/.test(k) && v.includes("/")) {
+    addIoc(sink, "file", v.slice(0, 300));
+    return;
+  }
+  if (/(?:fd\.[sc]?ip|^.*\.ip|connection)/.test(k)) {
+    for (const m of v.matchAll(IPV4_G)) {
+      const ip = cleanIp(m[0]);
+      if (ip) addIoc(sink, "ip", ip);
+    }
+    return;
+  }
+  if (/(?:fd\.[sc]?_?domain|domain|dns)/.test(k) && DOMAIN.test(v) && !IPV4.test(v)) {
+    addIoc(sink, "domain", v.toLowerCase());
+    return;
+  }
   if (/sha256|sha1|\bmd5\b/.test(k) && HEX_HASH.test(v)) addIoc(sink, "hash", v.toLowerCase());
 }
 
@@ -117,7 +151,10 @@ function mapFalco(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent {
       if (!path && /proc\.exepath$|^.*exe$/.test(kl) && str(v).includes("/")) path = str(v).slice(0, 300);
     }
   }
-  for (const m of output.matchAll(IPV4_G)) { const ip = cleanIp(m[0]); if (ip) addIoc(iocSink, "ip", ip); }
+  for (const m of output.matchAll(IPV4_G)) {
+    const ip = cleanIp(m[0]);
+    if (ip) addIoc(iocSink, "ip", ip);
+  }
 
   let description = `Falco: ${rule}`;
   if (output) description += ` — ${output}`;
@@ -173,8 +210,12 @@ function mapSysdigEvent(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent {
 
   if (proc) addIoc(iocSink, "process", baseName(proc));
   if (exe && exe.includes("/")) addIoc(iocSink, "file", exe.slice(0, 300));
-  if (fdName && fdName.includes("/") && !fdName.startsWith("<")) addIoc(iocSink, "file", fdName.slice(0, 300));
-  for (const m of `${info} ${fdName}`.matchAll(IPV4_G)) { const ip = cleanIp(m[0]); if (ip) addIoc(iocSink, "ip", ip); }
+  if (fdName && fdName.includes("/") && !fdName.startsWith("<"))
+    addIoc(iocSink, "file", fdName.slice(0, 300));
+  for (const m of `${info} ${fdName}`.matchAll(IPV4_G)) {
+    const ip = cleanIp(m[0]);
+    if (ip) addIoc(iocSink, "ip", ip);
+  }
 
   let description = `sysdig: ${proc || "?"} ${dir} ${etype}`.trim();
   if (info) description += ` ${info}`;
@@ -208,18 +249,31 @@ export function parseSysdig(text: string, opts: SysdigImportOptions = {}): Sysdi
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, alerts: 0, format: "empty", hostname: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      alerts: 0,
+      format: "empty",
+      hostname: "",
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
-  let alerts = 0, sawFalco = false, sawSysdig = false;
+  let alerts = 0,
+    sawFalco = false,
+    sawSysdig = false;
 
   for (const rec of records) {
     if (!isObject(rec)) continue;
     if (isFalcoAlert(rec)) {
-      sawFalco = true; alerts++;
+      sawFalco = true;
+      alerts++;
       const m = mapFalco(rec, iocSink);
       mapped.push(m);
       if (m.asset) hostTally.set(m.asset, (hostTally.get(m.asset) ?? 0) + 1);

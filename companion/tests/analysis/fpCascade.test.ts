@@ -17,7 +17,7 @@ function step(partial: Partial<NextStep> & { id: string }): NextStep {
 describe("textMentionsFindingId", () => {
   it("matches on id boundaries, not substrings", () => {
     expect(textMentionsFindingId("supported by f1 and f2", "f1")).toBe(true);
-    expect(textMentionsFindingId("see f12", "f1")).toBe(false);   // f1 is not a boundary match in f12
+    expect(textMentionsFindingId("see f12", "f1")).toBe(false); // f1 is not a boundary match in f12
     expect(textMentionsFindingId("f-auto-e1 covers it", "f-auto-e1")).toBe(true);
     expect(textMentionsFindingId(undefined, "f1")).toBe(false);
   });
@@ -38,15 +38,23 @@ describe("reconsiderKeyQuestions", () => {
     expect(out[0].status).toBe("unknown");
     expect(out[0].answer).toBe("");
     expect(out[0].pointer).toBe(FP_RESET_POINTER);
-    expect(out[0].relatedFindingIds).toEqual(["f2"]);   // dead link pruned
+    expect(out[0].relatedFindingIds).toEqual(["f2"]); // dead link pruned
     expect(out[0].staleReSynth).toBe(true);
-    expect(out[1].status).toBe("answered");             // q2 untouched
+    expect(out[1].status).toBe("answered"); // q2 untouched
     expect(out[1].staleReSynth).toBeUndefined();
   });
 
   it("resets on a PROSE mention when there is no structured link", () => {
     const { questions: out } = reconsiderKeyQuestions(
-      [q({ id: "q1", status: "partial", answer: "backed by f7", pointer: "finding f7", relatedFindingIds: [] })],
+      [
+        q({
+          id: "q1",
+          status: "partial",
+          answer: "backed by f7",
+          pointer: "finding f7",
+          relatedFindingIds: [],
+        }),
+      ],
       { survivingFindingIds: new Set([]), priorFindingIds: ["f7"], staleReSynth: true },
     );
     expect(out[0].status).toBe("unknown");
@@ -56,7 +64,7 @@ describe("reconsiderKeyQuestions", () => {
   it("on the authoritative synthesis pass (staleReSynth off) resets WITHOUT a stale badge and clears prior badges", () => {
     const { questions: out } = reconsiderKeyQuestions(
       [
-        q({ id: "q1", status: "answered", relatedFindingIds: ["f1"] }),           // will reset, no badge
+        q({ id: "q1", status: "answered", relatedFindingIds: ["f1"] }), // will reset, no badge
         q({ id: "q2", status: "answered", relatedFindingIds: ["f2"], staleReSynth: true }), // stays, badge cleared
       ],
       { survivingFindingIds: new Set(["f2"]), priorFindingIds: ["f1", "f2"] },
@@ -64,8 +72,8 @@ describe("reconsiderKeyQuestions", () => {
     expect(out[0].status).toBe("unknown");
     expect(out[0].staleReSynth).toBeUndefined();
     expect(out[1].status).toBe("answered");
-    expect(out[1].staleReSynth).toBeUndefined();        // cleared by authoritative pass
-    expect("staleReSynth" in out[0]).toBe(false);       // no lingering undefined key
+    expect(out[1].staleReSynth).toBeUndefined(); // cleared by authoritative pass
+    expect("staleReSynth" in out[0]).toBe(false); // no lingering undefined key
   });
 
   it("does not reset an already-unknown question, only prunes its dead links", () => {
@@ -99,8 +107,8 @@ describe("reconsiderNextSteps", () => {
       staleReSynth: true,
     });
     expect(changed).toBe(true);
-    expect(out[0].staleReSynth).toBe(true);   // structural
-    expect(out[1].staleReSynth).toBe(true);   // prose mention
+    expect(out[0].staleReSynth).toBe(true); // structural
+    expect(out[1].staleReSynth).toBe(true); // prose mention
     expect(out[2].staleReSynth).toBeUndefined();
   });
 

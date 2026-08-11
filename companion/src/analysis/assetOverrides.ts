@@ -19,17 +19,19 @@ const manualAssetSchema = z.object({
 });
 export type ManualAsset = z.infer<typeof manualAssetSchema>;
 
-export const assetOverridesSchema = z.object({
-  renames: z.record(z.string(), z.string()).default({}),
-  added: z.array(manualAssetSchema).default([]),
-  removed: z.array(z.string()).default([]),          // suppressed auto-derived asset ids
-  addedLinks: z.array(z.object({ asset: z.string(), ioc: z.string() })).default([]),
-  removedLinks: z.array(z.object({ asset: z.string(), ioc: z.string() })).default([]),
-  // Entity merging (#82): duplicate asset id -> canonical asset id it was folded into
-  // (e.g. "HOST01" merged into "host01.corp"). Applied after renames/suppressions, before the
-  // edge set is built, so the duplicate's IOC/finding/event links land on the canonical node.
-  merges: z.record(z.string(), z.string()).default({}),
-}).catch({ renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [], merges: {} });
+export const assetOverridesSchema = z
+  .object({
+    renames: z.record(z.string(), z.string()).default({}),
+    added: z.array(manualAssetSchema).default([]),
+    removed: z.array(z.string()).default([]), // suppressed auto-derived asset ids
+    addedLinks: z.array(z.object({ asset: z.string(), ioc: z.string() })).default([]),
+    removedLinks: z.array(z.object({ asset: z.string(), ioc: z.string() })).default([]),
+    // Entity merging (#82): duplicate asset id -> canonical asset id it was folded into
+    // (e.g. "HOST01" merged into "host01.corp"). Applied after renames/suppressions, before the
+    // edge set is built, so the duplicate's IOC/finding/event links land on the canonical node.
+    merges: z.record(z.string(), z.string()).default({}),
+  })
+  .catch({ renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [], merges: {} });
 
 export type AssetOverrides = z.infer<typeof assetOverridesSchema>;
 
@@ -51,8 +53,12 @@ function resolveCanonical(id: string, merges: Record<string, string>): string {
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-function worseSeverity(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
-function uniqStrings(values: string[]): string[] { return [...new Set(values)]; }
+function worseSeverity(a: Severity, b: Severity): Severity {
+  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+}
+function uniqStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
 
 // Apply manual overrides to an auto-derived asset graph. Pure — mutates neither argument.
 export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides): AssetGraph {
@@ -70,8 +76,14 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
     if (!assetMap.has(ma.id)) {
       const name = overrides.renames[ma.id] ?? ma.name;
       assetMap.set(ma.id, {
-        id: ma.id, name, type: ma.type,
-        compromised: false, iocIds: [], findingIds: [], eventCount: 0, maxSeverity: "Info",
+        id: ma.id,
+        name,
+        type: ma.type,
+        compromised: false,
+        iocIds: [],
+        findingIds: [],
+        eventCount: 0,
+        maxSeverity: "Info",
       });
     }
   }
@@ -188,7 +200,10 @@ export class AssetOverridesStore {
 
   // Add a manually created asset. Returns the created asset + updated overrides.
   // Assigns a stable UUID-based id prefixed "manual:" to distinguish from auto-derived ones.
-  async addAsset(caseId: string, input: { name: string; type: AssetType }): Promise<{ overrides: AssetOverrides; asset: ManualAsset }> {
+  async addAsset(
+    caseId: string,
+    input: { name: string; type: AssetType },
+  ): Promise<{ overrides: AssetOverrides; asset: ManualAsset }> {
     const name = input.name.trim();
     if (!name) throw new Error("name is required");
     const ov = await this.load(caseId);
@@ -251,7 +266,10 @@ export class AssetOverridesStore {
   // Restore a suppressed auto-derived link (remove it from removedLinks).
   async restoreLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
     const ov = await this.load(caseId);
-    const next = { ...ov, removedLinks: ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc)) };
+    const next = {
+      ...ov,
+      removedLinks: ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc)),
+    };
     await this.save(caseId, next);
     return next;
   }

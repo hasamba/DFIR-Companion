@@ -36,8 +36,7 @@ const SAFE_BOUNDED_REPEAT = 8;
 // Only ever asked "can these two overlap?", so an approximation is fine as long as it errs toward
 // "yes" — `any` and negated sets are treated as overlapping everything.
 type CharSet =
-  | { any: true }
-  | { any: false; negated: boolean; chars: Set<string>; ranges: [number, number][] };
+  { any: true } | { any: false; negated: boolean; chars: Set<string>; ranges: [number, number][] };
 
 const ANY: CharSet = { any: true };
 const EMPTY: CharSet = { any: false, negated: false, chars: new Set(), ranges: [] };
@@ -49,11 +48,27 @@ function literal(c: string): CharSet {
 // \d \w \s (and their negations) as explicit sets; negated forms widen to `any` (conservative).
 function shorthand(c: string): CharSet | null {
   switch (c) {
-    case "d": return { any: false, negated: false, chars: new Set(), ranges: [[48, 57]] };
-    case "w": return { any: false, negated: false, chars: new Set(["_"]), ranges: [[48, 57], [65, 90], [97, 122]] };
-    case "s": return { any: false, negated: false, chars: new Set([" ", "\t", "\n", "\r", "\f", "\v"]), ranges: [] };
-    case "D": case "W": case "S": return ANY;
-    default: return null;
+    case "d":
+      return { any: false, negated: false, chars: new Set(), ranges: [[48, 57]] };
+    case "w":
+      return {
+        any: false,
+        negated: false,
+        chars: new Set(["_"]),
+        ranges: [
+          [48, 57],
+          [65, 90],
+          [97, 122],
+        ],
+      };
+    case "s":
+      return { any: false, negated: false, chars: new Set([" ", "\t", "\n", "\r", "\f", "\v"]), ranges: [] };
+    case "D":
+    case "W":
+    case "S":
+      return ANY;
+    default:
+      return null;
   }
 }
 
@@ -65,7 +80,7 @@ function inSet(s: Extract<CharSet, { any: false }>, ch: string): boolean {
 
 function overlaps(a: CharSet, b: CharSet): boolean {
   if (a.any || b.any) return true;
-  if (a.negated || b.negated) return true;              // complement arithmetic isn't worth it
+  if (a.negated || b.negated) return true; // complement arithmetic isn't worth it
   for (const c of a.chars) if (inSet(b, c)) return true;
   for (const c of b.chars) if (inSet(a, c)) return true;
   return a.ranges.some(([lo, hi]) => b.ranges.some(([lo2, hi2]) => lo <= hi2 && lo2 <= hi));
@@ -88,9 +103,13 @@ type Atom =
   | { k: "char"; set: CharSet }
   | { k: "group"; alts: Term[][]; assertion: boolean }
   | { k: "backref" }
-  | { k: "zero" };                                      // ^ $ \b \B — no width
+  | { k: "zero" }; // ^ $ \b \B — no width
 
-interface Term { atom: Atom; min: number; max: number } // max === Infinity for * + {n,}
+interface Term {
+  atom: Atom;
+  min: number;
+  max: number;
+} // max === Infinity for * + {n,}
 
 // A hand-rolled parser rather than a library: this runs on untrusted input at request time, needs
 // no dependency, and only has to be accurate enough to locate quantifiers, groups and first-sets.
@@ -106,13 +125,17 @@ class Parser {
 
   private alternation(): Term[][] {
     const alts: Term[][] = [this.sequence()];
-    while (this.s[this.i] === "|") { this.i++; alts.push(this.sequence()); }
+    while (this.s[this.i] === "|") {
+      this.i++;
+      alts.push(this.sequence());
+    }
     return alts;
   }
 
   private sequence(): Term[] {
     const terms: Term[] = [];
-    while (this.i < this.s.length && this.s[this.i] !== "|" && this.s[this.i] !== ")") terms.push(this.term());
+    while (this.i < this.s.length && this.s[this.i] !== "|" && this.s[this.i] !== ")")
+      terms.push(this.term());
     return terms;
   }
 
@@ -126,17 +149,26 @@ class Parser {
     const c = this.s[this.i];
     let min = 1;
     let max = 1;
-    if (c === "*") { this.i++; min = 0; max = Infinity; }
-    else if (c === "+") { this.i++; min = 1; max = Infinity; }
-    else if (c === "?") { this.i++; min = 0; max = 1; }
-    else if (c === "{") {
+    if (c === "*") {
+      this.i++;
+      min = 0;
+      max = Infinity;
+    } else if (c === "+") {
+      this.i++;
+      min = 1;
+      max = Infinity;
+    } else if (c === "?") {
+      this.i++;
+      min = 0;
+      max = 1;
+    } else if (c === "{") {
       const m = /^\{(\d+)(,(\d*))?\}/.exec(this.s.slice(this.i));
-      if (!m) return { min, max };                      // a literal "{" — legal in JS regex
+      if (!m) return { min, max }; // a literal "{" — legal in JS regex
       this.i += m[0].length;
       min = Number(m[1]);
-      max = m[2] === undefined ? min : (m[3] ? Number(m[3]) : Infinity);
+      max = m[2] === undefined ? min : m[3] ? Number(m[3]) : Infinity;
     } else return { min, max };
-    if (this.s[this.i] === "?") this.i++;               // lazy — still backtracks catastrophically
+    if (this.s[this.i] === "?") this.i++; // lazy — still backtracks catastrophically
     return { min, max };
   }
 
@@ -144,8 +176,14 @@ class Parser {
     const c = this.s[this.i];
     if (c === "(") return this.group();
     if (c === "[") return { k: "char", set: this.charClass() };
-    if (c === ".") { this.i++; return { k: "char", set: ANY }; }
-    if (c === "^" || c === "$") { this.i++; return { k: "zero" }; }
+    if (c === ".") {
+      this.i++;
+      return { k: "char", set: ANY };
+    }
+    if (c === "^" || c === "$") {
+      this.i++;
+      return { k: "zero" };
+    }
     if (c === "\\") return this.escape();
     if (c === "*" || c === "+" || c === "?") throw new Error("nothing to repeat");
     this.i++;
@@ -153,14 +191,18 @@ class Parser {
   }
 
   private group(): Atom {
-    this.i++;                                           // "("
+    this.i++; // "("
     let assertion = false;
     if (this.s[this.i] === "?") {
       const rest = this.s.slice(this.i);
-      if (/^\?[:=!]/.test(rest)) { assertion = rest[1] !== ":"; this.i += 2; }
-      else if (/^\?<[=!]/.test(rest)) { assertion = true; this.i += 3; }
-      else {
-        const m = /^\?<[A-Za-z_$][\w$]*>/.exec(rest);   // named capture
+      if (/^\?[:=!]/.test(rest)) {
+        assertion = rest[1] !== ":";
+        this.i += 2;
+      } else if (/^\?<[=!]/.test(rest)) {
+        assertion = true;
+        this.i += 3;
+      } else {
+        const m = /^\?<[A-Za-z_$][\w$]*>/.exec(rest); // named capture
         if (!m) throw new Error("unsupported group");
         this.i += m[0].length;
       }
@@ -172,7 +214,7 @@ class Parser {
   }
 
   private charClass(): CharSet {
-    this.i++;                                           // "["
+    this.i++; // "["
     const negated = this.s[this.i] === "^";
     if (negated) this.i++;
     const chars = new Set<string>();
@@ -182,11 +224,17 @@ class Parser {
     while (this.i < this.s.length && (this.s[this.i] !== "]" || first)) {
       first = false;
       const lo = this.classMember();
-      if (lo === null) { widened = true; continue; }     // a shorthand class inside [] — widen
+      if (lo === null) {
+        widened = true;
+        continue;
+      } // a shorthand class inside [] — widen
       if (this.s[this.i] === "-" && this.s[this.i + 1] !== undefined && this.s[this.i + 1] !== "]") {
         this.i++;
         const hi = this.classMember();
-        if (hi === null) { widened = true; continue; }
+        if (hi === null) {
+          widened = true;
+          continue;
+        }
         ranges.push([lo.codePointAt(0) ?? 0, hi.codePointAt(0) ?? 0]);
       } else chars.add(lo);
     }
@@ -208,29 +256,48 @@ class Parser {
   }
 
   private escape(): Atom {
-    this.i++;                                           // "\"
+    this.i++; // "\"
     const c = this.s[this.i];
     if (c === undefined) throw new Error("trailing backslash");
     this.i++;
     if (c === "b" || c === "B") return { k: "zero" };
-    if (/[1-9]/.test(c) || c === "k") { while (/[\d<>\w]/.test(this.s[this.i] ?? "")) this.i++; return { k: "backref" }; }
+    if (/[1-9]/.test(c) || c === "k") {
+      while (/[\d<>\w]/.test(this.s[this.i] ?? "")) this.i++;
+      return { k: "backref" };
+    }
     const sh = shorthand(c);
     if (sh) return { k: "char", set: sh };
-    if (c === "p" || c === "P") { while (this.i < this.s.length && this.s[this.i++] !== "}"); return { k: "char", set: ANY }; }
+    if (c === "p" || c === "P") {
+      while (this.i < this.s.length && this.s[this.i++] !== "}");
+      return { k: "char", set: ANY };
+    }
     return { k: "char", set: literal(this.escapedChar(c)) };
   }
 
   // Decode the escapes that denote a single code point; consumes any trailing hex digits.
   private escapedChar(c: string): string {
     switch (c) {
-      case "n": return "\n";
-      case "t": return "\t";
-      case "r": return "\r";
-      case "f": return "\f";
-      case "v": return "\v";
-      case "0": return "\0";
-      case "c": { this.i++; return "\0"; }               // control escape — exact value irrelevant
-      case "x": { const h = this.s.slice(this.i, this.i + 2); this.i += 2; return String.fromCharCode(parseInt(h, 16) || 0); }
+      case "n":
+        return "\n";
+      case "t":
+        return "\t";
+      case "r":
+        return "\r";
+      case "f":
+        return "\f";
+      case "v":
+        return "\v";
+      case "0":
+        return "\0";
+      case "c": {
+        this.i++;
+        return "\0";
+      } // control escape — exact value irrelevant
+      case "x": {
+        const h = this.s.slice(this.i, this.i + 2);
+        this.i += 2;
+        return String.fromCharCode(parseInt(h, 16) || 0);
+      }
       case "u": {
         if (this.s[this.i] === "{") {
           const end = this.s.indexOf("}", this.i);
@@ -243,7 +310,8 @@ class Parser {
         this.i += 4;
         return String.fromCharCode(parseInt(h, 16) || 0);
       }
-      default: return c;                                 // \. \+ \\ … — the literal character
+      default:
+        return c; // \. \+ \\ … — the literal character
     }
   }
 }
@@ -258,17 +326,21 @@ function firstSet(seq: Term[]): CharSet {
     if (t.atom.k === "zero") continue;
     if (t.atom.k === "group" && t.atom.assertion) continue;
     parts.push(atomSet(t.atom));
-    if (t.min > 0) break;                                // consumes at least once — stop widening
+    if (t.min > 0) break; // consumes at least once — stop widening
   }
   return union(parts);
 }
 
 function atomSet(atom: Atom): CharSet {
   switch (atom.k) {
-    case "char": return atom.set;
-    case "group": return union(atom.alts.map(firstSet));
-    case "backref": return ANY;
-    case "zero": return EMPTY;
+    case "char":
+      return atom.set;
+    case "group":
+      return union(atom.alts.map(firstSet));
+    case "backref":
+      return ANY;
+    case "zero":
+      return EMPTY;
   }
 }
 
@@ -276,7 +348,7 @@ function atomSet(atom: Atom): CharSet {
 // null when it looks unambiguous.
 function ambiguity(atom: Atom): string | null {
   if (atom.k === "backref") return "a repetition whose body contains a backreference";
-  if (atom.k !== "group") return null;                   // a bare char/class body is unambiguous
+  if (atom.k !== "group") return null; // a bare char/class body is unambiguous
 
   for (const seq of atom.alts) {
     for (const t of seq) {
@@ -289,7 +361,8 @@ function ambiguity(atom: Atom): string | null {
     const firsts = atom.alts.map(firstSet);
     for (let i = 0; i < firsts.length; i++) {
       for (let j = i + 1; j < firsts.length; j++) {
-        if (overlaps(firsts[i], firsts[j])) return "a repetition over alternatives that can start with the same character";
+        if (overlaps(firsts[i], firsts[j]))
+          return "a repetition over alternatives that can start with the same character";
       }
     }
   }
@@ -310,7 +383,7 @@ function scan(alts: Term[][]): string | null {
           return "two adjacent repetitions that match the same characters";
         }
       }
-      if (t.atom.k === "zero") continue;                 // an anchor doesn't separate two loops
+      if (t.atom.k === "zero") continue; // an anchor doesn't separate two loops
       prevLoop = isLoop(t) ? t : null;
       if (t.atom.k === "group") {
         const nested = scan(t.atom.alts);

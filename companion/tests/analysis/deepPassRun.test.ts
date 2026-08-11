@@ -4,9 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import {
-  AnalysisPipeline,
-} from "../../src/analysis/pipeline.js";
+import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { DeepPassCheckpoint } from "../../src/analysis/deepPass.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
@@ -22,7 +20,10 @@ class ScriptedProvider implements AIProvider {
   readonly observeRequests: AnalyzeRequest[] = [];
   readonly synthRequests: AnalyzeRequest[] = [];
   onCall?: () => void;
-  constructor(private readonly observations: string, private readonly synth: string) {}
+  constructor(
+    private readonly observations: string,
+    private readonly synth: string,
+  ) {}
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     const isObserve = /ONE SLICE/i.test(req.systemPrompt);
     if (isObserve) this.observeRequests.push(req);
@@ -33,8 +34,15 @@ class ScriptedProvider implements AIProvider {
 }
 
 const SYNTH_DELTA = JSON.stringify({
-  findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "done",
-  forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "deep pass",
+  findings: [],
+  iocs: [],
+  mitreTechniques: [],
+  attackerPath: "",
+  summary: "done",
+  forensicEvents: [],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "deep pass",
 });
 
 const OBSERVATIONS = JSON.stringify({
@@ -61,7 +69,9 @@ function seedEvents(n: number): ForensicEvent[] {
     timestamp: `2026-05-20T${String(Math.floor(i / 60) % 24).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
     description: `distinct detection ${ruleTitle(i)}`,
     severity: "High" as const,
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
   }));
 }
 
@@ -73,7 +83,10 @@ async function seed(events: ForensicEvent[]): Promise<InvestigationState> {
 
 // retries/backoffMs default to 3 × 500ms exponential in production; a test that deliberately fails a
 // batch would then spend seconds sleeping, so failure paths pass a trivial schedule instead.
-function makePipeline(provider: AIProvider, opts: { retries?: number; backoffMs?: number } = {}): AnalysisPipeline {
+function makePipeline(
+  provider: AIProvider,
+  opts: { retries?: number; backoffMs?: number } = {},
+): AnalysisPipeline {
   return new AnalysisPipeline({
     provider,
     stateStore,
@@ -96,7 +109,7 @@ describe("deepPass", () => {
     const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
     const result = await makePipeline(provider).deepPass("c1", { minSeverity: "High" });
 
-    expect(provider.observeRequests).toHaveLength(3);   // ceil(250 / 100)
+    expect(provider.observeRequests).toHaveLength(3); // ceil(250 / 100)
     expect(provider.synthRequests).toHaveLength(1);
     expect(result.batches).toBe(3);
     expect(result.aborted).toBe(false);
@@ -106,9 +119,10 @@ describe("deepPass", () => {
     await seed(seedEvents(250));
     const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
 
-    await expect(makePipeline(provider).deepPass("c1", { minSeverity: "High", maxBatches: 2 }))
-      .rejects.toThrow(/3 batches/);
-    expect(provider.observeRequests).toHaveLength(0);   // nothing spent
+    await expect(
+      makePipeline(provider).deepPass("c1", { minSeverity: "High", maxBatches: 2 }),
+    ).rejects.toThrow(/3 batches/);
+    expect(provider.observeRequests).toHaveLength(0); // nothing spent
     expect(provider.synthRequests).toHaveLength(0);
   });
 
@@ -116,17 +130,22 @@ describe("deepPass", () => {
     await seed(seedEvents(250));
     const controller = new AbortController();
     const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
-    provider.onCall = () => controller.abort();        // abort once the first batch has been served
+    provider.onCall = () => controller.abort(); // abort once the first batch has been served
 
-    const result = await makePipeline(provider).deepPass("c1", { minSeverity: "High", signal: controller.signal });
+    const result = await makePipeline(provider).deepPass("c1", {
+      minSeverity: "High",
+      signal: controller.signal,
+    });
 
     expect(result.aborted).toBe(true);
-    expect(provider.synthRequests).toHaveLength(0);     // no final call, so nothing persisted
+    expect(provider.synthRequests).toHaveLength(0); // no final call, so nothing persisted
   });
 
   it("drops observations citing unknown event ids before the final synthesis", async () => {
     await seed(seedEvents(50));
-    const ghost = JSON.stringify({ observations: [{ summary: "ghost claim", eventIds: ["nope-9999"], whyItMatters: "x" }] });
+    const ghost = JSON.stringify({
+      observations: [{ summary: "ghost claim", eventIds: ["nope-9999"], whyItMatters: "x" }],
+    });
     const provider = new ScriptedProvider(ghost, SYNTH_DELTA);
 
     const result = await makePipeline(provider).deepPass("c1", { minSeverity: "High" });
@@ -148,8 +167,10 @@ describe("deepPass", () => {
   it("reports progress for every batch", async () => {
     await seed(seedEvents(250));
     const seen: string[] = [];
-    await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA))
-      .deepPass("c1", { minSeverity: "High", onProgress: (_d, _t, detail) => seen.push(detail) });
+    await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA)).deepPass("c1", {
+      minSeverity: "High",
+      onProgress: (_d, _t, detail) => seen.push(detail),
+    });
 
     expect(seen.filter((s) => /batch/i.test(s))).toHaveLength(3);
     expect(seen.some((s) => /synthesiz/i.test(s))).toBe(true);
@@ -186,12 +207,13 @@ describe("deepPass", () => {
 
   it("returns a run summary the route can serialise", async () => {
     await seed(seedEvents(250));
-    const result = await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA))
-      .deepPass("c1", { minSeverity: "High" });
+    const result = await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA)).deepPass("c1", {
+      minSeverity: "High",
+    });
 
     expect(result.floor).toBe("High");
     expect(result.events).toBe(250);
-    expect(result.rows).toBe(250);      // distinct descriptions → nothing groups
+    expect(result.rows).toBe(250); // distinct descriptions → nothing groups
     expect(result.batches).toBe(3);
     expect(result.observations).toBeGreaterThan(0);
   });
@@ -228,27 +250,32 @@ describe("deepPass resilience", () => {
   }
 
   it("skips a batch whose response never parses and still completes the run", async () => {
-    await seed(seedEvents(250));                       // 3 batches at cap 100
-    const provider = new FlakyProvider(2);             // first batch is unrecoverable
+    await seed(seedEvents(250)); // 3 batches at cap 100
+    const provider = new FlakyProvider(2); // first batch is unrecoverable
 
-    const result = await makePipeline(provider, { retries: 1, backoffMs: 1 }).deepPass("c1", { minSeverity: "High" });
+    const result = await makePipeline(provider, { retries: 1, backoffMs: 1 }).deepPass("c1", {
+      minSeverity: "High",
+    });
 
     expect(result.aborted).toBe(false);
     expect(result.batchesFailed).toBeGreaterThan(0);
-    expect(provider.synthCalls).toBe(1);               // the final synthesis still ran
+    expect(provider.synthCalls).toBe(1); // the final synthesis still ran
   });
 
   it("still collects observations from the batches that did parse", async () => {
     await seed(seedEvents(250));
-    const result = await makePipeline(new FlakyProvider(2), { retries: 1, backoffMs: 1 }).deepPass("c1", { minSeverity: "High" });
+    const result = await makePipeline(new FlakyProvider(2), { retries: 1, backoffMs: 1 }).deepPass("c1", {
+      minSeverity: "High",
+    });
 
-    expect(result.observations).toBeGreaterThan(0);    // batches 2 and 3 contributed
+    expect(result.observations).toBeGreaterThan(0); // batches 2 and 3 contributed
   });
 
   it("reports zero failures on a clean run", async () => {
     await seed(seedEvents(250));
-    const result = await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA))
-      .deepPass("c1", { minSeverity: "High" });
+    const result = await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA)).deepPass("c1", {
+      minSeverity: "High",
+    });
 
     expect(result.batchesFailed).toBe(0);
   });
@@ -298,28 +325,32 @@ describe("deepPass + Presidio approval gate", () => {
   }
 
   it("propagates from the FIRST observe batch instead of looping through the rest", async () => {
-    await seed(seedEvents(250));                       // 3 batches at cap 100
+    await seed(seedEvents(250)); // 3 batches at cap 100
     const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
-    const { client, calls } = gateOnCall(1);            // flags only the very first analyzeRestored call
+    const { client, calls } = gateOnCall(1); // flags only the very first analyzeRestored call
     const pipeline = makeGatedPipeline(provider, client);
 
-    await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(
+      PresidioApprovalRequired,
+    );
     // Without the fix, batch 1's catch swallows the error (batchesFailed++) and the loop continues:
     // batches 2 and 3 would each call the (ungated) client and reach provider.analyze, and the run
     // would fall through to a real (degraded) final synthesis — client call 4, also ungated, so it
     // would RESOLVE. With the fix, the rethrow on batch 1 aborts the whole run immediately.
     expect(provider.observeRequests).toHaveLength(0);
     expect(provider.synthRequests).toHaveLength(0);
-    expect(calls()).toBe(1);                            // proves the run stopped at the first call
+    expect(calls()).toBe(1); // proves the run stopped at the first call
   });
 
   it("propagates from a MIDDLE observe batch, not just a first-batch special case", async () => {
-    await seed(seedEvents(250));                        // 3 batches at cap 100
+    await seed(seedEvents(250)); // 3 batches at cap 100
     const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
-    const { client, calls } = gateOnCall(2);             // flags only batch 2's call
+    const { client, calls } = gateOnCall(2); // flags only batch 2's call
     const pipeline = makeGatedPipeline(provider, client);
 
-    await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(
+      PresidioApprovalRequired,
+    );
     // Batch 1 succeeded (ungated) and reached provider.analyze; batch 2 threw and — with the fix —
     // stopped the run before batch 3 or the final synthesis were ever attempted.
     expect(provider.observeRequests).toHaveLength(1);
@@ -332,12 +363,14 @@ describe("deepPass + Presidio approval gate", () => {
     // planCondenseRounds always has work to do regardless of how few observations there are.
     process.env.DFIR_AI_CONTEXT_TOKENS = "1";
     try {
-      await seed(seedEvents(10));                        // 1 observe batch (cap far exceeds 10)
+      await seed(seedEvents(10)); // 1 observe batch (cap far exceeds 10)
       const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
-      const { client, calls } = gateOnCall(2);            // call 1 = observe (ungated); call 2 = condense
+      const { client, calls } = gateOnCall(2); // call 1 = observe (ungated); call 2 = condense
       const pipeline = makeGatedPipeline(provider, client);
 
-      await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+      await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(
+        PresidioApprovalRequired,
+      );
       // The observe batch succeeded and reached provider.analyze; the condense round threw and — with
       // the fix — stopped the run before any further condense rounds or the final synthesis ran.
       expect(provider.observeRequests).toHaveLength(1);

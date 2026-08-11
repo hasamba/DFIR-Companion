@@ -18,8 +18,8 @@ import { loadBuiltInIncidentTypes, getBuiltInIncidentType } from "./incidentType
 // name collision — a custom file cannot silently redefine "ransomware" out from under the analyst.
 
 export interface IncidentTypeRecord {
-  typeId: string;        // the chosen incident type id (built-in or custom)
-  appliedAt: string;     // ISO timestamp of the last apply
+  typeId: string; // the chosen incident type id (built-in or custom)
+  appliedAt: string; // ISO timestamp of the last apply
 }
 
 export const EMPTY_INCIDENT_TYPE_RECORD: IncidentTypeRecord = { typeId: "", appliedAt: "" };
@@ -51,7 +51,11 @@ export class IncidentTypeStore {
     }
   }
 
-  async saveRecord(caseId: string, typeId: string, at: string = new Date().toISOString()): Promise<IncidentTypeRecord> {
+  async saveRecord(
+    caseId: string,
+    typeId: string,
+    at: string = new Date().toISOString(),
+  ): Promise<IncidentTypeRecord> {
     const record: IncidentTypeRecord = { typeId, appliedAt: at };
     await atomicWrite(this.path(caseId), JSON.stringify(record, null, 2));
     return record;

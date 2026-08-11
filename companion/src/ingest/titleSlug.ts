@@ -15,9 +15,9 @@ const MAX_SLUG_LENGTH = 60;
 export function slugifyTitle(title: string, maxLength: number = MAX_SLUG_LENGTH): string {
   if (!title) return "";
   const collapsed = title
-    .normalize("NFKD")            // separate combining marks so we can drop non-ASCII cleanly
+    .normalize("NFKD") // separate combining marks so we can drop non-ASCII cleanly
     .replace(/[^A-Za-z0-9._-]+/g, "-") // unsafe / non-ASCII → hyphen
-    .replace(/-+/g, "-")          // collapse repeats
+    .replace(/-+/g, "-") // collapse repeats
     .replace(/^[-._]+|[-._]+$/g, ""); // trim leading/trailing punctuation
   if (collapsed.length === 0) return "";
   // Truncate, then trim any orphan trailing punctuation introduced by the cut.

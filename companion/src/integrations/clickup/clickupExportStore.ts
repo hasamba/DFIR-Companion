@@ -11,9 +11,9 @@ import { atomicWrite } from "../../storage/atomicWrite.js";
 // side-file stores.
 
 export const clickupExportSchema = z.object({
-  listId: z.string().catch(""),                         // the target ClickUp list id
-  taskIds: z.record(z.string(), z.string()).catch({}),  // playbook task id → ClickUp task id
-  lastTaskUrl: z.string().catch(""),                    // a sample task url for the "Open in ClickUp" link
+  listId: z.string().catch(""), // the target ClickUp list id
+  taskIds: z.record(z.string(), z.string()).catch({}), // playbook task id → ClickUp task id
+  lastTaskUrl: z.string().catch(""), // a sample task url for the "Open in ClickUp" link
   lastExportedAt: z.string().catch(""),
 });
 

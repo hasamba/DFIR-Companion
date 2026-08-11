@@ -8,7 +8,7 @@ const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
     let c = n;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     t[n] = c >>> 0;
   }
   return t;
@@ -21,13 +21,23 @@ function crc32(buf: Buffer): number {
 }
 
 // ── Minimal ZIP writer (DEFLATE, UTF-8 filenames) ─────────────────────────
-function le16(buf: Buffer, off: number, v: number): void { buf.writeUInt16LE(v >>> 0, off); }
-function le32(buf: Buffer, off: number, v: number): void { buf.writeUInt32LE(v >>> 0, off); }
+function le16(buf: Buffer, off: number, v: number): void {
+  buf.writeUInt16LE(v >>> 0, off);
+}
+function le32(buf: Buffer, off: number, v: number): void {
+  buf.writeUInt32LE(v >>> 0, off);
+}
 
 function dosTime(d: Date): { t: number; dt: number } {
   return {
-    t: ((d.getUTCHours() & 0x1f) << 11) | ((d.getUTCMinutes() & 0x3f) << 5) | ((d.getUTCSeconds() >> 1) & 0x1f),
-    dt: (((d.getUTCFullYear() - 1980) & 0x7f) << 9) | (((d.getUTCMonth() + 1) & 0x0f) << 5) | (d.getUTCDate() & 0x1f),
+    t:
+      ((d.getUTCHours() & 0x1f) << 11) |
+      ((d.getUTCMinutes() & 0x3f) << 5) |
+      ((d.getUTCSeconds() >> 1) & 0x1f),
+    dt:
+      (((d.getUTCFullYear() - 1980) & 0x7f) << 9) |
+      (((d.getUTCMonth() + 1) & 0x0f) << 5) |
+      (d.getUTCDate() & 0x1f),
   };
 }
 
@@ -53,17 +63,17 @@ export function buildZip(files: Array<{ name: string; data: Buffer; mtime?: Date
     const { t, dt } = dosTime(f.mtime ?? new Date());
 
     const lh = Buffer.alloc(30 + nameBytes.length);
-    le32(lh, 0, 0x04034b50);      // local file header sig
-    le16(lh, 4, 20);               // version needed: 2.0
-    le16(lh, 6, 0x800);            // general flags: UTF-8
-    le16(lh, 8, 8);                // compression: DEFLATE
+    le32(lh, 0, 0x04034b50); // local file header sig
+    le16(lh, 4, 20); // version needed: 2.0
+    le16(lh, 6, 0x800); // general flags: UTF-8
+    le16(lh, 8, 8); // compression: DEFLATE
     le16(lh, 10, t);
     le16(lh, 12, dt);
     le32(lh, 14, crc);
     le32(lh, 18, compressed.length);
     le32(lh, 22, f.data.length);
     le16(lh, 26, nameBytes.length);
-    le16(lh, 28, 0);               // extra field length
+    le16(lh, 28, 0); // extra field length
     nameBytes.copy(lh, 30);
 
     entries.push({ nameBytes, compressed, rawLen: f.data.length, crc, t, dt, localOffset: offset });
@@ -75,22 +85,22 @@ export function buildZip(files: Array<{ name: string; data: Buffer; mtime?: Date
   const cdChunks: Buffer[] = [];
   for (const e of entries) {
     const cd = Buffer.alloc(46 + e.nameBytes.length);
-    le32(cd, 0, 0x02014b50);       // central dir sig
-    le16(cd, 4, 20);               // version made by
-    le16(cd, 6, 20);               // version needed
-    le16(cd, 8, 0x800);            // UTF-8 flag
-    le16(cd, 10, 8);               // DEFLATE
+    le32(cd, 0, 0x02014b50); // central dir sig
+    le16(cd, 4, 20); // version made by
+    le16(cd, 6, 20); // version needed
+    le16(cd, 8, 0x800); // UTF-8 flag
+    le16(cd, 10, 8); // DEFLATE
     le16(cd, 12, e.t);
     le16(cd, 14, e.dt);
     le32(cd, 16, e.crc);
     le32(cd, 20, e.compressed.length);
     le32(cd, 24, e.rawLen);
     le16(cd, 28, e.nameBytes.length);
-    le16(cd, 30, 0);               // extra field length
-    le16(cd, 32, 0);               // file comment length
-    le16(cd, 34, 0);               // disk number start
-    le16(cd, 36, 0);               // internal attributes
-    le32(cd, 38, 0);               // external attributes
+    le16(cd, 30, 0); // extra field length
+    le16(cd, 32, 0); // file comment length
+    le16(cd, 34, 0); // disk number start
+    le16(cd, 36, 0); // internal attributes
+    le32(cd, 38, 0); // external attributes
     le32(cd, 42, e.localOffset);
     e.nameBytes.copy(cd, 46);
     cdChunks.push(cd);
@@ -98,14 +108,14 @@ export function buildZip(files: Array<{ name: string; data: Buffer; mtime?: Date
 
   const centralDir = Buffer.concat(cdChunks);
   const eocd = Buffer.alloc(22);
-  le32(eocd, 0, 0x06054b50);      // end-of-central-dir sig
-  le16(eocd, 4, 0);               // disk number
-  le16(eocd, 6, 0);               // disk with central dir
+  le32(eocd, 0, 0x06054b50); // end-of-central-dir sig
+  le16(eocd, 4, 0); // disk number
+  le16(eocd, 6, 0); // disk with central dir
   le16(eocd, 8, entries.length);
   le16(eocd, 10, entries.length);
   le32(eocd, 12, centralDir.length);
-  le32(eocd, 16, offset);         // central dir offset
-  le16(eocd, 20, 0);              // comment length
+  le32(eocd, 16, offset); // central dir offset
+  le16(eocd, 20, 0); // comment length
 
   return Buffer.concat([...localChunks, centralDir, eocd]);
 }
@@ -205,16 +215,22 @@ export async function archiveCase(
   // bytes). Every other write in the data-integrity core (StateStore, BackupManager, CaseStore)
   // already routes through atomicWrite; archiveCase was the outlier — its own JSDoc claimed
   // atomicity the previous default did NOT provide.
-  const write = deps.writeFile ?? (async (p: string, d: Buffer) => {
-    const tmp = `${p}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(tmp, d);
-      await rename(tmp, p);
-    } catch (err) {
-      try { await unlink(tmp); } catch { /* temp may not exist; ignore */ }
-      throw err;
-    }
-  });
+  const write =
+    deps.writeFile ??
+    (async (p: string, d: Buffer) => {
+      const tmp = `${p}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(tmp, d);
+        await rename(tmp, p);
+      } catch (err) {
+        try {
+          await unlink(tmp);
+        } catch {
+          /* temp may not exist; ignore */
+        }
+        throw err;
+      }
+    });
 
   const relPaths = await scan(caseDir);
 

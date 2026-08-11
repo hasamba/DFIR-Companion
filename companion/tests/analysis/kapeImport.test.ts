@@ -11,7 +11,17 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
   it("Prefetch (PECmd): execution event + process IOC, uses LastRun", () => {
     const text = csv(
       ["SourceFilename", "ExecutableName", "Hash", "Size", "RunCount", "LastRun", "PreviousRun0"],
-      [["C:\\Windows\\Prefetch\\EVIL.EXE-1234.pf", "EVIL.EXE", "ABCD", "10000", "3", "2023-04-01 10:00:00", "2023-03-31 09:00:00"]],
+      [
+        [
+          "C:\\Windows\\Prefetch\\EVIL.EXE-1234.pf",
+          "EVIL.EXE",
+          "ABCD",
+          "10000",
+          "3",
+          "2023-04-01 10:00:00",
+          "2023-03-31 09:00:00",
+        ],
+      ],
     );
     const r = parseKapeCsv(text);
     expect(r.artifact).toBe("Prefetch");
@@ -28,7 +38,15 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
   it("Amcache: file + SHA1 hash IOC, FullPath as path", () => {
     const text = csv(
       ["ApplicationName", "FullPath", "FileKeyLastWriteTimestamp", "SHA1", "Size"],
-      [["evil", "C:\\Temp\\evil.exe", "2023-04-01 09:30:00", "0000da39a3ee5e6b4b0d3255bfef95601890afd80709", "2048"]],
+      [
+        [
+          "evil",
+          "C:\\Temp\\evil.exe",
+          "2023-04-01 09:30:00",
+          "0000da39a3ee5e6b4b0d3255bfef95601890afd80709",
+          "2048",
+        ],
+      ],
     );
     const r = parseKapeCsv(text);
     expect(r.artifact).toBe("Amcache");
@@ -67,10 +85,40 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
 
   it("MFT: builds ParentPath\\FileName, skips directories", () => {
     const text = csv(
-      ["EntryNumber", "InUse", "ParentPath", "FileName", "Extension", "FileSize", "IsDirectory", "Created0x10", "LastModified0x10"],
       [
-        ["100", "True", ".\\Users\\bob\\Desktop", "evil.exe", ".exe", "4096", "False", "2023-04-01 07:00:00", "2023-04-01 07:00:00"],
-        ["101", "True", ".\\Users\\bob", "Desktop", "", "0", "True", "2023-04-01 06:00:00", "2023-04-01 06:00:00"],
+        "EntryNumber",
+        "InUse",
+        "ParentPath",
+        "FileName",
+        "Extension",
+        "FileSize",
+        "IsDirectory",
+        "Created0x10",
+        "LastModified0x10",
+      ],
+      [
+        [
+          "100",
+          "True",
+          ".\\Users\\bob\\Desktop",
+          "evil.exe",
+          ".exe",
+          "4096",
+          "False",
+          "2023-04-01 07:00:00",
+          "2023-04-01 07:00:00",
+        ],
+        [
+          "101",
+          "True",
+          ".\\Users\\bob",
+          "Desktop",
+          "",
+          "0",
+          "True",
+          "2023-04-01 06:00:00",
+          "2023-04-01 06:00:00",
+        ],
       ],
     );
     const r = parseKapeCsv(text);
@@ -81,12 +129,45 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
 
   it("MFT: flags timestomping when $SI (Created0x10) is backdated before $FN (Created0x30)", () => {
     const text = csv(
-      ["EntryNumber", "InUse", "ParentPath", "FileName", "Extension", "FileSize", "IsDirectory", "Created0x10", "Created0x30", "LastModified0x10"],
+      [
+        "EntryNumber",
+        "InUse",
+        "ParentPath",
+        "FileName",
+        "Extension",
+        "FileSize",
+        "IsDirectory",
+        "Created0x10",
+        "Created0x30",
+        "LastModified0x10",
+      ],
       [
         // Backdated + zeroed-sub-second $SI vs full-precision recent $FN → timestomp.
-        ["100", "True", ".\\Windows\\System32", "evil.exe", ".exe", "4096", "False", "2009-07-14 01:14:24.0000000", "2026-06-02 09:15:23.4821330", "2026-06-02 09:15:23.4821330"],
+        [
+          "100",
+          "True",
+          ".\\Windows\\System32",
+          "evil.exe",
+          ".exe",
+          "4096",
+          "False",
+          "2009-07-14 01:14:24.0000000",
+          "2026-06-02 09:15:23.4821330",
+          "2026-06-02 09:15:23.4821330",
+        ],
         // Normal file: $SI ≈ $FN → not flagged.
-        ["101", "True", ".\\Users\\bob", "report.docx", ".docx", "8192", "False", "2026-06-02 09:15:20.1112223", "2026-06-02 09:15:20.1112223", "2026-06-02 09:20:00.0000000"],
+        [
+          "101",
+          "True",
+          ".\\Users\\bob",
+          "report.docx",
+          ".docx",
+          "8192",
+          "False",
+          "2026-06-02 09:15:20.1112223",
+          "2026-06-02 09:15:20.1112223",
+          "2026-06-02 09:20:00.0000000",
+        ],
       ],
     );
     const r = parseKapeCsv(text);

@@ -4,21 +4,57 @@ import type { InvestigationState, IOC, ForensicEvent } from "../../src/analysis/
 
 function ip(id: string, value: string, enr: Partial<NonNullable<IOC["enrichments"]>[number]> = {}): IOC {
   return {
-    id, type: "ip", value, firstSeen: "2026-01-01T00:00:00Z",
+    id,
+    type: "ip",
+    value,
+    firstSeen: "2026-01-01T00:00:00Z",
     enrichments: [{ source: "GeoIP", verdict: "unknown", fetchedAt: "2026-01-01T00:00:00Z", ...enr }],
   };
 }
 function ev(e: Partial<ForensicEvent>): ForensicEvent {
-  return { id: e.id ?? "e1", timestamp: e.timestamp ?? "2026-01-02T10:00:00Z", description: e.description ?? "", severity: e.severity ?? "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...e };
+  return {
+    id: e.id ?? "e1",
+    timestamp: e.timestamp ?? "2026-01-02T10:00:00Z",
+    description: e.description ?? "",
+    severity: e.severity ?? "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...e,
+  };
 }
-function state(iocs: IOC[], events: ForensicEvent[] = [], findings: InvestigationState["findings"] = []): InvestigationState {
-  return { caseId: "c", timeline: [], forensicTimeline: events, findings, iocs, threads: [], mitreTechniques: [], keyQuestions: [], summary: "", attackerPath: [], nextSteps: [] } as unknown as InvestigationState;
+function state(
+  iocs: IOC[],
+  events: ForensicEvent[] = [],
+  findings: InvestigationState["findings"] = [],
+): InvestigationState {
+  return {
+    caseId: "c",
+    timeline: [],
+    forensicTimeline: events,
+    findings,
+    iocs,
+    threads: [],
+    mitreTechniques: [],
+    keyQuestions: [],
+    summary: "",
+    attackerPath: [],
+    nextSteps: [],
+  } as unknown as InvestigationState;
 }
 
 describe("buildGeoMap (#133)", () => {
   it("builds a severity-colored marker from a geo enrichment + referencing event", () => {
     const s = state(
-      [ip("i1", "8.8.8.8", { lat: 37.4, lon: -122.1, country: "US", city: "Mountain View", tags: ["US", "AS15169"] })],
+      [
+        ip("i1", "8.8.8.8", {
+          lat: 37.4,
+          lon: -122.1,
+          country: "US",
+          city: "Mountain View",
+          tags: ["US", "AS15169"],
+        }),
+      ],
       [ev({ id: "e1", dstIp: "8.8.8.8", severity: "High", sources: ["Suricata"] })],
     );
     const g = buildGeoMap(s);
@@ -59,7 +95,20 @@ describe("buildGeoMap (#133)", () => {
     const s = state(
       [ip("i1", "8.8.8.8", { lat: 1, lon: 1 })],
       [],
-      [{ id: "f1", severity: "Critical", title: "t", description: "", relatedIocs: ["i1"], sourceScreenshots: [], mitreTechniques: [], firstSeen: "x", lastUpdated: "x", status: "open" }],
+      [
+        {
+          id: "f1",
+          severity: "Critical",
+          title: "t",
+          description: "",
+          relatedIocs: ["i1"],
+          sourceScreenshots: [],
+          mitreTechniques: [],
+          firstSeen: "x",
+          lastUpdated: "x",
+          status: "open",
+        },
+      ],
     );
     expect(buildGeoMap(s).markers[0].severity).toBe("Critical");
   });
@@ -67,8 +116,8 @@ describe("buildGeoMap (#133)", () => {
   it("derives a flow between two geo-resolved endpoints with direction", () => {
     const s = state(
       [
-        ip("i1", "10.0.0.5", { lat: 40, lon: -70 }),  // internal (RFC1918)
-        ip("i2", "8.8.8.8", { lat: 37, lon: -122 }),  // external
+        ip("i1", "10.0.0.5", { lat: 40, lon: -70 }), // internal (RFC1918)
+        ip("i2", "8.8.8.8", { lat: 37, lon: -122 }), // external
       ],
       [ev({ srcIp: "10.0.0.5", dstIp: "8.8.8.8", severity: "High", count: 3 })],
     );
@@ -80,7 +129,7 @@ describe("buildGeoMap (#133)", () => {
 
   it("excludes a flow when an endpoint has no coordinates", () => {
     const s = state(
-      [ip("i2", "8.8.8.8", { lat: 37, lon: -122 })],   // dst resolved, src 10.0.0.5 not an IOC
+      [ip("i2", "8.8.8.8", { lat: 37, lon: -122 })], // dst resolved, src 10.0.0.5 not an IOC
       [ev({ srcIp: "10.0.0.5", dstIp: "8.8.8.8" })],
     );
     expect(buildGeoMap(s).flows).toHaveLength(0);
@@ -130,7 +179,7 @@ describe("buildGeoMap (#133)", () => {
       [ev({ id: "e1", description: "alert on 192.168.1.10", severity: "Critical" })], // different host
     );
     const m = buildGeoMap(s).markers[0];
-    expect(m.eventCount).toBe(0);     // 192.168.1.1 was NOT referenced
+    expect(m.eventCount).toBe(0); // 192.168.1.1 was NOT referenced
     expect(m.severity).toBe("Info");
   });
 
@@ -143,9 +192,9 @@ describe("buildGeoMap (#133)", () => {
     expect(g.markers).toHaveLength(1);
     const m = g.markers[0];
     expect(m.approximate).toBe(true);
-    expect(m.lat).toBeCloseTo(51.17, 0);   // Germany centroid ~51.165691
-    expect(m.lon).toBeCloseTo(10.45, 0);   // Germany centroid ~10.451526
-    expect(m.country).toBe("Germany");     // resolved to full name via centroid
+    expect(m.lat).toBeCloseTo(51.17, 0); // Germany centroid ~51.165691
+    expect(m.lon).toBeCloseTo(10.45, 0); // Germany centroid ~10.451526
+    expect(m.country).toBe("Germany"); // resolved to full name via centroid
   });
 
   it("F1.2: IOC with tags:['IL'] (no country, no lat/lon) → approximate marker at Israel centroid", () => {
@@ -183,6 +232,6 @@ describe("buildGeoMap (#133)", () => {
     const m = buildGeoMap(s).markers[0];
     expect(m).toBeTruthy();
     expect(m.approximate).toBe(true);
-    expect(m.lat).toBeCloseTo(51.17, 1);   // Germany centroid
+    expect(m.lat).toBeCloseTo(51.17, 1); // Germany centroid
   });
 });

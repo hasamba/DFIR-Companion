@@ -189,7 +189,8 @@ export function isRequestAllowed(req: { origin?: string; host?: string }, cfg: G
     return {
       ok: false,
       kind: "host",
-      reason: `host "${req.host}" is not served by the DFIR companion` +
+      reason:
+        `host "${req.host}" is not served by the DFIR companion` +
         " — add it to DFIR_ALLOWED_HOSTS if this is your own deployment",
     };
   }
@@ -212,7 +213,8 @@ export function isRequestAllowed(req: { origin?: string; host?: string }, cfg: G
   return {
     ok: false,
     kind: "origin",
-    reason: `origin "${req.origin}" is not allowed to reach the DFIR companion` +
+    reason:
+      `origin "${req.origin}" is not allowed to reach the DFIR companion` +
       " — add it to DFIR_ALLOWED_ORIGINS if this is your own dashboard",
   };
 }
@@ -230,7 +232,12 @@ export function createOriginGuard(cfg: GuardConfig = {}): RequestHandler {
   return function originGuard(req: Request, res: Response, next: NextFunction): void {
     const origin = req.headers.origin;
     let decision = isRequestAllowed({ origin, host: req.headers.host }, cfg);
-    if (!decision.ok && decision.kind === "host" && origin === undefined && HOST_CHECK_EXEMPT_PATHS.has(req.path)) {
+    if (
+      !decision.ok &&
+      decision.kind === "host" &&
+      origin === undefined &&
+      HOST_CHECK_EXEMPT_PATHS.has(req.path)
+    ) {
       decision = { ok: true };
     }
     if (!decision.ok) {

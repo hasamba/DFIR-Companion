@@ -26,20 +26,36 @@ export function* parseCsvRecords(text: string): Generator<string[]> {
     const ch = text[i];
     if (inQuotes) {
       if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } // escaped quote
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } // escaped quote
         else inQuotes = false;
       } else {
         field += ch;
       }
       continue;
     }
-    if (ch === '"') { inQuotes = true; started = true; continue; }
-    if (ch === ",") { record.push(field); field = ""; started = true; continue; }
-    if (ch === "\r") { continue; }
+    if (ch === '"') {
+      inQuotes = true;
+      started = true;
+      continue;
+    }
+    if (ch === ",") {
+      record.push(field);
+      field = "";
+      started = true;
+      continue;
+    }
+    if (ch === "\r") {
+      continue;
+    }
     if (ch === "\n") {
-      record.push(field); field = "";
+      record.push(field);
+      field = "";
       if (!(record.length === 1 && record[0] === "")) yield record; // skip fully-empty
-      record = []; started = false;
+      record = [];
+      started = false;
       continue;
     }
     field += ch;
@@ -57,8 +73,10 @@ export function parseCsv(text: string): ParsedCsv {
   const rows: string[][] = [];
   let first = true;
   for (const rec of parseCsvRecords(text)) {
-    if (first) { headers = rec; first = false; }
-    else rows.push(rec);
+    if (first) {
+      headers = rec;
+      first = false;
+    } else rows.push(rec);
   }
   return { headers, rows };
 }
@@ -86,7 +104,9 @@ export async function* parseCsvRecordsFromLines(
       // parseCsvRecords correctly treats a \n inside an open quote as part of the field, so the
       // re-joined buffer reproduces the original logical record exactly (normally exactly one).
       for (const rec of parseCsvRecords(buf)) yield rec;
-      buf = ""; quotes = 0; have = false;
+      buf = "";
+      quotes = 0;
+      have = false;
     }
   }
   if (have) for (const rec of parseCsvRecords(buf)) yield rec;

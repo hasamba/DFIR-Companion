@@ -36,37 +36,39 @@ import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 // index-derived. The AI csv/log paths emit events whose text/count depend on model output, so
 // re-import there is genuinely not idempotent — that is the actual open work in #94.
 
-const HUNT = (ts: string) => ([{
-  group: "Sigma",
-  kind: "individual",
-  document: {
-    kind: "evtx",
-    path: "Sysmon.evtx",
-    data: {
-      Event: {
-        System: {
-          Provider: { "#attributes": { Name: "Microsoft-Windows-Sysmon" } },
-          EventID: 1,
-          Channel: "Microsoft-Windows-Sysmon/Operational",
-          Computer: "WIN-DC01.corp.local",
-          TimeCreated: { "#attributes": { SystemTime: ts } },
-        },
-        EventData: {
-          UtcTime: ts.replace("T", " ").replace("Z", ""),
-          Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-          CommandLine: "powershell.exe -nop -w hidden -enc SQBFAFgA",
-          ParentImage: "C:\\Program Files\\Microsoft Office\\winword.exe",
+const HUNT = (ts: string) => [
+  {
+    group: "Sigma",
+    kind: "individual",
+    document: {
+      kind: "evtx",
+      path: "Sysmon.evtx",
+      data: {
+        Event: {
+          System: {
+            Provider: { "#attributes": { Name: "Microsoft-Windows-Sysmon" } },
+            EventID: 1,
+            Channel: "Microsoft-Windows-Sysmon/Operational",
+            Computer: "WIN-DC01.corp.local",
+            TimeCreated: { "#attributes": { SystemTime: ts } },
+          },
+          EventData: {
+            UtcTime: ts.replace("T", " ").replace("Z", ""),
+            Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            CommandLine: "powershell.exe -nop -w hidden -enc SQBFAFgA",
+            ParentImage: "C:\\Program Files\\Microsoft Office\\winword.exe",
+          },
         },
       },
     },
+    rule: {
+      name: "Suspicious Encoded PowerShell Command Line",
+      level: "high",
+      tags: ["attack.execution", "attack.t1059.001"],
+    },
+    timestamp: ts,
   },
-  rule: {
-    name: "Suspicious Encoded PowerShell Command Line",
-    level: "high",
-    tags: ["attack.execution", "attack.t1059.001"],
-  },
-  timestamp: ts,
-}]);
+];
 
 // The importer resolves an event's real time from EventData.UtcTime, so a variant must move BOTH
 // that and the outer timestamps — otherwise it collides with the original on correlation step 0 and
@@ -82,7 +84,10 @@ async function makeApp() {
   const importMetaStore = new ImportMetaStore(store);
   // No-AI pipeline: the deterministic chainsaw importer populates the timeline with no model call.
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, importMetaStore, superTimelineStore });
@@ -92,7 +97,7 @@ async function makeApp() {
 
 async function counts(stateStore: StateStore, superStore: SuperTimelineStore) {
   const state = await stateStore.load("c1");
-  const sup = await superStore.query("c1", { limit: 1000 }) as unknown as { total?: number };
+  const sup = (await superStore.query("c1", { limit: 1000 })) as unknown as { total?: number };
   return { forensic: state.forensicTimeline.length, super: sup.total ?? 0 };
 }
 
@@ -136,41 +141,49 @@ async function startImport(app: Express, file: { filename: string; text: string 
 }
 
 describe("#94 — re-importing identical evidence is idempotent", () => {
-  it("adds nothing to the forensic timeline or the super-timeline on a second identical import", async () => {
-    const { app, stateStore, superTimelineStore, importMetaStore } = await makeApp();
+  it(
+    "adds nothing to the forensic timeline or the super-timeline on a second identical import",
+    async () => {
+      const { app, stateStore, superTimelineStore, importMetaStore } = await makeApp();
 
-    const firstFile = await startImport(app, FILE_A);
-    await settle(importMetaStore, firstFile);
-    const first = await counts(stateStore, superTimelineStore);
-    expect(first.forensic).toBe(1);
-    expect(first.super).toBe(1);
+      const firstFile = await startImport(app, FILE_A);
+      await settle(importMetaStore, firstFile);
+      const first = await counts(stateStore, superTimelineStore);
+      expect(first.forensic).toBe(1);
+      expect(first.super).toBe(1);
 
-    // The recovery path after an interrupted import: send the exact same bytes again. Waiting on THIS
-    // cycle's stored name is what makes the assertions below mean something — the timeline already
-    // holds the first import's event, so any threshold on its length would be met before the re-import
-    // even started, and the test would report idempotence for work that never landed.
-    const reimportFile = await startImport(app, FILE_A);
-    // The same bytes under a different stored name: each import takes a fresh sequence number, which is
-    // what makes the wait above discriminating. Were the two names equal, matching lastImportFile would
-    // be satisfied by the FIRST import's record and be exactly as vacuous as a timeline threshold.
-    expect(reimportFile).not.toBe(firstFile);
-    await settle(importMetaStore, reimportFile);
-    const second = await counts(stateStore, superTimelineStore);
+      // The recovery path after an interrupted import: send the exact same bytes again. Waiting on THIS
+      // cycle's stored name is what makes the assertions below mean something — the timeline already
+      // holds the first import's event, so any threshold on its length would be met before the re-import
+      // even started, and the test would report idempotence for work that never landed.
+      const reimportFile = await startImport(app, FILE_A);
+      // The same bytes under a different stored name: each import takes a fresh sequence number, which is
+      // what makes the wait above discriminating. Were the two names equal, matching lastImportFile would
+      // be satisfied by the FIRST import's record and be exactly as vacuous as a timeline threshold.
+      expect(reimportFile).not.toBe(firstFile);
+      await settle(importMetaStore, reimportFile);
+      const second = await counts(stateStore, superTimelineStore);
 
-    expect(second.forensic).toBe(first.forensic);
-    expect(second.super).toBe(first.super);
-  }, POLL_TIMEOUT_MS * 3);   // TWO real settle() budgets (one per import cycle), plus the 300ms settles
+      expect(second.forensic).toBe(first.forensic);
+      expect(second.super).toBe(first.super);
+    },
+    POLL_TIMEOUT_MS * 3,
+  ); // TWO real settle() budgets (one per import cycle), plus the 300ms settles
 
-  it("still ingests genuinely different evidence as new events", async () => {
-    const { app, stateStore, superTimelineStore, importMetaStore } = await makeApp();
+  it(
+    "still ingests genuinely different evidence as new events",
+    async () => {
+      const { app, stateStore, superTimelineStore, importMetaStore } = await makeApp();
 
-    await settle(importMetaStore, await startImport(app, FILE_A));
-    await settle(importMetaStore, await startImport(app, FILE_B));
+      await settle(importMetaStore, await startImport(app, FILE_A));
+      await settle(importMetaStore, await startImport(app, FILE_B));
 
-    // Guards the test above: proves the idempotence it asserts is real dedup of identical evidence,
-    // not the importer silently dropping every second import.
-    const after = await counts(stateStore, superTimelineStore);
-    expect(after.forensic).toBe(2);
-    expect(after.super).toBe(2);
-  }, POLL_TIMEOUT_MS * 3);
+      // Guards the test above: proves the idempotence it asserts is real dedup of identical evidence,
+      // not the importer silently dropping every second import.
+      const after = await counts(stateStore, superTimelineStore);
+      expect(after.forensic).toBe(2);
+      expect(after.super).toBe(2);
+    },
+    POLL_TIMEOUT_MS * 3,
+  );
 });

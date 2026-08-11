@@ -7,16 +7,28 @@ import type { Logger } from "../../src/logging/logger.js";
 // (buildEnrichmentProviders, the same function server.ts calls at boot and on live reload), not
 // buildTlsFetch in isolation, so a regression in the wiring itself would fail here.
 
-const ENV_KEYS = ["DFIR_MISP_URL", "DFIR_MISP_KEY", "DFIR_MISP_INSECURE", "DFIR_TLS_ALLOW_INSECURE_EXTERNAL", "DFIR_NOTIFY_INSECURE"];
+const ENV_KEYS = [
+  "DFIR_MISP_URL",
+  "DFIR_MISP_KEY",
+  "DFIR_MISP_INSECURE",
+  "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+  "DFIR_NOTIFY_INSECURE",
+];
 const saved: Record<string, string | undefined> = {};
 let originalLogger: Logger;
 
 beforeEach(() => {
   originalLogger = getServerLogger();
-  for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  for (const k of ENV_KEYS) {
+    saved[k] = process.env[k];
+    delete process.env[k];
+  }
 });
 afterEach(() => {
-  for (const k of ENV_KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  for (const k of ENV_KEYS) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
   setServerLogger(originalLogger);
 });
 
@@ -29,7 +41,9 @@ describe("tlsFetchFor wiring — insecureSkipVerify guard (#246)", () => {
     setServerLogger({ ...originalLogger, warn });
 
     let providers: ReturnType<typeof buildEnrichmentProviders> = [];
-    expect(() => { providers = buildEnrichmentProviders(); }).not.toThrow();
+    expect(() => {
+      providers = buildEnrichmentProviders();
+    }).not.toThrow();
     expect(providers.some((p) => p.name === "MISP")).toBe(true); // still configured
     expect(warn).toHaveBeenCalled();
     expect(warn.mock.calls.some(([m]) => /non-loopback/i.test(m as string))).toBe(true);

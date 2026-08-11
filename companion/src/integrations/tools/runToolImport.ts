@@ -22,9 +22,9 @@ export function resolveContainedPath(caseDir: string, userPath: string): string 
 }
 
 export interface RunToolResult {
-  outputText: string;   // the tool's output (stdout, or the read-back result file), fed to the importer
-  importKind: string;   // the fixed downstream importer kind for this tool
-  stderr: string;       // captured stderr (for surfacing warnings/errors to the analyst)
+  outputText: string; // the tool's output (stdout, or the read-back result file), fed to the importer
+  importKind: string; // the fixed downstream importer kind for this tool
+  stderr: string; // captured stderr (for surfacing warnings/errors to the analyst)
 }
 
 // Run `cfg` against `targetPath` and return the tool's output text + its importKind. `workDir` is a
@@ -34,19 +34,23 @@ export interface RunToolResult {
 export async function runToolAgainstFile(opts: {
   cfg: ToolConfig;
   runner: ToolRunner;
-  targetPath: string;    // already validated/absolute
-  workDir: string;       // e.g. cases/<id>/.toolwork
-  rulesPath?: string;    // overrides cfg.rulesPath when provided
-  definitions?: string;  // overrides cfg.definitions when provided
+  targetPath: string; // already validated/absolute
+  workDir: string; // e.g. cases/<id>/.toolwork
+  rulesPath?: string; // overrides cfg.rulesPath when provided
+  definitions?: string; // overrides cfg.definitions when provided
 }): Promise<RunToolResult> {
   const { cfg, runner, targetPath, workDir } = opts;
   const rules = (opts.rulesPath ?? cfg.rulesPath ?? "").trim();
   const definitions = (opts.definitions ?? cfg.definitions ?? "").trim();
   if (cfg.runArgs.includes("<rules>") && !rules) {
-    throw new Error(`${cfg.id}: a rules file is required — set it in Settings → Tools (DFIR_TOOL_${cfg.id.toUpperCase()}_RULES)`);
+    throw new Error(
+      `${cfg.id}: a rules file is required — set it in Settings → Tools (DFIR_TOOL_${cfg.id.toUpperCase()}_RULES)`,
+    );
   }
   if (cfg.runArgs.includes("<definitions>") && !definitions) {
-    throw new Error(`${cfg.id}: a definitions path is required — set it in Settings → Tools (DFIR_TOOL_${cfg.id.toUpperCase()}_DEFINITIONS)`);
+    throw new Error(
+      `${cfg.id}: a definitions path is required — set it in Settings → Tools (DFIR_TOOL_${cfg.id.toUpperCase()}_DEFINITIONS)`,
+    );
   }
 
   await mkdir(workDir, { recursive: true });
@@ -83,7 +87,7 @@ export async function runToolAgainstFile(opts: {
     if (gt >= 0) {
       stdoutFile = join(runDir, cfg.outputFile ?? "output.json");
       readPath = stdoutFile;
-      tokens = tokens.filter((_, i) => i !== gt && i !== gt + 1);   // drop `>` and its (usually <output>) target
+      tokens = tokens.filter((_, i) => i !== gt && i !== gt + 1); // drop `>` and its (usually <output>) target
     }
 
     const argv = substituteArgs(tokens, {
@@ -94,18 +98,22 @@ export async function runToolAgainstFile(opts: {
       definitions: definitions || undefined,
     });
 
-    const res = await runner(cfg.binary, argv, { timeoutMs: cfg.timeoutMs, maxOutputBytes: cfg.maxOutputBytes, stdoutFile });
+    const res = await runner(cfg.binary, argv, {
+      timeoutMs: cfg.timeoutMs,
+      maxOutputBytes: cfg.maxOutputBytes,
+      stdoutFile,
+    });
 
     // Redirected/file/dir output → read the file. Pure stdout tools (YARA/Snort) → strip ANSI so a
     // colour-forcing CLI can't break the importer parser.
-    const outputText = stdoutFile || cfg.outputMode !== "stdout"
-      ? await readFile(readPath as string, "utf8").catch(() => "")
-      : stripAnsi(res.stdout);
+    const outputText =
+      stdoutFile || cfg.outputMode !== "stdout"
+        ? await readFile(readPath as string, "utf8").catch(() => "")
+        : stripAnsi(res.stdout);
 
     if (!outputText.trim()) {
       const cleanErr = cleanToolOutput(res.stderr, 4);
-      const detail = cleanErr ? `: ${cleanErr.slice(0, 400)}`
-        : res.code ? ` (exit ${res.code})` : "";
+      const detail = cleanErr ? `: ${cleanErr.slice(0, 400)}` : res.code ? ` (exit ${res.code})` : "";
       throw new Error(`${cfg.id} produced no output${detail}`);
     }
     return { outputText, importKind: cfg.importKind, stderr: stripAnsi(res.stderr) };
@@ -123,7 +131,10 @@ export async function updateToolRules(cfg: ToolConfig, runner: ToolRunner): Prom
   const argv = tokenizeArgs(cfg.updateCommand);
   const bin = argv[0];
   if (!bin) throw new Error(`invalid update command for ${cfg.id}`);
-  const res = await runner(bin, argv.slice(1), { timeoutMs: cfg.timeoutMs, maxOutputBytes: cfg.maxOutputBytes });
+  const res = await runner(bin, argv.slice(1), {
+    timeoutMs: cfg.timeoutMs,
+    maxOutputBytes: cfg.maxOutputBytes,
+  });
   // Strip ANSI colour codes + collapse CR progress redraws so the UI toast is readable, not garbage
   // (Hayabusa's update-rules forces colour). Keep the tail — the meaningful "N rules updated" summary.
   const text = cleanToolOutput(`${res.stdout}\n${res.stderr}`);

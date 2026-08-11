@@ -7,18 +7,38 @@ function baseState() {
   const s = emptyState("c1");
   s.iocs.push(
     { id: "i1", type: "domain", value: "evil.com", firstSeen: "2026-01-02T00:00:00Z", extractedFrom: ["e1"] },
-    { id: "i2", type: "domain", value: "www.evil.com", firstSeen: "2026-01-01T00:00:00Z", extractedFrom: ["e2"],
+    {
+      id: "i2",
+      type: "domain",
+      value: "www.evil.com",
+      firstSeen: "2026-01-01T00:00:00Z",
+      extractedFrom: ["e2"],
       enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z" }],
-      enrichedBy: ["VirusTotal"] },
+      enrichedBy: ["VirusTotal"],
+    },
   );
   s.findings.push({
-    id: "f1", severity: "High", title: "C2 beacon", description: "beacon to evil.com",
-    relatedIocs: ["i1"], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open",
+    id: "f1",
+    severity: "High",
+    title: "C2 beacon",
+    description: "beacon to evil.com",
+    relatedIocs: ["i1"],
+    mitreTechniques: [],
+    sourceScreenshots: [],
+    firstSeen: "",
+    lastUpdated: "",
+    status: "open",
   });
-  s.forensicTimeline.push(
-    { id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "connection to evil.com", severity: "High",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" },
-  );
+  s.forensicTimeline.push({
+    id: "e1",
+    timestamp: "2026-01-01T00:00:00Z",
+    description: "connection to evil.com",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: "WIN-01",
+  });
   return s;
 }
 

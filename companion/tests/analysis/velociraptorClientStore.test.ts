@@ -9,7 +9,7 @@ const NOW = "2026-06-12T00:00:00.000Z";
 
 async function tmpFile(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dfir-veloclients-"));
-  return join(dir, "velociraptor", "clients.json");   // a not-yet-created subdir, like the real layout
+  return join(dir, "velociraptor", "clients.json"); // a not-yet-created subdir, like the real layout
 }
 
 const recs: VeloClientRecord[] = [
@@ -19,7 +19,9 @@ const recs: VeloClientRecord[] = [
 
 describe("VelociraptorClientStore", () => {
   let file: string;
-  beforeEach(async () => { file = await tmpFile(); });
+  beforeEach(async () => {
+    file = await tmpFile();
+  });
 
   it("returns an empty inventory before anything is saved", async () => {
     const inv = await new VelociraptorClientStore(file).load();
@@ -38,7 +40,14 @@ describe("VelociraptorClientStore", () => {
 
   it("drops records with no clientId on load", async () => {
     await mkdir(join(file, ".."), { recursive: true });
-    await writeFile(file, JSON.stringify({ updatedAt: NOW, clients: [{ hostname: "x" }, { clientId: "C.a", hostname: "a", fqdn: "" }] }), "utf8");
+    await writeFile(
+      file,
+      JSON.stringify({
+        updatedAt: NOW,
+        clients: [{ hostname: "x" }, { clientId: "C.a", hostname: "a", fqdn: "" }],
+      }),
+      "utf8",
+    );
     const inv = await new VelociraptorClientStore(file).load();
     expect(inv.clients).toHaveLength(1);
     expect(inv.clients[0].clientId).toBe("C.a");

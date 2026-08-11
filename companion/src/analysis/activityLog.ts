@@ -14,8 +14,16 @@ import { authenticatedActorFields } from "../auth/identityContext.js";
 // requirement (that was #224's dropped scope).
 
 export const ACTIVITY_CATEGORIES = [
-  "import", "triage", "ai", "enrichment", "anonymization",
-  "settings", "playbook", "collaboration", "hunt", "export",
+  "import",
+  "triage",
+  "ai",
+  "enrichment",
+  "anonymization",
+  "settings",
+  "playbook",
+  "collaboration",
+  "hunt",
+  "export",
 ] as const;
 export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
 
@@ -92,7 +100,9 @@ export class ActivityLogStore {
       if (!line.trim()) continue;
       try {
         entries.push(activityLogEntrySchema.parse(JSON.parse(line)));
-      } catch { /* skip a malformed line */ }
+      } catch {
+        /* skip a malformed line */
+      }
     }
     entries.reverse();
     const filtered = filter.category ? entries.filter((e) => e.category === filter.category) : entries;
@@ -112,7 +122,10 @@ export function logActivity(
   input: NewActivityEntry,
 ): Promise<void> {
   if (!store) return Promise.resolve();
-  return store.add(caseId, input)
-    .then(() => { onActivity?.(caseId); })
+  return store
+    .add(caseId, input)
+    .then(() => {
+      onActivity?.(caseId);
+    })
     .catch(() => {});
 }

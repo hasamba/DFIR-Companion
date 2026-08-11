@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { compileRuleset } from "../../src/analysis/taggerRules.js";
-import { runTagger, raiseSeverity, applyToForensicEvent, selectScopedEvents } from "../../src/analysis/tagger.js";
+import {
+  runTagger,
+  raiseSeverity,
+  applyToForensicEvent,
+  selectScopedEvents,
+} from "../../src/analysis/tagger.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
@@ -76,7 +81,13 @@ describe("raiseSeverity — raise only", () => {
 describe("applyToForensicEvent", () => {
   it("raises severity and unions MITRE without mutating the input", () => {
     const original = ev({ id: "e1", severity: "Low", mitreTechniques: ["T1059"] });
-    const result = { eventId: "e1", tags: ["t"], mitre: ["T1543", "T1059"], severity: "High" as const, ruleIds: ["svc"] };
+    const result = {
+      eventId: "e1",
+      tags: ["t"],
+      mitre: ["T1543", "T1059"],
+      severity: "High" as const,
+      ruleIds: ["svc"],
+    };
     const next = applyToForensicEvent(original, result);
     expect(next).not.toBe(original);
     expect(original.severity).toBe("Low"); // input untouched
@@ -86,7 +97,13 @@ describe("applyToForensicEvent", () => {
 
   it("is idempotent — applying the same result twice changes nothing further", () => {
     const original = ev({ id: "e1", severity: "Low", mitreTechniques: [] });
-    const result = { eventId: "e1", tags: ["t"], mitre: ["T1543"], severity: "High" as const, ruleIds: ["svc"] };
+    const result = {
+      eventId: "e1",
+      tags: ["t"],
+      mitre: ["T1543"],
+      severity: "High" as const,
+      ruleIds: ["svc"],
+    };
     const once = applyToForensicEvent(original, result);
     const twice = applyToForensicEvent(once, result);
     expect(twice).toEqual(once);
@@ -100,7 +117,15 @@ describe("applyToForensicEvent", () => {
 });
 
 describe("selectScopedEvents", () => {
-  const f = (id: string) => ({ id, timestamp: "t", description: "d", severity: "Info" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+  const f = (id: string) => ({
+    id,
+    timestamp: "t",
+    description: "d",
+    severity: "Info" as const,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  });
   const forensic = [f("a"), f("b")];
   const superEvents = [f("b"), f("c")]; // 'b' overlaps
 

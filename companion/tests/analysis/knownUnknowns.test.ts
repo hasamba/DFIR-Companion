@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { buildKnownUnknowns } from "../../src/analysis/knownUnknowns.js";
-import { emptyState, type Finding, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type Finding,
+  type ForensicEvent,
+  type InvestigationState,
+} from "../../src/analysis/stateTypes.js";
 import type { NextTechnique } from "../../src/analysis/adversaryEmulation.js";
 
 function finding(id: string, severity: Finding["severity"], mitreTechniques: string[], title = id): Finding {
@@ -32,7 +37,16 @@ function ev(id: string, timestamp: string, source: string): ForensicEvent {
 }
 
 function nextTech(id: string, name: string, tactic: string, groupCount: number): NextTechnique {
-  return { id, name, url: `https://attack.mitre.org/techniques/${id}`, tactic, groupCount, groups: [], prevalence: 0.1, score: 1 };
+  return {
+    id,
+    name,
+    url: `https://attack.mitre.org/techniques/${id}`,
+    tactic,
+    groupCount,
+    groups: [],
+    prevalence: 0.1,
+    score: 1,
+  };
 }
 
 function withFindings(findings: Finding[]): InvestigationState {
@@ -66,7 +80,9 @@ describe("buildKnownUnknowns", () => {
       ev("e1", new Date(start + 3 * 3600_000).toISOString(), "edr"), // 3h silence on the only source
       ev("e2", new Date(start + 3 * 3600_000 + 5000).toISOString(), "edr"),
     ];
-    const block = buildKnownUnknowns(emptyState("c"), events, { gapOptions: { minGapMinutes: 30, densityFactor: 0 } });
+    const block = buildKnownUnknowns(emptyState("c"), events, {
+      gapOptions: { minGapMinutes: 30, densityFactor: 0 },
+    });
     expect(block).toContain("No telemetry from");
     expect(block).toContain("ALL sources silent");
   });

@@ -11,21 +11,21 @@ import { withRateLimitRetry, type RetryPolicy } from "./provider.js";
 export interface ChainValidateOptions {
   check: (parent: string, child: string) => Promise<ParentChildResult | null>;
   delayMs?: number;
-  jitterMs?: number;         // ± random jitter added to the inter-call wait (default 0 = none)
-  random?: () => number;     // injected jitter source (default Math.random), returns [0, 1)
-  retry?: RetryPolicy;       // retry policy for a check() that throws RateLimitError (HTTP 429)
-  maxChecks?: number;        // cap on distinct (parent,child) pairs queried per run
-  force?: boolean;           // re-check events that already have a chainCheck
+  jitterMs?: number; // ± random jitter added to the inter-call wait (default 0 = none)
+  random?: () => number; // injected jitter source (default Math.random), returns [0, 1)
+  retry?: RetryPolicy; // retry policy for a check() that throws RateLimitError (HTTP 429)
+  maxChecks?: number; // cap on distinct (parent,child) pairs queried per run
+  force?: boolean; // re-check events that already have a chainCheck
   now?: () => string;
   sleep?: (ms: number) => Promise<void>;
   onProgress?: (done: number, total: number) => void;
 }
 
 export interface ChainSummary {
-  candidates: number;        // events with a parent→child to validate
-  pairs: number;             // distinct (parent,child) chains
-  checked: number;           // chains actually queried this run
-  anomalies: number;         // chains the dataset has NOT observed
+  candidates: number; // events with a parent→child to validate
+  pairs: number; // distinct (parent,child) chains
+  checked: number; // chains actually queried this run
+  anomalies: number; // chains the dataset has NOT observed
   errors: number;
 }
 
@@ -50,14 +50,23 @@ export async function validateProcessChains(
   const maxChecks = opts.maxChecks ?? 100;
 
   const candidates = events.filter((e) => e.parentName && e.processName && (opts.force || !e.chainCheck));
-  const summary: ChainSummary = { candidates: candidates.length, pairs: 0, checked: 0, anomalies: 0, errors: 0 };
+  const summary: ChainSummary = {
+    candidates: candidates.length,
+    pairs: 0,
+    checked: 0,
+    anomalies: 0,
+    errors: 0,
+  };
 
   // Distinct chains in first-appearance order.
   const order: Array<{ parent: string; child: string; key: string }> = [];
   const seen = new Set<string>();
   for (const e of candidates) {
     const key = pairKey(e.parentName!, e.processName!);
-    if (!seen.has(key)) { seen.add(key); order.push({ parent: e.parentName!, child: e.processName!, key }); }
+    if (!seen.has(key)) {
+      seen.add(key);
+      order.push({ parent: e.parentName!, child: e.processName!, key });
+    }
   }
   summary.pairs = order.length;
 

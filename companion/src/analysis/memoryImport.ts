@@ -70,23 +70,24 @@ export interface MemoryImportOptions {
 export interface MemoryParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;        // rows across all tables
-  kept: number;         // events emitted (after aggregation + cap)
-  dropped: number;      // rows not represented (dll/handle telemetry / below floor / capped)
-  groups: number;       // distinct event groups before the cap
-  tables: number;       // plugin tables parsed
-  injected: number;     // malfind (injected-code) rows seen
-  processes: number;    // process-listing rows seen
-  connections: number;  // network-connection rows seen
-  format: string;       // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "rekall" | "empty"
-  tool: string;         // "Volatility" | "Rekall" | ""
+  total: number; // rows across all tables
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // rows not represented (dll/handle telemetry / below floor / capped)
+  groups: number; // distinct event groups before the cap
+  tables: number; // plugin tables parsed
+  injected: number; // malfind (injected-code) rows seen
+  processes: number; // process-listing rows seen
+  connections: number; // network-connection rows seen
+  format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "rekall" | "empty"
+  tool: string; // "Volatility" | "Rekall" | ""
 }
 
 type Category =
-  | "process" | "netscan" | "malfind" | "cmdline" | "service" | "module" | "dll" | "handle" | "generic";
+  "process" | "netscan" | "malfind" | "cmdline" | "service" | "module" | "dll" | "handle" | "generic";
 
 const REKALL_DIRECTIVES = new Set(["m", "t", "r", "s", "e", "p", "f", "L", "c"]);
-const PRIVATE_IP = /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|255\.|22[4-9]\.|23\d\.|::1$|fe80:|fc|fd)/i;
+const PRIVATE_IP =
+  /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|255\.|22[4-9]\.|23\d\.|::1$|fe80:|fc|fd)/i;
 
 // ───────────────────────────── cell / field helpers ─────────────────────────────
 
@@ -103,7 +104,10 @@ function cellStr(v: unknown): string {
       if (typeof s === "number") return String(s);
     }
     const cybox = getCI(v, "Cybox");
-    if (isObject(cybox)) { const n = getCI(cybox, "Name"); if (typeof n === "string" && n.trim()) return n.trim(); }
+    if (isObject(cybox)) {
+      const n = getCI(cybox, "Name");
+      if (typeof n === "string" && n.trim()) return n.trim();
+    }
     return "";
   }
   return "";
@@ -111,7 +115,10 @@ function cellStr(v: unknown): string {
 
 // First non-empty resolved value across candidate keys (case-insensitive).
 function pick(row: Row, keys: string[]): string {
-  for (const k of keys) { const s = cellStr(getCI(row, k)).trim(); if (s) return s; }
+  for (const k of keys) {
+    const s = cellStr(getCI(row, k)).trim();
+    if (s) return s;
+  }
   return "";
 }
 
@@ -176,21 +183,28 @@ function classify(plugin: string, cols: Set<string>): Category {
   if (any("binary", "servicedll", "binary path") && any("state", "start", "display")) return "service";
 
   if (/driver|modscan|modules|modlist|lsmod|kernel_module/.test(p)) return "module";
-  if (any("base", "dllbase") && has("size") && any("name", "path", "driver name") && !has("pid")) return "module";
+  if (any("base", "dllbase") && has("size") && any("name", "path", "driver name") && !has("pid"))
+    return "module";
 
   if (/dlllist|ldrmodules|dlldump/.test(p)) return "dll";
-  if (has("pid") && any("base", "dllbase") && any("path", "loadtime", "mappedpath") && has("size")) return "dll";
+  if (has("pid") && any("base", "dllbase") && any("path", "loadtime", "mappedpath") && has("size"))
+    return "dll";
 
   if (/handles?/.test(p)) return "handle";
 
   if (/pslist|psscan|pstree|psxview|pstotal|ps_|memdump|procdump/.test(p)) return "process";
   if (any("imagefilename", "comm", "_eprocess")) return "process";
-  if (has("ppid") && any("createtime", "process_create_time", "threads", "thread_count", "handles", "handle_count")) return "process";
+  if (
+    has("ppid") &&
+    any("createtime", "process_create_time", "threads", "thread_count", "handles", "handle_count")
+  )
+    return "process";
 
   return "generic";
 }
 
-const SHORT_PLUGIN = /(pstree|pslist|psscan|psxview|netscan|netstat|connscan|connections|sockscan|sockets|malfind|hollowfind|ldrmodules|cmdline|cmdscan|consoles|svcscan|services|modscan|modules|driverscan|driverirp|dlllist|handles|getsids|envars|privileges|callbacks|ssdt|mutantscan|filescan|hivelist|hashdump)/;
+const SHORT_PLUGIN =
+  /(pstree|pslist|psscan|psxview|netscan|netstat|connscan|connections|sockscan|sockets|malfind|hollowfind|ldrmodules|cmdline|cmdscan|consoles|svcscan|services|modscan|modules|driverscan|driverirp|dlllist|handles|getsids|envars|privileges|callbacks|ssdt|mutantscan|filescan|hivelist|hashdump)/;
 
 // A short, human label for the plugin: the Rekall/known plugin name, the os.module from a
 // Volatility dotted id, or a filename/category fallback.
@@ -201,11 +215,23 @@ function displayLabel(plugin: string, category: Category, rows: Row[]): string {
   const m = SHORT_PLUGIN.exec(p);
   if (m) return m[1];
   if (category === "process") {
-    return rows.some((r) => { const c = getCI(r, "__children"); return Array.isArray(c) && c.length > 0; }) ? "pstree" : "pslist";
+    return rows.some((r) => {
+      const c = getCI(r, "__children");
+      return Array.isArray(c) && c.length > 0;
+    })
+      ? "pstree"
+      : "pslist";
   }
   const byCat: Record<Category, string> = {
-    process: "pslist", netscan: "netscan", malfind: "malfind", cmdline: "cmdline",
-    service: "svcscan", module: "modules", dll: "dlllist", handle: "handles", generic: "memory",
+    process: "pslist",
+    netscan: "netscan",
+    malfind: "malfind",
+    cmdline: "cmdline",
+    service: "svcscan",
+    module: "modules",
+    dll: "dlllist",
+    handle: "handles",
+    generic: "memory",
   };
   return byCat[category];
 }
@@ -227,7 +253,8 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
   const pidIndex = new Map<string, string>();
   const index = (list: Row[], depth: number): void => {
     for (const r of list) {
-      const pid = pickPid(r); const nm = procName(r);
+      const pid = pickPid(r);
+      const nm = procName(r);
       if (pid && nm) pidIndex.set(pid, nm);
       index(pstreeChildren(r, depth), depth + 1);
     }
@@ -241,7 +268,13 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
       const name = procName(r);
       const pid = pickPid(r);
       const ppid = pick(r, ["PPID", "ppid"]);
-      const created = pickTime(r, ["CreateTime", "process_create_time", "CreatedTime", "create_time", "start_time"]);
+      const created = pickTime(r, [
+        "CreateTime",
+        "process_create_time",
+        "CreatedTime",
+        "create_time",
+        "start_time",
+      ]);
       const exited = pick(r, ["ExitTime", "process_exit_time"]).trim();
       const cmd = pick(r, ["Cmd", "CommandLine", "Args"]);
       const path = pick(r, ["Path", "path"]);
@@ -267,21 +300,27 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
             ...(name ? { name } : {}),
             ...(path ? { executable: path } : {}),
             ...(cmd ? { commandLine: cmd } : {}),
-            ...(parentName || (Number.isInteger(parentPidNumber) && parentPidNumber > 0) ? {
-              parent: {
-                ...(Number.isInteger(parentPidNumber) && parentPidNumber > 0 ? { pid: parentPidNumber } : {}),
-                ...(parentName ? { name: parentName } : {}),
-              },
-            } : {}),
+            ...(parentName || (Number.isInteger(parentPidNumber) && parentPidNumber > 0)
+              ? {
+                  parent: {
+                    ...(Number.isInteger(parentPidNumber) && parentPidNumber > 0
+                      ? { pid: parentPidNumber }
+                      : {}),
+                    ...(parentName ? { name: parentName } : {}),
+                  },
+                }
+              : {}),
           },
           ...(path ? { file: { path, name: baseName(path) } } : {}),
           time: { observed: created, normalized: created },
           evidence: {
-            rawRecords: [{
-              source: `${tool.toLowerCase()}-${label}`,
-              locator: `row:${locatorIndex}`,
-              ...(pid ? { recordId: pid } : {}),
-            }],
+            rawRecords: [
+              {
+                source: `${tool.toLowerCase()}-${label}`,
+                locator: `row:${locatorIndex}`,
+                ...(pid ? { recordId: pid } : {}),
+              },
+            ],
           },
           producer: {
             importer: "memory",
@@ -303,7 +342,10 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
           severity: "Info",
           mitre: [],
           canonical,
-          aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}${psscan ? "|scan" : ""}`.slice(0, 400),
+          aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}${psscan ? "|scan" : ""}`.slice(
+            0,
+            400,
+          ),
           sources: [tool],
           ...(name ? { processName: name } : {}),
           ...(parentName ? { parentName } : {}),
@@ -344,7 +386,11 @@ function mapNetscan(label: string, tool: string, rows: Row[], sink: Map<string, 
 
     out.push({
       timestamp: created,
-      description: `${tool} ${label}: ${proto || "?"} ${laddr || "?"}:${lport || "?"} → ${faddr || "*"}:${fport || "*"}${state ? ` [${state}]` : ""}${owner ? ` owner ${owner}` : ""}${pid ? ` (PID ${pid})` : ""}`.slice(0, 600),
+      description:
+        `${tool} ${label}: ${proto || "?"} ${laddr || "?"}:${lport || "?"} → ${faddr || "*"}:${fport || "*"}${state ? ` [${state}]` : ""}${owner ? ` owner ${owner}` : ""}${pid ? ` (PID ${pid})` : ""}`.slice(
+          0,
+          600,
+        ),
       severity,
       mitre: [],
       aggKey: `mem|net|${proto}|${faddr}|${fport}|${proc}`.toLowerCase().slice(0, 400),
@@ -370,7 +416,11 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     if (name) addIoc(sink, "process", name);
     out.push({
       timestamp: "",
-      description: `${tool} ${label}: executable/injected private memory in ${proc || "?"} (PID ${pid || "?"})${prot ? ` — protection ${prot}` : ""}${tag ? `, tag ${tag}` : ""}`.slice(0, 600),
+      description:
+        `${tool} ${label}: executable/injected private memory in ${proc || "?"} (PID ${pid || "?"})${prot ? ` — protection ${prot}` : ""}${tag ? `, tag ${tag}` : ""}`.slice(
+          0,
+          600,
+        ),
       severity: "High",
       mitre: ["T1055"],
       aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${start}|${prot}`.toLowerCase().slice(0, 400),
@@ -397,7 +447,11 @@ function mapCmdline(label: string, tool: string, rows: Row[], sink: Map<string, 
     const severity: Severity = strong ? "High" : flagged ? "Medium" : "Info";
     out.push({
       timestamp: "",
-      description: `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"})${args ? ` — ${oneLine(args).slice(0, 220)}` : ""}`.slice(0, 600),
+      description:
+        `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"})${args ? ` — ${oneLine(args).slice(0, 220)}` : ""}`.slice(
+          0,
+          600,
+        ),
       severity,
       mitre: [...new Set([...(flagged ? ["T1059"] : []), ...(tc?.mitre ?? [])])],
       aggKey: `mem|cmd|${name.toLowerCase()}|${pid}`.slice(0, 400),
@@ -421,7 +475,11 @@ function mapService(label: string, tool: string, rows: Row[], sink: Map<string, 
     const severity: Severity = susp === "strong" ? "High" : susp === "weak" ? "Medium" : "Info";
     out.push({
       timestamp: "",
-      description: `${tool} ${label}: service ${name || "?"}${display && display !== name ? ` (${display})` : ""}${state ? ` [${state}]` : ""}${binary ? ` → ${oneLine(binary).slice(0, 200)}` : ""}`.slice(0, 600),
+      description:
+        `${tool} ${label}: service ${name || "?"}${display && display !== name ? ` (${display})` : ""}${state ? ` [${state}]` : ""}${binary ? ` → ${oneLine(binary).slice(0, 200)}` : ""}`.slice(
+          0,
+          600,
+        ),
       severity,
       mitre: [],
       aggKey: `mem|svc|${(name || binary).toLowerCase()}`.slice(0, 400),
@@ -442,7 +500,11 @@ function mapModule(label: string, tool: string, rows: Row[], sink: Map<string, S
     if (path && /[\\/]/.test(path)) addIoc(sink, "file", path.slice(0, 300));
     out.push({
       timestamp: "",
-      description: `${tool} ${label}: ${name || "?"}${base ? ` @ ${base}` : ""}${path ? ` — ${oneLine(path).slice(0, 200)}` : ""}`.slice(0, 600),
+      description:
+        `${tool} ${label}: ${name || "?"}${base ? ` @ ${base}` : ""}${path ? ` — ${oneLine(path).slice(0, 200)}` : ""}`.slice(
+          0,
+          600,
+        ),
       severity: "Info",
       mitre: [],
       aggKey: `mem|mod|${(name || path).toLowerCase()}`.slice(0, 400),
@@ -455,7 +517,13 @@ function mapModule(label: string, tool: string, rows: Row[], sink: Map<string, S
 
 // dlllist / ldrmodules: high-volume. By default harvest the DLL path → file IOC only; opt-in to
 // keep one Info event per loaded module.
-function mapDll(label: string, tool: string, rows: Row[], sink: Map<string, SiemIoc>, telemetry: boolean): MappedEvent[] {
+function mapDll(
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+  telemetry: boolean,
+): MappedEvent[] {
   const out: MappedEvent[] = [];
   for (const r of rows) {
     const path = pick(r, ["Path", "path", "MappedPath", "FullDllName"]);
@@ -467,7 +535,11 @@ function mapDll(label: string, tool: string, rows: Row[], sink: Map<string, Siem
     if (!path && !dllName) continue;
     out.push({
       timestamp: pickTime(r, ["LoadTime", "load_time"]),
-      description: `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(path || dllName).slice(0, 220)}`.slice(0, 600),
+      description:
+        `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(path || dllName).slice(0, 220)}`.slice(
+          0,
+          600,
+        ),
       severity: "Info",
       mitre: [],
       aggKey: `mem|dll|${proc.toLowerCase()}|${(path || dllName).toLowerCase()}`.slice(0, 400),
@@ -490,13 +562,20 @@ function mapGeneric(label: string, tool: string, rows: Row[], sink: Map<string, 
     }
     if (!pairs.length) continue;
     genericIocs(pairs, sink);
-    const body = pairs.slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" ");
+    const body = pairs
+      .slice(0, 8)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ");
     out.push({
       timestamp: pickTime(r, ["CreateTime", "Created", "Time", "time", "Timestamp"]),
       description: `${tool} ${label}: ${body}`.slice(0, 600),
       severity: "Info",
       mitre: [],
-      aggKey: `mem|gen|${label}|${body}`.toLowerCase().replace(/0x[0-9a-f]+/g, "<addr>").replace(/\d+/g, "#").slice(0, 400),
+      aggKey: `mem|gen|${label}|${body}`
+        .toLowerCase()
+        .replace(/0x[0-9a-f]+/g, "<addr>")
+        .replace(/\d+/g, "#")
+        .slice(0, 400),
       sources: [tool],
     });
   }
@@ -505,21 +584,27 @@ function mapGeneric(label: string, tool: string, rows: Row[], sink: Map<string, 
 
 // ───────────────────────────── table extraction ─────────────────────────────
 
-interface Table { plugin: string; rows: Row[]; }
+interface Table {
+  plugin: string;
+  rows: Row[];
+}
 
 const VOL_PLUGIN_KEY = /^(windows|linux|mac)\.[a-z]/; // lowercase os ⇒ Volatility (Velociraptor uses "Windows.")
 
 function isVolatilityPluginMap(root: unknown): boolean {
   if (!isObject(root) || Array.isArray(root)) return false;
   const entries = Object.entries(root);
-  return entries.length > 0 &&
+  return (
+    entries.length > 0 &&
     entries.every(([, v]) => Array.isArray(v)) &&
-    entries.some(([k]) => VOL_PLUGIN_KEY.test(k));
+    entries.some(([k]) => VOL_PLUGIN_KEY.test(k))
+  );
 }
 
 export function isRekallCommandList(root: unknown): boolean {
   if (!Array.isArray(root) || root.length === 0) return false;
-  let stmts = 0, hits = 0;
+  let stmts = 0,
+    hits = 0;
   for (const el of root) {
     if (Array.isArray(el) && typeof el[0] === "string" && el[0].length <= 2) {
       stmts++;
@@ -534,7 +619,10 @@ function parseRekall(root: unknown[]): Table[] {
   const tables: Table[] = [];
   let curPlugin = "";
   let cur: Table | null = null;
-  const startTable = (): void => { cur = { plugin: curPlugin, rows: [] }; tables.push(cur); };
+  const startTable = (): void => {
+    cur = { plugin: curPlugin, rows: [] };
+    tables.push(cur);
+  };
   for (const el of root) {
     if (!Array.isArray(el) || typeof el[0] !== "string") continue;
     const directive = el[0];
@@ -574,15 +662,45 @@ function pluginFromFilename(name: string | undefined): string {
 // column-fingerprint classification and per-category mappers above are reused unchanged.
 
 const VOL_TEXT_BANNER = /^Volatility 3 Framework\b/i;
-const VOL_TEXT_HEXDUMP = /^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){3,}/;   // a hexdump gutter line: "48 89 54 24 …"
-const VOL_TEXT_DISASM = /^0x[0-9a-fA-F]+:/;                         // a disassembly line: "0x…:\tmov …"
+const VOL_TEXT_HEXDUMP = /^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){3,}/; // a hexdump gutter line: "48 89 54 24 …"
+const VOL_TEXT_DISASM = /^0x[0-9a-fA-F]+:/; // a disassembly line: "0x…:\tmov …"
 // Column names that appear in Volatility 3 text headers — used (with the banner) to recognize the
 // format when the banner was stripped. Lowercased; matched against the TAB-split header cells.
 const VOL_TEXT_HEADER_COLS = new Set([
-  "pid", "ppid", "process", "imagefilename", "comm", "offset(v)", "offset", "protection", "tag",
-  "createtime", "exittime", "threads", "handles", "sessionid", "wow64", "args", "cmd",
-  "localaddr", "foreignaddr", "localport", "foreignport", "proto", "state", "owner", "created",
-  "name", "displayname", "binary", "start", "path", "base", "size", "start vpn", "end vpn",
+  "pid",
+  "ppid",
+  "process",
+  "imagefilename",
+  "comm",
+  "offset(v)",
+  "offset",
+  "protection",
+  "tag",
+  "createtime",
+  "exittime",
+  "threads",
+  "handles",
+  "sessionid",
+  "wow64",
+  "args",
+  "cmd",
+  "localaddr",
+  "foreignaddr",
+  "localport",
+  "foreignport",
+  "proto",
+  "state",
+  "owner",
+  "created",
+  "name",
+  "displayname",
+  "binary",
+  "start",
+  "path",
+  "base",
+  "size",
+  "start vpn",
+  "end vpn",
 ]);
 
 // Recognize a Volatility 3 text/grid export — the banner, or a TAB-separated header carrying several
@@ -611,7 +729,7 @@ function parseVolatilityText(text: string, filename: string | undefined): Table 
     if (VOL_TEXT_BANNER.test(trimmed) || /^Progress:/i.test(trimmed)) continue;
     if (!line.includes("\t")) continue;
     header = line.split("\t").map((c) => c.trim());
-    while (header.length && header[header.length - 1] === "") header.pop();   // drop trailing empties
+    while (header.length && header[header.length - 1] === "") header.pop(); // drop trailing empties
     i++;
     break;
   }
@@ -622,32 +740,46 @@ function parseVolatilityText(text: string, filename: string | undefined): Table 
     const raw = lines[i];
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    if (VOL_TEXT_DISASM.test(trimmed) || VOL_TEXT_HEXDUMP.test(trimmed)) continue;  // hexdump/disasm continuation
-    if (!raw.includes("\t")) continue;                                             // ascii gutter etc.
+    if (VOL_TEXT_DISASM.test(trimmed) || VOL_TEXT_HEXDUMP.test(trimmed)) continue; // hexdump/disasm continuation
+    if (!raw.includes("\t")) continue; // ascii gutter etc.
     const cells = raw.split("\t");
-    cells[0] = cells[0].replace(/^[*\s]+/, "").trim();   // strip pstree depth markers ("* ", "** ")
+    cells[0] = cells[0].replace(/^[*\s]+/, "").trim(); // strip pstree depth markers ("* ", "** ")
     if (cells.filter((c) => c.trim() !== "").length < 2) continue;
     const row: Row = {};
-    header.forEach((col, idx) => { if (col) row[col] = (cells[idx] ?? "").trim(); });
+    header.forEach((col, idx) => {
+      if (col) row[col] = (cells[idx] ?? "").trim();
+    });
     rows.push(row);
   }
   if (!rows.length) return null;
   return { plugin: pluginFromFilename(filename), rows };
 }
 
-function extractTables(text: string, filename: string | undefined): { tables: Table[]; format: string; tool: string } {
+function extractTables(
+  text: string,
+  filename: string | undefined,
+): { tables: Table[]; format: string; tool: string } {
   const trimmed = text.trim();
   if (!trimmed) return { tables: [], format: "empty", tool: "" };
 
   let root: unknown;
   let parsed = false;
-  try { root = JSON.parse(trimmed); parsed = true; } catch { /* NDJSON below */ }
+  try {
+    root = JSON.parse(trimmed);
+    parsed = true;
+  } catch {
+    /* NDJSON below */
+  }
 
   if (parsed) {
     if (Array.isArray(root)) {
       if (isRekallCommandList(root)) return { tables: parseRekall(root), format: "rekall", tool: "Rekall" };
       const rows = root.filter(isObject) as Row[];
-      return { tables: rows.length ? [{ plugin: pluginFromFilename(filename), rows }] : [], format: "volatility", tool: "Volatility" };
+      return {
+        tables: rows.length ? [{ plugin: pluginFromFilename(filename), rows }] : [],
+        format: "volatility",
+        tool: "Volatility",
+      };
     }
     if (isObject(root) && isVolatilityPluginMap(root)) {
       const tables = Object.entries(root)
@@ -665,9 +797,19 @@ function extractTables(text: string, filename: string | undefined): { tables: Ta
   for (const line of trimmed.split(/\r\n|\r|\n/)) {
     const l = line.trim();
     if (!l || l[0] !== "{") continue;
-    try { const o = JSON.parse(l); if (isObject(o)) rows.push(o); } catch { /* skip */ }
+    try {
+      const o = JSON.parse(l);
+      if (isObject(o)) rows.push(o);
+    } catch {
+      /* skip */
+    }
   }
-  if (rows.length) return { tables: [{ plugin: pluginFromFilename(filename), rows }], format: "volatility-jsonl", tool: "Volatility" };
+  if (rows.length)
+    return {
+      tables: [{ plugin: pluginFromFilename(filename), rows }],
+      format: "volatility-jsonl",
+      tool: "Volatility",
+    };
 
   // Volatility 3 TEXT/grid renderer (the default `vol <plugin>`, no -r json).
   if (looksLikeVolatilityText(trimmed)) {
@@ -698,41 +840,58 @@ export function looksLikeMemprocfsFindevil(text: string): boolean {
   let hasHeader = false;
   for (const line of lines.slice(0, 10)) {
     const t = line.trim();
-    if (FINDEVIL_HEADER_RE.test(t)) { hasHeader = true; continue; }
+    if (FINDEVIL_HEADER_RE.test(t)) {
+      hasHeader = true;
+      continue;
+    }
     if (hasHeader && (/^-{20,}$/.test(t) || FINDEVIL_ROW_RE.test(t))) return true;
   }
   return false;
 }
 
 interface FindevilRow {
-  pid: string; process: string; type: string; address: string; description: string;
+  pid: string;
+  process: string;
+  type: string;
+  address: string;
+  description: string;
 }
 
 function findevilSeverity(type: string, desc: string): { severity: Severity; mitre: string[] } {
   const t = type.toUpperCase();
   if (t.startsWith("YR_") || t.startsWith("YARA_")) {
-    if (/hacktool/i.test(t))  return { severity: "Critical", mitre: ["T1588.002"] };
-    if (/ransom/i.test(t))    return { severity: "Critical", mitre: ["T1486"] };
+    if (/hacktool/i.test(t)) return { severity: "Critical", mitre: ["T1588.002"] };
+    if (/ransom/i.test(t)) return { severity: "Critical", mitre: ["T1486"] };
     if (/shellcode/i.test(t)) return { severity: "Critical", mitre: ["T1055.001"] };
-    if (/malware|trojan|backdoor|rat\b|loader|dropper/i.test(t)) return { severity: "Critical", mitre: ["T1055"] };
+    if (/malware|trojan|backdoor|rat\b|loader|dropper/i.test(t))
+      return { severity: "Critical", mitre: ["T1055"] };
     return { severity: "High", mitre: ["T1027"] };
   }
   switch (t) {
-    case "PEB_MASQ":    return { severity: "High",   mitre: ["T1036.005"] };
-    case "PE_PATCHED":  return { severity: "High",   mitre: ["T1055"] };
-    case "THREAD":      return /system_impersonation/i.test(desc)
-                          ? { severity: "High",   mitre: ["T1134"] }
-                          : { severity: "Medium", mitre: ["T1055"] };
-    case "HIGH_ENTROPY": return { severity: "Medium", mitre: ["T1027"] };
-    case "PE_NOLINK":   return { severity: "Medium", mitre: ["T1055"] };
-    case "PROC_DEBUG":  return { severity: "Medium", mitre: ["T1055"] };
-    case "PRIVATE_RWX": return { severity: "Medium", mitre: ["T1055", "T1620"] };
+    case "PEB_MASQ":
+      return { severity: "High", mitre: ["T1036.005"] };
+    case "PE_PATCHED":
+      return { severity: "High", mitre: ["T1055"] };
+    case "THREAD":
+      return /system_impersonation/i.test(desc)
+        ? { severity: "High", mitre: ["T1134"] }
+        : { severity: "Medium", mitre: ["T1055"] };
+    case "HIGH_ENTROPY":
+      return { severity: "Medium", mitre: ["T1027"] };
+    case "PE_NOLINK":
+      return { severity: "Medium", mitre: ["T1055"] };
+    case "PROC_DEBUG":
+      return { severity: "Medium", mitre: ["T1055"] };
+    case "PRIVATE_RWX":
+      return { severity: "Medium", mitre: ["T1055", "T1620"] };
     case "DRIVER_PATH": {
       const suspicious = /\\(?:temp|tmp|users|downloads?|desktop|appdata|public)\\/i.test(desc);
       return { severity: suspicious ? "Medium" : "Low", mitre: ["T1014"] };
     }
-    case "PRIVATE_RX":  return { severity: "Info", mitre: [] };
-    default:            return { severity: "Low",  mitre: [] };
+    case "PRIVATE_RX":
+      return { severity: "Info", mitre: [] };
+    default:
+      return { severity: "Low", mitre: [] };
   }
 }
 
@@ -767,28 +926,46 @@ function findevilEventDesc(type: string, proc: string, pid: string, desc: string
     }
     case "PE_PATCHED": {
       const path = /([A-Za-z]:\\[^\s]+|\\[^\s]+\.(?:dll|exe|sys))\s*$/.exec(desc)?.[1] ?? "";
-      return `MemProcFS findevil PE_PATCHED: ${proc} (PID ${pid}) — patched PE${path ? ` ${path}` : ""}${addrNote}`.slice(0, 600);
+      return `MemProcFS findevil PE_PATCHED: ${proc} (PID ${pid}) — patched PE${path ? ` ${path}` : ""}${addrNote}`.slice(
+        0,
+        600,
+      );
     }
     case "PE_NOLINK": {
       const mod = /Module:\[([^\]]+)\]/.exec(desc)?.[1] ?? desc;
-      return `MemProcFS findevil PE_NOLINK: ${proc} (PID ${pid}) — unlisted PE ${mod}${addrNote}`.slice(0, 600);
+      return `MemProcFS findevil PE_NOLINK: ${proc} (PID ${pid}) — unlisted PE ${mod}${addrNote}`.slice(
+        0,
+        600,
+      );
     }
     case "DRIVER_PATH": {
       const drv = /Driver:\[([^\]]+)\]/.exec(desc)?.[1] ?? "";
       const mod = /Module:\[([^\]]+)\]/.exec(desc)?.[1] ?? "";
-      const note = drv ? ` — driver ${drv}${mod ? ` (${mod})` : ""}` : (desc ? ` — ${desc}` : "");
+      const note = drv ? ` — driver ${drv}${mod ? ` (${mod})` : ""}` : desc ? ` — ${desc}` : "";
       return `MemProcFS findevil DRIVER_PATH: ${proc} (PID ${pid})${note}`.slice(0, 600);
     }
     case "PRIVATE_RWX":
-      return `MemProcFS findevil PRIVATE_RWX: ${proc} (PID ${pid}) — executable private memory (RWX)${addrNote}`.slice(0, 600);
+      return `MemProcFS findevil PRIVATE_RWX: ${proc} (PID ${pid}) — executable private memory (RWX)${addrNote}`.slice(
+        0,
+        600,
+      );
     case "PRIVATE_RX":
-      return `MemProcFS findevil PRIVATE_RX: ${proc} (PID ${pid}) — private executable memory${addrNote}`.slice(0, 600);
+      return `MemProcFS findevil PRIVATE_RX: ${proc} (PID ${pid}) — private executable memory${addrNote}`.slice(
+        0,
+        600,
+      );
     case "PEB_MASQ":
-      return `MemProcFS findevil PEB_MASQ: ${proc} (PID ${pid}) — PEB process name masquerading`.slice(0, 600);
+      return `MemProcFS findevil PEB_MASQ: ${proc} (PID ${pid}) — PEB process name masquerading`.slice(
+        0,
+        600,
+      );
     case "PROC_DEBUG":
       return `MemProcFS findevil PROC_DEBUG: ${proc} (PID ${pid}) — process under debugger`.slice(0, 600);
     default:
-      return `MemProcFS findevil ${type}: ${proc} (PID ${pid})${desc ? ` — ${oneLine(desc).slice(0, 200)}` : ""}${addrNote}`.slice(0, 600);
+      return `MemProcFS findevil ${type}: ${proc} (PID ${pid})${desc ? ` — ${oneLine(desc).slice(0, 200)}` : ""}${addrNote}`.slice(
+        0,
+        600,
+      );
   }
 }
 
@@ -798,7 +975,9 @@ function parseFindevilRows(text: string): FindevilRow[] {
   for (const line of text.split(/\r\n|\r|\n/)) {
     const t = line.trim();
     if (!pastHeader) {
-      if (FINDEVIL_HEADER_RE.test(t)) { pastHeader = true; }
+      if (FINDEVIL_HEADER_RE.test(t)) {
+        pastHeader = true;
+      }
       continue;
     }
     if (/^-{20,}$/.test(t) || !t) continue;
@@ -822,7 +1001,8 @@ function mapFindevil(rows: FindevilRow[], sink: Map<string, SiemIoc>): MappedEve
     if (t === "DRIVER_PATH") {
       pathIoc = /Module:\[([^\]]+)\]/.exec(description)?.[1] ?? "";
     } else if (t === "PE_NOLINK") {
-      pathIoc = /VAD:\[([^\]]+)\]/.exec(description)?.[1] ?? /Module:\[([^\]]+)\]/.exec(description)?.[1] ?? "";
+      pathIoc =
+        /VAD:\[([^\]]+)\]/.exec(description)?.[1] ?? /Module:\[([^\]]+)\]/.exec(description)?.[1] ?? "";
     } else if (t === "PE_PATCHED") {
       pathIoc = /([A-Za-z]:\\[^\s]+|\\[^\s]+\.(?:dll|exe|sys))\s*$/.exec(description)?.[1] ?? "";
     }
@@ -844,7 +1024,20 @@ function mapFindevil(rows: FindevilRow[], sink: Map<string, SiemIoc>): MappedEve
 
 function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryParseResult {
   const rows = parseFindevilRows(text);
-  const empty: MemoryParseResult = { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format: "memprocfs-findevil", tool: "MemProcFS" };
+  const empty: MemoryParseResult = {
+    events: [],
+    iocs: [],
+    total: 0,
+    kept: 0,
+    dropped: 0,
+    groups: 0,
+    tables: 0,
+    injected: 0,
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-findevil",
+    tool: "MemProcFS",
+  };
   if (!rows.length) return empty;
 
   const sink = new Map<string, SiemIoc>();
@@ -894,13 +1087,29 @@ function csvCols(text: string): Set<string> {
 }
 
 function parseMemoryFindevilCsv(text: string, opts: MemoryImportOptions): MemoryParseResult {
-  const empty: MemoryParseResult = { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format: "memprocfs-findevil-csv", tool: "MemProcFS" };
+  const empty: MemoryParseResult = {
+    events: [],
+    iocs: [],
+    total: 0,
+    kept: 0,
+    dropped: 0,
+    groups: 0,
+    tables: 0,
+    injected: 0,
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-findevil-csv",
+    tool: "MemProcFS",
+  };
   const { headers, rows } = parseCsv(text);
   if (!headers.length || !rows.length) return empty;
 
   const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
-  const pidI = col("PID"); const procI = col("ProcessName"); const typeI = col("Type");
-  const addrI = col("Address"); const descI = col("Description");
+  const pidI = col("PID");
+  const procI = col("ProcessName");
+  const typeI = col("Type");
+  const addrI = col("Address");
+  const descI = col("Description");
 
   const findevilRows: FindevilRow[] = rows
     .filter((r) => r[typeI]?.trim())
@@ -917,29 +1126,56 @@ function parseMemoryFindevilCsv(text: string, opts: MemoryImportOptions): Memory
   const sink = new Map<string, SiemIoc>();
   const mapped = mapFindevil(findevilRows, sink);
   const { events, groups } = aggregateEvents(mapped, {
-    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
-    events, iocs: [...sink.values()].slice(0, maxIocs),
-    total: findevilRows.length, kept: events.length,
-    dropped: Math.max(0, findevilRows.length - represented), groups, tables: 1,
+    events,
+    iocs: [...sink.values()].slice(0, maxIocs),
+    total: findevilRows.length,
+    kept: events.length,
+    dropped: Math.max(0, findevilRows.length - represented),
+    groups,
+    tables: 1,
     injected: findevilRows.filter((r) => /^(YR_|YARA_)/i.test(r.type)).length,
-    processes: 0, connections: 0, format: "memprocfs-findevil-csv", tool: "MemProcFS",
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-findevil-csv",
+    tool: "MemProcFS",
   };
 }
 
 function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryParseResult {
-  const empty: MemoryParseResult = { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format: "memprocfs-yara-csv", tool: "MemProcFS" };
+  const empty: MemoryParseResult = {
+    events: [],
+    iocs: [],
+    total: 0,
+    kept: 0,
+    dropped: 0,
+    groups: 0,
+    tables: 0,
+    injected: 0,
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-yara-csv",
+    tool: "MemProcFS",
+  };
   const { headers, rows } = parseCsv(text);
   if (!headers.length || !rows.length) return empty;
 
   const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
-  const pidI = col("PID"); const procI = col("ProcessName"); const procPathI = col("ProcessPath");
-  const cmdI = col("CommandLine"); const createdI = col("Created");
-  const memTypeI = col("MemoryType"); const memTagI = col("MemoryTag");
-  const baseAddrI = col("MemoryBaseAddress"); const objAddrI = col("ObjectAddress");
+  const pidI = col("PID");
+  const procI = col("ProcessName");
+  const procPathI = col("ProcessPath");
+  const cmdI = col("CommandLine");
+  const createdI = col("Created");
+  const memTypeI = col("MemoryType");
+  const memTagI = col("MemoryTag");
+  const baseAddrI = col("MemoryBaseAddress");
+  const objAddrI = col("ObjectAddress");
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
@@ -964,7 +1200,11 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
     const addrNote = baseAddr ? ` @ base 0x${baseAddr}` : "";
     const objNote = objAddr ? ` (obj 0x${objAddr})` : "";
     const cmdNote = cmd ? ` — cmd: ${oneLine(cmd).slice(0, 120)}` : "";
-    const description = `MemProcFS YARA: ${proc} (PID ${pid})${memNote ? ` — match in ${memNote}` : " — YARA match"}${addrNote}${objNote}${cmdNote}`.slice(0, 600);
+    const description =
+      `MemProcFS YARA: ${proc} (PID ${pid})${memNote ? ` — match in ${memNote}` : " — YARA match"}${addrNote}${objNote}${cmdNote}`.slice(
+        0,
+        600,
+      );
 
     mapped.push({
       timestamp,
@@ -978,16 +1218,25 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   }
 
   const { events, groups } = aggregateEvents(mapped, {
-    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
-    events, iocs: [...sink.values()].slice(0, maxIocs),
-    total: rows.length, kept: events.length,
-    dropped: Math.max(0, rows.length - represented), groups, tables: 1,
-    injected: rows.length, processes: 0, connections: 0,
-    format: "memprocfs-yara-csv", tool: "MemProcFS",
+    events,
+    iocs: [...sink.values()].slice(0, maxIocs),
+    total: rows.length,
+    kept: events.length,
+    dropped: Math.max(0, rows.length - represented),
+    groups,
+    tables: 1,
+    injected: rows.length,
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-yara-csv",
+    tool: "MemProcFS",
   };
 }
 
@@ -1032,8 +1281,13 @@ function parseMpfsNetAddr(addr: string): { ip: string; port: string } | null {
 }
 
 function mapMpfsTimelineRow(
-  type: string, action: string, pid: string, txt: string, ts: string,
-  sink: Map<string, SiemIoc>, mapped: MappedEvent[],
+  type: string,
+  action: string,
+  pid: string,
+  txt: string,
+  ts: string,
+  sink: Map<string, SiemIoc>,
+  mapped: MappedEvent[],
 ): void {
   switch (type) {
     case "PROC": {
@@ -1082,15 +1336,25 @@ function mapMpfsTimelineRow(
     case "ShTask": {
       const a = action.toUpperCase();
       const m = MPFS_SHTASK_RE.exec(txt);
-      const taskName = ((m?.[1] ?? txt).trim()).slice(0, 100);
+      const taskName = (m?.[1] ?? txt).trim().slice(0, 100);
       const cmd = (m?.[2] ?? "").split("::")[0].trim().slice(0, 150);
       const user = m?.[3]?.trim() ?? "";
       let severity: Severity;
       let mitre: string[];
       let verb: string;
-      if (a === "CRE")      { severity = "Medium"; mitre = ["T1053.005"]; verb = "created"; }
-      else if (a === "DEL") { severity = "Medium"; mitre = ["T1070"];     verb = "deleted"; }
-      else                  { severity = "Low";    mitre = ["T1053.005"]; verb = "modified"; }
+      if (a === "CRE") {
+        severity = "Medium";
+        mitre = ["T1053.005"];
+        verb = "created";
+      } else if (a === "DEL") {
+        severity = "Medium";
+        mitre = ["T1070"];
+        verb = "deleted";
+      } else {
+        severity = "Low";
+        mitre = ["T1053.005"];
+        verb = "modified";
+      }
       const cmdNote = cmd ? ` — ${cmd}` : "";
       const userNote = user ? ` (${user})` : "";
       mapped.push({
@@ -1112,7 +1376,9 @@ function mapMpfsTimelineRow(
       try {
         const domain = new URL(url).hostname;
         if (domain && !PRIVATE_IP.test(domain)) addIoc(sink, "domain", domain);
-      } catch { /* malformed URL */ }
+      } catch {
+        /* malformed URL */
+      }
       const isDownload = /download/i.test(webType);
       const browserNote = browser ? `[${browser}] ` : "";
       mapped.push({
@@ -1138,40 +1404,53 @@ function mapMpfsTimelineRow(
 
 function parseMemoryMemprocfsTimeline(text: string, opts: MemoryImportOptions): MemoryParseResult {
   const empty: MemoryParseResult = {
-    events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0,
-    tables: 0, injected: 0, processes: 0, connections: 0,
-    format: "memprocfs-timeline", tool: "MemProcFS",
+    events: [],
+    iocs: [],
+    total: 0,
+    kept: 0,
+    dropped: 0,
+    groups: 0,
+    tables: 0,
+    injected: 0,
+    processes: 0,
+    connections: 0,
+    format: "memprocfs-timeline",
+    tool: "MemProcFS",
   };
   const { headers, rows } = parseCsv(text);
   if (!headers.length || !rows.length) return empty;
 
   const idx = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name);
-  const timeI = idx("time"); const typeI = idx("type"); const actionI = idx("action");
-  const pidI = idx("pid"); const textI = idx("text");
+  const timeI = idx("time");
+  const typeI = idx("type");
+  const actionI = idx("action");
+  const pidI = idx("pid");
+  const textI = idx("text");
   if (typeI < 0 || actionI < 0) return empty;
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  let procCount = 0, netCount = 0;
+  let procCount = 0,
+    netCount = 0;
 
   for (const row of rows) {
-    const type    = row[typeI]?.trim()   ?? "";
-    const action  = row[actionI]?.trim() ?? "";
-    const pid     = (pidI   >= 0 ? row[pidI]   : undefined)?.trim() ?? "0";
-    const txt     = (textI  >= 0 ? row[textI]  : undefined)?.trim() ?? "";
-    const ts      = normalizeTime((timeI >= 0 ? row[timeI] : undefined)?.trim() ?? "") ?? "";
-    const before  = mapped.length;
+    const type = row[typeI]?.trim() ?? "";
+    const action = row[actionI]?.trim() ?? "";
+    const pid = (pidI >= 0 ? row[pidI] : undefined)?.trim() ?? "0";
+    const txt = (textI >= 0 ? row[textI] : undefined)?.trim() ?? "";
+    const ts = normalizeTime((timeI >= 0 ? row[timeI] : undefined)?.trim() ?? "") ?? "";
+    const before = mapped.length;
     mapMpfsTimelineRow(type, action, pid, txt, ts, sink, mapped);
     if (mapped.length > before) {
       if (type === "PROC") procCount++;
-      if (type === "Net")  netCount++;
+      if (type === "Net") netCount++;
     }
   }
 
   const { events, groups } = aggregateEvents(mapped, {
-    aggregate:   opts.aggregate,
+    aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents:   opts.maxEvents ?? maxEventsDefault(),
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -1179,7 +1458,7 @@ function parseMemoryMemprocfsTimeline(text: string, opts: MemoryImportOptions): 
     events,
     iocs: [...sink.values()].slice(0, maxIocs),
     total: rows.length,
-    kept:  events.length,
+    kept: events.length,
     dropped: Math.max(0, rows.length - represented),
     groups,
     tables: 1,
@@ -1214,27 +1493,61 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   const { tables, format, tool } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
   if (tables.length === 0 || total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, tables: 0, injected: 0, processes: 0, connections: 0, format, tool: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      tables: 0,
+      injected: 0,
+      processes: 0,
+      connections: 0,
+      format,
+      tool: "",
+    };
   }
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  let injected = 0, processes = 0, connections = 0;
+  let injected = 0,
+    processes = 0,
+    connections = 0;
 
   for (const t of tables) {
     const cols = colSet(t.rows);
     const category = classify(t.plugin, cols);
     const label = displayLabel(t.plugin, category, t.rows);
     switch (category) {
-      case "process": mapped.push(...mapProcess(label, tool, t.rows, sink)); processes += t.rows.length; break;
-      case "netscan": mapped.push(...mapNetscan(label, tool, t.rows, sink)); connections += t.rows.length; break;
-      case "malfind": mapped.push(...mapMalfind(label, tool, t.rows, sink)); injected += t.rows.length; break;
-      case "cmdline": mapped.push(...mapCmdline(label, tool, t.rows, sink)); break;
-      case "service": mapped.push(...mapService(label, tool, t.rows, sink)); break;
-      case "module": mapped.push(...mapModule(label, tool, t.rows, sink)); break;
-      case "dll": mapped.push(...mapDll(label, tool, t.rows, sink, !!opts.dllTelemetry)); break;
-      case "handle": break; // handle tables are pure telemetry — neither events nor IOCs
-      default: mapped.push(...mapGeneric(label, tool, t.rows, sink));
+      case "process":
+        mapped.push(...mapProcess(label, tool, t.rows, sink));
+        processes += t.rows.length;
+        break;
+      case "netscan":
+        mapped.push(...mapNetscan(label, tool, t.rows, sink));
+        connections += t.rows.length;
+        break;
+      case "malfind":
+        mapped.push(...mapMalfind(label, tool, t.rows, sink));
+        injected += t.rows.length;
+        break;
+      case "cmdline":
+        mapped.push(...mapCmdline(label, tool, t.rows, sink));
+        break;
+      case "service":
+        mapped.push(...mapService(label, tool, t.rows, sink));
+        break;
+      case "module":
+        mapped.push(...mapModule(label, tool, t.rows, sink));
+        break;
+      case "dll":
+        mapped.push(...mapDll(label, tool, t.rows, sink, !!opts.dllTelemetry));
+        break;
+      case "handle":
+        break; // handle tables are pure telemetry — neither events nor IOCs
+      default:
+        mapped.push(...mapGeneric(label, tool, t.rows, sink));
     }
   }
 

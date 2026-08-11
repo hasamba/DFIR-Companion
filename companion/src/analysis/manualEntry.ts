@@ -14,10 +14,9 @@ const SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"] as const;
 const IOC_TYPES = ["ip", "domain", "hash", "file", "process", "url", "other"] as const;
 
 // Accept MITRE techniques as an array OR a comma/space-separated string; normalize to T-id list.
-const techniques = z.preprocess(
-  (v) => (typeof v === "string" ? v.split(/[\s,]+/) : v),
-  z.array(z.string()).catch([]),
-).transform((arr) => arr.map((t) => t.trim().toUpperCase()).filter((t) => /^T\d{4}(\.\d{3})?$/.test(t)));
+const techniques = z
+  .preprocess((v) => (typeof v === "string" ? v.split(/[\s,]+/) : v), z.array(z.string()).catch([]))
+  .transform((arr) => arr.map((t) => t.trim().toUpperCase()).filter((t) => /^T\d{4}(\.\d{3})?$/.test(t)));
 
 export const manualEventSchema = z.object({
   timestamp: z.string().min(1, "timestamp is required"),
@@ -34,23 +33,26 @@ export const manualEventSchema = z.object({
 // observed port, why the analyst added it. If the analyst types the annotated form anyway
 // ("10.10.20.15 (DC01)"), repairIocValue splits it; only a value that cannot be an indicator at
 // all (multi-line paste, absurdly long) is rejected, as a 400 rather than silently stored.
-export const manualIocSchema = z.object({
-  type: z.enum(IOC_TYPES),
-  value: z.string().trim().min(1, "value is required"),
-  note: z.string().trim().optional(),
-}).superRefine((input, ctx) => {
-  if (!repairIocValue(input)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["value"],
-      message: "value is not a usable indicator (it is multi-line or far longer than any real indicator of this type)",
-    });
-  }
-});
+export const manualIocSchema = z
+  .object({
+    type: z.enum(IOC_TYPES),
+    value: z.string().trim().min(1, "value is required"),
+    note: z.string().trim().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (!repairIocValue(input)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["value"],
+        message:
+          "value is not a usable indicator (it is multi-line or far longer than any real indicator of this type)",
+      });
+    }
+  });
 
 export interface BuildDeps {
-  now?: () => string;        // injected ISO clock (default real)
-  id?: () => string;         // injected id generator (default randomUUID)
+  now?: () => string; // injected ISO clock (default real)
+  id?: () => string; // injected id generator (default randomUUID)
 }
 
 // Build a ForensicEvent from validated input. Tagged `sources: ["manual"]` for provenance. The

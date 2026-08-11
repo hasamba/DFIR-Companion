@@ -17,7 +17,7 @@ export interface SwimlaneEvent {
 }
 
 export interface SwimlaneLane {
-  id: string;       // e.g. "host:win01" | "sev:Critical" | "tac:Execution" | "unassigned"
+  id: string; // e.g. "host:win01" | "sev:Critical" | "tac:Execution" | "unassigned"
   label: string;
   type: "host" | "account" | "severity" | "tactic" | "unassigned";
   events: SwimlaneEvent[];
@@ -33,9 +33,18 @@ export interface SwimlaneData {
 const SEV_ORDER: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
 
 const TACTIC_ORDER = [
-  "Initial Access", "Execution", "Persistence", "Privilege Escalation",
-  "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
-  "Collection", "Command and Control", "Exfiltration", "Impact",
+  "Initial Access",
+  "Execution",
+  "Persistence",
+  "Privilege Escalation",
+  "Defense Evasion",
+  "Credential Access",
+  "Discovery",
+  "Lateral Movement",
+  "Collection",
+  "Command and Control",
+  "Exfiltration",
+  "Impact",
   "Uncategorized",
 ];
 
@@ -65,10 +74,7 @@ function toSwimlaneEvent(e: ForensicEvent): SwimlaneEvent {
 //   tactic mode:   dominant tactic (tacticForTechniques) || "Uncategorized"
 //
 // Only events with a valid ISO timestamp participate (undated events are excluded).
-export function buildSwimlaneData(
-  events: ForensicEvent[],
-  groupBy: SwimlaneGroupBy = "asset",
-): SwimlaneData {
+export function buildSwimlaneData(events: ForensicEvent[], groupBy: SwimlaneGroupBy = "asset"): SwimlaneData {
   const dated = events.filter((e) => !Number.isNaN(Date.parse(e.timestamp)));
 
   const laneMap = new Map<string, SwimlaneLane>();
@@ -123,7 +129,8 @@ export function buildSwimlaneData(
   }
 
   // Time bounds
-  let minMs = Infinity, maxMs = -Infinity;
+  let minMs = Infinity,
+    maxMs = -Infinity;
   for (const e of dated) {
     const t = Date.parse(e.timestamp);
     if (t < minMs) minMs = t;

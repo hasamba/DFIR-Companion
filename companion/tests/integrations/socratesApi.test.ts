@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  md5Buffer, probeAnalysis, uploadBuffer, checkStatus, fetchVerdicts,
+  md5Buffer,
+  probeAnalysis,
+  uploadBuffer,
+  checkStatus,
+  fetchVerdicts,
 } from "../../src/integrations/socrates/socratesApi.js";
 
 // Minimal fetch double: map a URL substring to a JSON body, and record every requested URL.
@@ -36,7 +40,10 @@ describe("probeAnalysis", () => {
 describe("uploadBuffer", () => {
   it("posts multipart and returns the md5 and phase", async () => {
     const seen: string[] = [];
-    const f = mockFetch([["/api/upload", { status: "processing", md5: "b".repeat(32), phase: "network" }]], seen);
+    const f = mockFetch(
+      [["/api/upload", { status: "processing", md5: "b".repeat(32), phase: "network" }]],
+      seen,
+    );
     const res = await uploadBuffer("http://localhost:8000", Buffer.from("PK"), "eve.pcap", f);
     expect(res).toEqual({ status: "processing", md5: "b".repeat(32), phase: "network" });
     expect(seen[0]).toContain("/api/upload");
@@ -55,11 +62,14 @@ describe("checkStatus", () => {
 describe("fetchVerdicts", () => {
   it("pulls only the three verdict feeds, never the unfiltered event list", async () => {
     const seen: string[] = [];
-    const f = mockFetch([
-      ["type=alert", [{ event_type: "alert", alert: { signature: "ET TROJAN" } }]],
-      ["type=filealerts", [{ event_type: "filealerts", filealerts: [{ rule: "evil" }] }]],
-      ["/api/sigma-alerts", [{ rule_title: "Suspicious PowerShell", rule_id: "abc-123" }]],
-    ], seen);
+    const f = mockFetch(
+      [
+        ["type=alert", [{ event_type: "alert", alert: { signature: "ET TROJAN" } }]],
+        ["type=filealerts", [{ event_type: "filealerts", filealerts: [{ rule: "evil" }] }]],
+        ["/api/sigma-alerts", [{ rule_title: "Suspicious PowerShell", rule_id: "abc-123" }]],
+      ],
+      seen,
+    );
 
     const res = await fetchVerdicts("http://localhost:8000", "d".repeat(32), f);
     expect(res.alerts).toBe(1);

@@ -41,12 +41,12 @@ export interface SandboxImportOptions {
 export interface SandboxParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;       // reports parsed
-  kept: number;        // events emitted (after aggregation + cap)
+  total: number; // reports parsed
+  kept: number; // events emitted (after aggregation + cap)
   dropped: number;
   groups: number;
-  signatures: number;  // signature detections seen
-  format: string;      // "capev2" | "falcon" | "mixed" | "empty"
+  signatures: number; // signature detections seen
+  format: string; // "capev2" | "falcon" | "mixed" | "empty"
 }
 
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
@@ -138,7 +138,11 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   // The sample verdict event.
   out.push({
     timestamp: time,
-    description: `CAPE sandbox: ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(0, 600),
+    description:
+      `CAPE sandbox: ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(
+        0,
+        600,
+      ),
     severity: score10Severity(malscore),
     mitre: [],
     aggKey: `sandbox|cape|sample|${sha256 || name}`.toLowerCase().slice(0, 400),
@@ -153,10 +157,20 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
     const sname = str(getCI(s, "name"));
     const sdesc = str(getCI(s, "description"));
     if (!sname && !sdesc) continue;
-    const mitre = mitreFromText(flatStr(getCI(s, "ttp")), flatStr(getCI(s, "attack")), flatStr(getCI(s, "references")), sname, sdesc);
+    const mitre = mitreFromText(
+      flatStr(getCI(s, "ttp")),
+      flatStr(getCI(s, "attack")),
+      flatStr(getCI(s, "references")),
+      sname,
+      sdesc,
+    );
     out.push({
       timestamp: time,
-      description: `CAPE signature: ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(0, 600),
+      description:
+        `CAPE signature: ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
+          0,
+          600,
+        ),
       severity: capeSigSeverity(Number(getCI(s, "severity")) || 1),
       mitre,
       aggKey: `sandbox|cape|sig|${sname.toLowerCase()}|${sha256}`.slice(0, 400),
@@ -168,16 +182,29 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   // Dropped files + extracted CAPE payloads → file/hash IOCs.
   for (const d of [...asArray(getCI(report, "dropped")), ...asArray(getPath(report, "CAPE.payloads"))]) {
     if (!isObject(d)) continue;
-    addHash(sink, getCI(d, "sha256")); addHash(sink, getCI(d, "md5"));
+    addHash(sink, getCI(d, "sha256"));
+    addHash(sink, getCI(d, "md5"));
     addFile(sink, getCI(d, "name"));
   }
   // Network indicators.
   const net = getCI(report, "network");
   if (isObject(net)) {
     for (const h of asArray(getCI(net, "hosts"))) addAnyIp(sink, h);
-    for (const d of asArray(getCI(net, "domains"))) { if (isObject(d)) { addDomain(sink, getCI(d, "domain")); addAnyIp(sink, getCI(d, "ip")); } else addDomain(sink, d); }
-    for (const h of asArray(getCI(net, "http"))) { if (isObject(h)) { addDomain(sink, getCI(h, "host")); addUrl(sink, getCI(h, "uri")); } }
-    for (const dns of asArray(getCI(net, "dns"))) { if (isObject(dns)) addDomain(sink, getCI(dns, "request")); }
+    for (const d of asArray(getCI(net, "domains"))) {
+      if (isObject(d)) {
+        addDomain(sink, getCI(d, "domain"));
+        addAnyIp(sink, getCI(d, "ip"));
+      } else addDomain(sink, d);
+    }
+    for (const h of asArray(getCI(net, "http"))) {
+      if (isObject(h)) {
+        addDomain(sink, getCI(h, "host"));
+        addUrl(sink, getCI(h, "uri"));
+      }
+    }
+    for (const dns of asArray(getCI(net, "dns"))) {
+      if (isObject(dns)) addDomain(sink, getCI(dns, "request"));
+    }
   }
   return out;
 }
@@ -200,7 +227,11 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
 
   out.push({
     timestamp: time,
-    description: `Falcon Sandbox: ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(0, 600),
+    description:
+      `Falcon Sandbox: ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(
+        0,
+        600,
+      ),
     severity: falconVerdictSeverity(verdict, score),
     mitre: mitreFromText(flatStr(getCI(report, "mitre_attcks"))),
     aggKey: `sandbox|falcon|sample|${sha256 || name}`.toLowerCase().slice(0, 400),
@@ -216,7 +247,11 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
     if (!sname && !sdesc) continue;
     out.push({
       timestamp: time,
-      description: `Falcon signature: ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(0, 600),
+      description:
+        `Falcon signature: ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
+          0,
+          600,
+        ),
       severity: falconSigSeverity(str(getCI(s, "threat_level_human")), Number(getCI(s, "threat_level")) || 0),
       mitre: mitreFromText(str(getCI(s, "attck_id")), sname, sdesc),
       aggKey: `sandbox|falcon|sig|${sname.toLowerCase()}|${sha256}`.slice(0, 400),
@@ -227,12 +262,18 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
 
   for (const f of asArray(getCI(report, "extracted_files"))) {
     if (!isObject(f)) continue;
-    addHash(sink, getCI(f, "sha256")); addHash(sink, getCI(f, "md5")); addFile(sink, getCI(f, "name"));
+    addHash(sink, getCI(f, "sha256"));
+    addHash(sink, getCI(f, "md5"));
+    addFile(sink, getCI(f, "name"));
   }
   for (const p of asArray(getCI(report, "processes"))) {
-    if (isObject(p)) { addHash(sink, getCI(p, "sha256")); addFile(sink, getCI(p, "normalized_path") || getCI(p, "name")); }
+    if (isObject(p)) {
+      addHash(sink, getCI(p, "sha256"));
+      addFile(sink, getCI(p, "normalized_path") || getCI(p, "name"));
+    }
   }
-  for (const h of [...asArray(getCI(report, "hosts")), ...asArray(getCI(report, "compromised_hosts"))]) addAnyIp(sink, h);
+  for (const h of [...asArray(getCI(report, "hosts")), ...asArray(getCI(report, "compromised_hosts"))])
+    addAnyIp(sink, h);
   for (const d of asArray(getCI(report, "domains"))) addDomain(sink, d);
   return out;
 }
@@ -240,12 +281,21 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
 // ───────────────────────────── classification ─────────────────────────────
 
 function isFalcon(r: Row): boolean {
-  return !!getCI(r, "verdict") && (getCI(r, "threat_score") != null || !!getCI(r, "environment_id") ||
-    !!getCI(r, "vx_family") || !!getCI(r, "mitre_attcks") || !!getCI(r, "submit_name"));
+  return (
+    !!getCI(r, "verdict") &&
+    (getCI(r, "threat_score") != null ||
+      !!getCI(r, "environment_id") ||
+      !!getCI(r, "vx_family") ||
+      !!getCI(r, "mitre_attcks") ||
+      !!getCI(r, "submit_name"))
+  );
 }
 function isCape(r: Row): boolean {
-  return (!!getCI(r, "info") && (!!getCI(r, "signatures") || !!getCI(r, "target"))) ||
-    !!getCI(r, "CAPE") || getCI(r, "malscore") != null;
+  return (
+    (!!getCI(r, "info") && (!!getCI(r, "signatures") || !!getCI(r, "target"))) ||
+    !!getCI(r, "CAPE") ||
+    getCI(r, "malscore") != null
+  );
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────
@@ -253,7 +303,11 @@ function isCape(r: Row): boolean {
 export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}): SandboxParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   let root: unknown;
-  try { root = JSON.parse(text.trim()); } catch { root = null; }
+  try {
+    root = JSON.parse(text.trim());
+  } catch {
+    root = null;
+  }
   const reports: Row[] = Array.isArray(root) ? root.filter(isObject) : isObject(root) ? [root] : [];
   const total = reports.length;
   if (total === 0) {
@@ -262,14 +316,32 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  let sawCape = false, sawFalcon = false, matched = 0;
+  let sawCape = false,
+    sawFalcon = false,
+    matched = 0;
 
   for (const r of reports) {
-    if (isFalcon(r)) { mapped.push(...mapFalcon(r, iocSink)); sawFalcon = true; matched++; }
-    else if (isCape(r)) { mapped.push(...mapCape(r, iocSink)); sawCape = true; matched++; }
+    if (isFalcon(r)) {
+      mapped.push(...mapFalcon(r, iocSink));
+      sawFalcon = true;
+      matched++;
+    } else if (isCape(r)) {
+      mapped.push(...mapCape(r, iocSink));
+      sawCape = true;
+      matched++;
+    }
   }
   if (mapped.length === 0) {
-    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, signatures: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total,
+      kept: 0,
+      dropped: total,
+      groups: 0,
+      signatures: 0,
+      format: "empty",
+    };
   }
 
   const signatures = mapped.filter((e) => /signature:/.test(e.description)).length;

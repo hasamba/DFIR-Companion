@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isAnalystWorkLog, partitionWorkLog, hasIncidentSignal, hasStructuredEvidence } from "../../src/analysis/workLogFilter.js";
+import {
+  isAnalystWorkLog,
+  partitionWorkLog,
+  hasIncidentSignal,
+  hasStructuredEvidence,
+} from "../../src/analysis/workLogFilter.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Real lines the user reported as wrongly appearing in the forensic timeline.
@@ -71,8 +76,15 @@ const REAL_EVENTS = [
 ];
 
 function ev(description: string): ForensicEvent {
-  return { id: "e", timestamp: "2026-01-01T00:00:00Z", description, severity: "Info",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+  return {
+    id: "e",
+    timestamp: "2026-01-01T00:00:00Z",
+    description,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 function evWith(description: string, extra: Partial<ForensicEvent>): ForensicEvent {
@@ -126,22 +138,28 @@ describe("workLogFilter", () => {
       // Text-only path would DROP these (no incident signal in the words)…
       expect(isAnalystWorkLog("Velociraptor notebook accessed.")).toBe(true);
       // …but with a structured evidence field the event overload KEEPS them.
-      expect(isAnalystWorkLog(evWith("Velociraptor notebook accessed.", { sha256: "d".repeat(64) }))).toBe(false);
+      expect(isAnalystWorkLog(evWith("Velociraptor notebook accessed.", { sha256: "d".repeat(64) }))).toBe(
+        false,
+      );
       expect(isAnalystWorkLog(evWith("Access to VolWeb", { processName: "lsass.exe" }))).toBe(false);
-      expect(isAnalystWorkLog(evWith("Kibana dashboard opened", { mitreTechniques: ["T1003.001"] }))).toBe(false);
+      expect(isAnalystWorkLog(evWith("Kibana dashboard opened", { mitreTechniques: ["T1003.001"] }))).toBe(
+        false,
+      );
     });
 
     it("still drops a tool-worded event with no structured fields", () => {
-      expect(isAnalystWorkLog(evWith("Velociraptor notebook accessed.", { asset: "", path: undefined }))).toBe(true);
+      expect(
+        isAnalystWorkLog(evWith("Velociraptor notebook accessed.", { asset: "", path: undefined })),
+      ).toBe(true);
       expect(isAnalystWorkLog(ev("Access to Splunk"))).toBe(true);
     });
 
     it("partitionWorkLog keeps tool-worded events that carry structured evidence", () => {
       const events = [
-        ev("Velociraptor notebook accessed."),                                   // dropped
+        ev("Velociraptor notebook accessed."), // dropped
         evWith("Velociraptor notebook accessed.", { processName: "rubeus.exe" }), // kept via gate
-        ev("Access to Splunk"),                                                   // dropped
-        evWith("Access to VolWeb", { sha256: "e".repeat(64) }),                   // kept via gate
+        ev("Access to Splunk"), // dropped
+        evWith("Access to VolWeb", { sha256: "e".repeat(64) }), // kept via gate
       ];
       const { keep, removed } = partitionWorkLog(events);
       expect(keep).toHaveLength(2);

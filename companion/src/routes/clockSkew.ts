@@ -44,10 +44,22 @@ export function registerClockSkewRoutes(app: Express, ctx: RouteContext): void {
     if (!options.clockSkewStore) return res.status(501).json({ error: "clock-skew store not configured" });
     try {
       const state = await options.stateStore.load(req.params.id);
-      const report = detectClockSkew(correlationGroups(state.forensicTimeline, { crossHostArtifacts: true }), thresholds);
-      const record = await options.clockSkewStore.recordDetection(req.params.id, report, { replace: req.body?.replace === true });
+      const report = detectClockSkew(
+        correlationGroups(state.forensicTimeline, { crossHostArtifacts: true }),
+        thresholds,
+      );
+      const record = await options.clockSkewStore.recordDetection(req.params.id, report, {
+        replace: req.body?.replace === true,
+      });
       options.onClockSkew?.(req.params.id);
-      return res.status(200).json({ ...record, thresholds, anchorGroups: report.anchorGroups, groupsExamined: report.groupsExamined });
+      return res
+        .status(200)
+        .json({
+          ...record,
+          thresholds,
+          anchorGroups: report.anchorGroups,
+          groupsExamined: report.groupsExamined,
+        });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -62,7 +74,8 @@ export function registerClockSkewRoutes(app: Express, ctx: RouteContext): void {
       // Alignment changes every timestamp the analyst reads and every report generated after it, so
       // it belongs in the case's activity log like any other evidence-affecting decision.
       await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings", action: "clock-skew-align",
+        category: "settings",
+        action: "clock-skew-align",
         detail: enable
           ? `Timeline alignment enabled — ${shifted} host${shifted === 1 ? "" : "s"} virtually shifted`
           : "Timeline alignment disabled — recorded timestamps restored",
@@ -86,11 +99,14 @@ export function registerClockSkewRoutes(app: Express, ctx: RouteContext): void {
     try {
       const record = await options.clockSkewStore.setOverride(req.params.id, host, raw);
       await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings", action: "clock-skew-override",
-        detail: raw === null
-          ? `Cleared manual clock offset for ${host}`
-          : `Manual clock offset for ${host}: ${Math.round(raw / 1000)}s`,
-        targetType: "host", targetId: host,
+        category: "settings",
+        action: "clock-skew-override",
+        detail:
+          raw === null
+            ? `Cleared manual clock offset for ${host}`
+            : `Manual clock offset for ${host}: ${Math.round(raw / 1000)}s`,
+        targetType: "host",
+        targetId: host,
       });
       options.onClockSkew?.(req.params.id);
       return res.status(200).json({ ...record, thresholds });

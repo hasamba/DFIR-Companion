@@ -32,7 +32,9 @@ function seed(over: Partial<HypothesisSeed> & { title: string }): HypothesisSeed
 describe("normalizeTitle / hypothesisAutoKey", () => {
   it("normalizes case + whitespace so formatting variants fingerprint identically", () => {
     expect(normalizeTitle("  Initial   Access was PHISHING ")).toBe("initial access was phishing");
-    expect(hypothesisAutoKey("Initial access was phishing")).toBe(hypothesisAutoKey("  initial   ACCESS was phishing  "));
+    expect(hypothesisAutoKey("Initial access was phishing")).toBe(
+      hypothesisAutoKey("  initial   ACCESS was phishing  "),
+    );
   });
 
   it("returns '' for a blank title and a stable synth: key otherwise", () => {
@@ -90,7 +92,11 @@ describe("mergeHypotheses", () => {
 
   it("refreshes a PRISTINE synthesis hypothesis from a new seed", () => {
     const first = mergeHypotheses([], [seed({ title: "Phishing", description: "old" })], NOW).hypotheses;
-    const { hypotheses, changed } = mergeHypotheses(first, [seed({ title: "Phishing", description: "new" })], LATER);
+    const { hypotheses, changed } = mergeHypotheses(
+      first,
+      [seed({ title: "Phishing", description: "new" })],
+      LATER,
+    );
     expect(changed).toBe(true);
     expect(hypotheses).toHaveLength(1);
     expect(hypotheses[0].description).toBe("new");
@@ -98,9 +104,19 @@ describe("mergeHypotheses", () => {
   });
 
   it("FREEZES a touched synthesis hypothesis — synthesis no longer overwrites it", () => {
-    const base = mergeHypotheses([], [seed({ title: "Phishing", description: "old", status: "open" })], NOW).hypotheses;
-    const touched = base.map((h) => applyHypothesisPatch(h, { status: "supported", notes: "confirmed" }, NOW));
-    const { hypotheses, changed } = mergeHypotheses(touched, [seed({ title: "Phishing", description: "REWORDED", status: "refuted" })], LATER);
+    const base = mergeHypotheses(
+      [],
+      [seed({ title: "Phishing", description: "old", status: "open" })],
+      NOW,
+    ).hypotheses;
+    const touched = base.map((h) =>
+      applyHypothesisPatch(h, { status: "supported", notes: "confirmed" }, NOW),
+    );
+    const { hypotheses, changed } = mergeHypotheses(
+      touched,
+      [seed({ title: "Phishing", description: "REWORDED", status: "refuted" })],
+      LATER,
+    );
     expect(changed).toBe(false);
     expect(hypotheses[0].description).toBe("old");
     expect(hypotheses[0].status).toBe("supported");
@@ -108,7 +124,11 @@ describe("mergeHypotheses", () => {
   });
 
   it("PRUNES a pristine synthesis hypothesis whose seed disappeared", () => {
-    const base = mergeHypotheses([], [seed({ title: "Phishing" }), seed({ title: "Lateral movement" })], NOW).hypotheses;
+    const base = mergeHypotheses(
+      [],
+      [seed({ title: "Phishing" }), seed({ title: "Lateral movement" })],
+      NOW,
+    ).hypotheses;
     const { hypotheses, changed } = mergeHypotheses(base, [seed({ title: "Phishing" })], LATER);
     expect(changed).toBe(true);
     expect(hypotheses.map((h) => h.title)).toEqual(["Phishing"]);
@@ -138,7 +158,11 @@ describe("mergeHypotheses", () => {
 
 describe("buildAnalystHypothesis / applyHypothesisPatch", () => {
   it("builds an analyst hypothesis born analystTouched with a default author", () => {
-    const h = buildAnalystHypothesis({ title: "  Idea  ", relatedTechniques: ["T1566", "T1566"] }, "id1", NOW);
+    const h = buildAnalystHypothesis(
+      { title: "  Idea  ", relatedTechniques: ["T1566", "T1566"] },
+      "id1",
+      NOW,
+    );
     expect(h.title).toBe("Idea");
     expect(h.source).toBe("analyst");
     expect(h.analystTouched).toBe(true);
@@ -195,8 +219,16 @@ describe("statusHistory (issue #95)", () => {
   });
 
   it("a same-status refresh (other fields changed) does not duplicate the history entry", () => {
-    const first = mergeHypotheses([], [seed({ title: "Phishing", description: "old", status: "open" })], NOW).hypotheses;
-    const { hypotheses } = mergeHypotheses(first, [seed({ title: "Phishing", description: "new", status: "open" })], LATER);
+    const first = mergeHypotheses(
+      [],
+      [seed({ title: "Phishing", description: "old", status: "open" })],
+      NOW,
+    ).hypotheses;
+    const { hypotheses } = mergeHypotheses(
+      first,
+      [seed({ title: "Phishing", description: "new", status: "open" })],
+      LATER,
+    );
     expect(hypotheses[0].statusHistory).toEqual([{ status: "open", changedAt: NOW }]);
   });
 });
@@ -207,7 +239,12 @@ describe("hypothesisStats", () => {
       ...buildAnalystHypothesis({ title: id }, id, NOW),
       status,
     });
-    const stats = hypothesisStats([mk("a", "open"), mk("b", "open"), mk("c", "supported"), mk("d", "refuted")]);
+    const stats = hypothesisStats([
+      mk("a", "open"),
+      mk("b", "open"),
+      mk("c", "supported"),
+      mk("d", "refuted"),
+    ]);
     expect(stats).toEqual({ total: 4, open: 2, supported: 1, refuted: 1, unknown: 0 });
   });
 });

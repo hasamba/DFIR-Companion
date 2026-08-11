@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, isMaskableIpv4, isMaskableIpv6, isAnonToken, ALL_TOKEN_CATEGORIES, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import {
+  createAnonymizer,
+  isInternalIp,
+  isInternalIpv6,
+  SECRET_PLACEHOLDER,
+  deriveKnownEntities,
+  isNoiseDomain,
+  isNoiseAccount,
+  isLocalAiProvider,
+  isMaskableIpv4,
+  isMaskableIpv6,
+  isAnonToken,
+  ALL_TOKEN_CATEGORIES,
+  type AnonPolicy,
+  type KnownEntities,
+} from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
@@ -8,7 +23,20 @@ function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = fa
     enabled: true,
     redactSecrets,
     maskPublicIps: true,
-    categories: { IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false, PATH: false, CMD: false, REG: false, CARD: false, PHONE: false, NATID: false, ...over },
+    categories: {
+      IP: false,
+      EMAIL: false,
+      USER: false,
+      HOST: false,
+      DOMAIN: false,
+      PATH: false,
+      CMD: false,
+      REG: false,
+      CARD: false,
+      PHONE: false,
+      NATID: false,
+      ...over,
+    },
   };
 }
 
@@ -17,16 +45,16 @@ describe("isInternalIp", () => {
     expect(isInternalIp("10.0.0.5")).toBe(true);
     expect(isInternalIp("192.168.1.20")).toBe(true);
     expect(isInternalIp("172.16.4.9")).toBe(true);
-    expect(isInternalIp("172.31.0.1")).toBe(true);      // last /12 octet
+    expect(isInternalIp("172.31.0.1")).toBe(true); // last /12 octet
     expect(isInternalIp("127.0.0.1")).toBe(true);
     expect(isInternalIp("169.254.10.1")).toBe(true);
-    expect(isInternalIp("100.64.0.1")).toBe(true);      // CGNAT 100.64/10
+    expect(isInternalIp("100.64.0.1")).toBe(true); // CGNAT 100.64/10
     expect(isInternalIp("100.127.255.255")).toBe(true); // CGNAT upper bound
   });
   it("classifies public IPs as NOT internal (adversary C2 must survive)", () => {
     expect(isInternalIp("8.8.8.8")).toBe(false);
     expect(isInternalIp("45.61.136.10")).toBe(false);
-    expect(isInternalIp("172.32.0.1")).toBe(false);  // just outside 172.16/12
+    expect(isInternalIp("172.32.0.1")).toBe(false); // just outside 172.16/12
     expect(isInternalIp("100.128.0.1")).toBe(false); // just outside CGNAT 100.64/10
   });
 });
@@ -36,7 +64,7 @@ describe("anonymizer — internal IPs", () => {
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const out = a.apply("10.0.0.5 -> 10.0.0.9 ; 10.0.0.5 again");
     const first = out.match(/ANON_IP_\d+/g)!;
-    expect(first[0]).toBe(first[2]);   // both 10.0.0.5
+    expect(first[0]).toBe(first[2]); // both 10.0.0.5
     expect(first[0]).not.toBe(first[1]); // 10.0.0.9 differs
   });
   it("restore leaves unknown/hallucinated tokens untouched and is case-insensitive", () => {
@@ -110,9 +138,9 @@ describe("isMaskableIpv6", () => {
   it("accepts globally routable 2000::/3 addresses", () => {
     expect(isMaskableIpv6("2001:4860:4860::8888")).toBe(true); // Google DNS
     expect(isMaskableIpv6("2606:4700:4700::1111")).toBe(true); // Cloudflare DNS
-    expect(isMaskableIpv6("2001:db8::1")).toBe(true);          // documentation range
-    expect(isMaskableIpv6("[2001:db8::1]")).toBe(true);        // bracketed URL form
-    expect(isMaskableIpv6("3fff:ffff::1")).toBe(true);         // top of 2000::/3
+    expect(isMaskableIpv6("2001:db8::1")).toBe(true); // documentation range
+    expect(isMaskableIpv6("[2001:db8::1]")).toBe(true); // bracketed URL form
+    expect(isMaskableIpv6("3fff:ffff::1")).toBe(true); // top of 2000::/3
   });
 
   it("rejects the IPV6_RE false positives that ordinary text is full of", () => {
@@ -131,8 +159,8 @@ describe("isMaskableIpv6", () => {
 
   it("judges an IPv4-mapped address by its embedded IPv4, in either spelling", () => {
     expect(isMaskableIpv6("::ffff:8.8.8.8")).toBe(true);
-    expect(isMaskableIpv6("::ffff:808:808")).toBe(true);   // hex-canonical form of the same
-    expect(isMaskableIpv6("::ffff:0.1.2.3")).toBe(false);  // 0/8 — isMaskableIpv4 rejects it
+    expect(isMaskableIpv6("::ffff:808:808")).toBe(true); // hex-canonical form of the same
+    expect(isMaskableIpv6("::ffff:0.1.2.3")).toBe(false); // 0/8 — isMaskableIpv4 rejects it
     expect(isMaskableIpv6("::ffff:224.0.0.251")).toBe(false); // multicast
   });
 
@@ -141,10 +169,10 @@ describe("isMaskableIpv6", () => {
   // completely untouched. It is a real allocated prefix (RFC 6052), seen wherever an IPv6-only
   // network reaches IPv4.
   it("judges a NAT64 64:ff9b::/96 address by its embedded IPv4", () => {
-    expect(isMaskableIpv6("64:ff9b::c000:201")).toBe(true);    // 192.0.2.1, public
-    expect(isMaskableIpv6("64:ff9b::808:808")).toBe(true);     // 8.8.8.8
-    expect(isMaskableIpv6("64:ff9b::e000:fb")).toBe(false);    // 224.0.0.251 multicast
-    expect(isMaskableIpv6("64:ff9b::1:203")).toBe(false);      // 0.1.2.3 — 0/8
+    expect(isMaskableIpv6("64:ff9b::c000:201")).toBe(true); // 192.0.2.1, public
+    expect(isMaskableIpv6("64:ff9b::808:808")).toBe(true); // 8.8.8.8
+    expect(isMaskableIpv6("64:ff9b::e000:fb")).toBe(false); // 224.0.0.251 multicast
+    expect(isMaskableIpv6("64:ff9b::1:203")).toBe(false); // 0.1.2.3 — 0/8
     // Network-specific / RFC 8215 prefixes stay out of scope: the embedded IPv4's position is
     // not recoverable from the text, so they fall through to the 2000::/3 test as before.
     expect(isMaskableIpv6("64:ff9b:1::c000:201")).toBe(false);
@@ -153,9 +181,9 @@ describe("isMaskableIpv6", () => {
 
 describe("isInternalIpv6 — NAT64", () => {
   it("fails CLOSED when the NAT64 destination is an internal address", () => {
-    expect(isInternalIpv6("64:ff9b::a00:5")).toBe(true);       // 10.0.0.5
-    expect(isInternalIpv6("64:ff9b::c0a8:114")).toBe(true);    // 192.168.1.20
-    expect(isInternalIpv6("64:ff9b::c000:201")).toBe(false);   // 192.0.2.1 is public
+    expect(isInternalIpv6("64:ff9b::a00:5")).toBe(true); // 10.0.0.5
+    expect(isInternalIpv6("64:ff9b::c0a8:114")).toBe(true); // 192.168.1.20
+    expect(isInternalIpv6("64:ff9b::c000:201")).toBe(false); // 192.0.2.1 is public
   });
 });
 
@@ -173,8 +201,8 @@ describe("anonymizer — NAT64 addresses", () => {
   it("keeps an external NAT64 destination visible on the redacted-export policy", () => {
     const a = createAnonymizer({ ...policy({ IP: true }), maskPublicIps: false }, NONE);
     const out = a.apply("egress 64:ff9b::a00:5 then 64:ff9b::c000:201");
-    expect(out).toContain("64:ff9b::c000:201");   // adversary infrastructure stays actionable
-    expect(out).not.toContain("64:ff9b::a00:5");  // the victim address still goes
+    expect(out).toContain("64:ff9b::c000:201"); // adversary infrastructure stays actionable
+    expect(out).not.toContain("64:ff9b::a00:5"); // the victim address still goes
     expect(out).toMatch(/ANON_IP_1/);
   });
 });
@@ -190,7 +218,12 @@ describe("token category coverage", () => {
   it("mints and restores a token for every declared category, in every script", () => {
     for (const category of ALL_TOKEN_CATEGORIES) {
       for (const value of SCRIPTS) {
-        const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value, category }] };
+        const known: KnownEntities = {
+          hosts: [],
+          accounts: [],
+          internalDomains: [],
+          custom: [{ value, category }],
+        };
         const a = createAnonymizer(policy(), known);
         const out = a.apply(`left ${value} right`);
         expect(out, `category ${category} did not tokenize ${value}`).toContain(`ANON_${category}_1`);
@@ -207,7 +240,12 @@ describe("token category coverage", () => {
       ["Иван", "Иванов"],
     ];
     for (const [value, longer] of cases) {
-      const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value, category: "PERSON" }] };
+      const known: KnownEntities = {
+        hosts: [],
+        accounts: [],
+        internalDomains: [],
+        custom: [{ value, category: "PERSON" }],
+      };
       const a = createAnonymizer(policy(), known);
       const out = a.apply(`${longer} and ${value}`);
       expect(out, `${value} wrongly fired inside ${longer}`).toContain(longer);
@@ -227,7 +265,11 @@ describe("token category coverage", () => {
   });
 
   it("still refuses to match a known host inside a longer host name", () => {
-    const a = createAnonymizer(policy({ HOST: true }), { hosts: ["DC01"], accounts: [], internalDomains: [] });
+    const a = createAnonymizer(policy({ HOST: true }), {
+      hosts: ["DC01"],
+      accounts: [],
+      internalDomains: [],
+    });
     const out = a.apply("host DC01X and DC01 here");
     expect(out).toContain("DC01X");
     expect(out).toContain("ANON_HOST_1");
@@ -238,7 +280,12 @@ describe("token category coverage", () => {
     // escape in Unicode mode. If that ever stops being true, this throws rather than silently
     // failing to mask.
     const value = "a.b*c(d)[e]{f}|g^h$i+j?k\\l";
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value, category: "OTHER" }] };
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value, category: "OTHER" }],
+    };
     const a = createAnonymizer(policy(), known);
     const out = a.apply(`x ${value} y`);
     expect(out).toBe("x ANON_OTHER_1 y");
@@ -247,7 +294,12 @@ describe("token category coverage", () => {
 
   it("masks a non-Latin entity on the redacted-export policy too (maskPublicIps off)", () => {
     // The redacted ZIP is built to LEAVE THE MACHINE, so a silent miss there is the worst case.
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value: "יוסי כהן", category: "PERSON" }] };
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value: "יוסי כהן", category: "PERSON" }],
+    };
     const a = createAnonymizer({ ...policy(), maskPublicIps: false }, known);
     expect(a.apply("victim יוסי כהן reported")).toBe("victim ANON_PERSON_1 reported");
   });
@@ -286,8 +338,8 @@ describe("anonymizer — accounts/usernames", () => {
   it("tokenizes an internal UPN as USER but leaves a third-party address for EMAIL", () => {
     const a = createAnonymizer(policy({ USER: true, EMAIL: true }), ADATUM);
     const out = a.apply("admin@adatumlab.local phished by attacker@evil.com");
-    expect(out).toMatch(/ANON_USER_1/);   // internal UPN
-    expect(out).toMatch(/ANON_EMAIL_1/);  // external sender
+    expect(out).toMatch(/ANON_USER_1/); // internal UPN
+    expect(out).toMatch(/ANON_EMAIL_1/); // external sender
     expect(out).not.toContain("admin@adatumlab.local");
     expect(out).not.toContain("attacker@evil.com");
     expect(a.restore(out)).toBe("admin@adatumlab.local phished by attacker@evil.com");
@@ -322,7 +374,11 @@ describe("anonymizer — user paths", () => {
 
 describe("anonymizer — hosts", () => {
   it("tokenizes known hostnames and FQDNs (case-insensitive), restores them", () => {
-    const known: KnownEntities = { hosts: ["dc01.adatumlab.local", "ALCLIENT07"], accounts: [], internalDomains: [] };
+    const known: KnownEntities = {
+      hosts: ["dc01.adatumlab.local", "ALCLIENT07"],
+      accounts: [],
+      internalDomains: [],
+    };
     const a = createAnonymizer(policy({ HOST: true }), known);
     const out = a.apply("logon on ALCLIENT07 then to dc01.adatumlab.local");
     expect(out).not.toContain("ALCLIENT07");
@@ -345,7 +401,11 @@ describe("anonymizer — hosts", () => {
   // instance, and every apply() call gets a fresh instance whose response is restored before persisting
   // (pipeline.ts analyzeRestored). No collision was found; this locks in the invariant.
   it("never assigns the same token to two different real hosts", () => {
-    const known: KnownEntities = { hosts: ["ws-mktg-01.veridia.io", "ws-dev-01.veridia.io"], accounts: [], internalDomains: [] };
+    const known: KnownEntities = {
+      hosts: ["ws-mktg-01.veridia.io", "ws-dev-01.veridia.io"],
+      accounts: [],
+      internalDomains: [],
+    };
     const a = createAnonymizer(policy({ HOST: true }), known);
     const out = a.apply("seen on ws-mktg-01.veridia.io and separately on ws-dev-01.veridia.io");
     const tokens = out.match(/ANON_HOST_\d+/g) ?? [];
@@ -356,10 +416,14 @@ describe("anonymizer — hosts", () => {
 
 describe("anonymizer — internal domains", () => {
   it("tokenizes internal domains but preserves a public/adversary domain", () => {
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: ["adatumlab.local", "adatumlab"] };
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: ["adatumlab.local", "adatumlab"],
+    };
     const a = createAnonymizer(policy({ DOMAIN: true }), known);
     const out = a.apply("auth in ADATUMLAB to adatumlab.local; C2 at evil-c2.com");
-    expect(out).toContain("evil-c2.com");        // adversary preserved
+    expect(out).toContain("evil-c2.com"); // adversary preserved
     expect(out).not.toMatch(/adatumlab\.local/i);
     expect(out).toMatch(/ANON_DOMAIN_/);
     expect(a.restore(out)).toBe("auth in ADATUMLAB to adatumlab.local; C2 at evil-c2.com");
@@ -369,12 +433,14 @@ describe("anonymizer — internal domains", () => {
 describe("anonymizer — secret redaction (one-way)", () => {
   it("redacts AWS keys, JWTs and key=value credentials", () => {
     const a = createAnonymizer(policy({}, true), NONE);
-    const out = a.apply("AKIAIOSFODNN7EXAMPLE and password=Hunter2! token: eyJabc12345.eyJdef67890.sigsigsig9");
+    const out = a.apply(
+      "AKIAIOSFODNN7EXAMPLE and password=Hunter2! token: eyJabc12345.eyJdef67890.sigsigsig9",
+    );
     expect(out).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(out).not.toContain("Hunter2!");
     expect(out).toContain(SECRET_PLACEHOLDER);
     expect(out).toContain("password="); // key name kept, value redacted
-    expect(a.restore(out)).toBe(out);   // one-way: nothing to restore
+    expect(a.restore(out)).toBe(out); // one-way: nothing to restore
   });
   it("PRESERVES a SHA-256 hash (it's an IOC, not a secret)", () => {
     const sha = "2eeba4c80a6f91f06784c0c699512c22ff132233c71af336a423414cc84f574a";
@@ -396,19 +462,28 @@ describe("anonymizer — secret redaction (one-way)", () => {
   // Every armor a private key realistically arrives in. All fixture bodies below are fake.
   const KEY_BODY = "MIIEowIBAAKCAQEAnotarealkey";
   const keyForms: [string, string][] = [
-    ["RSA",                `-----BEGIN RSA PRIVATE KEY-----\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
-    ["EC",                 `-----BEGIN EC PRIVATE KEY-----\n${KEY_BODY}\n-----END EC PRIVATE KEY-----`],
-    ["DSA",                `-----BEGIN DSA PRIVATE KEY-----\n${KEY_BODY}\n-----END DSA PRIVATE KEY-----`],
-    ["OPENSSH",            `-----BEGIN OPENSSH PRIVATE KEY-----\n${KEY_BODY}\n-----END OPENSSH PRIVATE KEY-----`],
-    ["PKCS#8 bare",        `-----BEGIN PRIVATE KEY-----\n${KEY_BODY}\n-----END PRIVATE KEY-----`],
-    ["PKCS#8 encrypted",   `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${KEY_BODY}\n-----END ENCRYPTED PRIVATE KEY-----`],
+    ["RSA", `-----BEGIN RSA PRIVATE KEY-----\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
+    ["EC", `-----BEGIN EC PRIVATE KEY-----\n${KEY_BODY}\n-----END EC PRIVATE KEY-----`],
+    ["DSA", `-----BEGIN DSA PRIVATE KEY-----\n${KEY_BODY}\n-----END DSA PRIVATE KEY-----`],
+    ["OPENSSH", `-----BEGIN OPENSSH PRIVATE KEY-----\n${KEY_BODY}\n-----END OPENSSH PRIVATE KEY-----`],
+    ["PKCS#8 bare", `-----BEGIN PRIVATE KEY-----\n${KEY_BODY}\n-----END PRIVATE KEY-----`],
+    [
+      "PKCS#8 encrypted",
+      `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${KEY_BODY}\n-----END ENCRYPTED PRIVATE KEY-----`,
+    ],
     // PGP's armor ends "PRIVATE KEY BLOCK", not "PRIVATE KEY" — a pattern written for the PEM
     // spelling silently misses every PGP key.
-    ["PGP armor",          `-----BEGIN PGP PRIVATE KEY BLOCK-----\n${KEY_BODY}\n-----END PGP PRIVATE KEY BLOCK-----`],
+    ["PGP armor", `-----BEGIN PGP PRIVATE KEY BLOCK-----\n${KEY_BODY}\n-----END PGP PRIVATE KEY BLOCK-----`],
     // SSH2 export uses FOUR dashes and spaces inside the delimiter.
-    ["SSH2 export",        `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\n${KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----`],
-    ["with Proc-Type",     `-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,AB\n\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
-    ["all on one line",    `-----BEGIN OPENSSH PRIVATE KEY----- ${KEY_BODY} -----END OPENSSH PRIVATE KEY-----`],
+    [
+      "SSH2 export",
+      `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\n${KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----`,
+    ],
+    [
+      "with Proc-Type",
+      `-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,AB\n\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`,
+    ],
+    ["all on one line", `-----BEGIN OPENSSH PRIVATE KEY----- ${KEY_BODY} -----END OPENSSH PRIVATE KEY-----`],
   ];
   it.each(keyForms)("redacts a %s private key block", (_name, key) => {
     const a = createAnonymizer(policy({}, true), NONE);
@@ -440,8 +515,12 @@ describe("anonymizer — secret redaction (one-way)", () => {
     // artifact text full of them costs O(n^2). Over a 4x input, linear is ~4x and quadratic ~16x.
     const a = createAnonymizer(policy({}, true), NONE);
     const bait = (n: number) => "-----BEGIN PRIVATE KEY-----\n.\n".repeat(n);
-    const time = (n: number) => { const t = Date.now(); a.apply(bait(n)); return Date.now() - t; };
-    time(500);                                       // warm up
+    const time = (n: number) => {
+      const t = Date.now();
+      a.apply(bait(n));
+      return Date.now() - t;
+    };
+    time(500); // warm up
     const small = Math.max(time(2000), 1);
     expect(time(8000) / small).toBeLessThan(8);
   });
@@ -451,13 +530,22 @@ describe("deriveKnownEntities", () => {
   it("pulls hosts from asset, accounts + internal domains from descriptions and FQDNs", () => {
     const s = emptyState("c1");
     s.forensicTimeline = [
-      { id: "e1", timestamp: "", description: "logon ADATUMLAB\\srv", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "dc01.adatumlab.local" },
+      {
+        id: "e1",
+        timestamp: "",
+        description: "logon ADATUMLAB\\srv",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "dc01.adatumlab.local",
+      },
     ];
     const k = deriveKnownEntities(s);
     expect(k.hosts).toContain("dc01.adatumlab.local");
     expect(k.accounts).toContain("ADATUMLAB\\srv");
-    expect(k.internalDomains).toContain("adatumlab");        // NETBIOS domain
-    expect(k.internalDomains).toContain("adatumlab.local");  // from the FQDN host
+    expect(k.internalDomains).toContain("adatumlab"); // NETBIOS domain
+    expect(k.internalDomains).toContain("adatumlab.local"); // from the FQDN host
   });
 
   it("derives internal domains from IOC values too (redacted-export PII leak #17)", () => {
@@ -467,11 +555,18 @@ describe("deriveKnownEntities", () => {
     // the FQDN host lived in state.iocs, not state.forensicTimeline[].asset.
     const s = emptyState("c1");
     s.forensicTimeline = [
-      { id: "e1", timestamp: "", description: "compromise observed", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01" },
+      {
+        id: "e1",
+        timestamp: "",
+        description: "compromise observed",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "DC01",
+      },
     ];
-    s.iocs = [
-      { id: "i1", type: "domain", value: "dc01.globaltech.local", firstSeen: "" },
-    ];
+    s.iocs = [{ id: "i1", type: "domain", value: "dc01.globaltech.local", firstSeen: "" }];
     const k = deriveKnownEntities(s);
     expect(k.hosts).toContain("dc01.globaltech.local");
     expect(k.internalDomains).toContain("globaltech.local");
@@ -496,7 +591,16 @@ describe("deriveKnownEntities", () => {
     // infrastructure even though its TLD is public.
     const s = emptyState("c1");
     s.forensicTimeline = [
-      { id: "e1", timestamp: "", description: "logon by jdoe@victim.com", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS-1" },
+      {
+        id: "e1",
+        timestamp: "",
+        description: "logon by jdoe@victim.com",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WS-1",
+      },
     ];
     s.iocs = [{ id: "i1", type: "domain", value: "fs01.victim.com", firstSeen: "" }];
     const k = deriveKnownEntities(s);
@@ -520,9 +624,28 @@ describe("deriveKnownEntities", () => {
 
 describe("isNoiseDomain / isNoiseAccount", () => {
   it("flags Windows principals, registry hives and ATT&CK tactic words as noise", () => {
-    for (const d of ["builtin", "authority", "service", "hku", "hklm", "persistence",
-      "escalation", "execution", "discovery", "movement", "evasion", "ransomware",
-      "defender", "explorer", "vgauth", "access", "impact", "tools", "code", "local"]) {
+    for (const d of [
+      "builtin",
+      "authority",
+      "service",
+      "hku",
+      "hklm",
+      "persistence",
+      "escalation",
+      "execution",
+      "discovery",
+      "movement",
+      "evasion",
+      "ransomware",
+      "defender",
+      "explorer",
+      "vgauth",
+      "access",
+      "impact",
+      "tools",
+      "code",
+      "local",
+    ]) {
       expect(isNoiseDomain(d)).toBe(true);
     }
   });
@@ -534,7 +657,7 @@ describe("isNoiseDomain / isNoiseAccount", () => {
   it("isNoiseAccount keys off the DOMAIN / UPN-domain half", () => {
     expect(isNoiseAccount("HKU\\Software")).toBe(true);
     expect(isNoiseAccount("BUILTIN\\Administrators")).toBe(true);
-    expect(isNoiseAccount("AUTHORITY\\SYSTEM")).toBe(true);   // captured from "NT AUTHORITY\SYSTEM"
+    expect(isNoiseAccount("AUTHORITY\\SYSTEM")).toBe(true); // captured from "NT AUTHORITY\SYSTEM"
     expect(isNoiseAccount("ACME\\jdoe")).toBe(false);
     expect(isNoiseAccount("jdoe@acme.local")).toBe(false);
   });
@@ -544,12 +667,30 @@ describe("deriveKnownEntities — noise filtering", () => {
   it("drops registry hives, Windows principals and tactic folders; keeps real entities", () => {
     const s = emptyState("c1");
     s.forensicTimeline = [
-      { id: "e1", timestamp: "", description: "HKU\\Software autorun; BUILTIN\\Administrators; NT AUTHORITY\\SYSTEM ran from Execution\\evil.exe", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "win11.windomain.local" },
-      { id: "e2", timestamp: "", description: "logon ACME\\jdoe", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "",
+        description:
+          "HKU\\Software autorun; BUILTIN\\Administrators; NT AUTHORITY\\SYSTEM ran from Execution\\evil.exe",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "win11.windomain.local",
+      },
+      {
+        id: "e2",
+        timestamp: "",
+        description: "logon ACME\\jdoe",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     ];
     const k = deriveKnownEntities(s);
-    expect(k.internalDomains).toContain("acme");             // real NETBIOS domain kept
-    expect(k.internalDomains).toContain("windomain.local");  // real FQDN parent kept
+    expect(k.internalDomains).toContain("acme"); // real NETBIOS domain kept
+    expect(k.internalDomains).toContain("windomain.local"); // real FQDN parent kept
     for (const noise of ["hku", "builtin", "authority", "execution"]) {
       expect(k.internalDomains).not.toContain(noise);
     }
@@ -569,10 +710,15 @@ describe("isLocalAiProvider", () => {
 
 describe("anonymizer — custom entities", () => {
   it("tokenizes analyst-added exact-match entities even when that category's detector is OFF", () => {
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "203.0.113.9", category: "IP" },        // public IP the analyst marks as theirs
-      { value: "ProjectFalcon", category: "OTHER" },    // free-form codename
-    ]};
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [
+        { value: "203.0.113.9", category: "IP" }, // public IP the analyst marks as theirs
+        { value: "ProjectFalcon", category: "OTHER" }, // free-form codename
+      ],
+    };
     const a = createAnonymizer(policy({ IP: false }), known); // IP pattern detector OFF — custom still applies
     const out = a.apply("beacon from 203.0.113.9 tagged ProjectFalcon");
     expect(out).not.toContain("203.0.113.9");
@@ -593,18 +739,24 @@ describe("anonymizer — custom entities", () => {
     // recipient. anonCustom() runs unconditionally in apply(), before any category gate, so this
     // guard has to live there — filtering it only at a caller (e.g. the export builder) would miss
     // every other caller that reuses the same known.custom list.
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "45.61.136.10", category: "EXTIP" },
-    ]};
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value: "45.61.136.10", category: "EXTIP" }],
+    };
     const a = createAnonymizer({ ...policy({ IP: true }), maskPublicIps: false }, known);
     const out = a.apply("C2 was 45.61.136.10 and 1.1.1.1");
     expect(out).toBe("C2 was 45.61.136.10 and 1.1.1.1");
   });
 
   it("still tokenizes a persisted EXTIP custom entity when maskPublicIps is on (AI wire)", () => {
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "45.61.136.10", category: "EXTIP" },
-    ]};
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value: "45.61.136.10", category: "EXTIP" }],
+    };
     const a = createAnonymizer(policy({ IP: true }), known); // maskPublicIps: true by default
     const out = a.apply("C2 was 45.61.136.10");
     expect(out).toBe("C2 was ANON_EXTIP_1");
@@ -620,9 +772,12 @@ describe("anonymizer — custom entities", () => {
     // stay atomic: it is reserved before anonCustom ever runs, so the custom entity here correctly
     // does NOT fire on the embedded substring — the whole address is classified as one internal
     // IPv6 unit instead, which is the CORRECT outcome (10.0.0.5 is internal either way).
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "10.0.0.5", category: "IP" },
-    ]};
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value: "10.0.0.5", category: "IP" }],
+    };
     const a = createAnonymizer(policy({ IP: true }), known);
     const out = a.apply("session from ::ffff:10.0.0.5 established");
     expect(out).toBe("session from ANON_IP_1 established");
@@ -640,9 +795,12 @@ describe("anonymizer — custom entities", () => {
     // 10.0.0.5 as IP anyway. Moving anonCustom after the IP pass would then still produce a passing
     // run. HOST is a category no detector in this string can mint, so the token itself proves which
     // pass claimed the value — hence the exact-token assertion rather than a not.toContain.
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "10.0.0.5", category: "HOST" },
-    ]};
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value: "10.0.0.5", category: "HOST" }],
+    };
     const a = createAnonymizer(policy({ IP: true }), known);
     const out = a.apply("bare 10.0.0.5 and mapped ::ffff:10.0.0.5");
     expect(out).toBe("bare ANON_HOST_1 and mapped ANON_IP_1");
@@ -661,11 +819,16 @@ describe("anonymizer — suppression (analyst removed a wrong entity)", () => {
     const a = createAnonymizer(policy({ USER: true }), known);
     const out = a.apply("Out-File config\\PowershellInfo.log by WIN11\\vagrant");
     expect(out).toContain("config\\PowershellInfo.log"); // suppressed → left verbatim
-    expect(out).not.toContain("WIN11\\vagrant");          // a real account is still tokenized
+    expect(out).not.toContain("WIN11\\vagrant"); // a real account is still tokenized
     expect(out).toMatch(/ANON_USER_1/);
   });
   it("suppression is case-insensitive", () => {
-    const a = createAnonymizer(policy({ HOST: true }), { hosts: ["WIN11"], accounts: [], internalDomains: [], suppressed: ["win11"] });
+    const a = createAnonymizer(policy({ HOST: true }), {
+      hosts: ["WIN11"],
+      accounts: [],
+      internalDomains: [],
+      suppressed: ["win11"],
+    });
     expect(a.apply("host WIN11 online")).toBe("host WIN11 online");
   });
 });
@@ -823,9 +986,12 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
     // literal anchor, so the base64 payload — which is where victim data hides — went to the
     // external provider IN CLEARTEXT while two garbage EXTIP tokens were minted and persisted.
     const a = createAnonymizer(policy({ IP: true, CMD: true }), NONE);
-    const src = "IEX ([System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('QUJDREVGR0hJSktMTU5PUA==')))";
+    const src =
+      "IEX ([System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('QUJDREVGR0hJSktMTU5PUA==')))";
     const out = a.apply(src);
-    expect(out).toBe("IEX ([System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('ANON_CMD_1')))");
+    expect(out).toBe(
+      "IEX ([System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('ANON_CMD_1')))",
+    );
     expect(a.discoveries()).toEqual([{ value: "QUJDREVGR0hJSktMTU5PUA==", category: "CMD" }]);
     expect(a.restore(out)).toBe(src);
   });
@@ -834,7 +1000,11 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
     // "WIN11::admin" yields the IPv6 match "11::ad", which straddles the hostname AND the text
     // after it: reserving it left "WIN" + a garbage token, so anonHosts never saw WIN11 at all and
     // discoveries() reported no HOST.
-    const a = createAnonymizer(policy({ IP: true, HOST: true }), { hosts: ["WIN11"], accounts: [], internalDomains: [] });
+    const a = createAnonymizer(policy({ IP: true, HOST: true }), {
+      hosts: ["WIN11"],
+      accounts: [],
+      internalDomains: [],
+    });
     const out = a.apply("WIN11::admin logged in");
     expect(out).toBe("ANON_HOST_1::admin logged in");
     expect(a.discoveries()).toEqual([{ value: "WIN11", category: "HOST" }]);
@@ -842,8 +1012,12 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
   });
 
   it("tokenizes an internal domain that runs into a '::' sequence", () => {
-    const a = createAnonymizer(policy({ IP: true, DOMAIN: true }), { hosts: [], accounts: [], internalDomains: ["corp.local"] });
-    const out = a.apply("srv::corp.local");   // IPV6_RE match: "::c"
+    const a = createAnonymizer(policy({ IP: true, DOMAIN: true }), {
+      hosts: [],
+      accounts: [],
+      internalDomains: ["corp.local"],
+    });
+    const out = a.apply("srv::corp.local"); // IPV6_RE match: "::c"
     expect(out).toBe("srv::ANON_DOMAIN_1");
     expect(a.discoveries()).toEqual([{ value: "corp.local", category: "DOMAIN" }]);
     expect(a.restore(out)).toBe("srv::corp.local");
@@ -853,7 +1027,11 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
     // "ac::admin@corp.local" yields the match "ac::ad". Reserving it did not stop UPN_ACCT firing —
     // it made it fire on the REMNANT, tokenizing "min@corp.local" and persisting that mangled value
     // into the case's auto-discovery store as a USER.
-    const a = createAnonymizer(policy({ IP: true, USER: true }), { hosts: [], accounts: [], internalDomains: ["corp.local"] });
+    const a = createAnonymizer(policy({ IP: true, USER: true }), {
+      hosts: [],
+      accounts: [],
+      internalDomains: ["corp.local"],
+    });
     const out = a.apply("ac::admin@corp.local");
     expect(out).toBe("ac::ANON_USER_1");
     expect(a.discoveries()).toEqual([{ value: "admin@corp.local", category: "USER" }]);
@@ -862,7 +1040,7 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
 
   it("tokenizes the WHOLE email, not a truncated tail, next to a '::' sequence", () => {
     const a = createAnonymizer(policy({ IP: true, EMAIL: true }), NONE);
-    const out = a.apply("ab::bob@evil.com");  // IPV6_RE match: "ab::b"
+    const out = a.apply("ab::bob@evil.com"); // IPV6_RE match: "ab::b"
     expect(out).toBe("ab::ANON_EMAIL_1");
     expect(a.discoveries()).toEqual([{ value: "bob@evil.com", category: "EMAIL" }]);
     expect(a.restore(out)).toBe("ab::bob@evil.com");
@@ -873,18 +1051,21 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
     // minted USER token stood for the literal text "\uE000IPV6" and restore() produced a path that
     // never existed. Round-trip integrity, not just the token, is the assertion here.
     const a = createAnonymizer(policy({ IP: true, PATH: true }), NONE);
-    const out = a.apply("C:\\Users\\abc::def\\x.txt");  // IPV6_RE match: "abc::de"
+    const out = a.apply("C:\\Users\\abc::def\\x.txt"); // IPV6_RE match: "abc::de"
     expect(out).toBe("C:\\Users\\ANON_USER_1::def\\x.txt");
     expect(a.discoveries()).toEqual([{ value: "abc", category: "USER" }]);
     expect(a.restore(out)).toBe("C:\\Users\\abc::def\\x.txt");
   });
 
   it("tokenizes an analyst-added custom entity that a '::' match would otherwise swallow", () => {
-    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "deadbeef", category: "OTHER" },
-    ]};
+    const known: KnownEntities = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [{ value: "deadbeef", category: "OTHER" }],
+    };
     const a = createAnonymizer(policy({ IP: true }), known);
-    const out = a.apply("ab::deadbeef");   // IPV6_RE match: "ab::dead"
+    const out = a.apply("ab::deadbeef"); // IPV6_RE match: "ab::dead"
     expect(out).toBe("ab::ANON_OTHER_1");
     expect(a.discoveries()).toEqual([{ value: "deadbeef", category: "OTHER" }]);
     expect(a.restore(out)).toBe("ab::deadbeef");
@@ -927,7 +1108,7 @@ describe("anonymizer — forged IPv6 placeholders in attacker-influenced case te
   it("does not crash when the input contains a forged placeholder and no real IPv6", () => {
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const out = a.apply(`evil ${forged} marker`);
-    expect(out).toBe("evil IPV6:0 marker");   // sentinel stripped, nothing minted
+    expect(out).toBe("evil IPV6:0 marker"); // sentinel stripped, nothing minted
     expect(a.discoveries()).toEqual([]);
   });
 
@@ -964,8 +1145,8 @@ describe("isInternalIpv6", () => {
   // libraries) always produces. A victim IPv6 address logged/serialized in that form would
   // otherwise reach the external AI provider unredacted.
   it("detects IPv4-mapped/compatible addresses in their hex-canonical form, not just dotted", () => {
-    expect(isInternalIpv6("::ffff:7f00:1")).toBe(true);  // hex form of ::ffff:127.0.0.1
-    expect(isInternalIpv6("::ffff:a00:1")).toBe(true);   // hex form of ::ffff:10.0.0.1
+    expect(isInternalIpv6("::ffff:7f00:1")).toBe(true); // hex form of ::ffff:127.0.0.1
+    expect(isInternalIpv6("::ffff:a00:1")).toBe(true); // hex form of ::ffff:10.0.0.1
     expect(isInternalIpv6("::ffff:808:808")).toBe(false); // hex form of ::ffff:8.8.8.8 — public
   });
 });

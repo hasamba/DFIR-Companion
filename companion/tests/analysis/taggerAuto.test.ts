@@ -10,7 +10,15 @@ import { autoTagNewEvents } from "../../src/analysis/taggerAuto.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { timestamp: "2026-06-01T00:00:00Z", description: "d", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+  return {
+    timestamp: "2026-06-01T00:00:00Z",
+    description: "d",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
+  };
 }
 
 const RULES = `svc:
@@ -38,7 +46,10 @@ beforeEach(async () => {
   taggerStore = new TaggerStore(join(dir, "user.yaml"), [def]);
   // Seed the forensic timeline with the same event the import "added".
   const st = await stateStore.load("c1");
-  await stateStore.save({ ...st, forensicTimeline: [ev({ id: "e1", message: "service 7045", severity: "Low" })] });
+  await stateStore.save({
+    ...st,
+    forensicTimeline: [ev({ id: "e1", message: "service 7045", severity: "Low" })],
+  });
   delete process.env.TAGGER_AUTO;
   delete process.env.TAGGER_SCOPE;
   delete process.env.TAGGER_RULES_FILE;
@@ -83,7 +94,9 @@ describe("autoTagNewEvents", () => {
     await writeFile(badDefault, "bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n");
     const badStore = new TaggerStore(join(badDir, "user.yaml"), [badDefault]);
     await expect(
-      autoTagNewEvents({ taggerStore: badStore, tagsStore, stateStore }, "c1", [ev({ id: "e1", message: "x" })]),
+      autoTagNewEvents({ taggerStore: badStore, tagsStore, stateStore }, "c1", [
+        ev({ id: "e1", message: "x" }),
+      ]),
     ).resolves.toBeUndefined();
     await rm(badDir, { recursive: true, force: true });
   });

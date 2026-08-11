@@ -9,12 +9,18 @@ function observableResponse(node: Record<string, unknown>) {
 
 describe("OpenCtiProvider", () => {
   it("maps a high x_opencti_score to a malicious verdict with a clickable link", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse(observableResponse({
-      id: "obs-1", entity_type: "IPv4-Addr", observable_value: "1.2.3.4",
-      x_opencti_score: 90,
-      objectLabel: [{ value: "tracking" }],
-      indicators: { edges: [{ node: { id: "ind-1" } }] },
-    })));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(
+        observableResponse({
+          id: "obs-1",
+          entity_type: "IPv4-Addr",
+          observable_value: "1.2.3.4",
+          x_opencti_score: 90,
+          objectLabel: [{ value: "tracking" }],
+          indicators: { edges: [{ node: { id: "ind-1" } }] },
+        }),
+      ),
+    );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
     const r = await octi.lookup("ip", "1.2.3.4");
     expect(r).toMatchObject({ source: "OpenCTI", verdict: "malicious", detections: 1 });
@@ -28,10 +34,16 @@ describe("OpenCtiProvider", () => {
   });
 
   it("treats a malicious label as malicious even when the score is low", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse(observableResponse({
-      id: "obs-2", observable_value: "evil.test", x_opencti_score: 20,
-      objectLabel: [{ value: "ransomware" }],
-    })));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(
+        observableResponse({
+          id: "obs-2",
+          observable_value: "evil.test",
+          x_opencti_score: 20,
+          objectLabel: [{ value: "ransomware" }],
+        }),
+      ),
+    );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test/", apiKey: "k", fetchFn });
     const r = await octi.lookup("domain", "evil.test");
     expect(r!.verdict).toBe("malicious");
@@ -39,9 +51,16 @@ describe("OpenCtiProvider", () => {
   });
 
   it("a low-score, non-malicious-label hit is suspicious (present = at least suspicious)", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse(observableResponse({
-      id: "obs-3", observable_value: "9.9.9.9", x_opencti_score: 30, objectLabel: [{ value: "osint" }],
-    })));
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(
+        observableResponse({
+          id: "obs-3",
+          observable_value: "9.9.9.9",
+          x_opencti_score: 30,
+          objectLabel: [{ value: "osint" }],
+        }),
+      ),
+    );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
     const r = await octi.lookup("ip", "9.9.9.9");
     expect(r!.verdict).toBe("suspicious");
@@ -54,16 +73,31 @@ describe("OpenCtiProvider", () => {
   });
 
   it("respects a custom maliciousScore threshold", async () => {
-    const fetchFn = fetchMock(async () => jsonResponse(observableResponse({
-      id: "o", observable_value: "5.5.5.5", x_opencti_score: 60,
-    })));
-    const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn, maliciousScore: 50 });
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(
+        observableResponse({
+          id: "o",
+          observable_value: "5.5.5.5",
+          x_opencti_score: 60,
+        }),
+      ),
+    );
+    const octi = new OpenCtiProvider({
+      baseUrl: "https://opencti.test",
+      apiKey: "k",
+      fetchFn,
+      maliciousScore: 50,
+    });
     const r = await octi.lookup("ip", "5.5.5.5");
-    expect(r!.verdict).toBe("malicious");   // 60 >= 50
+    expect(r!.verdict).toBe("malicious"); // 60 >= 50
   });
 
   it("throws an auth error on HTTP 401", async () => {
-    const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "bad", fetchFn: fetchMock(async () => new Response("", { status: 401 })) });
+    const octi = new OpenCtiProvider({
+      baseUrl: "https://opencti.test",
+      apiKey: "bad",
+      fetchFn: fetchMock(async () => new Response("", { status: 401 })),
+    });
     await expect(octi.lookup("ip", "1.2.3.4")).rejects.toThrow(/DFIR_OPENCTI_KEY/);
   });
 
@@ -74,9 +108,17 @@ describe("OpenCtiProvider", () => {
   });
 
   it("probe() resolves on a valid me{} response and throws on 401", async () => {
-    const ok = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({ data: { me: { id: "u1", name: "analyst" } } })) });
+    const ok = new OpenCtiProvider({
+      baseUrl: "https://opencti.test",
+      apiKey: "k",
+      fetchFn: fetchMock(async () => jsonResponse({ data: { me: { id: "u1", name: "analyst" } } })),
+    });
     await expect(ok.probe()).resolves.toBeUndefined();
-    const bad = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "bad", fetchFn: fetchMock(async () => new Response("", { status: 401 })) });
+    const bad = new OpenCtiProvider({
+      baseUrl: "https://opencti.test",
+      apiKey: "bad",
+      fetchFn: fetchMock(async () => new Response("", { status: 401 })),
+    });
     await expect(bad.probe()).rejects.toThrow(/auth failed/i);
   });
 

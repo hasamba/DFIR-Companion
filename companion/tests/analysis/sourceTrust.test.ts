@@ -12,14 +12,14 @@ import {
 describe("trustForSource (#66)", () => {
   it("resolves exact and messy source strings via substring match", () => {
     expect(trustForSource("Velociraptor")).toBe(0.85);
-    expect(trustForSource("velociraptor_processes.csv")).toBe(0.85);           // substring, not the csv=0.6 generic
-    expect(trustForSource("corroborated by Velociraptor, THOR")).toBe(0.95);   // THOR is longer-key? both present → longest match
+    expect(trustForSource("velociraptor_processes.csv")).toBe(0.85); // substring, not the csv=0.6 generic
+    expect(trustForSource("corroborated by Velociraptor, THOR")).toBe(0.95); // THOR is longer-key? both present → longest match
     expect(trustForSource("CrowdStrike Falcon")).toBe(1.0);
   });
 
   it("prefers the more specific tier (longest key wins)", () => {
-    expect(trustForSource("SentinelOne")).toBe(0.95);          // not the sentinel=0.8 SIEM
-    expect(trustForSource("Microsoft Sentinel")).toBe(0.8);    // the SIEM
+    expect(trustForSource("SentinelOne")).toBe(0.95); // not the sentinel=0.8 SIEM
+    expect(trustForSource("Microsoft Sentinel")).toBe(0.8); // the SIEM
   });
 
   it("falls back to UNKNOWN for unrecognized / empty / placeholder", () => {
@@ -31,7 +31,7 @@ describe("trustForSource (#66)", () => {
   it("honors an override map", () => {
     const map = effectiveTrustMap({ velociraptor: 0.4 });
     expect(trustForSource("Velociraptor", map)).toBe(0.4);
-    expect(trustForSource("CrowdStrike", map)).toBe(1.0);      // untouched default
+    expect(trustForSource("CrowdStrike", map)).toBe(1.0); // untouched default
   });
 });
 
@@ -56,8 +56,10 @@ describe("override sanitization (#66)", () => {
     expect(sanitizeTrustValue("nope")).toBeNull();
   });
   it("keeps only real keys with in-range values, lowercased", () => {
-    expect(sanitizeTrustOverrides({ Velociraptor: 0.4, BadTool: 5, "": 0.3, ok: 0.9 }))
-      .toEqual({ velociraptor: 0.4, ok: 0.9 });
+    expect(sanitizeTrustOverrides({ Velociraptor: 0.4, BadTool: 5, "": 0.3, ok: 0.9 })).toEqual({
+      velociraptor: 0.4,
+      ok: 0.9,
+    });
   });
   it("returns {} for non-objects", () => {
     expect(sanitizeTrustOverrides(null)).toEqual({});

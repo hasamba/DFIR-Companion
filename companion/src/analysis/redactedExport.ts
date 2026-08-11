@@ -11,8 +11,17 @@ import { CUSTODY_MANIFEST_FILENAME, type CustodyManifest } from "./custodyManife
 // human-readable redaction notes); the I/O orchestration lives in reports/redactedExportBuilder.ts.
 
 const ALL_CATEGORIES: Record<AnonCategory, boolean> = {
-  IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
-  CARD: true, PHONE: true, NATID: true,
+  IP: true,
+  EMAIL: true,
+  USER: true,
+  HOST: true,
+  DOMAIN: true,
+  PATH: true,
+  CMD: true,
+  REG: true,
+  CARD: true,
+  PHONE: true,
+  NATID: true,
 };
 
 // The export always uses MAXIMUM redaction, independent of the per-case AI-anonymization toggle:
@@ -27,11 +36,11 @@ export function redactedExportPolicy(): AnonPolicy {
 }
 
 export interface RedactedExportOptions {
-  includeReport: boolean;       // report.md + report.html
-  includeCsvs: boolean;         // findings / IOCs / timeline CSVs
-  includeStateJson: boolean;    // the full (anonymized) case state JSON
-  includeScreenshots: boolean;  // screenshot images
-  blurScreenshots: boolean;     // OCR-blur PII text in screenshots (EXIF is always stripped)
+  includeReport: boolean; // report.md + report.html
+  includeCsvs: boolean; // findings / IOCs / timeline CSVs
+  includeStateJson: boolean; // the full (anonymized) case state JSON
+  includeScreenshots: boolean; // screenshot images
+  blurScreenshots: boolean; // OCR-blur PII text in screenshots (EXIF is always stripped)
 }
 
 export const DEFAULT_REDACTED_EXPORT_OPTIONS: RedactedExportOptions = {
@@ -116,7 +125,10 @@ const CUSTODY_PRESERVED_FIELDS: ReadonlySet<string> = new Set(["sha256", "prevHa
  * redacted by DEFAULT. A field added to CustodyRecord later leaks only if someone explicitly adds it
  * to the allow-list above, which is the safe direction for a mistake to fall.
  */
-export function redactCustodyRecords<T extends object>(records: readonly T[], redact: (s: string) => string): T[] {
+export function redactCustodyRecords<T extends object>(
+  records: readonly T[],
+  redact: (s: string) => string,
+): T[] {
   return records.map((record) => {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
@@ -129,10 +141,10 @@ export function redactCustodyRecords<T extends object>(records: readonly T[], re
 export interface RedactionSummary {
   caseId: string;
   options: RedactedExportOptions;
-  screenshotCount: number;      // images included in the package
-  screenshotsBlurred: number;   // images where OCR painted at least one box
+  screenshotCount: number; // images included in the package
+  screenshotsBlurred: number; // images where OCR painted at least one box
   screenshotRedactions: number; // total boxes painted across all images
-  metadataStripped: number;     // images re-encoded to drop EXIF/GPS/etc.
+  metadataStripped: number; // images re-encoded to drop EXIF/GPS/etc.
 }
 
 const REPORT_DIR = "report";
@@ -144,11 +156,15 @@ const MANIFEST_FILE = "export-manifest.json";
 // version) are supplied by the caller so the manifest builder stays pure + deterministic.
 export interface ExportManifestMeta {
   caseId: string;
-  exportedAt: string;   // ISO-8601 UTC, from the orchestrator
-  generatedBy: string;  // app version, from getAppVersion()
+  exportedAt: string; // ISO-8601 UTC, from the orchestrator
+  generatedBy: string; // app version, from getAppVersion()
 }
 
-export interface ExportManifestFile { path: string; sha256: string; bytes: number; }
+export interface ExportManifestFile {
+  path: string;
+  sha256: string;
+  bytes: number;
+}
 
 export interface ExportManifest extends ExportManifestMeta {
   files: ExportManifestFile[];
@@ -183,7 +199,10 @@ export function buildExportManifest(entries: readonly ZipEntry[], meta: ExportMa
 // the screenshots/ prefix in the ZIP (zip-slip), regardless of how it got onto disk.
 export function safeArchiveName(name: string): string {
   const base = name.replace(/^.*[\\/]/, "");
-  const cleaned = base.replace(/[\\/]/g, "_").replace(/\.{2,}/g, ".").trim();
+  const cleaned = base
+    .replace(/[\\/]/g, "_")
+    .replace(/\.{2,}/g, ".")
+    .trim();
   return cleaned.length > 0 ? cleaned : "file";
 }
 
@@ -221,7 +240,10 @@ export function assembleRedactedEntries(input: {
     entries.push({ path: `${REPORT_DIR}/findings.csv`, data: enc(input.contents.findingsCsv) });
     entries.push({ path: `${REPORT_DIR}/iocs.csv`, data: enc(input.contents.iocsCsv) });
     entries.push({ path: `${REPORT_DIR}/timeline.csv`, data: enc(input.contents.timelineCsv) });
-    entries.push({ path: `${REPORT_DIR}/forensic-timeline.csv`, data: enc(input.contents.forensicTimelineCsv) });
+    entries.push({
+      path: `${REPORT_DIR}/forensic-timeline.csv`,
+      data: enc(input.contents.forensicTimelineCsv),
+    });
   }
   if (input.options.includeStateJson) {
     entries.push({ path: `${REPORT_DIR}/state-export.json`, data: enc(input.contents.stateJson) });
@@ -234,7 +256,10 @@ export function assembleRedactedEntries(input: {
   // The signed custody manifest for the redacted appendix. Placed before the package manifest below
   // so it is enumerated and hashed like every other file in the package.
   if (input.contents.custodyManifest) {
-    entries.push({ path: CUSTODY_MANIFEST_FILENAME, data: enc(JSON.stringify(input.contents.custodyManifest, null, 2)) });
+    entries.push({
+      path: CUSTODY_MANIFEST_FILENAME,
+      data: enc(JSON.stringify(input.contents.custodyManifest, null, 2)),
+    });
   }
   // Hashed manifest of every file assembled above, appended LAST so it enumerates the whole package
   // (but not itself). Gives the recipient chain-of-custody verification the human-readable notes can't.

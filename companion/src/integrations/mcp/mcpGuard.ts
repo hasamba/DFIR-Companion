@@ -96,9 +96,16 @@ function shellSegments(input: string): string[] | null {
     // unquoted branch, because bash performs it only unquoted — `"<(x)"` and `'<(x)'` are literal.
     // A bare `<`/`>` NOT followed by `(` is an ordinary redirect and stays allowed.
     if ((c === "<" || c === ">") && input[i + 1] === "(") return null;
-    if (c === "'" || c === '"') { quote = c; continue; }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
 
-    if (SEGMENT_SEPARATORS.has(c)) { segments.push(current); current = ""; continue; }
+    if (SEGMENT_SEPARATORS.has(c)) {
+      segments.push(current);
+      current = "";
+      continue;
+    }
     current += c;
   }
   segments.push(current);
@@ -114,7 +121,7 @@ function shellSegments(input: string): string[] | null {
 function headOfSegment(segment: string): string | null {
   for (const token of segment.trim().split(/\s+/)) {
     if (!token) continue;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;   // an environment assignment, not the command
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue; // an environment assignment, not the command
     return basename(token);
   }
   return null;
@@ -145,7 +152,10 @@ export function inspectCommand(args: Record<string, unknown>): CommandCheck {
   if (typeof value === "string") {
     const segments = shellSegments(value);
     if (segments === null) {
-      return { kind: "unparseable", reason: `"${key}" uses shell substitution, so what it would run cannot be determined` };
+      return {
+        kind: "unparseable",
+        reason: `"${key}" uses shell substitution, so what it would run cannot be determined`,
+      };
     }
     const heads = segments.map(headOfSegment).filter((h): h is string => h !== null);
     if (heads.length === 0) return { kind: "unparseable", reason: `"${key}" names no command to run` };
@@ -186,7 +196,7 @@ export function assertCallAllowed(server: McpServer, toolName: string, args: Rec
     const list = denied.map((d) => `"${d}"`).join(", ");
     throw new Error(
       `MCP server "${server.id}" is not allowed to run ${list} via "${toolName}" — ` +
-      `add ${denied.length > 1 ? "them" : "it"} to this server's allowed commands, or narrow the command`,
+        `add ${denied.length > 1 ? "them" : "it"} to this server's allowed commands, or narrow the command`,
     );
   }
 }

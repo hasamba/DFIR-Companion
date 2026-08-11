@@ -57,7 +57,10 @@ function textIocs(msg: string, sink: Map<string, SiemIoc>): void {
   if (!msg) return;
   for (const m of msg.matchAll(RE_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
   for (const m of msg.matchAll(RE_URL)) addIoc(sink, "url", m[0].slice(0, 300));
-  for (const m of msg.matchAll(RE_IPV4)) { const ip = cleanIp(m[0]); if (ip) addIoc(sink, "ip", ip); }
+  for (const m of msg.matchAll(RE_IPV4)) {
+    const ip = cleanIp(m[0]);
+    if (ip) addIoc(sink, "ip", ip);
+  }
 }
 
 // Plaso `display_name`/`filename` carries a "TYPE:path" prefix (TSK:/OS:/GZIP:…); strip it and
@@ -109,8 +112,11 @@ function detectFlavor(headers: Set<string>): Flavor | null {
         description = description.slice(0, 600);
         return {
           timestamp: dynTime(firstStr(row, ["datetime"])),
-          description, severity: "Info", mitre: [],
-          aggKey: aggKey(source, message), sources: ["Plaso"],
+          description,
+          severity: "Info",
+          mitre: [],
+          aggKey: aggKey(source, message),
+          sources: ["Plaso"],
           ...(path ? { path } : {}),
         };
       },
@@ -135,8 +141,11 @@ function detectFlavor(headers: Set<string>): Flavor | null {
         description = description.slice(0, 600);
         return {
           timestamp: l2tTime(firstStr(row, ["date"]), firstStr(row, ["time"]), firstStr(row, ["timezone"])),
-          description, severity: "Info", mitre: [],
-          aggKey: aggKey(source, message), sources: ["Plaso"],
+          description,
+          severity: "Info",
+          mitre: [],
+          aggKey: aggKey(source, message),
+          sources: ["Plaso"],
           ...(path ? { path } : {}),
           ...(host && host !== "-" ? { asset: host } : {}),
         };
@@ -158,7 +167,11 @@ function aggKey(source: string, message: string): string {
 // Per-import mapping context shared by the in-memory and streaming entry points: a bounded IOC
 // sink + a row→MappedEvent mapper. Once the sink hits maxIocs it stops growing (a swap to a no-op
 // sink), so a file with millions of distinct indicators can't balloon memory.
-function makePlasoMapper(headers: string[], flavor: Flavor, maxIocs: number): {
+function makePlasoMapper(
+  headers: string[],
+  flavor: Flavor,
+  maxIocs: number,
+): {
   iocSink: Map<string, SiemIoc>;
   mapRow: (cols: string[]) => MappedEvent | null;
 } {
@@ -169,7 +182,9 @@ function makePlasoMapper(headers: string[], flavor: Flavor, maxIocs: number): {
     iocSink,
     mapRow(cols: string[]): MappedEvent | null {
       const row: Row = {};
-      trimmedHeaders.forEach((h, i) => { row[h] = cols[i] ?? ""; });
+      trimmedHeaders.forEach((h, i) => {
+        row[h] = cols[i] ?? "";
+      });
       return flavor.map(row, iocSink.size >= maxIocs ? noopSink : iocSink);
     },
   };
@@ -200,7 +215,11 @@ export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): Plas
 
   const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs);
   function* mappedGen(): Generator<MappedEvent> {
-    for (const cols of iter) { total++; const m = mapRow(cols); if (m) yield m; }
+    for (const cols of iter) {
+      total++;
+      const m = mapRow(cols);
+      if (m) yield m;
+    }
   }
 
   const { events, groups } = aggregateEvents(mappedGen(), {

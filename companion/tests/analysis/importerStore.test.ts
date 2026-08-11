@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { ImporterStore } from "../../src/analysis/importerStore.js";
 import { EXAMPLE_IMPORTER_SPEC } from "../../src/analysis/importerSpec.js";
 
-async function dir() { return mkdtemp(join(tmpdir(), "dfir-imp-")); }
+async function dir() {
+  return mkdtemp(join(tmpdir(), "dfir-imp-"));
+}
 
 describe("ImporterStore", () => {
   it("loads a valid spec, skips a malformed file, and reports errors", async () => {

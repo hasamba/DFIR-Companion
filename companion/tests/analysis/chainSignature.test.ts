@@ -4,16 +4,22 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(over: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    timestamp: "2026-05-26T12:00:00Z", description: "event", severity: "High",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over,
+    timestamp: "2026-05-26T12:00:00Z",
+    description: "event",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...over,
   };
 }
 
 describe("normalizeCommandLine", () => {
   it("reduces a full/quoted image path to its basename but keeps the arguments intact", () => {
     expect(normalizeCommandLine('"C:\\Windows\\System32\\cmd.exe" /c whoami')).toBe("cmd.exe /c whoami");
-    expect(normalizeCommandLine("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -nop -c Get-Date"))
-      .toBe("powershell.exe -nop -c get-date");
+    expect(
+      normalizeCommandLine("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -nop -c Get-Date"),
+    ).toBe("powershell.exe -nop -c get-date");
     expect(normalizeCommandLine("/usr/bin/python3 /tmp/x.py")).toBe("python3 /tmp/x.py");
   });
 
@@ -35,10 +41,20 @@ describe("normalizeCommandLine", () => {
 
 describe("computeChainSignature", () => {
   it("is equal for the SAME normalized command on the same host+parent, regardless of full path or case", () => {
-    const a = ev({ id: "a", asset: "HOST-1.corp.local", processName: "powershell.exe", parentName: "explorer.exe",
-      commandLine: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -enc AAAA' });
-    const b = ev({ id: "b", asset: "host-1", processName: "PowerShell.exe", parentName: "Explorer.exe",
-      commandLine: "powershell.exe -enc AAAA" });
+    const a = ev({
+      id: "a",
+      asset: "HOST-1.corp.local",
+      processName: "powershell.exe",
+      parentName: "explorer.exe",
+      commandLine: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -enc AAAA',
+    });
+    const b = ev({
+      id: "b",
+      asset: "host-1",
+      processName: "PowerShell.exe",
+      parentName: "Explorer.exe",
+      commandLine: "powershell.exe -enc AAAA",
+    });
     expect(computeChainSignature(a)).toBe(computeChainSignature(b));
   });
 
@@ -49,10 +65,21 @@ describe("computeChainSignature", () => {
   });
 
   it("falls back to scraping the command line from the description when commandLine is absent", () => {
-    const structured = ev({ id: "a", asset: "H", processName: "powershell.exe", parentName: "explorer.exe",
-      commandLine: "powershell.exe -nop -c Compress-Archive -Path D:\\x" });
-    const scraped = ev({ id: "b", asset: "H", processName: "powershell.exe", parentName: "explorer.exe",
-      description: "Sysmon Process create (EID 1) - powershell.exe - CommandLine=powershell.exe -nop -c Compress-Archive -Path D:\\x" });
+    const structured = ev({
+      id: "a",
+      asset: "H",
+      processName: "powershell.exe",
+      parentName: "explorer.exe",
+      commandLine: "powershell.exe -nop -c Compress-Archive -Path D:\\x",
+    });
+    const scraped = ev({
+      id: "b",
+      asset: "H",
+      processName: "powershell.exe",
+      parentName: "explorer.exe",
+      description:
+        "Sysmon Process create (EID 1) - powershell.exe - CommandLine=powershell.exe -nop -c Compress-Archive -Path D:\\x",
+    });
     expect(computeChainSignature(scraped)).toBe(computeChainSignature(structured));
   });
 

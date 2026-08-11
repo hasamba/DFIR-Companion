@@ -41,7 +41,8 @@ const URL_RE = /\bhttps?:\/\/[^\s"'<>]{5,300}/gi;
 const IPV4_RE = /\b((?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))\b/g;
 const SHA256_RE = /\b([a-f0-9]{64})\b/gi;
 // Domain: 2-63 chars per label, a common TLD, no leading digit in the rightmost label
-const DOMAIN_RE = /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:com|net|org|io|co|info|xyz|ru|cn|tk|top|pw|cc|biz|online|site|club|live|win|fun|space|tech|store|shop|link|click|download))\b/gi;
+const DOMAIN_RE =
+  /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:com|net|org|io|co|info|xyz|ru|cn|tk|top|pw|cc|biz|online|site|club|live|win|fun|space|tech|store|shop|link|click|download))\b/gi;
 
 const NOISE_IPS = new Set(["127.0.0.1", "0.0.0.0", "255.255.255.255", "8.8.8.8", "8.8.4.4"]);
 
@@ -50,7 +51,10 @@ function extractIocsFromText(text: string): RawIoc[] {
   const seen = new Set<string>();
   const add = (type: IOC["type"], value: string): void => {
     const k = `${type}:${value.toLowerCase()}`;
-    if (!seen.has(k)) { seen.add(k); out.push({ type, value }); }
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push({ type, value });
+    }
   };
 
   for (const m of text.matchAll(URL_RE)) {
@@ -92,8 +96,11 @@ function safeBase64Decode(s: string, encoding: BufferEncoding): string | null {
 
 // Returns true when the text contains a pattern this module can attempt to decode.
 export function isObfuscated(text: string): boolean {
-  return PS_ENC_RE.test(text) || FROM_B64_RE.test(text) ||
-    (BASE64_BLOCK_RE.test(text) && EXEC_MARKER_RE.test(text));
+  return (
+    PS_ENC_RE.test(text) ||
+    FROM_B64_RE.test(text) ||
+    (BASE64_BLOCK_RE.test(text) && EXEC_MARKER_RE.test(text))
+  );
 }
 
 // Attempt to deobfuscate an event's description. Returns null when no decodable
@@ -122,9 +129,7 @@ export function deobfuscateText(text: string): DeobfuscationResult | null {
     const b64Match = BASE64_BLOCK_RE.exec(text);
     if (b64Match) {
       // Try UTF-16LE first (common for PowerShell), then UTF-8
-      const decoded =
-        safeBase64Decode(b64Match[1], "utf16le") ??
-        safeBase64Decode(b64Match[1], "utf8");
+      const decoded = safeBase64Decode(b64Match[1], "utf16le") ?? safeBase64Decode(b64Match[1], "utf8");
       if (decoded && decoded.length >= 5) {
         return { decoded, method: "base64", rawIocs: extractIocsFromText(decoded) };
       }

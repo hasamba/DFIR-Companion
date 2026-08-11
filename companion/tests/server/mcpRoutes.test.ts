@@ -54,7 +54,10 @@ describe("GET /mcp/status", () => {
     const res = await request(appWith()).get("/mcp/status");
 
     expect(res.body.servers[0]).toMatchObject({
-      id: "sift-mcp", enabled: true, allowedTools: ["run_command"], knownToClaudeCode: null,
+      id: "sift-mcp",
+      enabled: true,
+      allowedTools: ["run_command"],
+      knownToClaudeCode: null,
     });
     expect(JSON.stringify(res.body)).not.toMatch(/url|token/i);
   });
@@ -64,7 +67,12 @@ describe("GET /mcp/status", () => {
     await store.add({ id: "sift-mcp" });
     const seen: ClaudeRunOptions[] = [];
 
-    await request(appWith(async (o) => { seen.push(o); return { code: 0, stdout: LIST, stderr: "" }; })).get("/mcp/status");
+    await request(
+      appWith(async (o) => {
+        seen.push(o);
+        return { code: 0, stdout: LIST, stderr: "" };
+      }),
+    ).get("/mcp/status");
 
     expect(seen).toHaveLength(0);
   });
@@ -76,8 +84,11 @@ describe("POST /mcp/discover", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(res.body.servers.map((s: { name: string }) => s.name))
-      .toEqual(["sift-mcp", "windows-triage-mcp", "broken-mcp"]);
+    expect(res.body.servers.map((s: { name: string }) => s.name)).toEqual([
+      "sift-mcp",
+      "windows-triage-mcp",
+      "broken-mcp",
+    ]);
   });
 
   // `claude mcp list` prints command lines that contain bearer tokens.
@@ -91,8 +102,12 @@ describe("POST /mcp/discover", () => {
 
   it("runs `claude mcp list` and nothing else", async () => {
     const seen: ClaudeRunOptions[] = [];
-    await request(appWith(async (o) => { seen.push(o); return { code: 0, stdout: LIST, stderr: "" }; }))
-      .post("/mcp/discover");
+    await request(
+      appWith(async (o) => {
+        seen.push(o);
+        return { code: 0, stdout: LIST, stderr: "" };
+      }),
+    ).post("/mcp/discover");
 
     expect(seen[0].args).toEqual(["mcp", "list"]);
   });
@@ -133,11 +148,16 @@ describe("POST /mcp/discover", () => {
 
 describe("/mcp/servers CRUD", () => {
   it("stores policy for a Claude Code server", async () => {
-    const res = await request(appWith()).post("/mcp/servers")
+    const res = await request(appWith())
+      .post("/mcp/servers")
       .send({ id: "sift-mcp", allowedTools: "run_command", allowedCommands: "vol.py" });
 
     expect(res.status).toBe(201);
-    expect(res.body.server).toMatchObject({ id: "sift-mcp", allowedTools: ["run_command"], allowedCommands: ["vol.py"] });
+    expect(res.body.server).toMatchObject({
+      id: "sift-mcp",
+      allowedTools: ["run_command"],
+      allowedCommands: ["vol.py"],
+    });
     // Nothing about credentials comes back, because none was taken.
     expect(res.body).not.toHaveProperty("tokenEnvKey");
   });
@@ -155,14 +175,18 @@ describe("/mcp/servers CRUD", () => {
 
   it("updates a server", async () => {
     await store.add({ id: "sift-mcp" });
-    const res = await request(appWith()).put("/mcp/servers/sift-mcp").send({ allowedTools: ["run_command", "check_tools"] });
+    const res = await request(appWith())
+      .put("/mcp/servers/sift-mcp")
+      .send({ allowedTools: ["run_command", "check_tools"] });
     expect(res.status).toBe(200);
     expect(res.body.server.allowedTools).toEqual(["run_command", "check_tools"]);
   });
 
   it("sets the command allowlist that bounds a command-runner tool", async () => {
     await store.add({ id: "sift-mcp", allowedTools: ["run_command"] });
-    const res = await request(appWith()).put("/mcp/servers/sift-mcp").send({ allowedCommands: "vol.py, /usr/bin/grep" });
+    const res = await request(appWith())
+      .put("/mcp/servers/sift-mcp")
+      .send({ allowedCommands: "vol.py, /usr/bin/grep" });
     expect(res.body.server.allowedCommands).toEqual(["vol.py", "grep"]);
   });
 
@@ -172,14 +196,22 @@ describe("/mcp/servers CRUD", () => {
 
   it("400s when an update would make delivery unsafe", async () => {
     await store.add({ id: "sift-mcp" });
-    const res = await request(appWith()).put("/mcp/servers/sift-mcp").send({ delivery: { mode: "scp", host: "evil;host", remoteDir: "/x" } });
+    const res = await request(appWith())
+      .put("/mcp/servers/sift-mcp")
+      .send({ delivery: { mode: "scp", host: "evil;host", remoteDir: "/x" } });
     expect(res.status).toBe(400);
   });
 
   it("removes a server and says whether there was one", async () => {
     await store.add({ id: "sift-mcp" });
-    expect((await request(appWith()).delete("/mcp/servers/sift-mcp")).body).toEqual({ ok: true, removed: true });
-    expect((await request(appWith()).delete("/mcp/servers/sift-mcp")).body).toEqual({ ok: true, removed: false });
+    expect((await request(appWith()).delete("/mcp/servers/sift-mcp")).body).toEqual({
+      ok: true,
+      removed: true,
+    });
+    expect((await request(appWith()).delete("/mcp/servers/sift-mcp")).body).toEqual({
+      ok: true,
+      removed: false,
+    });
   });
 
   it("501s on every CRUD route when unconfigured", async () => {
@@ -207,11 +239,14 @@ describe("POST /mcp/reconnect", () => {
 
 describe("POST /mcp/servers/:id/tools", () => {
   const toolsRunner: ClaudeRunner = async () => ({
-    code: 0, stderr: "",
-    stdout: JSON.stringify({
-      type: "result", subtype: "success",
-      result: '["list_available_tools","run_command","mcp__sift-mcp__check_tools"]',
-    }) + "\n",
+    code: 0,
+    stderr: "",
+    stdout:
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: '["list_available_tools","run_command","mcp__sift-mcp__check_tools"]',
+      }) + "\n",
   });
 
   it("asks Claude Code what one server offers, and strips a qualified prefix", async () => {
@@ -225,8 +260,12 @@ describe("POST /mcp/servers/:id/tools", () => {
   it("grants the whole server while asking, since the point is to see everything", async () => {
     await store.add({ id: "sift-mcp" });
     const seen: ClaudeRunOptions[] = [];
-    await request(appWith(async (o) => { seen.push(o); return toolsRunner(o); }))
-      .post("/mcp/servers/sift-mcp/tools");
+    await request(
+      appWith(async (o) => {
+        seen.push(o);
+        return toolsRunner(o);
+      }),
+    ).post("/mcp/servers/sift-mcp/tools");
 
     expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__*");
   });
@@ -244,7 +283,8 @@ describe("POST /mcp/servers/:id/tools", () => {
   it("reports an unusable reply as 200 with ok:false", async () => {
     await store.add({ id: "sift-mcp" });
     const app = appWith(async () => ({
-      code: 0, stderr: "",
+      code: 0,
+      stderr: "",
       stdout: JSON.stringify({ type: "result", subtype: "success", result: "I could not tell." }) + "\n",
     }));
 

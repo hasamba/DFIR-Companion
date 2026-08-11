@@ -19,7 +19,11 @@ import { createAnonymizer, SECRET_PLACEHOLDER, type KnownEntities } from "../../
 
 // Fixed provenance so the manifest tests are deterministic (the real orchestrator supplies a live
 // timestamp + app version).
-const MANIFEST_META: ExportManifestMeta = { caseId: "c1", exportedAt: "2026-01-01T00:00:00.000Z", generatedBy: "test-1.2.3" };
+const MANIFEST_META: ExportManifestMeta = {
+  caseId: "c1",
+  exportedAt: "2026-01-01T00:00:00.000Z",
+  generatedBy: "test-1.2.3",
+};
 
 const KNOWN: KnownEntities = {
   hosts: ["VICTIM-PC"],
@@ -87,8 +91,13 @@ describe("applyAnonDeep", () => {
 });
 
 const CONTENTS: RedactedReportContents = {
-  markdown: "# md", html: "<h1>h</h1>", findingsCsv: "f", iocsCsv: "i",
-  timelineCsv: "t", forensicTimelineCsv: "ft", stateJson: "{}",
+  markdown: "# md",
+  html: "<h1>h</h1>",
+  findingsCsv: "f",
+  iocsCsv: "i",
+  timelineCsv: "t",
+  forensicTimelineCsv: "ft",
+  stateJson: "{}",
 };
 
 describe("assembleRedactedEntries", () => {
@@ -115,7 +124,13 @@ describe("assembleRedactedEntries", () => {
       contents: CONTENTS,
       screenshots: [{ name: "shot-001.png", data: Buffer.from([1]) }],
       notes: "NOTES",
-      options: { includeReport: false, includeCsvs: false, includeStateJson: false, includeScreenshots: false, blurScreenshots: false },
+      options: {
+        includeReport: false,
+        includeCsvs: false,
+        includeStateJson: false,
+        includeScreenshots: false,
+        blurScreenshots: false,
+      },
       manifest: MANIFEST_META,
     });
     expect(entries.map((e) => e.path)).toEqual(["REDACTION-NOTES.txt", "export-manifest.json"]);
@@ -174,7 +189,9 @@ describe("buildExportManifest", () => {
     expect(m.totalFiles).toBe(2);
     expect(m.totalBytes).toBe(9);
     expect(m.files[0]).toEqual({
-      path: "a.txt", bytes: 5, sha256: createHash("sha256").update("hello").digest("hex"),
+      path: "a.txt",
+      bytes: 5,
+      sha256: createHash("sha256").update("hello").digest("hex"),
     });
     expect(m.files[1].path).toBe("b/c.bin");
   });

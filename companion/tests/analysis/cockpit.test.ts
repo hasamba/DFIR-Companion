@@ -121,47 +121,53 @@ describe("deriveCockpit — investigator usability scenarios", () => {
           sourceScreenshots: [],
         },
       ],
-      keyQuestions: [{
-        id: "q1",
-        question: "Was data exfiltrated?",
-        status: "partial",
-        answer: "No exfiltration was confirmed.",
-        pointer: "Proxy logs are incomplete.",
-        contradicted: { techniques: ["T1041"], eventIds: ["e-contradiction"] },
-        collect: {
-          host: "proxy-01",
-          logSource: "proxy access logs",
-          expectedOutcome: "Confirm or refute outbound transfer.",
+      keyQuestions: [
+        {
+          id: "q1",
+          question: "Was data exfiltrated?",
+          status: "partial",
+          answer: "No exfiltration was confirmed.",
+          pointer: "Proxy logs are incomplete.",
+          contradicted: { techniques: ["T1041"], eventIds: ["e-contradiction"] },
+          collect: {
+            host: "proxy-01",
+            logSource: "proxy access logs",
+            expectedOutcome: "Confirm or refute outbound transfer.",
+          },
         },
-      }],
-      uncertainties: [{
-        topic: "Initial access",
-        status: "speculated",
-        basis: "No primary source yet.",
-        gap: "Collect mailbox audit and message trace for the affected user.",
-      }],
+      ],
+      uncertainties: [
+        {
+          topic: "Initial access",
+          status: "speculated",
+          basis: "No primary source yet.",
+          gap: "Collect mailbox audit and message trace for the affected user.",
+        },
+      ],
     });
 
     const result = deriveCockpit({
       state: investigation,
       hypotheses: [hypothesis()],
-      jobs: [{
-        id: "job_1",
-        caseId: investigation.caseId,
-        kind: "import",
-        status: "failed",
-        priority: "normal",
-        queuedAt: "2026-07-30T11:45:00.000Z",
-        startedAt: "2026-07-30T11:45:00.000Z",
-        endedAt: "2026-07-30T11:46:00.000Z",
-        updatedAt: "2026-07-30T11:46:00.000Z",
-        error: "Parser rejected the archive",
-        warnings: [],
-        attempt: 1,
-        maxRetries: 0,
-        resumable: false,
-        cancellable: false,
-      }],
+      jobs: [
+        {
+          id: "job_1",
+          caseId: investigation.caseId,
+          kind: "import",
+          status: "failed",
+          priority: "normal",
+          queuedAt: "2026-07-30T11:45:00.000Z",
+          startedAt: "2026-07-30T11:45:00.000Z",
+          endedAt: "2026-07-30T11:46:00.000Z",
+          updatedAt: "2026-07-30T11:46:00.000Z",
+          error: "Parser rejected the archive",
+          warnings: [],
+          attempt: 1,
+          maxRetries: 0,
+          resumable: false,
+          cancellable: false,
+        },
+      ],
       investigator: "Alice",
       now: NOW,
     });
@@ -177,7 +183,9 @@ describe("deriveCockpit — investigator usability scenarios", () => {
     expect(result.sections.contradictions.map((card) => card.id)).toEqual(
       expect.arrayContaining(["contradiction:question:q1", "contradiction:hypothesis:h1"]),
     );
-    expect(result.sections.gaps.find((card) => card.id === "gap:question:q1")?.action).toContain("proxy access logs");
+    expect(result.sections.gaps.find((card) => card.id === "gap:question:q1")?.action).toContain(
+      "proxy access logs",
+    );
     expect(result.sections.activity[0]).toMatchObject({
       id: "activity:job:job_1",
       severity: "High",
@@ -190,22 +198,26 @@ describe("deriveCockpit — investigator usability scenarios", () => {
     const result = deriveCockpit({
       state: state({
         findings: [finding("f1", "High", { status: "confirmed" })],
-        forensicTimeline: [{
-          id: "e-f1",
-          timestamp: "2026-07-30T09:15:00.000Z",
-          description: "Confirmed malicious execution",
-          severity: "High",
-          mitreTechniques: [],
-          relatedFindingIds: ["f1"],
-          sourceScreenshots: [],
-        }],
-        keyQuestions: [{
-          id: "q1",
-          question: "What happened?",
-          status: "answered",
-          answer: "Malicious execution was confirmed.",
-          pointer: "f1",
-        }],
+        forensicTimeline: [
+          {
+            id: "e-f1",
+            timestamp: "2026-07-30T09:15:00.000Z",
+            description: "Confirmed malicious execution",
+            severity: "High",
+            mitreTechniques: [],
+            relatedFindingIds: ["f1"],
+            sourceScreenshots: [],
+          },
+        ],
+        keyQuestions: [
+          {
+            id: "q1",
+            question: "What happened?",
+            status: "answered",
+            answer: "Malicious execution was confirmed.",
+            pointer: "f1",
+          },
+        ],
         lastSummary: "Confirmed malicious execution on WS-01.",
         attackerPath: "Initial execution led to credential access.",
       }),
@@ -268,7 +280,9 @@ describe("deriveCockpit — review and card decisions", () => {
       },
       decisions: {
         cards: [],
-        reviews: [{ investigatorKey: "alice", investigator: "Alice", reviewedAt: "2026-07-30T10:00:00.000Z" }],
+        reviews: [
+          { investigatorKey: "alice", investigator: "Alice", reviewedAt: "2026-07-30T10:00:00.000Z" },
+        ],
         history: [],
       },
       investigator: "Alice",
@@ -298,7 +312,12 @@ describe("deriveCockpit — review and card decisions", () => {
       target: { panel: "super-timeline" },
     });
 
-    const legacy = deriveCockpit({ state: state(), importMeta: RECENT_IMPORT, investigator: "Alice", now: NOW });
+    const legacy = deriveCockpit({
+      state: state(),
+      importMeta: RECENT_IMPORT,
+      investigator: "Alice",
+      now: NOW,
+    });
     expect(legacy.sections.changes[0].title).toBe(
       "Import added 0 forensic events · super-timeline count unavailable",
     );
@@ -329,8 +348,18 @@ describe("deriveCockpit — review and card decisions", () => {
     const decisions: CockpitDecisionState = {
       cards: [
         { cardId: "lead:finding:f2", pinned: true, assignee: "Bob", updatedAt: NOW, updatedBy: "Alice" },
-        { cardId: "lead:finding:f1", dismissedAt: "2026-07-30T11:00:00.000Z", updatedAt: NOW, updatedBy: "Alice" },
-        { cardId: "lead:finding:f3", deferredUntil: "2026-07-31T12:00:00.000Z", updatedAt: NOW, updatedBy: "Alice" },
+        {
+          cardId: "lead:finding:f1",
+          dismissedAt: "2026-07-30T11:00:00.000Z",
+          updatedAt: NOW,
+          updatedBy: "Alice",
+        },
+        {
+          cardId: "lead:finding:f3",
+          deferredUntil: "2026-07-31T12:00:00.000Z",
+          updatedAt: NOW,
+          updatedBy: "Alice",
+        },
       ],
       reviews: [],
       history: [],
@@ -354,21 +383,25 @@ describe("deriveCockpit — review and card decisions", () => {
     const result = deriveCockpit({
       state: state({ findings: [finding("f1", "High")] }),
       pinnedFindingIds: ["f1"],
-      workflows: [{
-        findingId: "f1",
-        assignee: "Carol",
-        status: "in_progress",
-        updatedAt: NOW,
-        updatedBy: "Carol",
-      }],
+      workflows: [
+        {
+          findingId: "f1",
+          assignee: "Carol",
+          status: "in_progress",
+          updatedAt: NOW,
+          updatedBy: "Carol",
+        },
+      ],
       decisions: {
-        cards: [{
-          cardId: "lead:finding:f1",
-          pinned: false,
-          assignee: "Bob",
-          updatedAt: "2026-07-29T10:00:00.000Z",
-          updatedBy: "Bob",
-        }],
+        cards: [
+          {
+            cardId: "lead:finding:f1",
+            pinned: false,
+            assignee: "Bob",
+            updatedAt: "2026-07-29T10:00:00.000Z",
+            updatedBy: "Bob",
+          },
+        ],
         reviews: [],
         history: [],
       },

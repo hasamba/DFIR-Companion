@@ -9,7 +9,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 // AbuseIPDB, MalwareBazaar, RockyRaccoon) are opt-in per case. Enabling a provider triggers a
 // re-check of all IOCs on it (see enrichService's per-provider caching).
 export interface EnrichControl {
-  providers: string[];   // enabled provider names
+  providers: string[]; // enabled provider names
 }
 
 // The raw persisted shape, tolerant of the legacy `{ enabled: boolean }` files.
@@ -51,7 +51,7 @@ export class EnrichControlStore {
       return JSON.parse(await readFile(this.path(caseId), "utf8")) as RawControl;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-      if (err instanceof SyntaxError) return null;   // corrupt/unreadable → fall back to default
+      if (err instanceof SyntaxError) return null; // corrupt/unreadable → fall back to default
       throw err;
     }
   }

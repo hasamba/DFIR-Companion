@@ -66,22 +66,28 @@ export class FindingWorkflowStore {
   // are preserved from any existing record. A record whose assignee AND status both end up empty is
   // DROPPED, so the file only ever holds actively-triaged findings. Returns the resulting record, or
   // null when it was cleared (or never existed). Throws on a blank findingId.
-  async patch(caseId: string, findingId: string, patch: FindingWorkflowPatch): Promise<FindingWorkflow | null> {
+  async patch(
+    caseId: string,
+    findingId: string,
+    patch: FindingWorkflowPatch,
+  ): Promise<FindingWorkflow | null> {
     const id = String(findingId ?? "").trim();
     if (!id) throw new Error("findingId is required");
 
     const records = await this.load(caseId);
     const existing = records.find((r) => r.findingId === id);
 
-    const assignee = patch.assignee !== undefined
-      ? String(patch.assignee).trim().slice(0, MAX_ASSIGNEE_LENGTH)
-      : (existing?.assignee ?? "");
+    const assignee =
+      patch.assignee !== undefined
+        ? String(patch.assignee).trim().slice(0, MAX_ASSIGNEE_LENGTH)
+        : (existing?.assignee ?? "");
 
     let status: FindingWorkflowStatus | null;
     if (patch.status !== undefined) {
-      status = patch.status && (FINDING_WORKFLOW_STATUSES as readonly string[]).includes(patch.status)
-        ? patch.status
-        : null;
+      status =
+        patch.status && (FINDING_WORKFLOW_STATUSES as readonly string[]).includes(patch.status)
+          ? patch.status
+          : null;
     } else {
       status = existing?.status ?? null;
     }

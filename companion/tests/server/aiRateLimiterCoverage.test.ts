@@ -25,7 +25,9 @@ beforeEach(async () => {
 async function fireManyPost(path: string, count: number, body?: unknown): Promise<number[]> {
   const out: number[] = [];
   for (let i = 0; i < count; i++) {
-    const res = await request(app).post(path).send(body ?? {});
+    const res = await request(app)
+      .post(path)
+      .send(body ?? {});
     out.push(res.status);
   }
   return out;

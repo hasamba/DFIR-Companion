@@ -39,9 +39,7 @@ function findByContent(dir: string, ext: string, marker: RegExp, what: string): 
     const body = readFileSync(join(dir, f), "utf8");
     if (marker.test(body)) return body;
   }
-  throw new Error(
-    `no ${ext} file in ${dir} contains ${what} — checked ${candidates.length || "none"}`,
-  );
+  throw new Error(`no ${ext} file in ${dir} contains ${what} — checked ${candidates.length || "none"}`);
 }
 
 function main() {

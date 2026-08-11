@@ -1,4 +1,13 @@
-import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import {
+  type AIProvider,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+  type ProviderUsage,
+  ProviderError,
+  httpErrorKind,
+  httpErrorMessage,
+  requestSignal,
+} from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
 
 type FetchFn = typeof fetch;
@@ -48,10 +57,14 @@ export class OpenAIProvider implements AIProvider {
   // rather than hardcoding "OpenAI".
   private get label(): string {
     switch (this.name) {
-      case "openrouter": return "OpenRouter";
-      case "ollama": return "Ollama";
-      case "litellm": return "LiteLLM";
-      default: return "OpenAI";
+      case "openrouter":
+        return "OpenRouter";
+      case "ollama":
+        return "Ollama";
+      case "litellm":
+        return "LiteLLM";
+      default:
+        return "OpenAI";
     }
   }
 
@@ -86,12 +99,12 @@ export class OpenAIProvider implements AIProvider {
       if (promptTokens + margin >= ctx - MIN_OUTPUT) {
         throw new ProviderError(
           `${this.label} prompt is ~${promptTokens.toLocaleString()} tokens, over the model's ${ctx.toLocaleString()}-token context. ` +
-          `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
-          `or set DFIR_AI_CONTEXT_TOKENS to your model's real window.`,
+            `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
+            `or set DFIR_AI_CONTEXT_TOKENS to your model's real window.`,
           "context",
         );
       }
-      const room = ctx - promptTokens - margin;   // shrink reserved output to fit if needed
+      const room = ctx - promptTokens - margin; // shrink reserved output to fit if needed
       if (maxTokens === undefined || maxTokens > room) maxTokens = Math.max(MIN_OUTPUT, room);
     }
 
@@ -115,9 +128,10 @@ export class OpenAIProvider implements AIProvider {
         signal: requestSignal(timeoutMs, req.signal),
       });
     } catch (err) {
-      const msg = (err as Error).name === "TimeoutError"
-        ? `${this.label} request timed out after ${timeoutMs}ms`
-        : `${this.label} transport error: ${(err as Error).message}`;
+      const msg =
+        (err as Error).name === "TimeoutError"
+          ? `${this.label} request timed out after ${timeoutMs}ms`
+          : `${this.label} transport error: ${(err as Error).message}`;
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {

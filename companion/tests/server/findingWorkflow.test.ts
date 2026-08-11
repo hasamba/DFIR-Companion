@@ -30,7 +30,12 @@ describe("finding-workflow routes", () => {
       .patch("/cases/c1/findings/f-1/workflow")
       .send({ assignee: "Alice", status: "in_progress", updatedBy: "Bob" });
     expect(res.status).toBe(200);
-    expect(res.body.record).toMatchObject({ findingId: "f-1", assignee: "Alice", status: "in_progress", updatedBy: "Bob" });
+    expect(res.body.record).toMatchObject({
+      findingId: "f-1",
+      assignee: "Alice",
+      status: "in_progress",
+      updatedBy: "Bob",
+    });
     expect(pinged).toEqual(["c1"]);
 
     const list = await request(app).get("/cases/c1/finding-workflow");
@@ -48,7 +53,9 @@ describe("finding-workflow routes", () => {
   it("PATCH with empty assignee + empty status clears the record (record: null)", async () => {
     const { app } = await appWith();
     await request(app).patch("/cases/c1/findings/f-1/workflow").send({ assignee: "Alice", status: "new" });
-    const res = await request(app).patch("/cases/c1/findings/f-1/workflow").send({ assignee: "", status: "" });
+    const res = await request(app)
+      .patch("/cases/c1/findings/f-1/workflow")
+      .send({ assignee: "", status: "" });
     expect(res.status).toBe(200);
     expect(res.body.record).toBeNull();
     const list = await request(app).get("/cases/c1/finding-workflow");

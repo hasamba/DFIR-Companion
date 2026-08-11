@@ -26,7 +26,10 @@ function realSources(e: ForensicEvent): string[] {
 
 // Build value→sources index across all events, then look up each IOC value. Returns a map of
 // iocId → sorted distinct source names, ONLY for IOCs that at least one sourced event references.
-export function deriveIocSources(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, string[]> {
+export function deriveIocSources(
+  iocs: readonly IOC[],
+  events: readonly ForensicEvent[],
+): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   if (iocs.length === 0 || events.length === 0) return out;
 
@@ -36,7 +39,10 @@ export function deriveIocSources(iocs: readonly IOC[], events: readonly Forensic
     const key = raw.trim().toLowerCase();
     if (key.length < 3) return;
     let set = index.get(key);
-    if (!set) { set = new Set<string>(); index.set(key, set); }
+    if (!set) {
+      set = new Set<string>();
+      index.set(key, set);
+    }
     for (const s of sources) set.add(s);
   };
 
@@ -62,7 +68,10 @@ export function deriveIocSources(iocs: readonly IOC[], events: readonly Forensic
 }
 
 // Convenience for callers that want only the corroborated IOCs (2+ distinct tools).
-export function corroboratedIocSources(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, string[]> {
+export function corroboratedIocSources(
+  iocs: readonly IOC[],
+  events: readonly ForensicEvent[],
+): Record<string, string[]> {
   const all = deriveIocSources(iocs, events);
   const out: Record<string, string[]> = {};
   for (const [id, sources] of Object.entries(all)) if (sources.length >= 2) out[id] = sources;

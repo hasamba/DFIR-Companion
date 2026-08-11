@@ -6,7 +6,13 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
-import { emptyState, type Finding, type ForensicEvent, type InvestigationState, type TimelineEntry } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type Finding,
+  type ForensicEvent,
+  type InvestigationState,
+  type TimelineEntry,
+} from "../../src/analysis/stateTypes.js";
 
 // Case memory (#165): synthesis logs itself to the Investigation Log (never wiping prior entries),
 // and the known-unknowns / candidate-actor blocks are injected into the synthesis + hunt prompts.
@@ -15,23 +21,54 @@ let caseStore: CaseStore;
 let stateStore: StateStore;
 
 const SYNTH_DELTA = JSON.stringify({
-  findings: [{ id: "f1", severity: "High", title: "PS abuse", description: "encoded cmd",
-    relatedIocs: [], mitreTechniques: ["T1059"], status: "open", relatedEventIds: ["e1"] }],
-  iocs: [], mitreTechniques: [{ id: "T1059", name: "Command Interpreter" }],
-  attackerPath: "p", summary: "s", forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+  findings: [
+    {
+      id: "f1",
+      severity: "High",
+      title: "PS abuse",
+      description: "encoded cmd",
+      relatedIocs: [],
+      mitreTechniques: ["T1059"],
+      status: "open",
+      relatedEventIds: ["e1"],
+    },
+  ],
+  iocs: [],
+  mitreTechniques: [{ id: "T1059", name: "Command Interpreter" }],
+  attackerPath: "p",
+  summary: "s",
+  forensicEvents: [],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "",
 });
 
 function event(id: string, timestamp = "2026-05-20T09:00:00Z"): ForensicEvent {
-  return { id, timestamp, description: "x", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+  return {
+    id,
+    timestamp,
+    description: "x",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 // A pre-existing Critical finding covering a few common tactics — drives both the known-unknowns
 // "uncovered phases" line and (with broadly-used techniques) the adversary-hint overlap.
 function seriousFinding(): Finding {
   return {
-    id: "pf1", severity: "Critical", title: "Initial compromise", description: "",
-    relatedIocs: [], sourceScreenshots: [], mitreTechniques: ["T1059", "T1566", "T1027", "T1003", "T1105"],
-    firstSeen: "2026-05-20T08:00:00Z", lastUpdated: "2026-05-20T08:00:00Z", status: "open",
+    id: "pf1",
+    severity: "Critical",
+    title: "Initial compromise",
+    description: "",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: ["T1059", "T1566", "T1027", "T1003", "T1105"],
+    firstSeen: "2026-05-20T08:00:00Z",
+    lastUpdated: "2026-05-20T08:00:00Z",
+    status: "open",
   };
 }
 
@@ -50,7 +87,12 @@ describe("synthesize → Investigation Log (#165)", () => {
   it("appends one synthesis entry and preserves prior timeline entries", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(event("e1"));
-    const prior: TimelineEntry = { timestamp: "2026-05-20T08:30:00Z", windowSequence: 1, description: "THOR import: 5 finding(s) kept", sourceScreenshots: [] };
+    const prior: TimelineEntry = {
+      timestamp: "2026-05-20T08:30:00Z",
+      windowSequence: 1,
+      description: "THOR import: 5 finding(s) kept",
+      sourceScreenshots: [],
+    };
     seeded.timeline.push(prior);
     await stateStore.save(seeded);
 
@@ -67,7 +109,9 @@ describe("synthesize → Investigation Log (#165)", () => {
     // exactly one new synthesis entry was added
     const synthEntries = reloaded.timeline.filter((t) => t.description.startsWith("Synthesis:"));
     expect(synthEntries).toHaveLength(1);
-    expect(synthEntries[0].description).toMatch(/Synthesis: 1 finding\(s\) \(1 new, 0 reclassified\), 1 event\(s\), 0 IOC\(s\)/);
+    expect(synthEntries[0].description).toMatch(
+      /Synthesis: 1 finding\(s\) \(1 new, 0 reclassified\), 1 event\(s\), 0 IOC\(s\)/,
+    );
   });
 
   it("does not append a log entry when synthesis is skipped (unchanged inputs)", async () => {
@@ -77,16 +121,24 @@ describe("synthesize → Investigation Log (#165)", () => {
 
     const provider = new MockProvider("mock", SYNTH_DELTA);
     const analyze = vi.spyOn(provider, "analyze");
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     await pipeline.synthesize("c1");
-    const afterFirst = (await stateStore.load("c1")).timeline.filter((t) => t.description.startsWith("Synthesis:")).length;
+    const afterFirst = (await stateStore.load("c1")).timeline.filter((t) =>
+      t.description.startsWith("Synthesis:"),
+    ).length;
     expect(afterFirst).toBe(1);
     expect(analyze).toHaveBeenCalledTimes(1);
 
     await pipeline.synthesize("c1"); // unchanged → skipped
     expect(analyze).toHaveBeenCalledTimes(1);
-    const afterSkip = (await stateStore.load("c1")).timeline.filter((t) => t.description.startsWith("Synthesis:")).length;
+    const afterSkip = (await stateStore.load("c1")).timeline.filter((t) =>
+      t.description.startsWith("Synthesis:"),
+    ).length;
     expect(afterSkip).toBe(1); // no second entry
   });
 });
@@ -96,7 +148,11 @@ describe("synthesize → prompt grounding blocks (#165)", () => {
     await stateStore.save(state);
     const provider = new MockProvider("mock", SYNTH_DELTA);
     const analyze = vi.spyOn(provider, "analyze");
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
     await pipeline.synthesize("c1", { force: true });
     // analyze(req) takes one AnalyzeRequest object — grab its userPrompt.
     return String(analyze.mock.calls[0]?.[0]?.userPrompt ?? "");
@@ -136,7 +192,11 @@ describe("suggestHunts → known-unknowns block (#165)", () => {
 
     const provider = new MockProvider("mock", JSON.stringify({ suggestions: [] }));
     const analyze = vi.spyOn(provider, "analyze");
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     await pipeline.suggestHunts("c1");
     expect(analyze).toHaveBeenCalledTimes(1);

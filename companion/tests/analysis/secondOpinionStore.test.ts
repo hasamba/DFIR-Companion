@@ -19,17 +19,31 @@ const SO: SecondOpinion = {
       title: "Cobalt Strike C2 beacon",
       bSeverity: "High",
       finding: {
-        id: "g3", severity: "High", confidence: 75, title: "Cobalt Strike C2 beacon",
-        description: "beacon", relatedIocs: ["i9"], sourceScreenshots: [], mitreTechniques: ["T1071"],
-        firstSeen: "2026-06-01T00:00:00.000Z", lastUpdated: "2026-06-01T00:00:00.000Z", status: "open",
+        id: "g3",
+        severity: "High",
+        confidence: 75,
+        title: "Cobalt Strike C2 beacon",
+        description: "beacon",
+        relatedIocs: ["i9"],
+        sourceScreenshots: [],
+        mitreTechniques: ["T1071"],
+        firstSeen: "2026-06-01T00:00:00.000Z",
+        lastUpdated: "2026-06-01T00:00:00.000Z",
+        status: "open",
       },
       rationale: "Backed by IOC i9.",
       recommendation: "accept_b",
       status: "pending",
     },
     {
-      id: "severity:suspicious-logon", kind: "severity", title: "Suspicious logon",
-      aSeverity: "Medium", bSeverity: "High", rationale: "", recommendation: "review", status: "accepted",
+      id: "severity:suspicious-logon",
+      kind: "severity",
+      title: "Suspicious logon",
+      aSeverity: "Medium",
+      bSeverity: "High",
+      rationale: "",
+      recommendation: "review",
+      status: "accepted",
     },
   ],
 };
@@ -68,7 +82,10 @@ describe("SecondOpinionStore", () => {
   });
 
   it("coerces a malformed persisted recommendation/status to safe defaults", async () => {
-    await store.save("c1", { ...SO, deltas: [{ ...SO.deltas[0], recommendation: "bogus" as never, status: "weird" as never }] });
+    await store.save("c1", {
+      ...SO,
+      deltas: [{ ...SO.deltas[0], recommendation: "bogus" as never, status: "weird" as never }],
+    });
     const loaded = await store.load("c1");
     expect(loaded!.deltas[0].recommendation).toBe("review");
     expect(loaded!.deltas[0].status).toBe("pending");

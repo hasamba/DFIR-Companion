@@ -18,7 +18,10 @@ export function formatEmail(event: NotificationEvent): EmailContent {
     .concat(event.url ? ["", event.url] : [])
     .join("\n");
 
-  const bullets = event.lines.filter(Boolean).map((l) => `<li>${esc(l)}</li>`).join("");
+  const bullets = event.lines
+    .filter(Boolean)
+    .map((l) => `<li>${esc(l)}</li>`)
+    .join("");
   const link = event.url ? `<p><a href="${esc(event.url)}">Open case</a></p>` : "";
   const html =
     `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif">` +
@@ -38,9 +41,9 @@ export interface Rfc822Options {
   subject: string;
   text: string;
   html: string;
-  date: string;            // ISO timestamp
-  messageId?: string;      // defaults to a deterministic id derived from the headers
-  boundary?: string;       // defaults to a deterministic boundary (so tests are stable)
+  date: string; // ISO timestamp
+  messageId?: string; // defaults to a deterministic id derived from the headers
+  boundary?: string; // defaults to a deterministic boundary (so tests are stable)
 }
 
 // Build a complete RFC 5322 message (headers + multipart/alternative body) ready for SMTP DATA.
@@ -83,7 +86,6 @@ export function buildRfc822Message(opts: Rfc822Options): string {
 
 // RFC 2047 encoded-word for a non-ASCII subject; raw when it's plain ASCII.
 function encodeHeaderWord(s: string): string {
-   
   if (/^[\x20-\x7e]*$/.test(s)) return s;
   return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
 }
@@ -109,9 +111,5 @@ function formatRfc2822Date(iso: string): string {
 }
 
 function esc(s: string): string {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

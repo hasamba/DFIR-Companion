@@ -28,17 +28,17 @@ import { byEventTime } from "./forensicSort.js";
 export type AnomalyKind = "peer" | "self";
 
 export interface TimelineAnomaly {
-  id: string;             // stable: `${asset}:${bucketStart}`
-  asset: string;          // affected host or account
-  bucketStart: string;    // ISO timestamp of the bucket's start
-  bucketEnd: string;      // ISO timestamp of the bucket's end
-  eventCount: number;     // events in this bucket for this asset
-  medianCount: number;    // baseline the shown ratio is measured against (peer or self median)
-  ratio: number;          // eventCount / baseline (rounded to 1 decimal) — the stronger method's
-  severity: Severity;     // Critical ≥ 10×, High ≥ 7×, else Medium
-  kind: AnomalyKind;      // the method that produced the shown (stronger) ratio
+  id: string; // stable: `${asset}:${bucketStart}`
+  asset: string; // affected host or account
+  bucketStart: string; // ISO timestamp of the bucket's start
+  bucketEnd: string; // ISO timestamp of the bucket's end
+  eventCount: number; // events in this bucket for this asset
+  medianCount: number; // baseline the shown ratio is measured against (peer or self median)
+  ratio: number; // eventCount / baseline (rounded to 1 decimal) — the stronger method's
+  severity: Severity; // Critical ≥ 10×, High ≥ 7×, else Medium
+  kind: AnomalyKind; // the method that produced the shown (stronger) ratio
   methods: AnomalyKind[]; // every method that flagged this (asset, bucket) — "peer" and/or "self"
-  eventIds: string[];     // ids of the underlying events, chronological
+  eventIds: string[]; // ids of the underlying events, chronological
 }
 
 export interface TimelineAnomalyResult {
@@ -50,11 +50,11 @@ export interface TimelineAnomalyResult {
 }
 
 export interface AnomalyOptions {
-  bucketMinutes?: number;   // bucket width in minutes; default 15
-  spikeFactor?: number;     // peer-median ratio threshold to flag; default 5
-  minEvents?: number;       // minimum events in the spike bucket to flag; default 3
-  selfFactor?: number;      // self-median ratio threshold; default = spikeFactor
-  selfMinBuckets?: number;  // min active buckets for an asset's self-baseline; default 3
+  bucketMinutes?: number; // bucket width in minutes; default 15
+  spikeFactor?: number; // peer-median ratio threshold to flag; default 5
+  minEvents?: number; // minimum events in the spike bucket to flag; default 3
+  selfFactor?: number; // self-median ratio threshold; default = spikeFactor
+  selfMinBuckets?: number; // min active buckets for an asset's self-baseline; default 3
 }
 
 export const DEFAULT_BUCKET_MINUTES = 15;
@@ -74,9 +74,7 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function deriveAnomSeverity(ratio: number): Severity {
@@ -107,9 +105,15 @@ export function detectTimelineAnomalies(
     const floorMs = bucketFloorMs(Date.parse(e.timestamp), bucketMs);
     const asset = (e.asset ?? "").trim() || "(unknown)";
     let assetMap = buckets.get(floorMs);
-    if (!assetMap) { assetMap = new Map(); buckets.set(floorMs, assetMap); }
+    if (!assetMap) {
+      assetMap = new Map();
+      buckets.set(floorMs, assetMap);
+    }
     let evs = assetMap.get(asset);
-    if (!evs) { evs = []; assetMap.set(asset, evs); }
+    if (!evs) {
+      evs = [];
+      assetMap.set(asset, evs);
+    }
     evs.push(e);
   }
 
@@ -119,7 +123,14 @@ export function detectTimelineAnomalies(
   // creates the entry; a second method appends to `methods` and, when stronger, takes over the
   // shown ratio/baseline/severity/kind.
   const flagged = new Map<string, TimelineAnomaly>();
-  const flag = (asset: string, floorMs: number, evs: ForensicEvent[], baseline: number, rawRatio: number, kind: AnomalyKind): void => {
+  const flag = (
+    asset: string,
+    floorMs: number,
+    evs: ForensicEvent[],
+    baseline: number,
+    rawRatio: number,
+    kind: AnomalyKind,
+  ): void => {
     const bucketStart = msToIso(floorMs);
     const id = `${asset}:${bucketStart}`;
     const ratio = Math.round(rawRatio * 10) / 10;
@@ -135,12 +146,16 @@ export function detectTimelineAnomalies(
       return;
     }
     flagged.set(id, {
-      id, asset, bucketStart, bucketEnd: msToIso(floorMs + bucketMs),
+      id,
+      asset,
+      bucketStart,
+      bucketEnd: msToIso(floorMs + bucketMs),
       eventCount: evs.length,
       medianCount: Math.round(baseline * 10) / 10,
       ratio,
       severity: deriveAnomSeverity(rawRatio),
-      kind, methods: [kind],
+      kind,
+      methods: [kind],
       eventIds: evs.map((e) => e.id),
     });
   };
@@ -162,7 +177,10 @@ export function detectTimelineAnomalies(
   for (const [floorMs, assetMap] of buckets) {
     for (const [asset, evs] of assetMap) {
       let bm = perAsset.get(asset);
-      if (!bm) { bm = new Map(); perAsset.set(asset, bm); }
+      if (!bm) {
+        bm = new Map();
+        perAsset.set(asset, bm);
+      }
       bm.set(floorMs, evs);
     }
   }
@@ -194,12 +212,14 @@ export function detectTimelineAnomalies(
 export function anomalyEnvOptions(): AnomalyOptions {
   return {
     bucketMinutes: process.env.DFIR_ANOMALY_BUCKET_MINUTES
-      ? Number(process.env.DFIR_ANOMALY_BUCKET_MINUTES) : undefined,
+      ? Number(process.env.DFIR_ANOMALY_BUCKET_MINUTES)
+      : undefined,
     spikeFactor: process.env.DFIR_ANOMALY_SPIKE_FACTOR
-      ? Number(process.env.DFIR_ANOMALY_SPIKE_FACTOR) : undefined,
-    minEvents: process.env.DFIR_ANOMALY_MIN_EVENTS
-      ? Number(process.env.DFIR_ANOMALY_MIN_EVENTS) : undefined,
+      ? Number(process.env.DFIR_ANOMALY_SPIKE_FACTOR)
+      : undefined,
+    minEvents: process.env.DFIR_ANOMALY_MIN_EVENTS ? Number(process.env.DFIR_ANOMALY_MIN_EVENTS) : undefined,
     selfFactor: process.env.DFIR_ANOMALY_SELF_FACTOR
-      ? Number(process.env.DFIR_ANOMALY_SELF_FACTOR) : undefined,
+      ? Number(process.env.DFIR_ANOMALY_SELF_FACTOR)
+      : undefined,
   };
 }

@@ -20,13 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Finding } from "./stateTypes.js";
 
-export type ComplianceFramework =
-  | "NIST 800-53"
-  | "PCI-DSS"
-  | "HIPAA"
-  | "GDPR"
-  | "SEC"
-  | "ISO 27001";
+export type ComplianceFramework = "NIST 800-53" | "PCI-DSS" | "HIPAA" | "GDPR" | "SEC" | "ISO 27001";
 
 // A statutory/regulatory notification clock. `within` is an ISO-8601 duration, `unit` says whether
 // it runs in calendar or business days, and `from` is the legal trigger — all three are needed to
@@ -96,18 +90,19 @@ function coerceClock(raw: unknown): NotificationClock | undefined {
 
 function coerce(raw: unknown): ComplianceMapDataset {
   const obj = raw as Partial<ComplianceMapDataset>;
-  const map =
-    obj?.map && typeof obj.map === "object" && !Array.isArray(obj.map) ? obj.map : {};
+  const map = obj?.map && typeof obj.map === "object" && !Array.isArray(obj.map) ? obj.map : {};
   const cleaned: Record<string, ComplianceMapping[]> = {};
   for (const [tech, entries] of Object.entries(map)) {
     if (!Array.isArray(entries)) continue;
     const rows = entries
-      .filter((e): e is ComplianceMapping =>
-        !!e &&
-        typeof e.framework === "string" &&
-        typeof e.control === "string" &&
-        typeof e.title === "string" &&
-        typeof e.obligation === "string")
+      .filter(
+        (e): e is ComplianceMapping =>
+          !!e &&
+          typeof e.framework === "string" &&
+          typeof e.control === "string" &&
+          typeof e.title === "string" &&
+          typeof e.obligation === "string",
+      )
       .map((e) => {
         const notification = coerceClock(e.notification);
         return {
@@ -154,9 +149,7 @@ export function loadComplianceMap(): ComplianceMapDataset {
   }
   if (!warned) {
     warned = true;
-    console.warn(
-      "[compliance] compliance-map.json not found or invalid — compliance mapping disabled.",
-    );
+    console.warn("[compliance] compliance-map.json not found or invalid — compliance mapping disabled.");
   }
   cached = EMPTY;
   return cached;

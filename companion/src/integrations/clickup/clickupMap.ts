@@ -17,16 +17,23 @@ export function clickupPriority(priority: StepPriority): number {
 // have arbitrary custom statuses, so the push resolves these against the list's real status names.
 export function clickupStatusCandidates(status: PlaybookStatus): string[] {
   switch (status) {
-    case "done": return ["complete", "completed", "done", "closed"];
-    case "in_progress": return ["in progress", "doing", "wip", "in review", "open"];
-    case "skipped": return ["closed", "complete", "won't do", "wont do", "canceled", "cancelled", "done"];
-    default: return ["to do", "todo", "open", "not started", "backlog", "new"];
+    case "done":
+      return ["complete", "completed", "done", "closed"];
+    case "in_progress":
+      return ["in progress", "doing", "wip", "in review", "open"];
+    case "skipped":
+      return ["closed", "complete", "won't do", "wont do", "canceled", "cancelled", "done"];
+    default:
+      return ["to do", "todo", "open", "not started", "backlog", "new"];
   }
 }
 
 // Resolve a playbook status to a status name that actually exists on the list (case-insensitive),
 // or undefined to let ClickUp use the list's default status.
-export function resolveClickUpStatus(listStatuses: readonly string[], status: PlaybookStatus): string | undefined {
+export function resolveClickUpStatus(
+  listStatuses: readonly string[],
+  status: PlaybookStatus,
+): string | undefined {
   const have = new Set(listStatuses.map((s) => s.toLowerCase()));
   for (const name of clickupStatusCandidates(status)) if (have.has(name)) return name;
   return undefined;
@@ -48,7 +55,9 @@ export function mapPlaybookTaskToClickUp(task: PlaybookTask, statusName?: string
     task.assignee ? `Assignee: ${task.assignee}` : "",
     task.notes ? `Notes: ${task.notes}` : "",
     `— DFIR Companion (${task.source}, ${task.priority})`,
-  ].filter(Boolean).join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const body: ClickUpTaskBody = {
     name: task.title,
@@ -57,6 +66,9 @@ export function mapPlaybookTaskToClickUp(task: PlaybookTask, statusName?: string
   };
   if (statusName) body.status = statusName;
   const due = parseDueMs(task.dueDate);
-  if (due !== undefined) { body.due_date = due; body.due_date_time = false; }
+  if (due !== undefined) {
+    body.due_date = due;
+    body.due_date_time = false;
+  }
   return body;
 }

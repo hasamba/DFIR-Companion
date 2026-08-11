@@ -93,7 +93,8 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     // `applySavedViewForCase()` in `public/dashboard.html`.
     id: "now",
     name: "Now",
-    description: "Decision cockpit — active leads, contradictions, gaps, live work, changes and report blockers.",
+    description:
+      "Decision cockpit — active leads, contradictions, gaps, live work, changes and report blockers.",
     sections: ["sec-now"],
     defaultSort: "severity",
     reportTemplateId: "standard",
@@ -101,7 +102,8 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
   {
     id: "analyst",
     name: "Analyst",
-    description: "Dense, deep-investigation layout with the Now cockpit and every core workspace. No severity filter.",
+    description:
+      "Dense, deep-investigation layout with the Now cockpit and every core workspace. No severity filter.",
     sections: [
       "sec-now",
       "sec-ask",
@@ -212,7 +214,8 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
   {
     id: "report",
     name: "Report",
-    description: "Report drafting — exec summary, attacker path, findings, IOCs and metadata. Raw timeline hidden.",
+    description:
+      "Report drafting — exec summary, attacker path, findings, IOCs and metadata. Raw timeline hidden.",
     sections: [
       "sec-exec",
       "sec-narrative",
@@ -234,7 +237,8 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
   {
     id: "deep-dive",
     name: "Deep-Dive",
-    description: "Hypothesis testing — timeline + evidence chain large, full detail, comments/tags/threads enabled.",
+    description:
+      "Hypothesis testing — timeline + evidence chain large, full detail, comments/tags/threads enabled.",
     sections: [
       "sec-deep-pass",
       "sec-sessions",
@@ -273,7 +277,8 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
   {
     id: "hunt-prep",
     name: "Hunt Prep",
-    description: "Planning collections — playbook, next steps, ATT&CK, adversary hints and D3FEND countermeasures to drive hunts.",
+    description:
+      "Planning collections — playbook, next steps, ATT&CK, adversary hints and D3FEND countermeasures to drive hunts.",
     sections: [
       "sec-hunt-workbench",
       "sec-playbook",

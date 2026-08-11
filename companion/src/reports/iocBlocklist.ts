@@ -22,11 +22,18 @@ export interface IocBlocklistOptions {
 // ── Severity helpers ──────────────────────────────────────────────────────────
 
 const SEVERITY_RANK: Record<Severity, number> = {
-  Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0,
+  Critical: 4,
+  High: 3,
+  Medium: 2,
+  Low: 1,
+  Info: 0,
 };
 
 const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
-  malicious: 3, suspicious: 2, harmless: 1, unknown: 0,
+  malicious: 3,
+  suspicious: 2,
+  harmless: 1,
+  unknown: 0,
 };
 
 function worstVerdict(ioc: IOC): IocEnrichment["verdict"] | null {

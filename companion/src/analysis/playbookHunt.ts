@@ -24,13 +24,13 @@ const severityEnum = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 // One raw suggestion from the model. Every field is lenient (`.catch`) so one off value never
 // rejects the whole reply (mirrors `huntSuggestionSchema` and `responseSchema.ts`).
 export const playbookHuntSuggestionSchema = z.object({
-  taskId: z.string().catch(""),              // the playbook task this hunt is for (echoed from the list)
+  taskId: z.string().catch(""), // the playbook task this hunt is for (echoed from the list)
   endpointRelated: z.boolean().catch(false), // the model's judgment — false → dropped by the sanitizer
-  title: z.string().catch(""),               // short hunt name
-  rationale: z.string().catch(""),           // why: which task triggered it + what the query looks for + how to triage hits
-  vql: z.string().catch(""),                 // a single CLIENT-side Velociraptor VQL statement
-  targetHost: z.string().catch(""),          // the ONE host the model scoped it to (from the known list), "" = fleet-wide
-  severity: severityEnum.catch("Medium"),    // priority of the underlying threat (drives display ordering)
+  title: z.string().catch(""), // short hunt name
+  rationale: z.string().catch(""), // why: which task triggered it + what the query looks for + how to triage hits
+  vql: z.string().catch(""), // a single CLIENT-side Velociraptor VQL statement
+  targetHost: z.string().catch(""), // the ONE host the model scoped it to (from the known list), "" = fleet-wide
+  severity: severityEnum.catch("Medium"), // priority of the underlying threat (drives display ordering)
   mitreTechniques: z.array(z.string()).catch([]),
 });
 
@@ -55,7 +55,7 @@ export interface PlaybookHuntSuggestion {
   severity: Severity;
   mitreTechniques: string[];
   mode: HuntMode;
-  targetHost?: string;       // a real, observed host — present ONLY when mode === "collection"
+  targetHost?: string; // a real, observed host — present ONLY when mode === "collection"
 }
 
 // Default cap on suggestions per generation (override via DFIR_PBHUNT_SUGGEST_MAX).
@@ -76,7 +76,7 @@ function isOpenTask(t: PlaybookTask): boolean {
 // case-folded so "ALClient07" and "alclient07" collapse to one. These are the ONLY values that may
 // become a collection target (accounts are NOT Velociraptor client hostnames, so they're excluded).
 export function knownEndpoints(state: InvestigationState): string[] {
-  const seen = new Map<string, string>();   // lowercased → first-seen canonical casing
+  const seen = new Map<string, string>(); // lowercased → first-seen canonical casing
   for (const e of state.forensicTimeline ?? []) {
     const host = (e.asset ?? "").trim();
     if (!host) continue;
@@ -98,8 +98,8 @@ function hostMentioned(text: string, host: string): boolean {
   if (!tokens) return false;
   for (const t of tokens) {
     if (t === h) return true;
-    if (t.startsWith(h + ".")) return true;   // host is the leading label of an FQDN token
-    if (h.startsWith(t + ".")) return true;   // token is the leading label of the host's FQDN
+    if (t.startsWith(h + ".")) return true; // host is the leading label of an FQDN token
+    if (h.startsWith(t + ".")) return true; // token is the leading label of the host's FQDN
   }
   return false;
 }
@@ -133,7 +133,10 @@ export function deriveTaskEndpoints(state: InvestigationState, task: PlaybookTas
 
 // Precompute the endpoints for each task once (keyed by task id) — fed to both the prompt renderer
 // and the sanitizer so the mode decision matches the context the model saw.
-export function buildTaskEndpointsMap(state: InvestigationState, tasks: readonly PlaybookTask[]): Map<string, string[]> {
+export function buildTaskEndpointsMap(
+  state: InvestigationState,
+  tasks: readonly PlaybookTask[],
+): Map<string, string[]> {
   const map = new Map<string, string[]>();
   for (const t of tasks) map.set(t.id, deriveTaskEndpoints(state, t));
   return map;
@@ -172,20 +175,24 @@ export function sanitizePlaybookHuntSuggestions(
   const out: PlaybookHuntSuggestion[] = [];
   const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
   for (const s of raw ?? []) {
-    if (!s?.endpointRelated) continue;              // the issue's core rule — only endpoint tasks get a hunt
+    if (!s?.endpointRelated) continue; // the issue's core rule — only endpoint tasks get a hunt
     const vql = String(s?.vql ?? "").trim();
     const title = String(s?.title ?? "").trim();
-    if (!vql || !title) continue;                   // no query or no name → nothing to deploy
+    if (!vql || !title) continue; // no query or no name → nothing to deploy
     const taskId = String(s?.taskId ?? "").trim();
     const taskEndpoints = endpointsByTaskId.get(taskId) ?? [];
     const { mode, targetHost } = resolveHuntMode(String(s?.targetHost ?? ""), taskEndpoints, known);
     out.push({
       taskId,
       title: title.slice(0, MAX_TITLE_LEN),
-      rationale: String(s?.rationale ?? "").trim().slice(0, MAX_RATIONALE_LEN),
+      rationale: String(s?.rationale ?? "")
+        .trim()
+        .slice(0, MAX_RATIONALE_LEN),
       vql: vql.slice(0, MAX_VQL_LEN),
       severity: s?.severity ?? "Medium",
-      mitreTechniques: dedupeStrings((s?.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean)).slice(0, 20),
+      mitreTechniques: dedupeStrings(
+        (s?.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean),
+      ).slice(0, 20),
       mode,
       ...(targetHost ? { targetHost } : {}),
     });
@@ -197,7 +204,10 @@ export function sanitizePlaybookHuntSuggestions(
 // Render the OPEN playbook tasks for the model, each annotated with the endpoints it's already known
 // to touch (so the model classifies endpoint-relatedness with evidence and picks a REAL targetHost
 // instead of inventing one). Done/skipped tasks are excluded. Capped description for the budget.
-export function renderPlaybookHuntTasks(tasks: readonly PlaybookTask[], endpointsByTaskId: Map<string, string[]>): string {
+export function renderPlaybookHuntTasks(
+  tasks: readonly PlaybookTask[],
+  endpointsByTaskId: Map<string, string[]>,
+): string {
   const open = (tasks ?? []).filter(isOpenTask);
   if (!open.length) return "(no open playbook tasks)";
   return open
@@ -220,12 +230,12 @@ export function renderKnownEndpoints(known: readonly string[]): string {
 // relevance so a small cap keeps the high-value artifacts. Admin/Server/Demo/Reporting are never
 // endpoint hunts → dropped.
 function artifactRelevanceRank(name: string): number {
-  if (/^(Admin|Server|Demo|Reporting|Notebooks|Github)\./i.test(name)) return 99;   // dropped
+  if (/^(Admin|Server|Demo|Reporting|Notebooks|Github)\./i.test(name)) return 99; // dropped
   if (/^Windows\./i.test(name)) return 0;
   if (/^DetectRaptor\./i.test(name)) return 1;
   if (/^Custom\./i.test(name)) return 2;
   if (/^(Generic|Exchange|Elastic)\./i.test(name)) return 3;
-  return 5;   // Linux./MacOS./other — kept, lower priority (most cases are Windows; raw plugins cover the rest)
+  return 5; // Linux./MacOS./other — kept, lower priority (most cases are Windows; raw plugins cover the rest)
 }
 
 // Render the Velociraptor server's available CLIENT artifact names for the prompt — the model may
@@ -241,10 +251,10 @@ export function renderAvailableArtifacts(names: readonly string[], max = 150): s
     if (!v || seen.has(v)) continue;
     seen.add(v);
     const rank = artifactRelevanceRank(v);
-    if (rank >= 99) continue;   // never an endpoint hunt
+    if (rank >= 99) continue; // never an endpoint hunt
     ranked.push({ name: v, rank, i: ranked.length });
   }
-  ranked.sort((a, b) => (a.rank - b.rank) || (a.i - b.i));   // by relevance, stable within a rank
+  ranked.sort((a, b) => a.rank - b.rank || a.i - b.i); // by relevance, stable within a rank
   const out = ranked.slice(0, cap).map((r) => r.name);
   return out.length ? out.join(", ") : "(artifact list unavailable — use raw VQL plugins only)";
 }
@@ -261,7 +271,13 @@ export function hasPlaybookHuntMaterial(state: InvestigationState, tasks: readon
 
 // Severity rank for display ordering (Critical first) — exposed for the dashboard so playbook-hunt
 // ordering stays consistent with the rest of the app.
-export const PLAYBOOK_HUNT_SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+export const PLAYBOOK_HUNT_SEVERITY_RANK: Record<Severity, number> = {
+  Critical: 0,
+  High: 1,
+  Medium: 2,
+  Low: 3,
+  Info: 4,
+};
 
 // ── Persistence + staleness (suggestions survive a page refresh) ─────────────────────────────
 // Suggestions are generated on demand but PERSISTED per case so they don't vanish on reload. A
@@ -272,17 +288,25 @@ export const PLAYBOOK_HUNT_SEVERITY_RANK: Record<Severity, number> = { Critical:
 // mental model of "this hunt is for THIS task".
 
 export interface PersistedPlaybookHunts {
-  generatedAt: string;                       // when the analyst last generated (ISO)
-  suggestions: PlaybookHuntSuggestion[];     // each carries its taskId
-  taskHashes: Record<string, string>;        // taskId → task fingerprint at generation time
+  generatedAt: string; // when the analyst last generated (ISO)
+  suggestions: PlaybookHuntSuggestion[]; // each carries its taskId
+  taskHashes: Record<string, string>; // taskId → task fingerprint at generation time
 }
 
-export const EMPTY_PERSISTED_HUNTS: PersistedPlaybookHunts = { generatedAt: "", suggestions: [], taskHashes: {} };
+export const EMPTY_PERSISTED_HUNTS: PersistedPlaybookHunts = {
+  generatedAt: "",
+  suggestions: [],
+  taskHashes: {},
+};
 
 // Deterministic FNV-1a fingerprint of the task fields that drive a suggestion (title + description,
 // whitespace-normalized). A change here means the task was edited/reworded → its hunt is stale.
 export function taskFingerprint(task: { title?: string; description?: string }): string {
-  const norm = `${String(task?.title ?? "").replace(/\s+/g, " ").trim()}\u0000${String(task?.description ?? "").replace(/\s+/g, " ").trim()}`;
+  const norm = `${String(task?.title ?? "")
+    .replace(/\s+/g, " ")
+    .trim()}\u0000${String(task?.description ?? "")
+    .replace(/\s+/g, " ")
+    .trim()}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < norm.length; i++) {
     h ^= norm.charCodeAt(i);
@@ -293,7 +317,10 @@ export function taskFingerprint(task: { title?: string; description?: string }):
 
 // The fingerprint map to persist alongside freshly-generated suggestions — one entry per task that
 // has a suggestion, hashed from the tasks the model actually saw.
-export function buildHuntTaskHashes(suggestions: readonly PlaybookHuntSuggestion[], tasks: readonly PlaybookTask[]): Record<string, string> {
+export function buildHuntTaskHashes(
+  suggestions: readonly PlaybookHuntSuggestion[],
+  tasks: readonly PlaybookTask[],
+): Record<string, string> {
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
   const out: Record<string, string> = {};
   for (const s of suggestions) {
@@ -308,21 +335,26 @@ export function buildHuntTaskHashes(suggestions: readonly PlaybookHuntSuggestion
 // evaluated task that is still unchanged — including ones the AI evaluated but produced no hunt for
 // (non-endpoint tasks) — so a later generate can SKIP them (incremental, never re-doing covered work).
 // Returns the filtered set + `changed` so the caller can write-back the pruned store. Pure.
-export function selectFreshHunts(persisted: PersistedPlaybookHunts | undefined, tasks: readonly PlaybookTask[]): { suggestions: PlaybookHuntSuggestion[]; taskHashes: Record<string, string>; changed: boolean } {
+export function selectFreshHunts(
+  persisted: PersistedPlaybookHunts | undefined,
+  tasks: readonly PlaybookTask[],
+): { suggestions: PlaybookHuntSuggestion[]; taskHashes: Record<string, string>; changed: boolean } {
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
   const allSug = persisted?.suggestions ?? [];
   const storedHashes = persisted?.taskHashes ?? {};
   const suggestions: PlaybookHuntSuggestion[] = [];
   for (const s of allSug) {
     const t = byId.get(s.taskId);
-    if (t && storedHashes[s.taskId] === taskFingerprint(t)) suggestions.push(s);   // task unchanged → keep
+    if (t && storedHashes[s.taskId] === taskFingerprint(t)) suggestions.push(s); // task unchanged → keep
   }
   const taskHashes: Record<string, string> = {};
   for (const [taskId, hash] of Object.entries(storedHashes)) {
     const t = byId.get(taskId);
-    if (t && taskFingerprint(t) === hash) taskHashes[taskId] = hash;               // evaluated + unchanged → keep marker
+    if (t && taskFingerprint(t) === hash) taskHashes[taskId] = hash; // evaluated + unchanged → keep marker
   }
-  const changed = suggestions.length !== allSug.length || Object.keys(taskHashes).length !== Object.keys(storedHashes).length;
+  const changed =
+    suggestions.length !== allSug.length ||
+    Object.keys(taskHashes).length !== Object.keys(storedHashes).length;
   return { suggestions, taskHashes, changed };
 }
 
@@ -330,7 +362,10 @@ export function selectFreshHunts(persisted: PersistedPlaybookHunts | undefined, 
 // fingerprint differs from when last evaluated). Tasks already evaluated and unchanged are skipped, so
 // pressing Generate after adding one task only sends THAT task to the model and never regenerates the
 // hunts that already exist. Pure.
-export function pendingHuntTasks(tasks: readonly PlaybookTask[], evaluatedHashes: Record<string, string>): PlaybookTask[] {
+export function pendingHuntTasks(
+  tasks: readonly PlaybookTask[],
+  evaluatedHashes: Record<string, string>,
+): PlaybookTask[] {
   return (tasks ?? []).filter((t) => isOpenTask(t) && evaluatedHashes[t.id] !== taskFingerprint(t));
 }
 

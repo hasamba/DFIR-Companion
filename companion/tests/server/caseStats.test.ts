@@ -10,8 +10,15 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const EVENT_A: ForensicEvent = {
-  id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "d", severity: "Info",
-  mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS-01", sources: ["Sysmon"],
+  id: "e1",
+  timestamp: "2026-06-01T00:00:00Z",
+  description: "d",
+  severity: "Info",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+  asset: "WS-01",
+  sources: ["Sysmon"],
 };
 
 async function makeApp() {
@@ -19,7 +26,10 @@ async function makeApp() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore });
@@ -34,8 +44,13 @@ describe("GET /cases/:id/stats", () => {
     state.forensicTimeline = [EVENT_A];
     await stateStore.save(state);
     await store.appendImport("c1", {
-      caseId: "c1", sequenceNumber: 1, importedAt: "2026-06-01T09:00:00Z",
-      filename: "f1.csv", originalName: "f1.csv", rows: 10, bytes: 1000,
+      caseId: "c1",
+      sequenceNumber: 1,
+      importedAt: "2026-06-01T09:00:00Z",
+      filename: "f1.csv",
+      originalName: "f1.csv",
+      rows: 10,
+      bytes: 1000,
     });
 
     const res = await request(app).get("/cases/c1/stats");

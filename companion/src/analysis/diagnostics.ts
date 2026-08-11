@@ -156,9 +156,9 @@ export function countByKind(errors: readonly AiError[]): Record<string, number> 
 export interface ImporterRunStat {
   lastRunAt: string; // ISO-8601
   lastStatus: "ok" | "error";
-  total: number;   // records found in the container (last run)
-  kept: number;     // events emitted (last run)
-  dropped: number;  // records not represented (last run)
+  total: number; // records found in the container (last run)
+  kept: number; // events emitted (last run)
+  dropped: number; // records not represented (last run)
   lastError: string | null;
 }
 
@@ -186,7 +186,10 @@ export function summarizeImporterHealth(
   return meta.map((m) => {
     const s = runStats.get(m.id);
     return {
-      id: m.id, label: m.label, file: m.file, priority: m.priority,
+      id: m.id,
+      label: m.label,
+      file: m.file,
+      priority: m.priority,
       lastRunAt: s?.lastRunAt ?? null,
       lastStatus: s?.lastStatus ?? null,
       total: s?.total ?? null,
@@ -321,7 +324,8 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
   lines.push("");
   lines.push("-- Queue / processing --");
   lines.push(`  buffered screenshots: ${r.queue.bufferedCaptures} across ${r.queue.casesBuffering} case(s)`);
-  if (r.queue.oldestBufferedAgeMs != null) lines.push(`  oldest buffered:      ${formatAge(r.queue.oldestBufferedAgeMs)}`);
+  if (r.queue.oldestBufferedAgeMs != null)
+    lines.push(`  oldest buffered:      ${formatAge(r.queue.oldestBufferedAgeMs)}`);
   lines.push(`  synthesis in flight:  ${r.queue.synthInFlight}`);
   lines.push(`  failed-analysis cases: ${r.queue.pendingAnalysisCases}`);
   lines.push("");
@@ -334,7 +338,9 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
     if (r.ai.synthModel && r.ai.synthModel !== r.ai.model) lines.push(`  synth:    ${r.ai.synthModel}`);
     if (r.ai.secondOpinionModel) lines.push(`  2nd-op:   ${r.ai.secondOpinionModel}`);
     if (r.ai.baseUrl) lines.push(`  base URL: ${r.ai.baseUrl}`);
-    lines.push(`  timeout:  ${r.ai.timeoutMs}ms · max tokens: ${r.ai.maxTokens} · context: ${r.ai.contextTokens}`);
+    lines.push(
+      `  timeout:  ${r.ai.timeoutMs}ms · max tokens: ${r.ai.maxTokens} · context: ${r.ai.contextTokens}`,
+    );
     lines.push(`  anonymize default: ${r.ai.anonymizeDefault ? "on" : "off"}`);
   }
   const counts = Object.entries(r.ai.errorCounts);
@@ -399,7 +405,9 @@ function evidenceIntegrityLines(e: EvidenceIntegrityStatus): string[] {
   const ago = formatAge(Date.now() - Date.parse(e.lastRunAt));
   const scope = `across ${e.casesVerified} case(s)`;
   if (e.failedArtifacts > 0) {
-    lines.push(`  last verified ${ago} ago — ${e.failedArtifacts} of ${e.artifacts} artifacts FAILED verification ${scope}`);
+    lines.push(
+      `  last verified ${ago} ago — ${e.failedArtifacts} of ${e.artifacts} artifacts FAILED verification ${scope}`,
+    );
   } else {
     lines.push(`  last verified ${ago} ago — all ${e.artifacts} artifacts OK ${scope}`);
   }

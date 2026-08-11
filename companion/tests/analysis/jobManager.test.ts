@@ -98,9 +98,7 @@ describe("JobManager", () => {
       });
       await m.warn(job.jobId, "one batch had partial coverage");
       await m.warn(job.jobId, "one batch had partial coverage");
-      expect(m.get(job.jobId)?.warnings).toEqual([
-        "one batch had partial coverage",
-      ]);
+      expect(m.get(job.jobId)?.warnings).toEqual(["one batch had partial coverage"]);
 
       await vi.advanceTimersByTimeAsync(11);
 
@@ -167,7 +165,12 @@ describe("JobManager", () => {
   });
 
   it("an onJob that throws never breaks a transition", () => {
-    const m = new JobManager({ onJob: () => { throw new Error("ws down"); }, now: mkClock() });
+    const m = new JobManager({
+      onJob: () => {
+        throw new Error("ws down");
+      },
+      now: mkClock(),
+    });
     expect(() => m.register({ caseId: "c1", kind: "import" })).not.toThrow();
   });
 

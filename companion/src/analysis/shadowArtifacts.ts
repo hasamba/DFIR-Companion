@@ -28,14 +28,14 @@ import type { TimelineGap } from "./gapDetect.js";
 export type ShadowCategory = "execution" | "file-activity" | "network" | "persistence" | "general";
 
 export interface ShadowArtifact {
-  id: string;                    // stable kebab id, e.g. "usn-journal" (referenced by the AI hypothesis)
-  name: string;                  // display name, e.g. "USN Journal ($UsnJrnl:$J)"
-  reconstructs: string;          // what missing activity it can rebuild
-  whyResilient: string;          // why attackers rarely clean it (the reason it survives a wipe)
-  velociraptorArtifact: string;  // the built-in Velociraptor CLIENT artifact this collects
-  vql: string;                   // a single, deployable CLIENT-side VQL statement (review-then-deploy)
-  categories: ShadowCategory[];  // which gap signatures it addresses
-  os: "windows" | "linux";       // platform the artifact lives on
+  id: string; // stable kebab id, e.g. "usn-journal" (referenced by the AI hypothesis)
+  name: string; // display name, e.g. "USN Journal ($UsnJrnl:$J)"
+  reconstructs: string; // what missing activity it can rebuild
+  whyResilient: string; // why attackers rarely clean it (the reason it survives a wipe)
+  velociraptorArtifact: string; // the built-in Velociraptor CLIENT artifact this collects
+  vql: string; // a single, deployable CLIENT-side VQL statement (review-then-deploy)
+  categories: ShadowCategory[]; // which gap signatures it addresses
+  os: "windows" | "linux"; // platform the artifact lives on
 }
 
 // The catalog. Windows-focused because the silent-period signatures the gap detector flags (cleared
@@ -178,12 +178,14 @@ export const SHADOW_ARTIFACT_IDS: ReadonlySet<string> = new Set(SHADOW_ARTIFACTS
 
 // Look up a catalog entry by id (case-insensitive on the kebab id). Returns undefined for an unknown id.
 export function shadowArtifactById(id: string): ShadowArtifact | undefined {
-  const key = String(id ?? "").trim().toLowerCase();
+  const key = String(id ?? "")
+    .trim()
+    .toLowerCase();
   return SHADOW_ARTIFACTS.find((a) => a.id === key);
 }
 
 export interface GapShadowArtifacts {
-  targetHosts: string[];               // hosts to collect from, derived from the gap's surrounding events
+  targetHosts: string[]; // hosts to collect from, derived from the gap's surrounding events
   artifacts: readonly ShadowArtifact[]; // the catalog entries to collect (reconstruct the silent window)
 }
 
@@ -204,7 +206,10 @@ export function gapAffectedAssets(surrounding: readonly ForensicEvent[], cap = 1
 // of these can rebuild a blackout, so we offer them all, execution-first), while `targetHosts` is
 // derived from the events around the gap. Pure — deterministic, no I/O. `_gap` is accepted for a
 // stable, gap-aware signature (and future per-gap weighting) even though the current set is uniform.
-export function shadowArtifactsForGap(_gap: TimelineGap, surrounding: readonly ForensicEvent[]): GapShadowArtifacts {
+export function shadowArtifactsForGap(
+  _gap: TimelineGap,
+  surrounding: readonly ForensicEvent[],
+): GapShadowArtifacts {
   return {
     targetHosts: gapAffectedAssets(surrounding),
     artifacts: SHADOW_ARTIFACTS,

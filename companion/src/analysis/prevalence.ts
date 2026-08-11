@@ -13,14 +13,14 @@ import type { ForensicEvent } from "./stateTypes.js";
 
 export interface PatternStats {
   key: string;
-  count: number;        // total occurrences of this pattern in the corpus
-  hosts: Set<string>;   // distinct assets it appeared on
-  first: string;        // earliest dated occurrence (ISO); "" if all undated
-  last: string;         // latest dated occurrence (ISO); "" if all undated
+  count: number; // total occurrences of this pattern in the corpus
+  hosts: Set<string>; // distinct assets it appeared on
+  first: string; // earliest dated occurrence (ISO); "" if all undated
+  last: string; // latest dated occurrence (ISO); "" if all undated
 }
 export type PrevalenceIndex = Map<string, PatternStats>;
 
-export const RARE_MAX_DEFAULT = 2;    // ≤ this many occurrences → rare (anomaly-ish)
+export const RARE_MAX_DEFAULT = 2; // ≤ this many occurrences → rare (anomaly-ish)
 export const COMMON_MIN_DEFAULT = 20; // ≥ this many occurrences → common (baseline noise)
 
 // Collapse a command line / description to a stable SHAPE: lowercase, and replace volatile tokens
@@ -29,13 +29,13 @@ export const COMMON_MIN_DEFAULT = 20; // ≥ this many occurrences → common (b
 // same. Order matters: paths/hashes before the bare-number pass. Bounded output length.
 export function commandShape(text: string): string {
   let s = String(text ?? "").toLowerCase();
-  s = s.replace(/\b[a-f0-9]{32,64}\b/g, "<hash>");                          // md5/sha1/sha256 as args
+  s = s.replace(/\b[a-f0-9]{32,64}\b/g, "<hash>"); // md5/sha1/sha256 as args
   s = s.replace(/\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?/g, "<guid>");
-  s = s.replace(/\\\\[^\s"']+/g, "<unc>");                                  // \\server\share…
-  s = s.replace(/[a-z]:\\[^\s"']*/g, "<path>");                             // C:\dir\file
-  s = s.replace(/(?:\/[^\s"'/]+){2,}\/?/g, "<path>");                       // /usr/bin/… (≥2 segments)
-  s = s.replace(/"[^"]*"/g, "<str>").replace(/'[^']*'/g, "<str>");          // quoted strings
-  s = s.replace(/\b\d[\d.,:]*\b/g, "<n>");                                   // bare numbers / versions / times
+  s = s.replace(/\\\\[^\s"']+/g, "<unc>"); // \\server\share…
+  s = s.replace(/[a-z]:\\[^\s"']*/g, "<path>"); // C:\dir\file
+  s = s.replace(/(?:\/[^\s"'/]+){2,}\/?/g, "<path>"); // /usr/bin/… (≥2 segments)
+  s = s.replace(/"[^"]*"/g, "<str>").replace(/'[^']*'/g, "<str>"); // quoted strings
+  s = s.replace(/\b\d[\d.,:]*\b/g, "<n>"); // bare numbers / versions / times
   s = s.replace(/\s+/g, " ").trim();
   return s.slice(0, 200);
 }
@@ -61,7 +61,10 @@ export function buildPrevalenceIndex(events: readonly ForensicEvent[]): Prevalen
     const key = patternKey(e);
     if (!key) continue;
     let stats = index.get(key);
-    if (!stats) { stats = { key, count: 0, hosts: new Set(), first: "", last: "" }; index.set(key, stats); }
+    if (!stats) {
+      stats = { key, count: 0, hosts: new Set(), first: "", last: "" };
+      index.set(key, stats);
+    }
     stats.count += 1;
     const asset = (e.asset ?? "").trim();
     if (asset) stats.hosts.add(asset.toLowerCase());
@@ -77,7 +80,7 @@ export function buildPrevalenceIndex(events: readonly ForensicEvent[]): Prevalen
 export interface EventPrevalence {
   count: number;
   hostCount: number;
-  spanDays: number;   // whole days between first and last dated occurrence (0 when single/undated)
+  spanDays: number; // whole days between first and last dated occurrence (0 when single/undated)
 }
 
 // Look up an event's prevalence. Returns null when the event has no stable pattern key.
@@ -87,7 +90,11 @@ export function eventPrevalence(e: ForensicEvent, index: PrevalenceIndex): Event
   const stats = index.get(key);
   if (!stats) return null;
   const spanMs = stats.first && stats.last ? Date.parse(stats.last) - Date.parse(stats.first) : 0;
-  return { count: stats.count, hostCount: stats.hosts.size, spanDays: Math.max(0, Math.floor(spanMs / 86_400_000)) };
+  return {
+    count: stats.count,
+    hostCount: stats.hosts.size,
+    spanDays: Math.max(0, Math.floor(spanMs / 86_400_000)),
+  };
 }
 
 export function isRare(p: EventPrevalence, rareMax = RARE_MAX_DEFAULT): boolean {

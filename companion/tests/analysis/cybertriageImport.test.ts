@@ -4,21 +4,36 @@ import { parseCybertriage } from "../../src/analysis/cybertriageImport.js";
 // ── A scored "Bad" file item: lsass dump (real Cyber Triage shape).
 function lsassRow(): object {
   return {
-    ctType: "File", datetime: "2026-01-28T01:47:37", epoch_timestamp: 1769593657,
-    event_timestamp: "2026-01-28T01:47:37", hostName: "win11", message: "/trigonasim/logs/lsass.dmp",
-    path: "/trigonasim/logs/lsass.dmp", score: "Notable_Normal",
+    ctType: "File",
+    datetime: "2026-01-28T01:47:37",
+    epoch_timestamp: 1769593657,
+    event_timestamp: "2026-01-28T01:47:37",
+    hostName: "win11",
+    message: "/trigonasim/logs/lsass.dmp",
+    path: "/trigonasim/logs/lsass.dmp",
+    score: "Notable_Normal",
     scoreDescription: "Output from dumping lsass memory for passwords",
-    threat_type: "File", timestamp_desc: "File Created, Modified",
+    threat_type: "File",
+    timestamp_desc: "File Created, Modified",
   };
 }
 
 // ── A scored "Suspicious" process: unexpected parent (LikelyNotable_Normal verdict).
 function suspProcRow(): object {
   return {
-    ctType: "process", datetime: "2026-01-28T01:51:05", epoch_timestamp: 1769593865,
-    event_timestamp: "2026-01-28T01:51:05", hostName: "win11", message: "/windows/system32/cmd.exe ",
-    path: "/windows/system32/cmd.exe", parentProcess: "cscript.exe", parentPath: "/Windows/System32/cscript.exe",
-    pid: 7912, ppid: 5904, score: "LikelyNotable_Normal", scoreDescription: "Had unexpected parent",
+    ctType: "process",
+    datetime: "2026-01-28T01:51:05",
+    epoch_timestamp: 1769593865,
+    event_timestamp: "2026-01-28T01:51:05",
+    hostName: "win11",
+    message: "/windows/system32/cmd.exe ",
+    path: "/windows/system32/cmd.exe",
+    parentProcess: "cscript.exe",
+    parentPath: "/Windows/System32/cscript.exe",
+    pid: 7912,
+    ppid: 5904,
+    score: "LikelyNotable_Normal",
+    scoreDescription: "Had unexpected parent",
     timestamp_desc: "Process Created",
   };
 }
@@ -26,37 +41,64 @@ function suspProcRow(): object {
 // ── A scored "Suspicious" scheduled task carrying a UAC-bypass action.
 function taskRow(): object {
   return {
-    ctType: "Configuration Item", datetime: "2026-01-28T01:47:34", epoch_timestamp: 1769593654,
-    event_timestamp: "2026-01-28T01:47:34", hostName: "win11",
+    ctType: "Configuration Item",
+    datetime: "2026-01-28T01:47:34",
+    epoch_timestamp: 1769593654,
+    event_timestamp: "2026-01-28T01:47:34",
+    hostName: "win11",
     message: "powershell.exe -windowstyle hidden -command \"& 'c:\\trigonasim\\tools\\uac-bypass.ps1'\"",
-    name: "\\SystemConfigManager", score: "LikelyNotable_Normal", scoreDescription: "Was created within past 30 days",
-    actions: [{ args: "-WindowStyle Hidden -Command \"& 'C:\\TrigonaSim\\tools\\uac-bypass.ps1'\"", path: "powershell.exe" }],
-    subType: "Scheduled Task", type: "Scheduled Task", timestamp_desc: "Task Modified",
+    name: "\\SystemConfigManager",
+    score: "LikelyNotable_Normal",
+    scoreDescription: "Was created within past 30 days",
+    actions: [
+      {
+        args: "-WindowStyle Hidden -Command \"& 'C:\\TrigonaSim\\tools\\uac-bypass.ps1'\"",
+        path: "powershell.exe",
+      },
+    ],
+    subType: "Scheduled Task",
+    type: "Scheduled Task",
+    timestamp_desc: "Task Modified",
   };
 }
 
 // ── Unscored telemetry: a plain process execution (base fields only).
 function telemetryProcRow(): object {
   return {
-    datetime: "2026-01-28T01:50:00", epoch_timestamp: 1769593800, event_timestamp: "2026-01-28T01:50:00",
-    hostName: "win11", message: "/windows/system32/svchost.exe ", score: "None", timestamp_desc: "Process Created",
+    datetime: "2026-01-28T01:50:00",
+    epoch_timestamp: 1769593800,
+    event_timestamp: "2026-01-28T01:50:00",
+    hostName: "win11",
+    message: "/windows/system32/svchost.exe ",
+    score: "None",
+    timestamp_desc: "Process Created",
   };
 }
 
 // ── Unscored bulk File row (the MFT super-timeline — dropped by default).
 function fileTelemetryRow(): object {
   return {
-    datetime: "2026-01-28T01:52:03", epoch_timestamp: 1769593923, event_timestamp: "2026-01-28T01:52:03",
-    hostName: "win11", message: "/programdata/microsoft/network/downloader", score: "None",
-    threat_type: "File", timestamp_desc: "File Modified",
+    datetime: "2026-01-28T01:52:03",
+    epoch_timestamp: 1769593923,
+    event_timestamp: "2026-01-28T01:52:03",
+    hostName: "win11",
+    message: "/programdata/microsoft/network/downloader",
+    score: "None",
+    threat_type: "File",
+    timestamp_desc: "File Modified",
   };
 }
 
 // ── A network Active Connection (telemetry → IOC only): carries the remote IP.
 function activeConnRow(): object {
   return {
-    datetime: "2026-01-28T01:48:00", epoch_timestamp: 1769593680, event_timestamp: "2026-01-28T01:48:00",
-    hostName: "win11", message: "To 192.168.128.134:8000, Local Port: 49853", score: "None", timestamp_desc: "Active Connection",
+    datetime: "2026-01-28T01:48:00",
+    epoch_timestamp: 1769593680,
+    event_timestamp: "2026-01-28T01:48:00",
+    hostName: "win11",
+    message: "To 192.168.128.134:8000, Local Port: 49853",
+    score: "None",
+    timestamp_desc: "Active Connection",
   };
 }
 
@@ -91,7 +133,7 @@ describe("parseCybertriage — verdict-first scored rows", () => {
   it("maps a scheduled task with its action command and persistence MITRE", () => {
     const r = parseCybertriage(jsonl(taskRow()));
     const e = r.events[0];
-    expect(e.description).toContain("scheduled task \"\\SystemConfigManager\"");
+    expect(e.description).toContain('scheduled task "\\SystemConfigManager"');
     expect(e.description).toContain("uac-bypass.ps1");
     expect(e.mitreTechniques).toContain("T1053.005");
     expect(e.mitreTechniques).toContain("T1548.002"); // uac-bypass keyword

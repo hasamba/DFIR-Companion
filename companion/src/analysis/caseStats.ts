@@ -19,7 +19,7 @@ export interface SourceCount {
 }
 
 export interface ImportVelocityDay {
-  date: string;    // YYYY-MM-DD (UTC)
+  date: string; // YYYY-MM-DD (UTC)
   imports: number;
   rows: number;
 }

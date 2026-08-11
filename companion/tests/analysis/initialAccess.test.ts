@@ -3,12 +3,26 @@ import { linkEmailDelivery, emailLinkDomains } from "../../src/analysis/initialA
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const emailEv = (): ForensicEvent => ({
-  id: "m1", timestamp: "2024-03-18T14:10:00Z",
-  description: 'Email: "License Renewal" from billing@verilink-accounts.com to marcus.chen@veridia.io | 1 URL(s) linking mosaic-metrics.net',
-  severity: "Info", mitreTechniques: ["T1566", "T1566.002"], relatedFindingIds: [], sourceScreenshots: [], sources: ["Email"],
+  id: "m1",
+  timestamp: "2024-03-18T14:10:00Z",
+  description:
+    'Email: "License Renewal" from billing@verilink-accounts.com to marcus.chen@veridia.io | 1 URL(s) linking mosaic-metrics.net',
+  severity: "Info",
+  mitreTechniques: ["T1566", "T1566.002"],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+  sources: ["Email"],
 });
 const contact = (id: string, ts: string, desc: string, asset = "WS-DEV-01"): ForensicEvent => ({
-  id, timestamp: ts, description: desc, severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset, sources: ["Zeek"],
+  id,
+  timestamp: ts,
+  description: desc,
+  severity: "Info",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+  asset,
+  sources: ["Zeek"],
 });
 
 describe("emailLinkDomains (#201)", () => {
@@ -22,7 +36,10 @@ describe("emailLinkDomains (#201)", () => {
 
 describe("linkEmailDelivery (#201)", () => {
   it("tags a later host contact of the delivered domain as initial access", () => {
-    const out = linkEmailDelivery([emailEv(), contact("c1", "2024-03-18T14:14:31Z", "browser connection to mosaic-metrics.net")]);
+    const out = linkEmailDelivery([
+      emailEv(),
+      contact("c1", "2024-03-18T14:14:31Z", "browser connection to mosaic-metrics.net"),
+    ]);
     const c = out.find((e) => e.id === "c1")!;
     expect(c.severity).toBe("Medium");
     expect(c.mitreTechniques).toContain("T1204.002");
@@ -41,12 +58,18 @@ describe("linkEmailDelivery (#201)", () => {
   });
 
   it("does NOT tag a contact that happened BEFORE the email", () => {
-    const out = linkEmailDelivery([emailEv(), contact("c1", "2024-03-18T14:00:00Z", "connection to mosaic-metrics.net")]);
+    const out = linkEmailDelivery([
+      emailEv(),
+      contact("c1", "2024-03-18T14:00:00Z", "connection to mosaic-metrics.net"),
+    ]);
     expect(out.find((e) => e.id === "c1")!.severity).toBe("Info");
   });
 
   it("is idempotent — re-running does not double-tag or re-bump", () => {
-    const once = linkEmailDelivery([emailEv(), contact("c1", "2024-03-18T14:14:31Z", "GET mosaic-metrics.net/dropper")]);
+    const once = linkEmailDelivery([
+      emailEv(),
+      contact("c1", "2024-03-18T14:14:31Z", "GET mosaic-metrics.net/dropper"),
+    ]);
     const twice = linkEmailDelivery(once);
     const a = once.find((e) => e.id === "c1")!;
     const b = twice.find((e) => e.id === "c1")!;
@@ -55,7 +78,10 @@ describe("linkEmailDelivery (#201)", () => {
   });
 
   it("uses boundary-aware matching (does not match a superstring domain)", () => {
-    const out = linkEmailDelivery([emailEv(), contact("c1", "2024-03-18T14:30:00Z", "connection to notmosaic-metrics.network")]);
+    const out = linkEmailDelivery([
+      emailEv(),
+      contact("c1", "2024-03-18T14:30:00Z", "connection to notmosaic-metrics.network"),
+    ]);
     expect(out.find((e) => e.id === "c1")!.severity).toBe("Info");
   });
 

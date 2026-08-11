@@ -14,21 +14,21 @@ import type { Severity } from "./stateTypes.js";
 export type VeloMonitorStatus = "active" | "stopped" | "error";
 
 export interface VeloMonitor {
-  id: string;                 // stable id = clientId__artifact, so re-adding the same pair refreshes it
-  clientId: string;           // Velociraptor client id (C....), or "*" for the all-clients sentinel
-  allClients?: boolean;       // true = watch this artifact across EVERY enrolled client (clientId = "*")
-  hostname?: string;          // display name resolved from the inventory (optional; "all clients" when allClients)
-  artifact: string;           // CLIENT_EVENT artifact name (Windows.Events.ProcessCreation, …)
-  pollSeconds: number;        // poll interval (clamped at the route)
-  cursor: number;             // last-seen event time, epoch SECONDS (0 = start from first poll's window)
+  id: string; // stable id = clientId__artifact, so re-adding the same pair refreshes it
+  clientId: string; // Velociraptor client id (C....), or "*" for the all-clients sentinel
+  allClients?: boolean; // true = watch this artifact across EVERY enrolled client (clientId = "*")
+  hostname?: string; // display name resolved from the inventory (optional; "all clients" when allClients)
+  artifact: string; // CLIENT_EVENT artifact name (Windows.Events.ProcessCreation, …)
+  pollSeconds: number; // poll interval (clamped at the route)
+  cursor: number; // last-seen event time, epoch SECONDS (0 = start from first poll's window)
   status: VeloMonitorStatus;
-  minSeverity?: Severity;     // optional import floor (keeps low-value telemetry out)
-  createdAt: string;          // ISO
-  lastPolledAt?: string;      // ISO of the last poll attempt
-  lastEventAt?: string;       // ISO of the last poll that actually ingested rows
-  addedEvents?: number;       // cumulative forensic events ingested by this monitor
-  polls?: number;             // cumulative poll count
-  lastError?: string;         // last poll error (cleared on the next success)
+  minSeverity?: Severity; // optional import floor (keeps low-value telemetry out)
+  createdAt: string; // ISO
+  lastPolledAt?: string; // ISO of the last poll attempt
+  lastEventAt?: string; // ISO of the last poll that actually ingested rows
+  addedEvents?: number; // cumulative forensic events ingested by this monitor
+  polls?: number; // cumulative poll count
+  lastError?: string; // last poll error (cleared on the next success)
 }
 
 // Cap retained monitors per case so the side file stays small.
@@ -51,7 +51,8 @@ export class VeloMonitorStore {
   async list(caseId: string): Promise<VeloMonitor[]> {
     try {
       const parsed = JSON.parse(await readFile(this.path(caseId), "utf8")) as unknown;
-      if (Array.isArray(parsed)) return parsed.filter((m): m is VeloMonitor => !!m && typeof (m as VeloMonitor).id === "string");
+      if (Array.isArray(parsed))
+        return parsed.filter((m): m is VeloMonitor => !!m && typeof (m as VeloMonitor).id === "string");
       return [];
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -67,7 +68,10 @@ export class VeloMonitorStore {
   async upsert(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor> {
     const monitors = await this.list(caseId);
     const idx = monitors.findIndex((m) => m.id === monitor.id);
-    const next = idx >= 0 ? monitors.map((m, i) => (i === idx ? monitor : m)) : [...monitors, monitor].slice(-MAX_MONITORS);
+    const next =
+      idx >= 0
+        ? monitors.map((m, i) => (i === idx ? monitor : m))
+        : [...monitors, monitor].slice(-MAX_MONITORS);
     await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
     return monitor;
   }

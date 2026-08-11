@@ -10,10 +10,13 @@ import { normalizeReportTemplate, REPORT_SECTION_DEFS } from "../../src/reports/
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
-    id, timestamp,
+    id,
+    timestamp,
     description: extra.description ?? "an event",
     severity: extra.severity ?? "Info",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...extra,
   };
 }
@@ -28,7 +31,10 @@ function render(forensicTimeline: ForensicEvent[]) {
   return renderMarkdownReport(
     { ...emptyState("c1"), forensicTimeline },
     emptyReportMeta(),
-    undefined, undefined, undefined, undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
     timelineOnly,
   );
 }
@@ -44,7 +50,9 @@ describe("clock-skew alignment in the report", () => {
     const md = render([
       ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01" }),
       ev("e2", "2026-05-20T14:01:00Z", {
-        asset: "WS-01", originalTimestamp: "2026-05-20T14:03:00Z", skewOffsetMs: 120_000,
+        asset: "WS-01",
+        originalTimestamp: "2026-05-20T14:03:00Z",
+        skewOffsetMs: 120_000,
       }),
     ]);
     expect(md).toContain("**Clock-skew alignment is ON.**");

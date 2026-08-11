@@ -46,7 +46,11 @@ import type { AnalystQueryContext } from "./ai/analystQueries.js";
 import * as analystQueries from "./ai/analystQueries.js";
 import type { SessionSummaryResult, StarredSummaryResult, ViewReportContext } from "./ai/viewReports.js";
 import * as viewReports from "./ai/viewReports.js";
-export { VIEW_SUMMARY_MAX_ROWS, type StarredSummaryResult, type SessionSummaryResult } from "./ai/viewReports.js";
+export {
+  VIEW_SUMMARY_MAX_ROWS,
+  type StarredSummaryResult,
+  type SessionSummaryResult,
+} from "./ai/viewReports.js";
 import type { ExtractionContext } from "./ai/extraction.js";
 import * as extraction from "./ai/extraction.js";
 import { analyzeRestored } from "./ai/providerCall.js";
@@ -111,7 +115,14 @@ export class AnalysisPipeline {
    * hypothesisReview needs it. Live getters rather than a snapshot for the reason importCtx gives:
    * the settings-reload path rebuilds these options in place.
    */
-  private readonly aiCtx: CaseReportContext & AnalystQueryContext & ViewReportContext & HuntContext & PromptBlockContext & ExtractionContext & SynthesisContext & SecondOpinionContext;
+  private readonly aiCtx: CaseReportContext &
+    AnalystQueryContext &
+    ViewReportContext &
+    HuntContext &
+    PromptBlockContext &
+    ExtractionContext &
+    SynthesisContext &
+    SecondOpinionContext;
 
   constructor(private readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
@@ -129,45 +140,123 @@ export class AnalysisPipeline {
     };
     this.aiCtx = {
       opts: {
-        get synthesisProvider() { return opts.synthesisProvider; },
-        get stateStore() { return opts.stateStore; },
-        get falsePositiveStore() { return opts.falsePositiveStore; },
-        get scopeStore() { return opts.scopeStore; },
-        get superTimelineStore() { return opts.superTimelineStore; },
-        get hypothesisStore() { return opts.hypothesisStore; },
-        get velociraptorProvider() { return opts.velociraptorProvider; },
-        get huntOutcomeStore() { return opts.huntOutcomeStore; },
-        get importMetaStore() { return opts.importMetaStore; },
-        get provider() { return opts.provider; },
-        get imageLoader() { return opts.imageLoader; },
-        get onState() { return opts.onState; },
-        get anonStore() { return opts.anonStore; },
-        get customEntitiesStore() { return opts.customEntitiesStore; },
-        get discoveredStore() { return opts.discoveredStore; },
-        get ocrRunner() { return opts.ocrRunner; },
-        get presidio() { return opts.presidio; },
-        get presidioPendingStore() { return opts.presidioPendingStore; },
-        get presidioScanCapsOverride() { return opts.presidioScanCapsOverride; },
-        get aiCostStore() { return opts.aiCostStore; },
-        get operationalMetrics() { return opts.operationalMetrics; },
-        get correlationProfileStore() { return opts.correlationProfileStore; },
-        get sourceTrustStore() { return opts.sourceTrustStore; },
-        get clockSkewStore() { return opts.clockSkewStore; },
-        get notebookStore() { return opts.notebookStore; },
-        get aiControlStore() { return opts.aiControlStore; },
-        get playbookStore() { return opts.playbookStore; },
-        get incidentTypeStore() { return opts.incidentTypeStore; },
-        get learnedPatternStore() { return opts.learnedPatternStore; },
-        get secondOpinionStore() { return opts.secondOpinionStore; },
-        get secondOpinionProvider() { return opts.secondOpinionProvider; },
-        get secondOpinionModelLabel() { return opts.secondOpinionModelLabel; },
-        get synthesisModelLabel() { return opts.synthesisModelLabel; },
-        get synthMetaStore() { return opts.synthMetaStore; },
-        get analysisRunStore() { return opts.analysisRunStore; },
-        get stateLock() { return opts.stateLock; },
-        get onSynth() { return opts.onSynth; },
-        get retries() { return opts.retries; },
-        get backoffMs() { return opts.backoffMs; },
+        get synthesisProvider() {
+          return opts.synthesisProvider;
+        },
+        get stateStore() {
+          return opts.stateStore;
+        },
+        get falsePositiveStore() {
+          return opts.falsePositiveStore;
+        },
+        get scopeStore() {
+          return opts.scopeStore;
+        },
+        get superTimelineStore() {
+          return opts.superTimelineStore;
+        },
+        get hypothesisStore() {
+          return opts.hypothesisStore;
+        },
+        get velociraptorProvider() {
+          return opts.velociraptorProvider;
+        },
+        get huntOutcomeStore() {
+          return opts.huntOutcomeStore;
+        },
+        get importMetaStore() {
+          return opts.importMetaStore;
+        },
+        get provider() {
+          return opts.provider;
+        },
+        get imageLoader() {
+          return opts.imageLoader;
+        },
+        get onState() {
+          return opts.onState;
+        },
+        get anonStore() {
+          return opts.anonStore;
+        },
+        get customEntitiesStore() {
+          return opts.customEntitiesStore;
+        },
+        get discoveredStore() {
+          return opts.discoveredStore;
+        },
+        get ocrRunner() {
+          return opts.ocrRunner;
+        },
+        get presidio() {
+          return opts.presidio;
+        },
+        get presidioPendingStore() {
+          return opts.presidioPendingStore;
+        },
+        get presidioScanCapsOverride() {
+          return opts.presidioScanCapsOverride;
+        },
+        get aiCostStore() {
+          return opts.aiCostStore;
+        },
+        get operationalMetrics() {
+          return opts.operationalMetrics;
+        },
+        get correlationProfileStore() {
+          return opts.correlationProfileStore;
+        },
+        get sourceTrustStore() {
+          return opts.sourceTrustStore;
+        },
+        get clockSkewStore() {
+          return opts.clockSkewStore;
+        },
+        get notebookStore() {
+          return opts.notebookStore;
+        },
+        get aiControlStore() {
+          return opts.aiControlStore;
+        },
+        get playbookStore() {
+          return opts.playbookStore;
+        },
+        get incidentTypeStore() {
+          return opts.incidentTypeStore;
+        },
+        get learnedPatternStore() {
+          return opts.learnedPatternStore;
+        },
+        get secondOpinionStore() {
+          return opts.secondOpinionStore;
+        },
+        get secondOpinionProvider() {
+          return opts.secondOpinionProvider;
+        },
+        get secondOpinionModelLabel() {
+          return opts.secondOpinionModelLabel;
+        },
+        get synthesisModelLabel() {
+          return opts.synthesisModelLabel;
+        },
+        get synthMetaStore() {
+          return opts.synthMetaStore;
+        },
+        get analysisRunStore() {
+          return opts.analysisRunStore;
+        },
+        get stateLock() {
+          return opts.stateLock;
+        },
+        get onSynth() {
+          return opts.onSynth;
+        },
+        get retries() {
+          return opts.retries;
+        },
+        get backoffMs() {
+          return opts.backoffMs;
+        },
       },
       log: this.log,
       requireProvider: (purpose) => this.requireProvider(purpose),
@@ -180,7 +269,8 @@ export class AnalysisPipeline {
         else this.importTruncation.delete(caseId);
       },
       getKevCatalog: () => this.getKevCatalog(),
-      withRetry: (caseId, label, fn, retries, backoffMs) => this.withRetry(caseId, label, fn, retries, backoffMs),
+      withRetry: (caseId, label, fn, retries, backoffMs) =>
+        this.withRetry(caseId, label, fn, retries, backoffMs),
       analyzeRestored: (caseId, state, provider, req, label, skipPresidioGate) =>
         analyzeRestored(this.aiCtx, caseId, state, provider, req, label, skipPresidioGate),
       promoteSuperTimeline: (caseId, events, o) => this.promoteSuperTimeline(caseId, events, o),
@@ -216,7 +306,13 @@ export class AnalysisPipeline {
   // console/session log showed only the DEBUG "AI call [label] ..." line for each attempt's START,
   // never why an attempt failed. Each failed attempt now logs a WARN with the case id, call label,
   // provider error kind (when available), and whether it's retrying or giving up.
-  private withRetry<T>(caseId: string, label: string, fn: () => Promise<T>, retries: number, backoffMs: number): Promise<T> {
+  private withRetry<T>(
+    caseId: string,
+    label: string,
+    fn: () => Promise<T>,
+    retries: number,
+    backoffMs: number,
+  ): Promise<T> {
     return withRetry(fn, retries, backoffMs, (err, attempt, willRetry) => {
       const msg = err instanceof Error ? err.message : String(err);
       const kind = err instanceof ProviderError ? ` kind=${err.kind}` : "";
@@ -224,7 +320,12 @@ export class AnalysisPipeline {
         `AI call [${label}] attempt ${attempt + 1} failed${kind}: ${msg}${willRetry ? " — retrying" : " — giving up"}`,
         { caseId },
       );
-      if (willRetry) void this.opts.operationalMetrics?.record({ type: "ai_retry", phase: safeAiPhase(label), errorKind: safeAiErrorKind(err instanceof ProviderError ? err.kind : "other") });
+      if (willRetry)
+        void this.opts.operationalMetrics?.record({
+          type: "ai_retry",
+          phase: safeAiPhase(label),
+          errorKind: safeAiErrorKind(err instanceof ProviderError ? err.kind : "other"),
+        });
     });
   }
 
@@ -259,7 +360,11 @@ export class AnalysisPipeline {
   }
 
   analysisProviderModels(): Array<{ provider: string; model: string }> {
-    return uniqueProviderModels([this.opts.provider, this.opts.synthesisProvider, this.opts.secondOpinionProvider]);
+    return uniqueProviderModels([
+      this.opts.provider,
+      this.opts.synthesisProvider,
+      this.opts.secondOpinionProvider,
+    ]);
   }
 
   analysisTextProviderModel(): { provider: string; model: string } | null {
@@ -267,12 +372,14 @@ export class AnalysisPipeline {
     return provider ? { provider: provider.name, model: provider.model } : null;
   }
   analysisProvider(providerName: string, model: string): AIProvider | undefined {
-    return [this.opts.provider, this.opts.synthesisProvider, this.opts.secondOpinionProvider]
-      .find((provider) => provider?.name === providerName && provider.model === model);
+    return [this.opts.provider, this.opts.synthesisProvider, this.opts.secondOpinionProvider].find(
+      (provider) => provider?.name === providerName && provider.model === model,
+    );
   }
 
   private requireProvider(purpose: string): AIProvider {
-    if (!this.opts.provider) throw new Error(`AI provider not configured; ${purpose} requires an AI provider`);
+    if (!this.opts.provider)
+      throw new Error(`AI provider not configured; ${purpose} requires an AI provider`);
     return this.opts.provider;
   }
 
@@ -313,7 +420,7 @@ export class AnalysisPipeline {
     for (const d of checkConfiguredPromptDrift()) {
       this.log.warn(
         `[DFIR] prompt override ${d.file} is missing capabilities: ${d.missing.join(", ")} — ` +
-        `model output will silently lack them; re-run 'npm run prompts:eject' to refresh it`,
+          `model output will silently lack them; re-run 'npm run prompts:eject' to refresh it`,
       );
     }
   }
@@ -350,7 +457,9 @@ export class AnalysisPipeline {
     return ingest.importDeclarative(this.importCtx, ...args);
   }
 
-  promoteSuperTimeline(...args: ImporterArgs<typeof ingest.promoteSuperTimeline>): Promise<InvestigationState> {
+  promoteSuperTimeline(
+    ...args: ImporterArgs<typeof ingest.promoteSuperTimeline>
+  ): Promise<InvestigationState> {
     return ingest.promoteSuperTimeline(this.importCtx, ...args);
   }
 
@@ -492,7 +601,11 @@ export class AnalysisPipeline {
     return hunts.suggestHunts(this.aiCtx, caseId, opts);
   }
 
-  suggestTechniqueHunts(caseId: string, techniqueId: string, techniqueName?: string): Promise<HuntSuggestion[]> {
+  suggestTechniqueHunts(
+    caseId: string,
+    techniqueId: string,
+    techniqueName?: string,
+  ): Promise<HuntSuggestion[]> {
     return hunts.suggestTechniqueHunts(this.aiCtx, caseId, techniqueId, techniqueName);
   }
 
@@ -500,7 +613,11 @@ export class AnalysisPipeline {
     return nextSteps.suggestMemoryNextSteps(this.aiCtx, caseId);
   }
 
-  translateQuery(caseId: string, request: string, platforms?: readonly HuntPlatform[]): Promise<QueryTranslationResult> {
+  translateQuery(
+    caseId: string,
+    request: string,
+    platforms?: readonly HuntPlatform[],
+  ): Promise<QueryTranslationResult> {
     return hunts.translateQuery(this.aiCtx, caseId, request, platforms);
   }
 
@@ -512,7 +629,12 @@ export class AnalysisPipeline {
     return nextSteps.hypothesizeGaps(this.aiCtx, caseId);
   }
 
-  suggestPlaybookHunts(caseId: string, tasks: PlaybookTask[], availableArtifacts: string[] = [], opts?: { excludeVql?: string }): Promise<PlaybookHuntSuggestion[]> {
+  suggestPlaybookHunts(
+    caseId: string,
+    tasks: PlaybookTask[],
+    availableArtifacts: string[] = [],
+    opts?: { excludeVql?: string },
+  ): Promise<PlaybookHuntSuggestion[]> {
     return hunts.suggestPlaybookHunts(this.aiCtx, caseId, tasks, availableArtifacts, opts);
   }
 
@@ -551,7 +673,14 @@ export class AnalysisPipeline {
     candidateIds: string[],
     candidateLabels: string[],
   ): Promise<string[]> {
-    return analystQueries.suggestFalsePositiveSimilarAi(this.aiCtx, caseId, anchorId, anchorLabel, candidateIds, candidateLabels);
+    return analystQueries.suggestFalsePositiveSimilarAi(
+      this.aiCtx,
+      caseId,
+      anchorId,
+      anchorLabel,
+      candidateIds,
+      candidateLabels,
+    );
   }
 
   deepPassPreview(caseId: string): Promise<{ cap: number; floors: FloorOption[] }> {
@@ -576,13 +705,20 @@ export class AnalysisPipeline {
   // ALL currently-accepted deltas are (re-)applied onto the live case state (idempotent) — so an
   // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same
   // re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
-  applySecondOpinion(caseId: string, deltaId: string, accept: boolean): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+  applySecondOpinion(
+    caseId: string,
+    deltaId: string,
+    accept: boolean,
+  ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
     return secondOpinionRun.applySecondOpinion(this.aiCtx, caseId, deltaId, accept);
   }
 
   // Bulk accept-all / reject-all: decide every still-PENDING delta at once (already-decided deltas
   // are left as the analyst set them), persist, and apply the accepted set to the case in ONE pass.
-  applyAllSecondOpinion(caseId: string, accept: boolean): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+  applyAllSecondOpinion(
+    caseId: string,
+    accept: boolean,
+  ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
 

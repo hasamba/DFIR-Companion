@@ -34,7 +34,7 @@ describe("securityOnionSeverity", () => {
     expect(securityOnionSeverity({ "event.severity": 1, "rule.name": "x" })).toBe("High");
     expect(securityOnionSeverity({ "event.severity": 3, "rule.name": "x" })).toBe("Low");
     expect(securityOnionSeverity({ "rule.name": "x" })).toBe("Medium"); // an alert fired, no label
-    expect(securityOnionSeverity({})).toBe("Info");                      // no signal at all
+    expect(securityOnionSeverity({})).toBe("Info"); // no signal at all
   });
 });
 
@@ -58,7 +58,11 @@ describe("parseSecurityOnion", () => {
   it("keeps per-row severity across a mixed batch (high + medium)", () => {
     const rows = [
       soAlert(),
-      soAlert({ "event.severity_label": "medium", "rule.name": "ET SCAN Potential SSH Scan OUTBOUND", "rule.uuid": "2003068" }),
+      soAlert({
+        "event.severity_label": "medium",
+        "rule.name": "ET SCAN Potential SSH Scan OUTBOUND",
+        "rule.uuid": "2003068",
+      }),
     ];
     const r = parseSecurityOnion(JSON.stringify(rows));
     const sevs = r.events.map((e) => e.severity).sort();
@@ -66,12 +70,16 @@ describe("parseSecurityOnion", () => {
   });
 
   it("extracts MITRE from ECS threat fields and app-layer IOCs (dns/url/hash)", () => {
-    const r = parseSecurityOnion(JSON.stringify([soAlert({
-      "threat.technique.id": ["T1071.001"],
-      "dns.query": "evil-c2.example.com",
-      "url.full": "http://evil-c2.example.com/a",
-      "file.hash.sha256": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
-    })]));
+    const r = parseSecurityOnion(
+      JSON.stringify([
+        soAlert({
+          "threat.technique.id": ["T1071.001"],
+          "dns.query": "evil-c2.example.com",
+          "url.full": "http://evil-c2.example.com/a",
+          "file.hash.sha256": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+        }),
+      ]),
+    );
     const e = r.events[0];
     expect(e.mitreTechniques).toContain("T1071.001");
     expect(r.iocs.some((i) => i.type === "domain" && i.value === "evil-c2.example.com")).toBe(true);
@@ -84,21 +92,28 @@ describe("parseSecurityOnion", () => {
     // captured password) lives only in `message`. Severity must come from event.severity_label, and
     // the description must use rule.name — never the message blob.
     const row = {
-      _id: "OHjM", _index: ".ds-logs-import-so-2026.06.07-000001", "@timestamp": "2026-02-03T16:14:02.382Z",
-      "event.module": "suricata", "event.dataset": "suricata.alert",
-      "event.severity_label": "high", "event.severity": 3, "rule.severity": 1,
+      _id: "OHjM",
+      _index: ".ds-logs-import-so-2026.06.07-000001",
+      "@timestamp": "2026-02-03T16:14:02.382Z",
+      "event.module": "suricata",
+      "event.dataset": "suricata.alert",
+      "event.severity_label": "high",
+      "event.severity": 3,
+      "rule.severity": 1,
       "rule.name": "ET MALWARE Agent Tesla CnC Exfil via TCP",
-      "source.ip": "10.2.3.101", "source.port": 54050,
-      "destination.ip": "162.241.123.75", "destination.port": 47037,
+      "source.ip": "10.2.3.101",
+      "source.port": 54050,
+      "destination.ip": "162.241.123.75",
+      "destination.port": 47037,
       "import.id": "0f42",
-      message: "{\"alert\":{\"severity\":1},\"payload_printable\":\"Password: hunter2\"}",
+      message: '{"alert":{"severity":1},"payload_printable":"Password: hunter2"}',
     };
     const r = parseSecurityOnion(JSON.stringify([row]));
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
-    expect(e.severity).toBe("High");                              // event.severity_label, not Info
+    expect(e.severity).toBe("High"); // event.severity_label, not Info
     expect(e.description).toContain("ET MALWARE Agent Tesla CnC Exfil via TCP");
-    expect(e.description).not.toContain("Password");              // never dump the message blob
+    expect(e.description).not.toContain("Password"); // never dump the message blob
     expect(e.description).not.toContain("hunter2");
     expect(e.srcIp).toBe("10.2.3.101");
     expect(e.dstIp).toBe("162.241.123.75");
@@ -116,7 +131,8 @@ describe("parseSecurityOnion — IOC provenance", () => {
       "@timestamp": "2026-01-01T00:00:00Z",
       "rule.name": "DNS query to known-bad domain",
       "dns.query": "evil.example.com",
-      "source.ip": "10.0.0.5", "destination.ip": "10.0.0.1",
+      "source.ip": "10.0.0.5",
+      "destination.ip": "10.0.0.1",
       "host.name": "WKSTN-1",
     };
     const parsed = parseSecurityOnion(JSON.stringify([row]));
@@ -132,14 +148,16 @@ describe("parseSecurityOnion — IOC provenance", () => {
         "@timestamp": "2026-01-01T00:00:00Z",
         "rule.name": "DNS query to known-bad domain A",
         "dns.query": "evil-a.example.com",
-        "source.ip": "10.0.0.5", "destination.ip": "10.0.0.1",
+        "source.ip": "10.0.0.5",
+        "destination.ip": "10.0.0.1",
         "host.name": "WKSTN-1",
       },
       {
         "@timestamp": "2026-01-01T00:05:00Z",
         "rule.name": "DNS query to known-bad domain B",
         "dns.query": "evil-b.example.com",
-        "source.ip": "10.0.0.6", "destination.ip": "10.0.0.2",
+        "source.ip": "10.0.0.6",
+        "destination.ip": "10.0.0.2",
         "host.name": "WKSTN-2",
       },
     ];

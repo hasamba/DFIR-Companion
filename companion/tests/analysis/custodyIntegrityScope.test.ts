@@ -24,8 +24,13 @@ async function collect(caseId: string, name: string, text: string): Promise<stri
   const path = join(cases.importsDir(caseId), name);
   await writeFile(path, text, "utf8");
   await custody.record(caseId, {
-    artifactPath: path, sha256: sha(text), collectedBy: "alice",
-    collectedAt: "2026-07-28T10:00:00.000Z", source: "host-a", trigger: "import", caseId,
+    artifactPath: path,
+    sha256: sha(text),
+    collectedBy: "alice",
+    collectedAt: "2026-07-28T10:00:00.000Z",
+    source: "host-a",
+    trigger: "import",
+    caseId,
   });
   return path;
 }
@@ -37,7 +42,9 @@ beforeEach(async () => {
   await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
   custody = new CustodyStore(cases);
   alerts = [];
-  monitor = new EvidenceIntegrityMonitor(cases, custody, config, (s) => { alerts.push(s); });
+  monitor = new EvidenceIntegrityMonitor(cases, custody, config, (s) => {
+    alerts.push(s);
+  });
 });
 
 describe("integrity config defaults", () => {
@@ -105,7 +112,9 @@ describe("EvidenceIntegrityMonitor.verifyCaseIfStale", () => {
     const openedAt = Date.now();
     await monitor.verifyCaseIfStale("c1");
 
-    expect(await monitor.verifyCaseIfStale("c1", openedAt + DEFAULT_ON_OPEN_THROTTLE_MS + 1_000)).not.toBeNull();
+    expect(
+      await monitor.verifyCaseIfStale("c1", openedAt + DEFAULT_ON_OPEN_THROTTLE_MS + 1_000),
+    ).not.toBeNull();
   });
 
   it("does nothing when on-open verification is switched off", async () => {

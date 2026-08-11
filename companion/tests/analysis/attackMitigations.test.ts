@@ -6,7 +6,12 @@ import {
   type MitigationMapLink,
 } from "../../src/analysis/attackMitigations.js";
 import { loadMitigationsDataset } from "../../src/analysis/attackMitigationsData.js";
-import { emptyState, type InvestigationState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type InvestigationState,
+  type Finding,
+  type ForensicEvent,
+} from "../../src/analysis/stateTypes.js";
 
 const finding = (id: string, mitreTechniques: string[]): Finding => ({
   id,
@@ -57,7 +62,10 @@ function dataset(
   };
 }
 
-const stateWith = (techniques: string[]): InvestigationState => ({ ...emptyState("c1"), findings: [finding("F1", techniques)] });
+const stateWith = (techniques: string[]): InvestigationState => ({
+  ...emptyState("c1"),
+  findings: [finding("F1", techniques)],
+});
 
 describe("buildMitigationsResult", () => {
   it("resolves a case technique to its mitigations with name/url/detail", () => {
@@ -84,8 +92,14 @@ describe("buildMitigationsResult", () => {
 
   it("ranks the by-mitigation rollup by how many case techniques each addresses", () => {
     const ds = dataset([mit("M1026"), mit("M1043"), mit("M1017")], {
-      T1003: [{ id: "M1026", detail: "a" }, { id: "M1043", detail: "b" }],
-      T1078: [{ id: "M1026", detail: "c" }, { id: "M1017", detail: "d" }],
+      T1003: [
+        { id: "M1026", detail: "a" },
+        { id: "M1043", detail: "b" },
+      ],
+      T1078: [
+        { id: "M1026", detail: "c" },
+        { id: "M1017", detail: "d" },
+      ],
       T1021: [{ id: "M1026", detail: "e" }],
     });
     const r = buildMitigationsResult(stateWith(["T1003", "T1078", "T1021"]), ds);

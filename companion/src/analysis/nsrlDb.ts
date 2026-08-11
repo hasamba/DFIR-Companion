@@ -52,7 +52,9 @@ export class NsrlDb {
     try {
       const table = detectHashTable(db);
       if (!table) {
-        throw new Error("no table with a sha256 or md5 column — point this at the modern NSRL RDS (METADATA table)");
+        throw new Error(
+          "no table with a sha256 or md5 column — point this at the modern NSRL RDS (METADATA table)",
+        );
       }
       const byLength = new Map<number, ColumnQuery>();
       const columns: string[] = [];
@@ -99,7 +101,9 @@ export class NsrlDb {
 // FILE is a view over METADATA — querying the base table is what uses the index), then any base
 // table, then views.
 function detectHashTable(db: SqliteDatabase): string | null {
-  const rows = db.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table','view')").all() as Array<{ name: string; type: string }>;
+  const rows = db
+    .prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table','view')")
+    .all() as Array<{ name: string; type: string }>;
   const ordered = [...rows].sort((a, b) => rankTable(b) - rankTable(a));
   for (const r of ordered) {
     if (hashColumnsOf(db, r.name).length > 0) return r.name;
@@ -115,7 +119,9 @@ function rankTable(r: { name: string; type: string }): number {
 
 // The sha256/md5 column names actually present in `table` (preserving their real case for queries).
 function hashColumnsOf(db: SqliteDatabase, table: string): string[] {
-  const cols = db.prepare(`SELECT name FROM pragma_table_info('${table.replace(/'/g, "''")}')`).all() as Array<{ name: string }>;
+  const cols = db
+    .prepare(`SELECT name FROM pragma_table_info('${table.replace(/'/g, "''")}')`)
+    .all() as Array<{ name: string }>;
   const byLower = new Map(cols.map((c) => [c.name.toLowerCase(), c.name]));
   const out: string[] = [];
   for (const want of WANTED_COLUMNS) {
@@ -128,7 +134,9 @@ function hashColumnsOf(db: SqliteDatabase, table: string): string[] {
 // Sample one value to learn the stored case (NSRL RDS stores hashes uppercase; default to that).
 function sampleIsUpper(db: SqliteDatabase, table: string, col: string): boolean {
   try {
-    const row = db.prepare(`SELECT "${col}" AS v FROM "${table}" WHERE "${col}" IS NOT NULL LIMIT 1`).get() as { v?: unknown } | undefined;
+    const row = db
+      .prepare(`SELECT "${col}" AS v FROM "${table}" WHERE "${col}" IS NOT NULL LIMIT 1`)
+      .get() as { v?: unknown } | undefined;
     const v = row?.v;
     if (typeof v === "string" && v) return v === v.toUpperCase();
   } catch {

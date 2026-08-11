@@ -39,20 +39,44 @@ function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
 }
 
 function event(over: Partial<NotificationEvent> = {}): NotificationEvent {
-  return { kind: "critical_finding", caseId: "case-1", title: "t", severity: "High", lines: [], at: NOW, ...over };
+  return {
+    kind: "critical_finding",
+    caseId: "case-1",
+    title: "t",
+    severity: "High",
+    lines: [],
+    at: NOW,
+    ...over,
+  };
 }
 
 function finding(over: Partial<Finding> = {}): Finding {
   return {
-    id: "f1", severity: "Critical", title: "Cobalt Strike beacon", description: "C2 on DC01",
-    relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: NOW, lastUpdated: NOW, status: "open", ...over,
+    id: "f1",
+    severity: "Critical",
+    title: "Cobalt Strike beacon",
+    description: "C2 on DC01",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: NOW,
+    lastUpdated: NOW,
+    status: "open",
+    ...over,
   };
 }
 
 describe("shouldNotify", () => {
   it("requires enabled + the event-kind toggle", () => {
     expect(shouldNotify(channel({ enabled: false }), event())).toBe(false);
-    expect(shouldNotify(channel({ events: { critical_finding: false, playbook_update: true, milestone: false, mention: true } }), event())).toBe(false);
+    expect(
+      shouldNotify(
+        channel({
+          events: { critical_finding: false, playbook_update: true, milestone: false, mention: true },
+        }),
+        event(),
+      ),
+    ).toBe(false);
     expect(shouldNotify(channel(), event())).toBe(true);
   });
 
@@ -63,16 +87,28 @@ describe("shouldNotify", () => {
   });
 
   it("milestones bypass the threshold (gated only by the toggle)", () => {
-    const ch = channel({ minSeverity: "Critical", events: { critical_finding: true, playbook_update: true, milestone: true, mention: true } });
+    const ch = channel({
+      minSeverity: "Critical",
+      events: { critical_finding: true, playbook_update: true, milestone: true, mention: true },
+    });
     expect(shouldNotify(ch, event({ kind: "milestone", severity: "Info" }))).toBe(true);
-    const off = channel({ minSeverity: "Info", events: { critical_finding: true, playbook_update: true, milestone: false, mention: true } });
+    const off = channel({
+      minSeverity: "Info",
+      events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+    });
     expect(shouldNotify(off, event({ kind: "milestone", severity: "Info" }))).toBe(false);
   });
 
   it("mentions bypass the threshold (gated only by the toggle)", () => {
-    const ch = channel({ minSeverity: "Critical", events: { critical_finding: true, playbook_update: true, milestone: false, mention: true } });
+    const ch = channel({
+      minSeverity: "Critical",
+      events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+    });
     expect(shouldNotify(ch, event({ kind: "mention", severity: "Info" }))).toBe(true);
-    const off = channel({ minSeverity: "Info", events: { critical_finding: true, playbook_update: true, milestone: false, mention: false } });
+    const off = channel({
+      minSeverity: "Info",
+      events: { critical_finding: true, playbook_update: true, milestone: false, mention: false },
+    });
     expect(shouldNotify(off, event({ kind: "mention", severity: "Info" }))).toBe(false);
   });
 });
@@ -112,8 +148,15 @@ describe("findingEventsFromDiff", () => {
 
 describe("playbookTaskEvent / milestoneEvent", () => {
   const task: PlaybookTask = {
-    id: "t1", title: "Isolate DC01", description: "", status: "done", priority: "critical",
-    source: "finding", order: 0, createdAt: NOW, updatedAt: NOW,
+    id: "t1",
+    title: "Isolate DC01",
+    description: "",
+    status: "done",
+    priority: "critical",
+    source: "finding",
+    order: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
   };
 
   it("maps task priority → severity for threshold filtering", () => {
@@ -133,7 +176,15 @@ describe("playbookTaskEvent / milestoneEvent", () => {
   });
 
   it("mentionEvent is Info severity and names the mentioned investigators", () => {
-    const ev = mentionEvent("case-1", "finding", "f1", "Alice", ["bob", "carol"], "cc @bob @carol please check", NOW);
+    const ev = mentionEvent(
+      "case-1",
+      "finding",
+      "f1",
+      "Alice",
+      ["bob", "carol"],
+      "cc @bob @carol please check",
+      NOW,
+    );
     expect(ev.kind).toBe("mention");
     expect(ev.severity).toBe("Info");
     expect(ev.title).toBe("Alice mentioned @bob, @carol in a comment");
@@ -171,8 +222,13 @@ describe("parseChannelInput", () => {
   });
 
   it("requires smtp host/from/to for email and splits a recipient string", () => {
-    expect(parseChannelInput({ type: "email", smtp: { host: "mx", port: 587, from: "a@b.c", to: "" } }).ok).toBe(false);
-    const ok = parseChannelInput({ type: "email", smtp: { host: "mx", port: "587", from: "a@b.c", to: "x@y.z, p@q.r" } });
+    expect(
+      parseChannelInput({ type: "email", smtp: { host: "mx", port: 587, from: "a@b.c", to: "" } }).ok,
+    ).toBe(false);
+    const ok = parseChannelInput({
+      type: "email",
+      smtp: { host: "mx", port: "587", from: "a@b.c", to: "x@y.z, p@q.r" },
+    });
     expect(ok.ok).toBe(true);
     expect(ok.draft?.smtp?.to).toEqual(["x@y.z", "p@q.r"]);
     expect(ok.draft?.smtp?.port).toBe(587);
@@ -182,15 +238,21 @@ describe("parseChannelInput", () => {
     expect(parseChannelInput({ type: "telegram" }).ok).toBe(false);
     expect(parseChannelInput({ type: "telegram", telegram: { botToken: "tok", chatId: "" } }).ok).toBe(false);
     expect(parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }).ok).toBe(false); // no token, no existing
-    const ok = parseChannelInput({ type: "telegram", telegram: { botToken: "123:TOKEN", chatId: "-1001234567890" } });
+    const ok = parseChannelInput({
+      type: "telegram",
+      telegram: { botToken: "123:TOKEN", chatId: "-1001234567890" },
+    });
     expect(ok.ok).toBe(true);
     expect(ok.draft?.telegram?.chatId).toBe("-1001234567890");
     expect(ok.draft?.name).toBe("Telegram"); // default name
   });
 
   it("preserves saved telegram token when the update leaves botToken blank", () => {
-    const existing = channel({ type: "telegram", webhookUrl: undefined,
-      telegram: { botToken: "saved-token", chatId: "-100" } });
+    const existing = channel({
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "saved-token", chatId: "-100" },
+    });
     const r = parseChannelInput({ type: "telegram", telegram: { botToken: "", chatId: "-100" } }, existing);
     expect(r.ok).toBe(true);
     expect(r.draft?.telegram?.botToken).toBe("saved-token");
@@ -213,10 +275,14 @@ describe("applyChannelPatch (secret preservation) + redactChannel", () => {
 
   it("keeps the saved SMTP password when blank, replaces transport otherwise", () => {
     const existing = channel({
-      type: "email", webhookUrl: undefined,
+      type: "email",
+      webhookUrl: undefined,
       smtp: { host: "mx", port: 587, secure: false, from: "a@b.c", to: ["x@y.z"], password: "secret" },
     });
-    const draft = parseChannelInput({ type: "email", smtp: { host: "mx2", port: 465, secure: true, from: "a@b.c", to: "x@y.z" } }).draft!;
+    const draft = parseChannelInput({
+      type: "email",
+      smtp: { host: "mx2", port: 465, secure: true, from: "a@b.c", to: "x@y.z" },
+    }).draft!;
     const next = applyChannelPatch(existing, draft, NOW);
     expect(next.smtp?.host).toBe("mx2");
     expect(next.smtp?.secure).toBe(true);
@@ -225,9 +291,15 @@ describe("applyChannelPatch (secret preservation) + redactChannel", () => {
   });
 
   it("keeps the saved telegram token when the edit leaves it blank", () => {
-    const existing = channel({ type: "telegram", webhookUrl: undefined,
-      telegram: { botToken: "saved-token", chatId: "-100" } });
-    const draft = parseChannelInput({ type: "telegram", telegram: { botToken: "", chatId: "-100" } }, existing).draft!;
+    const existing = channel({
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "saved-token", chatId: "-100" },
+    });
+    const draft = parseChannelInput(
+      { type: "telegram", telegram: { botToken: "", chatId: "-100" } },
+      existing,
+    ).draft!;
     const next = applyChannelPatch(existing, draft, NOW);
     expect(next.telegram?.botToken).toBe("saved-token");
     expect(next.telegram?.chatId).toBe("-100");
@@ -239,14 +311,23 @@ describe("applyChannelPatch (secret preservation) + redactChannel", () => {
     const r = redactChannel(channel({ webhookUrl: "https://hooks.slack.com/x" }));
     expect(Object.hasOwn(r, "webhookUrl")).toBe(false);
     expect(r.hasWebhookUrl).toBe(true);
-    const e = redactChannel(channel({ type: "email", webhookUrl: undefined, smtp: { host: "mx", port: 587, secure: false, from: "a", to: ["b"], password: "p" } }));
+    const e = redactChannel(
+      channel({
+        type: "email",
+        webhookUrl: undefined,
+        smtp: { host: "mx", port: 587, secure: false, from: "a", to: ["b"], password: "p" },
+      }),
+    );
     expect(e.smtp?.hasPassword).toBe(true);
     expect(Object.hasOwn(e.smtp!, "password")).toBe(false);
   });
 
   it("redacts telegram bot token for the client view", () => {
-    const ch = channel({ type: "telegram", webhookUrl: undefined,
-      telegram: { botToken: "secret-token", chatId: "@mychannel" } });
+    const ch = channel({
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "secret-token", chatId: "@mychannel" },
+    });
     const r = redactChannel(ch);
     expect(r.telegram).toBeDefined();
     expect(r.telegram?.hasBotToken).toBe(true);
@@ -279,7 +360,11 @@ describe("NotificationConfigStore", () => {
     expect(added.id).toBeTruthy();
     expect(added.webhookUrl).toBe("https://hooks/x");
 
-    const blank = parseChannelInput({ type: "slack", name: "SOC renamed", webhookUrl: "https://hooks/x" }).draft!;
+    const blank = parseChannelInput({
+      type: "slack",
+      name: "SOC renamed",
+      webhookUrl: "https://hooks/x",
+    }).draft!;
     const updated = await store.update(added.id, { ...blank, webhookUrl: "" }, "2026-06-12T12:00:00.000Z");
     expect(updated?.name).toBe("SOC renamed");
     expect(updated?.webhookUrl).toBe("https://hooks/x"); // preserved through the store
@@ -295,16 +380,30 @@ describe("NotificationConfigStore", () => {
     // so upgrading must NOT silently start pushing comment text to their existing destination.
     const path = join(await mkdtemp(join(tmpdir(), "dfir-notify-legacy-")), "config.json");
     const legacy = new NotificationConfigStore(path);
-    await writeFile(path, JSON.stringify([{
-      id: "legacy-1", type: "slack", name: "SOC", enabled: true, minSeverity: "High",
-      events: { critical_finding: true, playbook_update: true, milestone: false },
-      webhookUrl: "https://hooks/legacy", createdAt: NOW, updatedAt: NOW,
-    }]), "utf8");
+    await writeFile(
+      path,
+      JSON.stringify([
+        {
+          id: "legacy-1",
+          type: "slack",
+          name: "SOC",
+          enabled: true,
+          minSeverity: "High",
+          events: { critical_finding: true, playbook_update: true, milestone: false },
+          webhookUrl: "https://hooks/legacy",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ]),
+      "utf8",
+    );
     const [ch] = await legacy.load();
     expect(ch.events.mention).toBe(false);
     expect(ch.events.critical_finding).toBe(true); // the settings they DID choose are untouched
     // A channel created now still defaults mentions on — that's a deliberate, visible opt-in.
-    expect(parseChannelInput({ type: "slack", webhookUrl: "https://hooks/new" }).draft!.events.mention).toBe(true);
+    expect(parseChannelInput({ type: "slack", webhookUrl: "https://hooks/new" }).draft!.events.mention).toBe(
+      true,
+    );
   });
 
   it("drops malformed channels on read", async () => {
@@ -316,7 +415,10 @@ describe("NotificationConfigStore", () => {
   });
 
   it("persists and loads Telegram channels with bot token intact", async () => {
-    const draft = parseChannelInput({ type: "telegram", telegram: { botToken: "123:SECRET", chatId: "-1001234567890" } }).draft!;
+    const draft = parseChannelInput({
+      type: "telegram",
+      telegram: { botToken: "123:SECRET", chatId: "-1001234567890" },
+    }).draft!;
     const added = await store.add(draft, NOW);
     expect(added.telegram?.botToken).toBe("123:SECRET");
     expect(added.telegram?.chatId).toBe("-1001234567890");

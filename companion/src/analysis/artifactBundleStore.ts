@@ -11,13 +11,13 @@ import { storeFilePath } from "../storage/safeStoreId.js";
 
 export interface ArtifactBundle {
   id: string;
-  name: string;                 // e.g. "Fast Triage"
+  name: string; // e.g. "Fast Triage"
   description: string;
   builtIn: boolean;
-  artifacts: string[];          // Velociraptor CLIENT artifact names
-  defaultWaitMinutes?: number;  // optional per-bundle default collect delay
-  timeoutSeconds?: number;      // optional per-collection timeout override (Velociraptor default 600s) — some artifacts run longer
-  expirySeconds?: number;       // optional per-bundle hunt expiry (relative, seconds); unset → the one-hour default
+  artifacts: string[]; // Velociraptor CLIENT artifact names
+  defaultWaitMinutes?: number; // optional per-bundle default collect delay
+  timeoutSeconds?: number; // optional per-collection timeout override (Velociraptor default 600s) — some artifacts run longer
+  expirySeconds?: number; // optional per-bundle hunt expiry (relative, seconds); unset → the one-hour default
   // Per-artifact parameter overrides passed to the hunt's `spec`, so a heavy artifact emits less at the
   // source (e.g. {"Windows.Hayabusa.Rules": {"RuleLevel": "Critical, High, and Medium"}} narrows Hayabusa).
   // Only the params you set are sent; everything else uses the artifact's own defaults.
@@ -31,7 +31,7 @@ export interface ArtifactBundle {
   // {"Windows.EventLogs.Evtx": {"start": "EarliestTime", "end": "LatestTime"}}). Unlike `params` above,
   // this holds only NAMES, never values — the window itself is chosen per run, never stored here.
   timeScopeParamNames?: Record<string, { start?: string; end?: string }>;
-  customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
+  customized?: boolean; // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
   // When true, this bundle's collected results go to the SUPER-TIMELINE ONLY (never the forensic
   // timeline) — for raw host-triage artifacts (MFT/USN/Prefetch) that would otherwise flood the
   // forensic timeline + IOC list. The analyst promotes individual events up when they matter.
@@ -47,7 +47,11 @@ function sanitizeBundleFilters(raw: unknown): Record<string, string> | undefined
   const out: Record<string, string> = Object.create(null);
   for (const [artifact, where] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof where !== "string") continue;
-    const w = where.replace(/[\r\n]+/g, " ").replace(/;+\s*$/, "").trim().slice(0, 1000);
+    const w = where
+      .replace(/[\r\n]+/g, " ")
+      .replace(/;+\s*$/, "")
+      .trim()
+      .slice(0, 1000);
     if (w) out[artifact] = w;
   }
   return Object.keys(out).length ? out : undefined;
@@ -73,7 +77,9 @@ function sanitizeBundleParams(raw: unknown): Record<string, Record<string, strin
 // string start/end names; an entry with neither is dropped. Returns undefined when empty, so a bundle
 // without corrections stays clean on disk. Null-prototype accumulator for the same reason as above
 // (`entry` needs none — its keys are the fixed literals start/end, not untrusted input).
-function sanitizeTimeScopeParamNames(raw: unknown): Record<string, { start?: string; end?: string }> | undefined {
+function sanitizeTimeScopeParamNames(
+  raw: unknown,
+): Record<string, { start?: string; end?: string }> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const out: Record<string, { start?: string; end?: string }> = Object.create(null);
   for (const [artifact, pair] of Object.entries(raw as Record<string, unknown>)) {
@@ -145,10 +151,15 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Custom.DFIR.RDPLateralMovementDetection",
     ],
     defaultWaitMinutes: 10,
-    timeoutSeconds: 6000,   // the sweep includes slow artifacts (THOR/Hayabusa) — well past the 600s default
+    timeoutSeconds: 6000, // the sweep includes slow artifacts (THOR/Hayabusa) — well past the 600s default
     // Hayabusa emits 10k+ rows at its defaults; constrain it at the source (Critical/High/Medium rules,
     // Stable+Experimental status) so the import stays signal-rich. Tune via Advanced → parameters.
-    params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium", RuleStatus: "Stable and Experimental" } },
+    params: {
+      "Windows.Hayabusa.Rules": {
+        RuleLevel: "Critical, High, and Medium",
+        RuleStatus: "Stable and Experimental",
+      },
+    },
     // Drop known-noisy rows at the source: YaraFile pagefile hits, and an in-development Evtx rule.
     // (The Evtx column name is inferred — adjust in the editor if your results use a different one.)
     filters: {
@@ -208,7 +219,7 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Generic.Forensic.SQLiteHunter",
     ],
     defaultWaitMinutes: 10,
-    timeoutSeconds: 6000,   // a broad forensic sweep (MFT/SRUM/SQLiteHunter) runs well past the 600s default
+    timeoutSeconds: 6000, // a broad forensic sweep (MFT/SRUM/SQLiteHunter) runs well past the 600s default
   },
   {
     id: "linux-triage",
@@ -332,10 +343,12 @@ export class ArtifactBundleStore {
     const out: ArtifactBundle[] = [];
     for (const b of BUILT_IN_BUNDLES) {
       const override = saved.get(b.id);
-      out.push(override ? { ...override, id: b.id, builtIn: true, customized: true } : { ...b, customized: false });
+      out.push(
+        override ? { ...override, id: b.id, builtIn: true, customized: true } : { ...b, customized: false },
+      );
     }
     for (const [id, b] of saved) {
-      if (this.isBuiltIn(id)) continue;   // already merged above as an override
+      if (this.isBuiltIn(id)) continue; // already merged above as an override
       out.push({ ...b, builtIn: false, customized: false });
     }
     return out;
@@ -353,7 +366,9 @@ export class ArtifactBundleStore {
   // Save a bundle. A built-in id writes an OVERRIDE (the built-in becomes editable in place);
   // any other id creates/updates a custom bundle. `customized`/`builtIn` are derived from the id,
   // not trusted from input.
-  async save(input: Omit<ArtifactBundle, "id" | "builtIn" | "customized"> & { id?: string }): Promise<ArtifactBundle> {
+  async save(
+    input: Omit<ArtifactBundle, "id" | "builtIn" | "customized"> & { id?: string },
+  ): Promise<ArtifactBundle> {
     const id = input.id && String(input.id).trim() ? String(input.id).trim() : randomUUID();
     const builtIn = this.isBuiltIn(id);
     const bundle: ArtifactBundle = {
@@ -361,16 +376,25 @@ export class ArtifactBundleStore {
       name: String(input.name ?? "").trim(),
       description: String(input.description ?? "").trim(),
       builtIn,
-      artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
+      artifacts: Array.isArray(input.artifacts)
+        ? input.artifacts
+            .map(String)
+            .map((a) => a.trim())
+            .filter(Boolean)
+        : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
       // Per-collection timeout (seconds), clamped to the same 60s..24h band the run-time override uses
       // (POST /cases/:id/velociraptor/run-bundle) so a saved default and a run override can't disagree.
       // 0/negative/NaN drop the field rather than persisting a value that would disable or corrupt the timeout.
-      timeoutSeconds: Number.isFinite(input.timeoutSeconds) && (input.timeoutSeconds as number) > 0
-        ? Math.min(86_400, Math.max(60, Math.floor(input.timeoutSeconds as number)))
-        : undefined,
+      timeoutSeconds:
+        Number.isFinite(input.timeoutSeconds) && (input.timeoutSeconds as number) > 0
+          ? Math.min(86_400, Math.max(60, Math.floor(input.timeoutSeconds as number)))
+          : undefined,
       // Relative hunt expiry (seconds); the API layer clamps/defaults, so here we just persist a positive int.
-      expirySeconds: typeof input.expirySeconds === "number" && input.expirySeconds > 0 ? Math.floor(input.expirySeconds) : undefined,
+      expirySeconds:
+        typeof input.expirySeconds === "number" && input.expirySeconds > 0
+          ? Math.floor(input.expirySeconds)
+          : undefined,
       params: sanitizeBundleParams(input.params),
       filters: sanitizeBundleFilters(input.filters),
       timeScopeParamNames: sanitizeTimeScopeParamNames(input.timeScopeParamNames),

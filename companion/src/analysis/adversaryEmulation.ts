@@ -102,9 +102,25 @@ const UNSPECIFIED = "Unspecified";
 // this guarantees the rarer ones, e.g. T1585/T1584, never surface as "hunt for this next".)
 const NON_HUNTABLE_BASES: ReadonlySet<string> = new Set([
   // Reconnaissance
-  "T1595", "T1592", "T1589", "T1590", "T1591", "T1598", "T1597", "T1596", "T1593", "T1594",
+  "T1595",
+  "T1592",
+  "T1589",
+  "T1590",
+  "T1591",
+  "T1598",
+  "T1597",
+  "T1596",
+  "T1593",
+  "T1594",
   // Resource Development
-  "T1583", "T1586", "T1584", "T1587", "T1585", "T1588", "T1608", "T1650",
+  "T1583",
+  "T1586",
+  "T1584",
+  "T1587",
+  "T1585",
+  "T1588",
+  "T1608",
+  "T1650",
 ]);
 
 // How many of the N total groups use each technique id (full granularity, deduped per group). This is

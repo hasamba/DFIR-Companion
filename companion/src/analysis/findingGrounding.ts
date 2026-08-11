@@ -78,7 +78,9 @@ function extractIpv4(text: string): string[] {
 function claimedIpsNotInEvidence(f: Finding, supporting: readonly ForensicEvent[]): string[] {
   const claimed = extractIpv4(`${f.title} ${f.description}`);
   if (!claimed.length) return [];
-  const evidenceIps = new Set(extractIpv4(supporting.map((e) => `${e.description} ${e.message ?? ""}`).join(" ")));
+  const evidenceIps = new Set(
+    extractIpv4(supporting.map((e) => `${e.description} ${e.message ?? ""}`).join(" ")),
+  );
   return claimed.filter((ip) => !evidenceIps.has(ip));
 }
 
@@ -122,13 +124,13 @@ function unconfirmedLateralDestinations(
 
 export interface GroundingInput {
   findings: readonly Finding[];
-  scopedEvents: readonly ForensicEvent[];      // in-scope events, carrying relatedFindingIds (reverse links)
+  scopedEvents: readonly ForensicEvent[]; // in-scope events, carrying relatedFindingIds (reverse links)
   iocs: readonly IOC[];
-  graphLinkedEventIds: ReadonlySet<string>;     // event ids that participate in an evidence-graph edge
+  graphLinkedEventIds: ReadonlySet<string>; // event ids that participate in an evidence-graph edge
   // CVE ids (upper-cased) present in the case that MATCH the CISA KEV catalog (issue #61). A finding is
   // `kevLinked` when it references one of these. Optional — omit/empty when no KEV catalog is loaded.
   kevCveIds?: ReadonlySet<string>;
-  sourceTrust?: SourceTrustMap;                 // #66: per-source trust; absent → no trust-based capping
+  sourceTrust?: SourceTrustMap; // #66: per-source trust; absent → no trust-based capping
 }
 
 // The IOC ids that carry at least one malicious/suspicious intel verdict — the finding-level "intel
@@ -136,7 +138,8 @@ export interface GroundingInput {
 function intelFlaggedIocIds(iocs: readonly IOC[]): Set<string> {
   const out = new Set<string>();
   for (const i of iocs) {
-    if ((i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious")) out.add(i.id);
+    if ((i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"))
+      out.add(i.id);
   }
   return out;
 }
@@ -151,8 +154,14 @@ function findingIsKevLinked(
 ): boolean {
   if (!kevCveIds.size) return false;
   const texts: string[] = [f.title, f.description];
-  for (const e of supporting) { texts.push(e.description); if (e.message) texts.push(e.message); }
-  for (const id of f.relatedIocs ?? []) { const i = iocById.get(id); if (i) texts.push(i.value); }
+  for (const e of supporting) {
+    texts.push(e.description);
+    if (e.message) texts.push(e.message);
+  }
+  for (const id of f.relatedIocs ?? []) {
+    const i = iocById.get(id);
+    if (i) texts.push(i.value);
+  }
   for (const t of texts) {
     for (const cve of extractCveIds(t)) if (kevCveIds.has(cve)) return true;
   }
@@ -177,7 +186,10 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     const push = (id: string): void => {
       if (seen.has(id)) return;
       const e = scopedById.get(id);
-      if (e) { seen.add(id); supporting.push(e); }
+      if (e) {
+        seen.add(id);
+        supporting.push(e);
+      }
     };
     for (const id of forward) push(id);
     for (const e of scopedEvents) if ((e.relatedFindingIds ?? []).includes(f.id)) push(e.id);
@@ -192,7 +204,15 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     const verdictFirst = supporting.some((e) => (SEVERITY_RANK[e.severity] ?? 0) >= DETECTION_RANK);
     const huntArtifactOnly = supporting.length > 0 && !verdictFirst;
     const kevLinked = findingIsKevLinked(f, supporting, iocById, kevCveIds);
-    const corroboration: FindingCorroboration = { distinctTools, distinctHosts, intelSources, graphLinked, verdictFirst, huntArtifactOnly, kevLinked };
+    const corroboration: FindingCorroboration = {
+      distinctTools,
+      distinctHosts,
+      intelSources,
+      graphLinked,
+      verdictFirst,
+      huntArtifactOnly,
+      kevLinked,
+    };
 
     // Rewrite relatedEventIds to the resolved supporting set so the forward link is consistent and
     // auditable (adds the reverse-linked backfill events; drops hallucinated ids).
@@ -211,7 +231,10 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     if (supporting.length === 0) {
       ungrounded = true;
       confidence = Math.min(confidence ?? UNGROUNDED_CONFIDENCE_CAP, UNGROUNDED_CONFIDENCE_CAP);
-      confidenceReason = appendReason(confidenceReason, "capped: no cited evidence in scope — treat as a hypothesis, not a fact");
+      confidenceReason = appendReason(
+        confidenceReason,
+        "capped: no cited evidence in scope — treat as a hypothesis, not a fact",
+      );
     } else {
       if (!corroborated && distinctHosts <= 1) {
         if ((confidence ?? 100) > SINGLE_SOURCE_CONFIDENCE_CAP) {
@@ -225,7 +248,10 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       if (huntArtifactOnly && intelSources === 0 && !kevLinked) {
         if ((confidence ?? 100) > HUNT_ARTIFACT_CONFIDENCE_CAP) {
           confidence = HUNT_ARTIFACT_CONFIDENCE_CAP;
-          confidenceReason = appendReason(confidenceReason, "capped: rests only on raw hunt-collection artifacts — no detection verdict; triage before acting");
+          confidenceReason = appendReason(
+            confidenceReason,
+            "capped: rests only on raw hunt-collection artifacts — no detection verdict; triage before acting",
+          );
         }
       }
     }
@@ -238,7 +264,10 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       const bestTrust = Math.max(...supporting.map((e) => trustForSources(e.sources, sourceTrust)));
       if (bestTrust < LOW_TRUST_THRESHOLD && (confidence ?? 100) > LOW_TRUST_CONFIDENCE_CAP) {
         confidence = LOW_TRUST_CONFIDENCE_CAP;
-        confidenceReason = appendReason(confidenceReason, `capped: low-trust source(s) only (max trust ${bestTrust.toFixed(2)})`);
+        confidenceReason = appendReason(
+          confidenceReason,
+          `capped: low-trust source(s) only (max trust ${bestTrust.toFixed(2)})`,
+        );
       }
     }
 
@@ -250,7 +279,8 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       if (mismatched.length) {
         contentMismatch = true;
         severity = CONTENT_MISMATCH_SEVERITY_FLOOR;
-        if ((confidence ?? 100) > CONTENT_MISMATCH_CONFIDENCE_CAP) confidence = CONTENT_MISMATCH_CONFIDENCE_CAP;
+        if ((confidence ?? 100) > CONTENT_MISMATCH_CONFIDENCE_CAP)
+          confidence = CONTENT_MISMATCH_CONFIDENCE_CAP;
         confidenceReason = appendReason(
           confidenceReason,
           `capped: claims ${mismatched.join(", ")} but the cited events never mention it — verify the citation before treating as confirmed`,
@@ -262,12 +292,13 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     // of its own, resting only on benign authentication telemetry, is floored to Medium. Runs on the
     // possibly-already-floored severity, so a finding both content-mismatched and lateral-unconfirmed keeps
     // the lower confidence. Skipped once the content-mismatch gate already floored it (same target severity).
-    if ((severity === "Critical" || severity === "High")) {
+    if (severity === "Critical" || severity === "High") {
       const unconfirmed = unconfirmedLateralDestinations(f, supporting, compromisedHosts);
       if (unconfirmed.length) {
         lateralUnconfirmed = true;
         severity = LATERAL_UNCONFIRMED_SEVERITY_FLOOR;
-        if ((confidence ?? 100) > LATERAL_UNCONFIRMED_CONFIDENCE_CAP) confidence = LATERAL_UNCONFIRMED_CONFIDENCE_CAP;
+        if ((confidence ?? 100) > LATERAL_UNCONFIRMED_CONFIDENCE_CAP)
+          confidence = LATERAL_UNCONFIRMED_CONFIDENCE_CAP;
         confidenceReason = appendReason(
           confidenceReason,
           `capped: claims lateral movement to ${unconfirmed.join(", ")}, which has no confirmed malicious activity of its own — the cited logon(s) may be a legitimate session by a reused account; confirm the source is a compromised node before treating as a pivot`,
@@ -307,28 +338,36 @@ export interface IntelCapInput {
   findings: readonly Finding[];
   iocs: readonly IOC[];
   scopedEvents: readonly ForensicEvent[];
-  hostNames: ReadonlySet<string>;          // the case's own host short-names (see iocAnchors.shortHost)
+  hostNames: ReadonlySet<string>; // the case's own host short-names (see iocAnchors.shortHost)
 }
 
 // The intel-only classification for ONE finding: null when it's not an over-graded intel-only finding,
 // else the verdict-carrying IOCs it rests on and whether any verdict conflicts with the case's own
 // infrastructure. Shared by the cap (below) and the corroborate-nextStep builder so the two never drift.
-interface IntelOnlyVerdict { verdictIocs: IOC[]; hasConflict: boolean; }
+interface IntelOnlyVerdict {
+  verdictIocs: IOC[];
+  hasConflict: boolean;
+}
 function classifyIntelOnlyFinding(
   f: Finding,
   iocById: ReadonlyMap<string, IOC>,
   scopedEvents: readonly ForensicEvent[],
   hostNames: ReadonlySet<string>,
 ): IntelOnlyVerdict | null {
-  if (SEV_ORDER[f.severity] > SEV_ORDER.High) return null;   // only High/Critical can be over-graded by intel
+  if (SEV_ORDER[f.severity] > SEV_ORDER.High) return null; // only High/Critical can be over-graded by intel
   const verdictIocs = (f.relatedIocs ?? [])
     .map((id) => iocById.get(id))
-    .filter((i): i is IOC => !!i && (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"));
-  if (!verdictIocs.length) return null;   // not intel-driven
+    .filter(
+      (i): i is IOC =>
+        !!i && (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"),
+    );
+  if (!verdictIocs.length) return null; // not intel-driven
   const classes = verdictIocs.map((i) =>
-    classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }));
+    classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }),
+  );
   const intelOnly = classes.every((c) => c === "lone-intel" || c === "conflicted");
-  const behavioralGrounding = !!f.corroboration && (f.corroboration.distinctTools >= 2 || f.corroboration.graphLinked);
+  const behavioralGrounding =
+    !!f.corroboration && (f.corroboration.distinctTools >= 2 || f.corroboration.graphLinked);
   if (!intelOnly || behavioralGrounding) return null;
   return { verdictIocs, hasConflict: classes.some((c) => c === "conflicted") };
 }
@@ -366,7 +405,9 @@ export function buildIntelCorroborationSteps(input: IntelCapInput): NextStep[] {
     const values = [...new Set(v.verdictIocs.map((i) => i.value))].slice(0, 3);
     const list = values.join(", ");
     // Best-effort host: the asset on a scoped event that mentions one of these IOC values.
-    const host = scopedEvents.find((e) => e.asset && values.some((val) => (e.description || "").toLowerCase().includes(val.toLowerCase())))?.asset;
+    const host = scopedEvents.find(
+      (e) => e.asset && values.some((val) => (e.description || "").toLowerCase().includes(val.toLowerCase())),
+    )?.asset;
     steps.push({
       id: `n-corroborate-${f.id}`,
       priority: "high",
@@ -392,7 +433,10 @@ export function corroborationLabel(f: Finding): string {
   if (f.ungrounded) return "uncorroborated (no cited evidence)";
   const c = f.corroboration;
   if (!c) return "";
-  const parts = [`${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`, `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`];
+  const parts = [
+    `${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`,
+    `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`,
+  ];
   if (c.intelSources > 0) parts.push("intel ✓");
   if (c.graphLinked) parts.push("graph-linked");
   if (c.kevLinked) parts.push("KEV ✓");

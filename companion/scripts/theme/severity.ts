@@ -221,10 +221,7 @@ export interface SeveritySolution {
  *                   otherwise the tier A fallback role's value
  * @param surfaces   the backgrounds severity text renders on (page and panel)
  */
-export function solveSeverityScale(
-  candidates: Record<Severity, string>,
-  surfaces: Rgb[],
-): SeveritySolution {
+export function solveSeverityScale(candidates: Record<Severity, string>, surfaces: Rgb[]): SeveritySolution {
   const repairs: string[] = [];
   const lch: Record<Severity, Oklch> = {} as Record<Severity, Oklch>;
   for (const s of SEVERITY_ORDER) {
@@ -233,7 +230,9 @@ export function solveSeverityScale(
     // which the browser drops silently and the role falls back to inherited text colour.
     // Start from the canonical hue instead and let the contrast pass place it.
     if (!/^#[0-9a-fA-F]{6}$/.test(candidates[s] ?? "")) {
-      repairs.push(`${s}: candidate ${JSON.stringify(candidates[s])} is not a hex colour, using canonical hue`);
+      repairs.push(
+        `${s}: candidate ${JSON.stringify(candidates[s])} is not a hex colour, using canonical hue`,
+      );
       lch[s] = { L: 0.7, C: 0.14, h: CANONICAL_HUE[s] };
       continue;
     }

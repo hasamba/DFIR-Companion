@@ -29,8 +29,8 @@ export function textMentionsFindingId(text: string | undefined, findingId: strin
 
 export interface ReconsiderQuestionsInput {
   survivingFindingIds: ReadonlySet<string>; // finding ids that REMAIN (after FP removal / after synthesis)
-  priorFindingIds: readonly string[];       // finding ids that existed going in (to catch prose mentions)
-  staleReSynth?: boolean;                    // true for the synchronous FP-route pass → badge the reset
+  priorFindingIds: readonly string[]; // finding ids that existed going in (to catch prose mentions)
+  staleReSynth?: boolean; // true for the synchronous FP-route pass → badge the reset
 }
 
 export interface ReconsiderQuestionsResult {
@@ -58,7 +58,9 @@ export function reconsiderKeyQuestions(
     const related = (q.relatedFindingIds ?? []).filter((id) => input.survivingFindingIds.has(id));
     const structuralLoss = (q.relatedFindingIds ?? []).some((id) => !input.survivingFindingIds.has(id));
     const textualLoss = prior.some(
-      (id) => !input.survivingFindingIds.has(id) && (textMentionsFindingId(q.pointer, id) || textMentionsFindingId(q.answer, id)),
+      (id) =>
+        !input.survivingFindingIds.has(id) &&
+        (textMentionsFindingId(q.pointer, id) || textMentionsFindingId(q.answer, id)),
     );
     const isReset = (structuralLoss || textualLoss) && q.status !== "unknown";
     if (isReset) {
@@ -115,7 +117,10 @@ export function reconsiderNextSteps(
     const { staleReSynth: _prevStale, ...rest } = s;
     const structural = (s.relatedFindingIds ?? []).some((id) => input.removedFindingIds.has(id));
     const textual = removed.some(
-      (id) => textMentionsFindingId(s.action, id) || textMentionsFindingId(s.pointer, id) || textMentionsFindingId(s.rationale, id),
+      (id) =>
+        textMentionsFindingId(s.action, id) ||
+        textMentionsFindingId(s.pointer, id) ||
+        textMentionsFindingId(s.rationale, id),
     );
     const stale = structural || textual;
     if (stale && input.staleReSynth) {

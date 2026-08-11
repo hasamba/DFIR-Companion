@@ -29,7 +29,8 @@ const VERSION_URL = process.env.DFIR_D3FEND_VERSION_URL || "https://d3fend.mitre
 // The full ontology (JSON-LD) carries each defensive technique's plain-English `d3f:definition`,
 // which the mapping endpoint omits. We join it by technique id so each countermeasure is
 // self-explanatory in the UI (a hover tooltip) instead of a bare name.
-const ONTOLOGY_URL = process.env.DFIR_D3FEND_ONTOLOGY_URL || "https://d3fend.mitre.org/ontologies/d3fend.json";
+const ONTOLOGY_URL =
+  process.env.DFIR_D3FEND_ONTOLOGY_URL || "https://d3fend.mitre.org/ontologies/d3fend.json";
 const DEF_MAX = 240; // trim long definitions to one scannable line
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -128,7 +129,9 @@ async function main(): Promise<void> {
     const v = (await fetchJson(VERSION_URL)) as { ontology_version?: string; version?: string };
     d3fendVersion = v.ontology_version || v.version || "unknown";
   } catch (err) {
-    console.warn(`[d3fend] version lookup failed (${err instanceof Error ? err.message : err}) — using "unknown"`);
+    console.warn(
+      `[d3fend] version lookup failed (${err instanceof Error ? err.message : err}) — using "unknown"`,
+    );
   }
 
   // technique id → (d3fend id → countermeasure). The inferred mapping explodes each technique×
@@ -173,16 +176,24 @@ async function main(): Promise<void> {
       const id = node["@id"];
       const def = ldText(node["d3f:definition"]);
       if (!id || !def) continue;
-      const frag = id.includes(":") ? id.slice(id.lastIndexOf(":") + 1) : id.includes("#") ? id.slice(id.lastIndexOf("#") + 1) : id;
+      const frag = id.includes(":")
+        ? id.slice(id.lastIndexOf(":") + 1)
+        : id.includes("#")
+          ? id.slice(id.lastIndexOf("#") + 1)
+          : id;
       if (frag && !defById.has(frag)) defById.set(frag, def);
     }
     for (const id of allCountermeasures) {
       const def = defById.get(id);
       if (def) definitions[id] = trimDef(def);
     }
-    console.log(`[d3fend] ${Object.keys(definitions).length}/${allCountermeasures.size} countermeasures have a definition`);
+    console.log(
+      `[d3fend] ${Object.keys(definitions).length}/${allCountermeasures.size} countermeasures have a definition`,
+    );
   } catch (err) {
-    console.warn(`[d3fend] ontology fetch failed (${err instanceof Error ? err.message : err}) — definitions omitted`);
+    console.warn(
+      `[d3fend] ontology fetch failed (${err instanceof Error ? err.message : err}) — definitions omitted`,
+    );
   }
 
   const dataset = {

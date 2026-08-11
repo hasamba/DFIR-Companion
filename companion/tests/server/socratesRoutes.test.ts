@@ -27,12 +27,18 @@ async function harness() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const importUndoStore = new ImportUndoStore(store);
   const app = createApp(store, {
-    pipeline, stateStore, importUndoStore, loadToolConfigs: socratesCfg,
+    pipeline,
+    stateStore,
+    importUndoStore,
+    loadToolConfigs: socratesCfg,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store };
@@ -43,8 +49,9 @@ describe("SO-CRATES routes", () => {
     const { app } = await harness();
     const r = await request(app).get("/tools/status");
     expect(r.status).toBe(200);
-    const socrates = (r.body.tools as Array<{ id: string; configured: boolean; transport: string }>)
-      .find((t) => t.id === "socrates");
+    const socrates = (r.body.tools as Array<{ id: string; configured: boolean; transport: string }>).find(
+      (t) => t.id === "socrates",
+    );
     expect(socrates?.configured).toBe(true);
     expect(socrates?.transport).toBe("http");
   });
@@ -70,7 +77,9 @@ describe("SO-CRATES routes", () => {
   it("rejects a zip whose password is wrong with an actionable message", async () => {
     const { app } = await harness();
     const r = await request(app).post("/cases/c1/tools/socrates/run-upload").send({
-      filename: "zc.zip", dataBase64: ZC_ZIP_B64, zipPassword: "definitely-wrong",
+      filename: "zc.zip",
+      dataBase64: ZC_ZIP_B64,
+      zipPassword: "definitely-wrong",
     });
     // "definitely-wrong" fails, but the ladder falls back to "infected" which opens it — so the
     // failure here is the unreachable server, never a password error.

@@ -76,11 +76,7 @@ function reviewerActor(ctx: RouteContext, caseId: string, reviewerId: string): R
   const identity = auth.store.getIdentity(reviewerId);
   if (!identity || identity.disabled || identity.kind === "service") return null;
   const role = auth.store.getCaseRole(identity.id, caseId);
-  if (
-    identity.globalRole !== "administrator" &&
-    role !== "reviewer" &&
-    role !== "administrator"
-  ) {
+  if (identity.globalRole !== "administrator" && role !== "reviewer" && role !== "administrator") {
     return null;
   }
   return { id: identity.id, displayName: identity.displayName, kind: identity.kind };
@@ -100,7 +96,8 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
   const { options } = ctx;
 
   app.get("/cases/:id/report-versions", async (req: Request, res: Response) => {
-    if (!options.reportVersionStore) return res.status(501).json({ error: "report versioning not configured" });
+    if (!options.reportVersionStore)
+      return res.status(501).json({ error: "report versioning not configured" });
     try {
       const versions = await options.reportVersionStore.list(req.params.id);
       const withWorkflow = await Promise.all(
@@ -118,7 +115,8 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
   // Diff two stored versions' findings/IOCs/forensic-timeline. `from`/`to` are version ids from the
   // list above; `to` defaults to the most recent version when omitted.
   app.get("/cases/:id/report-versions/diff", async (req: Request, res: Response) => {
-    if (!options.reportVersionStore) return res.status(501).json({ error: "report versioning not configured" });
+    if (!options.reportVersionStore)
+      return res.status(501).json({ error: "report versioning not configured" });
     const caseId = req.params.id;
     const fromId = typeof req.query.from === "string" ? req.query.from : "";
     let toId = typeof req.query.to === "string" ? req.query.to : "";
@@ -148,7 +146,8 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
   // Restore a prior version's editable report-meta as the case's CURRENT report-meta. Returns the
   // saved (normalized) meta so the dashboard's report-meta form can refresh in place.
   app.post("/cases/:id/report-versions/:versionId/restore", async (req: Request, res: Response) => {
-    if (!options.reportVersionStore) return res.status(501).json({ error: "report versioning not configured" });
+    if (!options.reportVersionStore)
+      return res.status(501).json({ error: "report versioning not configured" });
     if (!options.reportMetaStore) return res.status(501).json({ error: "report metadata not configured" });
     const caseId = req.params.id;
     try {
@@ -176,65 +175,56 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
     return res.status(200).json({ mode: "team", reviewers });
   });
 
-  app.get(
-    "/cases/:id/report-versions/:versionId/workflow",
-    async (req: Request, res: Response) => {
-      if (!options.reportVersionStore) {
-        return res.status(501).json({ error: "report versioning not configured" });
-      }
-      try {
-        const workflow = await options.reportVersionStore.workflow(
-          req.params.id,
-          req.params.versionId,
-        );
-        if (!workflow) return res.status(404).json({ error: "report version not found" });
-        return res.status(200).json({
-          ...workflow,
-          reviewMode: options.teamAuth ? "team" : "solo",
-        });
-      } catch (err) {
-        return workflowError(res, err);
-      }
-    },
-  );
+  app.get("/cases/:id/report-versions/:versionId/workflow", async (req: Request, res: Response) => {
+    if (!options.reportVersionStore) {
+      return res.status(501).json({ error: "report versioning not configured" });
+    }
+    try {
+      const workflow = await options.reportVersionStore.workflow(req.params.id, req.params.versionId);
+      if (!workflow) return res.status(404).json({ error: "report version not found" });
+      return res.status(200).json({
+        ...workflow,
+        reviewMode: options.teamAuth ? "team" : "solo",
+      });
+    } catch (err) {
+      return workflowError(res, err);
+    }
+  });
 
-  app.post(
-    "/cases/:id/report-versions/:versionId/workflow/submit",
-    async (req: Request, res: Response) => {
-      if (!options.reportVersionStore) {
-        return res.status(501).json({ error: "report versioning not configured" });
+  app.post("/cases/:id/report-versions/:versionId/workflow/submit", async (req: Request, res: Response) => {
+    if (!options.reportVersionStore) {
+      return res.status(501).json({ error: "report versioning not configured" });
+    }
+    if (!options.teamAuth) {
+      return res.status(409).json({ error: "peer review requires team authentication" });
+    }
+    const actor = requestActor(req, ctx);
+    if (!actor) return res.status(403).json({ error: "a signed-in person must submit the report" });
+    try {
+      const { reviewerId } = submitSchema.parse(req.body as unknown);
+      const reviewer = reviewerActor(ctx, req.params.id, reviewerId);
+      if (!reviewer) {
+        return res.status(400).json({ error: "reviewer is not an eligible case reviewer" });
       }
-      if (!options.teamAuth) {
-        return res.status(409).json({ error: "peer review requires team authentication" });
-      }
-      const actor = requestActor(req, ctx);
-      if (!actor) return res.status(403).json({ error: "a signed-in person must submit the report" });
-      try {
-        const { reviewerId } = submitSchema.parse(req.body as unknown);
-        const reviewer = reviewerActor(ctx, req.params.id, reviewerId);
-        if (!reviewer) {
-          return res.status(400).json({ error: "reviewer is not an eligible case reviewer" });
-        }
-        const workflow = await options.reportVersionStore.submitForReview(
-          req.params.id,
-          req.params.versionId,
-          actor,
-          reviewer,
-        );
-        auditWorkflow(
-          req,
-          ctx,
-          req.params.id,
-          "report-submitted-for-review",
-          req.params.versionId,
-          `assigned ${reviewer.displayName}`,
-        );
-        return res.status(200).json(workflow);
-      } catch (err) {
-        return workflowError(res, err);
-      }
-    },
-  );
+      const workflow = await options.reportVersionStore.submitForReview(
+        req.params.id,
+        req.params.versionId,
+        actor,
+        reviewer,
+      );
+      auditWorkflow(
+        req,
+        ctx,
+        req.params.id,
+        "report-submitted-for-review",
+        req.params.versionId,
+        `assigned ${reviewer.displayName}`,
+      );
+      return res.status(200).json(workflow);
+    } catch (err) {
+      return workflowError(res, err);
+    }
+  });
 
   app.post(
     "/cases/:id/report-versions/:versionId/review/annotations",
@@ -315,14 +305,7 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
           actor,
           reason,
         );
-        auditWorkflow(
-          req,
-          ctx,
-          req.params.id,
-          "report-changes-requested",
-          req.params.versionId,
-          reason,
-        );
+        auditWorkflow(req, ctx, req.params.id, "report-changes-requested", req.params.versionId, reason);
         return res.status(200).json(workflow);
       } catch (err) {
         return workflowError(res, err);
@@ -330,36 +313,26 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
     },
   );
 
-  app.post(
-    "/cases/:id/report-versions/:versionId/review/approve",
-    async (req: Request, res: Response) => {
-      if (!options.reportVersionStore) {
-        return res.status(501).json({ error: "report versioning not configured" });
-      }
-      const actor = requestActor(req, ctx);
-      if (!actor) return res.status(403).json({ error: "a signed-in reviewer is required" });
-      try {
-        const { note } = noteSchema.parse(req.body as unknown);
-        const workflow = await options.reportVersionStore.approve(
-          req.params.id,
-          req.params.versionId,
-          actor,
-          note,
-        );
-        auditWorkflow(
-          req,
-          ctx,
-          req.params.id,
-          "report-approved",
-          req.params.versionId,
-          note,
-        );
-        return res.status(200).json(workflow);
-      } catch (err) {
-        return workflowError(res, err);
-      }
-    },
-  );
+  app.post("/cases/:id/report-versions/:versionId/review/approve", async (req: Request, res: Response) => {
+    if (!options.reportVersionStore) {
+      return res.status(501).json({ error: "report versioning not configured" });
+    }
+    const actor = requestActor(req, ctx);
+    if (!actor) return res.status(403).json({ error: "a signed-in reviewer is required" });
+    try {
+      const { note } = noteSchema.parse(req.body as unknown);
+      const workflow = await options.reportVersionStore.approve(
+        req.params.id,
+        req.params.versionId,
+        actor,
+        note,
+      );
+      auditWorkflow(req, ctx, req.params.id, "report-approved", req.params.versionId, note);
+      return res.status(200).json(workflow);
+    } catch (err) {
+      return workflowError(res, err);
+    }
+  });
 
   app.post(
     "/cases/:id/report-versions/:versionId/workflow/self-approve",
@@ -379,14 +352,7 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
           actor,
           note,
         );
-        auditWorkflow(
-          req,
-          ctx,
-          req.params.id,
-          "report-self-reviewed",
-          req.params.versionId,
-          note,
-        );
+        auditWorkflow(req, ctx, req.params.id, "report-self-reviewed", req.params.versionId, note);
         return res.status(200).json(workflow);
       } catch (err) {
         return workflowError(res, err);
@@ -394,56 +360,49 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
     },
   );
 
-  app.post(
-    "/cases/:id/report-versions/:versionId/workflow/release",
-    async (req: Request, res: Response) => {
-      if (!options.reportVersionStore) {
-        return res.status(501).json({ error: "report versioning not configured" });
-      }
-      if (!options.analysisRunStore || !options.custodyStore) {
-        return res.status(501).json({ error: "release integrity services are not configured" });
-      }
-      const actor = requestActor(req, ctx);
-      if (!actor) return res.status(403).json({ error: "a signed-in investigator is required" });
-      try {
-        const body = releaseSchema.parse(req.body as unknown);
-        const version = await options.reportVersionStore.get(req.params.id, req.params.versionId);
-        if (!version) return res.status(404).json({ error: "report version not found" });
-        const runIds = version.analysisRunIds ?? [];
-        const runs = (
-          await Promise.all(runIds.map((id) => options.analysisRunStore!.get(req.params.id, id)))
-        ).filter((run): run is NonNullable<typeof run> => run !== null);
-        const [analysisIntegrity, head, chainBreaks, mismatches] = await Promise.all([
-          options.analysisRunStore.verify(req.params.id),
-          options.custodyStore.chainHead(req.params.id),
-          options.custodyStore.verifyChain(req.params.id),
-          options.custodyStore.verifyIntegrity(req.params.id),
-        ]);
-        const release = await options.reportVersionStore.release(
-          req.params.id,
-          req.params.versionId,
-          {
-            actor,
-            ...body,
-            analysisRuns: runs,
-            analysisIntegrity,
-            custody: { head, chainBreaks, mismatches },
-          },
-        );
-        auditWorkflow(
-          req,
-          ctx,
-          req.params.id,
-          "report-released",
-          req.params.versionId,
-          `${release.id} · ${release.manifestHash}`,
-        );
-        return res.status(201).json(release);
-      } catch (err) {
-        return workflowError(res, err);
-      }
-    },
-  );
+  app.post("/cases/:id/report-versions/:versionId/workflow/release", async (req: Request, res: Response) => {
+    if (!options.reportVersionStore) {
+      return res.status(501).json({ error: "report versioning not configured" });
+    }
+    if (!options.analysisRunStore || !options.custodyStore) {
+      return res.status(501).json({ error: "release integrity services are not configured" });
+    }
+    const actor = requestActor(req, ctx);
+    if (!actor) return res.status(403).json({ error: "a signed-in investigator is required" });
+    try {
+      const body = releaseSchema.parse(req.body as unknown);
+      const version = await options.reportVersionStore.get(req.params.id, req.params.versionId);
+      if (!version) return res.status(404).json({ error: "report version not found" });
+      const runIds = version.analysisRunIds ?? [];
+      const runs = (
+        await Promise.all(runIds.map((id) => options.analysisRunStore!.get(req.params.id, id)))
+      ).filter((run): run is NonNullable<typeof run> => run !== null);
+      const [analysisIntegrity, head, chainBreaks, mismatches] = await Promise.all([
+        options.analysisRunStore.verify(req.params.id),
+        options.custodyStore.chainHead(req.params.id),
+        options.custodyStore.verifyChain(req.params.id),
+        options.custodyStore.verifyIntegrity(req.params.id),
+      ]);
+      const release = await options.reportVersionStore.release(req.params.id, req.params.versionId, {
+        actor,
+        ...body,
+        analysisRuns: runs,
+        analysisIntegrity,
+        custody: { head, chainBreaks, mismatches },
+      });
+      auditWorkflow(
+        req,
+        ctx,
+        req.params.id,
+        "report-released",
+        req.params.versionId,
+        `${release.id} · ${release.manifestHash}`,
+      );
+      return res.status(201).json(release);
+    } catch (err) {
+      return workflowError(res, err);
+    }
+  });
 
   app.get("/cases/:id/report-releases", async (req: Request, res: Response) => {
     if (!options.reportVersionStore) {
@@ -481,10 +440,7 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
         to: { id: to.id, releasedAt: to.releasedAt, version: to.reportVersion },
         findings: diffFindings(from.snapshot.state.findings, to.snapshot.state.findings),
         iocs: diffIocs(from.snapshot.state.iocs, to.snapshot.state.iocs),
-        timeline: diffTimeline(
-          from.snapshot.state.forensicTimeline,
-          to.snapshot.state.forensicTimeline,
-        ),
+        timeline: diffTimeline(from.snapshot.state.forensicTimeline, to.snapshot.state.forensicTimeline),
       });
     } catch (err) {
       return workflowError(res, err);
@@ -496,46 +452,32 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
       return res.status(501).json({ error: "report versioning not configured" });
     }
     try {
-      const release = await options.reportVersionStore.getRelease(
-        req.params.id,
-        req.params.releaseId,
-      );
-      return release
-        ? res.status(200).json(release)
-        : res.status(404).json({ error: "release not found" });
+      const release = await options.reportVersionStore.getRelease(req.params.id, req.params.releaseId);
+      return release ? res.status(200).json(release) : res.status(404).json({ error: "release not found" });
     } catch (err) {
       return workflowError(res, err);
     }
   });
 
-  app.get(
-    "/cases/:id/report-releases/:releaseId/packs/:pack",
-    async (req: Request, res: Response) => {
-      if (!options.reportVersionStore) {
-        return res.status(501).json({ error: "report versioning not configured" });
-      }
-      const pack = req.params.pack;
-      if (!(REPORT_PACK_TYPES as readonly string[]).includes(pack)) {
-        return res.status(400).json({ error: "unknown release pack" });
-      }
-      try {
-        const release = await options.reportVersionStore.getRelease(
-          req.params.id,
-          req.params.releaseId,
-        );
-        if (!release) return res.status(404).json({ error: "release not found" });
-        const typedPack = pack as (typeof REPORT_PACK_TYPES)[number];
-        const extension = typedPack === "ioc" ? "csv" : "md";
-        res.type(typedPack === "ioc" ? "text/csv; charset=utf-8" : "text/markdown; charset=utf-8");
-        res.setHeader(
-          "Content-Disposition",
-          `attachment; filename="${typedPack}-${release.id}.${extension}"`,
-        );
-        res.setHeader("Cache-Control", "private, no-cache");
-        return res.send(release.packs[typedPack]);
-      } catch (err) {
-        return workflowError(res, err);
-      }
-    },
-  );
+  app.get("/cases/:id/report-releases/:releaseId/packs/:pack", async (req: Request, res: Response) => {
+    if (!options.reportVersionStore) {
+      return res.status(501).json({ error: "report versioning not configured" });
+    }
+    const pack = req.params.pack;
+    if (!(REPORT_PACK_TYPES as readonly string[]).includes(pack)) {
+      return res.status(400).json({ error: "unknown release pack" });
+    }
+    try {
+      const release = await options.reportVersionStore.getRelease(req.params.id, req.params.releaseId);
+      if (!release) return res.status(404).json({ error: "release not found" });
+      const typedPack = pack as (typeof REPORT_PACK_TYPES)[number];
+      const extension = typedPack === "ioc" ? "csv" : "md";
+      res.type(typedPack === "ioc" ? "text/csv; charset=utf-8" : "text/markdown; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${typedPack}-${release.id}.${extension}"`);
+      res.setHeader("Cache-Control", "private, no-cache");
+      return res.send(release.packs[typedPack]);
+    } catch (err) {
+      return workflowError(res, err);
+    }
+  });
 }

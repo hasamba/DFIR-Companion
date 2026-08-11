@@ -9,16 +9,16 @@
 // analog of diffIocs.ts / timelineDiff.ts.
 
 export interface HuntRunSnapshot {
-  rowKeys: string[];   // stable per-row fingerprints, capped — the run's row-identity set
-  hosts: string[];     // distinct host identifiers extracted from the rows, capped
+  rowKeys: string[]; // stable per-row fingerprints, capped — the run's row-identity set
+  hosts: string[]; // distinct host identifiers extracted from the rows, capped
 }
 
 export interface HuntRunDiff {
   addedRows: number;
   removedRows: number;
-  addedHosts: string[];    // hosts present in this run, not the previous one
-  removedHosts: string[];  // hosts present in the previous run, not this one
-  isFirstRun: boolean;     // no previous snapshot for this fingerprint yet — nothing to diff against
+  addedHosts: string[]; // hosts present in this run, not the previous one
+  removedHosts: string[]; // hosts present in the previous run, not this one
+  isFirstRun: boolean; // no previous snapshot for this fingerprint yet — nothing to diff against
 }
 
 // Per-snapshot cap on distinct row keys / hosts so a hunt returning tens of thousands of rows doesn't
@@ -29,7 +29,18 @@ export const HUNT_RUN_SNAPSHOT_MAX_ROWS = 500;
 
 // Field names likely to carry a host identity across Velociraptor artifacts (client-info style columns
 // first, then common OS/EDR spellings). First match wins per row.
-const HOST_FIELDS = ["Fqdn", "fqdn", "Hostname", "hostname", "ClientId", "client_id", "Computer", "computer", "Host", "host"];
+const HOST_FIELDS = [
+  "Fqdn",
+  "fqdn",
+  "Hostname",
+  "hostname",
+  "ClientId",
+  "client_id",
+  "Computer",
+  "computer",
+  "Host",
+  "host",
+];
 
 function extractHost(row: unknown): string | undefined {
   if (!row || typeof row !== "object") return undefined;
@@ -46,7 +57,9 @@ function extractHost(row: unknown): string | undefined {
 function rowKey(row: unknown): string {
   if (row && typeof row === "object" && !Array.isArray(row)) {
     const obj = row as Record<string, unknown>;
-    const sorted = Object.keys(obj).sort().map((k) => [k, obj[k]] as const);
+    const sorted = Object.keys(obj)
+      .sort()
+      .map((k) => [k, obj[k]] as const);
     return JSON.stringify(sorted);
   }
   return JSON.stringify(row);
@@ -57,7 +70,10 @@ function dedupeCapped(values: readonly string[], max: number): string[] {
 }
 
 // Build a bounded snapshot of one hunt run's rows, from the artifact -> rows map a collect() returns.
-export function buildHuntRunSnapshot(rowsByArtifact: Record<string, unknown[]>, maxRows: number = HUNT_RUN_SNAPSHOT_MAX_ROWS): HuntRunSnapshot {
+export function buildHuntRunSnapshot(
+  rowsByArtifact: Record<string, unknown[]>,
+  maxRows: number = HUNT_RUN_SNAPSHOT_MAX_ROWS,
+): HuntRunSnapshot {
   const rowKeys: string[] = [];
   const hosts: string[] = [];
   for (const rows of Object.values(rowsByArtifact ?? {})) {
@@ -96,15 +112,23 @@ export function diffHuntRuns(previous: HuntRunSnapshot | undefined, current: Hun
 
 // True when nothing changed (and it isn't the first run) — lets callers skip surfacing an empty diff.
 export function isEmptyHuntRunDiff(diff: HuntRunDiff): boolean {
-  return !diff.isFirstRun && diff.addedRows === 0 && diff.removedRows === 0 && diff.addedHosts.length === 0 && diff.removedHosts.length === 0;
+  return (
+    !diff.isFirstRun &&
+    diff.addedRows === 0 &&
+    diff.removedRows === 0 &&
+    diff.addedHosts.length === 0 &&
+    diff.removedHosts.length === 0
+  );
 }
 
 // Compact human summary for the dashboard hunt-profile view, mirroring huntOutcomes.ts's summarizeResult.
 export function summarizeHuntRunDiff(diff: HuntRunDiff): string {
   if (diff.isFirstRun) return "first run — no prior run to compare";
   const parts: string[] = [];
-  if (diff.addedRows > 0) parts.push(`+${diff.addedRows} row${diff.addedRows === 1 ? "" : "s"} since last run`);
-  if (diff.addedHosts.length) parts.push(`${diff.addedHosts.length} new host${diff.addedHosts.length === 1 ? "" : "s"}`);
+  if (diff.addedRows > 0)
+    parts.push(`+${diff.addedRows} row${diff.addedRows === 1 ? "" : "s"} since last run`);
+  if (diff.addedHosts.length)
+    parts.push(`${diff.addedHosts.length} new host${diff.addedHosts.length === 1 ? "" : "s"}`);
   if (diff.removedRows > 0) parts.push(`-${diff.removedRows} row${diff.removedRows === 1 ? "" : "s"}`);
   if (!parts.length) return "no change since last run";
   return parts.join(", ");
@@ -116,7 +140,7 @@ export function summarizeHuntRunDiff(diff: HuntRunDiff): string {
 export interface HuntRunRecord {
   vqlFingerprint: string;
   huntId: string;
-  capturedAt: string;   // ISO
+  capturedAt: string; // ISO
   snapshot: HuntRunSnapshot;
 }
 
@@ -124,7 +148,10 @@ export interface HuntRunRecord {
 // small across a long investigation with many distinct hunts.
 export const HUNT_RUN_RECORDS_MAX = 50;
 
-export function findHuntRunRecord(records: readonly HuntRunRecord[], vqlFingerprint: string): HuntRunRecord | undefined {
+export function findHuntRunRecord(
+  records: readonly HuntRunRecord[],
+  vqlFingerprint: string,
+): HuntRunRecord | undefined {
   if (!vqlFingerprint) return undefined;
   return records.find((r) => r.vqlFingerprint === vqlFingerprint);
 }

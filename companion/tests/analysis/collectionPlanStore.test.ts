@@ -57,8 +57,13 @@ describe("CollectionPlanStore", () => {
     const { cases, store } = await makeStore();
     const dir = cases.stateDir("c1");
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "collection-plan.json"),
-      JSON.stringify({ overrides: { edr: { state: "banana", reason: "x" }, network: { state: "na", reason: "ok" } } }), "utf8");
+    await writeFile(
+      join(dir, "collection-plan.json"),
+      JSON.stringify({
+        overrides: { edr: { state: "banana", reason: "x" }, network: { state: "na", reason: "ok" } },
+      }),
+      "utf8",
+    );
     expect(await store.load("c1")).toEqual({ network: { state: "na", reason: "ok" } });
   });
 });

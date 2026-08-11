@@ -99,7 +99,9 @@ export class NotebookStore {
         updated = {
           ...e,
           ...(patch.text !== undefined ? { text: String(patch.text).trim() } : {}),
-          ...(patch.type !== undefined && NOTEBOOK_ENTRY_TYPES.includes(patch.type) ? { type: patch.type } : {}),
+          ...(patch.type !== undefined && NOTEBOOK_ENTRY_TYPES.includes(patch.type)
+            ? { type: patch.type }
+            : {}),
           ...(patch.linkedEntityIds !== undefined ? { linkedEntityIds: patch.linkedEntityIds } : {}),
         };
         return updated;

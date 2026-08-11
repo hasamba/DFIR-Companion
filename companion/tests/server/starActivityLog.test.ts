@@ -28,7 +28,10 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
   it("logs a tag-added entry for a normal label", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "needs-review", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "needs-review",
+      author: "an",
     });
     expect(post.status).toBe(201);
     const log = await request(app).get("/cases/c1/activity-log");
@@ -41,7 +44,10 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
   it("does NOT log a tag-added entry for the reserved 'starred' label", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "starred", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "starred",
+      author: "an",
     });
     expect(post.status).toBe(201);
     const log = await request(app).get("/cases/c1/activity-log");
@@ -55,7 +61,10 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
     // add() normalizes "Starred" → "starred"; the suppression check reads the STORED tag.label,
     // so a cased/spaced variant is caught too (symmetric with the DELETE side).
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "Starred", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "Starred",
+      author: "an",
     });
     expect(post.status).toBe(201);
     expect(post.body.label).toBe("starred");
@@ -67,7 +76,10 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
   it("does NOT log a tag-removed entry when the removed tag was 'starred'", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "starred", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "starred",
+      author: "an",
     });
     const tagId = post.body.id;
     const del = await request(app).delete(`/cases/c1/tags/${tagId}`);
@@ -80,7 +92,10 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
   it("DOES log a tag-removed entry for a normal label", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "needs-review", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "needs-review",
+      author: "an",
     });
     const tagId = post.body.id;
     const del = await request(app).delete(`/cases/c1/tags/${tagId}`);
@@ -94,7 +109,10 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
   it("404s on a repeat DELETE of the same tag id (remove() null path, no double-log)", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "needs-review", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "needs-review",
+      author: "an",
     });
     const tagId = post.body.id;
     await request(app).delete(`/cases/c1/tags/${tagId}`);

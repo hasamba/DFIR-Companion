@@ -3,13 +3,13 @@ export type TriggerType = "timer" | "navigation" | "tab_switch" | "click";
 export interface CaptureMetadata {
   caseId: string;
   sequenceNumber: number;
-  timestamp: string;        // ISO-8601
+  timestamp: string; // ISO-8601
   url: string;
   tabTitle: string;
   triggerType: TriggerType;
-  contentHash: string;      // SHA-256 hex of the screenshot bytes (exact-match dedup vs. the previous capture)
+  contentHash: string; // SHA-256 hex of the screenshot bytes (exact-match dedup vs. the previous capture)
   isDuplicate: boolean;
-  screenshotFile: string;   // relative filename within screenshots/, e.g. "000123_<ts>_<tab-title>.webp" (title slugified; omitted when empty / no safe chars)
+  screenshotFile: string; // relative filename within screenshots/, e.g. "000123_<ts>_<tab-title>.webp" (title slugified; omitted when empty / no safe chars)
 }
 
 export interface CasePasswordHash {
@@ -20,7 +20,7 @@ export interface CasePasswordHash {
 export interface CaseMeta {
   caseId: string;
   name: string;
-  createdAt: string;        // ISO-8601
+  createdAt: string; // ISO-8601
   investigator: string;
   aiProvider: string | null;
   status?: "open" | "closed" | "archived"; // lifecycle state; absent means open
@@ -35,11 +35,11 @@ export interface CaseMeta {
 export interface ImportMetadata {
   caseId: string;
   sequenceNumber: number;
-  importedAt: string;       // ISO-8601
-  filename: string;         // stored filename within imports/
-  originalName: string;     // the user's original file name
-  rows: number;             // data rows (excluding header)
-  bytes: number;            // raw CSV byte length
+  importedAt: string; // ISO-8601
+  filename: string; // stored filename within imports/
+  originalName: string; // the user's original file name
+  rows: number; // data rows (excluding header)
+  bytes: number; // raw CSV byte length
 }
 
 // Payload the extension POSTs to the ingest endpoint.
@@ -49,5 +49,5 @@ export interface IngestPayload {
   url: string;
   tabTitle: string;
   triggerType: TriggerType;
-  imageBase64: string;      // base64-encoded screenshot bytes (webp/png)
+  imageBase64: string; // base64-encoded screenshot bytes (webp/png)
 }

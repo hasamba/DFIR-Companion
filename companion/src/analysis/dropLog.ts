@@ -65,7 +65,11 @@ export function buildSweepLogEntries(
 ): { entries: DropLogEntry[]; nextLoggedPending: Set<string> } {
   const entries: DropLogEntry[] = [
     ...sweep.imported.map((relpath): DropLogEntry => ({ status: "IMPORTED", relpath })),
-    ...(sweep.submitted ?? []).map((s): DropLogEntry => ({ status: "SUBMITTED", relpath: s.relpath, reason: s.reason })),
+    ...(sweep.submitted ?? []).map((s): DropLogEntry => ({
+      status: "SUBMITTED",
+      relpath: s.relpath,
+      reason: s.reason,
+    })),
     ...sweep.failed.map((f): DropLogEntry => ({ status: "FAILED", relpath: f.relpath, reason: f.reason })),
     ...sweep.pendingRawInputs
       .filter((p) => !loggedPending.has(p.relpath))

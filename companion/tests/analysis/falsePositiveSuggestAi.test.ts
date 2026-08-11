@@ -8,7 +8,11 @@ import { join } from "node:path";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 
 function fakeProvider(rawText: string): AIProvider {
-  return { name: "fake", model: "mock-model", analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }) };
+  return {
+    name: "fake",
+    model: "mock-model",
+    analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }),
+  };
 }
 
 describe("AnalysisPipeline.suggestFalsePositiveSimilarAi", () => {
@@ -18,9 +22,19 @@ describe("AnalysisPipeline.suggestFalsePositiveSimilarAi", () => {
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "c1", investigator: "tester", aiProvider: null });
     const provider = fakeProvider(JSON.stringify({ candidateIds: ["e2", "e999-does-not-exist"] }));
-    const pipeline = new AnalysisPipeline({ stateStore, synthesisProvider: provider, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      stateStore,
+      synthesisProvider: provider,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
 
-    const result = await pipeline.suggestFalsePositiveSimilarAi("c1", "e1", "PsExec run", ["e2", "e3"], ["PsExec run again", "unrelated login"]);
+    const result = await pipeline.suggestFalsePositiveSimilarAi(
+      "c1",
+      "e1",
+      "PsExec run",
+      ["e2", "e3"],
+      ["PsExec run again", "unrelated login"],
+    );
     expect(result).toEqual(["e2"]);
   });
 
@@ -30,9 +44,19 @@ describe("AnalysisPipeline.suggestFalsePositiveSimilarAi", () => {
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "c1", investigator: "tester", aiProvider: null });
     const provider = fakeProvider(JSON.stringify({ candidateIds: ["e2", "e3"] }));
-    const pipeline = new AnalysisPipeline({ stateStore, synthesisProvider: provider, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      stateStore,
+      synthesisProvider: provider,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
 
-    const result = await pipeline.suggestFalsePositiveSimilarAi("c1", "e1", "PsExec run", ["e2", "e3"], ["PsExec run again", "unrelated login"]);
+    const result = await pipeline.suggestFalsePositiveSimilarAi(
+      "c1",
+      "e1",
+      "PsExec run",
+      ["e2", "e3"],
+      ["PsExec run again", "unrelated login"],
+    );
     expect(result).toEqual(["e2", "e3"]);
   });
 });

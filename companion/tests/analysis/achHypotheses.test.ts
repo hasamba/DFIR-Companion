@@ -10,10 +10,25 @@ import { renderRefutedHypothesesBlock } from "../../src/analysis/priorWork.js";
 
 function h(partial: Partial<Hypothesis> & { id: string; title: string }): Hypothesis {
   return {
-    description: "", expectedOutcome: "", status: "open", relatedTechniques: [], relatedEventIds: [],
-    relatedIocIds: [], contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
-    assignee: "", notes: "", source: "synthesis", analystTouched: false, needsReview: false,
-    createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", statusHistory: [], ...partial,
+    description: "",
+    expectedOutcome: "",
+    status: "open",
+    relatedTechniques: [],
+    relatedEventIds: [],
+    relatedIocIds: [],
+    contradictingEventIds: [],
+    discriminator: "",
+    exhausted: false,
+    exhaustedReason: "",
+    assignee: "",
+    notes: "",
+    source: "synthesis",
+    analystTouched: false,
+    needsReview: false,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    statusHistory: [],
+    ...partial,
   };
 }
 const NOW = "2026-02-02T00:00:00Z";
@@ -21,11 +36,18 @@ const NOW = "2026-02-02T00:00:00Z";
 describe("sanitizeHypotheses ACH fields (#14)", () => {
   it("keeps contradictingEventIds (filtered to real events) + discriminator", () => {
     const [seed] = sanitizeHypotheses(
-      [{ title: "T", relatedEventIds: ["e1"], contradictingEventIds: ["e2", "ghost"], discriminator: "  $MFT on FS01  " }],
+      [
+        {
+          title: "T",
+          relatedEventIds: ["e1"],
+          contradictingEventIds: ["e2", "ghost"],
+          discriminator: "  $MFT on FS01  ",
+        },
+      ],
       new Set(["e1", "e2"]),
       new Set(),
     );
-    expect(seed.contradictingEventIds).toEqual(["e2"]);   // "ghost" dropped (not a real event)
+    expect(seed.contradictingEventIds).toEqual(["e2"]); // "ghost" dropped (not a real event)
     expect(seed.discriminator).toBe("$MFT on FS01");
   });
 });
@@ -33,7 +55,12 @@ describe("sanitizeHypotheses ACH fields (#14)", () => {
 describe("rankHypothesesAch (#14)", () => {
   it("orders by fewest contradictions, then most support; sinks exhausted/refuted", () => {
     const ranked = rankHypothesesAch([
-      h({ id: "wellSupportedButWrong", title: "A", relatedEventIds: ["e1", "e2", "e3"], contradictingEventIds: ["e8", "e9"] }),
+      h({
+        id: "wellSupportedButWrong",
+        title: "A",
+        relatedEventIds: ["e1", "e2", "e3"],
+        contradictingEventIds: ["e8", "e9"],
+      }),
       h({ id: "clean", title: "B", relatedEventIds: ["e1"], contradictingEventIds: [] }),
       h({ id: "exhausted", title: "C", contradictingEventIds: [], exhausted: true }),
       h({ id: "oneContra", title: "D", relatedEventIds: ["e1", "e2"], contradictingEventIds: ["e8"] }),
@@ -53,9 +80,9 @@ describe("markExhaustedHypotheses (#14)", () => {
     const signals: HypothesisHuntSignal[] = [
       { relatedHypothesisId: "hp_explicit", techniques: [], missed: true },
       { relatedHypothesisId: "hp_explicit", techniques: [], missed: true },
-      { techniques: ["T1021"], missed: true },   // matches hp_tech AND hp_supported by technique
+      { techniques: ["T1021"], missed: true }, // matches hp_tech AND hp_supported by technique
       { techniques: ["T1021"], missed: true },
-      { techniques: ["T1021"], missed: false },  // a hit — not counted
+      { techniques: ["T1021"], missed: false }, // a hit — not counted
     ];
     const { hypotheses: out, changed } = markExhaustedHypotheses(hyps, signals, NOW, 2);
     expect(changed).toBe(true);
@@ -66,7 +93,9 @@ describe("markExhaustedHypotheses (#14)", () => {
   });
 
   it("does not exhaust below the miss threshold and is idempotent", () => {
-    const one: HypothesisHuntSignal[] = [{ relatedHypothesisId: "hp_explicit", techniques: [], missed: true }];
+    const one: HypothesisHuntSignal[] = [
+      { relatedHypothesisId: "hp_explicit", techniques: [], missed: true },
+    ];
     expect(markExhaustedHypotheses(hyps, one, NOW, 2).changed).toBe(false);
     const many: HypothesisHuntSignal[] = [
       { relatedHypothesisId: "hp_explicit", techniques: [], missed: true },
@@ -74,7 +103,7 @@ describe("markExhaustedHypotheses (#14)", () => {
     ];
     const first = markExhaustedHypotheses(hyps, many, NOW, 2);
     const second = markExhaustedHypotheses(first.hypotheses, many, "2026-03-03T00:00:00Z", 2);
-    expect(second.changed).toBe(false);   // already exhausted → no re-stamp
+    expect(second.changed).toBe(false); // already exhausted → no re-stamp
   });
 });
 

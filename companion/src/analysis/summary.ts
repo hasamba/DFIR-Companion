@@ -15,19 +15,22 @@ function withMore<T>(items: readonly T[], max: number, render: (t: T) => string)
 }
 
 export function buildStateSummary(state: InvestigationState): string {
-  if (
-    state.findings.length === 0 &&
-    state.openThreads.length === 0 &&
-    state.forensicTimeline.length === 0
-  ) {
+  if (state.findings.length === 0 && state.openThreads.length === 0 && state.forensicTimeline.length === 0) {
     return "No findings yet. This is early in the investigation.";
   }
-  const findings = withMore(state.findings, MAX_FINDINGS, (f) => `- [${f.id}] (${f.severity}) ${f.title}: ${f.description}`);
+  const findings = withMore(
+    state.findings,
+    MAX_FINDINGS,
+    (f) => `- [${f.id}] (${f.severity}) ${f.title}: ${f.description}`,
+  );
   const threads = state.openThreads
     .filter((t) => t.status === "open")
     .map((t) => `- [${t.id}] ${t.description}`)
     .join("\n");
-  const shownIocs = state.iocs.slice(-MAX_IOCS).map((i) => `${i.type}:${i.value}`).join(", ");
+  const shownIocs = state.iocs
+    .slice(-MAX_IOCS)
+    .map((i) => `${i.type}:${i.value}`)
+    .join(", ");
   const extraIocs = state.iocs.length - Math.min(state.iocs.length, MAX_IOCS);
   const iocs = extraIocs > 0 ? `${shownIocs} (+${extraIocs} more)` : shownIocs;
   // Show the most recent dated events so the model extends (not duplicates) the timeline.

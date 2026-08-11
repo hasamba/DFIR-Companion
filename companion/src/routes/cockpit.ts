@@ -35,20 +35,15 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     return meta?.investigator?.trim().slice(0, 120) || "analyst";
   }
 
-  async function loadSnapshot(caseId: string, requestedInvestigator?: unknown): Promise<CockpitSnapshot | null> {
+  async function loadSnapshot(
+    caseId: string,
+    requestedInvestigator?: unknown,
+  ): Promise<CockpitSnapshot | null> {
     if (!(await store.caseExists(caseId))) return null;
     const stateStore = options.stateStore;
     if (!stateStore) throw new Error("state store not configured");
     const investigator = await resolveInvestigator(caseId, requestedInvestigator);
-    const [
-      state,
-      hypotheses,
-      workflows,
-      pins,
-      importMeta,
-      synthMeta,
-      decisions,
-    ] = await Promise.all([
+    const [state, hypotheses, workflows, pins, importMeta, synthMeta, decisions] = await Promise.all([
       stateStore.load(caseId),
       options.hypothesisStore?.load(caseId) ?? Promise.resolve([]),
       options.findingWorkflowStore?.load(caseId) ?? Promise.resolve([]),

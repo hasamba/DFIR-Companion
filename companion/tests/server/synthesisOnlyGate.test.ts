@@ -21,7 +21,8 @@ async function makeSynthOnlyApp(canned: string) {
   const pipeline = buildRuntimePipeline({
     provider: undefined,
     synthesisProvider: new MockProvider("synth-only", canned),
-    stateStore, store,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: false });
@@ -31,17 +32,40 @@ async function makeSynthOnlyApp(canned: string) {
 
 describe("synthesis-provider gate (no vision provider)", () => {
   it("POST /cases/:id/synthesize runs on the synthesis provider alone", async () => {
-    const { app, stateStore } = await makeSynthOnlyApp(JSON.stringify({
-      findings: [{ id: "f1", severity: "High", title: "synth finding", description: "d",
-        relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] }],
-      iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-    }));
+    const { app, stateStore } = await makeSynthOnlyApp(
+      JSON.stringify({
+        findings: [
+          {
+            id: "f1",
+            severity: "High",
+            title: "synth finding",
+            description: "d",
+            relatedIocs: [],
+            mitreTechniques: [],
+            status: "open",
+            relatedEventIds: ["e1"],
+          },
+        ],
+        iocs: [],
+        mitreTechniques: [],
+        attackerPath: "path",
+        summary: "s",
+        forensicEvents: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        timelineNote: "",
+      }),
+    );
     // synthesize() early-returns on an empty timeline (nothing to synthesize), so seed one event.
     const s = emptyState("c1");
     s.forensicTimeline.push({
-      id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish opened",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
     });
     await stateStore.save(s);
     const res = await request(app).post("/cases/c1/synthesize").send({});
@@ -50,31 +74,44 @@ describe("synthesis-provider gate (no vision provider)", () => {
   });
 
   it("POST /cases/:id/ask answers on the synthesis provider alone", async () => {
-    const { app } = await makeSynthOnlyApp(JSON.stringify({
-      answer: "No evidence of exfiltration.", status: "unknown",
-      pointer: "Check egress proxy/firewall logs.", relatedEventIds: [],
-    }));
+    const { app } = await makeSynthOnlyApp(
+      JSON.stringify({
+        answer: "No evidence of exfiltration.",
+        status: "unknown",
+        pointer: "Check egress proxy/firewall logs.",
+        relatedEventIds: [],
+      }),
+    );
     const res = await request(app).post("/cases/c1/ask").send({ question: "was data exfiltrated?" });
     expect(res.status).toBe(200);
     expect(res.body.answer).toBeTruthy();
   });
 
   it("POST /cases/:id/events/:eid/explain explains on the synthesis provider alone", async () => {
-    const { app, stateStore } = await makeSynthOnlyApp(JSON.stringify({
-      summary: "PowerShell spawned by Word",
-      whyItMatters: "Classic macro initial access",
-      normalContext: "Unusual in office environments",
-      suspiciousIndicators: "WINWORD.EXE parent process",
-      attackMapping: "T1059.001",
-      pivotQueries: [{ platform: "velociraptor", query: "SELECT * FROM pslist()", rationale: "check process tree" }],
-      evidenceFor: "Macro execution chain",
-      evidenceAgainst: "Could be legitimate automation",
-      relatedEventIds: [],
-    }));
+    const { app, stateStore } = await makeSynthOnlyApp(
+      JSON.stringify({
+        summary: "PowerShell spawned by Word",
+        whyItMatters: "Classic macro initial access",
+        normalContext: "Unusual in office environments",
+        suspiciousIndicators: "WINWORD.EXE parent process",
+        attackMapping: "T1059.001",
+        pivotQueries: [
+          { platform: "velociraptor", query: "SELECT * FROM pslist()", rationale: "check process tree" },
+        ],
+        evidenceFor: "Macro execution chain",
+        evidenceAgainst: "Could be legitimate automation",
+        relatedEventIds: [],
+      }),
+    );
     const s = emptyState("c1");
     s.forensicTimeline.push({
-      id: "ev1", timestamp: "2026-06-01T10:00:00Z", description: "powershell.exe spawned",
-      severity: "High", mitreTechniques: ["T1059.001"], relatedFindingIds: [], sourceScreenshots: [],
+      id: "ev1",
+      timestamp: "2026-06-01T10:00:00Z",
+      description: "powershell.exe spawned",
+      severity: "High",
+      mitreTechniques: ["T1059.001"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
     });
     await stateStore.save(s);
     const res = await request(app).post("/cases/c1/events/ev1/explain");
@@ -90,11 +127,20 @@ describe("synthesis-provider gate (no vision provider)", () => {
   });
 
   it("POST /cases/:id/import-csv accepts CSV analysis on the synthesis provider alone", async () => {
-    const { app } = await makeSynthOnlyApp(JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-      timelineNote: "", summary: "", forensicEvents: [],
-    }));
-    const res = await request(app).post("/cases/c1/import-csv")
+    const { app } = await makeSynthOnlyApp(
+      JSON.stringify({
+        findings: [],
+        iocs: [],
+        mitreTechniques: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        timelineNote: "",
+        summary: "",
+        forensicEvents: [],
+      }),
+    );
+    const res = await request(app)
+      .post("/cases/c1/import-csv")
       .send({ filename: "results.csv", csv: "ts,event\n2026-06-01T10:00:00Z,logon\n" });
     expect(res.status).toBe(202);
     expect(res.body.accepted).toBe(true);
@@ -105,7 +151,10 @@ describe("synthesis-provider gate (no vision provider)", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const pipeline = buildRuntimePipeline({
-      provider: undefined, synthesisProvider: undefined, stateStore, store,
+      provider: undefined,
+      synthesisProvider: undefined,
+      stateStore,
+      store,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const app = createApp(store, { pipeline, stateStore, aiConfigured: false });
@@ -114,7 +163,9 @@ describe("synthesis-provider gate (no vision provider)", () => {
     expect(synth.status).toBe(501);
     const ask = await request(app).post("/cases/c1/ask").send({ question: "q" });
     expect(ask.status).toBe(501);
-    const csv = await request(app).post("/cases/c1/import-csv").send({ filename: "x.csv", csv: "a,b\n1,2\n" });
+    const csv = await request(app)
+      .post("/cases/c1/import-csv")
+      .send({ filename: "x.csv", csv: "a,b\n1,2\n" });
     expect(csv.status).toBe(501);
   });
 });

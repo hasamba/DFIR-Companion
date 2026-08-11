@@ -28,7 +28,14 @@ function withJobs(n: number, kind: "import" | "synthesis" | "enrichment" = "impo
 describe("jobRegistry", () => {
   it("createJob appends a running, immutable job", () => {
     const t0 = emptyJobTable();
-    const t1 = createJob(t0, { id: "job_1", caseId: "c1", kind: "synthesis", label: "x", cancellable: true, now: T0 });
+    const t1 = createJob(t0, {
+      id: "job_1",
+      caseId: "c1",
+      kind: "synthesis",
+      label: "x",
+      cancellable: true,
+      now: T0,
+    });
     expect(t0.jobs).toHaveLength(0); // original untouched
     const j = getJob(t1, "job_1")!;
     expect(j.status).toBe("running");
@@ -62,7 +69,12 @@ describe("jobRegistry", () => {
     table = progressJob(table, "job_0", { done: 500, total: 1000 }, "reading events", T1);
     expect(getJob(table, "job_0")?.lastCheckpoint?.progress).toEqual({ done: 0, total: 1 });
 
-    table = checkpointJob(table, "job_0", { progress: { done: 1, total: 1 }, detail: "timeline committed" }, T1);
+    table = checkpointJob(
+      table,
+      "job_0",
+      { progress: { done: 1, total: 1 }, detail: "timeline committed" },
+      T1,
+    );
     table = requeueJob(interruptJob(table, "job_0", T1), "job_0", T1);
     expect(getJob(table, "job_0")).toMatchObject({
       status: "queued",
@@ -81,7 +93,8 @@ describe("jobRegistry", () => {
     expect(getJob(cancelled, "job_1")!).toMatchObject({ status: "failed", error: "boom", endedAt: T1 });
     expect(getJob(cancelled, "job_2")!.status).toBe("cancelled");
     expect(getJob(cancelled, "job_2")!.updatedAt).toBe(T1);
-    for (const id of ["job_0", "job_1", "job_2"]) expect(isTerminal(getJob(cancelled, id)!.status)).toBe(true);
+    for (const id of ["job_0", "job_1", "job_2"])
+      expect(isTerminal(getJob(cancelled, id)!.status)).toBe(true);
   });
 
   it("a terminal job cannot be re-terminated (late finish can't clobber a cancel)", () => {

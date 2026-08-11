@@ -44,7 +44,9 @@ beforeEach(async () => {
   });
 
   // A real PNG on disk so the export's screenshot lister finds it.
-  const png = await sharp({ create: { width: 120, height: 40, channels: 3, background: { r: 255, g: 255, b: 255 } } })
+  const png = await sharp({
+    create: { width: 120, height: 40, channels: 3, background: { r: 255, g: 255, b: 255 } },
+  })
     .png()
     .toBuffer();
   await cases.saveScreenshot("c1", "shot-001.png", png);
@@ -58,11 +60,14 @@ beforeEach(async () => {
 
 describe("GET /cases/:id/export/redacted", () => {
   it("returns a ZIP attachment with an anonymized report, redacted screenshot, and notes", async () => {
-    const res = await request(app).get("/cases/c1/export/redacted").buffer().parse((r, cb) => {
-      const chunks: Buffer[] = [];
-      r.on("data", (c: Buffer) => chunks.push(c));
-      r.on("end", () => cb(null, Buffer.concat(chunks)));
-    });
+    const res = await request(app)
+      .get("/cases/c1/export/redacted")
+      .buffer()
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("application/zip");
@@ -85,11 +90,14 @@ describe("GET /cases/:id/export/redacted", () => {
   });
 
   it("omits screenshots when ?screenshots=0", async () => {
-    const res = await request(app).get("/cases/c1/export/redacted?screenshots=0").buffer().parse((r, cb) => {
-      const chunks: Buffer[] = [];
-      r.on("data", (c: Buffer) => chunks.push(c));
-      r.on("end", () => cb(null, Buffer.concat(chunks)));
-    });
+    const res = await request(app)
+      .get("/cases/c1/export/redacted?screenshots=0")
+      .buffer()
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
     expect(res.status).toBe(200);
     const paths = readZip(res.body as Buffer).map((e) => e.path);
     expect(paths.some((p) => p.startsWith("screenshots/"))).toBe(false);

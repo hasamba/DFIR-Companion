@@ -19,18 +19,18 @@
 //                           a specific reason instead of collecting a wall of remote 403s.
 
 export interface RepairedIocValue {
-  value: string;   // the bare indicator
-  note?: string;   // annotation lifted out of the raw value ("DC01", "exfil endpoint", "port 443")
+  value: string; // the bare indicator
+  note?: string; // annotation lifted out of the raw value ("DC01", "exfil endpoint", "port 443")
 }
 
 // Longest plausible value per type. Anything past this is a text blob that was mis-typed, not an
 // indicator — the only class we drop outright. Unknown types fall back to OTHER_MAX.
 const MAX_LEN: Record<string, number> = {
-  ip: 45,        // longest full IPv6 form
-  domain: 253,   // RFC 1035 max FQDN
-  hash: 128,     // SHA-512 hex
-  url: 2048,     // conventional browser/proxy ceiling
-  file: 1024,    // generous path
+  ip: 45, // longest full IPv6 form
+  domain: 253, // RFC 1035 max FQDN
+  hash: 128, // SHA-512 hex
+  url: 2048, // conventional browser/proxy ceiling
+  file: 1024, // generous path
   process: 512,
   sid: 184,
 };
@@ -45,7 +45,8 @@ const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const HASH_LEN = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/;
 // One or more DNS labels. Single-label hostnames ("DC01") are accepted — they are routinely
 // recorded as domain IOCs — as are underscores, which appear in SRV/DKIM records.
-const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*\.?$/;
+const DOMAIN_RE =
+  /^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*\.?$/;
 // Reject the loopback/placeholder addresses that carry no investigative signal, matching cleanIp.
 const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
 
@@ -119,7 +120,13 @@ function isPrivateIpv6(ip: string): boolean {
   const lower = ip.toLowerCase();
   if (lower === "::1" || lower === "::") return true;
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true;
+  if (
+    lower.startsWith("fe8") ||
+    lower.startsWith("fe9") ||
+    lower.startsWith("fea") ||
+    lower.startsWith("feb")
+  )
+    return true;
   const mapped = embeddedIpv4(lower);
   if (mapped && isPrivateIpv4(mapped)) return true;
   return false;
@@ -174,11 +181,16 @@ export function isWellFormedIocValue(type: string, value: string): boolean {
   if (v.length > (MAX_LEN[type] ?? OTHER_MAX)) return false;
   if (/[\r\n\t]/.test(v)) return false;
   switch (type) {
-    case "ip":     return isValidIp(v);
-    case "hash":   return HASH_LEN.test(v.toLowerCase());
-    case "domain": return DOMAIN_RE.test(v.toLowerCase());
-    case "url":    return !/\s/.test(v) && /[./]/.test(v);
-    default:       return true;
+    case "ip":
+      return isValidIp(v);
+    case "hash":
+      return HASH_LEN.test(v.toLowerCase());
+    case "domain":
+      return DOMAIN_RE.test(v.toLowerCase());
+    case "url":
+      return !/\s/.test(v) && /[./]/.test(v);
+    default:
+      return true;
   }
 }
 
@@ -194,10 +206,14 @@ function canonicalize(type: string, v: string): string {
     // Case is PRESERVED. Validation is case-insensitive (DNS and hex digests both are), but the
     // stored value keeps the casing it was first seen with — dedup is already case-insensitive, so
     // rewriting the case would change what analysts see for no correlation benefit.
-    case "hash":   return HASH_LEN.test(v.toLowerCase()) ? v : "";
-    case "domain": return DOMAIN_RE.test(v.toLowerCase()) ? v.replace(/\.$/, "") : "";
-    case "url":    return isWellFormedIocValue("url", v) ? v : "";
-    default:       return v;
+    case "hash":
+      return HASH_LEN.test(v.toLowerCase()) ? v : "";
+    case "domain":
+      return DOMAIN_RE.test(v.toLowerCase()) ? v.replace(/\.$/, "") : "";
+    case "url":
+      return isWellFormedIocValue("url", v) ? v : "";
+    default:
+      return v;
   }
 }
 

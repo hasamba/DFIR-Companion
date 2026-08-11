@@ -31,14 +31,32 @@ describe("normalizeExt / slugifyToolName", () => {
 
 describe("customToolToConfig", () => {
   it("uses stdout mode when the command has no <output>", () => {
-    const t: CustomTool = { id: "custom-x", name: "X", binary: "x", runArgs: "-r <target>", extensions: [".db"], autoRun: false, timeoutMs: 1000, maxOutputBytes: 100 };
+    const t: CustomTool = {
+      id: "custom-x",
+      name: "X",
+      binary: "x",
+      runArgs: "-r <target>",
+      extensions: [".db"],
+      autoRun: false,
+      timeoutMs: 1000,
+      maxOutputBytes: 100,
+    };
     const cfg = customToolToConfig(t);
     expect(cfg.importKind).toBe("auto");
     expect(cfg.outputMode).toBe("stdout");
     expect(cfg.outputFile).toBeUndefined();
   });
   it("uses file mode when the command writes <output>", () => {
-    const t: CustomTool = { id: "custom-y", name: "Y", binary: "y", runArgs: "-r <target> -o <output>", extensions: [".db"], autoRun: true, timeoutMs: 1000, maxOutputBytes: 100 };
+    const t: CustomTool = {
+      id: "custom-y",
+      name: "Y",
+      binary: "y",
+      runArgs: "-r <target> -o <output>",
+      extensions: [".db"],
+      autoRun: true,
+      timeoutMs: 1000,
+      maxOutputBytes: 100,
+    };
     const cfg = customToolToConfig(t);
     expect(cfg.outputMode).toBe("file");
     expect(cfg.outputFile).toBe("output.dat");
@@ -49,7 +67,13 @@ describe("customToolToConfig", () => {
 describe("CustomToolStore", () => {
   it("adds, loads, and normalizes a custom tool", async () => {
     const s = await store();
-    const t = await s.add({ name: "EVTX2JSON", binary: "C:\\tools\\evtx2json.exe", runArgs: "<target> -o <output>", extensions: "evtx, .EVT xyz", autoRun: true });
+    const t = await s.add({
+      name: "EVTX2JSON",
+      binary: "C:\\tools\\evtx2json.exe",
+      runArgs: "<target> -o <output>",
+      extensions: "evtx, .EVT xyz",
+      autoRun: true,
+    });
     expect(t.id).toBe("custom-evtx2json");
     expect(t.extensions).toEqual([".evtx", ".evt", ".xyz"]);
     expect(t.autoRun).toBe(true);

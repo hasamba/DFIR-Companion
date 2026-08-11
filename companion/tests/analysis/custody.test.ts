@@ -77,7 +77,13 @@ describe("CustodyStore", () => {
 
   it("skips a malformed line instead of throwing", async () => {
     await store.record("c1", {
-      artifactPath, sha256: "abc", collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1",
+      artifactPath,
+      sha256: "abc",
+      collectedBy: "a",
+      collectedAt: "t",
+      source: "s",
+      trigger: "m",
+      caseId: "c1",
     });
     const { appendFile } = await import("node:fs/promises");
     await appendFile(join(casesRoot, "c1", "metadata", "custody.jsonl"), "not json\n", "utf8");
@@ -89,7 +95,13 @@ describe("CustodyStore", () => {
   it("verifyIntegrity returns no mismatches when the artifact is unchanged", async () => {
     const sha = createHash("sha256").update("hello world\n").digest("hex");
     await store.record("c1", {
-      artifactPath, sha256: sha, collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1",
+      artifactPath,
+      sha256: sha,
+      collectedBy: "a",
+      collectedAt: "t",
+      source: "s",
+      trigger: "m",
+      caseId: "c1",
     });
     const mismatches = await store.verifyIntegrity("c1");
     expect(mismatches).toEqual([]);
@@ -98,7 +110,13 @@ describe("CustodyStore", () => {
   it("verifyIntegrity reports a hash-mismatch when the artifact has been modified", async () => {
     const sha = createHash("sha256").update("hello world\n").digest("hex");
     await store.record("c1", {
-      artifactPath, sha256: sha, collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1",
+      artifactPath,
+      sha256: sha,
+      collectedBy: "a",
+      collectedAt: "t",
+      source: "s",
+      trigger: "m",
+      caseId: "c1",
     });
     await writeFile(artifactPath, "tampered content\n", "utf8");
     const mismatches = await store.verifyIntegrity("c1");
@@ -111,7 +129,13 @@ describe("CustodyStore", () => {
   it("verifyIntegrity reports a missing artifact when the file no longer exists", async () => {
     const sha = createHash("sha256").update("hello world\n").digest("hex");
     await store.record("c1", {
-      artifactPath, sha256: sha, collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1",
+      artifactPath,
+      sha256: sha,
+      collectedBy: "a",
+      collectedAt: "t",
+      source: "s",
+      trigger: "m",
+      caseId: "c1",
     });
     const { rm } = await import("node:fs/promises");
     await rm(artifactPath);
@@ -129,7 +153,13 @@ describe("CustodyStore", () => {
     const sha = createHash("sha256").update("hello world\n").digest("hex");
     const recordArtifact = (): Promise<unknown> =>
       store.record("c1", {
-        artifactPath, sha256: sha, collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1",
+        artifactPath,
+        sha256: sha,
+        collectedBy: "a",
+        collectedAt: "t",
+        source: "s",
+        trigger: "m",
+        caseId: "c1",
       });
 
     it("stores an in-case artifact as a path relative to the case dir", async () => {
@@ -183,7 +213,13 @@ describe("CustodyStore", () => {
       await writeFile(external, "external evidence\n", "utf8");
       externalSha = createHash("sha256").update("external evidence\n").digest("hex");
       await store.record("c1", {
-        artifactPath: external, sha256: externalSha, collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1",
+        artifactPath: external,
+        sha256: externalSha,
+        collectedBy: "a",
+        collectedAt: "t",
+        source: "s",
+        trigger: "m",
+        caseId: "c1",
       });
     });
 
@@ -203,9 +239,21 @@ describe("CustodyStore", () => {
   // custody.jsonl files written before the relative-path change hold absolute paths and no marker.
   it("reads a record written in the pre-existing absolute-path format", async () => {
     const sha = createHash("sha256").update("hello world\n").digest("hex");
-    const legacy = { artifactPath, sha256: sha, collectedBy: "a", collectedAt: "t", source: "s", trigger: "m", caseId: "c1" };
+    const legacy = {
+      artifactPath,
+      sha256: sha,
+      collectedBy: "a",
+      collectedAt: "t",
+      source: "s",
+      trigger: "m",
+      caseId: "c1",
+    };
     await mkdir(join(casesRoot, "c1", "metadata"), { recursive: true });
-    await appendFile(join(casesRoot, "c1", "metadata", "custody.jsonl"), JSON.stringify(legacy) + "\n", "utf8");
+    await appendFile(
+      join(casesRoot, "c1", "metadata", "custody.jsonl"),
+      JSON.stringify(legacy) + "\n",
+      "utf8",
+    );
     expect((await store.load("c1"))[0].artifactPath).toBe(artifactPath);
     expect(await store.verifyIntegrity("c1")).toEqual([]);
   });
@@ -213,13 +261,25 @@ describe("CustodyStore", () => {
   it("records multiple entries for the same case", async () => {
     const sha1 = createHash("sha256").update("hello world\n").digest("hex");
     await store.record("c1", {
-      artifactPath, sha256: sha1, collectedBy: "a", collectedAt: "t1", source: "s", trigger: "m", caseId: "c1",
+      artifactPath,
+      sha256: sha1,
+      collectedBy: "a",
+      collectedAt: "t1",
+      source: "s",
+      trigger: "m",
+      caseId: "c1",
     });
     const second = join(cases.importsDir("c1"), "second.log");
     await writeFile(second, "second artifact\n", "utf8");
     const sha2 = createHash("sha256").update("second artifact\n").digest("hex");
     await store.record("c1", {
-      artifactPath: second, sha256: sha2, collectedBy: "b", collectedAt: "t2", source: "s2", trigger: "m2", caseId: "c1",
+      artifactPath: second,
+      sha256: sha2,
+      collectedBy: "b",
+      collectedAt: "t2",
+      source: "s2",
+      trigger: "m2",
+      caseId: "c1",
     });
     const list = await store.load("c1");
     expect(list).toHaveLength(2);

@@ -27,13 +27,14 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
 
   // A tool id is known when it's a configured built-in or a defined custom tool. Rebuilt here (the
   // createApp original read its closure `customTools`); the live custom-tool list comes from ctx.
-  const isKnownTool = (toolId: string): boolean => toolId in TOOL_DEFS || ctx.customTools().some((t) => t.id === toolId);
+  const isKnownTool = (toolId: string): boolean =>
+    toolId in TOOL_DEFS || ctx.customTools().some((t) => t.id === toolId);
 
   // How this tool is reached. Custom tools are always local binaries, so anything not a built-in
   // is "spawn". Used to decide whether the toolRunner (the PROCESS SPAWNER) is required — an HTTP
   // tool like SO-CRATES must work on a machine with no local forensic binaries installed.
   const transportOf = (toolId: string): "spawn" | "http" =>
-    (toolId in TOOL_DEFS ? TOOL_DEFS[toolId as ToolId].transport : "spawn");
+    toolId in TOOL_DEFS ? TOOL_DEFS[toolId as ToolId].transport : "spawn";
 
   // ── External forensic tools (#211) ────────────────────────────────────────────────────────────
   // Per-tool configured/auto-run status for the Settings → Tools tab (no secret values). Derived LIVE
@@ -92,12 +93,24 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     if (transportOf(toolId) === "spawn" && !options.toolRunner) {
       return res.status(501).json({ error: "external tools not configured" });
     }
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!path) return res.status(400).json({ error: "path is required" });
     try {
-      const r = await runToolAndIngest(caseId, toolId, path, { undoLabel: `Tool: ${toolId} — ${basename(path)}` });
-      return res.status(200).json({ ok: true, tool: toolId, storedName: r.storedName, addedEvents: r.addedEvents, addedIocs: r.addedIocs, analyzed: r.analyzed });
+      const r = await runToolAndIngest(caseId, toolId, path, {
+        undoLabel: `Tool: ${toolId} — ${basename(path)}`,
+      });
+      return res
+        .status(200)
+        .json({
+          ok: true,
+          tool: toolId,
+          storedName: r.storedName,
+          addedEvents: r.addedEvents,
+          addedIocs: r.addedIocs,
+          analyzed: r.analyzed,
+        });
     } catch (err) {
       recordImportFailure(caseId, toolId, path, err);
       return res.status(400).json({ ok: false, error: (err as Error).message });
@@ -117,11 +130,14 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     if (transportOf(toolId) === "spawn" && !options.toolRunner) {
       return res.status(501).json({ error: "external tools not configured" });
     }
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!(await store.caseExists(caseId)))
+      return res.status(404).json({ error: `case ${caseId} does not exist` });
     const filename = String(req.body?.filename ?? "").trim();
     const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
-    if (!filename || !dataBase64) return res.status(400).json({ error: "filename and dataBase64 are required" });
-    if (!ctx.liveToolConfigs()().get(toolId)) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
+    if (!filename || !dataBase64)
+      return res.status(400).json({ error: "filename and dataBase64 are required" });
+    if (!ctx.liveToolConfigs()().get(toolId))
+      return res.status(400).json({ error: `tool "${toolId}" is not configured` });
 
     // HTTP tools never touch disk here — the bytes go straight to the service, and a zip is
     // extracted first. Returns job ids rather than counts: the analysis is asynchronous.
@@ -141,20 +157,36 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     // Stage into a FRESH per-upload dir under the file's ORIGINAL basename (no collisions, so no need to
     // mangle the name) — folder-root tools (Velociraptor --ROOT) detect the EVTX channel from the filename.
     const toolWork = join(store.caseDir(caseId), ".toolwork");
-    const safe = basename(filename).replace(/[^\w.\-]+/g, "_").slice(0, 120) || "raw.bin";
+    const safe =
+      basename(filename)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 120) || "raw.bin";
     let stageDir = "";
     try {
       await mkdir(toolWork, { recursive: true });
       stageDir = await mkdtemp(join(toolWork, "up-"));
       const staged = join(stageDir, safe);
       await writeFile(staged, Buffer.from(dataBase64, "base64"));
-      const r = await runToolAndIngest(caseId, toolId, staged, { undoLabel: `Tool: ${toolId} — ${basename(filename)}` });
-      return res.status(200).json({ ok: true, tool: toolId, addedEvents: r.addedEvents, addedIocs: r.addedIocs, analyzed: r.analyzed });
+      const r = await runToolAndIngest(caseId, toolId, staged, {
+        undoLabel: `Tool: ${toolId} — ${basename(filename)}`,
+      });
+      return res
+        .status(200)
+        .json({
+          ok: true,
+          tool: toolId,
+          addedEvents: r.addedEvents,
+          addedIocs: r.addedIocs,
+          analyzed: r.analyzed,
+        });
     } catch (err) {
       recordImportFailure(caseId, toolId, filename, err);
       return res.status(400).json({ ok: false, error: (err as Error).message });
     } finally {
-      if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best-effort cleanup */ });
+      if (stageDir)
+        await rm(stageDir, { recursive: true, force: true }).catch(() => {
+          /* best-effort cleanup */
+        });
     }
   });
 
@@ -168,7 +200,8 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     // waves nonexistent cases through — a missing case is the downstream route's 404 to report, not
     // the gate's — which left an unauthenticated caller able to reach a process-spawning route by
     // naming a case that was never created. This is that downstream check.
-    if (!(await store.getCaseMeta(req.params.id))) return res.status(404).json({ error: `case "${req.params.id}" not found` });
+    if (!(await store.getCaseMeta(req.params.id)))
+      return res.status(404).json({ error: `case "${req.params.id}" not found` });
     if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
     const cfg = ctx.liveToolConfigs()().get(toolId);
     if (!cfg) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
@@ -184,7 +217,8 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // analyst sees "analyzing (network)…" rather than a silent gap. SO-CRATES analysis is
   // asynchronous, so the run route returns job ids and the results land here.
   app.get("/cases/:id/socrates/jobs", async (req: Request, res: Response) => {
-    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    if (!(await store.caseExists(req.params.id)))
+      return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     return res.status(200).json({ jobs: await ctx.socratesJobStore.list(req.params.id) });
   });
 
@@ -229,10 +263,14 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // value; PUT sets/clears it.
   const FORENSIC_GATE_SEVERITIES: readonly Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
   app.get("/cases/:id/forensic-gate", async (req: Request, res: Response) => {
-    if (!options.forensicGateControlStore) return res.status(501).json({ error: "forensic gate not configured" });
+    if (!options.forensicGateControlStore)
+      return res.status(501).json({ error: "forensic gate not configured" });
     try {
       const perCase = (await options.forensicGateControlStore.load(req.params.id)).minSeverity ?? null;
-      const effective = resolveForensicMinSeverity(perCase ?? undefined, process.env.DFIR_FORENSIC_MIN_SEVERITY);
+      const effective = resolveForensicMinSeverity(
+        perCase ?? undefined,
+        process.env.DFIR_FORENSIC_MIN_SEVERITY,
+      );
       return res.status(200).json({ minSeverity: perCase, effective });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -240,20 +278,33 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   });
 
   app.put("/cases/:id/forensic-gate", async (req: Request, res: Response) => {
-    if (!options.forensicGateControlStore) return res.status(501).json({ error: "forensic gate not configured" });
+    if (!options.forensicGateControlStore)
+      return res.status(501).json({ error: "forensic gate not configured" });
     const raw = req.body?.minSeverity;
     // Accept one of the 5 severities, or null/omitted to clear the per-case override.
     const cleared = raw === null || raw === undefined || raw === "";
     if (!cleared && !FORENSIC_GATE_SEVERITIES.includes(raw)) {
-      return res.status(400).json({ error: `minSeverity must be one of ${FORENSIC_GATE_SEVERITIES.join(", ")} or null` });
+      return res
+        .status(400)
+        .json({ error: `minSeverity must be one of ${FORENSIC_GATE_SEVERITIES.join(", ")} or null` });
     }
     try {
-      await options.forensicGateControlStore.set(req.params.id, { minSeverity: cleared ? undefined : (raw as Severity) });
+      await options.forensicGateControlStore.set(req.params.id, {
+        minSeverity: cleared ? undefined : (raw as Severity),
+      });
       options.onForensicGate?.(req.params.id);
       const perCase = (await options.forensicGateControlStore.load(req.params.id)).minSeverity ?? null;
-      const effective = resolveForensicMinSeverity(perCase ?? undefined, process.env.DFIR_FORENSIC_MIN_SEVERITY);
+      const effective = resolveForensicMinSeverity(
+        perCase ?? undefined,
+        process.env.DFIR_FORENSIC_MIN_SEVERITY,
+      );
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings", action: "forensic-gate", detail: perCase === null ? "forensic gate cleared (using global default)" : `forensic gate set to ${perCase}`,
+        category: "settings",
+        action: "forensic-gate",
+        detail:
+          perCase === null
+            ? "forensic gate cleared (using global default)"
+            : `forensic gate set to ${perCase}`,
       });
       return res.status(200).json({ minSeverity: perCase, effective });
     } catch (err) {

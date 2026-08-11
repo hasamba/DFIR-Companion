@@ -8,10 +8,10 @@ import type { Severity } from "../../analysis/stateTypes.js";
 
 const SEVERITY_COLOR: Record<Severity, number> = {
   Critical: 0xd00000, // red
-  High: 0xe8590c,     // orange
-  Medium: 0xf1c40f,   // amber
-  Low: 0x2d7dd2,      // blue
-  Info: 0x868e96,     // grey
+  High: 0xe8590c, // orange
+  Medium: 0xf1c40f, // amber
+  Low: 0x2d7dd2, // blue
+  Info: 0x868e96, // grey
 };
 
 const SEVERITY_EMOJI: Record<Severity, string> = {

@@ -6,9 +6,16 @@ import type { FetchFn } from "../../src/enrichment/provider.js";
 // `/browse/` url from their client mock, so they cannot catch the client deriving the wrong url
 // from a REAL Jira response — these tests use the response shape Jira actually sends.
 
-interface Recorded { url: string; method: string; body: unknown }
+interface Recorded {
+  url: string;
+  method: string;
+  body: unknown;
+}
 
-function mockFetch(responses: Array<{ status?: number; json?: unknown }>): { fetchFn: FetchFn; calls: Recorded[] } {
+function mockFetch(responses: Array<{ status?: number; json?: unknown }>): {
+  fetchFn: FetchFn;
+  calls: Recorded[];
+} {
   const calls: Recorded[] = [];
   let i = 0;
   const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
@@ -51,15 +58,23 @@ describe("JiraClient issue urls", () => {
   it("links an updated issue to the browse page too", async () => {
     // A successful edit answers 204 No Content, so the key comes from what the caller passed in.
     const { fetchFn } = mockFetch([{ status: 204 }]);
-    const ref = await client(fetchFn).updateIssue("IR-42", { projectKey: "IR", summary: "Suspicious PowerShell" });
+    const ref = await client(fetchFn).updateIssue("IR-42", {
+      projectKey: "IR",
+      summary: "Suspicious PowerShell",
+    });
 
     expect(ref.key).toBe("IR-42");
     expect(ref.url).toBe("https://jira.example.com/browse/IR-42");
   });
 
   it("keeps the browse url on the configured host when the base url has a trailing slash", async () => {
-    const { fetchFn } = mockFetch([{ json: { id: "10001", key: "IR-7", self: "https://internal.example/rest/api/3/issue/10001" } }]);
-    const ref = await client(fetchFn, "https://jira.example.com/").createIssue({ projectKey: "IR", summary: "x" });
+    const { fetchFn } = mockFetch([
+      { json: { id: "10001", key: "IR-7", self: "https://internal.example/rest/api/3/issue/10001" } },
+    ]);
+    const ref = await client(fetchFn, "https://jira.example.com/").createIssue({
+      projectKey: "IR",
+      summary: "x",
+    });
 
     expect(ref.url).toBe("https://jira.example.com/browse/IR-7");
   });

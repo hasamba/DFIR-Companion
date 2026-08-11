@@ -14,8 +14,9 @@ describe("resolveEnabledProviders", () => {
   });
 
   it("keeps an explicit list, filtered to providers still configured", () => {
-    expect(resolveEnabledProviders({ providers: ["VirusTotal", "MISP", "GoneProvider"] }, configured, local))
-      .toEqual(["VirusTotal", "MISP"]);
+    expect(
+      resolveEnabledProviders({ providers: ["VirusTotal", "MISP", "GoneProvider"] }, configured, local),
+    ).toEqual(["VirusTotal", "MISP"]);
   });
 
   it("explicit empty list means none (enrichment off)", () => {

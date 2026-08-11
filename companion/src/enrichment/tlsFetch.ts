@@ -4,7 +4,11 @@ import type { FetchFn } from "./provider.js";
 import { isLoopbackHost } from "../providers/urlValidation.js";
 
 function isLoopbackUrl(url: string): boolean {
-  try { return isLoopbackHost(new URL(url).host); } catch { return false; }
+  try {
+    return isLoopbackHost(new URL(url).host);
+  } catch {
+    return false;
+  }
 }
 
 // Custom TLS trust for self-hosted intel servers (MISP / YETI) that present an internal-CA
@@ -16,9 +20,9 @@ function isLoopbackUrl(url: string): boolean {
 //   - insecureSkipVerify: accept any cert without verifying (self-signed). Insecure; lab only.
 
 export interface TlsFetchOptions {
-  caCertPath?: string;          // PEM bundle for an internal/private CA
+  caCertPath?: string; // PEM bundle for an internal/private CA
   insecureSkipVerify?: boolean; // skip cert verification entirely (self-signed)
-  hostUrl?: string;            // the provider's base URL, used to check if insecureSkipVerify targets a loopback host
+  hostUrl?: string; // the provider's base URL, used to check if insecureSkipVerify targets a loopback host
   onWarn?: (message: string) => void;
 }
 
@@ -52,7 +56,7 @@ export function buildTlsFetch(opts: TlsFetchOptions, deps: TlsFetchDeps = {}): F
     if (!isLoopback && !allowInsecureExternal) {
       throw new Error(
         "TLS certificate verification DISABLED for a non-loopback host. This is a MITM risk — an on-path attacker can harvest the API key. " +
-        "Set DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true to override (not recommended), or use a CA bundle (DFIR_*_CA) instead.",
+          "Set DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true to override (not recommended), or use a CA bundle (DFIR_*_CA) instead.",
       );
     }
     connect.rejectUnauthorized = false;
@@ -65,6 +69,5 @@ export function buildTlsFetch(opts: TlsFetchOptions, deps: TlsFetchDeps = {}): F
 
   const dispatcher = (deps.makeDispatcher ?? ((c) => new Agent({ connect: c })))(connect);
   const base = deps.baseFetch ?? (undiciFetch as unknown as FetchFn);
-  return ((input, init) =>
-    base(input, { ...(init ?? {}), dispatcher } as RequestInit));
+  return (input, init) => base(input, { ...(init ?? {}), dispatcher } as RequestInit);
 }

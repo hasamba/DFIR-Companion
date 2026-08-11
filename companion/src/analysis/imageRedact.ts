@@ -11,8 +11,8 @@ import type { AnonPolicy, KnownEntities } from "./anonymize.js";
 
 export interface ScreenshotRedactResult {
   buffer: Buffer;
-  blurred: boolean;        // OCR painted at least one box
-  redactionCount: number;  // number of boxes painted
+  blurred: boolean; // OCR painted at least one box
+  redactionCount: number; // number of boxes painted
   metadataStripped: boolean;
 }
 

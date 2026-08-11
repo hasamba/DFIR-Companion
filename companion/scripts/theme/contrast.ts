@@ -9,7 +9,10 @@ export function hexToRgb(hex: string): Rgb {
 }
 
 export function rgbToHex([r, g, b]: Rgb): string {
-  const h = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  const h = (v: number) =>
+    Math.max(0, Math.min(255, Math.round(v)))
+      .toString(16)
+      .padStart(2, "0");
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
@@ -31,8 +34,7 @@ export function contrast(a: Rgb, b: Rgb): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-export const mix = (a: Rgb, b: Rgb, t: number): Rgb =>
-  [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t) as Rgb;
+export const mix = (a: Rgb, b: Rgb, t: number): Rgb => [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t) as Rgb;
 
 /** A theme is light when its page background is. Drives `color-scheme`. */
 export function isLightBackground(hex: string): boolean {

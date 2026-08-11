@@ -8,7 +8,9 @@ import type { ServiceNowIncidentRef } from "./servicenowClient.js";
 // Per-case memory of finding → ServiceNow incident numbers. Stored in `state/servicenow-export.json`.
 
 const servicenowExportSchema = z.object({
-  incidentRefs: z.record(z.string(), z.object({ id: z.string(), number: z.string(), url: z.string().optional() })).catch({}),
+  incidentRefs: z
+    .record(z.string(), z.object({ id: z.string(), number: z.string(), url: z.string().optional() }))
+    .catch({}),
   lastExportedAt: z.string().catch(""),
 });
 
@@ -32,7 +34,11 @@ export class ServiceNowExportStore {
     }
   }
 
-  async record(caseId: string, refs: Record<string, ServiceNowIncidentRef>, now?: string): Promise<ServiceNowExport> {
+  async record(
+    caseId: string,
+    refs: Record<string, ServiceNowIncidentRef>,
+    now?: string,
+  ): Promise<ServiceNowExport> {
     const prev = await this.load(caseId);
     const next: ServiceNowExport = {
       incidentRefs: { ...prev.incidentRefs, ...refs },

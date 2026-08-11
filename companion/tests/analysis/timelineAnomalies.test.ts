@@ -50,7 +50,8 @@ describe("detectTimelineAnomalies", () => {
     // host-a: 20 events; host-b, host-c, host-d: 1 event each → median = 1, ratio = 20
     const events: ForensicEvent[] = [
       ...Array.from({ length: 20 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}01:${String(i).padStart(2, "0")}Z`, "host-a")),
+        ev(`a${i}`, `${BASE_TS}01:${String(i).padStart(2, "0")}Z`, "host-a"),
+      ),
       ev("b0", `${BASE_TS}02:00Z`, "host-b"),
       ev("c0", `${BASE_TS}03:00Z`, "host-c"),
       ev("d0", `${BASE_TS}04:00Z`, "host-d"),
@@ -61,15 +62,14 @@ describe("detectTimelineAnomalies", () => {
     expect(a.asset).toBe("host-a");
     expect(a.eventCount).toBe(20);
     expect(a.ratio).toBe(20);
-    expect(a.severity).toBe("Critical");   // ≥ 10×
+    expect(a.severity).toBe("Critical"); // ≥ 10×
     expect(a.eventIds).toHaveLength(20);
   });
 
   it("assigns High severity for 7–9× ratio", () => {
     // host-a: 7 events; host-b, host-c: 1 each → median 1, ratio 7
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 7 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
+      ...Array.from({ length: 7 }, (_, i) => ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
       ev("b0", `${BASE_TS}02:00Z`, "host-b"),
       ev("c0", `${BASE_TS}03:00Z`, "host-c"),
     ];
@@ -81,8 +81,7 @@ describe("detectTimelineAnomalies", () => {
 
   it("assigns Medium severity for 5–6× ratio", () => {
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 5 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
+      ...Array.from({ length: 5 }, (_, i) => ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
       ev("b0", `${BASE_TS}02:00Z`, "host-b"),
       ev("c0", `${BASE_TS}03:00Z`, "host-c"),
     ];
@@ -94,8 +93,7 @@ describe("detectTimelineAnomalies", () => {
   it("does not flag a bucket where the spike asset is below minEvents", () => {
     // ratio would be 5 but spiker only has 2 events — below minEvents=3
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 2 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
+      ...Array.from({ length: 2 }, (_, i) => ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
       // host-b, host-c each have 1 → but we need 3+ to count
       ev("b0", `${BASE_TS}02:00Z`, "host-b"),
       ev("c0", `${BASE_TS}03:00Z`, "host-b"), // 2 for host-b so median is 1 not 0
@@ -109,8 +107,7 @@ describe("detectTimelineAnomalies", () => {
   it("does not flag a bucket below the spikeFactor threshold", () => {
     // host-a: 4, host-b: 2, host-c: 2 → median 2, ratio 2 < default 5
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 4 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
+      ...Array.from({ length: 4 }, (_, i) => ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
       ev("b0", `${BASE_TS}02:00Z`, "host-b"),
       ev("b1", `${BASE_TS}02:01Z`, "host-b"),
       ev("c0", `${BASE_TS}03:00Z`, "host-c"),
@@ -122,8 +119,7 @@ describe("detectTimelineAnomalies", () => {
   it("respects a custom spikeFactor", () => {
     // ratio = 4, default threshold 5 → nothing; custom threshold 3 → flagged
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 4 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
+      ...Array.from({ length: 4 }, (_, i) => ev(`a${i}`, `${BASE_TS}01:0${i}Z`, "host-a")),
       ev("b0", `${BASE_TS}02:00Z`, "host-b"),
       ev("c0", `${BASE_TS}03:00Z`, "host-c"),
     ];
@@ -135,8 +131,7 @@ describe("detectTimelineAnomalies", () => {
     // host-a spikes in hour 14 only; hour 15 is balanced
     const events: ForensicEvent[] = [
       // Hour 14: host-a spikes, host-b 1, host-c 1
-      ...Array.from({ length: 10 }, (_, i) =>
-        ev(`a14_${i}`, `2026-05-20T14:0${i}:00Z`, "host-a")),
+      ...Array.from({ length: 10 }, (_, i) => ev(`a14_${i}`, `2026-05-20T14:0${i}:00Z`, "host-a")),
       ev("b14", "2026-05-20T14:30:00Z", "host-b"),
       ev("c14", "2026-05-20T14:45:00Z", "host-c"),
       // Hour 15: balanced (2 each)
@@ -156,8 +151,7 @@ describe("detectTimelineAnomalies", () => {
   it("groups events with no asset under (unknown)", () => {
     // 10 no-asset events + 1 host-b + 1 host-c → should flag (unknown)
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 10 }, (_, i) =>
-        ev(`u${i}`, `${BASE_TS}${String(i).padStart(2, "0")}:00Z`)),  // no asset
+      ...Array.from({ length: 10 }, (_, i) => ev(`u${i}`, `${BASE_TS}${String(i).padStart(2, "0")}:00Z`)), // no asset
       ev("b0", `${BASE_TS}20:00Z`, "host-b"),
       ev("c0", `${BASE_TS}30:00Z`, "host-c"),
     ];
@@ -171,10 +165,8 @@ describe("detectTimelineAnomalies", () => {
     // host-a: 10 events (ratio 10, Critical), host-b: 7 (ratio 7, High)
     // host-c through host-h: 1 each (6 background hosts keep median at 1)
     const events: ForensicEvent[] = [
-      ...Array.from({ length: 10 }, (_, i) =>
-        ev(`a${i}`, `${BASE_TS}0${i}:00Z`, "host-a")),
-      ...Array.from({ length: 7 }, (_, i) =>
-        ev(`b${i}`, `${BASE_TS}0${i}:30Z`, "host-b")),
+      ...Array.from({ length: 10 }, (_, i) => ev(`a${i}`, `${BASE_TS}0${i}:00Z`, "host-a")),
+      ...Array.from({ length: 7 }, (_, i) => ev(`b${i}`, `${BASE_TS}0${i}:30Z`, "host-b")),
       ev("c0", `${BASE_TS}30:00Z`, "host-c"),
       ev("d0", `${BASE_TS}31:00Z`, "host-d"),
       ev("e0", `${BASE_TS}32:00Z`, "host-e"),
@@ -218,17 +210,18 @@ describe("detectTimelineAnomalies — self-baseline (an asset vs its own rate)",
       ev("q3", "2026-05-20T12:00:00Z", "host-a"),
       ev("q4", "2026-05-20T13:00:00Z", "host-a"),
       ...Array.from({ length: 10 }, (_, i) =>
-        ev(`burst${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a")),
+        ev(`burst${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a"),
+      ),
     ];
     const r = detectTimelineAnomalies(events, { bucketMinutes: 60 });
-    expect(r.assetCount).toBe(1);                 // single asset → peer baseline impossible
+    expect(r.assetCount).toBe(1); // single asset → peer baseline impossible
     expect(r.anomalies).toHaveLength(1);
     const a = r.anomalies[0];
     expect(a.asset).toBe("host-a");
     expect(a.kind).toBe("self");
     expect(a.methods).toEqual(["self"]);
     expect(a.eventCount).toBe(10);
-    expect(a.ratio).toBe(10);                     // 10 / median([1,1,1,1,10]) = 10/1
+    expect(a.ratio).toBe(10); // 10 / median([1,1,1,1,10]) = 10/1
     expect(a.severity).toBe("Critical");
     expect(a.bucketStart).toContain("T14:");
   });
@@ -237,7 +230,8 @@ describe("detectTimelineAnomalies — self-baseline (an asset vs its own rate)",
     const events: ForensicEvent[] = [
       ev("a1", "2026-05-20T10:00:00Z", "host-a"),
       ...Array.from({ length: 10 }, (_, i) =>
-        ev(`b${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a")),
+        ev(`b${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a"),
+      ),
     ];
     // 2 active buckets only, and a single asset (no peer baseline) → nothing flagged.
     expect(detectTimelineAnomalies(events, { bucketMinutes: 60 }).anomalies).toHaveLength(0);
@@ -250,7 +244,8 @@ describe("detectTimelineAnomalies — self-baseline (an asset vs its own rate)",
       ev("a12", "2026-05-20T12:00:00Z", "host-a"),
       ev("a13", "2026-05-20T13:00:00Z", "host-a"),
       ...Array.from({ length: 10 }, (_, i) =>
-        ev(`a14_${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a")),
+        ev(`a14_${i}`, `2026-05-20T14:${String(i).padStart(2, "0")}:00Z`, "host-a"),
+      ),
       ev("b14", "2026-05-20T14:30:00Z", "host-b"),
       ev("c14", "2026-05-20T14:45:00Z", "host-c"),
     ];

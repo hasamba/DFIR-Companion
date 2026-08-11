@@ -50,7 +50,8 @@ describe("checkRegexSafety — ordinary importer patterns still pass", () => {
       "^Hayabusa-.+-timeline\\.csv$",
       "^(alerts|events)-\\d+\\.json$",
       "sysmon",
-    ]) accept(src);
+    ])
+      accept(src);
   });
 
   it("accepts bounded nesting whose path count cannot explode", () => {
@@ -77,8 +78,12 @@ describe("checkRegexSafety — the rejected patterns really are dangerous", () =
     for (const src of ["((a+))+$", "(a|a)+$", "(a{1,10})+$"]) {
       expect(checkRegexSafety(src).ok, `${src} must be rejected`).toBe(false);
       const re = new RegExp(src);
-      const time = (n: number) => { const t = Date.now(); re.test("a".repeat(n) + "!"); return Date.now() - t; };
-      time(12);                                                   // warm up the engine
+      const time = (n: number) => {
+        const t = Date.now();
+        re.test("a".repeat(n) + "!");
+        return Date.now() - t;
+      };
+      time(12); // warm up the engine
       expect(time(22), `${src} was expected to backtrack`).toBeGreaterThan(5);
     }
   });

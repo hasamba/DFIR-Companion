@@ -21,7 +21,8 @@ function appThatThrows(makeError: () => never) {
   // Mirror of the terminal handler in createApp (kept in sync intentionally).
   app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
-    if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+    if (err instanceof ZodError)
+      return res.status(400).json({ error: "invalid payload", details: err.issues });
     return res.status(500).json({ error: "internal server error" });
   });
   return app;

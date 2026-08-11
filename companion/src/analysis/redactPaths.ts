@@ -33,8 +33,27 @@ const URL_RE = /\b(?!file:)[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/gi;
  * only the leading segment tells them apart.
  */
 const FS_TOP_LEVEL = [
-  "home", "Users", "root", "var", "tmp", "opt", "srv", "mnt", "media", "etc", "usr",
-  "private", "data", "app", "Volumes", "Applications", "Library", "System", "proc", "dev", "run",
+  "home",
+  "Users",
+  "root",
+  "var",
+  "tmp",
+  "opt",
+  "srv",
+  "mnt",
+  "media",
+  "etc",
+  "usr",
+  "private",
+  "data",
+  "app",
+  "Volumes",
+  "Applications",
+  "Library",
+  "System",
+  "proc",
+  "dev",
+  "run",
 ];
 
 const POSIX_FS_PATH_RE = new RegExp(String.raw`/(?:${FS_TOP_LEVEL.join("|")})(?:/${SEG})*/?`, "g");

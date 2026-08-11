@@ -37,7 +37,7 @@ export function zipCryptoDecrypt(data: Buffer, password: string): Buffer {
   const updateKeys = (b: number): void => {
     key0 = crcUpdate(key0, b);
     key1 = (key1 + (key0 & 0xff)) >>> 0;
-    key1 = (Math.imul(key1, 134775813) + 1) >>> 0;   // imul: the product overflows 2^53 otherwise
+    key1 = (Math.imul(key1, 134775813) + 1) >>> 0; // imul: the product overflows 2^53 otherwise
     key2 = crcUpdate(key2, key1 >>> 24);
   };
 
@@ -48,7 +48,7 @@ export function zipCryptoDecrypt(data: Buffer, password: string): Buffer {
     const temp = (key2 | 2) & 0xffff;
     const plain = data[i] ^ ((Math.imul(temp, temp ^ 1) >> 8) & 0xff);
     out[i] = plain;
-    updateKeys(plain);   // the keystream depends on the PLAINTEXT, so update after decrypting
+    updateKeys(plain); // the keystream depends on the PLAINTEXT, so update after decrypting
   }
   return out;
 }
@@ -64,7 +64,7 @@ export function zipCryptoDecrypt(data: Buffer, password: string): Buffer {
  */
 export function verifyZipCryptoCheckByte(header: Buffer, crc: number, modTime: number): boolean {
   const checkByte = header[11];
-  return checkByte === (crc >>> 24) || checkByte === ((modTime >> 8) & 0xff);
+  return checkByte === crc >>> 24 || checkByte === ((modTime >> 8) & 0xff);
 }
 
 /**
@@ -78,7 +78,10 @@ export function verifyZipCryptoCheckByte(header: Buffer, crc: number, modTime: n
 export type ZipPasswordFailure = "wrong-password" | "unsupported-encryption" | "password-required";
 
 export class ZipPasswordError extends Error {
-  constructor(message: string, readonly reason: ZipPasswordFailure) {
+  constructor(
+    message: string,
+    readonly reason: ZipPasswordFailure,
+  ) {
     super(message);
     this.name = "ZipPasswordError";
   }
@@ -103,16 +106,16 @@ export class ZipAuthenticationError extends Error {
 }
 
 export interface AesParams {
-  aeVersion: number;       // 1 or 2; AE-2 zeroes the entry CRC, so callers must skip the CRC check
-  strength: 1 | 2 | 3;     // AES-128 / AES-192 / AES-256
-  actualMethod: number;    // the real compression method (0 stored, 8 deflate) hidden behind method 99
+  aeVersion: number; // 1 or 2; AE-2 zeroes the entry CRC, so callers must skip the CRC check
+  strength: 1 | 2 | 3; // AES-128 / AES-192 / AES-256
+  actualMethod: number; // the real compression method (0 stored, 8 deflate) hidden behind method 99
 }
 
 const AES_EXTRA_ID = 0x9901;
 const SALT_LEN: Record<number, number> = { 1: 8, 2: 12, 3: 16 };
 const KEY_LEN: Record<number, number> = { 1: 16, 2: 24, 3: 32 };
 const PW_VERIFY_LEN = 2;
-const MAC_LEN = 10;         // HMAC-SHA1 truncated to 80 bits
+const MAC_LEN = 10; // HMAC-SHA1 truncated to 80 bits
 const PBKDF2_ITERATIONS = 1000;
 
 /** Locate and parse the 0x9901 extra field of a method-99 entry. Null when absent or malformed. */
@@ -162,7 +165,9 @@ function aesCtrXor(key: Buffer, input: Buffer): Buffer {
  * which is the cheap check — it runs before any decryption work.
  */
 export function aesDecrypt(
-  data: Buffer, password: string, strength: 1 | 2 | 3,
+  data: Buffer,
+  password: string,
+  strength: 1 | 2 | 3,
 ): { plaintext: Buffer; macOk: boolean } {
   const saltLen = SALT_LEN[strength];
   const keyLen = KEY_LEN[strength];

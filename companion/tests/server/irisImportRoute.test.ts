@@ -14,30 +14,55 @@ import { waitForEvents } from "../helpers/caseWaits.js";
 function mockIris(over: Partial<Record<string, unknown>> = {}): IrisClient {
   const base = {
     async ping() {},
-    async listCases() { return [{ caseId: 7, caseName: "Ransomware FS01" }]; },
-    async findCaseByName(name: string) { return name === "Ransomware FS01" ? { caseId: 7, caseName: name } : null; },
-    async getRawAssets() { return [{ asset_id: 1, asset_name: "DC01", asset_compromise_status_id: 1 }]; },
-    async getRawIocs() { return [{ ioc_id: 1, ioc_value: "8.8.8.8", ioc_type: "ip-dst" }]; },
+    async listCases() {
+      return [{ caseId: 7, caseName: "Ransomware FS01" }];
+    },
+    async findCaseByName(name: string) {
+      return name === "Ransomware FS01" ? { caseId: 7, caseName: name } : null;
+    },
+    async getRawAssets() {
+      return [{ asset_id: 1, asset_name: "DC01", asset_compromise_status_id: 1 }];
+    },
+    async getRawIocs() {
+      return [{ ioc_id: 1, ioc_value: "8.8.8.8", ioc_type: "ip-dst" }];
+    },
     async getRawTimeline() {
-      return [{
-        event_id: 1, event_title: "C2 beacon", event_content: "C2 beacon\nAsset: DC01",
-        event_date: "2026-06-04T13:00:00.000000", event_tz: "+00:00", event_color: "#f97316", event_tags: "high,T1071",
-      }];
+      return [
+        {
+          event_id: 1,
+          event_title: "C2 beacon",
+          event_content: "C2 beacon\nAsset: DC01",
+          event_date: "2026-06-04T13:00:00.000000",
+          event_tz: "+00:00",
+          event_color: "#f97316",
+          event_tags: "high,T1071",
+        },
+      ];
     },
     ...over,
   };
   return base as unknown as IrisClient;
 }
 
-async function makeApp(opts: { irisClient?: IrisClient; rebuildIrisClient?: () => IrisClient | undefined } = {}) {
+async function makeApp(
+  opts: { irisClient?: IrisClient; rebuildIrisClient?: () => IrisClient | undefined } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-iris-import-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const app = createApp(store, { pipeline, stateStore, irisClient: opts.irisClient, rebuildIrisClient: opts.rebuildIrisClient });
+  const app = createApp(store, {
+    pipeline,
+    stateStore,
+    irisClient: opts.irisClient,
+    rebuildIrisClient: opts.rebuildIrisClient,
+  });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };
 }
@@ -68,24 +93,32 @@ describe("DFIR-IRIS import routes (issue #88)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("imports an IRIS case (by id) into the forensic timeline + IOCs", async () => {
-    const { app, stateStore } = await makeApp({ irisClient: mockIris() });
-    const res = await request(app).post("/cases/c1/iris-import").send({ irisCaseId: 7 });
-    expect(res.status).toBe(202);
-    expect(res.body.caseName).toBe("Ransomware FS01");
-    expect(res.body.timeline).toBe(1);
-    expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-    const state = await stateStore.load("c1");
-    expect(state.iocs.some((i) => i.value === "8.8.8.8")).toBe(true);
-    expect(state.forensicTimeline.some((e) => (e.sources ?? []).includes("DFIR-IRIS"))).toBe(true);
-  }, POLL_TIMEOUT_MS * 2);   // one waitForEvents budget, doubled to leave room for setup + assertions
+  it(
+    "imports an IRIS case (by id) into the forensic timeline + IOCs",
+    async () => {
+      const { app, stateStore } = await makeApp({ irisClient: mockIris() });
+      const res = await request(app).post("/cases/c1/iris-import").send({ irisCaseId: 7 });
+      expect(res.status).toBe(202);
+      expect(res.body.caseName).toBe("Ransomware FS01");
+      expect(res.body.timeline).toBe(1);
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+      const state = await stateStore.load("c1");
+      expect(state.iocs.some((i) => i.value === "8.8.8.8")).toBe(true);
+      expect(state.forensicTimeline.some((e) => (e.sources ?? []).includes("DFIR-IRIS"))).toBe(true);
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one waitForEvents budget, doubled to leave room for setup + assertions
 
-  it("resolves the IRIS case by name", async () => {
-    const { app, stateStore } = await makeApp({ irisClient: mockIris() });
-    const res = await request(app).post("/cases/c1/iris-import").send({ irisCaseName: "Ransomware FS01" });
-    expect(res.status).toBe(202);
-    expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  }, POLL_TIMEOUT_MS * 2);
+  it(
+    "resolves the IRIS case by name",
+    async () => {
+      const { app, stateStore } = await makeApp({ irisClient: mockIris() });
+      const res = await request(app).post("/cases/c1/iris-import").send({ irisCaseName: "Ransomware FS01" });
+      expect(res.status).toBe(202);
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it("502s when the IRIS case name does not resolve", async () => {
     const { app } = await makeApp({ irisClient: mockIris() });
@@ -108,7 +141,11 @@ describe("DFIR-IRIS import routes (issue #88)", () => {
   });
 
   it("POST /iris/reconnect reports a reachability failure (configured but ping throws)", async () => {
-    const down = mockIris({ async ping() { throw new Error("ECONNREFUSED"); } });
+    const down = mockIris({
+      async ping() {
+        throw new Error("ECONNREFUSED");
+      },
+    });
     const { app } = await makeApp({ rebuildIrisClient: () => down });
     const res = await request(app).post("/iris/reconnect");
     expect(res.status).toBe(200);
@@ -117,7 +154,7 @@ describe("DFIR-IRIS import routes (issue #88)", () => {
   });
 
   it("a successful reconnect swaps in the client so /iris/cases then works", async () => {
-    const { app } = await makeApp({ rebuildIrisClient: () => mockIris() });   // no client at startup
+    const { app } = await makeApp({ rebuildIrisClient: () => mockIris() }); // no client at startup
     expect((await request(app).get("/iris/cases")).status).toBe(501);
     await request(app).post("/iris/reconnect");
     const res = await request(app).get("/iris/cases");

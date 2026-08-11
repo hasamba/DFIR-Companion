@@ -10,11 +10,11 @@
 // mask volatile numeric tokens, keep words and IP addresses, group by the result.
 
 export interface LogTemplate {
-  template: string;        // normalized pattern (volatile tokens masked) — the group key
-  count: number;           // how many raw lines collapsed into this template
-  firstTimestamp: string;  // leading timestamp of the first occurrence (best effort, "" if none)
-  lastTimestamp: string;   // leading timestamp of the last occurrence
-  example: string;         // a representative raw line (the first occurrence)
+  template: string; // normalized pattern (volatile tokens masked) — the group key
+  count: number; // how many raw lines collapsed into this template
+  firstTimestamp: string; // leading timestamp of the first occurrence (best effort, "" if none)
+  lastTimestamp: string; // leading timestamp of the last occurrence
+  example: string; // a representative raw line (the first occurrence)
 }
 
 // Leading-timestamp detectors, tried in order. Best-effort: used only to report a
@@ -22,9 +22,9 @@ export interface LogTemplate {
 // time from the example line. Order matters (more specific first).
 const TS_PATTERNS: RegExp[] = [
   /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/, // ISO-8601
-  /^\[\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}(?:\s[+-]\d{4})?\]/,          // Apache "[28/May/2026:09:00:01 +0000]"
-  /^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/,                              // RFC 3164 syslog "May 28 09:00:01"
-  /^\d{10,13}\b/,                                                              // epoch seconds/millis
+  /^\[\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}(?:\s[+-]\d{4})?\]/, // Apache "[28/May/2026:09:00:01 +0000]"
+  /^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/, // RFC 3164 syslog "May 28 09:00:01"
+  /^\d{10,13}\b/, // epoch seconds/millis
 ];
 
 // Pull a leading timestamp off a line. Returns the matched timestamp (or "") and the
@@ -55,9 +55,9 @@ export function templateizeLine(rest: string): string {
   });
   s = s
     .replace(/\b0x[0-9a-fA-F]+\b/g, "HEX") // hex literals → digit-free token (survives the digit mask)
-    .replace(/#\d+/g, "#N")                // #ids (e.g. "#871204")
-    .replace(/\d+/g, "N")                  // any remaining digit run
-    .replace(/\s+/g, " ")                  // collapse whitespace
+    .replace(/#\d+/g, "#N") // #ids (e.g. "#871204")
+    .replace(/\d+/g, "N") // any remaining digit run
+    .replace(/\s+/g, " ") // collapse whitespace
     .trim();
   let k = 0;
   s = s.split(IP_SENTINEL).reduce((acc, part, i) => (i === 0 ? part : acc + (ips[k++] ?? "") + part), "");
@@ -80,7 +80,11 @@ export interface AggregateStats {
 
 // Group log lines into counted templates. Order within a count tie follows first
 // appearance, so the output is stable/deterministic.
-export function aggregateLogLines(lines: readonly string[], opts: AggregateOptions = {}, stats?: AggregateStats): LogTemplate[] {
+export function aggregateLogLines(
+  lines: readonly string[],
+  opts: AggregateOptions = {},
+  stats?: AggregateStats,
+): LogTemplate[] {
   const groups = new Map<string, LogTemplate>();
   const insertionOrder = new Map<string, number>();
   let order = 0;
@@ -93,7 +97,13 @@ export function aggregateLogLines(lines: readonly string[], opts: AggregateOptio
       existing.count += 1;
       existing.lastTimestamp = timestamp || existing.lastTimestamp;
     } else {
-      groups.set(template, { template, count: 1, firstTimestamp: timestamp, lastTimestamp: timestamp, example: line });
+      groups.set(template, {
+        template,
+        count: 1,
+        firstTimestamp: timestamp,
+        lastTimestamp: timestamp,
+        example: line,
+      });
       insertionOrder.set(template, order++);
     }
   }
@@ -104,7 +114,10 @@ export function aggregateLogLines(lines: readonly string[], opts: AggregateOptio
   const byCountDesc = (a: LogTemplate, b: LogTemplate): number => b.count - a.count || byInsertion(a, b);
 
   const max = opts.maxTemplates ?? 400;
-  if (stats) { stats.distinctTemplates = all.length; stats.keptTemplates = Math.min(all.length, max); }
+  if (stats) {
+    stats.distinctTemplates = all.length;
+    stats.keptTemplates = Math.min(all.length, max);
+  }
   if (all.length <= max) return all.sort(byCountDesc);
 
   // Truncation needed. A naive "most frequent first" cap silently drops RARE templates once a log

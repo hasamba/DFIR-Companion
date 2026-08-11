@@ -29,12 +29,12 @@ const severityEnum = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 // One per-gap hypothesis from the model. Every field is lenient so one off value never rejects the
 // whole reply. `gapId` ties it back to the TimelineGap it explains (the model echoes the id shown).
 export const gapHypothesisSchema = z.object({
-  gapId: z.string().catch(""),                       // the [gap-N] id the hypothesis is for
-  hypothesis: z.string().catch(""),                  // prose: what the attacker most likely did during the silence
-  attackerActions: z.array(z.string()).catch([]),    // concrete actions that fit the gap (bullet points)
-  confidence: z.number().catch(0),                   // 0..100, the model's confidence (clamped on sanitize)
-  severity: severityEnum.catch("Medium"),            // how serious the hypothesised activity would be
-  mitreTechniques: z.array(z.string()).catch([]),    // ATT&CK ids for the hypothesised actions
+  gapId: z.string().catch(""), // the [gap-N] id the hypothesis is for
+  hypothesis: z.string().catch(""), // prose: what the attacker most likely did during the silence
+  attackerActions: z.array(z.string()).catch([]), // concrete actions that fit the gap (bullet points)
+  confidence: z.number().catch(0), // 0..100, the model's confidence (clamped on sanitize)
+  severity: severityEnum.catch("Medium"), // how serious the hypothesised activity would be
+  mitreTechniques: z.array(z.string()).catch([]), // ATT&CK ids for the hypothesised actions
   recommendedArtifactIds: z.array(z.string()).catch([]), // shadow-artifact catalog ids to prioritise (subset of SHADOW_ARTIFACT_IDS)
 });
 
@@ -163,8 +163,12 @@ export function sanitizeGapHypotheses(
     seen.add(gapId);
     out.push({
       gapId,
-      hypothesis: String(h?.hypothesis ?? "").trim().slice(0, MAX_HYPOTHESIS_LEN),
-      attackerActions: dedupeStrings(h?.attackerActions ?? []).map((a) => a.slice(0, MAX_ACTION_LEN)).slice(0, MAX_ACTIONS),
+      hypothesis: String(h?.hypothesis ?? "")
+        .trim()
+        .slice(0, MAX_HYPOTHESIS_LEN),
+      attackerActions: dedupeStrings(h?.attackerActions ?? [])
+        .map((a) => a.slice(0, MAX_ACTION_LEN))
+        .slice(0, MAX_ACTIONS),
       confidence: clampConfidence(h?.confidence),
       severity: h?.severity ?? "Medium",
       mitreTechniques: dedupeStrings(h?.mitreTechniques ?? []).slice(0, 20),

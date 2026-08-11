@@ -41,14 +41,14 @@ const CORE_TACTICS: readonly IrisTactic[] = [
 ];
 
 export interface KnownUnknownsOptions {
-  gapOptions?: GapOptions;                      // forwarded to detectTimelineGaps
-  nextTechniques?: readonly NextTechnique[];    // from adversaryEmulation — caller supplies (needs the offline dataset)
-  playbookMatch?: PlaybookMatch | null;         // #230 top playbook match — caller supplies (needs the offline catalog)
-  yieldWarning?: ImportYieldWarning | null;     // source-yield #10 trigger (a): a zero-yield AI import (caller loads importMeta)
-  maxGaps?: number;                             // cap on coverage-gap lines (default 3)
-  maxNextTechniques?: number;                   // cap on likely-next-technique lines (default 5)
-  maxPlaybookSteps?: number;                    // cap on unobserved-playbook-step lines (default 4)
-  max?: number;                                 // hard cap on TOTAL bullets in the rendered block (default 10)
+  gapOptions?: GapOptions; // forwarded to detectTimelineGaps
+  nextTechniques?: readonly NextTechnique[]; // from adversaryEmulation — caller supplies (needs the offline dataset)
+  playbookMatch?: PlaybookMatch | null; // #230 top playbook match — caller supplies (needs the offline catalog)
+  yieldWarning?: ImportYieldWarning | null; // source-yield #10 trigger (a): a zero-yield AI import (caller loads importMeta)
+  maxGaps?: number; // cap on coverage-gap lines (default 3)
+  maxNextTechniques?: number; // cap on likely-next-technique lines (default 5)
+  maxPlaybookSteps?: number; // cap on unobserved-playbook-step lines (default 4)
+  max?: number; // hard cap on TOTAL bullets in the rendered block (default 10)
 }
 
 const DEFAULT_MAX_GAPS = 3;
@@ -58,48 +58,88 @@ const DEFAULT_MAX_TOTAL = 10;
 const MAX_HOSTS_PER_TACTIC = 3;
 
 export type KnownUnknownKind =
-  | "uncovered_tactic"
-  | "silence_gap"
-  | "likely_next_technique"
-  | "yield_gap"
-  | "playbook_step";
+  "uncovered_tactic" | "silence_gap" | "likely_next_technique" | "yield_gap" | "playbook_step";
 
 // One structured gap the case is missing. `collect` carries deterministic "where to look" directives
 // (for uncovered_tactic and playbook_step — silence gaps link to the existing Timeline Gaps panel, and
 // likely-next techniques are predictive hunt priorities, not a specific collection).
 export interface KnownUnknownItem {
   kind: KnownUnknownKind;
-  label: string;                                          // the human sentence
-  tactic?: IrisTactic;                                    // uncovered_tactic / likely_next_technique / playbook_step
-  technique?: { id: string; name?: string };              // likely_next_technique / playbook_step
-  window?: { start: string; end: string; durationLabel: string; complete: boolean };  // silence_gap
-  playbook?: { name: string; score: number; reference?: string };                     // playbook_step
-  collect: CollectDirective[];                            // deployable collection directives (may be empty)
+  label: string; // the human sentence
+  tactic?: IrisTactic; // uncovered_tactic / likely_next_technique / playbook_step
+  technique?: { id: string; name?: string }; // likely_next_technique / playbook_step
+  window?: { start: string; end: string; durationLabel: string; complete: boolean }; // silence_gap
+  playbook?: { name: string; score: number; reference?: string }; // playbook_step
+  collect: CollectDirective[]; // deployable collection directives (may be empty)
 }
 
 // What log source / Velociraptor artifact would answer "did this kill-chain phase happen". The first
 // entry is the PRIMARY (used to build the deploy directive); the rest enrich the human label. Artifact
 // names are real Velociraptor built-ins (resolveCollectVql maps them; #8).
-interface TacticEvidenceSpec { logSource: string; artifact?: string }
+interface TacticEvidenceSpec {
+  logSource: string;
+  artifact?: string;
+}
 const TACTIC_EVIDENCE: Partial<Record<IrisTactic, readonly TacticEvidenceSpec[]>> = {
   "Initial Access": [
-    { logSource: "mail-gateway / web-proxy logs + browser history", artifact: "Windows.Applications.Chrome.History" },
+    {
+      logSource: "mail-gateway / web-proxy logs + browser history",
+      artifact: "Windows.Applications.Chrome.History",
+    },
     { logSource: "VPN / RDP-gateway auth logs" },
   ],
-  "Execution": [{ logSource: "Security.evtx 4688 + Sysmon EID 1 (process creation)", artifact: "Windows.EventLogs.Evtx" }],
-  "Persistence": [{ logSource: "scheduled tasks / services / run keys / WMI subscriptions", artifact: "Windows.Persistence.PermanentWMIEvents" }],
-  "Privilege Escalation": [{ logSource: "Security.evtx 4672/4673 + token/UAC events", artifact: "Windows.EventLogs.Evtx" }],
-  "Lateral Movement": [{ logSource: "Security.evtx 4624 type-3/10 + 4648 (network/RDP logon)", artifact: "Windows.EventLogs.Evtx" }],
-  "Command and Control": [{ logSource: "DNS + web-proxy logs for the connective IOCs", artifact: "Windows.Network.Netstat" }],
-  "Exfiltration": [{ logSource: "SRUM network-usage + USN journal for staged archives", artifact: "Windows.Forensics.SRUM" }],
-  "Impact": [{ logSource: "Security.evtx + VSS/backup-deletion + ransom-note artifacts", artifact: "Windows.EventLogs.Evtx" }],
+  Execution: [
+    { logSource: "Security.evtx 4688 + Sysmon EID 1 (process creation)", artifact: "Windows.EventLogs.Evtx" },
+  ],
+  Persistence: [
+    {
+      logSource: "scheduled tasks / services / run keys / WMI subscriptions",
+      artifact: "Windows.Persistence.PermanentWMIEvents",
+    },
+  ],
+  "Privilege Escalation": [
+    { logSource: "Security.evtx 4672/4673 + token/UAC events", artifact: "Windows.EventLogs.Evtx" },
+  ],
+  "Lateral Movement": [
+    {
+      logSource: "Security.evtx 4624 type-3/10 + 4648 (network/RDP logon)",
+      artifact: "Windows.EventLogs.Evtx",
+    },
+  ],
+  "Command and Control": [
+    { logSource: "DNS + web-proxy logs for the connective IOCs", artifact: "Windows.Network.Netstat" },
+  ],
+  Exfiltration: [
+    { logSource: "SRUM network-usage + USN journal for staged archives", artifact: "Windows.Forensics.SRUM" },
+  ],
+  Impact: [
+    {
+      logSource: "Security.evtx + VSS/backup-deletion + ransom-note artifacts",
+      artifact: "Windows.EventLogs.Evtx",
+    },
+  ],
   // The three below are NOT in CORE_TACTICS — their absence is rarely a lead on its own, so they
   // never raise an "uncovered phase". They are here because a PLAYBOOK step can land on them (#230):
   // once a named chain says credential theft happened at this point, "no LSASS-access telemetry" is
   // a specific, collectable gap rather than a generic observation.
-  "Credential Access": [{ logSource: "Sysmon EID 10 LSASS access + Security.evtx 4656/4663 on lsass.exe", artifact: "Windows.EventLogs.Evtx" }],
-  "Discovery": [{ logSource: "Security.evtx 4688 + Sysmon EID 1 for net/nltest/AdFind-style enumeration", artifact: "Windows.EventLogs.Evtx" }],
-  "Defense Evasion": [{ logSource: "Security.evtx 1102 / Sysmon EID 1 for AV-tamper + log-clear activity", artifact: "Windows.EventLogs.Evtx" }],
+  "Credential Access": [
+    {
+      logSource: "Sysmon EID 10 LSASS access + Security.evtx 4656/4663 on lsass.exe",
+      artifact: "Windows.EventLogs.Evtx",
+    },
+  ],
+  Discovery: [
+    {
+      logSource: "Security.evtx 4688 + Sysmon EID 1 for net/nltest/AdFind-style enumeration",
+      artifact: "Windows.EventLogs.Evtx",
+    },
+  ],
+  "Defense Evasion": [
+    {
+      logSource: "Security.evtx 1102 / Sysmon EID 1 for AV-tamper + log-clear activity",
+      artifact: "Windows.EventLogs.Evtx",
+    },
+  ],
 };
 
 function uniq(arr: readonly (string | undefined)[]): string[] {
@@ -136,7 +176,12 @@ function connectiveHosts(state: InvestigationState): string[] {
 
 // The hosts to point an uncovered-tactic collection at, tactic-specific where the case's own structure
 // says where to look, else the top signal-carrying hosts. Always non-empty when the case has any host.
-function targetHostsForTactic(tactic: IrisTactic, state: InvestigationState, scopedEvents: readonly ForensicEvent[], topHosts: readonly string[]): string[] {
+function targetHostsForTactic(
+  tactic: IrisTactic,
+  state: InvestigationState,
+  scopedEvents: readonly ForensicEvent[],
+  topHosts: readonly string[],
+): string[] {
   const fallback = topHosts.slice(0, MAX_HOSTS_PER_TACTIC);
   switch (tactic) {
     case "Initial Access":
@@ -157,7 +202,12 @@ function targetHostsForTactic(tactic: IrisTactic, state: InvestigationState, sco
 // The deployable collection directives for one uncovered tactic: the primary artifact on each target
 // host, expected-outcome set to the phase it would confirm. Empty when the tactic has no evidence spec
 // or the case has no host to point at.
-export function tacticCollectDirectives(tactic: IrisTactic, state: InvestigationState, scopedEvents: readonly ForensicEvent[], topHosts: readonly string[]): CollectDirective[] {
+export function tacticCollectDirectives(
+  tactic: IrisTactic,
+  state: InvestigationState,
+  scopedEvents: readonly ForensicEvent[],
+  topHosts: readonly string[],
+): CollectDirective[] {
   const specs = TACTIC_EVIDENCE[tactic];
   if (!specs || !specs.length) return [];
   const primary = specs[0];
@@ -195,8 +245,10 @@ function uncoveredTacticLabel(tactic: IrisTactic): string {
 // on-host execution/persistence is likely invisible. A soft LEAD, gated on a real finding so a quiet
 // case doesn't nag. Heuristic over event sources/artifact names; conservative (needs net present AND
 // detector fully absent). "" when it doesn't apply.
-const NETWORK_TELEMETRY_RE = /zeek|\bbro\b|conn\.log|proxy|squid|bluecoat|firewall|netflow|\bflow\b|\bpcap\b|http[_-]?access/i;
-const DETECTOR_RE = /sigma|\bedr\b|velociraptor|\bthor\b|crowdstrike|defender|carbonblack|sentinel|hayabusa|chainsaw|\byara\b|antivirus|\bav\b|snort|suricata|\bids\b|sysmon|evtx|security\.evtx|windows event/i;
+const NETWORK_TELEMETRY_RE =
+  /zeek|\bbro\b|conn\.log|proxy|squid|bluecoat|firewall|netflow|\bflow\b|\bpcap\b|http[_-]?access/i;
+const DETECTOR_RE =
+  /sigma|\bedr\b|velociraptor|\bthor\b|crowdstrike|defender|carbonblack|sentinel|hayabusa|chainsaw|\byara\b|antivirus|\bav\b|snort|suricata|\bids\b|sysmon|evtx|security\.evtx|windows event/i;
 
 function sourceText(e: ForensicEvent): string {
   return `${(e.sources ?? []).join(" ")} ${e.artifactName ?? ""} ${e.description ?? ""}`;
@@ -244,13 +296,21 @@ export function buildKnownUnknownItems(
   //    already owns the shadow-artifact deploy UI.
   const gaps = detectTimelineGaps(scopedEvents, opts.gapOptions);
   const maxGaps = Math.max(0, opts.maxGaps ?? DEFAULT_MAX_GAPS);
-  const orderedGaps = [...gaps.filter((g) => g.complete), ...gaps.filter((g) => !g.complete)].slice(0, maxGaps);
+  const orderedGaps = [...gaps.filter((g) => g.complete), ...gaps.filter((g) => !g.complete)].slice(
+    0,
+    maxGaps,
+  );
   for (const g of orderedGaps) {
     const who = g.complete ? "ALL sources silent" : `silent: ${g.silentSources.join(", ") || "some sources"}`;
     items.push({
       kind: "silence_gap",
       label: `No telemetry from ${g.startTimestamp} to ${g.endTimestamp} (${g.durationLabel}; ${who}) — collection gap or cleared logs?`,
-      window: { start: g.startTimestamp, end: g.endTimestamp, durationLabel: g.durationLabel, complete: g.complete },
+      window: {
+        start: g.startTimestamp,
+        end: g.endTimestamp,
+        durationLabel: g.durationLabel,
+        complete: g.complete,
+      },
       collect: [],
     });
   }
@@ -261,7 +321,9 @@ export function buildKnownUnknownItems(
   //    endpoint-detector feed. Both are coverage blind spots: the collection ran, the signal didn't land.
   if (opts.yieldWarning) {
     const w = opts.yieldWarning;
-    const phases = w.inferredPhases.length ? ` This source would typically evidence ${w.inferredPhases.join(", ")}.` : "";
+    const phases = w.inferredPhases.length
+      ? ` This source would typically evidence ${w.inferredPhases.join(", ")}.`
+      : "";
     items.push({ kind: "yield_gap", label: `${w.message}.${phases}`, collect: [] });
   }
   const netGap = networkTelemetryWithoutDetector(state);
@@ -312,10 +374,16 @@ export function buildKnownUnknownItems(
 // the per-tactic uncovered items into ONE bullet (the model reads phases as a set), keeps gaps + next
 // as their own lines, and caps the total. This is what the prompt path used to build directly, so the
 // human panel and the model see the same underlying items.
-export function renderKnownUnknowns(items: readonly KnownUnknownItem[], max: number = DEFAULT_MAX_TOTAL): string {
+export function renderKnownUnknowns(
+  items: readonly KnownUnknownItem[],
+  max: number = DEFAULT_MAX_TOTAL,
+): string {
   const bullets: string[] = [];
 
-  const uncovered = items.filter((i) => i.kind === "uncovered_tactic").map((i) => i.tactic).filter(Boolean) as IrisTactic[];
+  const uncovered = items
+    .filter((i) => i.kind === "uncovered_tactic")
+    .map((i) => i.tactic)
+    .filter(Boolean) as IrisTactic[];
   if (uncovered.length) bullets.push(`No finding yet explains these ATT&CK phases: ${uncovered.join(", ")}.`);
 
   for (const i of items) {
@@ -345,5 +413,8 @@ export function buildKnownUnknowns(
   scopedEvents: ForensicEvent[],
   opts: KnownUnknownsOptions = {},
 ): string {
-  return renderKnownUnknowns(buildKnownUnknownItems(state, scopedEvents, opts), opts.max ?? DEFAULT_MAX_TOTAL);
+  return renderKnownUnknowns(
+    buildKnownUnknownItems(state, scopedEvents, opts),
+    opts.max ?? DEFAULT_MAX_TOTAL,
+  );
 }

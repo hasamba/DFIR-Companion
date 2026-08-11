@@ -26,8 +26,13 @@ beforeEach(async () => {
   const artifactPath = join(cases.importsDir("c1"), "0001_evidence.csv");
   await writeFile(artifactPath, "ts,message\n", "utf8");
   await custody.record("c1", {
-    artifactPath, sha256: "a".repeat(64), collectedBy: "alice",
-    collectedAt: "2026-07-28T10:00:00.000Z", source: "WORKSTATION-7", trigger: "import", caseId: "c1",
+    artifactPath,
+    sha256: "a".repeat(64),
+    collectedBy: "alice",
+    collectedAt: "2026-07-28T10:00:00.000Z",
+    source: "WORKSTATION-7",
+    trigger: "import",
+    caseId: "c1",
   });
 });
 
@@ -75,7 +80,8 @@ describe("what survives redaction in the custody appendix (#362)", () => {
   // it came from. Tokenizing it leaves the recipient a chain they cannot check against the evidence
   // they hold, which is most of the appendix's value to an external party.
   it("keeps the artifact hash intact", async () => {
-    const redact = (s: string) => s.replace(/WORKSTATION-7/g, "ANON_HOST_1").replace(/[0-9a-f]{64}/g, "ANON_HASH");
+    const redact = (s: string) =>
+      s.replace(/WORKSTATION-7/g, "ANON_HOST_1").replace(/[0-9a-f]{64}/g, "ANON_HASH");
 
     const { markdown } = await writer.redactedReportContents("c1", redact);
 
@@ -87,8 +93,13 @@ describe("what survives redaction in the custody appendix (#362)", () => {
     const second = join(cases.importsDir("c1"), "0002_more.csv");
     await writeFile(second, "more\n", "utf8");
     await custody.record("c1", {
-      artifactPath: second, sha256: "b".repeat(64), collectedBy: "alice",
-      collectedAt: "2026-07-28T11:00:00.000Z", source: "WORKSTATION-7", trigger: "import", caseId: "c1",
+      artifactPath: second,
+      sha256: "b".repeat(64),
+      collectedBy: "alice",
+      collectedAt: "2026-07-28T11:00:00.000Z",
+      source: "WORKSTATION-7",
+      trigger: "import",
+      caseId: "c1",
     });
     const before = (await custody.load("c1"))[1].prevHash;
     expect(before).toMatch(/^[0-9a-f]{64}$/);
@@ -122,10 +133,16 @@ describe("what survives redaction in the custody appendix (#362)", () => {
   it("redacts a field it has never heard of, rather than letting it through", async () => {
     // A field added to CustodyRecord later must be redacted by DEFAULT — leaking by default is the
     // failure mode worth engineering against here.
-    const withExtra = { ...(await custody.load("c1"))[0], custodianNotes: "handed over by Bob at ACME-DC01" } as Record<string, unknown>;
+    const withExtra = {
+      ...(await custody.load("c1"))[0],
+      custodianNotes: "handed over by Bob at ACME-DC01",
+    } as Record<string, unknown>;
     const redactAll = (s: string) => `ANON(${s})`;
 
-    const [record] = redactCustodyRecords([withExtra as never], redactAll) as unknown as Record<string, unknown>[];
+    const [record] = redactCustodyRecords([withExtra as never], redactAll) as unknown as Record<
+      string,
+      unknown
+    >[];
 
     expect(record.custodianNotes).toBe("ANON(handed over by Bob at ACME-DC01)");
   });
@@ -133,7 +150,8 @@ describe("what survives redaction in the custody appendix (#362)", () => {
 
 describe("the signed manifest that travels with a redacted package", () => {
   it("is built over the REDACTED records, never the real ones", async () => {
-    const redact = (s: string) => s.replace(/WORKSTATION-7/g, "ANON_HOST_1").replace(/evidence\.csv/g, "ANON_FILE");
+    const redact = (s: string) =>
+      s.replace(/WORKSTATION-7/g, "ANON_HOST_1").replace(/evidence\.csv/g, "ANON_FILE");
 
     const { custodyManifest } = await writer.redactedReportContents("c1", redact);
 

@@ -22,35 +22,35 @@ export type ToolTransport = "spawn" | "http";
 export type OutputMode = "stdout" | "file" | "dir";
 
 export interface ToolConfig {
-  id: string;                 // built-in ToolId or a custom-tool id
-  binary: string;             // executable path / PATH name (gates on/off); "" for http tools
-  transport: ToolTransport;   // spawn a binary, or call an HTTP service
-  baseUrl?: string;           // http tools only — the service root, no trailing slash
-  runArgs: string;            // args template with <target>/<output>/<rules> placeholders
-  updateCommand?: string;     // FULL "update rules" command line (first token = executable); blank = no button
-  importKind: string;         // fixed downstream importer kind
+  id: string; // built-in ToolId or a custom-tool id
+  binary: string; // executable path / PATH name (gates on/off); "" for http tools
+  transport: ToolTransport; // spawn a binary, or call an HTTP service
+  baseUrl?: string; // http tools only — the service root, no trailing slash
+  runArgs: string; // args template with <target>/<output>/<rules> placeholders
+  updateCommand?: string; // FULL "update rules" command line (first token = executable); blank = no button
+  importKind: string; // fixed downstream importer kind
   outputMode: OutputMode;
-  outputFile?: string;        // result filename for "file"/"dir" modes
-  rulesPath?: string;         // analyst's own rules for <rules> (Snort/YARA)
-  definitions?: string;       // extra artifact-definitions path for <definitions> (Velociraptor CLI)
-  autoRun: boolean;           // run automatically when a matching raw file lands in the drop folder
+  outputFile?: string; // result filename for "file"/"dir" modes
+  rulesPath?: string; // analyst's own rules for <rules> (Snort/YARA)
+  definitions?: string; // extra artifact-definitions path for <definitions> (Velociraptor CLI)
+  autoRun: boolean; // run automatically when a matching raw file lands in the drop folder
   timeoutMs: number;
   maxOutputBytes: number;
 }
 
 interface ToolDef {
   id: ToolId;
-  label: string;                    // display name
-  repoUrl: string;                  // official repo (linked in the UI, never bundled)
+  label: string; // display name
+  repoUrl: string; // official repo (linked in the UI, never bundled)
   importKind: string;
   transport: ToolTransport;
   defaultRunArgs: string;
   outputMode: OutputMode;
   defaultOutputFile?: string;
-  usesRules: boolean;               // Snort/YARA need a <rules> path
-  extensions: string[];             // raw file extensions this tool claims (drop-folder routing)
+  usesRules: boolean; // Snort/YARA need a <rules> path
+  extensions: string[]; // raw file extensions this tool claims (drop-folder routing)
   defaultUpdateSubcommand?: string; // args appended to `binary` for the update button (Hayabusa: update-rules)
-  defaultUpdateCommand?: string;    // standalone update command line (Suricata: suricata-update)
+  defaultUpdateCommand?: string; // standalone update command line (Suricata: suricata-update)
 }
 
 // The extensions SO-CRATES claims. Explicit rather than a catch-all: SO-CRATES YARA-scans anything
@@ -58,12 +58,39 @@ interface ToolDef {
 // Companion's native importers. Extensionless and hash-named samples are covered by the
 // looksBinary() content sniff in analysis/dropScan.ts instead.
 export const SOCRATES_EXTS: string[] = [
-  ".pcap", ".pcapng", ".cap", ".trace",
-  ".evtx", ".evt",
-  ".exe", ".dll", ".sys", ".drv", ".scr", ".com", ".cpl", ".ocx", ".msi", ".bin", ".elf", ".so", ".dylib",
-  ".lnk", ".msp", ".cab",
-  ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".rtf",
-  ".zip", ".7z", ".rar",
+  ".pcap",
+  ".pcapng",
+  ".cap",
+  ".trace",
+  ".evtx",
+  ".evt",
+  ".exe",
+  ".dll",
+  ".sys",
+  ".drv",
+  ".scr",
+  ".com",
+  ".cpl",
+  ".ocx",
+  ".msi",
+  ".bin",
+  ".elf",
+  ".so",
+  ".dylib",
+  ".lnk",
+  ".msp",
+  ".cab",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".pdf",
+  ".rtf",
+  ".zip",
+  ".7z",
+  ".rar",
 ];
 
 // Static per-tool definitions (NOT env). The importKind + outputMode + claimed extensions are fixed;
@@ -93,7 +120,8 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     // Velociraptor detects the channel from the filename and globs it. `--nobanner --no-debug` keep the
     // output clean, and `> <output>` redirects the JSON result rows to a file the Companion then imports
     // (handled natively — no shell). NOTE: no `-v` (verbose logs would pollute the results).
-    defaultRunArgs: "--definitions <definitions> -r Windows.Hayabusa.Rules --ROOT <targetdir> --nobanner --no-debug > <output>",
+    defaultRunArgs:
+      "--definitions <definitions> -r Windows.Hayabusa.Rules --ROOT <targetdir> --nobanner --no-debug > <output>",
     outputMode: "stdout",
     defaultOutputFile: "output.json",
     usesRules: false,
@@ -135,7 +163,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     defaultRunArgs: "-s -m -r <rules> <target>",
     outputMode: "stdout",
     usesRules: true,
-    extensions: [],   // YARA scans files/dirs on demand — not a raw drop-folder extension
+    extensions: [], // YARA scans files/dirs on demand — not a raw drop-folder extension
   },
   socrates: {
     id: "socrates",
@@ -187,10 +215,15 @@ export function loadToolConfig(id: ToolId, env: NodeJS.ProcessEnv = process.env)
     const baseUrl = env[`${p}URL`]?.trim();
     if (!baseUrl) return null;
     return {
-      id, binary: "", transport: "http", baseUrl: baseUrl.replace(/\/+$/, ""),
-      runArgs: "", importKind: def.importKind, outputMode: def.outputMode,
+      id,
+      binary: "",
+      transport: "http",
+      baseUrl: baseUrl.replace(/\/+$/, ""),
+      runArgs: "",
+      importKind: def.importKind,
+      outputMode: def.outputMode,
       autoRun: masterAuto && toolAuto,
-      timeoutMs: Number(env[`${p}TIMEOUT_MS`]) || 1_200_000,   // 20 min: Suricata over a large PCAP
+      timeoutMs: Number(env[`${p}TIMEOUT_MS`]) || 1_200_000, // 20 min: Suricata over a large PCAP
       maxOutputBytes: Number(env[`${p}MAX_OUTPUT`]) || 100 * 1024 * 1024,
     };
   }

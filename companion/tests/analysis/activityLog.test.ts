@@ -20,8 +20,16 @@ describe("ActivityLogStore", () => {
   });
 
   it("appends an entry (server-assigned id + timestamp) and lists it newest-first", async () => {
-    const a = await store.add("c1", { category: "import", action: "import", detail: "THOR — +5 events, +2 IOCs" });
-    const b = await store.add("c1", { category: "triage", action: "mark-false-positive", detail: "ioc 1.2.3.4 (duplicate)" });
+    const a = await store.add("c1", {
+      category: "import",
+      action: "import",
+      detail: "THOR — +5 events, +2 IOCs",
+    });
+    const b = await store.add("c1", {
+      category: "triage",
+      action: "mark-false-positive",
+      detail: "ioc 1.2.3.4 (duplicate)",
+    });
     expect(a.id).toBeTruthy();
     expect(a.timestamp).toBeTruthy();
     expect(a.outcome).toBe("success");
@@ -32,7 +40,12 @@ describe("ActivityLogStore", () => {
   it("defaults a blank/missing actor to 'analyst' and trims a provided one", async () => {
     const noActor = await store.add("c1", { category: "settings", action: "scope-changed", detail: "x" });
     expect(noActor.actor).toBe("analyst");
-    const withActor = await store.add("c1", { category: "collaboration", action: "comment-added", detail: "x", actor: "  Alice  " });
+    const withActor = await store.add("c1", {
+      category: "collaboration",
+      action: "comment-added",
+      detail: "x",
+      actor: "  Alice  ",
+    });
     expect(withActor.actor).toBe("Alice");
   });
 
@@ -45,7 +58,8 @@ describe("ActivityLogStore", () => {
   });
 
   it("caps results with limit", async () => {
-    for (let i = 0; i < 5; i++) await store.add("c1", { category: "import", action: "import", detail: String(i) });
+    for (let i = 0; i < 5; i++)
+      await store.add("c1", { category: "import", action: "import", detail: String(i) });
     expect(await store.load("c1", { limit: 2 })).toHaveLength(2);
   });
 
@@ -61,6 +75,8 @@ describe("ActivityLogStore", () => {
 
 describe("logActivity helper", () => {
   it("no-ops without throwing when the store is undefined", () => {
-    expect(() => logActivity(undefined, undefined, "c1", { category: "import", action: "import", detail: "x" })).not.toThrow();
+    expect(() =>
+      logActivity(undefined, undefined, "c1", { category: "import", action: "import", detail: "x" }),
+    ).not.toThrow();
   });
 });

@@ -66,19 +66,19 @@ export function promptCandidates(
   return events.filter((e) => e.severity !== "Info");
 }
 
-export const DEFAULT_GROUP_GAP_SECONDS = 3600;   // 1 hour between occurrences starts a new burst
-export const DEFAULT_GROUP_MIN_REPEATS = 4;      // below this, collapsing costs detail and saves nothing
-export const DEFAULT_MAX_HOSTS_NAMED = 4;        // how many host names the rendered line spells out
+export const DEFAULT_GROUP_GAP_SECONDS = 3600; // 1 hour between occurrences starts a new burst
+export const DEFAULT_GROUP_MIN_REPEATS = 4; // below this, collapsing costs detail and saves nothing
+export const DEFAULT_MAX_HOSTS_NAMED = 4; // how many host names the rendered line spells out
 
 export interface DetectionGroup {
-  key: string;                    // "<severity>|<patternKey>" — the bucket this burst came from
-  representative: ForensicEvent;  // the EARLIEST member; its id anchors the prompt row
-  memberIds: string[];            // every event this group represents (incl. the representative)
-  count: number;                  // memberIds.length
-  hosts: string[];                // distinct assets, first-seen order
-  first: string;                  // earliest member timestamp (ISO)
-  last: string;                   // latest member timestamp (ISO)
-  severity: Severity;             // shared by every member (groups never span severities)
+  key: string; // "<severity>|<patternKey>" — the bucket this burst came from
+  representative: ForensicEvent; // the EARLIEST member; its id anchors the prompt row
+  memberIds: string[]; // every event this group represents (incl. the representative)
+  count: number; // memberIds.length
+  hosts: string[]; // distinct assets, first-seen order
+  first: string; // earliest member timestamp (ISO)
+  last: string; // latest member timestamp (ISO)
+  severity: Severity; // shared by every member (groups never span severities)
 }
 
 export interface GroupOptions {
@@ -87,9 +87,9 @@ export interface GroupOptions {
 }
 
 export interface CollapsedPrompt {
-  events: ForensicEvent[];                             // representatives + ungrouped events, input order
-  groupById: Map<string, DetectionGroup>;              // representative event id → its group
-  memberIdsByRepresentative: Map<string, string[]>;    // representative event id → every id it covers
+  events: ForensicEvent[]; // representatives + ungrouped events, input order
+  groupById: Map<string, DetectionGroup>; // representative event id → its group
+  memberIdsByRepresentative: Map<string, string[]>; // representative event id → every id it covers
 }
 
 // Minimum length for an extracted rule header to be trusted (guards against a stray "[x] y: z").
@@ -114,8 +114,8 @@ const DETECTION_MIN_HEAD = 10;
  */
 export function detectionRuleHead(description: string | undefined): string | null {
   const desc = String(description ?? "");
-  if (!/\[[^\]]+\]/.test(desc)) return null;   // needs the "[Artifact]" bracket
-  if (!desc.includes(": ")) return null;        // needs the "<Detector>: <RuleName>" separator
+  if (!/\[[^\]]+\]/.test(desc)) return null; // needs the "[Artifact]" bracket
+  if (!desc.includes(": ")) return null; // needs the "<Detector>: <RuleName>" separator
   const cut = desc.indexOf(" - ");
   const head = (cut > 0 ? desc.slice(0, cut) : desc).trim();
   return head.length >= DETECTION_MIN_HEAD ? head : null;
@@ -170,18 +170,15 @@ function toGroup(key: string, run: readonly ForensicEvent[]): DetectionGroup {
  * apart. Bursts shorter than `minRepeats` are not emitted — their events stay individual rows.
  * Pure and deterministic; the input array is never mutated.
  */
-export function groupDetections(
-  events: readonly ForensicEvent[],
-  opts: GroupOptions = {},
-): DetectionGroup[] {
+export function groupDetections(events: readonly ForensicEvent[], opts: GroupOptions = {}): DetectionGroup[] {
   const gapMs = Math.max(0, (opts.gapSeconds ?? DEFAULT_GROUP_GAP_SECONDS) * 1000);
   const minRepeats = Math.max(2, opts.minRepeats ?? DEFAULT_GROUP_MIN_REPEATS);
 
   const buckets = new Map<string, ForensicEvent[]>();
   for (const e of events) {
-    if (!isDated(e)) continue;                 // undated: no position on the time axis, never grouped
+    if (!isDated(e)) continue; // undated: no position on the time axis, never grouped
     const pk = groupPatternKey(e);
-    if (!pk) continue;                          // no stable pattern (empty description, no hash/process)
+    if (!pk) continue; // no stable pattern (empty description, no hash/process)
     const key = `${e.severity}|${pk}`;
     const list = buckets.get(key);
     if (list) list.push(e);
@@ -232,7 +229,7 @@ export function collapseForPrompt(
       out.push({ ...e, count: g.count, endTimestamp: g.last });
       continue;
     }
-    if (claimed.has(e.id)) continue;            // a non-representative member — covered by its group
+    if (claimed.has(e.id)) continue; // a non-representative member — covered by its group
     out.push(e);
   }
   return { events: out, groupById, memberIdsByRepresentative };

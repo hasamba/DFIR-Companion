@@ -23,10 +23,20 @@ class CapturingProvider implements AIProvider {
   }
 }
 
-function ev(id: string, timestamp: string, description: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
+function ev(
+  id: string,
+  timestamp: string,
+  description: string,
+  extra: Partial<ForensicEvent> = {},
+): ForensicEvent {
   return {
-    id, timestamp, description,
-    severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    id,
+    timestamp,
+    description,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...extra,
   };
 }
@@ -38,7 +48,10 @@ async function harness(opts: { ai?: boolean } = {}) {
   const stateStore = new StateStore(store);
   const provider = ai ? new CapturingProvider() : undefined;
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: ai });

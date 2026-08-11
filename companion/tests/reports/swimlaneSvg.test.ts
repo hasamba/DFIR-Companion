@@ -45,9 +45,7 @@ describe("renderSwimlaneSvg", () => {
   });
 
   it("plots a single-instant timeline without dividing by zero", () => {
-    const data = buildSwimlaneData([
-      ev("e1", "2026-05-01T10:00:00Z", { asset: "WIN-01" }),
-    ]);
+    const data = buildSwimlaneData([ev("e1", "2026-05-01T10:00:00Z", { asset: "WIN-01" })]);
     const svg = renderSwimlaneSvg(data);
     expect(svg).toContain("<circle");
     expect(svg).not.toContain("NaN");
@@ -57,17 +55,24 @@ describe("renderSwimlaneSvg", () => {
   it("caps lanes and adds a truncation note when there are more than 40", () => {
     const events: ForensicEvent[] = [];
     for (let i = 0; i < 50; i++) {
-      events.push(ev(`e${i}`, `2026-05-01T10:${String(i % 60).padStart(2, "0")}:00Z`, { asset: `HOST-${String(i).padStart(2, "0")}` }));
+      events.push(
+        ev(`e${i}`, `2026-05-01T10:${String(i % 60).padStart(2, "0")}:00Z`, {
+          asset: `HOST-${String(i).padStart(2, "0")}`,
+        }),
+      );
     }
     const svg = renderSwimlaneSvg(buildSwimlaneData(events));
     expect(svg).toContain("Showing 40/50 lanes");
   });
 
   it("never emits NaN coordinates for a well-formed dataset", () => {
-    const data: SwimlaneData = buildSwimlaneData([
-      ev("e1", "2026-05-01T10:00:00Z", { severity: "Critical" }),
-      ev("e2", "2026-05-02T10:00:00Z", { severity: "Info" }),
-    ], "severity");
+    const data: SwimlaneData = buildSwimlaneData(
+      [
+        ev("e1", "2026-05-01T10:00:00Z", { severity: "Critical" }),
+        ev("e2", "2026-05-02T10:00:00Z", { severity: "Info" }),
+      ],
+      "severity",
+    );
     const svg = renderSwimlaneSvg(data);
     expect(svg).not.toContain("NaN");
   });

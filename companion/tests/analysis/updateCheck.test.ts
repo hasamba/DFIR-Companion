@@ -1,8 +1,13 @@
 // companion/tests/analysis/updateCheck.test.ts
 import { describe, it, expect } from "vitest";
 import {
-  compareVersions, isNewer, parseLatestRelease, resolveUpdateMode,
-  buildUpdateStatus, githubLatestUrl, DEFAULT_UPDATE_REPO,
+  compareVersions,
+  isNewer,
+  parseLatestRelease,
+  resolveUpdateMode,
+  buildUpdateStatus,
+  githubLatestUrl,
+  DEFAULT_UPDATE_REPO,
 } from "../../src/analysis/updateCheck.js";
 
 describe("compareVersions", () => {
@@ -34,8 +39,17 @@ describe("isNewer", () => {
 
 describe("parseLatestRelease", () => {
   it("reads tag_name / html_url / published_at", () => {
-    const r = parseLatestRelease({ tag_name: "v0.24.0", html_url: "https://x/y", published_at: "2026-06-18T00:00:00Z" });
-    expect(r).toEqual({ tag: "v0.24.0", version: "0.24.0", htmlUrl: "https://x/y", publishedAt: "2026-06-18T00:00:00Z" });
+    const r = parseLatestRelease({
+      tag_name: "v0.24.0",
+      html_url: "https://x/y",
+      published_at: "2026-06-18T00:00:00Z",
+    });
+    expect(r).toEqual({
+      tag: "v0.24.0",
+      version: "0.24.0",
+      htmlUrl: "https://x/y",
+      publishedAt: "2026-06-18T00:00:00Z",
+    });
   });
   it("returns null on junk or a missing tag", () => {
     expect(parseLatestRelease(null)).toBeNull();
@@ -66,7 +80,10 @@ describe("resolveUpdateMode", () => {
 describe("buildUpdateStatus", () => {
   it("computes isNewer from the cached result vs current", () => {
     const s = buildUpdateStatus({ enabled: true, locked: false }, "0.23.0", {
-      latestVersion: "0.24.0", latestTag: "v0.24.0", htmlUrl: "https://x", checkedAt: 1000,
+      latestVersion: "0.24.0",
+      latestTag: "v0.24.0",
+      htmlUrl: "https://x",
+      checkedAt: 1000,
     });
     expect(s.isNewer).toBe(true);
     expect(s.latest).toBe("0.24.0");
@@ -82,6 +99,8 @@ describe("buildUpdateStatus", () => {
 
 describe("githubLatestUrl", () => {
   it("builds the releases/latest API url", () => {
-    expect(githubLatestUrl(DEFAULT_UPDATE_REPO)).toBe("https://api.github.com/repos/hasamba/DFIR-Companion/releases/latest");
+    expect(githubLatestUrl(DEFAULT_UPDATE_REPO)).toBe(
+      "https://api.github.com/repos/hasamba/DFIR-Companion/releases/latest",
+    );
   });
 });

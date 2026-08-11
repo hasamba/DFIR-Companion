@@ -48,15 +48,15 @@ export interface ClockSkewOptions extends CorrelateOptions {
 export type SkewConfidence = "high" | "medium" | "low";
 
 export interface ClockSkewResult {
-  host: string;              // display name (the first spelling seen, e.g. the FQDN)
-  hostKey: string;           // normalized short hostname the offset is keyed on
-  offsetMs: number;          // host clock − consensus. Positive ⇒ this host runs FAST.
-  anchorCount: number;       // samples behind the offset
-  dispersionMs: number;      // median absolute deviation of those samples
+  host: string; // display name (the first spelling seen, e.g. the FQDN)
+  hostKey: string; // normalized short hostname the offset is keyed on
+  offsetMs: number; // host clock − consensus. Positive ⇒ this host runs FAST.
+  anchorCount: number; // samples behind the offset
+  dispersionMs: number; // median absolute deviation of those samples
   confidence: SkewConfidence;
-  qualified: boolean;        // enough consistent samples to align on
-  skewed: boolean;           // qualified AND beyond the alert threshold
-  sources: string[];         // tools that contributed anchors, for auditability
+  qualified: boolean; // enough consistent samples to align on
+  skewed: boolean; // qualified AND beyond the alert threshold
+  sources: string[]; // tools that contributed anchors, for auditability
 }
 
 export interface ClockSkewReport {
@@ -64,7 +64,7 @@ export interface ClockSkewReport {
   // The clock every offset is expressed against — the best-anchored host, whose own offset is 0 by
   // construction. "" when nothing was measured.
   referenceHost: string;
-  anchorGroups: number;      // correlation groups that qualified as anchors
+  anchorGroups: number; // correlation groups that qualified as anchors
   groupsExamined: number;
 }
 
@@ -72,9 +72,7 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
-    : sorted[mid];
+  return sorted.length % 2 === 0 ? Math.round((sorted[mid - 1] + sorted[mid]) / 2) : sorted[mid];
 }
 
 // Median absolute deviation — a spread measure a single wild sample cannot inflate the way a
@@ -108,7 +106,10 @@ interface Sample {
  * group), so a host that logged an artifact five times cannot outvote a host that logged it once —
  * and the group's consensus reference is the median across hosts, not across records.
  */
-export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockSkewOptions = {}): ClockSkewReport {
+export function detectClockSkew(
+  groups: readonly ForensicEvent[][],
+  opts: ClockSkewOptions = {},
+): ClockSkewReport {
   const minAnchors = opts.minAnchors ?? DEFAULT_MIN_ANCHORS;
   const maxDispersionMs = opts.maxDispersionMs ?? DEFAULT_MAX_DISPERSION_MS;
   const maxSpreadMs = opts.maxAnchorSpreadMs ?? DEFAULT_MAX_ANCHOR_SPREAD_MS;
@@ -135,7 +136,7 @@ export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockS
       const srcs = sourcesByHost.get(key) ?? sourcesByHost.set(key, new Set()).get(key)!;
       for (const s of e.sources ?? []) if (s && s !== "unknown source") srcs.add(s);
     }
-    if (timesByHost.size < 2) continue;   // single host in the group ⇒ nothing to compare against
+    if (timesByHost.size < 2) continue; // single host in the group ⇒ nothing to compare against
 
     // The group must carry more than one tool's word for it. A single tool reporting the same
     // artifact on two hosts is the propagation case with no second clock in evidence; two tools
@@ -165,9 +166,7 @@ export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockS
     const anchorCount = samples.length;
     const qualified = anchorCount >= minAnchors && dispersionMs <= maxDispersionMs;
     const confidence: SkewConfidence =
-      anchorCount >= 5 && dispersionMs <= 1_000 ? "high"
-        : qualified ? "medium"
-          : "low";
+      anchorCount >= 5 && dispersionMs <= 1_000 ? "high" : qualified ? "medium" : "low";
     results.push({
       host: displayName.get(key) ?? key,
       hostKey: key,
@@ -176,7 +175,7 @@ export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockS
       dispersionMs,
       confidence,
       qualified,
-      skewed: false,   // decided after re-centering below
+      skewed: false, // decided after re-centering below
       sources: [...new Set(samples.flatMap((s) => s.sources))].sort(),
     });
   }
@@ -189,7 +188,12 @@ export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockS
   // fewest events and the analyst can read the timeline as "on DC01's clock".
   const reference = [...results]
     .filter((r) => r.qualified)
-    .sort((a, b) => (b.anchorCount - a.anchorCount) || (b.sources.length - a.sources.length) || a.hostKey.localeCompare(b.hostKey))[0];
+    .sort(
+      (a, b) =>
+        b.anchorCount - a.anchorCount ||
+        b.sources.length - a.sources.length ||
+        a.hostKey.localeCompare(b.hostKey),
+    )[0];
   if (reference) {
     const base = reference.offsetMs;
     for (const r of results) r.offsetMs -= base;
@@ -207,7 +211,10 @@ export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockS
  * `detectClockSkew(correlationGroups(events, { ...opts, crossHostArtifacts: true }), opts)` — the flag is
  * required: without it correlate scopes each artifact to one host (#345) and no anchor ever spans two.
  */
-export function detectClockSkewFromTimeline(events: readonly ForensicEvent[], opts: ClockSkewOptions = {}): ClockSkewReport {
+export function detectClockSkewFromTimeline(
+  events: readonly ForensicEvent[],
+  opts: ClockSkewOptions = {},
+): ClockSkewReport {
   return detectClockSkew(correlationGroups(events, { ...opts, crossHostArtifacts: true }), opts);
 }
 
@@ -225,7 +232,8 @@ export function effectiveOffsets(
   for (const [host, offset] of Object.entries(overrides)) {
     const key = hostKey(host);
     if (!key || !Number.isFinite(offset)) continue;
-    if (offset === 0) out.delete(key);   // an explicit 0 override means "this clock is correct"
+    if (offset === 0)
+      out.delete(key); // an explicit 0 override means "this clock is correct"
     else out.set(key, offset);
   }
   return out;
@@ -237,7 +245,10 @@ export function effectiveOffsets(
  * and the report can show both and the stored case file is never touched. Output is re-sorted,
  * because shifting one host's events changes their order relative to every other host's.
  */
-export function alignTimestamps(events: readonly ForensicEvent[], offsets: ReadonlyMap<string, number>): ForensicEvent[] {
+export function alignTimestamps(
+  events: readonly ForensicEvent[],
+  offsets: ReadonlyMap<string, number>,
+): ForensicEvent[] {
   if (offsets.size === 0) return [...events];
   const shifted = events.map((e) => {
     const offset = e.asset ? offsets.get(hostKey(e.asset)) : undefined;
@@ -282,7 +293,10 @@ export interface AlignmentState {
  * uses (the state route, the report writer, and through it the evidence graph and lateral paths), so
  * "align timelines" means one thing everywhere. A no-op when the toggle is off or no host qualifies.
  */
-export function projectAlignment(state: AlignmentState | undefined, events: readonly ForensicEvent[]): ForensicEvent[] {
+export function projectAlignment(
+  state: AlignmentState | undefined,
+  events: readonly ForensicEvent[],
+): ForensicEvent[] {
   if (!state?.alignEnabled) return [...events];
   return alignTimestamps(events, effectiveOffsets(state.results, state.overrides));
 }

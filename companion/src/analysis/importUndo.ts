@@ -14,14 +14,14 @@ import type { InvestigationState } from "./stateTypes.js";
 // machine-local convenience, intentionally excluded from the portable case snapshot.
 
 export interface ImportCheckpoint {
-  label: string;            // what this checkpoint precedes, e.g. "thor (0003_thor.json)"
-  at: string;               // ISO time the checkpoint was captured
+  label: string; // what this checkpoint precedes, e.g. "thor (0003_thor.json)"
+  at: string; // ISO time the checkpoint was captured
   state: InvestigationState; // the full investigation state at that point
 }
 
 export interface ImportUndoStack {
-  undo: ImportCheckpoint[];   // pre-import snapshots, oldest -> newest (the top to undo is last)
-  redo: ImportCheckpoint[];   // states that were rolled back, oldest -> newest (top to redo is last)
+  undo: ImportCheckpoint[]; // pre-import snapshots, oldest -> newest (the top to undo is last)
+  redo: ImportCheckpoint[]; // states that were rolled back, oldest -> newest (top to redo is last)
 }
 
 // Default number of undo levels kept. The issue asks for "multiple undo's and redo's"; each level
@@ -135,8 +135,8 @@ export function applyRedo(
 export interface CheckpointSummary {
   label: string;
   at: string;
-  events: number;   // forensicTimeline length at that checkpoint
-  iocs: number;     // IOC count at that checkpoint
+  events: number; // forensicTimeline length at that checkpoint
+  iocs: number; // IOC count at that checkpoint
   findings: number; // findings count at that checkpoint
 }
 
@@ -144,9 +144,9 @@ export interface UndoStackSummary {
   canUndo: boolean;
   canRedo: boolean;
   maxDepth: number;
-  nextUndo: CheckpointSummary | null;   // what "Undo" will roll back (top of the undo stack)
-  nextRedo: CheckpointSummary | null;   // what "Redo" will re-apply (top of the redo stack)
-  undo: CheckpointSummary[];            // oldest -> newest
+  nextUndo: CheckpointSummary | null; // what "Undo" will roll back (top of the undo stack)
+  nextRedo: CheckpointSummary | null; // what "Redo" will re-apply (top of the redo stack)
+  undo: CheckpointSummary[]; // oldest -> newest
   redo: CheckpointSummary[];
 }
 
@@ -158,7 +158,10 @@ const summarize = (c: ImportCheckpoint): CheckpointSummary => ({
   findings: c.state.findings.length,
 });
 
-export function summarizeUndoStack(stack: ImportUndoStack, maxDepth: number = DEFAULT_UNDO_DEPTH): UndoStackSummary {
+export function summarizeUndoStack(
+  stack: ImportUndoStack,
+  maxDepth: number = DEFAULT_UNDO_DEPTH,
+): UndoStackSummary {
   const top = (a: ImportCheckpoint[]): ImportCheckpoint | undefined => a[a.length - 1];
   const u = top(stack.undo);
   const r = top(stack.redo);
@@ -243,7 +246,10 @@ export class ImportUndoStore {
   // Atomically load -> transform -> save under this case's lock. Use this instead of manual
   // load()/save() pairs for any read-modify-write (pushing a checkpoint, undo, redo) so concurrent
   // callers serialize instead of racing.
-  async mutate<T>(caseId: string, fn: (stack: ImportUndoStack) => { stack: ImportUndoStack; result: T }): Promise<T> {
+  async mutate<T>(
+    caseId: string,
+    fn: (stack: ImportUndoStack) => { stack: ImportUndoStack; result: T },
+  ): Promise<T> {
     return this.lock.runExclusive(caseId, async () => {
       const { stack, result } = fn(await this.load(caseId));
       await this.save(caseId, stack);

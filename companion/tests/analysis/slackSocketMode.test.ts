@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { SlackSocketMode, type SocketLike, type SlackCommandPayload } from "../../src/analysis/slackSocketMode.js";
+import {
+  SlackSocketMode,
+  type SocketLike,
+  type SlackCommandPayload,
+} from "../../src/analysis/slackSocketMode.js";
 import type { Logger } from "../../src/logging/logger.js";
 
 // Slack Socket Mode (#235): an outbound WebSocket instead of a Request URL, so Slack commands need
@@ -13,11 +17,18 @@ const yieldingSleep = (record?: number[]) => async (ms: number) => {
 
 function fakeLog(): Logger & { lines: string[] } {
   const lines: string[] = [];
-  const push = (level: string) => (m: string) => { lines.push(`${level} ${m}`); };
+  const push = (level: string) => (m: string) => {
+    lines.push(`${level} ${m}`);
+  };
   return {
     lines,
-    debug: push("debug"), info: push("info"), warn: push("warn"), error: push("error"),
-    getLevel: () => "info", setLevel: () => {}, close: async () => {},
+    debug: push("debug"),
+    info: push("info"),
+    warn: push("warn"),
+    error: push("error"),
+    getLevel: () => "info",
+    setLevel: () => {},
+    close: async () => {},
   } as unknown as Logger & { lines: string[] };
 }
 
@@ -26,22 +37,38 @@ class FakeSocket implements SocketLike {
   readonly sent: string[] = [];
   closed = false;
   private handlers = new Map<string, (arg?: unknown) => void>();
-  on(event: string, cb: (arg?: unknown) => void): void { this.handlers.set(event, cb); }
-  send(data: string): void { this.sent.push(data); }
-  close(): void { this.closed = true; }
-  emit(event: string, arg?: unknown): void { this.handlers.get(event)?.(arg); }
-  deliver(frame: unknown): void { this.emit("message", JSON.stringify(frame)); }
-  acks(): Array<Record<string, unknown>> { return this.sent.map((s) => JSON.parse(s)); }
+  on(event: string, cb: (arg?: unknown) => void): void {
+    this.handlers.set(event, cb);
+  }
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  close(): void {
+    this.closed = true;
+  }
+  emit(event: string, arg?: unknown): void {
+    this.handlers.get(event)?.(arg);
+  }
+  deliver(frame: unknown): void {
+    this.emit("message", JSON.stringify(frame));
+  }
+  acks(): Array<Record<string, unknown>> {
+    return this.sent.map((s) => JSON.parse(s));
+  }
 }
 
 /** connections.open always succeeds; every socket it hands out is captured for the test. */
-function harness(opts: { onCommand?: (p: SlackCommandPayload) => Promise<unknown>; openBody?: unknown } = {}) {
+function harness(
+  opts: { onCommand?: (p: SlackCommandPayload) => Promise<unknown>; openBody?: unknown } = {},
+) {
   const sockets: FakeSocket[] = [];
   const log = fakeLog();
   const opened: string[] = [];
   const fetchFn = (async (url: string) => {
     opened.push(String(url));
-    return new Response(JSON.stringify(opts.openBody ?? { ok: true, url: "wss://slack.test/link" }), { status: 200 });
+    return new Response(JSON.stringify(opts.openBody ?? { ok: true, url: "wss://slack.test/link" }), {
+      status: 200,
+    });
   }) as unknown as typeof fetch;
 
   const mode = new SlackSocketMode({
@@ -49,7 +76,11 @@ function harness(opts: { onCommand?: (p: SlackCommandPayload) => Promise<unknown
     fetchFn,
     log,
     sleepFn: yieldingSleep(),
-    socketFactory: () => { const s = new FakeSocket(); sockets.push(s); return s; },
+    socketFactory: () => {
+      const s = new FakeSocket();
+      sockets.push(s);
+      return s;
+    },
     onCommand: opts.onCommand ?? (async () => ({ response_type: "in_channel", text: "ok" })),
   });
   return { mode, sockets, log, opened };
@@ -59,7 +90,13 @@ const commandEnvelope = (id: string, text: string) => ({
   envelope_id: id,
   type: "slash_commands",
   accepts_response_payload: true,
-  payload: { command: "/dfir", text, channel_id: "C1", user_id: "U1", response_url: "https://hooks.slack.com/x" },
+  payload: {
+    command: "/dfir",
+    text,
+    channel_id: "C1",
+    user_id: "U1",
+    response_url: "https://hooks.slack.com/x",
+  },
 });
 
 describe("SlackSocketMode", () => {
@@ -74,7 +111,10 @@ describe("SlackSocketMode", () => {
   it("dispatches a slash command and acks with the reply", async () => {
     const seen: string[] = [];
     const { mode, sockets } = harness({
-      onCommand: async (p) => { seen.push(p.text ?? ""); return { response_type: "in_channel", text: "Top 5 findings" }; },
+      onCommand: async (p) => {
+        seen.push(p.text ?? "");
+        return { response_type: "in_channel", text: "Top 5 findings" };
+      },
     });
     mode.start();
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
@@ -102,7 +142,11 @@ describe("SlackSocketMode", () => {
   });
 
   it("still acks when the command handler throws, so Slack does not redeliver it", async () => {
-    const { mode, sockets, log } = harness({ onCommand: async () => { throw new Error("dispatch exploded"); } });
+    const { mode, sockets, log } = harness({
+      onCommand: async () => {
+        throw new Error("dispatch exploded");
+      },
+    });
     mode.start();
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0].deliver(commandEnvelope("env-3", "status"));
@@ -139,9 +183,15 @@ describe("SlackSocketMode", () => {
   it("backs off when connections.open keeps failing", async () => {
     const slept: number[] = [];
     const log = fakeLog();
-    const fetchFn = (async () => new Response(JSON.stringify({ ok: false, error: "ratelimited" }), { status: 200 })) as unknown as typeof fetch;
+    const fetchFn = (async () =>
+      new Response(JSON.stringify({ ok: false, error: "ratelimited" }), {
+        status: 200,
+      })) as unknown as typeof fetch;
     const mode = new SlackSocketMode({
-      appToken: "xapp-1", fetchFn, log, sleepFn: yieldingSleep(slept),
+      appToken: "xapp-1",
+      fetchFn,
+      log,
+      sleepFn: yieldingSleep(slept),
       socketFactory: () => new FakeSocket(),
       onCommand: async () => undefined,
     });
@@ -153,9 +203,15 @@ describe("SlackSocketMode", () => {
 
   it("explains a bad app token rather than retrying quietly", async () => {
     const log = fakeLog();
-    const fetchFn = (async () => new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), { status: 200 })) as unknown as typeof fetch;
+    const fetchFn = (async () =>
+      new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), {
+        status: 200,
+      })) as unknown as typeof fetch;
     const mode = new SlackSocketMode({
-      appToken: "xoxb-wrong-kind", fetchFn, log, sleepFn: yieldingSleep(),
+      appToken: "xoxb-wrong-kind",
+      fetchFn,
+      log,
+      sleepFn: yieldingSleep(),
       socketFactory: () => new FakeSocket(),
       onCommand: async () => undefined,
     });
@@ -197,10 +253,12 @@ describe("SlackSocketMode", () => {
     const { mode, sockets } = harness();
     mode.start();
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
-    await expect(Promise.race([
-      mode.stop().then(() => "stopped"),
-      new Promise((r) => setTimeout(() => r("hung"), 2_000)),
-    ])).resolves.toBe("stopped");
+    await expect(
+      Promise.race([
+        mode.stop().then(() => "stopped"),
+        new Promise((r) => setTimeout(() => r("hung"), 2_000)),
+      ]),
+    ).resolves.toBe("stopped");
   });
 
   it("start() twice does not open two connections", async () => {

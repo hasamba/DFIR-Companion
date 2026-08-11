@@ -57,7 +57,10 @@ describe("findContradictingEvents (prefix match)", () => {
   const exfilRule = CONTRADICTION_RULES.find((r) => r.key === "exfiltration")!;
 
   it("matches a sub-technique by prefix (T1052.001 under T1052)", () => {
-    const events = [ev({ id: "e5", mitreTechniques: ["T1052.001"] }), ev({ id: "e6", mitreTechniques: ["T1005"] })];
+    const events = [
+      ev({ id: "e5", mitreTechniques: ["T1052.001"] }),
+      ev({ id: "e6", mitreTechniques: ["T1005"] }),
+    ];
     const res = findContradictingEvents(events, exfilRule);
     expect(res.techniques).toContain("T1052.001");
     expect(res.eventIds).toContain("e5");
@@ -73,7 +76,14 @@ describe("findContradictingEvents (prefix match)", () => {
 
 describe("flagContradictedAnswers", () => {
   it("flags the halcyon case: 'no exfiltration' vs staged/copied data in the timeline", () => {
-    const questions = [q({ id: "q_exfiltration", question: "Was data exfiltrated?", status: "answered", answer: "No data exfiltration has been confirmed." })];
+    const questions = [
+      q({
+        id: "q_exfiltration",
+        question: "Was data exfiltrated?",
+        status: "answered",
+        answer: "No data exfiltration has been confirmed.",
+      }),
+    ];
     const events = [
       ev({ id: "e10", description: "xcopy sensitive to E:", mitreTechniques: ["T1074.001"] }),
       ev({ id: "e11", description: "7z archive of finance", mitreTechniques: ["T1560.001"] }),
@@ -86,7 +96,13 @@ describe("flagContradictedAnswers", () => {
   });
 
   it("matches by question TEXT when the id is non-standard", () => {
-    const questions = [q({ id: "custom1", question: "Did the attacker perform lateral movement?", answer: "No lateral movement was observed." })];
+    const questions = [
+      q({
+        id: "custom1",
+        question: "Did the attacker perform lateral movement?",
+        answer: "No lateral movement was observed.",
+      }),
+    ];
     const events = [ev({ id: "e2", mitreTechniques: ["T1021.001"] })];
     const out = flagContradictedAnswers(questions, events);
     expect(out[0].status).toBe("partial");
@@ -94,7 +110,14 @@ describe("flagContradictedAnswers", () => {
   });
 
   it("leaves a positive answer untouched", () => {
-    const questions = [q({ id: "q_exfiltration", question: "exfiltration?", status: "answered", answer: "Data exfiltrated via rclone to S3." })];
+    const questions = [
+      q({
+        id: "q_exfiltration",
+        question: "exfiltration?",
+        status: "answered",
+        answer: "Data exfiltrated via rclone to S3.",
+      }),
+    ];
     const events = [ev({ mitreTechniques: ["T1567.002"] })];
     const out = flagContradictedAnswers(questions, events);
     expect(out[0].status).toBe("answered");
@@ -102,7 +125,9 @@ describe("flagContradictedAnswers", () => {
   });
 
   it("leaves a negative answer untouched when NO matching evidence exists", () => {
-    const questions = [q({ id: "q_exfiltration", question: "exfiltration?", answer: "No exfiltration was observed." })];
+    const questions = [
+      q({ id: "q_exfiltration", question: "exfiltration?", answer: "No exfiltration was observed." }),
+    ];
     const events = [ev({ mitreTechniques: ["T1059"] })];
     const out = flagContradictedAnswers(questions, events);
     expect(out[0].status).toBe("answered");
@@ -118,7 +143,13 @@ describe("flagContradictedAnswers", () => {
   });
 
   it("is idempotent and clears a stale flag when the answer no longer contradicts", () => {
-    const stale = q({ id: "q_exfiltration", question: "exfiltration?", status: "partial", answer: "Confirmed: data exfiltrated.", contradicted: { techniques: ["T1041"], eventIds: ["x"] } });
+    const stale = q({
+      id: "q_exfiltration",
+      question: "exfiltration?",
+      status: "partial",
+      answer: "Confirmed: data exfiltrated.",
+      contradicted: { techniques: ["T1041"], eventIds: ["x"] },
+    });
     const out = flagContradictedAnswers([stale], [ev({ mitreTechniques: ["T1041"] })]);
     expect(out[0].contradicted).toBeUndefined(); // positive answer → flag cleared
   });

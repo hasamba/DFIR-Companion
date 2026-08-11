@@ -19,10 +19,12 @@ function parseVersion(v: string): { core: number[]; pre: string } {
 
 // -1 if a<b, 0 if equal, 1 if a>b. A release (no prerelease) outranks an equal-core prerelease.
 export function compareVersions(a: string, b: string): -1 | 0 | 1 {
-  const pa = parseVersion(a), pb = parseVersion(b);
+  const pa = parseVersion(a),
+    pb = parseVersion(b);
   const len = Math.max(pa.core.length, pb.core.length);
   for (let i = 0; i < len; i++) {
-    const x = pa.core[i] ?? 0, y = pb.core[i] ?? 0;
+    const x = pa.core[i] ?? 0,
+      y = pb.core[i] ?? 0;
     if (x > y) return 1;
     if (x < y) return -1;
   }
@@ -60,14 +62,18 @@ export function parseLatestRelease(json: unknown): LatestRelease | null {
   };
 }
 
-export interface UpdateMode { enabled: boolean; locked: boolean; }
+export interface UpdateMode {
+  enabled: boolean;
+  locked: boolean;
+}
 
 // Env DFIR_UPDATE_CHECK: 0/false/off/no → locked off; 1/true/on/yes → default on; unset/other → default off.
 // The persisted Settings toggle (storedEnabled) wins unless locked.
 export function resolveUpdateMode(env: string | undefined, storedEnabled: boolean | undefined): UpdateMode {
   const e = (env ?? "").trim().toLowerCase();
   if (e === "0" || e === "false" || e === "off" || e === "no") return { enabled: false, locked: true };
-  if (e === "1" || e === "true" || e === "on" || e === "yes") return { enabled: storedEnabled ?? true, locked: false };
+  if (e === "1" || e === "true" || e === "on" || e === "yes")
+    return { enabled: storedEnabled ?? true, locked: false };
   return { enabled: storedEnabled ?? false, locked: false };
 }
 
@@ -92,7 +98,11 @@ export interface UpdateStatus {
   error: string | null;
 }
 
-export function buildUpdateStatus(mode: UpdateMode, current: string, result: UpdateResult | undefined): UpdateStatus {
+export function buildUpdateStatus(
+  mode: UpdateMode,
+  current: string,
+  result: UpdateResult | undefined,
+): UpdateStatus {
   const latest = result?.latestVersion || null;
   return {
     enabled: mode.enabled,

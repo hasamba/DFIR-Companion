@@ -64,10 +64,14 @@ describe("LiveHub", () => {
   it("broadcastTo contains a send() that throws (half-open peer) instead of crashing", () => {
     const hub = new LiveHub();
     const dead = fakeSocket();
-    dead.send = () => { throw new Error("not open"); };
+    dead.send = () => {
+      throw new Error("not open");
+    };
     const alive = fakeSocket();
     let terminated = false;
-    dead.terminate = () => { terminated = true; };
+    dead.terminate = () => {
+      terminated = true;
+    };
     hub.subscribe("c1", dead);
     hub.subscribe("c1", alive);
     expect(() => hub.broadcastTo("c1", { type: "state" })).not.toThrow();
@@ -81,8 +85,12 @@ describe("LiveHub", () => {
     let pinged = false;
     const s = fakeSocket();
     s.isAlive = true;
-    s.ping = () => { pinged = true; };
-    s.terminate = () => { terminated = true; };
+    s.ping = () => {
+      pinged = true;
+    };
+    s.terminate = () => {
+      terminated = true;
+    };
     hub.subscribe("c1", s);
     // First sweep: flip isAlive=false and ping.
     hub.sweepReaper();
@@ -103,11 +111,13 @@ describe("LiveHub", () => {
     const s = fakeSocket();
     s.isAlive = true;
     s.ping = () => {};
-    s.terminate = () => { terminated = true; };
+    s.terminate = () => {
+      terminated = true;
+    };
     hub.subscribe("c1", s);
-    hub.sweepReaper();      // isAlive=false, ping sent
-    s.isAlive = true;       // pong handler fired
-    hub.sweepReaper();      // still alive → ping again, no terminate
+    hub.sweepReaper(); // isAlive=false, ping sent
+    s.isAlive = true; // pong handler fired
+    hub.sweepReaper(); // still alive → ping again, no terminate
     expect(terminated).toBe(false);
     expect(hub.connectionCount()).toBe(1);
   });

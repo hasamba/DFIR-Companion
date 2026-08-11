@@ -46,7 +46,9 @@ const cockpitDecisionStateSchema = z.object({
 const EMPTY: CockpitDecisionState = { cards: [], reviews: [], history: [] };
 
 function cleanText(value: unknown, max: number): string {
-  return String(value ?? "").trim().slice(0, max);
+  return String(value ?? "")
+    .trim()
+    .slice(0, max);
 }
 
 function validIso(value: string): boolean {
@@ -134,13 +136,16 @@ export class CockpitStore {
       const current = existing.cards.find((card) => card.cardId === cardId);
       const updated = updateDecision(current, cardId, input, at);
       const cards = [...existing.cards.filter((card) => card.cardId !== cardId), updated];
-      const history = [...existing.history, {
-        action: input.action,
-        cardId,
-        actor,
-        at,
-        ...(value ? { value } : {}),
-      }];
+      const history = [
+        ...existing.history,
+        {
+          action: input.action,
+          cardId,
+          actor,
+          at,
+          ...(value ? { value } : {}),
+        },
+      ];
       const next: CockpitDecisionState = { ...existing, cards, history };
       await this.save(caseId, next);
       return next;
@@ -157,15 +162,17 @@ export class CockpitStore {
     return this.lock.runExclusive(caseId, async () => {
       const existing = await this.load(caseId);
       const review: CockpitReview = { investigatorKey: key, investigator, reviewedAt: at };
-      const reviews = [
-        ...existing.reviews.filter((item) => item.investigatorKey !== key),
-        review,
-      ].sort((a, b) => a.investigatorKey.localeCompare(b.investigatorKey));
-      const history = [...existing.history, {
-        action: "review" as const,
-        actor: investigator,
-        at,
-      }];
+      const reviews = [...existing.reviews.filter((item) => item.investigatorKey !== key), review].sort(
+        (a, b) => a.investigatorKey.localeCompare(b.investigatorKey),
+      );
+      const history = [
+        ...existing.history,
+        {
+          action: "review" as const,
+          actor: investigator,
+          at,
+        },
+      ];
       await this.save(caseId, { ...existing, reviews, history });
       return review;
     });

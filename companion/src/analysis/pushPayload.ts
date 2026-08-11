@@ -14,9 +14,9 @@
 // (e.g. a Velociraptor-looking name routes ambiguous rows to the Velociraptor importer).
 
 export interface PushPayload {
-  text: string;        // the blob handed to detectImportKind + the importer
-  source: string;      // caller-supplied label (sanitized) — drives the evidence filename
-  filename: string;    // synthetic name for detection hints + the stored evidence file
+  text: string; // the blob handed to detectImportKind + the importer
+  source: string; // caller-supplied label (sanitized) — drives the evidence filename
+  filename: string; // synthetic name for detection hints + the stored evidence file
 }
 
 const EVENT_ARRAY_KEYS = ["events", "rows", "records", "data", "results"] as const;
@@ -27,7 +27,11 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 // Keep a caller label safe for a filename + log line: printable, no path separators, capped.
 function sanitizeSource(raw: unknown): string {
-  const s = String(raw ?? "").replace(/[\r\n\t]+/g, " ").replace(/[^\w.\- ]+/g, "").trim().slice(0, 60);
+  const s = String(raw ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[^\w.\- ]+/g, "")
+    .trim()
+    .slice(0, 60);
   return s || "push";
 }
 
@@ -52,10 +56,13 @@ export function extractPushPayload(body: unknown): PushPayload {
 
     // { text|json|csv: "<string>" } — same fields the /import route accepts.
     const str =
-      typeof body.text === "string" ? body.text
-      : typeof body.json === "string" ? body.json
-      : typeof body.csv === "string" ? body.csv
-      : "";
+      typeof body.text === "string"
+        ? body.text
+        : typeof body.json === "string"
+          ? body.json
+          : typeof body.csv === "string"
+            ? body.csv
+            : "";
     if (str) {
       const filename = explicitName || defaultName(source, body.csv ? "csv" : "dat");
       return { text: str, source, filename };
@@ -65,7 +72,8 @@ export function extractPushPayload(body: unknown): PushPayload {
     // An empty object (`{}`, or no body at all under a JSON content-type) has nothing to import —
     // stringifying it would otherwise produce the non-empty text "{}", silently slipping past the
     // caller's `!text.trim()` empty-payload guard and landing as a junk "siem" event with no content.
-    if (Object.keys(body).length === 0) return { text: "", source, filename: explicitName || defaultName(source) };
+    if (Object.keys(body).length === 0)
+      return { text: "", source, filename: explicitName || defaultName(source) };
     return { text: JSON.stringify(body), source, filename: explicitName || defaultName(source) };
   }
 

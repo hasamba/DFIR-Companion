@@ -24,7 +24,10 @@ function hostWithoutPort(host: string): string {
     if (close > 0) lower = lower.slice(1, close);
     return lower;
   }
-  if (!lower.includes(":") || (lower.indexOf(":") === lower.lastIndexOf(":") && /^\d+$/.test(lower.slice(lower.lastIndexOf(":") + 1)))) {
+  if (
+    !lower.includes(":") ||
+    (lower.indexOf(":") === lower.lastIndexOf(":") && /^\d+$/.test(lower.slice(lower.lastIndexOf(":") + 1)))
+  ) {
     const lastColon = lower.lastIndexOf(":");
     if (lastColon > 0) lower = lower.slice(0, lastColon);
   }
@@ -54,7 +57,7 @@ function isPrivateNetworkHost(host: string): boolean {
     if (a === 10) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;      // link-local
+    if (a === 169 && b === 254) return true; // link-local
     if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
     return false;
   }

@@ -23,7 +23,8 @@ function sigmaPowershell() {
             Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
             CommandLine: "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoA",
             ParentImage: "C:\\Program Files\\Microsoft Office\\winword.exe",
-            Hashes: "SHA256=aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899,MD5=00112233445566778899aabbccddeeff",
+            Hashes:
+              "SHA256=aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899,MD5=00112233445566778899aabbccddeeff",
           },
         },
       },
@@ -83,7 +84,7 @@ describe("parseChainsawReport — Chainsaw hunt detections", () => {
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
     expect(e.description).toContain("Chainsaw/Sigma: Suspicious Encoded PowerShell Command Line");
-    expect(e.severity).toBe("High");                 // Sigma high (≥ the EVTX-derived Medium)
+    expect(e.severity).toBe("High"); // Sigma high (≥ the EVTX-derived Medium)
     expect(e.mitreTechniques).toContain("T1059.001"); // from the attack tag
     expect(e.asset).toBe("WIN-DC01.corp.local");
     expect(e.sources).toEqual(["Chainsaw"]);
@@ -133,9 +134,18 @@ describe("parseChainsawReport — Chainsaw hunt detections", () => {
   });
 
   it("keeps a detection's verdict even when it carries no embedded EVTX event", () => {
-    const r = parseChainsawReport(JSON.stringify([
-      { group: "Antivirus", kind: "individual", name: "Defender Threat", level: "high", tags: ["attack.t1204"], timestamp: "2023-01-02T11:00:00Z" },
-    ]));
+    const r = parseChainsawReport(
+      JSON.stringify([
+        {
+          group: "Antivirus",
+          kind: "individual",
+          name: "Defender Threat",
+          level: "high",
+          tags: ["attack.t1204"],
+          timestamp: "2023-01-02T11:00:00Z",
+        },
+      ]),
+    );
     expect(r.detections).toBe(1);
     expect(r.events).toHaveLength(1);
     expect(r.events[0].severity).toBe("High");
@@ -150,7 +160,7 @@ describe("parseChainsawReport — raw EVTX dumps (no verdict)", () => {
     expect(r.detections).toBe(0);
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
-    expect(e.severity).toBe("Medium");        // 4625 failed logon
+    expect(e.severity).toBe("Medium"); // 4625 failed logon
     expect(e.asset).toBe("WS01");
     expect(e.sources).toEqual(["EVTX"]);
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("10.0.0.5");
@@ -227,7 +237,9 @@ describe("parseChainsawReport — flat Chainsaw/Sigma JSON (Velociraptor-shelled
     expect(r.detections).toBe(1);
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
-    expect(e.description).toContain("Chainsaw/Sigma: Uncommon New Firewall Rule Added In Windows Firewall Exception List");
+    expect(e.description).toContain(
+      "Chainsaw/Sigma: Uncommon New Firewall Rule Added In Windows Firewall Exception List",
+    );
     expect(e.severity).toBe("Medium");
     expect(e.asset).toBe("WIN-UK1GV882OK6");
     expect(e.sources).toEqual(["Chainsaw"]);
@@ -238,7 +250,9 @@ describe("parseChainsawReport — flat Chainsaw/Sigma JSON (Velociraptor-shelled
     const r = parseChainsawReport(JSON.stringify([flatInfoRdsEvent()]));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].severity).toBe("Info");
-    expect(r.events[0].description).toContain("Chainsaw/Microsoft RDS Events - User Profile Disk: User Profile Disk - Registry file loaded");
+    expect(r.events[0].description).toContain(
+      "Chainsaw/Microsoft RDS Events - User Profile Disk: User Profile Disk - Registry file loaded",
+    );
   });
 
   it("reads NDJSON of the flat shape and aggregates per distinct rule", () => {
@@ -259,7 +273,7 @@ describe("parseChainsawReport — options & edge cases", () => {
   it("applies a minSeverity floor", () => {
     const text = JSON.stringify([sigmaPowershell(), rawLogonDataArray()]); // High + Low(4624)
     const r = parseChainsawReport(text, { minSeverity: "Medium" });
-    expect(r.events).toHaveLength(1);                 // the Low 4624 dropped
+    expect(r.events).toHaveLength(1); // the Low 4624 dropped
     expect(r.events[0].severity).toBe("High");
   });
 

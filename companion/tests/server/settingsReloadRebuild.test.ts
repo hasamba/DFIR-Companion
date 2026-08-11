@@ -23,17 +23,42 @@ let app: ReturnType<typeof createApp>;
 // Every prefix the route accepts — the reload itself must stay a 200 for all of them, whether or
 // not the prefix has anything to rebuild.
 const ALL_PREFIXES = [
-  "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
-  "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
-  "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
-  "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
+  "DFIR_VISION_",
+  "DFIR_AI_",
+  "DFIR_IRIS_",
+  "DFIR_VELOCIRAPTOR_",
+  "DFIR_TIMESKETCH_",
+  "DFIR_NOTION_",
+  "DFIR_CLICKUP_",
+  "DFIR_VT_",
+  "DFIR_ABUSEIPDB_",
+  "DFIR_HUNTINGCH_",
+  "DFIR_MB_",
+  "DFIR_CROWDSTRIKE_",
+  "DFIR_SHODAN_",
+  "DFIR_MISP_",
+  "DFIR_YETI_",
+  "DFIR_OPENCTI_",
+  "DFIR_ROCKYRACCOON_",
+  "DFIR_GEOIP_",
+  "DFIR_LEAKCHECK_",
+  "DFIR_HIBP_",
+  "DFIR_DEHASHED_",
+  "DFIR_PUSH_TOKEN",
+  "DFIR_NSRL_",
+  "DFIR_TOOL_",
 ];
 
 // Keys this file writes into the temp .env and therefore into the live process.env — cleared around
 // every test so one case can't leak configuration into the next (or into another test file).
 const TOUCHED = [
-  "DFIR_MISP_URL", "DFIR_MISP_KEY", "DFIR_VT_KEY", "DFIR_NOTION_TOKEN", "DFIR_CLICKUP_TOKEN",
-  "DFIR_CLICKUP_LIST_ID", "DFIR_LEAKCHECK_KEY",
+  "DFIR_MISP_URL",
+  "DFIR_MISP_KEY",
+  "DFIR_VT_KEY",
+  "DFIR_NOTION_TOKEN",
+  "DFIR_CLICKUP_TOKEN",
+  "DFIR_CLICKUP_LIST_ID",
+  "DFIR_LEAKCHECK_KEY",
 ];
 
 beforeEach(async () => {
@@ -85,7 +110,9 @@ describe("/settings/reload rebuilds the live client for the prefix (#178)", () =
     // the rebuild reached the live registry rather than only process.env.
     const control = await request(app).get("/cases/reload-case/enrich-control");
     expect(control.status).toBe(200);
-    expect(control.body.providers.find((p: { name: string }) => p.name === "VirusTotal")?.configured).toBe(true);
+    expect(control.body.providers.find((p: { name: string }) => p.name === "VirusTotal")?.configured).toBe(
+      true,
+    );
   });
 
   it("rebuilds the customer-exposure provider set", async () => {
@@ -99,7 +126,11 @@ describe("/settings/reload rebuilds the live client for the prefix (#178)", () =
   });
 
   it("rebuilds the Notion and ClickUp export clients", async () => {
-    await writeFile(envPath, "DFIR_NOTION_TOKEN=ntn\nDFIR_CLICKUP_TOKEN=cu\nDFIR_CLICKUP_LIST_ID=901\n", "utf8");
+    await writeFile(
+      envPath,
+      "DFIR_NOTION_TOKEN=ntn\nDFIR_CLICKUP_TOKEN=cu\nDFIR_CLICKUP_LIST_ID=901\n",
+      "utf8",
+    );
 
     expect((await reload("DFIR_NOTION_")).body.rebuilt).toContain("notion");
     expect((await request(app).get("/notion/status")).body.configured).toBe(true);

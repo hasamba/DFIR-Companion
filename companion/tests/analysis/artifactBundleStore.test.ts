@@ -58,38 +58,79 @@ describe("ArtifactBundleStore", () => {
     });
 
     it("persists so a new store instance can read it", async () => {
-      await store.save({ id: "persistent", name: "P", description: "d", artifacts: ["Generic.System.Pstree"] });
+      await store.save({
+        id: "persistent",
+        name: "P",
+        description: "d",
+        artifacts: ["Generic.System.Pstree"],
+      });
       const store2 = new ArtifactBundleStore(root);
       expect((await store2.get("persistent"))?.name).toBe("P");
     });
 
     it("persists a positive relative expiry and drops a non-positive one", async () => {
-      const withExpiry = await store.save({ name: "E", description: "", artifacts: ["A.B"], expirySeconds: 86_400 });
+      const withExpiry = await store.save({
+        name: "E",
+        description: "",
+        artifacts: ["A.B"],
+        expirySeconds: 86_400,
+      });
       expect(withExpiry.expirySeconds).toBe(86_400);
-      const noExpiry = await store.save({ name: "E2", description: "", artifacts: ["A.B"], expirySeconds: 0 });
+      const noExpiry = await store.save({
+        name: "E2",
+        description: "",
+        artifacts: ["A.B"],
+        expirySeconds: 0,
+      });
       expect(noExpiry.expirySeconds).toBeUndefined();
     });
 
     it("clamps a saved timeout into the 60s..24h band the run-time override uses", async () => {
-      const inBand = await store.save({ name: "T", description: "", artifacts: ["A.B"], timeoutSeconds: 900.7 });
+      const inBand = await store.save({
+        name: "T",
+        description: "",
+        artifacts: ["A.B"],
+        timeoutSeconds: 900.7,
+      });
       expect(inBand.timeoutSeconds).toBe(900);
-      const tooSmall = await store.save({ name: "T2", description: "", artifacts: ["A.B"], timeoutSeconds: 5 });
+      const tooSmall = await store.save({
+        name: "T2",
+        description: "",
+        artifacts: ["A.B"],
+        timeoutSeconds: 5,
+      });
       expect(tooSmall.timeoutSeconds).toBe(60);
-      const tooBig = await store.save({ name: "T3", description: "", artifacts: ["A.B"], timeoutSeconds: 999_999 });
+      const tooBig = await store.save({
+        name: "T3",
+        description: "",
+        artifacts: ["A.B"],
+        timeoutSeconds: 999_999,
+      });
       expect(tooBig.timeoutSeconds).toBe(86_400);
     });
 
     it("drops a zero, negative, or NaN timeout instead of persisting a corrupt value", async () => {
       // NaN matters most: JSON.stringify writes it as null, so it would round-trip as a corrupt value.
       for (const bad of [0, -1, Number.NaN]) {
-        const saved = await store.save({ id: `bad-${String(bad)}`, name: "T", description: "", artifacts: ["A.B"], timeoutSeconds: bad });
+        const saved = await store.save({
+          id: `bad-${String(bad)}`,
+          name: "T",
+          description: "",
+          artifacts: ["A.B"],
+          timeoutSeconds: bad,
+        });
         expect(saved.timeoutSeconds).toBeUndefined();
         expect((await store.get(`bad-${String(bad)}`))?.timeoutSeconds).toBeUndefined();
       }
     });
 
     it("saving with a built-in id stores an editable override (builtIn stays, customized flagged)", async () => {
-      const saved = await store.save({ id: "best-practice", name: "Best Practice (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
+      const saved = await store.save({
+        id: "best-practice",
+        name: "Best Practice (mine)",
+        description: "edited",
+        artifacts: ["Windows.System.Pslist"],
+      });
       expect(saved.builtIn).toBe(true);
       expect(saved.customized).toBe(true);
       const got = await store.get("best-practice");
@@ -103,18 +144,24 @@ describe("ArtifactBundleStore", () => {
 
     it("persists timeScopeParamNames and drops malformed entries", async () => {
       const saved = await store.save({
-        name: "Scoped", description: "", artifacts: ["Windows.EventLogs.Evtx"],
+        name: "Scoped",
+        description: "",
+        artifacts: ["Windows.EventLogs.Evtx"],
         timeScopeParamNames: {
           "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" },
-          "Bad.Types": { start: 42, end: null },              // non-string → dropped
-          "Bad.Shape": "nope",                                 // not an object → dropped
-          "Empty.Pair": {},                                    // nothing usable → dropped
+          "Bad.Types": { start: 42, end: null }, // non-string → dropped
+          "Bad.Shape": "nope", // not an object → dropped
+          "Empty.Pair": {}, // nothing usable → dropped
         } as never,
       });
-      expect(saved.timeScopeParamNames).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+      expect(saved.timeScopeParamNames).toEqual({
+        "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" },
+      });
 
       const reloaded = await store.get(saved.id);
-      expect(reloaded?.timeScopeParamNames).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+      expect(reloaded?.timeScopeParamNames).toEqual({
+        "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" },
+      });
     });
 
     it("leaves timeScopeParamNames undefined when none are given", async () => {
@@ -124,7 +171,9 @@ describe("ArtifactBundleStore", () => {
 
     it("keeps a timeScopeParamNames entry with only start or only end", async () => {
       const saved = await store.save({
-        name: "Partial", description: "", artifacts: ["A.B", "C.D"],
+        name: "Partial",
+        description: "",
+        artifacts: ["A.B", "C.D"],
         timeScopeParamNames: {
           "A.B": { start: "EarliestTime" },
           "C.D": { end: "LatestTime" },
@@ -139,7 +188,9 @@ describe("ArtifactBundleStore", () => {
     it("drops whitespace-only timeScopeParamNames values and truncates to 100 chars", async () => {
       const long = "X".repeat(150);
       const saved = await store.save({
-        name: "Edge", description: "", artifacts: ["A.B"],
+        name: "Edge",
+        description: "",
+        artifacts: ["A.B"],
         timeScopeParamNames: {
           "A.B": { start: "   ", end: long },
         },
@@ -163,9 +214,14 @@ describe("ArtifactBundleStore", () => {
 
     it("editing a built-in then deleting resets it to the shipped default", async () => {
       const def = BUILT_IN_BUNDLES.find((b) => b.id === "best-practice")!;
-      await store.save({ id: "best-practice", name: "My Edit", description: "x", artifacts: ["Windows.System.Pslist"] });
+      await store.save({
+        id: "best-practice",
+        name: "My Edit",
+        description: "x",
+        artifacts: ["Windows.System.Pslist"],
+      });
       expect((await store.get("best-practice"))?.name).toBe("My Edit");
-      expect(await store.delete("best-practice")).toBe(true);   // removes the override
+      expect(await store.delete("best-practice")).toBe(true); // removes the override
       const reset = await store.get("best-practice");
       expect(reset?.name).toBe(def.name);
       expect(reset?.customized).toBe(false);
@@ -179,7 +235,12 @@ describe("ArtifactBundleStore", () => {
   });
 
   it("persists per-artifact params and ships them on the Best Practice built-in (Hayabusa RuleLevel/RuleStatus)", async () => {
-    const saved = await store.save({ name: "P", description: "", artifacts: ["Windows.Hayabusa.Rules"], params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium" } } });
+    const saved = await store.save({
+      name: "P",
+      description: "",
+      artifacts: ["Windows.Hayabusa.Rules"],
+      params: { "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium" } },
+    });
     expect(saved.params).toEqual({ "Windows.Hayabusa.Rules": { RuleLevel: "Critical, High, and Medium" } });
     const bp = await store.get("best-practice");
     expect(bp?.params?.["Windows.Hayabusa.Rules"]?.RuleLevel).toBe("Critical, High, and Medium");
@@ -187,7 +248,12 @@ describe("ArtifactBundleStore", () => {
   });
 
   it("persists per-artifact WHERE filters and ships them on the Best Practice built-in", async () => {
-    const saved = await store.save({ name: "F", description: "", artifacts: ["A.B"], filters: { "A.B": "NOT X =~ 'y'" } });
+    const saved = await store.save({
+      name: "F",
+      description: "",
+      artifacts: ["A.B"],
+      filters: { "A.B": "NOT X =~ 'y'" },
+    });
     expect(saved.filters).toEqual({ "A.B": "NOT X =~ 'y'" });
     const bp = await store.get("best-practice");
     expect(bp?.filters?.["DetectRaptor.Generic.Detection.YaraFile"]).toContain("pagefile");
@@ -195,7 +261,10 @@ describe("ArtifactBundleStore", () => {
 
   it("sanitizes params — drops nested objects and coerces values to strings", async () => {
     // untrusted shape (as it arrives from the route body) — numbers coerced, nested objects dropped
-    const params = { "A.B": { Keep: 5, Drop: { nested: 1 } } } as unknown as Record<string, Record<string, string>>;
+    const params = { "A.B": { Keep: 5, Drop: { nested: 1 } } } as unknown as Record<
+      string,
+      Record<string, string>
+    >;
     const saved = await store.save({ name: "P", description: "", artifacts: ["A.B"], params });
     expect(saved.params).toEqual({ "A.B": { Keep: "5" } });
   });
@@ -207,7 +276,14 @@ describe("ArtifactBundleStore", () => {
     const filters = JSON.parse('{"__proto__":"NOT OSPath =~ \'x\'","A.B":"NOT Z"}');
     const params = JSON.parse('{"__proto__":{"Evil":"yes"},"A.B":{"Keep":"1"}}');
     const timeScopeParamNames = JSON.parse('{"__proto__":{"start":"Evil"},"A.B":{"start":"EarliestTime"}}');
-    const saved = await store.save({ name: "PP", description: "", artifacts: ["A.B"], filters, params, timeScopeParamNames });
+    const saved = await store.save({
+      name: "PP",
+      description: "",
+      artifacts: ["A.B"],
+      filters,
+      params,
+      timeScopeParamNames,
+    });
 
     // The accumulators are null-prototype, so nothing was reassigned via the inherited setter...
     expect(Object.getPrototypeOf(saved.filters!)).toBeNull();

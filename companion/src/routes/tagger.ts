@@ -35,17 +35,37 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
     try {
       const active = await options.taggerStore.readActive();
-      let ruleSummary: Array<{ id: string; description?: string; tags: string[]; mitre: string[]; severity?: string; view?: string }> = [];
+      let ruleSummary: Array<{
+        id: string;
+        description?: string;
+        tags: string[];
+        mitre: string[];
+        severity?: string;
+        view?: string;
+      }> = [];
       let error: string | undefined;
       try {
         const compiled = await options.taggerStore.load();
         ruleSummary = compiled.rules.map((r) => ({
-          id: r.id, description: r.description, tags: r.tags, mitre: r.mitre, severity: r.severity, view: r.view,
+          id: r.id,
+          description: r.description,
+          tags: r.tags,
+          mitre: r.mitre,
+          severity: r.severity,
+          view: r.view,
         }));
       } catch (err) {
         error = (err as Error).message; // a hand-edited file can be invalid; report it, still return the text
       }
-      return res.status(200).json({ text: active.text, source: active.source, ruleCount: ruleSummary.length, rules: ruleSummary, error });
+      return res
+        .status(200)
+        .json({
+          text: active.text,
+          source: active.source,
+          ruleCount: ruleSummary.length,
+          rules: ruleSummary,
+          error,
+        });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -78,23 +98,31 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       const startedAt = new Date().toISOString();
       const activeRules = await options.taggerStore.readActive();
       const ruleset = await options.taggerStore.load(); // throws on an invalid ruleset → 400 below
-      if (!ruleset.rules.length) return res.status(200).json({ scope, totalMatched: 0, tagsWritten: 0, mutatedCount: 0, perRule: [] });
+      if (!ruleset.rules.length)
+        return res.status(200).json({ scope, totalMatched: 0, tagsWritten: 0, mutatedCount: 0, perRule: [] });
 
       const summary = await ctx.runStateExclusive(caseId, async () => {
         const state = await options.stateStore!.load(caseId);
-        const superEvents = scope !== "forensic" && options.superTimelineStore
-          ? await options.superTimelineStore.all(caseId)
-          : [];
+        const superEvents =
+          scope !== "forensic" && options.superTimelineStore
+            ? await options.superTimelineStore.all(caseId)
+            : [];
         const events: ForensicEvent[] = selectScopedEvents(scope, state.forensicTimeline, superEvents);
 
         const applied = await runAndApplyTagger({
-          caseId, events, ruleset,
+          caseId,
+          events,
+          ruleset,
           forensicTimeline: state.forensicTimeline,
           tagsStore: options.tagsStore!,
           mutateForensic: scope !== "super",
         });
         if (applied.mutatedCount > 0) {
-          await options.stateStore!.save({ ...state, forensicTimeline: applied.forensicTimeline, updatedAt: new Date().toISOString() });
+          await options.stateStore!.save({
+            ...state,
+            forensicTimeline: applied.forensicTimeline,
+            updatedAt: new Date().toISOString(),
+          });
         }
         return applied;
       });
@@ -124,7 +152,9 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
         });
       }
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "triage", action: "tagger-run", actor: "tagger",
+        category: "triage",
+        action: "tagger-run",
+        actor: "tagger",
         detail: `tagged ${summary.result.totalMatched} event(s), ${summary.tagsWritten} tag(s), ${summary.mutatedCount} severity/MITRE update(s)`,
       });
       return res.status(200).json({
@@ -132,7 +162,12 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
         totalMatched: summary.result.totalMatched,
         tagsWritten: summary.tagsWritten,
         mutatedCount: summary.mutatedCount,
-        perRule: summary.result.perRule.map((r) => ({ id: r.id, description: r.description, matched: r.matched, view: r.view })),
+        perRule: summary.result.perRule.map((r) => ({
+          id: r.id,
+          description: r.description,
+          matched: r.matched,
+          view: r.view,
+        })),
       });
     } catch (err) {
       return res.status(400).json({ error: (err as Error).message });
@@ -147,7 +182,10 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       const removed = await options.tagsStore.removeByAuthorPrefix(caseId, TAGGER_AUTHOR_PREFIX);
       if (removed) options.onTags?.(caseId);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "triage", action: "tagger-cleared", actor: "tagger", detail: `removed ${removed} tagger tag(s)`,
+        category: "triage",
+        action: "tagger-cleared",
+        actor: "tagger",
+        detail: `removed ${removed} tagger tag(s)`,
       });
       return res.status(200).json({ removed });
     } catch (err) {
@@ -158,13 +196,15 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
   // Suggest ONE tagger rule from a plain-English description (PR #112 follow-up). AI-gated. Returns
   // a candidate for review — nothing is persisted here. Body: { description }.
   app.post("/cases/:id/tagger/suggest-rule", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for tagger rule suggestion" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for tagger rule suggestion" });
     const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
     if (!description) return res.status(400).json({ error: "description is required" });
     try {
       const outcome = await options.pipeline.suggestTaggerRule(req.params.id, description);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "tagger-suggest-rule",
+        category: "ai",
+        action: "tagger-suggest-rule",
         detail: `suggested rule from: "${description.slice(0, 120)}" — ${outcome.kind}`,
       });
       return res.status(200).json(outcome);
@@ -183,9 +223,10 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     try {
       const ruleset = compileText(ruleYaml); // throws on invalid → 400 below
       const state = await options.stateStore.load(req.params.id);
-      const superEvents = scope !== "forensic" && options.superTimelineStore
-        ? await options.superTimelineStore.all(req.params.id)
-        : [];
+      const superEvents =
+        scope !== "forensic" && options.superTimelineStore
+          ? await options.superTimelineStore.all(req.params.id)
+          : [];
       const events = selectScopedEvents(scope, state.forensicTimeline, superEvents);
       const result = runTagger(events, ruleset);
       // A capped, trimmed view of the matching events for the dashboard preview list.

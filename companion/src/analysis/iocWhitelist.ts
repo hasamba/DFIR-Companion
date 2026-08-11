@@ -20,11 +20,11 @@ const IOC_TYPES = ["ip", "domain", "hash", "file", "process", "url", "other"] as
 
 export interface IocWhitelistRule {
   id: string;
-  match: WhitelistMatchMode;     // how `pattern` is compared to the IOC value
-  pattern: string;               // "10.0.0.0/8" | "^.*\\.corp\\.local$" | a sha256/md5 | an exact value
-  iocType?: IOC["type"];         // optional: only apply to this IOC type (e.g. cidr → ip, hash list → hash)
-  note?: string;                 // why it's known-good (e.g. "internal range", "Windows system binary")
-  addedAt: string;               // ISO time the rule was added
+  match: WhitelistMatchMode; // how `pattern` is compared to the IOC value
+  pattern: string; // "10.0.0.0/8" | "^.*\\.corp\\.local$" | a sha256/md5 | an exact value
+  iocType?: IOC["type"]; // optional: only apply to this IOC type (e.g. cidr → ip, hash list → hash)
+  note?: string; // why it's known-good (e.g. "internal range", "Windows system binary")
+  addedAt: string; // ISO time the rule was added
 }
 
 // The validated core of a rule, before the store assigns an id + addedAt.
@@ -62,13 +62,16 @@ export function ipInCidr(ip: string, cidr: string): boolean {
   if (base === null || target === null) return false;
   const bits = m[2] === undefined ? 32 : Number(m[2]);
   if (bits < 0 || bits > 32) return false;
-  if (bits === 0) return true;                                   // 0.0.0.0/0 matches everything
+  if (bits === 0) return true; // 0.0.0.0/0 matches everything
   const mask = (0xffffffff << (32 - bits)) >>> 0;
   return (base & mask) >>> 0 === (target & mask) >>> 0;
 }
 
 // ── matching ───────────────────────────────────────────────────────────────────────────────────
-export function ruleMatchesIoc(rule: IocWhitelistRule | WhitelistRuleInput, ioc: { type: IOC["type"]; value: string }): boolean {
+export function ruleMatchesIoc(
+  rule: IocWhitelistRule | WhitelistRuleInput,
+  ioc: { type: IOC["type"]; value: string },
+): boolean {
   if (rule.iocType && rule.iocType !== ioc.type) return false;
   const val = String(ioc.value ?? "").trim();
   if (!val) return false;
@@ -78,7 +81,11 @@ export function ruleMatchesIoc(rule: IocWhitelistRule | WhitelistRuleInput, ioc:
     case "exact":
       return val.toLowerCase() === rule.pattern.trim().toLowerCase();
     case "regex":
-      try { return new RegExp(rule.pattern, "i").test(val); } catch { return false; }
+      try {
+        return new RegExp(rule.pattern, "i").test(val);
+      } catch {
+        return false;
+      }
     default:
       return false;
   }
@@ -113,14 +120,24 @@ export function whitelistMatches(
 export function sanitizeRuleInput(raw: unknown): WhitelistRuleInput | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  const mode = String(r.match ?? "").trim().toLowerCase();
+  const mode = String(r.match ?? "")
+    .trim()
+    .toLowerCase();
   if (!WHITELIST_MATCH_MODES.includes(mode as WhitelistMatchMode)) return null;
   const match = mode as WhitelistMatchMode;
   const pattern = String(r.pattern ?? "").trim();
   if (!pattern || pattern.length > 500) return null;
   if (match === "cidr" && !isValidCidr(pattern)) return null;
-  if (match === "regex") { try { new RegExp(pattern); } catch { return null; } }
-  const rawType = String(r.iocType ?? "").trim().toLowerCase();
+  if (match === "regex") {
+    try {
+      new RegExp(pattern);
+    } catch {
+      return null;
+    }
+  }
+  const rawType = String(r.iocType ?? "")
+    .trim()
+    .toLowerCase();
   const iocType = (IOC_TYPES as readonly string[]).includes(rawType) ? (rawType as IOC["type"]) : undefined;
   const note = r.note != null ? String(r.note).trim().slice(0, 500) : undefined;
   return { match, pattern, ...(iocType ? { iocType } : {}), ...(note ? { note } : {}) };

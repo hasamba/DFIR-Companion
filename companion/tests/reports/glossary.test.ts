@@ -11,8 +11,18 @@ describe("deriveGlossary", () => {
     const state = emptyState("c1");
     state.lastSummary = "An EDR alert fired.";
     state.attackerPath = "RDP brute force, then lateral movement and a cobalt strike beacon.";
-    state.findings.push({ id: "f1", severity: "High", title: "Ransomware", description: "lsass dumped",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Ransomware",
+      description: "lsass dumped",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
 
     const terms = deriveGlossary(state).map((g) => g.term);
     expect(terms).toContain("EDR");
@@ -20,7 +30,7 @@ describe("deriveGlossary", () => {
     expect(terms).toContain("lateral movement");
     expect(terms).toContain("Cobalt Strike");
     expect(terms).toContain("beacon");
-    expect(terms).toContain("LSASS");      // case-insensitive ("lsass")
+    expect(terms).toContain("LSASS"); // case-insensitive ("lsass")
     expect(terms).toContain("ransomware"); // from the finding title
     // Sorted alphabetically.
     expect(terms).toEqual([...terms].sort((a, b) => a.localeCompare(b)));

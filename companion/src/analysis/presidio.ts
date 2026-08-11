@@ -115,12 +115,15 @@ export class HttpPresidioClient implements PresidioClient {
       if (!Array.isArray(raw)) throw new Error("/analyze returned a non-array response");
       return raw.flatMap((item) => {
         const r = item as { entity_type?: unknown; start?: unknown; end?: unknown; score?: unknown };
-        if (typeof r.entity_type !== "string" || typeof r.start !== "number" || typeof r.end !== "number") return [];
-        return [{
-          entityType: r.entity_type,
-          value: text.slice(r.start, r.end),
-          score: typeof r.score === "number" ? r.score : 0,
-        }];
+        if (typeof r.entity_type !== "string" || typeof r.start !== "number" || typeof r.end !== "number")
+          return [];
+        return [
+          {
+            entityType: r.entity_type,
+            value: text.slice(r.start, r.end),
+            score: typeof r.score === "number" ? r.score : 0,
+          },
+        ];
       });
     } finally {
       clearTimeout(timer);

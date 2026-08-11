@@ -71,7 +71,9 @@ describe("looksLikeWinEventXml", () => {
     expect(looksLikeWinEventXml(SAMPLE)).toBe(true);
   });
   it("matches a namespace-stripped <Event><System><EventID>", () => {
-    expect(looksLikeWinEventXml("<Events><Event><System><EventID>1</EventID></System></Event></Events>")).toBe(true);
+    expect(
+      looksLikeWinEventXml("<Events><Event><System><EventID>1</EventID></System></Event></Events>"),
+    ).toBe(true);
   });
   it("rejects JSON / CSV / plain text", () => {
     expect(looksLikeWinEventXml('{"EventID":1}')).toBe(false);
@@ -108,10 +110,9 @@ describe("parseWinEventXml", () => {
   });
   it("reports monotonic event progress without changing parsed records", async () => {
     const progress: Array<[number, number]> = [];
-    const records = await parseWinEventXmlProgress(
-      SAMPLE,
-      (done, total) => { progress.push([done, total]); },
-    );
+    const records = await parseWinEventXmlProgress(SAMPLE, (done, total) => {
+      progress.push([done, total]);
+    });
     expect(records).toEqual(parseWinEventXml(SAMPLE));
     expect(progress.at(-1)).toEqual([2, 2]);
     expect(progress.every(([done, total]) => done <= total)).toBe(true);
@@ -120,11 +121,7 @@ describe("parseWinEventXml", () => {
   it("stops parsing promptly when the analyst cancels", async () => {
     const controller = new AbortController();
     setImmediate(() => controller.abort());
-    const work = parseWinEventXmlProgress(
-      repeatedEvents(600),
-      undefined,
-      controller.signal,
-    );
+    const work = parseWinEventXmlProgress(repeatedEvents(600), undefined, controller.signal);
 
     await expect(work).rejects.toMatchObject({ name: "AbortError" });
   });

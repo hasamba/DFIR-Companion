@@ -47,7 +47,10 @@ describe("JiraExportStore round-trip", () => {
     let creates = 0;
     const client: JiraClientLike = {
       me: async () => ({ id: "u1" }),
-      createIssue: async () => { creates += 1; return { id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" }; },
+      createIssue: async () => {
+        creates += 1;
+        return { id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" };
+      },
       updateIssue: async (idOrKey) => ({ id: "", key: idOrKey, url: undefined }),
     };
 
@@ -58,7 +61,11 @@ describe("JiraExportStore round-trip", () => {
     expect(onDisk.lastExportedAt).not.toBe("");
 
     const reloaded = await store.load("c1");
-    expect(reloaded.issueRefs["finding-1"]).toEqual({ id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" });
+    expect(reloaded.issueRefs["finding-1"]).toEqual({
+      id: "issue-100",
+      key: "IR-42",
+      url: "https://jira.example.com/browse/IR-42",
+    });
 
     // The remembered ref must survive the reload well enough to route the re-push to an update.
     const again = await pushFindingToJira(client, store, { caseId: "c1", projectKey: "IR", finding });
@@ -76,7 +83,11 @@ describe("JiraExportStore round-trip", () => {
     };
 
     await pushFindingToJira(client, store, { caseId: "c1", projectKey: "IR", finding });
-    await pushFindingToJira(client, store, { caseId: "c1", projectKey: "IR", finding: { ...finding, id: "finding-2", title: "Second" } });
+    await pushFindingToJira(client, store, {
+      caseId: "c1",
+      projectKey: "IR",
+      finding: { ...finding, id: "finding-2", title: "Second" },
+    });
 
     const reloaded = await store.load("c1");
     expect(Object.keys(reloaded.issueRefs).sort()).toEqual(["finding-1", "finding-2"]);
@@ -90,8 +101,19 @@ describe("ServiceNowExportStore round-trip", () => {
     let creates = 0;
     const client: ServiceNowClientLike = {
       me: async () => ({ userId: "admin" }),
-      createIncident: async () => { creates += 1; return { id: "sys-100", number: "INC0012345", url: "https://snow.example.com/incident.do?sys_id=sys-100" }; },
-      updateIncident: async (sysId) => ({ id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` }),
+      createIncident: async () => {
+        creates += 1;
+        return {
+          id: "sys-100",
+          number: "INC0012345",
+          url: "https://snow.example.com/incident.do?sys_id=sys-100",
+        };
+      },
+      updateIncident: async (sysId) => ({
+        id: sysId,
+        number: "INC0012345",
+        url: `https://snow.example.com/incident.do?sys_id=${sysId}`,
+      }),
     };
 
     await pushFindingToServiceNow(client, store, { caseId: "c1", finding });

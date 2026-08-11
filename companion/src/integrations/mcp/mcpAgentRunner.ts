@@ -76,7 +76,8 @@ export interface McpAgentResult {
  */
 export function allowedToolPatterns(servers: McpServer[]): string[] {
   return servers.flatMap((s) =>
-    s.allowedTools.length === 0 ? [`mcp__${s.id}__*`] : s.allowedTools.map((t) => `mcp__${s.id}__${t}`));
+    s.allowedTools.length === 0 ? [`mcp__${s.id}__*`] : s.allowedTools.map((t) => `mcp__${s.id}__${t}`),
+  );
 }
 
 const SYSTEM_PROMPT = [
@@ -138,7 +139,11 @@ function streamProgress(onProgress?: (detail: string) => void): (chunk: string) 
     for (const line of lines) {
       if (!line.trim()) continue;
       let event: StreamEvent;
-      try { event = JSON.parse(line) as StreamEvent; } catch { continue; }
+      try {
+        event = JSON.parse(line) as StreamEvent;
+      } catch {
+        continue;
+      }
       if (event.type === "system") {
         onProgress?.("connected to Claude Code");
         continue;
@@ -184,33 +189,44 @@ function isMaxTurns(result: TerminalResult | null): boolean {
  * it is the reporting turn the analyst was otherwise denied, using only evidence already collected.
  */
 async function finalizeMaxTurnRun(
-  opts: McpAgentOptions, runner: ClaudeRunner, sessionId: string,
+  opts: McpAgentOptions,
+  runner: ClaudeRunner,
+  sessionId: string,
 ): Promise<string> {
   const run = await runner({
     bin: opts.bin?.trim() || "claude",
     args: [
       "-p",
-      "--resume", sessionId,
+      "--resume",
+      sessionId,
       "--fork-session",
-      "--input-format", "stream-json",
-      "--output-format", "stream-json",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
       "--verbose",
-      "--setting-sources", "user",
+      "--setting-sources",
+      "user",
       // No MCP or built-in tool can run in this continuation. It can only report what is already in
       // the session, so reaching the investigation limit cannot silently widen the operation.
-      "--tools", "",
-      "--max-turns", String(FINAL_REPORT_TURNS),
+      "--tools",
+      "",
+      "--max-turns",
+      String(FINAL_REPORT_TURNS),
     ],
-    stdin: JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: [{
-          type: "text",
-          text: "Do not call any more tools. Using only the evidence already collected in this session, return the required final JSON report now.",
-        }],
-      },
-    }) + "\n",
+    stdin:
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Do not call any more tools. Using only the evidence already collected in this session, return the required final JSON report now.",
+            },
+          ],
+        },
+      }) + "\n",
     timeoutMs: opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS,
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.onProgress ? { onStdout: streamProgress(opts.onProgress) } : {}),
@@ -222,7 +238,9 @@ async function finalizeMaxTurnRun(
   try {
     return finalText(run.stdout, run.stderr, run.code);
   } catch (err) {
-    throw new Error(`the investigation reached its turn safety limit and the final reporting turn failed: ${(err as Error).message}`);
+    throw new Error(
+      `the investigation reached its turn safety limit and the final reporting turn failed: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -247,8 +265,10 @@ function percentConfidence(value: unknown): number | undefined {
 
 function verdictFinding(raw: Record<string, unknown>, id: string): Record<string, unknown> | null {
   const verdict = raw.verdict;
-  const detail = verdict && typeof verdict === "object" ? verdict as Record<string, unknown> : {};
-  const verdictText = String(detail.classification ?? detail.label ?? verdict ?? "").trim().toLowerCase();
+  const detail = verdict && typeof verdict === "object" ? (verdict as Record<string, unknown>) : {};
+  const verdictText = String(detail.classification ?? detail.label ?? verdict ?? "")
+    .trim()
+    .toLowerCase();
   const classification = verdictText.replace(/^\s*\d+(?:\.\d+)?%\s*/, "");
   const malicious = ["malicious", "compromised"].includes(classification);
   const suspicious = ["suspicious", "likely malicious", "likely-malicious"].includes(classification);
@@ -256,8 +276,11 @@ function verdictFinding(raw: Record<string, unknown>, id: string): Record<string
 
   const embeddedConfidence = /^(\d+(?:\.\d+)?)%/.exec(verdictText)?.[1];
   const confidence = percentConfidence(
-    detail.confidence ?? raw.maliciousProbability ?? raw.maliciousScore ?? raw.confidence
-      ?? (embeddedConfidence === undefined ? undefined : Number(embeddedConfidence)),
+    detail.confidence ??
+      raw.maliciousProbability ??
+      raw.maliciousScore ??
+      raw.confidence ??
+      (embeddedConfidence === undefined ? undefined : Number(embeddedConfidence)),
   );
   const summary = String(detail.summary ?? raw.verdictSummary ?? raw.analysis ?? "").trim();
   return {
@@ -275,45 +298,67 @@ function verdictFinding(raw: Record<string, unknown>, id: string): Record<string
 
 export function normalizeAgentDelta(raw: unknown, idPrefix = `mcp-${randomUUID()}`): unknown {
   const r = (raw ?? {}) as Record<string, unknown> & {
-    findings?: unknown[]; iocs?: unknown[]; timeline?: unknown[]; forensicEvents?: unknown[];
+    findings?: unknown[];
+    iocs?: unknown[];
+    timeline?: unknown[];
+    forensicEvents?: unknown[];
   };
   const findings = Array.isArray(r.findings) ? r.findings : [];
   const iocs = Array.isArray(r.iocs) ? r.iocs : [];
-  const events = Array.isArray(r.timeline) ? r.timeline : Array.isArray(r.forensicEvents) ? r.forensicEvents : [];
-  const normalizedFindings = findings.map((f, i) => {
-    const o = (f ?? {}) as Record<string, unknown>;
-    const confidence = percentConfidence(o.confidence);
-    return {
-      id: `${idPrefix}-f${i + 1}`,
-      title: String(o.title ?? "").slice(0, 300),
-      // "detail" is a plausible thing for a model to emit instead; accept either.
-      description: String(o.description ?? o.detail ?? ""),
-      ...(o.severity !== undefined ? { severity: o.severity } : {}),
-      ...(confidence !== undefined ? { confidence } : {}),
-      relatedIocs: [], mitreTechniques: [],
-    };
-  }).filter((f) => f.title.length > 0);
+  const events = Array.isArray(r.timeline)
+    ? r.timeline
+    : Array.isArray(r.forensicEvents)
+      ? r.forensicEvents
+      : [];
+  const normalizedFindings = findings
+    .map((f, i) => {
+      const o = (f ?? {}) as Record<string, unknown>;
+      const confidence = percentConfidence(o.confidence);
+      return {
+        id: `${idPrefix}-f${i + 1}`,
+        title: String(o.title ?? "").slice(0, 300),
+        // "detail" is a plausible thing for a model to emit instead; accept either.
+        description: String(o.description ?? o.detail ?? ""),
+        ...(o.severity !== undefined ? { severity: o.severity } : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+        relatedIocs: [],
+        mitreTechniques: [],
+      };
+    })
+    .filter((f) => f.title.length > 0);
   const derived = normalizedFindings.length === 0 ? verdictFinding(r, `${idPrefix}-f1`) : null;
 
   return {
     findings: derived ? [derived] : normalizedFindings,
-    iocs: iocs.map((c, i) => {
-      const o = (c ?? {}) as Record<string, unknown>;
-      return { id: `${idPrefix}-i${i + 1}`, ...(o.type !== undefined ? { type: o.type } : {}), value: String(o.value ?? "") };
-    }).filter((c) => c.value.length > 0),
-    forensicEvents: events.map((e, i) => {
-      const o = (e ?? {}) as Record<string, unknown>;
-      return {
-        id: `${idPrefix}-e${i + 1}`,
-        timestamp: String(o.timestamp ?? ""),
-        description: String(o.description ?? ""),
-        ...(o.severity !== undefined ? { severity: o.severity } : {}),
-        mitreTechniques: [],
-      };
-    }).filter((e) => e.description.length > 0 && e.timestamp.length > 0),
+    iocs: iocs
+      .map((c, i) => {
+        const o = (c ?? {}) as Record<string, unknown>;
+        return {
+          id: `${idPrefix}-i${i + 1}`,
+          ...(o.type !== undefined ? { type: o.type } : {}),
+          value: String(o.value ?? ""),
+        };
+      })
+      .filter((c) => c.value.length > 0),
+    forensicEvents: events
+      .map((e, i) => {
+        const o = (e ?? {}) as Record<string, unknown>;
+        return {
+          id: `${idPrefix}-e${i + 1}`,
+          timestamp: String(o.timestamp ?? ""),
+          description: String(o.description ?? ""),
+          ...(o.severity !== undefined ? { severity: o.severity } : {}),
+          mitreTechniques: [],
+        };
+      })
+      .filter((e) => e.description.length > 0 && e.timestamp.length > 0),
     // Scaffolding the agent is deliberately not asked for. Empty summary/timelineNote are no-ops in
     // mergeDelta, so an agent run adds to the case without rewriting its conclusions.
-    mitreTechniques: [], threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "",
+    mitreTechniques: [],
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: "",
+    summary: "",
   };
 }
 
@@ -325,11 +370,14 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
 
   const args = [
     "-p",
-    "--input-format", "stream-json",
-    "--output-format", "stream-json",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
     "--verbose",
     ...(opts.model ? ["--model", opts.model] : []),
-    "--system-prompt", SYSTEM_PROMPT,
+    "--system-prompt",
+    SYSTEM_PROMPT,
     // NOT --strict-mcp-config: the servers come from Claude Code's own configuration, which is the
     // point. The cost is that it starts every server it is configured with, not only the ones named
     // here — --allowed-tools bounds what may be CALLED, not what gets launched.
@@ -337,15 +385,23 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
     // "user" and NOT "" — MCP servers ARE a user setting, so blanking every source leaves Claude
     // Code with no servers at all. Found by running it: the call came back "no sift-mcp server is
     // connected". Project and local sources stay off, so no repo CLAUDE.md, hooks or settings.
-    "--setting-sources", "user",
-    "--allowed-tools", allowed.join(","),
-    "--max-turns", String(opts.maxTurns ?? DEFAULT_MAX_TURNS),
+    "--setting-sources",
+    "user",
+    "--allowed-tools",
+    allowed.join(","),
+    "--max-turns",
+    String(opts.maxTurns ?? DEFAULT_MAX_TURNS),
   ];
-  const stdin = JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: opts.prompt }] } }) + "\n";
+  const stdin =
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: opts.prompt }] },
+    }) + "\n";
 
   const run = await runner({
     bin: opts.bin?.trim() || "claude",
-    args, stdin,
+    args,
+    stdin,
     timeoutMs: opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS,
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.onProgress ? { onStdout: streamProgress(opts.onProgress) } : {}),
@@ -353,7 +409,8 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
   });
 
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
-  if (run.timedOut) throw new Error(`the agent run exceeded ${opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS}ms and was stopped`);
+  if (run.timedOut)
+    throw new Error(`the agent run exceeded ${opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS}ms and was stopped`);
 
   const terminal = terminalResult(run.stdout);
   let rawText: string;
@@ -381,7 +438,10 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
  * rendered as "linked".
  */
 export function parseDelta(text: string): AnalysisDelta {
-  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const trimmed = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
   if (start === -1 || end <= start) {

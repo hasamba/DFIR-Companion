@@ -17,7 +17,9 @@ export function registerInteractiveReportRoutes(app: Express, ctx: RouteContext)
     try {
       const state = await options.reportWriter.filteredState(caseId);
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-      const reportMeta = options.reportMetaStore ? await options.reportMetaStore.load(caseId).catch(() => emptyReportMeta()) : emptyReportMeta();
+      const reportMeta = options.reportMetaStore
+        ? await options.reportMetaStore.load(caseId).catch(() => emptyReportMeta())
+        : emptyReportMeta();
       const html = renderInteractiveHtmlReport(state, caseMeta, reportMeta);
       res.type("text/html; charset=utf-8");
       res.setHeader("Cache-Control", "private, no-cache");

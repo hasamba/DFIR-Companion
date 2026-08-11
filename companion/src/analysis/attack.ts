@@ -16,11 +16,20 @@ export function attackTechniqueUrl(id: string): string | null {
 
 // ATT&CK tactic name (lowercased) → tactic id, for linking the tactic pages.
 export const ATTACK_TACTIC_IDS: Readonly<Record<string, string>> = {
-  reconnaissance: "TA0043", "resource development": "TA0042", "initial access": "TA0001",
-  execution: "TA0002", persistence: "TA0003", "privilege escalation": "TA0004",
-  "defense evasion": "TA0005", "credential access": "TA0006", discovery: "TA0007",
-  "lateral movement": "TA0008", collection: "TA0009", exfiltration: "TA0010",
-  "command and control": "TA0011", impact: "TA0040",
+  reconnaissance: "TA0043",
+  "resource development": "TA0042",
+  "initial access": "TA0001",
+  execution: "TA0002",
+  persistence: "TA0003",
+  "privilege escalation": "TA0004",
+  "defense evasion": "TA0005",
+  "credential access": "TA0006",
+  discovery: "TA0007",
+  "lateral movement": "TA0008",
+  collection: "TA0009",
+  exfiltration: "TA0010",
+  "command and control": "TA0011",
+  impact: "TA0040",
 };
 
 export function attackTacticUrl(name: string): string | null {

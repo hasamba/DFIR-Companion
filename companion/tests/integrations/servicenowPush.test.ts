@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
-import { pushFindingToServiceNow, pushFindingsToServiceNow, type ServiceNowExportStoreLike } from "../../src/integrations/servicenow/servicenowPush.js";
+import {
+  pushFindingToServiceNow,
+  pushFindingsToServiceNow,
+  type ServiceNowExportStoreLike,
+} from "../../src/integrations/servicenow/servicenowPush.js";
 import type { ServiceNowClientLike } from "../../src/integrations/servicenow/servicenowClient.js";
 
 function makeFinding(partial: Partial<Finding> = {}): Finding {
@@ -19,23 +23,42 @@ function makeFinding(partial: Partial<Finding> = {}): Finding {
   } as Finding;
 }
 
-function inMemoryStore(initial: { incidentRefs: Record<string, { id: string; number: string; url?: string }>; lastExportedAt: string } = { incidentRefs: {}, lastExportedAt: "" }): ServiceNowExportStoreLike {
+function inMemoryStore(
+  initial: {
+    incidentRefs: Record<string, { id: string; number: string; url?: string }>;
+    lastExportedAt: string;
+  } = { incidentRefs: {}, lastExportedAt: "" },
+): ServiceNowExportStoreLike {
   let state = { ...initial, incidentRefs: { ...initial.incidentRefs } };
   return {
     load: async () => ({ ...state, incidentRefs: { ...state.incidentRefs } }),
-    save: async (_caseId, refs) => { state = { ...state, incidentRefs: { ...state.incidentRefs, ...refs } }; },
+    save: async (_caseId, refs) => {
+      state = { ...state, incidentRefs: { ...state.incidentRefs, ...refs } };
+    },
   };
 }
 
-function mockClient(): { client: ServiceNowClientLike; calls: unknown[]; created: number; updated: string[] } {
+function mockClient(): {
+  client: ServiceNowClientLike;
+  calls: unknown[];
+  created: number;
+  updated: string[];
+} {
   const calls: unknown[] = [];
   const tally = { created: 0, updated: [] as string[] };
   const client: ServiceNowClientLike = {
-    me: async () => { calls.push("me"); return { userId: "admin", userName: "admin" }; },
+    me: async () => {
+      calls.push("me");
+      return { userId: "admin", userName: "admin" };
+    },
     createIncident: async (body) => {
       calls.push(body);
       tally.created += 1;
-      return { id: "sys-100", number: "INC0012345", url: "https://snow.example.com/incident.do?sys_id=sys-100" };
+      return {
+        id: "sys-100",
+        number: "INC0012345",
+        url: "https://snow.example.com/incident.do?sys_id=sys-100",
+      };
     },
     updateIncident: async (sysId, body) => {
       calls.push(body);
@@ -43,7 +66,16 @@ function mockClient(): { client: ServiceNowClientLike; calls: unknown[]; created
       return { id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` };
     },
   };
-  return { client, calls, get created() { return tally.created; }, get updated() { return tally.updated; } };
+  return {
+    client,
+    calls,
+    get created() {
+      return tally.created;
+    },
+    get updated() {
+      return tally.updated;
+    },
+  };
 }
 
 describe("pushFindingToServiceNow", () => {
@@ -88,7 +120,7 @@ describe("pushFindingToServiceNow", () => {
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
     expect(second.updated).toBe(true);
-    expect(mock.created).toBe(1);            // no duplicate incident
+    expect(mock.created).toBe(1); // no duplicate incident
     expect(mock.updated).toEqual(["sys-100"]);
     expect(second.incident.number).toBe("INC0012345");
   });
@@ -101,11 +133,20 @@ function bulkClient(failTitles: string[] = []): ServiceNowClientLike {
   return {
     me: async () => ({ userId: "admin", userName: "admin" }),
     createIncident: async (body) => {
-      if (failTitles.some((t) => body.shortDescription.includes(t))) throw new Error("ServiceNow permission denied");
+      if (failTitles.some((t) => body.shortDescription.includes(t)))
+        throw new Error("ServiceNow permission denied");
       n += 1;
-      return { id: `sys-${n}`, number: `INC000000${n}`, url: `https://snow.example.com/incident.do?sys_id=sys-${n}` };
+      return {
+        id: `sys-${n}`,
+        number: `INC000000${n}`,
+        url: `https://snow.example.com/incident.do?sys_id=sys-${n}`,
+      };
     },
-    updateIncident: async (sysId) => ({ id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` }),
+    updateIncident: async (sysId) => ({
+      id: sysId,
+      number: "INC0012345",
+      url: `https://snow.example.com/incident.do?sys_id=${sysId}`,
+    }),
   };
 }
 
@@ -128,7 +169,10 @@ describe("pushFindingsToServiceNow", () => {
       makeFinding({ id: "finding-2", title: "Persistence via Run key" }),
       makeFinding({ id: "finding-3", title: "Exfil over DNS" }),
     ];
-    const result = await pushFindingsToServiceNow(bulkClient(["Persistence via Run key"]), store, { caseId: "case-b", findings });
+    const result = await pushFindingsToServiceNow(bulkClient(["Persistence via Run key"]), store, {
+      caseId: "case-b",
+      findings,
+    });
 
     expect(result).toMatchObject({ created: 2, updated: 0, skipped: 1 });
     expect(result.incidents.map((i) => i.findingId)).toEqual(["finding-1", "finding-3"]);
@@ -138,7 +182,16 @@ describe("pushFindingsToServiceNow", () => {
   });
 
   it("UPDATES the findings already pushed and opens incidents only for the new ones", async () => {
-    const store = inMemoryStore({ incidentRefs: { "finding-1": { id: "sys-9", number: "INC0009", url: "https://snow.example.com/incident.do?sys_id=sys-9" } }, lastExportedAt: "" });
+    const store = inMemoryStore({
+      incidentRefs: {
+        "finding-1": {
+          id: "sys-9",
+          number: "INC0009",
+          url: "https://snow.example.com/incident.do?sys_id=sys-9",
+        },
+      },
+      lastExportedAt: "",
+    });
     const findings = [makeFinding(), makeFinding({ id: "finding-2", title: "Persistence via Run key" })];
     const result = await pushFindingsToServiceNow(bulkClient(), store, { caseId: "case-b", findings });
 
@@ -149,7 +202,10 @@ describe("pushFindingsToServiceNow", () => {
 
   it("offers the first incident url so the dashboard can link the batch", async () => {
     const store = inMemoryStore();
-    const result = await pushFindingsToServiceNow(bulkClient(), store, { caseId: "case-b", findings: [makeFinding()] });
+    const result = await pushFindingsToServiceNow(bulkClient(), store, {
+      caseId: "case-b",
+      findings: [makeFinding()],
+    });
     expect(result.incidentUrl).toBe("https://snow.example.com/incident.do?sys_id=sys-1");
   });
 

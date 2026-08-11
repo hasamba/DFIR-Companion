@@ -135,8 +135,7 @@ export const MIN_MATCHED_STEPS = 2;
 
 // One wording for the disclaimer, shared by every surface that renders a match — mirrors
 // ADVERSARY_HINTS_CAVEAT (#46). The panel says "matches playbook", never "is Conti".
-export const PLAYBOOK_MATCH_CAVEAT =
-  "Sequence similarity to a published playbook — not attribution.";
+export const PLAYBOOK_MATCH_CAVEAT = "Sequence similarity to a published playbook — not attribution.";
 
 // Env-derived options, so the route, the report section and the dashboard panel all rank with the
 // SAME threshold. `|| DEFAULT` deliberately also catches NaN from a typo'd value; an explicit 0 is
@@ -145,8 +144,7 @@ export function playbookMatchEnvOptions(): Required<PlaybookMatchOptions> {
   const rawMin = process.env.DFIR_PLAYBOOK_MIN_SCORE;
   return {
     topN: Number(process.env.DFIR_PLAYBOOK_TOP_N) || DEFAULT_TOP_N,
-    minScore:
-      rawMin !== undefined && Number.isFinite(Number(rawMin)) ? Number(rawMin) : DEFAULT_MIN_SCORE,
+    minScore: rawMin !== undefined && Number.isFinite(Number(rawMin)) ? Number(rawMin) : DEFAULT_MIN_SCORE,
   };
 }
 

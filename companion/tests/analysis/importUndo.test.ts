@@ -23,22 +23,39 @@ function mkState(tag: string, n: number, m: number, k = 0): InvestigationState {
   return {
     ...emptyState("c1"),
     forensicTimeline: Array.from({ length: n }, (_, i) => ({
-      id: `${tag}-e${i}`, timestamp: "2026-01-01T00:00:00Z", description: `${tag} event ${i}`,
-      severity: "Info" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      id: `${tag}-e${i}`,
+      timestamp: "2026-01-01T00:00:00Z",
+      description: `${tag} event ${i}`,
+      severity: "Info" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
     })),
     iocs: Array.from({ length: m }, (_, i) => ({
-      id: `${tag}-i${i}`, type: "ip" as const, value: `10.0.${tag.length}.${i}`, firstSeen: "2026-01-01T00:00:00Z",
+      id: `${tag}-i${i}`,
+      type: "ip" as const,
+      value: `10.0.${tag.length}.${i}`,
+      firstSeen: "2026-01-01T00:00:00Z",
     })),
     findings: Array.from({ length: k }, (_, i) => ({
-      id: `${tag}-f${i}`, severity: "High" as const, title: `${tag} finding ${i}`, description: "d",
-      relatedIocs: [], sourceScreenshots: [], mitreTechniques: [], firstSeen: "2026-01-01T00:00:00Z",
-      lastUpdated: "2026-01-01T00:00:00Z", status: "open" as const,
+      id: `${tag}-f${i}`,
+      severity: "High" as const,
+      title: `${tag} finding ${i}`,
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "2026-01-01T00:00:00Z",
+      lastUpdated: "2026-01-01T00:00:00Z",
+      status: "open" as const,
     })),
   };
 }
 
 const cp = (tag: string, n: number, m: number, k: number, label: string, at = "2026-06-13T00:00:00Z") => ({
-  label, at, state: mkState(tag, n, m, k),
+  label,
+  at,
+  state: mkState(tag, n, m, k),
 });
 
 describe("importUndo pure operations", () => {
@@ -97,7 +114,8 @@ describe("importUndo pure operations", () => {
       process.env.DFIR_UNDO_MAX_MB = "not-a-number";
       expect(undoMaxBytesFromEnv()).toBe(DEFAULT_UNDO_MAX_BYTES);
     } finally {
-      if (prev === undefined) delete process.env.DFIR_UNDO_MAX_MB; else process.env.DFIR_UNDO_MAX_MB = prev;
+      if (prev === undefined) delete process.env.DFIR_UNDO_MAX_MB;
+      else process.env.DFIR_UNDO_MAX_MB = prev;
     }
   });
 
@@ -127,7 +145,7 @@ describe("importUndo pure operations", () => {
     const r = applyUndo(stack, current, "2026-06-13T10:00:00Z")!;
     expect(r.restore.forensicTimeline).toHaveLength(2);
     expect(r.restore.iocs).toHaveLength(1);
-    expect(r.restore.findings).toHaveLength(1);     // findings come back too
+    expect(r.restore.findings).toHaveLength(1); // findings come back too
     expect(r.stack.undo).toHaveLength(0);
     expect(r.stack.redo).toHaveLength(1);
     expect(r.stack.redo[0].state.findings).toHaveLength(5); // current state preserved for redo
@@ -169,12 +187,27 @@ describe("importUndo pure operations", () => {
     expect(empty.maxDepth).toBe(5);
     expect(empty.nextUndo).toBeNull();
 
-    const stack: ImportUndoStack = { undo: [cp("a", 2, 1, 0, "a"), cp("b", 4, 3, 2, "thor")], redo: [cp("c", 9, 5, 6, "siem")] };
+    const stack: ImportUndoStack = {
+      undo: [cp("a", 2, 1, 0, "a"), cp("b", 4, 3, 2, "thor")],
+      redo: [cp("c", 9, 5, 6, "siem")],
+    };
     const s = summarizeUndoStack(stack, 5);
     expect(s.canUndo).toBe(true);
     expect(s.canRedo).toBe(true);
-    expect(s.nextUndo).toEqual({ label: "thor", at: "2026-06-13T00:00:00Z", events: 4, iocs: 3, findings: 2 });
-    expect(s.nextRedo).toEqual({ label: "siem", at: "2026-06-13T00:00:00Z", events: 9, iocs: 5, findings: 6 });
+    expect(s.nextUndo).toEqual({
+      label: "thor",
+      at: "2026-06-13T00:00:00Z",
+      events: 4,
+      iocs: 3,
+      findings: 2,
+    });
+    expect(s.nextRedo).toEqual({
+      label: "siem",
+      at: "2026-06-13T00:00:00Z",
+      events: 9,
+      iocs: 5,
+      findings: 6,
+    });
     expect(s.undo).toHaveLength(2);
   });
 
@@ -186,7 +219,8 @@ describe("importUndo pure operations", () => {
       undo: [
         { label: "a", at: "t", state: { forensicTimeline: [{ id: "x" }], iocs: [], findings: [] } },
         { label: "no-state" }, // dropped — unrestorable
-        42, null,
+        42,
+        null,
       ],
       redo: [{ state: {} }],
     });
@@ -213,7 +247,11 @@ describe("ImportUndoStore", () => {
   });
 
   it("persists and loads a stack round-trip (full state intact)", async () => {
-    const stack = pushCheckpoint(emptyUndoStack(), cp("before", 3, 2, 1, "thor (0003_thor.json)"), store.depth());
+    const stack = pushCheckpoint(
+      emptyUndoStack(),
+      cp("before", 3, 2, 1, "thor (0003_thor.json)"),
+      store.depth(),
+    );
     await store.save("c1", stack);
     const loaded = await store.load("c1");
     expect(loaded.undo).toHaveLength(1);
@@ -236,10 +274,16 @@ describe("ImportUndoStore", () => {
     const budgetBytes = 1_000_000; // 1MB — small so the test runs fast but still exercises real disk I/O
     const bounded = new ImportUndoStore(cases, 5, budgetBytes);
     let growingEvents = 200;
-    for (let i = 0; i < 15; i++) { // well past the depth cap of 5
+    for (let i = 0; i < 15; i++) {
+      // well past the depth cap of 5
       growingEvents += 200; // each successive pre-import state is bigger, like a real bulk import
       await bounded.mutate("c1", (stack) => ({
-        stack: pushCheckpoint(stack, cp(`s${i}`, growingEvents, 0, 0, `import ${i}`), bounded.depth(), bounded.byteBudget()),
+        stack: pushCheckpoint(
+          stack,
+          cp(`s${i}`, growingEvents, 0, 0, `import ${i}`),
+          bounded.depth(),
+          bounded.byteBudget(),
+        ),
         result: undefined,
       }));
     }
@@ -253,12 +297,14 @@ describe("ImportUndoStore", () => {
     // still in flight) race on the same file: the second save clobbers the first (lost update),
     // and both writers spawn simultaneous multi-MB atomic-write temp files for the same case.
     const labels = Array.from({ length: 8 }, (_, i) => `import-${i}`);
-    await Promise.all(labels.map((label) =>
-      store.mutate("c1", (stack) => ({
-        stack: pushCheckpoint(stack, cp(label, 1, 0, 0, label), 20),
-        result: undefined,
-      })),
-    ));
+    await Promise.all(
+      labels.map((label) =>
+        store.mutate("c1", (stack) => ({
+          stack: pushCheckpoint(stack, cp(label, 1, 0, 0, label), 20),
+          result: undefined,
+        })),
+      ),
+    );
     const loaded = await store.load("c1");
     expect(loaded.undo.map((c) => c.label).sort()).toEqual([...labels].sort());
   });

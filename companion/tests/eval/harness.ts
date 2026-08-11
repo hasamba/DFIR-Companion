@@ -58,7 +58,10 @@ export async function makeEvalPipeline(
   const stateStore = new StateStore(store);
   await store.createCase({ caseId, name: "eval", investigator: "eval", aiProvider: provider.name });
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    store,
     imageLoader,
   });
   return { pipeline, stateStore, caseId };
@@ -66,25 +69,46 @@ export async function makeEvalPipeline(
 
 export function producedEvents(state: InvestigationState): ProducedEvent[] {
   return state.forensicTimeline.map((e) => ({
-    id: e.id, timestamp: e.timestamp, description: e.description, severity: e.severity,
-    mitreTechniques: e.mitreTechniques, asset: e.asset, relatedFindingIds: e.relatedFindingIds,
+    id: e.id,
+    timestamp: e.timestamp,
+    description: e.description,
+    severity: e.severity,
+    mitreTechniques: e.mitreTechniques,
+    asset: e.asset,
+    relatedFindingIds: e.relatedFindingIds,
   }));
 }
 
 export function producedFindings(state: InvestigationState): ProducedFinding[] {
   return state.findings.map((f) => ({
-    id: f.id, severity: f.severity, confidence: f.confidence, confidenceReason: f.confidenceReason,
-    relatedEventIds: f.relatedEventIds, relatedIocs: f.relatedIocs,
+    id: f.id,
+    severity: f.severity,
+    confidence: f.confidence,
+    confidenceReason: f.confidenceReason,
+    relatedEventIds: f.relatedEventIds,
+    relatedIocs: f.relatedIocs,
   }));
 }
 
 // Run one extraction fixture (CSV or generic-log) through the pipeline with `provider` and return the
 // produced events. In mock mode `provider` returns the fixture's canned delta; in real mode it's the model.
-export async function runExtractionFixture(fx: ExtractionFixture, provider: AIProvider): Promise<ProducedEvent[]> {
+export async function runExtractionFixture(
+  fx: ExtractionFixture,
+  provider: AIProvider,
+): Promise<ProducedEvent[]> {
   const { pipeline, caseId } = await makeEvalPipeline(provider);
-  const state = fx.modality === "csv"
-    ? await pipeline.analyzeCsv(caseId, fx.input, { label: `${fx.name}.csv`, idPrefix: "m1", importedAt: IMPORTED_AT })
-    : await pipeline.analyzeLog(caseId, fx.input, { label: `${fx.name}.log`, idPrefix: "l1", importedAt: IMPORTED_AT });
+  const state =
+    fx.modality === "csv"
+      ? await pipeline.analyzeCsv(caseId, fx.input, {
+          label: `${fx.name}.csv`,
+          idPrefix: "m1",
+          importedAt: IMPORTED_AT,
+        })
+      : await pipeline.analyzeLog(caseId, fx.input, {
+          label: `${fx.name}.log`,
+          idPrefix: "l1",
+          importedAt: IMPORTED_AT,
+        });
   return producedEvents(state);
 }
 
@@ -92,7 +116,10 @@ export async function runExtractionFixture(fx: ExtractionFixture, provider: AIPr
 // MOCK-ONLY in practice: the provider returns the fixture's canned delta and makeEvalPipeline's stub
 // imageLoader supplies placeholder bytes, so no real screenshot is decoded or shipped. This exercises the
 // analyzeWindow plumbing + scorer — the one modality the CSV/log runners can't reach.
-export async function runScreenshotFixture(fx: ScreenshotFixture, provider: AIProvider): Promise<ProducedEvent[]> {
+export async function runScreenshotFixture(
+  fx: ScreenshotFixture,
+  provider: AIProvider,
+): Promise<ProducedEvent[]> {
   const { pipeline, caseId } = await makeEvalPipeline(provider);
   const captures = fx.captures.map((c) => ({ ...c, caseId })); // bind synthetic captures to the temp case
   const state = await pipeline.analyzeWindow(caseId, captures);
@@ -106,18 +133,21 @@ export async function runScreenshotFixture(fx: ScreenshotFixture, provider: AIPr
 // local, uncommitted directory pointed to by DFIR_EVAL_SCREENSHOT_DIR — never from the repo.
 
 export interface RealScreenshotFixture {
-  name: string;             // derived from the image's basename
-  imagePath: string;        // absolute path to the screenshot file
+  name: string; // derived from the image's basename
+  imagePath: string; // absolute path to the screenshot file
   mimeType: string;
   tabTitle: string;
   url: string;
-  timestamp?: string;       // capture time; defaults to IMPORTED_AT if the sidecar omits it
+  timestamp?: string; // capture time; defaults to IMPORTED_AT if the sidecar omits it
   golden: GoldenEvent[];
   thresholds?: Thresholds;
 }
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  ".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
 };
 
 interface ScreenshotSidecar {
@@ -171,7 +201,10 @@ export async function loadRealScreenshotFixtures(dir: string): Promise<RealScree
 // Run one real screenshot fixture through analyzeWindow: reads the actual image bytes off disk and
 // hands them to `provider` (the real, vision-scoped provider — see realProviderOrNull's note on why
 // the TEXT provider used by the other --real fixtures is the wrong model for this modality).
-export async function runRealScreenshotFixture(fx: RealScreenshotFixture, provider: AIProvider): Promise<ProducedEvent[]> {
+export async function runRealScreenshotFixture(
+  fx: RealScreenshotFixture,
+  provider: AIProvider,
+): Promise<ProducedEvent[]> {
   const bytes = await readFile(fx.imagePath);
   const image: AnalyzeImage = { base64: bytes.toString("base64"), mimeType: fx.mimeType };
   const { pipeline, caseId } = await makeEvalPipeline(provider, "eval", async () => image);
@@ -193,7 +226,10 @@ export async function runRealScreenshotFixture(fx: RealScreenshotFixture, provid
 // Run one synthesis fixture: seed its pre-canned timeline, synthesize with `provider`, and return the final
 // (events, findings) — exercising the full synthesis pass incl. the deterministic grounding/backfill
 // guarantees the eval verifies.
-export async function runSynthesisFixture(fx: SynthesisFixture, provider: AIProvider): Promise<{ events: ProducedEvent[]; findings: ProducedFinding[] }> {
+export async function runSynthesisFixture(
+  fx: SynthesisFixture,
+  provider: AIProvider,
+): Promise<{ events: ProducedEvent[]; findings: ProducedFinding[] }> {
   const { pipeline, stateStore, caseId } = await makeEvalPipeline(provider);
   const seeded = emptyState(caseId);
   seeded.forensicTimeline.push(...fx.seedEvents);
@@ -202,10 +238,7 @@ export async function runSynthesisFixture(fx: SynthesisFixture, provider: AIProv
   return { events: producedEvents(state), findings: producedFindings(state) };
 }
 
-function qualityOutput(
-  state: InvestigationState,
-  evidenceEventIds: readonly string[],
-): QualityOutput {
+function qualityOutput(state: InvestigationState, evidenceEventIds: readonly string[]): QualityOutput {
   return {
     evidenceEventIds: [...evidenceEventIds],
     claims: state.findings.map((finding) => ({
@@ -226,10 +259,7 @@ function qualityOutput(
   };
 }
 
-export async function runCorpusCase(
-  fixture: CorpusCase,
-  provider: AIProvider,
-): Promise<QualityOutput> {
+export async function runCorpusCase(fixture: CorpusCase, provider: AIProvider): Promise<QualityOutput> {
   const { pipeline, stateStore, caseId } = await makeEvalPipeline(provider);
   const seeded = {
     ...emptyState(caseId),

@@ -24,10 +24,10 @@ import { HUNT_PLATFORMS, normalizeHuntPlatform, type HuntPlatform } from "./hunt
 // alias table) so a reply of "vql" / "Velociraptor VQL" still maps to the canonical key.
 export const queryTranslationSchema = z.object({
   platform: z.string().catch(""),
-  label: z.string().catch(""),            // short human label for the card, e.g. "PowerShell download-and-execute"
-  query: z.string().catch(""),            // the translated query ("" when notApplicable)
-  explanation: z.string().catch(""),      // how it captures the request + what a hit looks like
-  caveats: z.string().catch(""),          // assumptions / field-mapping notes / what to verify (optional)
+  label: z.string().catch(""), // short human label for the card, e.g. "PowerShell download-and-execute"
+  query: z.string().catch(""), // the translated query ("" when notApplicable)
+  explanation: z.string().catch(""), // how it captures the request + what a hit looks like
+  caveats: z.string().catch(""), // assumptions / field-mapping notes / what to verify (optional)
   notApplicable: z.boolean().catch(false), // true when the platform genuinely can't express the request
 });
 
@@ -36,7 +36,7 @@ export type RawQueryTranslation = z.infer<typeof queryTranslationSchema>;
 // The model returns { interpretation, queries: [...] }. `.catch` at every level keeps a partial
 // reply usable.
 export const queryTranslationResponseSchema = z.object({
-  interpretation: z.string().catch(""),   // one sentence: how the model read the request (lets the analyst confirm intent)
+  interpretation: z.string().catch(""), // one sentence: how the model read the request (lets the analyst confirm intent)
   queries: z.array(queryTranslationSchema).catch([]),
 });
 
@@ -57,7 +57,7 @@ export interface QueryTranslationResult {
   queries: QueryTranslation[];
 }
 
-const MAX_QUERY_LEN = 4000;        // a runaway query is a sign of a confused model; keep it pasteable
+const MAX_QUERY_LEN = 4000; // a runaway query is a sign of a confused model; keep it pasteable
 const MAX_LABEL_LEN = 200;
 const MAX_EXPLANATION_LEN = 1200;
 const MAX_CAVEATS_LEN = 800;
@@ -104,10 +104,10 @@ export const PLATFORM_SCHEMA_HINTS: Readonly<Record<HuntPlatform, string>> = {
     "file_event, product e.g. windows), detection (a `selection` map of `Field|modifier: value` then `condition`), level, " +
     "tags (attack.tXXXX). Field names follow Sysmon/Windows: Image, CommandLine, ParentImage, TargetFilename, DestinationIp.",
   yara:
-    "YARA rule over FILE CONTENT — `strings:` (text/byte/regex patterns) + `condition:` (optional `import \"hash\"`). " +
+    'YARA rule over FILE CONTENT — `strings:` (text/byte/regex patterns) + `condition:` (optional `import "hash"`). ' +
     "Use for file/sample signatures. NOT for process-behavior or pure-network intents — mark notApplicable for those.",
   suricata:
-    "Suricata/Snort NETWORK rule: `alert <proto: ip|dns|tls|http> $HOME_NET any -> <dest> any (msg:\"…\"; <keyword:content>; " +
+    'Suricata/Snort NETWORK rule: `alert <proto: ip|dns|tls|http> $HOME_NET any -> <dest> any (msg:"…"; <keyword:content>; ' +
     "sid:9000001; rev:1;)`. Keyword content matches: dns.query / tls.sni / http.host / http.uri. Use for network intents " +
     "(domain/IP/URL/SNI); mark notApplicable for host-only process intents.",
 };
@@ -118,7 +118,9 @@ export const PLATFORM_SCHEMA_HINTS: Readonly<Record<HuntPlatform, string>> = {
  * falls back to ALL platforms. Pure.
  */
 export function renderPlatformGuide(platforms: readonly HuntPlatform[]): string {
-  const want = new Set((platforms.length ? platforms : HUNT_PLATFORMS).filter((p) => HUNT_PLATFORMS.includes(p)));
+  const want = new Set(
+    (platforms.length ? platforms : HUNT_PLATFORMS).filter((p) => HUNT_PLATFORMS.includes(p)),
+  );
   const ordered = HUNT_PLATFORMS.filter((p) => want.has(p));
   const list = ordered.length ? ordered : [...HUNT_PLATFORMS];
   return list.map((p) => `- ${p} — ${PLATFORM_LABELS[p]}\n  ${PLATFORM_SCHEMA_HINTS[p]}`).join("\n");
@@ -153,7 +155,9 @@ export function sanitizeQueryTranslations(
   raw: readonly RawQueryTranslation[] | undefined,
   allowed: readonly HuntPlatform[],
 ): QueryTranslation[] {
-  const allow = new Set<HuntPlatform>((allowed.length ? allowed : HUNT_PLATFORMS).filter((p) => HUNT_PLATFORMS.includes(p)));
+  const allow = new Set<HuntPlatform>(
+    (allowed.length ? allowed : HUNT_PLATFORMS).filter((p) => HUNT_PLATFORMS.includes(p)),
+  );
   const seen = new Set<HuntPlatform>();
   const out: QueryTranslation[] = [];
   for (const t of raw ?? []) {
@@ -167,10 +171,15 @@ export function sanitizeQueryTranslations(
     seen.add(platform);
     out.push({
       platform,
-      label: String(t?.label ?? "").trim().slice(0, MAX_LABEL_LEN) || PLATFORM_LABELS[platform],
+      label:
+        String(t?.label ?? "")
+          .trim()
+          .slice(0, MAX_LABEL_LEN) || PLATFORM_LABELS[platform],
       query: query.slice(0, MAX_QUERY_LEN),
       explanation: explanation.slice(0, MAX_EXPLANATION_LEN),
-      caveats: String(t?.caveats ?? "").trim().slice(0, MAX_CAVEATS_LEN),
+      caveats: String(t?.caveats ?? "")
+        .trim()
+        .slice(0, MAX_CAVEATS_LEN),
       notApplicable: query ? false : true,
     });
   }
@@ -179,5 +188,8 @@ export function sanitizeQueryTranslations(
 
 /** Clamp the model's one-line interpretation of the request. Pure. */
 export function sanitizeInterpretation(raw: string | undefined): string {
-  return String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_INTERPRETATION_LEN);
+  return String(raw ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_INTERPRETATION_LEN);
 }

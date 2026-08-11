@@ -4,7 +4,11 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
-import { applyFalsePositive, filterFalsePositiveEvents, type FalsePositiveStore } from "../analysis/falsePositive.js";
+import {
+  applyFalsePositive,
+  filterFalsePositiveEvents,
+  type FalsePositiveStore,
+} from "../analysis/falsePositive.js";
 import { renderMarkdownReport } from "./markdown.js";
 import type { CustodyRecord, CustodyStore } from "../analysis/custody.js";
 import { assembleCustodyManifest } from "../analysis/custodyManifest.js";
@@ -15,7 +19,12 @@ import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } fro
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
-import { buildEvidenceGraph, buildLateralPaths, type EvidenceGraph, type LateralPath } from "../analysis/evidenceGraph.js";
+import {
+  buildEvidenceGraph,
+  buildLateralPaths,
+  type EvidenceGraph,
+  type LateralPath,
+} from "../analysis/evidenceGraph.js";
 import { projectAlignment } from "../analysis/clockSkew.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
@@ -25,7 +34,11 @@ import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../a
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { rankHosts, type HostRankingResult } from "../analysis/hostRanking.js";
-import { buildMobileSummary, mobileSummaryEnvOptions, type MobileCaseSummary } from "../analysis/mobileSummary.js";
+import {
+  buildMobileSummary,
+  mobileSummaryEnvOptions,
+  type MobileCaseSummary,
+} from "../analysis/mobileSummary.js";
 import {
   buildPresentationDeck,
   presentationEnvOptions,
@@ -33,7 +46,11 @@ import {
   type PresentationDeck,
 } from "../analysis/presentation.js";
 import { buildGeoMap, geoMapEnvOptions, type GeoMapData } from "../analysis/geoMap.js";
-import { detectTimelineAnomalies, anomalyEnvOptions, type TimelineAnomalyResult } from "../analysis/timelineAnomalies.js";
+import {
+  detectTimelineAnomalies,
+  anomalyEnvOptions,
+  type TimelineAnomalyResult,
+} from "../analysis/timelineAnomalies.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
 import { buildD3fendResult, type D3fendResult } from "../analysis/d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
@@ -63,11 +80,20 @@ import {
   type LateralPathDismissal,
   type AnnotatedLateralPath,
 } from "../analysis/lateralPathDismiss.js";
-import { buildBrandingContext, defaultReportTemplate, renderTemplateString, type ReportTemplate } from "./reportTemplate.js";
+import {
+  buildBrandingContext,
+  defaultReportTemplate,
+  renderTemplateString,
+  type ReportTemplate,
+} from "./reportTemplate.js";
 import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
 import type { ComplianceControlStore, ComplianceControl } from "../analysis/complianceControl.js";
-import { applyAnonDeep, redactCustodyRecords, type RedactedReportContents } from "../analysis/redactedExport.js";
+import {
+  applyAnonDeep,
+  redactCustodyRecords,
+  type RedactedReportContents,
+} from "../analysis/redactedExport.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { KevCatalog } from "../analysis/kev.js";
@@ -103,13 +129,13 @@ export interface ReportWriterOptions {
   reportTemplateControl?: ReportTemplateControlStore;
   kevStore?: KevStore;
   hypothesisStore?: HypothesisStore;
-  synthMeta?: SynthMetaStore;   // #11 deferred: second-look collection leads in the report
-  lateralPathDismissals?: LateralPathDismissStore;   // analyst-rejected lateral chains
-  reportVersions?: ReportVersionStore;   // #77 report versioning (diff & rollback)
-  analysisRuns?: AnalysisRunStore;   // #377 reproducible analysis manifests + report pinning
-  complianceControl?: ComplianceControlStore;   // #336 discovery date + framework filter
-  clockSkew?: ClockSkewStore;   // #228 per-host clock offsets + the alignment toggle
-  custodyStore?: CustodyStore;   // #231 chain-of-custody appendix
+  synthMeta?: SynthMetaStore; // #11 deferred: second-look collection leads in the report
+  lateralPathDismissals?: LateralPathDismissStore; // analyst-rejected lateral chains
+  reportVersions?: ReportVersionStore; // #77 report versioning (diff & rollback)
+  analysisRuns?: AnalysisRunStore; // #377 reproducible analysis manifests + report pinning
+  complianceControl?: ComplianceControlStore; // #336 discovery date + framework filter
+  clockSkew?: ClockSkewStore; // #228 per-host clock offsets + the alignment toggle
+  custodyStore?: CustodyStore; // #231 chain-of-custody appendix
   /** Signs the custody manifest that travels with a redacted package. Without it, none is produced. */
   instanceSecret?: Buffer;
 }
@@ -166,7 +192,11 @@ export class ReportWriter {
   // it's loaded here on demand for the report. [] when unavailable.
   private async loadSecondLookLeads(caseId: string): Promise<string[]> {
     if (!this.synthMeta) return [];
-    try { return (await this.synthMeta.load(caseId)).secondLook?.leads ?? []; } catch { return []; }
+    try {
+      return (await this.synthMeta.load(caseId)).secondLook?.leads ?? [];
+    } catch {
+      return [];
+    }
   }
 
   // Synthesis coverage footnote (#62) — OPT-IN via DFIR_REPORT_SYNTH_COVERAGE. Off by default (the
@@ -175,7 +205,11 @@ export class ReportWriter {
   private async loadCoverage(caseId: string): Promise<SynthesisCoverage | null> {
     const flag = (process.env.DFIR_REPORT_SYNTH_COVERAGE ?? "").trim().toLowerCase();
     if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
-    try { return (await this.synthMeta.load(caseId)).coverage ?? null; } catch { return null; }
+    try {
+      return (await this.synthMeta.load(caseId)).coverage ?? null;
+    } catch {
+      return null;
+    }
   }
 
   // Model-performance footnote (#74) — OPT-IN via DFIR_REPORT_MODEL_PERF, same posture as the
@@ -185,7 +219,13 @@ export class ReportWriter {
     if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
     try {
       const meta = await this.synthMeta.load(caseId);
-      return { synthModel: meta.synthModel, findingsCount: meta.findingsCount, highSeverityBackfillCount: meta.highSeverityBackfillCount, parseRetries: meta.parseRetries, secondOpinionPerf: meta.secondOpinionPerf };
+      return {
+        synthModel: meta.synthModel,
+        findingsCount: meta.findingsCount,
+        highSeverityBackfillCount: meta.highSeverityBackfillCount,
+        parseRetries: meta.parseRetries,
+        secondOpinionPerf: meta.secondOpinionPerf,
+      };
     } catch {
       return null;
     }
@@ -310,15 +350,25 @@ export class ReportWriter {
   // on demand with the same scope/legitimate filtering as the report. An optional time `window`
   // (#83) narrows it to events in that range. Chains the analyst has DISMISSED are dropped — pass
   // includeDismissed to get them back, each flagged, for the review/undo view.
-  async lateralPaths(caseId: string, window?: TimeWindow, includeDismissed = false): Promise<LateralPath[] | AnnotatedLateralPath[]> {
+  async lateralPaths(
+    caseId: string,
+    window?: TimeWindow,
+    includeDismissed = false,
+  ): Promise<LateralPath[] | AnnotatedLateralPath[]> {
     const paths = buildLateralPaths(await this.loadFilteredState(caseId), window);
     const dismissals = await this.loadLateralPathDismissals(caseId);
-    return includeDismissed ? annotateDismissedPaths(paths, dismissals) : filterDismissedPaths(paths, dismissals);
+    return includeDismissed
+      ? annotateDismissedPaths(paths, dismissals)
+      : filterDismissedPaths(paths, dismissals);
   }
 
   private async loadLateralPathDismissals(caseId: string): Promise<LateralPathDismissal[]> {
     if (!this.lateralPathDismissals) return [];
-    try { return await this.lateralPathDismissals.load(caseId); } catch { return []; }
+    try {
+      return await this.lateralPathDismissals.load(caseId);
+    } catch {
+      return [];
+    }
   }
 
   // Temporal attack phases (bursts of activity grouped by time gap) for the case, derived on
@@ -517,8 +567,34 @@ export class ReportWriter {
     custody?: CustodyRecord[],
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl, custody),
-      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses, custody),
+      markdown: renderMarkdownReport(
+        state,
+        meta,
+        exposure,
+        graph,
+        notebookEntries,
+        playbookTasks,
+        template,
+        kevCatalog,
+        hypotheses,
+        secondLookLeads,
+        coverage,
+        lateralPaths,
+        modelPerf,
+        complianceControl,
+        custody,
+      ),
+      html: renderHtmlReport(
+        state,
+        meta,
+        exposure,
+        graph,
+        notebookEntries,
+        playbookTasks,
+        template,
+        hypotheses,
+        custody,
+      ),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
       timelineCsv: timelineCsv(state),
@@ -553,11 +629,30 @@ export class ReportWriter {
     const secondLookLeads = await this.loadSecondLookLeads(caseId);
     const coverage = await this.loadCoverage(caseId);
     // Lateral chains the analyst dismissed must not reappear in the written report.
-    const lateralPaths = filterDismissedPaths(buildLateralPaths(state), await this.loadLateralPathDismissals(caseId));
+    const lateralPaths = filterDismissedPaths(
+      buildLateralPaths(state),
+      await this.loadLateralPathDismissals(caseId),
+    );
     const modelPerf = await this.loadModelPerf(caseId);
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
     const custody = this.custodyStore ? await this.custodyStore.load(caseId) : undefined;
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl, custody);
+    const c = this.renderContents(
+      state,
+      meta,
+      exposure,
+      graph,
+      notebookEntries,
+      playbookTasks,
+      template,
+      kevCatalog,
+      hypotheses,
+      secondLookLeads,
+      coverage,
+      lateralPaths,
+      modelPerf,
+      complianceControl,
+      custody,
+    );
     // Staged, not published: nothing in reports/ changes until every artifact AND the provenance
     // record below have succeeded. Writing them straight over the previous report left a mixed
     // generation behind whenever anything in between failed — see reports/reportGeneration.ts.
@@ -585,10 +680,7 @@ export class ReportWriter {
           input: {
             artifacts: [],
             eventIds: state.forensicTimeline.map((event) => event.id),
-            entityIds: [
-              ...state.findings.map((finding) => finding.id),
-              ...state.iocs.map((ioc) => ioc.id),
-            ],
+            entityIds: [...state.findings.map((finding) => finding.id), ...state.iocs.map((ioc) => ioc.id)],
             selectionHash: hashManifestValue({
               sourceRunIds: sourceRuns.map((run) => run.id),
               eventIds: state.forensicTimeline.map((event) => event.id),
@@ -627,16 +719,21 @@ export class ReportWriter {
               id,
               sha256: createHash("sha256").update(contents).digest("hex"),
             })),
-            claims: state.findings.map((finding) => claimSnapshot(finding.id, {
-              title: finding.title,
-              severity: finding.severity,
-              description: finding.description,
-              evidenceEventIds: finding.relatedEventIds,
-            })),
+            claims: state.findings.map((finding) =>
+              claimSnapshot(finding.id, {
+                title: finding.title,
+                severity: finding.severity,
+                description: finding.description,
+                evidenceEventIds: finding.relatedEventIds,
+              }),
+            ),
           },
         });
         reportRunId = reportRun.id;
-        await generation.stage(paths.analysisRuns, JSON.stringify(await this.analysisRuns.list(caseId), null, 2));
+        await generation.stage(
+          paths.analysisRuns,
+          JSON.stringify(await this.analysisRuns.list(caseId), null, 2),
+        );
       } else {
         await generation.stage(paths.analysisRuns, "[]\n");
       }
@@ -653,14 +750,18 @@ export class ReportWriter {
         await this.reportVersions.snapshot(caseId, {
           markdown: c.markdown,
           meta,
-          state: { findings: state.findings, iocs: state.iocs, forensicTimeline: state.forensicTimeline, uncertainties: state.uncertainties },
+          state: {
+            findings: state.findings,
+            iocs: state.iocs,
+            forensicTimeline: state.forensicTimeline,
+            uncertainties: state.uncertainties,
+          },
           template,
-          analysisRunIds: [
-            ...sourceRuns.map((run) => run.id),
-            ...(reportRunId ? [reportRunId] : []),
-          ],
+          analysisRunIds: [...sourceRuns.map((run) => run.id), ...(reportRunId ? [reportRunId] : [])],
         });
-      } catch { /* best-effort — see comment above */ }
+      } catch {
+        /* best-effort — see comment above */
+      }
     }
     return paths;
   }
@@ -671,7 +772,10 @@ export class ReportWriter {
   // anonymizer instance is used across all artifacts). The asset/IoC graph is derived from the
   // already-anonymized state so its labels are tokenized too. The on-disk report is never touched.
   // The investigating firm's logo (a base64 data URI) is left intact — it is branding, not victim PII.
-  async redactedReportContents(caseId: string, redact: (s: string) => string): Promise<RedactedReportContents> {
+  async redactedReportContents(
+    caseId: string,
+    redact: (s: string) => string,
+  ): Promise<RedactedReportContents> {
     const state = applyAnonDeep(await this.loadFilteredState(caseId), redact);
     const rawMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
     // The redacted export is meant for EXTERNAL parties. The anonymizer's apply() only tokenizes
@@ -716,20 +820,42 @@ export class ReportWriter {
     // shipping real hostnames, analyst names and filesystem paths to an external party (#231).
     // Field by field rather than wholesale, so the artifact hashes survive and the recipient can
     // actually check the chain against the evidence they hold (#362).
-    const custody = this.custodyStore ? redactCustodyRecords(await this.custodyStore.load(caseId), redact) : undefined;
+    const custody = this.custodyStore
+      ? redactCustodyRecords(await this.custodyStore.load(caseId), redact)
+      : undefined;
     // A manifest describing the REDACTED appendix, signed so this installation can later prove what
     // it sent. Built from the redacted records, never the store's: handing the real ones to an
     // external party is precisely what this export exists to prevent (#362 follow-up). The chain head
     // and any breaks come from the real log — hashes, line numbers and an enum carry no case data.
-    const custodyManifest = this.custodyStore && this.instanceSecret && custody
-      ? assembleCustodyManifest({
-          caseId,
-          records: custody,
-          head: await this.custodyStore.chainHead(caseId),
-          breaks: await this.custodyStore.verifyChain(caseId),
-          secret: this.instanceSecret,
-        })
-      : undefined;
-    return { ...this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl, custody), custodyManifest };
+    const custodyManifest =
+      this.custodyStore && this.instanceSecret && custody
+        ? assembleCustodyManifest({
+            caseId,
+            records: custody,
+            head: await this.custodyStore.chainHead(caseId),
+            breaks: await this.custodyStore.verifyChain(caseId),
+            secret: this.instanceSecret,
+          })
+        : undefined;
+    return {
+      ...this.renderContents(
+        state,
+        meta,
+        exposure,
+        graph,
+        notebookEntries,
+        playbookTasks,
+        template,
+        kevCatalog,
+        hypotheses,
+        secondLookLeads,
+        undefined,
+        lateralPaths,
+        undefined,
+        complianceControl,
+        custody,
+      ),
+      custodyManifest,
+    };
   }
 }

@@ -20,12 +20,12 @@ const severityChangeSchema = z.object({
 // record promoted, and which requests came back empty (each an actionable collection lead). Surfaced on
 // the synth-meta card. Optional/lenient — absent on a run where the sweep didn't run or found nothing.
 const secondLookSchema = z.object({
-  promoted: z.number().catch(0),          // events pulled up from the raw record and re-synthesized
-  requests: z.number().catch(0),          // total search requests issued this sweep
-  matched: z.number().catch(0),           // requests that hit at least one event
-  leads: z.array(z.string()).catch([]),   // reasons of requests that matched nothing (collection leads)
-  summary: z.string().catch(""),          // one-line human summary for the card
-  at: z.string().catch(""),               // when the sweep ran
+  promoted: z.number().catch(0), // events pulled up from the raw record and re-synthesized
+  requests: z.number().catch(0), // total search requests issued this sweep
+  matched: z.number().catch(0), // requests that hit at least one event
+  leads: z.array(z.string()).catch([]), // reasons of requests that matched nothing (collection leads)
+  summary: z.string().catch(""), // one-line human summary for the card
+  at: z.string().catch(""), // when the sweep ran
 });
 
 export type SecondLookMeta = z.infer<typeof secondLookSchema>;
@@ -37,12 +37,12 @@ export type SecondLookMeta = z.infer<typeof secondLookSchema>;
 // — via SynthMetaStore.recordSecondOpinionPerf, the same load-merge-save pattern as recordSecondLook, so
 // a later plain record() write (from the NEXT ordinary synthesis run) never silently wipes it.
 const secondOpinionPerfSchema = z.object({
-  modelA: z.string().catch(""),        // primary synthesis model label
-  modelB: z.string().catch(""),        // second-opinion model label
+  modelA: z.string().catch(""), // primary synthesis model label
+  modelB: z.string().catch(""), // second-opinion model label
   agreementCount: z.number().catch(0), // findings BOTH models independently raised
-  deltaCount: z.number().catch(0),     // points where they disagreed (b_only/a_only/severity/mitre_*)
-  agreementRate: z.number().catch(0),  // agreementCount / (agreementCount + deltaCount); 0 when both are 0
-  at: z.string().catch(""),            // when this second-opinion run completed
+  deltaCount: z.number().catch(0), // points where they disagreed (b_only/a_only/severity/mitre_*)
+  agreementRate: z.number().catch(0), // agreementCount / (agreementCount + deltaCount); 0 when both are 0
+  at: z.string().catch(""), // when this second-opinion run completed
 });
 
 export type SecondOpinionPerf = z.infer<typeof secondOpinionPerfSchema>;
@@ -54,15 +54,15 @@ export type SecondOpinionPerf = z.infer<typeof secondOpinionPerfSchema>;
 // counts are derived deterministically at the synthesis call site. Optional/lenient — absent on old
 // files and on runs recorded before this existed.
 const synthesisCoverageSchema = z.object({
-  inWindow: z.number().catch(0),             // events inside the scope window — the denominator ("of M")
-  considered: z.number().catch(0),           // events the model actually read ("N")
-  omittedBudget: z.number().catch(0),        // in-window, non-legitimate events dropped by the size/token cap
-  omittedLegitimate: z.number().catch(0),    // in-window events filtered out as false-positive / legitimate
-  omittedScope: z.number().catch(0),         // events dropped for being OUTSIDE the scope window
-  omittedHighSeverity: z.number().catch(0),  // of the budget-omitted, how many are Critical/High (the safety-net backfill still covers these)
-  groupEntries: z.number().catch(0),         // prompt rows that represent a collapsed detection burst
-  groupedEvents: z.number().catch(0),        // events covered by those rows (≥ groupEntries when > 0)
-  omittedInfo: z.number().catch(0),          // Info-severity events deliberately not sent (DFIR_SYNTH_INCLUDE_INFO)
+  inWindow: z.number().catch(0), // events inside the scope window — the denominator ("of M")
+  considered: z.number().catch(0), // events the model actually read ("N")
+  omittedBudget: z.number().catch(0), // in-window, non-legitimate events dropped by the size/token cap
+  omittedLegitimate: z.number().catch(0), // in-window events filtered out as false-positive / legitimate
+  omittedScope: z.number().catch(0), // events dropped for being OUTSIDE the scope window
+  omittedHighSeverity: z.number().catch(0), // of the budget-omitted, how many are Critical/High (the safety-net backfill still covers these)
+  groupEntries: z.number().catch(0), // prompt rows that represent a collapsed detection burst
+  groupedEvents: z.number().catch(0), // events covered by those rows (≥ groupEntries when > 0)
+  omittedInfo: z.number().catch(0), // Info-severity events deliberately not sent (DFIR_SYNTH_INCLUDE_INFO)
   promptTokensEstimate: z.number().catch(0), // ~size of the assembled synthesis prompt, in tokens
 });
 
@@ -131,11 +131,14 @@ export function coverageLabel(c: SynthesisCoverage): string {
 
 export const synthMetaSchema = z.object({
   lastSynthesizedAt: z.string().catch(""),
-  lastDiff: z.object({
-    added: z.array(z.string()).catch([]),
-    removed: z.array(z.string()).catch([]),
-    severityChanged: z.array(severityChangeSchema).catch([]),
-  }).nullable().catch(null),
+  lastDiff: z
+    .object({
+      added: z.array(z.string()).catch([]),
+      removed: z.array(z.string()).catch([]),
+      severityChanged: z.array(severityChangeSchema).catch([]),
+    })
+    .nullable()
+    .catch(null),
   durationMs: z.number().optional().catch(undefined),
   eventCount: z.number().optional().catch(undefined),
   iocCount: z.number().optional().catch(undefined),
@@ -167,15 +170,18 @@ export interface SynthPerfMetrics {
   durationMs: number;
   eventCount: number;
   iocCount: number;
-  selectionCounts?: Record<string, number>;   // #4: per-class counts of the events the model saw
-  coverage?: SynthesisCoverage;               // #62: included/omitted coverage audit for this run
-  synthModel?: string;                        // #74: "<provider>/<model>" that ran this synthesis
-  findingsCount?: number;                     // #74: total findings after this run
-  highSeverityBackfillCount?: number;         // #74: of those, how many the deterministic safety net added
-  parseRetries?: number;                      // #74: retries the synthesis JSON parse needed
+  selectionCounts?: Record<string, number>; // #4: per-class counts of the events the model saw
+  coverage?: SynthesisCoverage; // #62: included/omitted coverage audit for this run
+  synthModel?: string; // #74: "<provider>/<model>" that ran this synthesis
+  findingsCount?: number; // #74: total findings after this run
+  highSeverityBackfillCount?: number; // #74: of those, how many the deterministic safety net added
+  parseRetries?: number; // #74: retries the synthesis JSON parse needed
 }
 
-export type ModelPerfSnapshot = Pick<SynthMeta, "synthModel" | "findingsCount" | "highSeverityBackfillCount" | "parseRetries" | "secondOpinionPerf">;
+export type ModelPerfSnapshot = Pick<
+  SynthMeta,
+  "synthModel" | "findingsCount" | "highSeverityBackfillCount" | "parseRetries" | "secondOpinionPerf"
+>;
 
 // One-line human summary of the per-model quality fields, for the report footnote. Returns null when
 // there's nothing to say (no synth model recorded and no second-opinion run). Each clause is omitted
@@ -184,7 +190,8 @@ export function modelPerfLabel(m: ModelPerfSnapshot): string | null {
   const parts: string[] = [];
   if (m.synthModel) {
     let s = `Synthesis ran on **${m.synthModel}**`;
-    if (m.findingsCount !== undefined) s += ` — ${m.findingsCount} finding${m.findingsCount === 1 ? "" : "s"}`;
+    if (m.findingsCount !== undefined)
+      s += ` — ${m.findingsCount} finding${m.findingsCount === 1 ? "" : "s"}`;
     if (m.highSeverityBackfillCount) {
       s += ` (${m.highSeverityBackfillCount} recovered by the high-severity safety net, not raised by the model itself)`;
     }
@@ -220,7 +227,12 @@ export class SynthMetaStore {
 
   // Record a completed synthesis run: stamp the time, store the findings diff, and
   // optionally store performance metrics (duration, event/IOC counts).
-  async record(caseId: string, diff: FindingsDiff, at: string = new Date().toISOString(), perf?: SynthPerfMetrics): Promise<SynthMeta> {
+  async record(
+    caseId: string,
+    diff: FindingsDiff,
+    at: string = new Date().toISOString(),
+    perf?: SynthPerfMetrics,
+  ): Promise<SynthMeta> {
     const meta: SynthMeta = { lastSynthesizedAt: at, lastDiff: diff, ...perf };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;

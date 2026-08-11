@@ -43,7 +43,8 @@ describe("GET /cases/:id/custody", () => {
 
 describe("POST /cases/:id/custody", () => {
   it("hashes the artifact server-side and returns the stored record", async () => {
-    const res = await request(app).post("/cases/c1/custody")
+    const res = await request(app)
+      .post("/cases/c1/custody")
       .send({ artifactPath, collectedBy: "alice", source: "import", trigger: "manual" });
     expect(res.status).toBe(201);
     expect(res.body.ok).toBe(true);
@@ -69,7 +70,9 @@ describe("POST /cases/:id/custody", () => {
   });
 
   it("400s when the artifact cannot be read", async () => {
-    const res = await request(app).post("/cases/c1/custody").send({ artifactPath: join(tmpdir(), "definitely-not-here.bin") });
+    const res = await request(app)
+      .post("/cases/c1/custody")
+      .send({ artifactPath: join(tmpdir(), "definitely-not-here.bin") });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/could not read artifact/);
   });

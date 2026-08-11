@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
-import { buildCustodyManifest, verifyCustodyManifest, type CustodyManifest } from "../../src/analysis/custodyManifest.js";
+import {
+  buildCustodyManifest,
+  verifyCustodyManifest,
+  type CustodyManifest,
+} from "../../src/analysis/custodyManifest.js";
 
 let cases: CaseStore;
 let custody: CustodyStore;
@@ -19,8 +23,13 @@ const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("
 async function collect(path: string, text: string): Promise<void> {
   await writeFile(path, text, "utf8");
   await custody.record("c1", {
-    artifactPath: path, sha256: sha(text), collectedBy: "alice",
-    collectedAt: "2026-07-28T10:00:00.000Z", source: "host-a", trigger: "import", caseId: "c1",
+    artifactPath: path,
+    sha256: sha(text),
+    collectedBy: "alice",
+    collectedAt: "2026-07-28T10:00:00.000Z",
+    source: "host-a",
+    trigger: "import",
+    caseId: "c1",
   });
 }
 
@@ -78,7 +87,9 @@ describe("buildCustodyManifest", () => {
   it("reports chain breaks that already exist at signing time", async () => {
     await collect(one, "first\n");
     await collect(two, "second\n");
-    const [first, second] = (await readFile(cases.custodyLogPath("c1"), "utf8")).split("\n").filter((l) => l.trim());
+    const [first, second] = (await readFile(cases.custodyLogPath("c1"), "utf8"))
+      .split("\n")
+      .filter((l) => l.trim());
     const tampered = { ...(JSON.parse(first) as Record<string, unknown>), collectedBy: "mallory" };
     await writeFile(cases.custodyLogPath("c1"), JSON.stringify(tampered) + "\n" + second + "\n", "utf8");
 
@@ -131,7 +142,9 @@ describe("verifyCustodyManifest", () => {
     await collect(one, "first\n");
     const manifest = await build();
 
-    expect(verifyCustodyManifest({ ...manifest, signature: undefined } as unknown as CustodyManifest, SECRET)).toBe(false);
+    expect(
+      verifyCustodyManifest({ ...manifest, signature: undefined } as unknown as CustodyManifest, SECRET),
+    ).toBe(false);
   });
 
   it("verifies after a round trip through JSON, whatever order the keys come back in", async () => {
@@ -140,7 +153,9 @@ describe("verifyCustodyManifest", () => {
 
     const roundTripped = JSON.parse(JSON.stringify(manifest)) as Record<string, unknown>;
     // Rebuild with the keys in reverse order — a signature over a naive JSON.stringify would break.
-    const reordered = Object.fromEntries(Object.entries(roundTripped).reverse()) as unknown as CustodyManifest;
+    const reordered = Object.fromEntries(
+      Object.entries(roundTripped).reverse(),
+    ) as unknown as CustodyManifest;
 
     expect(verifyCustodyManifest(reordered, SECRET)).toBe(true);
   });

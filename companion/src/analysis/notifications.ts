@@ -15,13 +15,25 @@ import type { PlaybookTask } from "./playbook.js";
 // enrichment, this is OFF by default — the channel list starts empty and each channel is created
 // + enabled explicitly by the analyst (opt-in). Nothing leaves the box until then.
 
-export const NOTIFICATION_CHANNEL_TYPES = ["slack", "teams", "mattermost", "discord", "email", "telegram"] as const;
+export const NOTIFICATION_CHANNEL_TYPES = [
+  "slack",
+  "teams",
+  "mattermost",
+  "discord",
+  "email",
+  "telegram",
+] as const;
 export type NotificationChannelType = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
 // slack/teams/mattermost/discord are all incoming-webhook channels — they carry only a `webhookUrl`
 // (no other transport config) and share the same validation, secret-redaction, and update path.
 // email (SMTP) and telegram (bot token) are not webhook channels.
-export const WEBHOOK_CHANNEL_TYPES: readonly NotificationChannelType[] = ["slack", "teams", "mattermost", "discord"];
+export const WEBHOOK_CHANNEL_TYPES: readonly NotificationChannelType[] = [
+  "slack",
+  "teams",
+  "mattermost",
+  "discord",
+];
 
 export function isWebhookChannelType(type: NotificationChannelType): boolean {
   return WEBHOOK_CHANNEL_TYPES.includes(type);
@@ -29,7 +41,12 @@ export function isWebhookChannelType(type: NotificationChannelType): boolean {
 
 // The signal classes from the issue, plus `mention` (issue #88 — an @name in a case comment). The
 // kind is also the per-channel toggle key.
-export const NOTIFICATION_EVENT_KINDS = ["critical_finding", "playbook_update", "milestone", "mention"] as const;
+export const NOTIFICATION_EVENT_KINDS = [
+  "critical_finding",
+  "playbook_update",
+  "milestone",
+  "mention",
+] as const;
 export type NotificationEventKind = (typeof NOTIFICATION_EVENT_KINDS)[number];
 
 export const SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"] as const;
@@ -63,17 +80,17 @@ export function severityForPriority(priority: StepPriority): Severity {
 export interface NotificationEvent {
   kind: NotificationEventKind;
   caseId: string;
-  title: string;          // headline, already human-readable (e.g. "New finding: Cobalt Strike beacon")
-  severity: Severity;     // event severity for threshold filtering + message colour
-  lines: string[];        // detail rows
-  at: string;             // ISO timestamp
-  url?: string;           // optional deep link back to the dashboard/case
+  title: string; // headline, already human-readable (e.g. "New finding: Cobalt Strike beacon")
+  severity: Severity; // event severity for threshold filtering + message colour
+  lines: string[]; // detail rows
+  at: string; // ISO timestamp
+  url?: string; // optional deep link back to the dashboard/case
 }
 
 // Telegram bot config. botToken is stored but never echoed back to the browser (the route redacts it).
 export interface TelegramChannelConfig {
-  botToken: string;   // secret — never echoed to the browser
-  chatId: string;     // chat/channel/group ID (e.g., "@channelname" or "-1001234567890")
+  botToken: string; // secret — never echoed to the browser
+  chatId: string; // chat/channel/group ID (e.g., "@channelname" or "-1001234567890")
 }
 
 // SMTP transport config for an email channel. Secrets (password) are stored but never echoed back
@@ -81,12 +98,12 @@ export interface TelegramChannelConfig {
 export interface SmtpChannelConfig {
   host: string;
   port: number;
-  secure: boolean;        // implicit TLS (port 465). Otherwise plain + opportunistic STARTTLS.
+  secure: boolean; // implicit TLS (port 465). Otherwise plain + opportunistic STARTTLS.
   username?: string;
   password?: string;
-  from: string;           // From: address
-  to: string[];           // recipient addresses
-  rejectUnauthorized?: boolean;  // verify the server cert (default true) — set false for self-signed
+  from: string; // From: address
+  to: string[]; // recipient addresses
+  rejectUnauthorized?: boolean; // verify the server cert (default true) — set false for self-signed
 }
 
 // A configured destination. Webhook channels (slack/teams/mattermost/discord) use `webhookUrl`;
@@ -94,13 +111,13 @@ export interface SmtpChannelConfig {
 export interface NotificationChannel {
   id: string;
   type: NotificationChannelType;
-  name: string;                                   // analyst label
+  name: string; // analyst label
   enabled: boolean;
-  minSeverity: Severity;                          // only events at or above this fire (findings/playbook)
+  minSeverity: Severity; // only events at or above this fire (findings/playbook)
   events: Record<NotificationEventKind, boolean>; // which signal classes this channel wants
-  webhookUrl?: string;                            // slack / teams / mattermost / discord incoming-webhook URL
-  smtp?: SmtpChannelConfig;                        // email transport
-  telegram?: TelegramChannelConfig;               // telegram bot transport
+  webhookUrl?: string; // slack / teams / mattermost / discord incoming-webhook URL
+  smtp?: SmtpChannelConfig; // email transport
+  telegram?: TelegramChannelConfig; // telegram bot transport
   createdAt: string;
   updatedAt: string;
 }
@@ -187,12 +204,24 @@ export function playbookTaskEvent(
     `Case: ${caseId}`,
   ];
   if (task.assignee) lines.push(`Assignee: ${task.assignee}`);
-  return { kind: "playbook_update", caseId, title: `${PLAYBOOK_ACTION_VERB[action]}: ${task.title}`, severity, lines, at };
+  return {
+    kind: "playbook_update",
+    caseId,
+    title: `${PLAYBOOK_ACTION_VERB[action]}: ${task.title}`,
+    severity,
+    lines,
+    at,
+  };
 }
 
 // Build a `milestone` lifecycle event. Severity is Info (milestones bypass the threshold), so the
 // `milestone` per-channel toggle is the only gate.
-export function milestoneEvent(caseId: string, title: string, lines: string[], at: string): NotificationEvent {
+export function milestoneEvent(
+  caseId: string,
+  title: string,
+  lines: string[],
+  at: string,
+): NotificationEvent {
   return { kind: "milestone", caseId, title, severity: "Info", lines: [...lines, `Case: ${caseId}`], at };
 }
 
@@ -226,7 +255,10 @@ export function testEvent(at: string): NotificationEvent {
     caseId: "—",
     title: "DFIR Companion test notification",
     severity: "Info",
-    lines: ["This is a test message confirming the channel is wired up correctly.", "If you received this, notifications work."],
+    lines: [
+      "This is a test message confirming the channel is wired up correctly.",
+      "If you received this, notifications work.",
+    ],
     at,
   };
 }
@@ -245,9 +277,11 @@ const smtpInputSchema = z.object({
   username: z.string().optional(),
   password: z.string().optional(),
   from: z.string().min(1),
-  to: z.union([z.array(z.string()), z.string()]).transform((v) =>
-    (Array.isArray(v) ? v : String(v).split(/[,;\s]+/)).map((s) => s.trim()).filter(Boolean),
-  ),
+  to: z
+    .union([z.array(z.string()), z.string()])
+    .transform((v) =>
+      (Array.isArray(v) ? v : String(v).split(/[,;\s]+/)).map((s) => s.trim()).filter(Boolean),
+    ),
   rejectUnauthorized: z.boolean().optional(),
 });
 
@@ -307,7 +341,10 @@ const defaultEvents = (): Record<NotificationEventKind, boolean> => ({
 export function parseChannelInput(raw: unknown, existing?: NotificationChannel): ParsedChannelInput {
   const parsed = channelInputSchema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ") };
+    return {
+      ok: false,
+      error: parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "),
+    };
   }
   const v = parsed.data;
   const events = { ...defaultEvents(), ...(v.events ?? {}) } as Record<NotificationEventKind, boolean>;
@@ -322,9 +359,11 @@ export function parseChannelInput(raw: unknown, existing?: NotificationChannel):
   if (isWebhookChannelType(v.type)) {
     // Blank URL on update → keep the saved one (only valid when the existing channel is also a
     // webhook channel and already has a URL).
-    const sameTypeExisting = existing && isWebhookChannelType(existing.type) ? existing.webhookUrl : undefined;
+    const sameTypeExisting =
+      existing && isWebhookChannelType(existing.type) ? existing.webhookUrl : undefined;
     const url = (v.webhookUrl ?? "").trim() || (sameTypeExisting ?? "");
-    if (!/^https?:\/\//i.test(url)) return { ok: false, error: `${v.type} channel requires an http(s) webhook URL` };
+    if (!/^https?:\/\//i.test(url))
+      return { ok: false, error: `${v.type} channel requires an http(s) webhook URL` };
     draft.webhookUrl = url;
   } else if (v.type === "telegram") {
     // Blank token on update → keep the saved one (same redacted-round-trip pattern as webhookUrl).
@@ -364,7 +403,11 @@ function defaultName(type: NotificationChannelType): string {
 // resend (a blank webhookUrl / smtp.password means "keep the current one" — the GET response
 // redacts them, so the browser never has the value to echo back). This is the same
 // don't-wipe-the-secret-on-edit pattern as the env settings password fields.
-export function applyChannelPatch(existing: NotificationChannel, draft: ChannelDraft, at: string): NotificationChannel {
+export function applyChannelPatch(
+  existing: NotificationChannel,
+  draft: ChannelDraft,
+  at: string,
+): NotificationChannel {
   const next: NotificationChannel = {
     ...existing,
     type: draft.type,

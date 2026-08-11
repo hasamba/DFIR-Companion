@@ -174,7 +174,9 @@ function main() {
 
   const outCss = outParts.join("");
   const generatedLen = parts.tokens.length + parts.themesA.length + parts.themesB.length;
-  console.log(`token region   ${TOKENS_FILE} line ${lineOf(tokensSrc, start)} to EOF, then 2 whole files -> ${generatedLen} chars across 3 parts`);
+  console.log(
+    `token region   ${TOKENS_FILE} line ${lineOf(tokensSrc, start)} to EOF, then 2 whole files -> ${generatedLen} chars across 3 parts`,
+  );
   console.log(`css call sites ${cssSites}`);
   console.log(`js  call sites ${jsSites}`);
   console.log(`roles emitted  ${values.size}`);

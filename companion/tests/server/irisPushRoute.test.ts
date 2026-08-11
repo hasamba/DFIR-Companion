@@ -25,22 +25,52 @@ function mockIrisPush(over: Partial<Record<string, unknown>> = {}) {
       return ref;
     },
     async setSummary() {},
-    async iocTypeMap() { return new Map<string, number>(); },
-    async assetTypeMap() { return new Map<string, number>(); },
-    async eventCategoryMap() { return new Map<string, number>(); },
-    async taskStatusMap() { return new Map<string, number>([["to do", 1]]); },
-    async listAssets() { return []; },
-    async addAsset() { return 1; },
-    async listIocs() { return []; },
-    async addIoc() { return 1; },
-    async listEvents() { return []; },
-    async addEvent() { return 1; },
-    async listTasks() { return []; },
-    async addTask() { return 1; },
-    async listDirectories() { return []; },
-    async addDirectory() { return 1; },
+    async iocTypeMap() {
+      return new Map<string, number>();
+    },
+    async assetTypeMap() {
+      return new Map<string, number>();
+    },
+    async eventCategoryMap() {
+      return new Map<string, number>();
+    },
+    async taskStatusMap() {
+      return new Map<string, number>([["to do", 1]]);
+    },
+    async listAssets() {
+      return [];
+    },
+    async addAsset() {
+      return 1;
+    },
+    async listIocs() {
+      return [];
+    },
+    async addIoc() {
+      return 1;
+    },
+    async listEvents() {
+      return [];
+    },
+    async addEvent() {
+      return 1;
+    },
+    async listTasks() {
+      return [];
+    },
+    async addTask() {
+      return 1;
+    },
+    async listDirectories() {
+      return [];
+    },
+    async addDirectory() {
+      return 1;
+    },
     async deleteDirectory() {},
-    async addNote() { return 1; },
+    async addNote() {
+      return 1;
+    },
     ...over,
   };
   return { client: base as unknown as IrisClient, cases };
@@ -52,11 +82,16 @@ async function makeApp(irisClient: IrisClient) {
   const stateStore = new StateStore(store);
   const irisExportStore = new IrisExportStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, irisClient, irisExportStore });
-  await request(app).post("/cases").send({ caseId: "c1", name: "Ransomware FS01", investigator: "i", aiProvider: null });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c1", name: "Ransomware FS01", investigator: "i", aiProvider: null });
   return app;
 }
 
@@ -84,14 +119,14 @@ describe("POST /cases/:id/push/iris (stable case naming + override)", () => {
     await request(app).post("/cases/c1/push/iris").send({ caseName: "acme-breach-2026" });
     const res2 = await request(app).post("/cases/c1/push/iris").send({});
     expect(res2.status).toBe(200);
-    expect(res2.body.created).toBe(false);   // matched the SAME case, not a new one
-    expect(cases).toHaveLength(1);           // still only one IRIS case exists
+    expect(res2.body.created).toBe(false); // matched the SAME case, not a new one
+    expect(cases).toHaveLength(1); // still only one IRIS case exists
     expect(cases[0].caseName).toBe("acme-breach-2026");
   });
 
   it("creates a new case rather than colliding with an unrelated existing one", async () => {
     const { client, cases } = mockIrisPush();
-    cases.push({ caseId: 1, caseName: "Case #1" });   // e.g. IRIS's own seeded default case
+    cases.push({ caseId: 1, caseName: "Case #1" }); // e.g. IRIS's own seeded default case
     const app = await makeApp(client);
     const res = await request(app).post("/cases/c1/push/iris").send({});
     expect(res.status).toBe(200);
@@ -102,13 +137,13 @@ describe("POST /cases/:id/push/iris (stable case naming + override)", () => {
 
   it("reuses a case already pushed under the pre-override bare-case-id naming scheme", async () => {
     const { client, cases } = mockIrisPush();
-    cases.push({ caseId: 1, caseName: "c1" });   // simulates a pre-existing push from before this feature
+    cases.push({ caseId: 1, caseName: "c1" }); // simulates a pre-existing push from before this feature
     const app = await makeApp(client);
     const res = await request(app).post("/cases/c1/push/iris").send({});
     expect(res.status).toBe(200);
-    expect(res.body.created).toBe(false);        // updated the SAME legacy case
+    expect(res.body.created).toBe(false); // updated the SAME legacy case
     expect(res.body.caseId).toBe(1);
-    expect(cases).toHaveLength(1);                // no duplicate created
+    expect(cases).toHaveLength(1); // no duplicate created
   });
 });
 

@@ -1,8 +1,21 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import type { NewPlaybookTask, PlaybookTaskPatch } from "../analysis/playbookStore.js";
-import { PLAYBOOK_STATUSES, playbookStats, withBlockedState, PlaybookValidationError, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
-import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS, PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT } from "../analysis/playbookHunt.js";
+import {
+  PLAYBOOK_STATUSES,
+  playbookStats,
+  withBlockedState,
+  PlaybookValidationError,
+  type PlaybookStatus,
+  type PlaybookTask,
+} from "../analysis/playbook.js";
+import {
+  selectFreshHunts,
+  pendingHuntTasks,
+  mergePersistedHunts,
+  EMPTY_PERSISTED_HUNTS,
+  PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
+} from "../analysis/playbookHunt.js";
 import { DEFAULT_PLAYBOOK_CONTROL } from "../analysis/playbookControl.js";
 import { buildHuntingProfile } from "../analysis/huntOutcomes.js";
 import { playbookTaskEvent, type NotificationEvent } from "../analysis/notifications.js";
@@ -56,7 +69,9 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
   // Deep link a notification back to the case dashboard (when a public base URL is configured).
   // Module-private copy of createApp's caseLink (pure over options.dashboardBaseUrl).
   const caseLink = (caseId: string): string | undefined =>
-    options.dashboardBaseUrl ? `${options.dashboardBaseUrl.replace(/\/+$/, "")}/dashboard?caseId=${encodeURIComponent(caseId)}` : undefined;
+    options.dashboardBaseUrl
+      ? `${options.dashboardBaseUrl.replace(/\/+$/, "")}/dashboard?caseId=${encodeURIComponent(caseId)}`
+      : undefined;
 
   // Fire a notification event to all matching channels. Best-effort, fire-and-forget: a transport
   // failure NEVER bubbles into the request that triggered it (notifications are a side channel).
@@ -64,7 +79,9 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
   const dispatchNotify = (event: NotificationEvent): void => {
     if (!options.notifier) return;
     const enriched = event.url ? event : { ...event, url: caseLink(event.caseId) };
-    options.notifier.dispatch(enriched).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
+    options.notifier
+      .dispatch(enriched)
+      .catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
   };
 
   // Load the persisted hunt suggestions (#70), dropping any whose task was reworded/deleted since
@@ -75,7 +92,12 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     try {
       const persisted = await options.playbookHuntStore.load(caseId);
       const fresh = selectFreshHunts(persisted, tasks);
-      if (fresh.changed) await options.playbookHuntStore.save(caseId, { generatedAt: persisted.generatedAt, suggestions: fresh.suggestions, taskHashes: fresh.taskHashes });
+      if (fresh.changed)
+        await options.playbookHuntStore.save(caseId, {
+          generatedAt: persisted.generatedAt,
+          suggestions: fresh.suggestions,
+          taskHashes: fresh.taskHashes,
+        });
       return fresh.suggestions;
     } catch {
       return [];
@@ -103,14 +125,20 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
   });
 
   app.put("/cases/:id/playbook/control", async (req: Request, res: Response) => {
-    if (!options.playbookControlStore) return res.status(501).json({ error: "playbook control not configured" });
-    if (typeof req.body?.useTemplates !== "boolean") return res.status(400).json({ error: "useTemplates (boolean) is required" });
+    if (!options.playbookControlStore)
+      return res.status(501).json({ error: "playbook control not configured" });
+    if (typeof req.body?.useTemplates !== "boolean")
+      return res.status(400).json({ error: "useTemplates (boolean) is required" });
     try {
-      const control = await options.playbookControlStore.set(req.params.id, { useTemplates: req.body.useTemplates });
-      const tasks = await syncPlaybook(req.params.id);   // re-derive immediately under the new mode
+      const control = await options.playbookControlStore.set(req.params.id, {
+        useTemplates: req.body.useTemplates,
+      });
+      const tasks = await syncPlaybook(req.params.id); // re-derive immediately under the new mode
       options.onPlaybook?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings", action: "playbook-control", detail: `IR templates ${control.useTemplates ? "enabled" : "disabled"}`,
+        category: "settings",
+        action: "playbook-control",
+        detail: `IR templates ${control.useTemplates ? "enabled" : "disabled"}`,
       });
       return res.status(200).json({ control, tasks: withBlockedState(tasks), stats: playbookStats(tasks) });
     } catch (err) {
@@ -122,11 +150,20 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     if (!options.playbookStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       // Auto-sync against current state so the panel reflects the latest next steps/findings.
-      const tasks = options.stateStore ? await syncPlaybook(req.params.id) : await options.playbookStore.load(req.params.id);
+      const tasks = options.stateStore
+        ? await syncPlaybook(req.params.id)
+        : await options.playbookStore.load(req.params.id);
       // Persisted AI hunt suggestions, filtered to tasks that are UNCHANGED since generation (#70) —
       // so they survive a page refresh but a reworded/deleted task drops its stale hunt.
       const huntSuggestions = await loadFreshHunts(req.params.id, tasks);
-      return res.status(200).json({ tasks: withBlockedState(tasks), stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id), huntSuggestions });
+      return res
+        .status(200)
+        .json({
+          tasks: withBlockedState(tasks),
+          stats: playbookStats(tasks),
+          control: await loadPlaybookControl(req.params.id),
+          huntSuggestions,
+        });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -139,7 +176,13 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     try {
       const tasks = await syncPlaybook(req.params.id);
       options.onPlaybook?.(req.params.id);
-      return res.status(200).json({ tasks: withBlockedState(tasks), stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+      return res
+        .status(200)
+        .json({
+          tasks: withBlockedState(tasks),
+          stats: playbookStats(tasks),
+          control: await loadPlaybookControl(req.params.id),
+        });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -152,8 +195,10 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
   // the playbook store; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
   // Registered BEFORE /:taskId so "suggest-hunts" is not captured as a task id.
   app.post("/cases/:id/playbook/suggest-hunts", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
-    if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.playbookStore || !options.stateStore)
+      return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
 
@@ -165,13 +210,26 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
         if (!task) return res.status(404).json({ error: "task not found" });
         const excludeVql = typeof req.body?.excludeVql === "string" ? req.body.excludeVql.trim() : undefined;
         const [, artifactNames] = await Promise.all([
-          refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before regen failed: ${(e as Error).message}`); return 0; }),
+          refreshVeloClients().catch((e) => {
+            logLine(`[velociraptor] inventory refresh before regen failed: ${(e as Error).message}`);
+            return 0;
+          }),
           options.velociraptorClient
-            ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
+            ? options.velociraptorClient
+                .listClientArtifacts()
+                .then((a) => a.map((x) => x.name))
+                .catch(() => [] as string[])
             : Promise.resolve([] as string[]),
         ]);
-        const newSuggestions = await options.pipeline.suggestPlaybookHunts(req.params.id, [task], artifactNames, { excludeVql });
-        const persisted = options.playbookHuntStore ? await options.playbookHuntStore.load(req.params.id) : { ...EMPTY_PERSISTED_HUNTS };
+        const newSuggestions = await options.pipeline.suggestPlaybookHunts(
+          req.params.id,
+          [task],
+          artifactNames,
+          { excludeVql },
+        );
+        const persisted = options.playbookHuntStore
+          ? await options.playbookHuntStore.load(req.params.id)
+          : { ...EMPTY_PERSISTED_HUNTS };
         // Replace the old suggestion for this task (if any) and keep everything else.
         const kept = (persisted.suggestions ?? []).filter((s) => s.taskId !== regenTaskId);
         const merged: typeof persisted = {
@@ -179,19 +237,28 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
           suggestions: [...kept, ...newSuggestions.filter((s) => s.taskId === regenTaskId)],
           taskHashes: { ...persisted.taskHashes },
         };
-        logLine(`[velociraptor] playbook hunt regen for task ${regenTaskId} in ${req.params.id}: ${newSuggestions.length} suggestion(s)`);
+        logLine(
+          `[velociraptor] playbook hunt regen for task ${regenTaskId} in ${req.params.id}: ${newSuggestions.length} suggestion(s)`,
+        );
         if (options.playbookHuntStore) {
-          try { await options.playbookHuntStore.save(req.params.id, merged); }
-          catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+          try {
+            await options.playbookHuntStore.save(req.params.id, merged);
+          } catch (e) {
+            logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`);
+          }
         }
-        return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: false });
+        return res
+          .status(200)
+          .json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: false });
       }
 
       // INCREMENTAL (#70): keep the suggestions whose task is unchanged and only generate for NEW or
       // CHANGED tasks — so adding one task and pressing Generate sends just that task to the model and
       // never re-does the hunts that already exist. `force:true` regenerates everything from scratch.
       const force = req.body?.force === true;
-      const persisted = options.playbookHuntStore ? await options.playbookHuntStore.load(req.params.id) : { ...EMPTY_PERSISTED_HUNTS };
+      const persisted = options.playbookHuntStore
+        ? await options.playbookHuntStore.load(req.params.id)
+        : { ...EMPTY_PERSISTED_HUNTS };
       const fresh = force ? { suggestions: [], taskHashes: {} } : selectFreshHunts(persisted, tasks);
       const pending = pendingHuntTasks(tasks, fresh.taskHashes);
       // Concurrently (best-effort, no-op when the API is off): refresh the client inventory so a host
@@ -201,16 +268,25 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       // The artifact list may come from the client's short-TTL catalog cache — fine here: it only steers
       // the model's suggestions (already best-effort, `catch → []`), and run-bundle/deploy re-checks.
       const [, artifactNames] = await Promise.all([
-        refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`); return 0; }),
+        refreshVeloClients().catch((e) => {
+          logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`);
+          return 0;
+        }),
         pending.length && options.velociraptorClient
-          ? options.velociraptorClient.listClientArtifacts().then((a) => a.map((x) => x.name)).catch(() => [] as string[])
+          ? options.velociraptorClient
+              .listClientArtifacts()
+              .then((a) => a.map((x) => x.name))
+              .catch(() => [] as string[])
           : Promise.resolve([] as string[]),
       ]);
       // Keep only suggestions FOR the pending tasks — so a model that echoes a wrong taskId can't
       // duplicate or clobber a kept (covered) suggestion. fresh + new then have disjoint task ids.
       const pendingIds = new Set(pending.map((t) => t.id));
-      const newSuggestions = (pending.length ? await options.pipeline.suggestPlaybookHunts(req.params.id, pending, artifactNames) : [])
-        .filter((s) => pendingIds.has(s.taskId));
+      const newSuggestions = (
+        pending.length
+          ? await options.pipeline.suggestPlaybookHunts(req.params.id, pending, artifactNames)
+          : []
+      ).filter((s) => pendingIds.has(s.taskId));
       // Which pending tasks to mark "evaluated" (won't be re-sent): if the model hit the per-generation
       // cap there may be MORE pending tasks it never got to — stamp only the ones it actually hunted, so
       // the rest are retried on the next press. Otherwise it saw every pending task → stamp them all
@@ -220,13 +296,20 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       const suggestedIds = new Set(newSuggestions.map((s) => s.taskId));
       const evaluatedTasks = truncated ? pending.filter((t) => suggestedIds.has(t.id)) : pending;
       const merged = mergePersistedHunts(fresh, newSuggestions, evaluatedTasks, new Date().toISOString());
-      logLine(`[velociraptor] playbook hunts for ${req.params.id}: ${newSuggestions.length} new (of ${pending.length} pending task(s))${truncated ? " [cap hit — press again for more]" : ""}, ${merged.suggestions.length} total`);
+      logLine(
+        `[velociraptor] playbook hunts for ${req.params.id}: ${newSuggestions.length} new (of ${pending.length} pending task(s))${truncated ? " [cap hit — press again for more]" : ""}, ${merged.suggestions.length} total`,
+      );
       // Persist so the set survives a refresh + future incremental generates. Best-effort.
       if (options.playbookHuntStore) {
-        try { await options.playbookHuntStore.save(req.params.id, merged); }
-        catch (e) { logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`); }
+        try {
+          await options.playbookHuntStore.save(req.params.id, merged);
+        } catch (e) {
+          logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`);
+        }
       }
-      return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: truncated });
+      return res
+        .status(200)
+        .json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: truncated });
     } catch (err) {
       return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
@@ -254,20 +337,26 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     const input: NewPlaybookTask = {
       title,
       description: typeof req.body?.description === "string" ? req.body.description : undefined,
-      status: PLAYBOOK_STATUSES.includes(req.body?.status as PlaybookStatus) ? (req.body.status as PlaybookStatus) : undefined,
+      status: PLAYBOOK_STATUSES.includes(req.body?.status as PlaybookStatus)
+        ? (req.body.status as PlaybookStatus)
+        : undefined,
       priority: typeof req.body?.priority === "string" ? req.body.priority : undefined,
       assignee: typeof req.body?.assignee === "string" ? req.body.assignee : undefined,
       dueDate: typeof req.body?.dueDate === "string" ? req.body.dueDate : undefined,
       notes: typeof req.body?.notes === "string" ? req.body.notes : undefined,
-      relatedFindingId: typeof req.body?.relatedFindingId === "string" ? req.body.relatedFindingId : undefined,
+      relatedFindingId:
+        typeof req.body?.relatedFindingId === "string" ? req.body.relatedFindingId : undefined,
     };
     try {
       const task = await options.playbookStore.add(req.params.id, input);
       options.onPlaybook?.(req.params.id);
       dispatchNotify(playbookTaskEvent(req.params.id, task, "added", new Date().toISOString()));
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "playbook", action: "task-added",
-        detail: `task added: "${task.title}"`, targetType: "playbook-task", targetId: task.id,
+        category: "playbook",
+        action: "task-added",
+        detail: `task added: "${task.title}"`,
+        targetType: "playbook-task",
+        targetId: task.id,
       });
       return res.status(201).json(task);
     } catch (err) {
@@ -293,12 +382,21 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       // Notify only on a STATUS change (the meaningful playbook signal) — "completed" when it lands
       // on done, "updated" otherwise. Pure metadata edits (notes/assignee) stay quiet to avoid noise.
       if (patch.status) {
-        dispatchNotify(playbookTaskEvent(req.params.id, updated, updated.status === "done" ? "completed" : "updated", new Date().toISOString()));
+        dispatchNotify(
+          playbookTaskEvent(
+            req.params.id,
+            updated,
+            updated.status === "done" ? "completed" : "updated",
+            new Date().toISOString(),
+          ),
+        );
       }
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "playbook", action: "task-updated",
+        category: "playbook",
+        action: "task-updated",
         detail: `task "${updated.title}" — ${Object.keys(patch).join(", ")} changed${patch.status ? ` (status: ${updated.status})` : ""}`,
-        targetType: "playbook-task", targetId: updated.id,
+        targetType: "playbook-task",
+        targetId: updated.id,
       });
       return res.status(200).json(updated);
     } catch (err) {
@@ -314,8 +412,11 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       if (!removed) return res.status(404).json({ error: "playbook task not found" });
       options.onPlaybook?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "playbook", action: "task-removed", detail: `task ${req.params.taskId} removed`,
-        targetType: "playbook-task", targetId: req.params.taskId,
+        category: "playbook",
+        action: "task-removed",
+        detail: `task ${req.params.taskId} removed`,
+        targetType: "playbook-task",
+        targetId: req.params.taskId,
       });
       return res.status(204).end();
     } catch (err) {

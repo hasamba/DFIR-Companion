@@ -34,11 +34,11 @@ export function timestompThresholdMs(): number {
 export type TimestompSignal = "backdated" | "subsecond-zeroed";
 
 export interface TimestompVerdict {
-  mitre: string[];             // always ["T1070.006"]
+  mitre: string[]; // always ["T1070.006"]
   severity: "Medium";
-  signals: TimestompSignal[];  // which fingerprint(s) fired, worst-first (backdated before subsecond)
-  note: string;                // human-readable, appended to the event description
-  deltaMs: number;             // fnCreated - siCreated (signed, positive ⇒ $SI is earlier)
+  signals: TimestompSignal[]; // which fingerprint(s) fired, worst-first (backdated before subsecond)
+  note: string; // human-readable, appended to the event description
+  deltaMs: number; // fnCreated - siCreated (signed, positive ⇒ $SI is earlier)
 }
 
 // Sentinel date prefixes that mean "unset" in MFT output (FILETIME 0 / .NET min date) — never a real
@@ -52,8 +52,8 @@ const MIN_VALID_MS = Date.parse("1970-01-02T00:00:00Z"); // reject epoch-0 / pre
 function parseMs(raw: string): number {
   const t = raw.trim();
   if (!t || UNSET_PREFIXES.some((p) => t.startsWith(p))) return NaN;
-  let s = t.replace(" ", "T");            // naive "date time" → ISO "dateTtime"
-  s = s.replace(/(\.\d{3})\d+/, "$1");    // truncate >3-digit fraction so Date.parse accepts it
+  let s = t.replace(" ", "T"); // naive "date time" → ISO "dateTtime"
+  s = s.replace(/(\.\d{3})\d+/, "$1"); // truncate >3-digit fraction so Date.parse accepts it
   if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) s += "Z"; // no zone ⇒ UTC (EZ tools emit UTC)
   const ms = Date.parse(s);
   return Number.isFinite(ms) && ms >= MIN_VALID_MS ? ms : NaN;
@@ -71,7 +71,9 @@ function hasNonZeroSubSecond(raw: string): boolean {
 
 function humanizeDelta(ms: number): string {
   const abs = Math.abs(ms);
-  const day = 86_400_000, hour = 3_600_000, min = 60_000;
+  const day = 86_400_000,
+    hour = 3_600_000,
+    min = 60_000;
   if (abs >= day) {
     const d = Math.floor(abs / day);
     return d >= 365 ? `${Math.floor(d / 365)}y ${Math.floor((d % 365) / 30)}mo` : `${d}d`;

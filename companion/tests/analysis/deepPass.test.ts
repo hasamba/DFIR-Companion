@@ -1,15 +1,26 @@
 import { describe, it, expect } from "vitest";
 import {
-  previewFloors, planBatches, DEFAULT_MAX_BATCHES,
-  sanitizeObservations, renderObservationDigest, OBSERVATION_CAP_PER_BATCH,
-  digestFitsBudget, planCondenseRounds, MAX_CONDENSE_ROUNDS,
+  previewFloors,
+  planBatches,
+  DEFAULT_MAX_BATCHES,
+  sanitizeObservations,
+  renderObservationDigest,
+  OBSERVATION_CAP_PER_BATCH,
+  digestFitsBudget,
+  planCondenseRounds,
+  MAX_CONDENSE_ROUNDS,
 } from "../../src/analysis/deepPass.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, t: string, sev: Severity, desc = id, asset?: string): ForensicEvent {
   return {
-    id, timestamp: t, description: desc, severity: sev,
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    id,
+    timestamp: t,
+    description: desc,
+    severity: sev,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...(asset ? { asset } : {}),
   };
 }
@@ -19,16 +30,21 @@ function mixedCase(): ForensicEvent[] {
   const out: ForensicEvent[] = [];
   const add = (n: number, sev: Severity, prefix: string) => {
     for (let i = 0; i < n; i++) {
-      out.push(ev(
-        `${prefix}${i}`,
-        `2026-05-20T${String(i % 24).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
-        sev,
-        `${prefix} distinct ${prefix}${i}`,
-      ));
+      out.push(
+        ev(
+          `${prefix}${i}`,
+          `2026-05-20T${String(i % 24).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+          sev,
+          `${prefix} distinct ${prefix}${i}`,
+        ),
+      );
     }
   };
-  add(40, "Critical", "crit"); add(60, "High", "high"); add(100, "Medium", "med");
-  add(200, "Low", "low"); add(50, "Info", "info");
+  add(40, "Critical", "crit");
+  add(60, "High", "high");
+  add(100, "Medium", "med");
+  add(200, "Low", "low");
+  add(50, "Info", "info");
   return out;
 }
 
@@ -38,17 +54,17 @@ describe("previewFloors", () => {
     const byFloor = Object.fromEntries(rows.map((r) => [r.floor, r]));
 
     expect(byFloor.Critical.events).toBe(40);
-    expect(byFloor.High.events).toBe(100);      // Critical + High
+    expect(byFloor.High.events).toBe(100); // Critical + High
     expect(byFloor.Medium.events).toBe(200);
-    expect(byFloor.Low.events).toBe(400);       // everything except the 50 Info
+    expect(byFloor.Low.events).toBe(400); // everything except the 50 Info
     expect(rows.every((r) => r.events <= 400)).toBe(true);
   });
 
   it("computes batch counts from the rows that survive grouping", () => {
     const rows = previewFloors(mixedCase(), { cap: 100 });
     const low = rows.find((r) => r.floor === "Low")!;
-    expect(low.rows).toBe(400);                 // nothing groups: all descriptions distinct
-    expect(low.batches).toBe(4);                // ceil(400 / 100)
+    expect(low.rows).toBe(400); // nothing groups: all descriptions distinct
+    expect(low.batches).toBe(4); // ceil(400 / 100)
     const crit = rows.find((r) => r.floor === "Critical")!;
     expect(crit.batches).toBe(1);
   });
@@ -70,14 +86,19 @@ describe("previewFloors", () => {
   });
 
   it("orders floors most-severe first", () => {
-    expect(previewFloors(mixedCase(), { cap: 100 }).map((r) => r.floor))
-      .toEqual(["Critical", "High", "Medium", "Low"]);
+    expect(previewFloors(mixedCase(), { cap: 100 }).map((r) => r.floor)).toEqual([
+      "Critical",
+      "High",
+      "Medium",
+      "Low",
+    ]);
   });
 });
 
 describe("planBatches", () => {
   const rows = Array.from({ length: 250 }, (_, i) =>
-    ev(`e${i}`, `2026-05-20T${String(i % 24).padStart(2, "0")}:00:00Z`, "High"));
+    ev(`e${i}`, `2026-05-20T${String(i % 24).padStart(2, "0")}:00:00Z`, "High"),
+  );
 
   it("splits into chronological chunks of at most the cap", () => {
     const batches = planBatches(rows, 100);
@@ -111,7 +132,18 @@ describe("sanitizeObservations", () => {
 
   it("keeps a well-formed observation and its known event ids", () => {
     const out = sanitizeObservations(
-      { observations: [{ summary: "archive staged", hosts: ["ws-01"], firstSeen: "2026-05-20T09:00:00Z", lastSeen: "2026-05-20T09:30:00Z", eventIds: ["e1", "e2"], whyItMatters: "precedes an upload" }] },
+      {
+        observations: [
+          {
+            summary: "archive staged",
+            hosts: ["ws-01"],
+            firstSeen: "2026-05-20T09:00:00Z",
+            lastSeen: "2026-05-20T09:30:00Z",
+            eventIds: ["e1", "e2"],
+            whyItMatters: "precedes an upload",
+          },
+        ],
+      },
       valid,
     );
     expect(out).toHaveLength(1);
@@ -127,12 +159,21 @@ describe("sanitizeObservations", () => {
   });
 
   it("drops an observation left with no real evidence", () => {
-    expect(sanitizeObservations({ observations: [{ summary: "x", eventIds: ["ghost"], whyItMatters: "y" }] }, valid)).toEqual([]);
+    expect(
+      sanitizeObservations(
+        { observations: [{ summary: "x", eventIds: ["ghost"], whyItMatters: "y" }] },
+        valid,
+      ),
+    ).toEqual([]);
   });
 
   it("ignores a severity or finding field a batch tried to smuggle in", () => {
     const out = sanitizeObservations(
-      { observations: [{ summary: "x", eventIds: ["e1"], whyItMatters: "y", severity: "Critical", title: "Ransomware" }] },
+      {
+        observations: [
+          { summary: "x", eventIds: ["e1"], whyItMatters: "y", severity: "Critical", title: "Ransomware" },
+        ],
+      },
       valid,
     );
     expect(out).toHaveLength(1);
@@ -141,7 +182,11 @@ describe("sanitizeObservations", () => {
   });
 
   it("caps how many observations one batch can contribute", () => {
-    const many = Array.from({ length: OBSERVATION_CAP_PER_BATCH + 10 }, (_, i) => ({ summary: `s${i}`, eventIds: ["e1"], whyItMatters: "w" }));
+    const many = Array.from({ length: OBSERVATION_CAP_PER_BATCH + 10 }, (_, i) => ({
+      summary: `s${i}`,
+      eventIds: ["e1"],
+      whyItMatters: "w",
+    }));
     expect(sanitizeObservations({ observations: many }, valid)).toHaveLength(OBSERVATION_CAP_PER_BATCH);
   });
 
@@ -156,7 +201,14 @@ describe("sanitizeObservations", () => {
 describe("renderObservationDigest", () => {
   it("renders each observation with its hosts, window and event ids", () => {
     const block = renderObservationDigest([
-      { summary: "archive staged", hosts: ["ws-01"], firstSeen: "2026-05-20T09:00:00Z", lastSeen: "2026-05-20T09:30:00Z", eventIds: ["e1"], whyItMatters: "precedes an upload" },
+      {
+        summary: "archive staged",
+        hosts: ["ws-01"],
+        firstSeen: "2026-05-20T09:00:00Z",
+        lastSeen: "2026-05-20T09:30:00Z",
+        eventIds: ["e1"],
+        whyItMatters: "precedes an upload",
+      },
     ]);
     expect(block).toContain("archive staged");
     expect(block).toContain("ws-01");
@@ -175,11 +227,12 @@ describe("renderObservationDigest", () => {
 });
 
 describe("condensing", () => {
-  const obs = (n: number) => Array.from({ length: n }, (_, i) => ({
-    summary: `observation number ${i} with a reasonably long factual summary line`,
-    whyItMatters: "it precedes an outbound transfer",
-    eventIds: [`e${i}`],
-  }));
+  const obs = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      summary: `observation number ${i} with a reasonably long factual summary line`,
+      whyItMatters: "it precedes an outbound transfer",
+      eventIds: [`e${i}`],
+    }));
 
   it("fits when the digest is under budget", () => {
     expect(digestFitsBudget(obs(5), 100_000)).toBe(true);

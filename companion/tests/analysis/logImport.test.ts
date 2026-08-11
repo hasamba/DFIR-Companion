@@ -8,7 +8,8 @@ describe("parseLogLines", () => {
   });
 
   it("splits on LF, CRLF and CR; trims trailing whitespace; drops blank lines", () => {
-    const text = "May 28 09:00:01 host sshd[1]: Failed\r\nMay 28 09:00:02 host sshd[2]: Accepted\r\n\nMay 28 09:00:03 host kernel: drop\n";
+    const text =
+      "May 28 09:00:01 host sshd[1]: Failed\r\nMay 28 09:00:02 host sshd[2]: Accepted\r\n\nMay 28 09:00:03 host kernel: drop\n";
     expect(parseLogLines(text).lines).toEqual([
       "May 28 09:00:01 host sshd[1]: Failed",
       "May 28 09:00:02 host sshd[2]: Accepted",

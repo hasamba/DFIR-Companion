@@ -48,9 +48,7 @@ export async function pollFor<T>(
       // observed. "never reached the state, last saw X after N attempts in Ms" is the difference
       // between a diagnosable failure and one that gets waved away as flake (issue #173).
       const what = typeof description === "function" ? description() : description;
-      throw new Error(
-        `timed out after ${timeoutMs}ms (${attempts} attempts) waiting for: ${what}`,
-      );
+      throw new Error(`timed out after ${timeoutMs}ms (${attempts} attempts) waiting for: ${what}`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }

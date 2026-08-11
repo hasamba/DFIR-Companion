@@ -23,8 +23,8 @@ export interface ProviderUsage {
   inputTokens?: number;
   outputTokens?: number;
   cacheCreationTokens?: number; // input tokens written to the cache on this call
-  cacheReadTokens?: number;     // input tokens served from the cache on this call
-  costUSD?: number;             // real dollar cost, when the provider reports one (OpenRouter only today)
+  cacheReadTokens?: number; // input tokens served from the cache on this call
+  costUSD?: number; // real dollar cost, when the provider reports one (OpenRouter only today)
   // The concrete model id the provider actually served the request with, when it differs from (or
   // resolves) the configured DFIR_*_MODEL — e.g. an alias like "sonnet" resolving to
   // "claude-sonnet-4-6". Only the claude-code provider reports this today (its CLI's result event
@@ -37,10 +37,14 @@ export interface AnalyzeResult {
   usage?: ProviderUsage; // present only when the provider reports token usage
 }
 
-export type ProviderErrorKind = "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "context" | "other";
+export type ProviderErrorKind =
+  "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "context" | "other";
 
 export class ProviderError extends Error {
-  constructor(message: string, readonly kind: ProviderErrorKind) {
+  constructor(
+    message: string,
+    readonly kind: ProviderErrorKind,
+  ) {
     super(message);
     this.name = "ProviderError";
   }
@@ -61,15 +65,23 @@ export function httpErrorKind(status: number): ProviderErrorKind {
 export function httpErrorMessage(provider: string, status: number, body?: string): string {
   const snippet = body ? ` — ${body.replace(/\s+/g, " ").trim().slice(0, 180)}` : "";
   // A 400 about context length is the model rejecting an oversized prompt — say what to DO.
-  if (status === 400 && body && /context length|maximum context|too many tokens|reduce the length/i.test(body)) {
-    return `${provider} HTTP 400 (context too large): the prompt exceeds the model's context window. ` +
+  if (
+    status === 400 &&
+    body &&
+    /context length|maximum context|too many tokens|reduce the length/i.test(body)
+  ) {
+    return (
+      `${provider} HTTP 400 (context too large): the prompt exceeds the model's context window. ` +
       `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
-      `or set DFIR_AI_CONTEXT_TOKENS to your model's real window so the tool trims to fit.${snippet}`;
+      `or set DFIR_AI_CONTEXT_TOKENS to your model's real window so the tool trims to fit.${snippet}`
+    );
   }
   switch (status) {
     case 402:
-      return `${provider} HTTP 402 (payment required): the ${provider} account is out of credits or has no active billing. ` +
-        `Add credits/billing on the provider, or switch the AI model (DFIR_VISION_* for screenshots, DFIR_AI_SYNTH_* for text — e.g. a cheaper model, OpenRouter, or local Ollama).${snippet}`;
+      return (
+        `${provider} HTTP 402 (payment required): the ${provider} account is out of credits or has no active billing. ` +
+        `Add credits/billing on the provider, or switch the AI model (DFIR_VISION_* for screenshots, DFIR_AI_SYNTH_* for text — e.g. a cheaper model, OpenRouter, or local Ollama).${snippet}`
+      );
     case 401:
     case 403:
       return `${provider} HTTP ${status} (auth): the API key is missing, invalid, or lacks access to the model. Check the AI key/model config (DFIR_VISION_* for screenshots, DFIR_AI_SYNTH_* for text).${snippet}`;
@@ -107,7 +119,11 @@ export class ProviderRegistry {
 }
 
 export class MockProvider implements AIProvider {
-  constructor(readonly name: string, private readonly canned: string, readonly model: string = "mock-model") {}
+  constructor(
+    readonly name: string,
+    private readonly canned: string,
+    readonly model: string = "mock-model",
+  ) {}
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     return { rawText: this.canned };
   }

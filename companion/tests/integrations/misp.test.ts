@@ -1,25 +1,47 @@
 import { describe, it, expect } from "vitest";
 import { pushCaseToMisp } from "../../src/integrations/misp/mispPush.js";
 import type {} from "../../src/integrations/misp/mispPush.js";
-import type { MispPushClientLike, MispEventCreate, MispAttrRef, MispAttrBody } from "../../src/integrations/misp/mispPushClient.js";
-import { emptyState, type InvestigationState, type IOC, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type {
+  MispPushClientLike,
+  MispEventCreate,
+  MispAttrRef,
+  MispAttrBody,
+} from "../../src/integrations/misp/mispPushClient.js";
+import {
+  emptyState,
+  type InvestigationState,
+  type IOC,
+  type Finding,
+  type ForensicEvent,
+} from "../../src/analysis/stateTypes.js";
 
 function ioc(over: Partial<IOC> & { value: string; type: IOC["type"] }): IOC {
   return { id: over.value, firstSeen: "2026-06-08T00:00:00Z", ...over };
 }
 
-function event(over: Partial<ForensicEvent> & { id: string; timestamp: string; description: string }): ForensicEvent {
+function event(
+  over: Partial<ForensicEvent> & { id: string; timestamp: string; description: string },
+): ForensicEvent {
   return {
-    severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...over,
   };
 }
 
 function finding(over: Partial<Finding> & { id: string; title: string }): Finding {
   return {
-    severity: "High", description: "", relatedIocs: [], sourceScreenshots: [],
-    mitreTechniques: [], firstSeen: "2026-06-08T00:00:00Z", lastUpdated: "2026-06-08T00:00:00Z",
-    status: "open", ...over,
+    severity: "High",
+    description: "",
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "2026-06-08T00:00:00Z",
+    lastUpdated: "2026-06-08T00:00:00Z",
+    status: "open",
+    ...over,
   };
 }
 
@@ -34,15 +56,25 @@ class MockMispClient implements MispPushClientLike {
   existingEventId: string | null = null;
   private seq = 1;
 
-  async ping() { this.pinged = true; }
-  async findEventByTag(_tag: string) { return this.existingEventId; }
+  async ping() {
+    this.pinged = true;
+  }
+  async findEventByTag(_tag: string) {
+    return this.existingEventId;
+  }
   async createEvent(body: MispEventCreate) {
     this.createdEvents.push(body);
     return String(this.seq++);
   }
-  async addTagToEvent(eventId: string, tag: string) { this.addedTags.push({ eventId, tag }); }
-  async listAttributes(_eventId: string) { return this.existingAttrs; }
-  async addAttribute(eventId: string, body: MispAttrBody) { this.addedAttributes.push({ eventId, body }); }
+  async addTagToEvent(eventId: string, tag: string) {
+    this.addedTags.push({ eventId, tag });
+  }
+  async listAttributes(_eventId: string) {
+    return this.existingAttrs;
+  }
+  async addAttribute(eventId: string, body: MispAttrBody) {
+    this.addedAttributes.push({ eventId, body });
+  }
 }
 
 function sampleState(): InvestigationState {
@@ -53,7 +85,9 @@ function sampleState(): InvestigationState {
       ioc({ value: "evil.com", type: "domain" }),
       ioc({ value: "d41d8cd98f00b204e9800998ecf8427e", type: "hash" }),
     ],
-    findings: [finding({ id: "f1", title: "C2 beacon", severity: "High", mitreTechniques: ["T1071", "T1059"] })],
+    findings: [
+      finding({ id: "f1", title: "C2 beacon", severity: "High", mitreTechniques: ["T1071", "T1059"] }),
+    ],
   };
 }
 
@@ -62,7 +96,11 @@ function sampleState(): InvestigationState {
 describe("pushCaseToMisp", () => {
   it("pings, creates event, attaches case tag, adds attributes and MITRE tags", async () => {
     const m = new MockMispClient();
-    const res = await pushCaseToMisp(m, { caseId: "case-alpha", state: sampleState() }, { baseUrl: "https://misp.example.org/" });
+    const res = await pushCaseToMisp(
+      m,
+      { caseId: "case-alpha", state: sampleState() },
+      { baseUrl: "https://misp.example.org/" },
+    );
 
     expect(m.pinged).toBe(true);
     expect(res.created).toBe(true);
@@ -80,7 +118,7 @@ describe("pushCaseToMisp", () => {
     const attrTypes = m.addedAttributes.map((a) => a.body.type);
     expect(attrTypes).toContain("ip-dst");
     expect(attrTypes).toContain("domain");
-    expect(attrTypes).toContain("md5");    // 32-char hash → md5
+    expect(attrTypes).toContain("md5"); // 32-char hash → md5
 
     // MITRE tags
     const mitreTags = m.addedTags.filter((t) => t.tag.startsWith("mitre-attack:"));
@@ -94,7 +132,7 @@ describe("pushCaseToMisp", () => {
 
   it("finds the existing event by tag and skips creation on re-push", async () => {
     const m = new MockMispClient();
-    m.existingEventId = "42";   // prior push already exists
+    m.existingEventId = "42"; // prior push already exists
     const res = await pushCaseToMisp(m, { caseId: "case-alpha", state: sampleState() });
     expect(res.created).toBe(false);
     expect(res.eventId).toBe("42");
@@ -104,10 +142,10 @@ describe("pushCaseToMisp", () => {
   it("deduplicates attributes already present in the event (by value, case-insensitive)", async () => {
     const m = new MockMispClient();
     m.existingEventId = "10";
-    m.existingAttrs = [{ type: "ip-dst", value: "8.8.8.8" }];  // already pushed
+    m.existingAttrs = [{ type: "ip-dst", value: "8.8.8.8" }]; // already pushed
     const res = await pushCaseToMisp(m, { caseId: "case-alpha", state: sampleState() });
     expect(res.attributes.existing).toBe(1);
-    expect(res.attributes.added).toBe(2);   // evil.com + hash are new
+    expect(res.attributes.added).toBe(2); // evil.com + hash are new
     const newValues = m.addedAttributes.map((a) => a.body.value);
     expect(newValues).not.toContain("8.8.8.8");
   });
@@ -117,8 +155,8 @@ describe("pushCaseToMisp", () => {
     const state = {
       ...emptyState("c1"),
       iocs: [
-        ioc({ value: "a".repeat(64), type: "hash" }),    // sha256
-        ioc({ value: "b".repeat(40), type: "hash" }),    // sha1
+        ioc({ value: "a".repeat(64), type: "hash" }), // sha256
+        ioc({ value: "b".repeat(40), type: "hash" }), // sha1
       ],
     };
     await pushCaseToMisp(m, { caseId: "c1", state });
@@ -147,7 +185,9 @@ describe("pushCaseToMisp", () => {
 
       expect(res.attributes).toMatchObject({ added: 1, skipped: 0 });
       expect(m.addedAttributes[0].body).toMatchObject({
-        type: "ip-dst", value: "10.10.20.15", comment: "DC01",
+        type: "ip-dst",
+        value: "10.10.20.15",
+        comment: "DC01",
       });
     });
 
@@ -183,7 +223,9 @@ describe("pushCaseToMisp", () => {
       const state = {
         ...emptyState("c-bad"),
         // 66 hex chars — not a recognised digest length; MISP would reject it.
-        iocs: [ioc({ value: "cafe0001002003004005006007008009000a000b000c000d000e000f0010001100", type: "hash" })],
+        iocs: [
+          ioc({ value: "cafe0001002003004005006007008009000a000b000c000d000e000f0010001100", type: "hash" }),
+        ],
       };
       const res = await pushCaseToMisp(m, { caseId: "c-bad", state });
       expect(res.attributes).toMatchObject({ added: 0, skipped: 1 });
@@ -207,18 +249,26 @@ describe("pushCaseToMisp", () => {
 
   it("derives threat level from worst finding severity", async () => {
     const m = new MockMispClient();
-    const highState = { ...emptyState("c3"), iocs: [], findings: [finding({ id: "f1", title: "t", severity: "High" })] };
+    const highState = {
+      ...emptyState("c3"),
+      iocs: [],
+      findings: [finding({ id: "f1", title: "t", severity: "High" })],
+    };
     await pushCaseToMisp(m, { caseId: "c3", state: highState });
-    expect(m.createdEvents[0].threat_level_id).toBe("1");   // High/Critical → 1
+    expect(m.createdEvents[0].threat_level_id).toBe("1"); // High/Critical → 1
 
     const m2 = new MockMispClient();
-    const medState = { ...emptyState("c4"), iocs: [], findings: [finding({ id: "f1", title: "t", severity: "Medium" })] };
+    const medState = {
+      ...emptyState("c4"),
+      iocs: [],
+      findings: [finding({ id: "f1", title: "t", severity: "Medium" })],
+    };
     await pushCaseToMisp(m2, { caseId: "c4", state: medState });
     expect(m2.createdEvents[0].threat_level_id).toBe("2");
 
     const m3 = new MockMispClient();
     await pushCaseToMisp(m3, { caseId: "c5", state: emptyState("c5") }); // no findings
-    expect(m3.createdEvents[0].threat_level_id).toBe("4");  // Undefined
+    expect(m3.createdEvents[0].threat_level_id).toBe("4"); // Undefined
   });
 
   it("respects distribution and analysis options", async () => {
@@ -257,8 +307,21 @@ describe("pushCaseToMisp", () => {
     const state = {
       ...emptyState("c9"),
       forensicTimeline: [
-        event({ id: "e1", timestamp: "2026-06-08T01:00:00Z", description: "Malicious process launched", asset: "HOST-01", sources: ["Velociraptor"], mitreTechniques: ["T1059"] }),
-        event({ id: "e2", timestamp: "2026-06-08T02:00:00Z", endTimestamp: "2026-06-08T02:05:00Z", description: "C2 beacon burst", count: 12 }),
+        event({
+          id: "e1",
+          timestamp: "2026-06-08T01:00:00Z",
+          description: "Malicious process launched",
+          asset: "HOST-01",
+          sources: ["Velociraptor"],
+          mitreTechniques: ["T1059"],
+        }),
+        event({
+          id: "e2",
+          timestamp: "2026-06-08T02:00:00Z",
+          endTimestamp: "2026-06-08T02:05:00Z",
+          description: "C2 beacon burst",
+          count: 12,
+        }),
       ],
     };
     const res = await pushCaseToMisp(m, { caseId: "c9", state });
@@ -284,7 +347,9 @@ describe("pushCaseToMisp", () => {
     m.existingEventId = "77";
     const state = {
       ...emptyState("c10"),
-      forensicTimeline: [event({ id: "e1", timestamp: "2026-06-08T01:00:00Z", description: "Malicious process launched" })],
+      forensicTimeline: [
+        event({ id: "e1", timestamp: "2026-06-08T01:00:00Z", description: "Malicious process launched" }),
+      ],
     };
     // Pre-seed the exact value the mapper would produce for this event.
     m.existingAttrs = [{ type: "text", value: "[2026-06-08T01:00:00Z] Malicious process launched" }];
@@ -298,8 +363,19 @@ describe("pushCaseToMisp", () => {
   it("caps an oversized timeline, keeping the most severe events", async () => {
     const m = new MockMispClient();
     const noise = Array.from({ length: 20 }, (_, i) =>
-      event({ id: `info${i}`, timestamp: `2026-06-08T00:00:${String(i).padStart(2, "0")}Z`, description: `noise ${i}`, severity: "Info" }));
-    const critical = event({ id: "crit", timestamp: "2026-06-08T23:00:00Z", description: "ransomware deployed", severity: "Critical" });
+      event({
+        id: `info${i}`,
+        timestamp: `2026-06-08T00:00:${String(i).padStart(2, "0")}Z`,
+        description: `noise ${i}`,
+        severity: "Info",
+      }),
+    );
+    const critical = event({
+      id: "crit",
+      timestamp: "2026-06-08T23:00:00Z",
+      description: "ransomware deployed",
+      severity: "Critical",
+    });
     const state = { ...emptyState("c12"), forensicTimeline: [...noise, critical] };
 
     const res = await pushCaseToMisp(m, { caseId: "c12", state }, { timelineLimit: 5 });
@@ -316,11 +392,15 @@ describe("pushCaseToMisp", () => {
   it("aborts the timeline push after repeated MISP failures instead of retrying every event", async () => {
     const m = new MockMispClient();
     let calls = 0;
-    m.addAttribute = async () => { calls += 1; throw new Error("MISP HTTP 500"); };
+    m.addAttribute = async () => {
+      calls += 1;
+      throw new Error("MISP HTTP 500");
+    };
     const state = {
       ...emptyState("c13"),
       forensicTimeline: Array.from({ length: 500 }, (_, i) =>
-        event({ id: `e${i}`, timestamp: `2026-06-08T01:00:00Z`, description: `event ${i}` })),
+        event({ id: `e${i}`, timestamp: `2026-06-08T01:00:00Z`, description: `event ${i}` }),
+      ),
     };
 
     const res = await pushCaseToMisp(m, { caseId: "c13", state });

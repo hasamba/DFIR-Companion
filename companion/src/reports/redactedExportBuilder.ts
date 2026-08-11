@@ -6,8 +6,17 @@ import type { ReportWriter } from "./reportWriter.js";
 import type { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import type { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import type { CustomerStore } from "../analysis/customerStore.js";
-import { createAnonymizer, deriveKnownEntities, type CustomEntity, type KnownEntities } from "../analysis/anonymize.js";
-import { redactScreenshot, type ScreenshotRedactOptions, type ScreenshotRedactResult } from "../analysis/imageRedact.js";
+import {
+  createAnonymizer,
+  deriveKnownEntities,
+  type CustomEntity,
+  type KnownEntities,
+} from "../analysis/anonymize.js";
+import {
+  redactScreenshot,
+  type ScreenshotRedactOptions,
+  type ScreenshotRedactResult,
+} from "../analysis/imageRedact.js";
 import type { OcrRunner } from "../analysis/ocrRedact.js";
 import { createZip } from "../analysis/zipArchive.js";
 import { getAppVersion } from "../version.js";
@@ -79,7 +88,9 @@ export async function buildRedactedExport(
       const meta = await deps.reportMetaStore.load(caseId);
       const org = meta.organization?.trim();
       if (org) orgEntity = [{ value: org, category: "OTHER" as const }];
-    } catch { /* no meta or corrupt — skip; the org name stays as-is */ }
+    } catch {
+      /* no meta or corrupt — skip; the org name stays as-is */
+    }
   }
   const known: KnownEntities = {
     hosts: derived.hosts,
@@ -107,7 +118,12 @@ export async function buildRedactedExport(
   if (options.includeScreenshots) {
     for (const file of await listScreenshots(caseId)) {
       const buf = await readScreenshot(caseId, file);
-      const result = await redactImage(buf, { policy, known, runner: deps.ocrRunner, blur: options.blurScreenshots });
+      const result = await redactImage(buf, {
+        policy,
+        known,
+        runner: deps.ocrRunner,
+        blur: options.blurScreenshots,
+      });
       screenshots.push({ name: file, data: result.buffer });
       if (result.blurred) screenshotsBlurred++;
       screenshotRedactions += result.redactionCount;
@@ -125,7 +141,10 @@ export async function buildRedactedExport(
   };
   const notes = buildRedactionNotes(summary);
   const entries = assembleRedactedEntries({
-    contents, screenshots, notes, options,
+    contents,
+    screenshots,
+    notes,
+    options,
     // Provenance for the hashed export-manifest.json (#79) — mirrors the whole-case archive manifest.
     manifest: { caseId, exportedAt: new Date().toISOString(), generatedBy: getAppVersion() },
   });

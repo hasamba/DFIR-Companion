@@ -15,7 +15,7 @@ import { repairIocValue } from "./iocValue.js";
 
 export interface IocRepairResult {
   state: InvestigationState;
-  removed: number;   // duplicate rows dropped (same id as an earlier row)
+  removed: number; // duplicate rows dropped (same id as an earlier row)
 }
 
 export function dedupeIocsById(state: InvestigationState): IocRepairResult {
@@ -23,7 +23,10 @@ export function dedupeIocsById(state: InvestigationState): IocRepairResult {
   const kept: IOC[] = [];
   let removed = 0;
   for (const ioc of state.iocs) {
-    if (seen.has(ioc.id)) { removed++; continue; }
+    if (seen.has(ioc.id)) {
+      removed++;
+      continue;
+    }
     seen.add(ioc.id);
     kept.push(ioc);
   }

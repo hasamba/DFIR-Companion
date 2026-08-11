@@ -14,12 +14,7 @@ import {
 } from "../../src/analysis/playbookMatch.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
-const ev = (
-  id: string,
-  timestamp: string,
-  techniques: string[],
-  asset?: string,
-): ForensicEvent => ({
+const ev = (id: string, timestamp: string, techniques: string[], asset?: string): ForensicEvent => ({
   id,
   timestamp,
   description: id,
@@ -78,13 +73,7 @@ describe("observedTechniqueSequence", () => {
     expect(s.map((t) => t.technique)).toEqual(["T1566.001", "T1003.001"]);
     // …and the chain therefore reads as in-order rather than out-of-order.
     const m = matchPlaybook(conti, { scope: "case", techniques: s });
-    expect(m.steps.map((x) => x.status)).toEqual([
-      "matched",
-      "missing",
-      "matched",
-      "missing",
-      "missing",
-    ]);
+    expect(m.steps.map((x) => x.status)).toEqual(["matched", "missing", "matched", "missing", "missing"]);
   });
 
   it("sorts an unparseable timestamp to the END, never to the front of the chain", () => {
@@ -117,11 +106,7 @@ describe("observedSequences", () => {
       ev("e2", "2026-01-01T00:01:00Z", ["T1003.001"], "WKSTN01"),
       ev("e3", "2026-01-01T00:02:00Z", ["T1486"], "DC01"),
     ]);
-    expect(scopes.map((s) => `${s.scope}:${s.host ?? "-"}`)).toEqual([
-      "case:-",
-      "host:DC01",
-      "host:WKSTN01",
-    ]);
+    expect(scopes.map((s) => `${s.scope}:${s.host ?? "-"}`)).toEqual(["case:-", "host:DC01", "host:WKSTN01"]);
     expect(scopes[0].techniques).toHaveLength(3);
   });
 
@@ -147,10 +132,7 @@ describe("observedSequences", () => {
 
 describe("matchPlaybook", () => {
   it("scores a full in-order chain at 100 and marks all steps matched/exact", () => {
-    const m = matchPlaybook(
-      conti,
-      seq("T1566.001", "T1059.001", "T1003.001", "T1021.002", "T1486"),
-    );
+    const m = matchPlaybook(conti, seq("T1566.001", "T1059.001", "T1003.001", "T1021.002", "T1486"));
     expect(m.score).toBe(100);
     expect(m.matchedCount).toBe(5);
     expect(m.exactCount).toBe(5);
@@ -185,13 +167,7 @@ describe("matchPlaybook", () => {
     expect(m.matchedCount).toBe(2);
     expect(m.missingCount).toBe(3);
     expect(m.score).toBe(40);
-    expect(m.steps.map((s) => s.status)).toEqual([
-      "matched",
-      "matched",
-      "missing",
-      "missing",
-      "missing",
-    ]);
+    expect(m.steps.map((s) => s.status)).toEqual(["matched", "matched", "missing", "missing", "missing"]);
   });
 
   it("separates out-of-order steps from missing ones in the counts", () => {
@@ -207,10 +183,7 @@ describe("matchPlaybook", () => {
 
   it("awards partial credit for a base-technique match and ranks it below an exact one", () => {
     // Playbook wants T1059.001 (PowerShell); case observed T1059.003 (cmd) — same base.
-    const m = matchPlaybook(
-      conti,
-      seq("T1566.001", "T1059.003", "T1003.001", "T1021.002", "T1486"),
-    );
+    const m = matchPlaybook(conti, seq("T1566.001", "T1059.003", "T1003.001", "T1021.002", "T1486"));
     expect(m.matchedCount).toBe(5);
     expect(m.exactCount).toBe(4);
     const ps = m.steps.find((s) => s.step.technique === "T1059.001");
@@ -343,13 +316,7 @@ describe("buildPlaybookMatchResult", () => {
       ev("e5", "2026-01-01T00:04:00Z", ["T1486"]),
     ];
     const result = buildPlaybookMatchResult(events, dataset([conti]), { topN: 3 });
-    expect(result.observed).toEqual([
-      "T1566.001",
-      "T1059.001",
-      "T1003.001",
-      "T1021.002",
-      "T1486",
-    ]);
+    expect(result.observed).toEqual(["T1566.001", "T1059.001", "T1003.001", "T1021.002", "T1486"]);
     expect(result.matches).toHaveLength(1);
     expect(result.matches[0].name).toBe("Conti");
     expect(result.matches[0].score).toBe(100);
@@ -366,10 +333,7 @@ describe("buildPlaybookMatchResult", () => {
   });
 
   it("respects topN", () => {
-    const events = [
-      ev("e1", "2026-01-01T00:00:00Z", ["T1078"]),
-      ev("e2", "2026-01-01T00:01:00Z", ["T1486"]),
-    ];
+    const events = [ev("e1", "2026-01-01T00:00:00Z", ["T1078"]), ev("e2", "2026-01-01T00:01:00Z", ["T1486"])];
     const playbooks = Array.from({ length: 5 }, (_, i) => ({
       name: `P${i}`,
       description: "",

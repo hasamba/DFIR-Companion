@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseIrisCase, mapIrisEvent, mapIrisIoc, mapIrisAsset, type IrisCaseData,
+  parseIrisCase,
+  mapIrisEvent,
+  mapIrisIoc,
+  mapIrisAsset,
+  type IrisCaseData,
 } from "../../src/analysis/irisImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
@@ -10,10 +14,13 @@ function timelineRow(over: Record<string, unknown> = {}): Record<string, unknown
   return {
     event_id: 1,
     event_title: "C2 beacon to 185.220.101.5",
-    event_content: "C2 beacon to 185.220.101.5\nAsset: DC01\nSHA256: " + "a".repeat(64) + "\nPath: C:\\Windows\\Temp\\evil.exe\nMITRE: T1071",
+    event_content:
+      "C2 beacon to 185.220.101.5\nAsset: DC01\nSHA256: " +
+      "a".repeat(64) +
+      "\nPath: C:\\Windows\\Temp\\evil.exe\nMITRE: T1071",
     event_date: "2026-06-04T13:00:00.123456",
     event_tz: "+00:00",
-    event_color: "#f97316",   // High
+    event_color: "#f97316", // High
     event_tags: "dfir-companion,high,T1071",
     ...over,
   };
@@ -37,7 +44,7 @@ describe("mapIrisEvent", () => {
   it("reads severity from the event colour, MITRE from tags, and asset/hash/path from the content", () => {
     const sink = new Map<string, SiemIoc>();
     const e = mapIrisEvent(timelineRow(), sink);
-    expect(e.severity).toBe("High");                 // from #f97316
+    expect(e.severity).toBe("High"); // from #f97316
     expect(e.mitre).toContain("T1071");
     expect(e.asset).toBe("DC01");
     expect(e.sha256).toBe("a".repeat(64));
@@ -113,10 +120,10 @@ describe("mapIrisIoc", () => {
 describe("mapIrisAsset", () => {
   it("maps a compromised asset to a High evidence event carrying the asset name", () => {
     const e = mapIrisAsset(assetRow())!;
-    expect(e.severity).toBe("High");                  // compromise status 1
+    expect(e.severity).toBe("High"); // compromise status 1
     expect(e.asset).toBe("DC01");
     expect(e.description).toContain("COMPROMISED");
-    expect(e.timestamp).toBe("");                     // assets are undated
+    expect(e.timestamp).toBe(""); // assets are undated
   });
 
   it("maps an uncompromised asset to an Info event", () => {
@@ -133,17 +140,19 @@ describe("mapIrisAsset", () => {
 
 describe("parseIrisCase", () => {
   it("aggregates timeline + assets into events, dedupes IOCs, and reports counts", () => {
-    const res = parseIrisCase(data({
-      timeline: [timelineRow()],
-      assets: [assetRow()],
-      iocs: [iocRow(), iocRow({ ioc_id: 2, ioc_value: "evil.com", ioc_type: "domain" })],
-      caseName: "Ransomware FS01",
-      irisCaseId: 7,
-    }));
+    const res = parseIrisCase(
+      data({
+        timeline: [timelineRow()],
+        assets: [assetRow()],
+        iocs: [iocRow(), iocRow({ ioc_id: 2, ioc_value: "evil.com", ioc_type: "domain" })],
+        caseName: "Ransomware FS01",
+        irisCaseId: 7,
+      }),
+    );
     expect(res.timelineCount).toBe(1);
     expect(res.assetCount).toBe(1);
     expect(res.iocRecords).toBe(2);
-    expect(res.kept).toBe(2);                          // one timeline event + one asset event
+    expect(res.kept).toBe(2); // one timeline event + one asset event
     expect(res.caseName).toBe("Ransomware FS01");
     expect(res.irisCaseId).toBe(7);
     // IOCs from the ioc list plus the hash/path harvested from the timeline content.
@@ -154,16 +163,21 @@ describe("parseIrisCase", () => {
   });
 
   it("honors includeAssets:false (assets are not turned into events)", () => {
-    const res = parseIrisCase(data({ timeline: [timelineRow()], assets: [assetRow()] }), { includeAssets: false });
-    expect(res.kept).toBe(1);                          // only the timeline event
+    const res = parseIrisCase(data({ timeline: [timelineRow()], assets: [assetRow()] }), {
+      includeAssets: false,
+    });
+    expect(res.kept).toBe(1); // only the timeline event
   });
 
   it("applies the minSeverity floor (drops Info asset events)", () => {
-    const res = parseIrisCase(data({
-      timeline: [timelineRow()],
-      assets: [assetRow({ asset_compromise_status_id: 3 })],   // Info
-    }), { minSeverity: "Medium" });
-    expect(res.kept).toBe(1);                          // High timeline event kept, Info asset dropped
+    const res = parseIrisCase(
+      data({
+        timeline: [timelineRow()],
+        assets: [assetRow({ asset_compromise_status_id: 3 })], // Info
+      }),
+      { minSeverity: "Medium" },
+    );
+    expect(res.kept).toBe(1); // High timeline event kept, Info asset dropped
     expect(res.dropped).toBeGreaterThanOrEqual(1);
   });
 

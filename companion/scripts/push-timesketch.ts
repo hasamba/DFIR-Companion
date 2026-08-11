@@ -27,7 +27,9 @@ async function main(): Promise<void> {
 
   const client = buildTimesketchClient();
   if (!client) {
-    console.error("Timesketch not configured. Set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD in companion/.env.");
+    console.error(
+      "Timesketch not configured. Set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD in companion/.env.",
+    );
     process.exit(1);
   }
 
@@ -47,8 +49,12 @@ async function main(): Promise<void> {
   console.log(`Pushing "${caseId}" to ${process.env.DFIR_TIMESKETCH_URL} …`);
   const res = await pushCaseToTimesketch(client, { sketchName: caseId, state }, timesketchPushOptions());
 
-  console.log(`\nTimesketch sketch #${res.sketchId} ${res.created ? "CREATED" : "UPDATED"} ("${res.sketchName}")`);
-  console.log(`  timeline: "${res.timelineName}"  events: ${res.events}${res.replacedTimeline ? "  (replaced existing)" : ""}`);
+  console.log(
+    `\nTimesketch sketch #${res.sketchId} ${res.created ? "CREATED" : "UPDATED"} ("${res.sketchName}")`,
+  );
+  console.log(
+    `  timeline: "${res.timelineName}"  events: ${res.events}${res.replacedTimeline ? "  (replaced existing)" : ""}`,
+  );
   if (res.sketchUrl) console.log(`  open:     ${res.sketchUrl}`);
   if (res.warnings.length) {
     console.log(`\n  ${res.warnings.length} warning(s):`);
@@ -57,4 +63,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => { console.error("timesketch push error:", (e as Error).message); process.exit(1); });
+main().catch((e) => {
+  console.error("timesketch push error:", (e as Error).message);
+  process.exit(1);
+});

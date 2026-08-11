@@ -10,16 +10,26 @@ import {
 
 describe("parseSshAuth", () => {
   it("parses an accepted password login", () => {
-    expect(parseSshAuth("Accepted password for jordan.lee from 10.66.10.23 port 58209 ssh2"))
-      .toEqual({ result: "accepted", user: "jordan.lee", ip: "10.66.10.23" });
+    expect(parseSshAuth("Accepted password for jordan.lee from 10.66.10.23 port 58209 ssh2")).toEqual({
+      result: "accepted",
+      user: "jordan.lee",
+      ip: "10.66.10.23",
+    });
   });
   it("parses accepted publickey and keyboard-interactive/pam", () => {
-    expect(parseSshAuth("Accepted publickey for root from 203.0.113.9 port 22 ssh2")?.result).toBe("accepted");
-    expect(parseSshAuth("Accepted keyboard-interactive/pam for bob from 8.8.8.8 port 22 ssh2")?.result).toBe("accepted");
+    expect(parseSshAuth("Accepted publickey for root from 203.0.113.9 port 22 ssh2")?.result).toBe(
+      "accepted",
+    );
+    expect(parseSshAuth("Accepted keyboard-interactive/pam for bob from 8.8.8.8 port 22 ssh2")?.result).toBe(
+      "accepted",
+    );
   });
   it("parses failed password (incl. invalid user) and 'Invalid user' as failures", () => {
-    expect(parseSshAuth("Failed password for invalid user admin from 203.0.113.9 port 41022 ssh2"))
-      .toEqual({ result: "failed", user: "admin", ip: "203.0.113.9" });
+    expect(parseSshAuth("Failed password for invalid user admin from 203.0.113.9 port 41022 ssh2")).toEqual({
+      result: "failed",
+      user: "admin",
+      ip: "203.0.113.9",
+    });
     expect(parseSshAuth("Invalid user oracle from 203.0.113.9 port 5000")?.result).toBe("failed");
   });
   it("returns null for non-auth chatter", () => {
@@ -29,8 +39,12 @@ describe("parseSshAuth", () => {
 });
 
 const t = (s: string) => Date.parse(`2024-05-16T${s}Z`);
-const ev = (key: number, hhmmss: string, ip: string, result: "accepted" | "failed"): SshAuthEvent<number> =>
-  ({ key, ms: t(hhmmss), ip, result });
+const ev = (
+  key: number,
+  hhmmss: string,
+  ip: string,
+  result: "accepted" | "failed",
+): SshAuthEvent<number> => ({ key, ms: t(hhmmss), ip, result });
 
 describe("markSshBruteForce", () => {
   it("flags an accepted login after >= minFailures failures from the same IP", () => {

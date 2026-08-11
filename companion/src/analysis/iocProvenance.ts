@@ -10,7 +10,10 @@ export type IocProvenance = "detection" | "telemetry";
 // -1 when no event references it. Boundary-aware exact-token match like iocCorroboration (no false
 // substring hits). Pure, derived on read. This is the shared internal-provenance primitive: both the
 // detection-vs-telemetry classifier (below) and the composite IOC risk score (iocRiskScore.ts) read it.
-export function deriveIocSeverityRank(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, number> {
+export function deriveIocSeverityRank(
+  iocs: readonly IOC[],
+  events: readonly ForensicEvent[],
+): Record<string, number> {
   const out: Record<string, number> = {};
   if (iocs.length === 0) return out;
   const index = new Map<string, number>();
@@ -22,7 +25,11 @@ export function deriveIocSeverityRank(iocs: readonly IOC[], events: readonly For
   };
   for (const e of events) {
     const rank = SEVERITY_RANK[e.severity] ?? 0;
-    add(e.sha256, rank); add(e.md5, rank); add(e.srcIp, rank); add(e.dstIp, rank); add(e.path, rank);
+    add(e.sha256, rank);
+    add(e.md5, rank);
+    add(e.srcIp, rank);
+    add(e.dstIp, rank);
+    add(e.path, rank);
     const tokens = (e.description || "").match(TOKEN_RE);
     if (tokens) for (const t of tokens) add(t, rank);
   }
@@ -36,7 +43,10 @@ export function deriveIocSeverityRank(iocs: readonly IOC[], events: readonly For
 // For each IOC, the max event severity it appears in (across forensic ∪ super events). Low+ =>
 // "detection" (tied to a graded event); Info-only or unmatched => "telemetry". Distinct from the
 // threat-intel verdict (external knowledge) — this is internal provenance.
-export function deriveIocProvenance(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, IocProvenance> {
+export function deriveIocProvenance(
+  iocs: readonly IOC[],
+  events: readonly ForensicEvent[],
+): Record<string, IocProvenance> {
   const ranks = deriveIocSeverityRank(iocs, events);
   const out: Record<string, IocProvenance> = {};
   for (const ioc of iocs) out[ioc.id] = ranks[ioc.id] >= LOW_RANK ? "detection" : "telemetry";

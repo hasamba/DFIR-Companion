@@ -7,7 +7,11 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { TagsStore } from "../../src/analysis/tags.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
-import { ActivityLogStore, type ActivityLogEntry, type NewActivityEntry } from "../../src/analysis/activityLog.js";
+import {
+  ActivityLogStore,
+  type ActivityLogEntry,
+  type NewActivityEntry,
+} from "../../src/analysis/activityLog.js";
 
 // The dashboard refreshes the activity log the moment a collaboration mutation responds, so those
 // routes must await their append instead of firing it and forgetting. The existing suppression
@@ -48,7 +52,10 @@ describe("collaboration activity log is read-after-write consistent", () => {
   it("tag-added is readable the instant POST /tags responds", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "needs-review", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "needs-review",
+      author: "an",
     });
     expect(post.status).toBe(201);
     expect(await actionsAfterResponse(app)).toContain("tag-added");
@@ -57,7 +64,10 @@ describe("collaboration activity log is read-after-write consistent", () => {
   it("tag-removed is readable the instant DELETE /tags responds", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "needs-review", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "needs-review",
+      author: "an",
     });
     const del = await request(app).delete(`/cases/c1/tags/${post.body.id}`);
     expect(del.status).toBe(204);
@@ -67,7 +77,10 @@ describe("collaboration activity log is read-after-write consistent", () => {
   it("comment-added is readable the instant POST /comments responds", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/comments").send({
-      targetType: "event", targetId: "ev1", text: "looks like staging", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      text: "looks like staging",
+      author: "an",
     });
     expect(post.status).toBe(201);
     expect(await actionsAfterResponse(app)).toContain("comment-added");
@@ -76,7 +89,10 @@ describe("collaboration activity log is read-after-write consistent", () => {
   it("comment-removed is readable the instant DELETE /comments responds", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/comments").send({
-      targetType: "event", targetId: "ev1", text: "looks like staging", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      text: "looks like staging",
+      author: "an",
     });
     const del = await request(app).delete(`/cases/c1/comments/${post.body.id}`);
     expect(del.status).toBe(204);
@@ -88,7 +104,10 @@ describe("collaboration activity log is read-after-write consistent", () => {
   it("still logs nothing for the reserved 'starred' tag", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
-      targetType: "event", targetId: "ev1", label: "starred", author: "an",
+      targetType: "event",
+      targetId: "ev1",
+      label: "starred",
+      author: "an",
     });
     expect(post.status).toBe(201);
     expect(await actionsAfterResponse(app)).not.toContain("tag-added");

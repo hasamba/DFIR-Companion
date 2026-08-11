@@ -21,9 +21,17 @@ describe("StarredReportStore", () => {
 
   it("round-trips a saved report", async () => {
     const { store } = await makeStore();
-    await store.save("c1", { markdown: "# Starred Events Report\n\nbody", savedAt: "2026-07-16T10:00:00Z", eventCount: 4 });
+    await store.save("c1", {
+      markdown: "# Starred Events Report\n\nbody",
+      savedAt: "2026-07-16T10:00:00Z",
+      eventCount: 4,
+    });
     const loaded = await store.load("c1");
-    expect(loaded).toEqual({ markdown: "# Starred Events Report\n\nbody", savedAt: "2026-07-16T10:00:00Z", eventCount: 4 });
+    expect(loaded).toEqual({
+      markdown: "# Starred Events Report\n\nbody",
+      savedAt: "2026-07-16T10:00:00Z",
+      eventCount: 4,
+    });
   });
 
   it("overwrites on re-save (single slot)", async () => {

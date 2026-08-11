@@ -12,7 +12,9 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-function worst(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+function worst(a: Severity, b: Severity): Severity {
+  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+}
 
 const DOMAIN_RE = /\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]+)+\b/gi;
 const MARKER = "[initial access:";
@@ -67,7 +69,8 @@ export function linkEmailDelivery(events: ForensicEvent[]): ForensicEvent[] {
           ...e,
           severity: worst(e.severity, "Medium"),
           mitreTechniques: mitre,
-          description: `${e.description ?? ""} ${MARKER} host contacted email-delivered domain ${domain}]`.slice(0, 600),
+          description:
+            `${e.description ?? ""} ${MARKER} host contacted email-delivered domain ${domain}]`.slice(0, 600),
         };
       }
     }

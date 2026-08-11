@@ -11,8 +11,8 @@ export interface DiffIoc {
 }
 
 export interface IocsDiff {
-  added: DiffIoc[];     // IOCs present after, not before (what the import brought in)
-  removed: DiffIoc[];   // IOCs present before, not after (rare — IOCs aren't normally dropped)
+  added: DiffIoc[]; // IOCs present after, not before (what the import brought in)
+  removed: DiffIoc[]; // IOCs present before, not after (rare — IOCs aren't normally dropped)
 }
 
 // First occurrence of each value wins. Keyed by exact value — the same identity mergeDelta dedupes on.

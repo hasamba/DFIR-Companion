@@ -24,11 +24,11 @@ theme block copied out of its stylesheet drops in with no translation.
 
 ## The three tiers
 
-| Tier | Count | What it is | Must a theme define it? |
-|------|-------|------------|-------------------------|
-| A | 25 | The upstream roles, spelled exactly as upstream spells them | Yes |
-| B | 21 | Roles the companion needs and upstream has no equivalent for | No — each derives from tier A |
-| C | 4 | Brand constants, identical in both existing palettes | No — never themed |
+| Tier | Count | What it is                                                   | Must a theme define it?       |
+| ---- | ----- | ------------------------------------------------------------ | ----------------------------- |
+| A    | 25    | The upstream roles, spelled exactly as upstream spells them  | Yes                           |
+| B    | 21    | Roles the companion needs and upstream has no equivalent for | No — each derives from tier A |
+| C    | 4     | Brand constants, identical in both existing palettes         | No — never themed             |
 
 The generated CSS is laid out so that cascade order does the work:
 
@@ -53,7 +53,7 @@ now asserts one marker pair and one block per theme.
 The tier B derivations must sit at bare `:root` and the built-in themes' explicit
 tier B values must sit behind `[data-theme]`. An imported theme is
 `:root[data-theme="nord"]`, specificity (0,2,0); if our explicit `--sev-high` lived
-at bare `:root` then nord — which never sets it — would inherit *our* severity orange
+at bare `:root` then nord — which never sets it — would inherit _our_ severity orange
 instead of deriving its own from nord's `--tag-orange-text`.
 
 The dark tier A values appear twice, at `:root` and in the dark block. The theme
@@ -133,11 +133,11 @@ light theme. That produced `--bg-elevated`. Two low-traffic pairs remain flagged
 
 ## Known conflicts with upstream
 
-**Hover direction.** Upstream's `--accent-hover` is *darker* than `--accent` in dark
+**Hover direction.** Upstream's `--accent-hover` is _darker_ than `--accent` in dark
 themes. The dashboard brightens on hover at 8 of 10 accent-hover call sites and
 darkens at 2. Tier A `--accent-hover` therefore means "brighter" here, and the two
 darkening sites moved to `--accent-solid-hover`. Anyone porting an upstream theme
-should expect its `--accent-hover` value to read as a hover *dimming* and may want
+should expect its `--accent-hover` value to read as a hover _dimming_ and may want
 to swap it.
 
 **Roles we never use.** `--modal-backdrop`, `--tag-blue-text` and `--tag-gray-text`
@@ -161,7 +161,7 @@ Two distinct things are taken from upstream, with different standing:
   MIT notice travels with them in `vendor/themePalettes.ts`, generated into the CSS
   blocks in `dashboard.html`, and recorded in the top-level [`NOTICE`](../../../NOTICE).
 
-No upstream *source code* is included — only colour values and the names they are
+No upstream _source code_ is included — only colour values and the names they are
 keyed by. The combined work stays AGPL; MIT infects nothing.
 
 Several palettes are third-party schemes (Nord, Gruvbox, Catppuccin, Tokyo Night,
@@ -174,14 +174,14 @@ picker is courtesy rather than obligation — worth doing anyway.
 Measured by loading the pre- and post-migration files side by side and comparing the
 computed style of every rendered element:
 
-| | dark | light |
-|---|---|---|
-| elements pixel-identical | 86.3% | 86.9% |
-| call sites unchanged | 75.3% | 75.5% |
-| shift under 10/255 (imperceptible) | 9.8% | 6.3% |
-| shift 10–25 (visible on inspection) | 7.3% | 9.4% |
-| shift over 25 (clearly different) | 3.9% | 5.1% |
-| previously broken, now render | 3.8% | 3.8% |
+|                                     | dark  | light |
+| ----------------------------------- | ----- | ----- |
+| elements pixel-identical            | 86.3% | 86.9% |
+| call sites unchanged                | 75.3% | 75.5% |
+| shift under 10/255 (imperceptible)  | 9.8%  | 6.3%  |
+| shift 10–25 (visible on inspection) | 7.3%  | 9.4%  |
+| shift over 25 (clearly different)   | 3.9%  | 5.1%  |
+| previously broken, now render       | 3.8%  | 3.8%  |
 
 The shifts are the point of the exercise: near-duplicates like `#0d1017` / `#0d1117`
 / `#0f1115` collapse onto one background role, and whichever had the most call sites
@@ -189,7 +189,7 @@ sets the value. Nothing moves further than the role it was assigned.
 
 **42 variables were referenced but never declared** — `var(--c-2b3242)` and friends,
 75 call sites, resolving to nothing so the property fell back to inherited or initial.
-The naming convention makes the intent recoverable (the name *is* the hex), so they
+The naming convention makes the intent recoverable (the name _is_ the hex), so they
 were folded in and now render the colour they always claimed. That is a bug fix
 riding along with a refactor; `npm run theme:map` lists all 42.
 
@@ -201,7 +201,7 @@ riding along with a refactor; `npm run theme:map` lists all 42.
 - **Upstream's `dark` and `light` are skipped.** Ours are tuned against this UI and
   hold the exact pre-refactor colours.
 - **`c64` is rejected on legibility grounds** — body text at 2.26:1 against its
-  background, and an inverted ramp where `--text-muted` (4.09:1) is *more* prominent
+  background, and an inverted ramp where `--text-muted` (4.09:1) is _more_ prominent
   than `--text-primary`. The importer enforces this as a rule about the palette, not a
   hardcoded name, so a future upstream theme with the same defect is caught too. See
   `auditPalette()` in `contrast.ts`.
@@ -213,7 +213,7 @@ theme, and `--hover-wash` in the matching polarity.
 ### The text ramp is solved, not derived
 
 This dashboard uses a five-step text ramp; upstream defines three. The two extra
-steps sit *below* `--text-muted`, and the obvious CSS derivation — mix muted toward
+steps sit _below_ `--text-muted`, and the obvious CSS derivation — mix muted toward
 the background — scales contrast down multiplicatively. That is fine when muted starts
 high and unusable when it does not: upstream ships themes whose muted is already at
 the floor (Nord 3.31:1, Kanagawa 3.33:1, Rosé Pine 2.73:1). Measured across the
@@ -234,13 +234,13 @@ Severity began as tier A fallbacks (`--sev-critical: var(--tag-red-text)`). That
 works if a theme supplies five distinct, severity-appropriate hues, and the tier A
 vocabulary does not guarantee it. Measured across the imported set:
 
-| defect | themes affected |
-|---|---|
-| a severity below 3:1 against its surface | 3 |
-| an **adjacent** pair too close to tell apart | 10 |
-| **Medium and Info the identical colour** (ΔE 0.000) | 18 |
-| High and Medium the identical colour | 2 (Ristretto, CGA) |
-| **Medium 70°–172° from amber** — a teal or blue | 11 |
+| defect                                              | themes affected    |
+| --------------------------------------------------- | ------------------ |
+| a severity below 3:1 against its surface            | 3                  |
+| an **adjacent** pair too close to tell apart        | 10                 |
+| **Medium and Info the identical colour** (ΔE 0.000) | 18                 |
+| High and Medium the identical colour                | 2 (Ristretto, CGA) |
+| **Medium 70°–172° from amber** — a teal or blue     | 11                 |
 
 The Medium/Info case is the one worth dwelling on. `--sev-medium` falls back to
 `--help-icon-color` and `--sev-info` to `--accent`, and most themes set those two roles
@@ -278,7 +278,7 @@ colour-only severity indicator is ever added.
 
 ### One deliberate adaptation
 
-Upstream's `--accent-hover` is *darker* than its `--accent`; this dashboard brightens
+Upstream's `--accent-hover` is _darker_ than its `--accent`; this dashboard brightens
 on hover at 8 of its 10 accent-hover call sites. Importing verbatim would invert every
 hover in 22 themes, so upstream's darker value becomes `--accent-solid-hover` (our
 button-face hover, which does dim) and `--accent-hover` is derived toward
@@ -299,7 +299,7 @@ have written it — and it goes straight into a DOM attribute, so it is checked 
 2. The main script re-checks against the generated registry and corrects an unknown
    name to the OS preference.
 
-Being briefly wrong about *which* theme is a flash. Being wrong about what may enter
+Being briefly wrong about _which_ theme is a flash. Being wrong about what may enter
 an attribute is not.
 
 ## What is not done

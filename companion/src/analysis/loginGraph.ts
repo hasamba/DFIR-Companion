@@ -8,10 +8,10 @@ import { upgradeForensicEvent } from "./canonicalEvent.js";
 // therefore no longer a graph contract. Pure + deterministic, no AI, no I/O.
 
 export interface ParsedLogon {
-  account: string;                  // full form as rendered, e.g. "CORP\\jdoe", "NT AUTHORITY\\SYSTEM"
-  host: string;                     // the event's asset (the machine logged ONTO)
+  account: string; // full form as rendered, e.g. "CORP\\jdoe", "NT AUTHORITY\\SYSTEM"
+  host: string; // the event's asset (the machine logged ONTO)
   logonType?: number;
-  typeName: string;                 // decoded LOGON_TYPES name, "type N", or "Unknown"
+  typeName: string; // decoded LOGON_TYPES name, "type N", or "Unknown"
   outcome: "success" | "failed";
   sourceIp?: string;
   workstation?: string;
@@ -21,12 +21,9 @@ export interface ParsedLogon {
 export function parseLoginEvent(e: ForensicEvent): ParsedLogon | null {
   const canonical = upgradeForensicEvent(e).canonical;
   if (canonical?.event.category !== "authentication" || canonical.event.type !== "logon") return null;
-  const account = (
-    canonical.actor?.kind === "account" ? canonical.actor.name : undefined
-  ) ?? canonical.account?.name;
-  const host = (
-    canonical.target?.kind === "host" ? canonical.target.name : undefined
-  ) ?? e.asset;
+  const account =
+    (canonical.actor?.kind === "account" ? canonical.actor.name : undefined) ?? canonical.account?.name;
+  const host = (canonical.target?.kind === "host" ? canonical.target.name : undefined) ?? e.asset;
   const cleanAccount = account?.trim() ?? "";
   const cleanHost = host?.trim() ?? "";
   if (!cleanAccount || !cleanHost) return null;
@@ -67,28 +64,28 @@ export function isNoiseAccount(account: string): boolean {
 // without bloating the graph payload. Edge risk is the worst logonRisk() across the edge's events.
 
 export interface LoginGraphNode {
-  id: string;                       // "account:<full-lower>" | "host:<lower>"
-  name: string;                     // display (service domains shortened)
+  id: string; // "account:<full-lower>" | "host:<lower>"
+  name: string; // display (service domains shortened)
   type: "account" | "host";
-  isNoise: boolean;                 // machine/$, DWM-*, UMFD-*, ANONYMOUS LOGON (accounts only)
+  isNoise: boolean; // machine/$, DWM-*, UMFD-*, ANONYMOUS LOGON (accounts only)
   eventCount: number;
 }
 
 export interface LoginGraphEdge {
-  source: string;                   // account node id — arrow points account → host
-  target: string;                   // host node id
-  logonType: string;                // decoded name ("Interactive", "type 13", "Unknown")
+  source: string; // account node id — arrow points account → host
+  target: string; // host node id
+  logonType: string; // decoded name ("Interactive", "type 13", "Unknown")
   outcome: "success" | "failed";
   count: number;
   firstSeen: string;
   lastSeen: string;
-  risk: "none" | "medium";          // worst logonRisk() across the edge's events
+  risk: "none" | "medium"; // worst logonRisk() across the edge's events
 }
 
 export interface LoginGraph {
   nodes: LoginGraphNode[];
-  edges: LoginGraphEdge[];          // sorted by count desc; capped
-  totalEdges: number;               // before the cap — powers "showing X of Y"
+  edges: LoginGraphEdge[]; // sorted by count desc; capped
+  totalEdges: number; // before the cap — powers "showing X of Y"
   truncated: boolean;
 }
 
@@ -136,12 +133,19 @@ export class LoginGraphBuilder {
     const endMs = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
     const tsMs = Date.parse(e.timestamp);
     const last = !Number.isNaN(endMs) && endMs > tsMs ? end : e.timestamp;
-    const risky = p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
+    const risky =
+      p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
     const edge = this.edges.get(key);
     if (!edge) {
       this.edges.set(key, {
-        source: acct.id, target: host.id, logonType: p.typeName, outcome: p.outcome,
-        count: n, firstSeen: e.timestamp, lastSeen: last, risk: risky ? "medium" : "none",
+        source: acct.id,
+        target: host.id,
+        logonType: p.typeName,
+        outcome: p.outcome,
+        count: n,
+        firstSeen: e.timestamp,
+        lastSeen: last,
+        risk: risky ? "medium" : "none",
       });
     } else {
       // Same epoch-based comparison for firstSeen/lastSeen merge (avoids the same string-sort bug).
@@ -149,7 +153,8 @@ export class LoginGraphBuilder {
       const eLastMs = Date.parse(edge.lastSeen);
       const firstSeen = !Number.isNaN(eFirstMs) && tsMs < eFirstMs ? e.timestamp : edge.firstSeen;
       const lastMs = Date.parse(last);
-      const lastSeen = !Number.isNaN(lastMs) && !Number.isNaN(eLastMs) && lastMs > eLastMs ? last : edge.lastSeen;
+      const lastSeen =
+        !Number.isNaN(lastMs) && !Number.isNaN(eLastMs) && lastMs > eLastMs ? last : edge.lastSeen;
       this.edges.set(key, {
         ...edge,
         count: edge.count + n,
@@ -162,8 +167,13 @@ export class LoginGraphBuilder {
 
   build(maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
     // Tie-break beyond count so a truncated graph is stable across imports (stored event order can shift).
-    const sorted = [...this.edges.values()].sort((a, b) =>
-      b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target) || a.logonType.localeCompare(b.logonType));
+    const sorted = [...this.edges.values()].sort(
+      (a, b) =>
+        b.count - a.count ||
+        a.source.localeCompare(b.source) ||
+        a.target.localeCompare(b.target) ||
+        a.logonType.localeCompare(b.logonType),
+    );
     const kept = sorted.slice(0, maxEdges);
     const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
     return {
@@ -191,15 +201,18 @@ export interface LoginEdgeEvent {
 }
 
 export interface LoginEdgeEventsQuery {
-  account: string;                  // full account form, case-insensitive
+  account: string; // full account form, case-insensitive
   host: string;
-  type: string;                     // decoded typeName, e.g. "Interactive"
+  type: string; // decoded typeName, e.g. "Interactive"
   outcome: "success" | "failed";
   limit: number;
 }
 
 // The events behind ONE edge — lazy-loaded by the dashboard when the analyst clicks it.
-export function loginEdgeEvents(events: readonly ForensicEvent[], q: LoginEdgeEventsQuery): { events: LoginEdgeEvent[]; total: number } {
+export function loginEdgeEvents(
+  events: readonly ForensicEvent[],
+  q: LoginEdgeEventsQuery,
+): { events: LoginEdgeEvent[]; total: number } {
   const matched: { e: ForensicEvent; p: ParsedLogon }[] = [];
   for (const e of events) {
     const p = parseLoginEvent(e);

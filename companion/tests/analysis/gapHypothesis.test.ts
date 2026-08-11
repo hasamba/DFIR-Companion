@@ -14,7 +14,16 @@ import type { TimelineGap } from "../../src/analysis/gapDetect.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, ts: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
-  return { id, timestamp: ts, description: extra.description ?? `event ${id}`, severity: extra.severity ?? "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...extra };
+  return {
+    id,
+    timestamp: ts,
+    description: extra.description ?? `event ${id}`,
+    severity: extra.severity ?? "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...extra,
+  };
 }
 
 function gap(over: Partial<TimelineGap> = {}): TimelineGap {
@@ -36,8 +45,12 @@ function gap(over: Partial<TimelineGap> = {}): TimelineGap {
 
 // A timeline: 5 events before the gap (a0..a4 at 08:0x) on WEB01, 5 after (b0..b4 at 10:0x) on DC01.
 function timeline(): ForensicEvent[] {
-  const before = Array.from({ length: 5 }, (_, i) => ev(`a${i}`, `2026-05-20T08:0${i}:00Z`, { asset: "WEB01" }));
-  const after = Array.from({ length: 5 }, (_, i) => ev(`b${i}`, `2026-05-20T10:0${i}:00Z`, { asset: "DC01" }));
+  const before = Array.from({ length: 5 }, (_, i) =>
+    ev(`a${i}`, `2026-05-20T08:0${i}:00Z`, { asset: "WEB01" }),
+  );
+  const after = Array.from({ length: 5 }, (_, i) =>
+    ev(`b${i}`, `2026-05-20T10:0${i}:00Z`, { asset: "DC01" }),
+  );
   return [...before, ...after];
 }
 
@@ -62,7 +75,9 @@ describe("gapHypothesesResponseSchema", () => {
   });
 
   it("is lenient: bad severity falls back, missing fields default", () => {
-    const parsed = gapHypothesesResponseSchema.parse({ hypotheses: [{ gapId: "gap-1", severity: "Apocalyptic" }] });
+    const parsed = gapHypothesesResponseSchema.parse({
+      hypotheses: [{ gapId: "gap-1", severity: "Apocalyptic" }],
+    });
     expect(parsed.hypotheses[0].severity).toBe("Medium");
     expect(parsed.hypotheses[0].hypothesis).toBe("");
     expect(parsed.hypotheses[0].attackerActions).toEqual([]);
@@ -79,7 +94,7 @@ describe("surroundingEvents", () => {
   it("picks the events bounding the gap by id, capping each side", () => {
     const { before, after } = surroundingEvents(gap(), timeline(), 3);
     expect(before.map((e) => e.id)).toEqual(["a2", "a3", "a4"]); // last 3 ending at the before-id
-    expect(after.map((e) => e.id)).toEqual(["b0", "b1", "b2"]);  // first 3 starting at the after-id
+    expect(after.map((e) => e.id)).toEqual(["b0", "b1", "b2"]); // first 3 starting at the after-id
   });
 
   it("returns empty sides when the bounding ids are not present", () => {
@@ -109,14 +124,20 @@ describe("sanitizeGapHypotheses", () => {
   const valid = new Set(["gap-1", "gap-2"]);
 
   it("drops hypotheses for unknown gap ids and dedupes by gap id", () => {
-    const out = sanitizeGapHypotheses([aiHyp(), aiHyp({ gapId: "gap-9" }), aiHyp({ hypothesis: "dup" })], valid);
+    const out = sanitizeGapHypotheses(
+      [aiHyp(), aiHyp({ gapId: "gap-9" }), aiHyp({ hypothesis: "dup" })],
+      valid,
+    );
     expect(out).toHaveLength(1);
     expect(out[0].gapId).toBe("gap-1");
     expect(out[0].hypothesis).not.toBe("dup"); // first one kept
   });
 
   it("clamps confidence to 0..100 and filters artifact ids to the real catalog", () => {
-    const out = sanitizeGapHypotheses([aiHyp({ confidence: 250, recommendedArtifactIds: ["prefetch", "made-up", "SRUM"] })], valid);
+    const out = sanitizeGapHypotheses(
+      [aiHyp({ confidence: 250, recommendedArtifactIds: ["prefetch", "made-up", "SRUM"] })],
+      valid,
+    );
     expect(out[0].confidence).toBe(100);
     expect(out[0].recommendedArtifactIds).toEqual(["prefetch", "srum"]); // lowercased, unknown dropped
   });
@@ -140,7 +161,10 @@ describe("sanitizeGapHypotheses", () => {
 
 describe("buildGapHypotheses", () => {
   it("attaches shadow artifacts to EVERY focus gap, even one the AI skipped", () => {
-    const gaps = [gap(), gap({ id: "gap-2", complete: false, severity: "Medium", beforeEventId: "a4", afterEventId: "b0" })];
+    const gaps = [
+      gap(),
+      gap({ id: "gap-2", complete: false, severity: "Medium", beforeEventId: "a4", afterEventId: "b0" }),
+    ];
     const surround = new Map(gaps.map((g) => [g.id, surroundingEvents(g, timeline())]));
     // AI only answered gap-1.
     const result = buildGapHypotheses([aiHyp()], gaps, surround);
@@ -149,9 +173,9 @@ describe("buildGapHypotheses", () => {
     const g2 = result.hypotheses.find((h) => h.gapId === "gap-2")!;
     expect(g1.hypothesis).toContain("credential dumping");
     expect(g1.shadowArtifacts.length).toBeGreaterThan(0);
-    expect(g2.hypothesis).toBe("");                 // AI skipped it
+    expect(g2.hypothesis).toBe(""); // AI skipped it
     expect(g2.shadowArtifacts.length).toBeGreaterThan(0); // but still gets collections
-    expect(g2.severity).toBe("Medium");             // falls back to the gap's own severity
+    expect(g2.severity).toBe("Medium"); // falls back to the gap's own severity
     expect(g1.targetHosts).toContain("WEB01");
     expect(result.caveat.length).toBeGreaterThan(0);
   });

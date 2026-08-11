@@ -22,8 +22,13 @@ async function collect(caseId: string, name: string, text: string): Promise<stri
   const path = join(cases.importsDir(caseId), name);
   await writeFile(path, text, "utf8");
   await custody.record(caseId, {
-    artifactPath: path, sha256: sha(text), collectedBy: "alice",
-    collectedAt: "2026-07-28T10:00:00.000Z", source: "host-a", trigger: "import", caseId,
+    artifactPath: path,
+    sha256: sha(text),
+    collectedBy: "alice",
+    collectedAt: "2026-07-28T10:00:00.000Z",
+    source: "host-a",
+    trigger: "import",
+    caseId,
   });
   return path;
 }
@@ -35,7 +40,14 @@ beforeEach(async () => {
   await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
   custody = new CustodyStore(cases);
   alerts = [];
-  monitor = new EvidenceIntegrityMonitor(cases, custody, { intervalMs: 86_400_000, onOpenThrottleMs: 0 }, (sweep) => { alerts.push(sweep); });
+  monitor = new EvidenceIntegrityMonitor(
+    cases,
+    custody,
+    { intervalMs: 86_400_000, onOpenThrottleMs: 0 },
+    (sweep) => {
+      alerts.push(sweep);
+    },
+  );
 });
 
 // The all-cases sweep interval. Its DEFAULT (off) and the on-open trigger are covered in
@@ -74,7 +86,10 @@ describe("EvidenceIntegrityMonitor.runSweep", () => {
 
     expect(sweep).toMatchObject({ artifacts: 2, failedArtifacts: 1 });
     expect(sweep.problemCases.map((c) => c.caseId)).toEqual(["c1"]);
-    expect(sweep.problemCases[0].mismatches[0]).toMatchObject({ artifactPath: path, reason: "hash-mismatch" });
+    expect(sweep.problemCases[0].mismatches[0]).toMatchObject({
+      artifactPath: path,
+      reason: "hash-mismatch",
+    });
   });
 
   it("counts a deleted artifact as failed", async () => {
@@ -87,7 +102,9 @@ describe("EvidenceIntegrityMonitor.runSweep", () => {
   it("counts a break in the custody log itself", async () => {
     await collect("c1", "a.csv", "one\n");
     await collect("c1", "b.csv", "two\n");
-    const [first, second] = (await readFile(cases.custodyLogPath("c1"), "utf8")).split("\n").filter((l) => l.trim());
+    const [first, second] = (await readFile(cases.custodyLogPath("c1"), "utf8"))
+      .split("\n")
+      .filter((l) => l.trim());
     const edited = { ...(JSON.parse(first) as Record<string, unknown>), collectedBy: "mallory" };
     await writeFile(cases.custodyLogPath("c1"), JSON.stringify(edited) + "\n" + second + "\n", "utf8");
 
@@ -108,7 +125,11 @@ describe("EvidenceIntegrityMonitor.runSweep", () => {
   it("verifies archived cases too, since archived evidence is still evidence", async () => {
     const path = await collect("c1", "a.csv", "one\n");
     await cases.archiveCaseFolder("c1");
-    await writeFile(path.replace(join(cases.casesRoot, "c1"), join(cases.casesRoot, "_archived", "c1")), "tampered\n", "utf8");
+    await writeFile(
+      path.replace(join(cases.casesRoot, "c1"), join(cases.casesRoot, "_archived", "c1")),
+      "tampered\n",
+      "utf8",
+    );
 
     const sweep = await monitor.runSweep();
 
@@ -138,7 +159,12 @@ describe("EvidenceIntegrityMonitor alerting", () => {
 
 describe("EvidenceIntegrityMonitor.status", () => {
   it("reports never-run before the first sweep", () => {
-    expect(monitor.status()).toMatchObject({ enabled: true, lastRunAt: null, artifacts: 0, failedArtifacts: 0 });
+    expect(monitor.status()).toMatchObject({
+      enabled: true,
+      lastRunAt: null,
+      artifacts: 0,
+      failedArtifacts: 0,
+    });
   });
 
   it("reports the last sweep once one has run", async () => {
@@ -177,7 +203,11 @@ describe("evidence integrity in GET /diagnostics", () => {
     const { default: request } = await import("supertest");
     const res = await request(app).get("/diagnostics");
     expect(res.status).toBe(200);
-    expect(res.body.report.evidenceIntegrity).toMatchObject({ enabled: true, artifacts: 1, failedArtifacts: 0 });
+    expect(res.body.report.evidenceIntegrity).toMatchObject({
+      enabled: true,
+      artifacts: 1,
+      failedArtifacts: 0,
+    });
     expect(res.body.text).toContain("-- Evidence integrity --");
 
     const bare = await request(createApp(cases, {})).get("/diagnostics");

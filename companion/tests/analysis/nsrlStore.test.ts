@@ -23,11 +23,11 @@ describe("NsrlStore", () => {
   it("adds hashes, normalizes + dedups, and reports how many were new", async () => {
     const s = await store();
     const r1 = await s.addMany([MD5.toUpperCase(), SHA256, MD5, "not-a-hash", "ffffffff"]);
-    expect(r1.added).toBe(2);     // MD5 + SHA256; junk dropped, dupe collapsed
+    expect(r1.added).toBe(2); // MD5 + SHA256; junk dropped, dupe collapsed
     expect(r1.total).toBe(2);
     expect((await s.load()).has(MD5)).toBe(true);
 
-    const r2 = await s.addMany([MD5, SHA256]);   // both already present
+    const r2 = await s.addMany([MD5, SHA256]); // both already present
     expect(r2.added).toBe(0);
     expect(r2.total).toBe(2);
   });
@@ -55,7 +55,10 @@ describe("NsrlStore", () => {
 
 describe("splitNsrlPaths", () => {
   it("splits on ';', trims, and drops blanks (Windows-path safe)", () => {
-    expect(splitNsrlPaths("C:\\rds\\a.txt ; C:\\rds b\\c.txt;")).toEqual(["C:\\rds\\a.txt", "C:\\rds b\\c.txt"]);
+    expect(splitNsrlPaths("C:\\rds\\a.txt ; C:\\rds b\\c.txt;")).toEqual([
+      "C:\\rds\\a.txt",
+      "C:\\rds b\\c.txt",
+    ]);
     expect(splitNsrlPaths(undefined)).toEqual([]);
     expect(splitNsrlPaths("   ")).toEqual([]);
   });
@@ -65,15 +68,19 @@ describe("ingestNsrlFiles", () => {
   it("reads + ingests file(s) by path, best-effort per file (a bad path is reported, not fatal)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dfir-nsrl-ing-"));
     const good = join(dir, "rds.txt");
-    await writeFile(good, `"SHA-1","MD5","CRC32"\n"${"da39a3ee5e6b4b0d3255bfef95601890afd80709".toUpperCase()}","${MD5.toUpperCase()}","0"\n`, "utf8");
+    await writeFile(
+      good,
+      `"SHA-1","MD5","CRC32"\n"${"da39a3ee5e6b4b0d3255bfef95601890afd80709".toUpperCase()}","${MD5.toUpperCase()}","0"\n`,
+      "utf8",
+    );
     const s = new NsrlStore(join(dir, "store", "known.txt"));
 
     const results = await ingestNsrlFiles(s, [good, join(dir, "missing.txt")]);
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ file: good, added: 2 });
     expect(results[0].error).toBeUndefined();
-    expect(results[1].error).toBeTruthy();           // missing file → error result, not a throw
+    expect(results[1].error).toBeTruthy(); // missing file → error result, not a throw
     expect(results[1].added).toBe(0);
-    expect(await s.count()).toBe(2);                 // the good file still loaded
+    expect(await s.count()).toBe(2); // the good file still loaded
   });
 });

@@ -3,7 +3,12 @@ import { parseEcarJson, mapEcarRecord, isEcarRecord, ECAR_SOURCE } from "../../s
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
 // One ECAR record (the EDR Common Activity Record NDJSON shape). `properties` carries the detail.
-function rec(object: string, action: string, properties: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+function rec(
+  object: string,
+  action: string,
+  properties: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+) {
   return {
     timestamp_ms: 1715688049745, // 2024-05-14T12:00:49.745Z
     id: "00000000-0000-0000-0000-000000000000",
@@ -33,7 +38,9 @@ describe("isEcarRecord — signature", () => {
 
 describe("parseEcarJson — timestamp + container", () => {
   it("reads timestamp_ms as epoch-ms ISO and tags the source", () => {
-    const r = parseEcarJson(ndjson(rec("PROCESS", "CREATE", { command_line: "id", image_path: "/usr/bin/id" })));
+    const r = parseEcarJson(
+      ndjson(rec("PROCESS", "CREATE", { command_line: "id", image_path: "/usr/bin/id" })),
+    );
     expect(r.total).toBe(1);
     expect(r.events).toHaveLength(1);
     expect(r.events[0].timestamp).toBe("2024-05-14T12:00:49.745Z");
@@ -96,8 +103,12 @@ describe("mapEcarRecord — FLOW/CONNECT IOCs are public-only", () => {
     const sink = new Map<string, SiemIoc>();
     const m = mapEcarRecord(
       rec("FLOW", "CONNECT", {
-        src_ip: "10.44.30.10", src_port: "55001",
-        dst_ip: "45.83.221.30", dst_port: "443", protocol: "tcp", direction: "OUTBOUND",
+        src_ip: "10.44.30.10",
+        src_port: "55001",
+        dst_ip: "45.83.221.30",
+        dst_port: "443",
+        protocol: "tcp",
+        direction: "OUTBOUND",
       }),
       sink,
     )!;
@@ -113,7 +124,11 @@ describe("mapEcarRecord — FLOW/CONNECT IOCs are public-only", () => {
     const sink = new Map<string, SiemIoc>();
     const m = mapEcarRecord(
       rec("FLOW", "CONNECT", {
-        src_ip: "10.44.20.10", dst_ip: "10.44.20.20", dst_port: "3389", protocol: "tcp", direction: "OUTBOUND",
+        src_ip: "10.44.20.10",
+        dst_ip: "10.44.20.20",
+        dst_port: "3389",
+        protocol: "tcp",
+        direction: "OUTBOUND",
       }),
       sink,
     )!;
@@ -125,7 +140,12 @@ describe("mapEcarRecord — FLOW/CONNECT IOCs are public-only", () => {
 describe("mapEcarRecord — USER_SESSION + THREAD", () => {
   it("treats '-' src_ip as empty and a failed logon as Low", () => {
     const m = mapEcarRecord(
-      rec("USER_SESSION", "LOGIN", { src_ip: "-", outcome: "failure", logon_type: "3", failure_reason: "bad password" }),
+      rec("USER_SESSION", "LOGIN", {
+        src_ip: "-",
+        outcome: "failure",
+        logon_type: "3",
+        failure_reason: "bad password",
+      }),
       new Map(),
     )!;
     expect(m.severity).toBe("Low");
@@ -135,7 +155,10 @@ describe("mapEcarRecord — USER_SESSION + THREAD", () => {
 
   it("keeps a remote thread create as Info evidence (no auto-verdict — benign system procs do it too)", () => {
     const m = mapEcarRecord(
-      rec("THREAD", "REMOTE_CREATE", { image_path: "C:\\Windows\\System32\\services.exe", target_pid: "5652" }),
+      rec("THREAD", "REMOTE_CREATE", {
+        image_path: "C:\\Windows\\System32\\services.exe",
+        target_pid: "5652",
+      }),
       new Map(),
     )!;
     expect(m.severity).toBe("Info");
@@ -147,7 +170,11 @@ describe("mapEcarRecord — USER_SESSION + THREAD", () => {
 describe("parseEcarJson — aggregation collapses repetitive flows", () => {
   it("collapses identical flows into one counted row", () => {
     const flow = rec("FLOW", "CONNECT", {
-      src_ip: "10.44.30.10", dst_ip: "45.83.221.30", dst_port: "443", protocol: "tcp", direction: "OUTBOUND",
+      src_ip: "10.44.30.10",
+      dst_ip: "45.83.221.30",
+      dst_port: "443",
+      protocol: "tcp",
+      direction: "OUTBOUND",
     });
     const r = parseEcarJson(ndjson(flow, flow, flow));
     expect(r.total).toBe(3);

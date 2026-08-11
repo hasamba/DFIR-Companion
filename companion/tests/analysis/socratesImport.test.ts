@@ -4,16 +4,46 @@ import { parseSocrates } from "../../src/analysis/socratesImport.js";
 const suricataAlert = {
   timestamp: "2017-12-01T08:00:00.123456+0000",
   event_type: "alert",
-  src_ip: "10.0.0.5", src_port: 51000, dest_ip: "203.0.113.9", dest_port: 443, proto: "TCP",
-  alert: { signature: "ET MALWARE Cobalt Strike Beacon", category: "A Network Trojan was detected", signature_id: 2027000, severity: 1, metadata: { mitre_technique_id: ["T1071.001"] } },
+  src_ip: "10.0.0.5",
+  src_port: 51000,
+  dest_ip: "203.0.113.9",
+  dest_port: 443,
+  proto: "TCP",
+  alert: {
+    signature: "ET MALWARE Cobalt Strike Beacon",
+    category: "A Network Trojan was detected",
+    signature_id: 2027000,
+    severity: 1,
+    metadata: { mitre_technique_id: ["T1071.001"] },
+  },
 };
-const suricataDns = { timestamp: "2017-12-01T08:00:01+0000", event_type: "dns", src_ip: "10.0.0.5", dns: { rrname: "evil-c2.example.com", rrtype: "A" } };
+const suricataDns = {
+  timestamp: "2017-12-01T08:00:01+0000",
+  event_type: "dns",
+  src_ip: "10.0.0.5",
+  dns: { rrname: "evil-c2.example.com", rrtype: "A" },
+};
 const yaraFileAlert = {
-  event_type: "filealerts", timestamp: "2017-12-01T08:00:02+0000",
-  filealerts: { rule_name: "Windows_Trojan_CobaltStrike", tags: ["malware", "attack.t1055"], author: "x",
-    sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899", meta: { filename: "beacon.exe" } },
+  event_type: "filealerts",
+  timestamp: "2017-12-01T08:00:02+0000",
+  filealerts: {
+    rule_name: "Windows_Trojan_CobaltStrike",
+    tags: ["malware", "attack.t1055"],
+    author: "x",
+    sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    meta: { filename: "beacon.exe" },
+  },
 };
-const sigmaAlert = { timestamp: "2024-01-02T03:04:05Z", rule_title: "Suspicious PowerShell Download", rule_id: "abc-123", severity: "high", level: "high", logsource: "windows/powershell", tags: "attack.execution,attack.t1059.001", mitre_techniques: "T1059.001" };
+const sigmaAlert = {
+  timestamp: "2024-01-02T03:04:05Z",
+  rule_title: "Suspicious PowerShell Download",
+  rule_id: "abc-123",
+  severity: "high",
+  level: "high",
+  logsource: "windows/powershell",
+  tags: "attack.execution,attack.t1059.001",
+  mitre_techniques: "T1059.001",
+};
 
 describe("parseSocrates", () => {
   it("maps a Suricata alert to a timeline event tagged SO-CRATES + Suricata", () => {
@@ -80,9 +110,15 @@ describe("parseSocrates", () => {
 
   it("falls back to the sha256 prefix + adds the md5 IOC for a YARA hit with no filename", () => {
     const md5 = "0123456789abcdef0123456789abcdef";
-    const row = { event_type: "filealerts", timestamp: "2017-12-01T08:00:02+0000",
-      filealerts: { rule_name: "Generic_Suspicious", md5,
-        sha256: "ffeeddccbbaa00112233445566778899ffeeddccbbaa00112233445566778899" } };
+    const row = {
+      event_type: "filealerts",
+      timestamp: "2017-12-01T08:00:02+0000",
+      filealerts: {
+        rule_name: "Generic_Suspicious",
+        md5,
+        sha256: "ffeeddccbbaa00112233445566778899ffeeddccbbaa00112233445566778899",
+      },
+    };
     const r = parseSocrates(JSON.stringify([row]));
     expect(r.events[0].description).toBe("YARA: Generic_Suspicious on ffeeddccbbaa0011");
     expect(r.iocs.some((i) => i.type === "hash" && i.value === md5)).toBe(true);
@@ -100,18 +136,22 @@ describe("parseSocrates", () => {
       timestamp: "2019-05-26T04:01:43.567204Z",
       rule_title: "Uncommon Svchost Command Line Parameter - Sysmon",
       rule_id: "f17211f1-1f24-4d0c-829f-31e28dc93cdd",
-      severity: "high", level: "high",
+      severity: "high",
+      level: "high",
       logsource: "Microsoft-Windows-Sysmon/Operational",
       tags: '["attack.privilege-escalation", "attack.t1036.005", "attack.t1055"]',
       mitre_techniques: '["attack.t1036.005", "attack.t1055"]',
       original_log: JSON.stringify({
-        Channel: "Microsoft-Windows-Sysmon/Operational", EventID: 1,
+        Channel: "Microsoft-Windows-Sysmon/Operational",
+        EventID: 1,
         CommandLine: "C:\\Windows\\system32\\svchost.exe",
         Image: "C:\\Windows\\System32\\svchost.exe",
         ParentImage: "C:\\Users\\IEUser\\Desktop\\info.rar\\jjs.exe",
-        ParentCommandLine: "\"C:\\Users\\IEUser\\Desktop\\info.rar\\jjs.exe\"",
-        Computer: "IEWIN7", User: "NT AUTHORITY\\SYSTEM",
-        Hashes: "SHA1=4AF001B3C3816B860660CF2DE2C0FD3C1DFB4878,MD5=54A47F6B5E09A77E61649109C6A08866,SHA256=121118A0F5E0E8C933EFD28C9901E54E42792619A8A3A6D11E1F0025A7324BC2,IMPHASH=58E185299ECCA757FE68BA83A6495FDE",
+        ParentCommandLine: '"C:\\Users\\IEUser\\Desktop\\info.rar\\jjs.exe"',
+        Computer: "IEWIN7",
+        User: "NT AUTHORITY\\SYSTEM",
+        Hashes:
+          "SHA1=4AF001B3C3816B860660CF2DE2C0FD3C1DFB4878,MD5=54A47F6B5E09A77E61649109C6A08866,SHA256=121118A0F5E0E8C933EFD28C9901E54E42792619A8A3A6D11E1F0025A7324BC2,IMPHASH=58E185299ECCA757FE68BA83A6495FDE",
         SHA256: "121118a0f5e0e8c933efd28c9901e54e42792619a8a3a6d11e1f0025a7324bc2",
         SystemTime: "2019-05-26T04:01:43.567204Z",
       }),
@@ -129,6 +169,11 @@ describe("parseSocrates", () => {
     expect(e.parentName).toBe("jjs.exe");
     expect(e.mitreTechniques).toEqual(expect.arrayContaining(["T1055", "T1036.005"]));
     expect(e.sources).toEqual(["SO-CRATES", "Sigma"]);
-    expect(r.iocs.some((i) => i.type === "hash" && i.value === "121118a0f5e0e8c933efd28c9901e54e42792619a8a3a6d11e1f0025a7324bc2")).toBe(true);
+    expect(
+      r.iocs.some(
+        (i) =>
+          i.type === "hash" && i.value === "121118a0f5e0e8c933efd28c9901e54e42792619a8a3a6d11e1f0025a7324bc2",
+      ),
+    ).toBe(true);
   });
 });

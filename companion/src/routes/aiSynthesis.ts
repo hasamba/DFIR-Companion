@@ -3,8 +3,17 @@ import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { withNonce } from "../http/securityHeaders.js";
-import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "../reports/reportTemplate.js";
-import { HYPOTHESIS_STATUSES, type HypothesisStatus, type HypothesisPatch, type NewHypothesis } from "../analysis/hypothesis.js";
+import {
+  defaultReportTemplate,
+  isReportSectionEnabled,
+  type ReportSectionKey,
+} from "../reports/reportTemplate.js";
+import {
+  HYPOTHESIS_STATUSES,
+  type HypothesisStatus,
+  type HypothesisPatch,
+  type NewHypothesis,
+} from "../analysis/hypothesis.js";
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
 import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
@@ -115,7 +124,11 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const next = await setControl(req.params.id, patch);
       if (!enabled) {
         ctx.captureBuffers().set(req.params.id, []); // drop pending buffer when pausing
-        options.onAiStatus?.(req.params.id, { status: "idle", at: new Date().toISOString(), detail: "AI paused" });
+        options.onAiStatus?.(req.params.id, {
+          status: "idle",
+          at: new Date().toISOString(),
+          detail: "AI paused",
+        });
       } else if (!prev.enabled) {
         void backfill(req.params.id); // resumed → analyze the gap
       }
@@ -129,23 +142,38 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
   app.post("/cases/:id/synthesize", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for synthesis" });
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running synthesis` });
+      return res
+        .status(423)
+        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running synthesis` });
     }
     // Per-run Chain-of-Thought toggle (#121): "deepReasoning" enables extended thinking for THIS run
     // only (no .env edit + restart) — an optional thinkingTokens overrides the budget. Off otherwise.
     const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
     const reqThinking = Number((req.body as { thinkingTokens?: unknown })?.thinkingTokens);
-    const thinkingTokens = Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
+    const thinkingTokens =
+      Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
+    options.onAiStatus?.(caseId, {
+      status: "analyzing",
+      phase: "synthesizing",
+      at: new Date().toISOString(),
+      detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions",
+    });
     // #225: track this manual synthesis as a cancellable job so the analyst can abort a long run.
     // exclusive: a second re-synthesize for the same case (double-click, or racing the "Generate
     // hypotheses" button / a live auto-synthesis) supersedes rather than running alongside it.
-    const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "synthesis", cancellable: true, exclusive: true });
+    const job = options.jobManager?.register({
+      caseId,
+      kind: "synthesis",
+      label: "synthesis",
+      cancellable: true,
+      exclusive: true,
+    });
     await job?.ready;
     // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
     if (options.backupManager) {
@@ -153,7 +181,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
-      const state = await options.pipeline.synthesize(caseId, { force: true, deepReasoning, ...(thinkingTokens !== undefined ? { thinkingTokens } : {}), ...(job?.signal ? { signal: job.signal } : {}) });
+      const state = await options.pipeline.synthesize(caseId, {
+        force: true,
+        deepReasoning,
+        ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
+        ...(job?.signal ? { signal: job.signal } : {}),
+      });
       if (job) await options.jobManager?.finish(job.jobId);
       // Keep the playbook checklist aligned with the fresh next steps/findings (idempotent —
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
@@ -162,11 +195,14 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
           const { useTemplates } = await loadPlaybookControl(caseId);
           await options.playbookStore.sync(caseId, state, { useTemplates });
           options.onPlaybook?.(caseId);
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai", action: "synthesis",
+        category: "ai",
+        action: "synthesis",
         detail: `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
       });
       return res.status(200).json({
@@ -183,13 +219,24 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         // A newer exclusive registration may have superseded this run (see above) — if a synthesis
         // job for this case is still active, that newer run owns the status; don't stomp it to idle.
         if (!options.jobManager?.hasActive(caseId, "synthesis")) {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" });
+          options.onAiStatus?.(caseId, {
+            status: "idle",
+            at: new Date().toISOString(),
+            detail: "synthesis cancelled",
+          });
         }
         return res.status(499).json({ error: "synthesis cancelled" });
       }
-      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      options.onAiStatus?.(caseId, {
+        status: "error",
+        at: new Date().toISOString(),
+        detail: (err as Error).message,
+      });
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai", action: "synthesis", detail: (err as Error).message, outcome: "error",
+        category: "ai",
+        action: "synthesis",
+        detail: (err as Error).message,
+        outcome: "error",
       });
       return sendPipelineError(res, err);
     }
@@ -201,23 +248,35 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // accepts them per item. 501 when no second-opinion model is configured (DFIR_AI_SECOND_OPINION_MODEL).
   app.post("/cases/:id/second-opinion", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.secondOpinionEnabled) {
-      return res.status(501).json({ error: "second-opinion model not configured — set DFIR_AI_SECOND_OPINION_MODEL" });
+      return res
+        .status(501)
+        .json({ error: "second-opinion model not configured — set DFIR_AI_SECOND_OPINION_MODEL" });
     }
     const caseId = req.params.id;
     // Same per-run deep-reasoning toggle (#121) as /synthesize — flows into both model A & B passes.
     const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: deepReasoning ? "running second opinion (deep reasoning)" : "running second opinion" });
+    options.onAiStatus?.(caseId, {
+      status: "analyzing",
+      phase: "synthesizing",
+      at: new Date().toISOString(),
+      detail: deepReasoning ? "running second opinion (deep reasoning)" : "running second opinion",
+    });
     try {
       const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       options.onSecondOpinion?.(caseId);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai", action: "second-opinion",
+        category: "ai",
+        action: "second-opinion",
         detail: `second opinion ran — ${record.deltas.length} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
       });
       return res.status(200).json(record);
     } catch (err) {
-      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
+      options.onAiStatus?.(caseId, {
+        status: "error",
+        at: new Date().toISOString(),
+        detail: (err as Error).message,
+      });
       return sendPipelineError(res, err);
     }
   });
@@ -236,7 +295,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // case (idempotent; durable across re-synthesis); reject only records the decision. The case
   // state is otherwise untouched. Body: { deltaId, accept }.
   app.post("/cases/:id/second-opinion/apply", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.secondOpinionStore) return res.status(501).json({ error: "second opinion not configured" });
+    if (!options.pipeline || !options.secondOpinionStore)
+      return res.status(501).json({ error: "second opinion not configured" });
     const deltaId = typeof req.body?.deltaId === "string" ? req.body.deltaId.trim() : "";
     const accept = req.body?.accept === true;
     if (!deltaId) return res.status(400).json({ error: "deltaId is required" });
@@ -244,11 +304,14 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const { record } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
       options.onSecondOpinion?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "second-opinion-apply", detail: `delta ${deltaId} — ${accept ? "accepted" : "rejected"}`,
+        category: "ai",
+        action: "second-opinion-apply",
+        detail: `delta ${deltaId} — ${accept ? "accepted" : "rejected"}`,
       });
       return res.status(200).json(record);
     } catch (err) {
-      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
+      if (err instanceof PresidioApprovalRequired)
+        return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /unknown second-opinion delta/.test(msg) ? 404 : /no second opinion/.test(msg) ? 409 : 500;
       return res.status(code).json({ error: msg });
@@ -258,17 +321,21 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Bulk accept-all / reject-all over the still-pending second-opinion deltas, in one pass. Body:
   // { accept }. Accept (re-)applies all accepted deltas to the case; reject just records decisions.
   app.post("/cases/:id/second-opinion/apply-all", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.secondOpinionStore) return res.status(501).json({ error: "second opinion not configured" });
+    if (!options.pipeline || !options.secondOpinionStore)
+      return res.status(501).json({ error: "second opinion not configured" });
     const accept = req.body?.accept === true;
     try {
       const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
       options.onSecondOpinion?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "second-opinion-apply-all", detail: `all pending deltas — ${accept ? "accepted" : "rejected"}`,
+        category: "ai",
+        action: "second-opinion-apply-all",
+        detail: `all pending deltas — ${accept ? "accepted" : "rejected"}`,
       });
       return res.status(200).json(record);
     } catch (err) {
-      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
+      if (err instanceof PresidioApprovalRequired)
+        return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /no second opinion/.test(msg) ? 409 : 500;
       return res.status(code).json({ error: msg });
@@ -278,13 +345,16 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Ask the LLM a free-form question about the case ("was data exfiltrated?"). Single-shot,
   // no state change — returns a grounded answer + status + collection guidance (`pointer`).
   app.post("/cases/:id/ask", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for case questions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for case questions" });
     const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
     if (!question) return res.status(400).json({ error: "question is required" });
     try {
       const answer = await options.pipeline.ask(req.params.id, question);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "ask", detail: `asked: "${question.slice(0, 120)}"`,
+        category: "ai",
+        action: "ask",
+        detail: `asked: "${question.slice(0, 120)}"`,
       });
       return res.status(200).json(answer);
     } catch (err) {
@@ -296,13 +366,15 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Returns structured analysis: what happened, why it matters, ATT&CK mapping, pivot queries,
   // and evidence for/against maliciousness. Useful for junior analysts and training.
   app.post("/cases/:id/events/:eid/explain", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for event explanation" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for event explanation" });
     try {
       const result = await options.pipeline.explainEvent(req.params.id, req.params.eid);
       return res.status(200).json(result);
     } catch (err: unknown) {
       const msg = (err as Error).message;
-      if (msg.startsWith("event not found") || msg.startsWith("Case not found")) return res.status(404).json({ error: msg });
+      if (msg.startsWith("event not found") || msg.startsWith("Case not found"))
+        return res.status(404).json({ error: msg });
       errLine(`[explain] case=${req.params.id} event=${req.params.eid}: ${msg}`);
       return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
@@ -312,13 +384,23 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // call). The dashboard shows it and can save it into report-meta.executiveSummary, which then
   // overrides the auto-derived summary in the generated report.
   app.post("/cases/:id/executive-summary", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for executive summary" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for executive summary" });
     if (!(await reportSectionEnabled(req.params.id, "executiveSummary")))
-      return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
+      return res
+        .status(409)
+        .json({
+          error:
+            "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).",
+          sectionDisabled: true,
+          section: "executiveSummary",
+        });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "executive-summary", detail: "executive summary generated",
+        category: "ai",
+        action: "executive-summary",
+        detail: "executive summary generated",
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -333,15 +415,23 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     // Gate on the SYNTHESIS (text) provider, not hasAiProvider() (the VISION/OCR provider): this is a
     // text-only call driven by synthesisProvider, so it must work whenever DFIR_AI_SYNTH_PROVIDER (or
     // the DFIR_AI_PROVIDER it falls back to) is set — even if the vision provider alone is unconfigured.
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for starred report" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for starred report" });
     if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
     try {
       const tags = await options.tagsStore.load(req.params.id);
-      const starredIds = [...new Set(tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL).map((t) => t.targetId))];
-      if (!starredIds.length) return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });
+      const starredIds = [
+        ...new Set(
+          tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL).map((t) => t.targetId),
+        ),
+      ];
+      if (!starredIds.length)
+        return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });
       const result = await options.pipeline.starredReport(req.params.id, starredIds);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "starred-report", detail: `starred events report generated (${result.usedEvents}/${result.eventCount} starred events)`,
+        category: "ai",
+        action: "starred-report",
+        detail: `starred events report generated (${result.usedEvents}/${result.eventCount} starred events)`,
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -355,7 +445,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // The saved copy of the starred report (a per-case side file; survives reload, overwritten on
   // each save). GET → 404 when nothing is saved yet.
   app.get("/cases/:id/starred-report", async (req: Request, res: Response) => {
-    if (!options.starredReportStore) return res.status(501).json({ error: "starred report store not configured" });
+    if (!options.starredReportStore)
+      return res.status(501).json({ error: "starred report store not configured" });
     try {
       const saved = await options.starredReportStore.load(req.params.id);
       if (!saved) return res.status(404).json({ error: "no saved starred report" });
@@ -366,14 +457,21 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   });
 
   app.put("/cases/:id/starred-report", async (req: Request, res: Response) => {
-    if (!options.starredReportStore) return res.status(501).json({ error: "starred report store not configured" });
+    if (!options.starredReportStore)
+      return res.status(501).json({ error: "starred report store not configured" });
     const markdown = typeof req.body?.markdown === "string" ? req.body.markdown : "";
     if (!markdown.trim()) return res.status(400).json({ error: "markdown is required" });
     try {
-      const saved = { markdown, savedAt: new Date().toISOString(), eventCount: Number(req.body?.eventCount) || 0 };
+      const saved = {
+        markdown,
+        savedAt: new Date().toISOString(),
+        eventCount: Number(req.body?.eventCount) || 0,
+      };
       await options.starredReportStore.save(req.params.id, saved);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "starred-report-saved", detail: "starred events report saved to case",
+        category: "ai",
+        action: "starred-report-saved",
+        detail: "starred events report saved to case",
       });
       return res.status(200).json(saved);
     } catch (err) {
@@ -387,10 +485,15 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/view-summary", async (req: Request, res: Response) => {
     // Synthesis (text) provider gate — see the starred-report route above for why this is
     // hasSynthesisProvider() rather than the vision-provider hasAiProvider().
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for view summary" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for view summary" });
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const b = req.body ?? {};
-    const csv = (v: unknown): string[] => String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const csv = (v: unknown): string[] =>
+      String(v ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     const filters: SuperQuery = {
       from: typeof b.from === "string" && b.from ? b.from : undefined,
       to: typeof b.to === "string" && b.to ? b.to : undefined,
@@ -416,7 +519,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       }
       const result = await options.pipeline.viewSummary(req.params.id, filters, tagLabelMap);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "view-summary", detail: `view summary generated (${result.usedEvents}/${result.eventCount} matching events)`,
+        category: "ai",
+        action: "view-summary",
+        detail: `view summary generated (${result.usedEvents}/${result.eventCount} matching events)`,
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -431,11 +536,14 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // case's findings + the deterministic ATT&CK mitigations. Ephemeral (no state change); the
   // dashboard renders it under the Mitigation & Defensive Countermeasures panel.
   app.post("/cases/:id/remediation-plan", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for remediation plan" });
     try {
       const result = await options.pipeline.remediationPlan(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "remediation-plan", detail: "remediation plan generated",
+        category: "ai",
+        action: "remediation-plan",
+        detail: "remediation plan generated",
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -447,12 +555,15 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // hypothesis's supporting vs. refuting evidence and returns an ADVISORY recommended status. Ephemeral:
   // it NEVER mutates a hypothesis (the analyst applies any recommendation via the existing PATCH route).
   app.post("/cases/:id/hypothesis-review", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hypothesis review" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for hypothesis review" });
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
     try {
       const result = await options.pipeline.hypothesisReview(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "hypothesis-review", detail: `reviewed ${result.reviews.length} open hypothes${result.reviews.length === 1 ? "is" : "es"}`,
+        category: "ai",
+        action: "hypothesis-review",
+        detail: `reviewed ${result.reviews.length} open hypothes${result.reviews.length === 1 ? "is" : "es"}`,
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -463,16 +574,26 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Generate (or regenerate) a prose narrative timeline for the case (one text-only AI call).
   // Saves the result to state.narrativeTimeline so it persists and appears in the report/dashboard.
   app.post("/cases/:id/narrative", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for narrative generation" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for narrative generation" });
     // The narrative timeline renders under report section 3.2, inside the "Timeline of events"
     // major section — so a disabled `timeline` section means the narrative won't appear; skip its
     // AI call to save tokens (issue #168). The analyst's already-saved narrative is left intact.
     if (!(await reportSectionEnabled(req.params.id, "timeline")))
-      return res.status(409).json({ error: "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "timeline" });
+      return res
+        .status(409)
+        .json({
+          error:
+            "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).",
+          sectionDisabled: true,
+          section: "timeline",
+        });
     try {
       const result = await options.pipeline.generateNarrative(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "narrative", detail: "narrative timeline generated",
+        category: "ai",
+        action: "narrative",
+        detail: "narrative timeline generated",
       });
       return res.status(200).json(result);
     } catch (err) {
@@ -538,7 +659,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const stateStore = options.stateStore;
       const result = await ctx.runStateExclusive(req.params.id, async () => {
         const state = await stateStore.load(req.params.id);
-        const nums = state.keyQuestions.map((q) => Number(/^aq(\d+)$/.exec(q.id)?.[1])).filter((n) => !Number.isNaN(n));
+        const nums = state.keyQuestions
+          .map((q) => Number(/^aq(\d+)$/.exec(q.id)?.[1]))
+          .filter((n) => !Number.isNaN(n));
         const newQuestion: InvestigationQuestion = {
           id: `aq${(nums.length ? Math.max(...nums) : 0) + 1}`,
           question,
@@ -561,8 +684,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Hypotheses (issue #140) — status-tracked investigative hypotheses (analyst-authored or
   // auto-generated by synthesis). CRUD over the per-case HypothesisStore; each write pings live
   // dashboard clients. A PATCH marks the hypothesis analystTouched, freezing it from synthesis refresh.
-  const asStringArray = (v: unknown): string[] | undefined =>
-    Array.isArray(v) ? v.map(String) : undefined;
+  const asStringArray = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(String) : undefined);
 
   app.get("/cases/:id/hypotheses", async (req: Request, res: Response) => {
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
@@ -582,7 +704,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       title,
       description: typeof req.body?.description === "string" ? req.body.description : undefined,
       expectedOutcome: typeof req.body?.expectedOutcome === "string" ? req.body.expectedOutcome : undefined,
-      status: HYPOTHESIS_STATUSES.includes(statusIn as HypothesisStatus) ? (statusIn as HypothesisStatus) : undefined,
+      status: HYPOTHESIS_STATUSES.includes(statusIn as HypothesisStatus)
+        ? (statusIn as HypothesisStatus)
+        : undefined,
       relatedTechniques: asStringArray(req.body?.relatedTechniques),
       relatedEventIds: asStringArray(req.body?.relatedEventIds),
       relatedIocIds: asStringArray(req.body?.relatedIocIds),
@@ -605,11 +729,16 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (typeof req.body?.title === "string") patch.title = req.body.title;
     if (typeof req.body?.description === "string") patch.description = req.body.description;
     if (typeof req.body?.expectedOutcome === "string") patch.expectedOutcome = req.body.expectedOutcome;
-    if (typeof req.body?.status === "string" && HYPOTHESIS_STATUSES.includes(req.body.status as HypothesisStatus)) {
+    if (
+      typeof req.body?.status === "string" &&
+      HYPOTHESIS_STATUSES.includes(req.body.status as HypothesisStatus)
+    ) {
       patch.status = req.body.status as HypothesisStatus;
     }
-    if (Array.isArray(req.body?.relatedTechniques)) patch.relatedTechniques = req.body.relatedTechniques.map(String);
-    if (Array.isArray(req.body?.relatedEventIds)) patch.relatedEventIds = req.body.relatedEventIds.map(String);
+    if (Array.isArray(req.body?.relatedTechniques))
+      patch.relatedTechniques = req.body.relatedTechniques.map(String);
+    if (Array.isArray(req.body?.relatedEventIds))
+      patch.relatedEventIds = req.body.relatedEventIds.map(String);
     if (Array.isArray(req.body?.relatedIocIds)) patch.relatedIocIds = req.body.relatedIocIds.map(String);
     if (typeof req.body?.assignee === "string") patch.assignee = req.body.assignee;
     if (typeof req.body?.notes === "string") patch.notes = req.body.notes;
@@ -639,7 +768,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // page reload — purely a display preference (nothing is removed from state). `minConfidence: null`
   // means "show all" (0). GET returns the current value; PUT sets/clears it.
   app.get("/cases/:id/confidence-control", async (req: Request, res: Response) => {
-    if (!options.confidenceControlStore) return res.status(501).json({ error: "confidence control not configured" });
+    if (!options.confidenceControlStore)
+      return res.status(501).json({ error: "confidence control not configured" });
     try {
       const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
       return res.status(200).json({ minConfidence });
@@ -649,7 +779,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   });
 
   app.put("/cases/:id/confidence-control", async (req: Request, res: Response) => {
-    if (!options.confidenceControlStore) return res.status(501).json({ error: "confidence control not configured" });
+    if (!options.confidenceControlStore)
+      return res.status(501).json({ error: "confidence control not configured" });
     const raw = req.body?.minConfidence;
     const cleared = raw === null || raw === undefined || raw === "";
     if (!cleared && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100)) {
@@ -660,7 +791,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       options.onConfidenceControl?.(req.params.id);
       const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings", action: "confidence-control", detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
+        category: "settings",
+        action: "confidence-control",
+        detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
       });
       return res.status(200).json({ minConfidence });
     } catch (err) {
@@ -685,13 +818,22 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // wide hunt to proactively detect it. Single text-only AI call, EPHEMERAL (no state change) — the
   // dashboard shows the VQL + rationale for review, then deploys via POST /velociraptor/hunt.
   app.post("/cases/:id/adversary-hints/hunt-technique", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
     const techniqueId = String((req.body as { techniqueId?: unknown })?.techniqueId ?? "").trim();
-    const techniqueName = String((req.body as { techniqueName?: unknown })?.techniqueName ?? "").trim() || undefined;
-    if (!/^T\d{4}(?:\.\d{3})?$/i.test(techniqueId)) return res.status(400).json({ error: "valid ATT&CK techniqueId required" });
+    const techniqueName =
+      String((req.body as { techniqueName?: unknown })?.techniqueName ?? "").trim() || undefined;
+    if (!/^T\d{4}(?:\.\d{3})?$/i.test(techniqueId))
+      return res.status(400).json({ error: "valid ATT&CK techniqueId required" });
     try {
-      const suggestions = await options.pipeline.suggestTechniqueHunts(req.params.id, techniqueId, techniqueName);
-      logLine(`[adversary] suggested ${suggestions.length} hunt(s) for technique ${techniqueId} (${req.params.id})`);
+      const suggestions = await options.pipeline.suggestTechniqueHunts(
+        req.params.id,
+        techniqueId,
+        techniqueName,
+      );
+      logLine(
+        `[adversary] suggested ${suggestions.length} hunt(s) for technique ${techniqueId} (${req.params.id})`,
+      );
       return res.status(200).json({ suggestions });
     } catch (err) {
       return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
@@ -704,12 +846,15 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // run. EPHEMERAL (no state change). Needs an AI provider; returns [] when the case has no memory
   // evidence (the dashboard hides the panel in that case).
   app.post("/cases/:id/memory/next-steps", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for memory next-step suggestions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+      return res.status(501).json({ error: "AI provider not configured for memory next-step suggestions" });
     try {
       const suggestions = await options.pipeline.suggestMemoryNextSteps(req.params.id);
       logLine(`[memory] suggested ${suggestions.length} next step(s) for ${req.params.id}`);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai", action: "memory-next-steps", detail: `suggested ${suggestions.length} next step(s)`,
+        category: "ai",
+        action: "memory-next-steps",
+        detail: `suggested ${suggestions.length} next step(s)`,
       });
       return res.status(200).json({ suggestions });
     } catch (err) {
@@ -755,10 +900,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // file is later opened without a CSP header.
       const html = await renderStandalonePresentation(deck, String(res.locals.cspNonce ?? ""));
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
-      res
-        .type("html")
-        .set("Content-Disposition", `attachment; filename="${filename}"`)
-        .send(html);
+      res.type("html").set("Content-Disposition", `attachment; filename="${filename}"`).send(html);
     } catch (err) {
       return sendPipelineError(res, err);
     }

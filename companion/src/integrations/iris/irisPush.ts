@@ -12,13 +12,28 @@ import { buildAssetGraph, type AssetGraph } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import { emptyReportMeta } from "../../reports/reportMeta.js";
 import {
-  mapAsset, mapIoc, mapEvent, mapNextStepTask, mapPlaybookTask, playbookStatusCandidates,
-  buildNotes, executiveSummaryMarkdown,
+  mapAsset,
+  mapIoc,
+  mapEvent,
+  mapNextStepTask,
+  mapPlaybookTask,
+  playbookStatusCandidates,
+  buildNotes,
+  executiveSummaryMarkdown,
 } from "./irisMap.js";
 import type { PlaybookTask } from "../../analysis/playbook.js";
 import type {
-  IrisCaseCreate, IrisCaseRef, IrisAssetRef, IrisIocRef, IrisEventRef, IrisDirRef, IrisTaskRef,
-  IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody,
+  IrisCaseCreate,
+  IrisCaseRef,
+  IrisAssetRef,
+  IrisIocRef,
+  IrisEventRef,
+  IrisDirRef,
+  IrisTaskRef,
+  IrisAssetBody,
+  IrisIocBody,
+  IrisEventBody,
+  IrisTaskBody,
 } from "./irisClient.js";
 
 // Structural subset of IrisClient used here — lets tests pass a lightweight mock.
@@ -46,30 +61,34 @@ export interface IrisClientLike {
 }
 
 export interface IrisPushInput {
-  caseName: string;                    // the resolved IRIS case name to find-or-create (an explicit
-                                        // override, a remembered name from a prior push, or a computed
-                                        // default — see irisExportStore.ts's defaultIrisCaseName)
+  caseName: string; // the resolved IRIS case name to find-or-create (an explicit
+  // override, a remembered name from a prior push, or a computed
+  // default — see irisExportStore.ts's defaultIrisCaseName)
   state: InvestigationState;
   meta?: ReportMeta;
-  assetGraph?: AssetGraph;             // defaults to buildAssetGraph(state)
+  assetGraph?: AssetGraph; // defaults to buildAssetGraph(state)
   // Response Playbook tasks (issue #36). When present, these are pushed as IRIS tasks (status-aware)
   // INSTEAD of the raw recommended next steps — the playbook is the analyst-curated superset.
   playbookTasks?: PlaybookTask[];
 }
 
 export interface IrisPushOptions {
-  customerId?: number;                 // IRIS customer id (default 1 — seeded IrisInitialClient)
-  classificationId?: number;           // IRIS case classification id (default 1)
-  baseUrl?: string;                    // to build a clickable case URL in the result
-  notesDirectory?: string;             // managed notes directory name (default "DFIR Companion")
+  customerId?: number; // IRIS customer id (default 1 — seeded IrisInitialClient)
+  classificationId?: number; // IRIS case classification id (default 1)
+  baseUrl?: string; // to build a clickable case URL in the result
+  notesDirectory?: string; // managed notes directory name (default "DFIR Companion")
 }
 
-interface SectionCount { added: number; existing: number; skipped: number }
+interface SectionCount {
+  added: number;
+  existing: number;
+  skipped: number;
+}
 
 export interface IrisPushResult {
   caseId: number;
   caseName: string;
-  created: boolean;                    // true = the case was newly created
+  created: boolean; // true = the case was newly created
   assets: SectionCount;
   iocs: SectionCount;
   timeline: SectionCount;
@@ -133,9 +152,16 @@ export async function pushCaseToIris(
   for (const a of await client.listAssets(cid)) assetByName.set(a.name.trim().toLowerCase(), a.id);
   for (const asset of graph.assets) {
     const key = asset.name.trim().toLowerCase();
-    if (assetByName.has(key)) { assets.existing += 1; continue; }
+    if (assetByName.has(key)) {
+      assets.existing += 1;
+      continue;
+    }
     const body = mapAsset(asset, assetTypes);
-    if (!body) { assets.skipped += 1; warnings.push(`asset skipped (no IRIS type for "${asset.type}"): ${asset.name}`); continue; }
+    if (!body) {
+      assets.skipped += 1;
+      warnings.push(`asset skipped (no IRIS type for "${asset.type}"): ${asset.name}`);
+      continue;
+    }
     try {
       assetByName.set(key, await client.addAsset(cid, body));
       assets.added += 1;
@@ -150,9 +176,16 @@ export async function pushCaseToIris(
   for (const i of await client.listIocs(cid)) iocByValue.set(i.value.trim().toLowerCase(), i.id);
   for (const ioc of input.state.iocs) {
     const key = ioc.value.trim().toLowerCase();
-    if (iocByValue.has(key)) { iocs.existing += 1; continue; }
+    if (iocByValue.has(key)) {
+      iocs.existing += 1;
+      continue;
+    }
     const body = mapIoc(ioc, iocTypes);
-    if (!body) { iocs.skipped += 1; warnings.push(`ioc skipped (no IRIS type for "${ioc.type}"): ${ioc.value}`); continue; }
+    if (!body) {
+      iocs.skipped += 1;
+      warnings.push(`ioc skipped (no IRIS type for "${ioc.type}"): ${ioc.value}`);
+      continue;
+    }
     try {
       iocByValue.set(key, await client.addIoc(cid, body));
       iocs.added += 1;
@@ -171,23 +204,37 @@ export async function pushCaseToIris(
     warnings.push("timeline: could not list existing events — re-push may duplicate events");
   }
   let categoryByName = new Map<string, number>();
-  try { categoryByName = await client.eventCategoryMap(); } catch (err) { warnings.push(`event categories: ${(err as Error).message}`); }
+  try {
+    categoryByName = await client.eventCategoryMap();
+  } catch (err) {
+    warnings.push(`event categories: ${(err as Error).message}`);
+  }
   const findingById = new Map(input.state.findings.map((f) => [f.id, f]));
   const iocById = new Map(input.state.iocs.map((i) => [i.id, i]));
   const findingIocValues = (e: ForensicEvent): string[] => {
     const out: string[] = [];
     for (const fid of e.relatedFindingIds) {
       const f = findingById.get(fid);
-      if (f) for (const iid of f.relatedIocs) { const i = iocById.get(iid); if (i) out.push(i.value); }
+      if (f)
+        for (const iid of f.relatedIocs) {
+          const i = iocById.get(iid);
+          if (i) out.push(i.value);
+        }
     }
     return out;
   };
   const ctx = { assetByName, iocByValue, categoryByName, findingIocValues };
   for (const event of input.state.forensicTimeline) {
     const body = mapEvent(event, ctx);
-    if (!body) { timeline.skipped += 1; continue; }     // unparseable timestamp
+    if (!body) {
+      timeline.skipped += 1;
+      continue;
+    } // unparseable timestamp
     const dedupeKey = `${body.event_title}|${body.event_date}`;
-    if (seenEvents.has(dedupeKey)) { timeline.existing += 1; continue; }
+    if (seenEvents.has(dedupeKey)) {
+      timeline.existing += 1;
+      continue;
+    }
     try {
       await client.addEvent(cid, body);
       seenEvents.add(dedupeKey);
@@ -205,24 +252,39 @@ export async function pushCaseToIris(
   const usePlaybook = (input.playbookTasks?.length ?? 0) > 0;
   if (usePlaybook || input.state.nextSteps.length) {
     let statuses = new Map<string, number>();
-    try { statuses = await client.taskStatusMap(); }
-    catch (err) { warnings.push(`task status: ${(err as Error).message}`); }
+    try {
+      statuses = await client.taskStatusMap();
+    } catch (err) {
+      warnings.push(`task status: ${(err as Error).message}`);
+    }
     const fallbackStatus = statuses.get("to do") ?? statuses.get("open") ?? [...statuses.values()][0] ?? 1;
     const resolveStatus = (candidates: string[]): number => {
-      for (const name of candidates) { const id = statuses.get(name); if (id != null) return id; }
+      for (const name of candidates) {
+        const id = statuses.get(name);
+        if (id != null) return id;
+      }
       return fallbackStatus;
     };
     const seenTasks = new Set<string>();
-    try { for (const t of await client.listTasks(cid)) seenTasks.add(t.title); }
-    catch { warnings.push("tasks: could not list existing tasks — re-push may duplicate"); }
+    try {
+      for (const t of await client.listTasks(cid)) seenTasks.add(t.title);
+    } catch {
+      warnings.push("tasks: could not list existing tasks — re-push may duplicate");
+    }
 
     const items: { body: IrisTaskBody; statusId: number }[] = usePlaybook
-      ? input.playbookTasks!.map((t) => ({ body: mapPlaybookTask(t), statusId: resolveStatus(playbookStatusCandidates(t.status)) }))
+      ? input.playbookTasks!.map((t) => ({
+          body: mapPlaybookTask(t),
+          statusId: resolveStatus(playbookStatusCandidates(t.status)),
+        }))
       : input.state.nextSteps.map((s) => ({ body: mapNextStepTask(s), statusId: fallbackStatus }));
 
     for (const { body, statusId } of items) {
       const title = String(body.task_title);
-      if (seenTasks.has(title)) { tasks.existing += 1; continue; }
+      if (seenTasks.has(title)) {
+        tasks.existing += 1;
+        continue;
+      }
       try {
         await client.addTask(cid, { ...body, task_status_id: statusId, task_assignees_id: [] });
         seenTasks.add(title);
@@ -242,8 +304,12 @@ export async function pushCaseToIris(
     if (existingDir) await client.deleteDirectory(cid, existingDir.id);
     const dirId = await client.addDirectory(cid, dirName);
     for (const note of buildNotes(input.state, meta)) {
-      try { await client.addNote(cid, dirId, note.title, note.content); notes += 1; }
-      catch (err) { warnings.push(`note "${note.title}": ${(err as Error).message}`); }
+      try {
+        await client.addNote(cid, dirId, note.title, note.content);
+        notes += 1;
+      } catch (err) {
+        warnings.push(`note "${note.title}": ${(err as Error).message}`);
+      }
     }
   } catch (err) {
     warnings.push(`notes: ${(err as Error).message}`);

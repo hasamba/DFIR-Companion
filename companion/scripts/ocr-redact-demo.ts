@@ -18,10 +18,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import {
-  ocrRedactImage,
-  TesseractOcrRunner,
-} from "../src/analysis/ocrRedact.js";
+import { ocrRedactImage, TesseractOcrRunner } from "../src/analysis/ocrRedact.js";
 import type { AnonPolicy, KnownEntities } from "../src/analysis/anonymize.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +27,19 @@ const OUT_DIR = path.join(__dirname, "ocr-demo-out");
 // Same shape the case derives at runtime: enable all categories + a few known victim entities.
 const POLICY: AnonPolicy = {
   enabled: true,
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
+  categories: {
+    IP: true,
+    EMAIL: true,
+    USER: true,
+    HOST: true,
+    DOMAIN: true,
+    PATH: true,
+    CMD: true,
+    REG: true,
+    CARD: true,
+    PHONE: true,
+    NATID: true,
+  },
   redactSecrets: false,
   // The demo mirrors the AI-prompt path, where a public address carries no analytic value
   // to the model and restore() puts it back afterwards.
@@ -74,9 +83,7 @@ async function makeSyntheticImage(): Promise<Buffer> {
 
 async function main(): Promise<void> {
   const argPath = process.argv[2];
-  const input = argPath
-    ? await fs.readFile(path.resolve(argPath))
-    : await makeSyntheticImage();
+  const input = argPath ? await fs.readFile(path.resolve(argPath)) : await makeSyntheticImage();
 
   await fs.mkdir(OUT_DIR, { recursive: true });
   await fs.writeFile(path.join(OUT_DIR, "input.png"), input);
@@ -105,7 +112,9 @@ async function main(): Promise<void> {
     // Self-check against the synthetic expectations.
     const seen = new Set(words.map((w) => w.text.replace(/[:,]/g, "")));
     const matchedExpected = REDACT.filter((r) => [...seen].some((s) => s.includes(r) || r.includes(s)));
-    console.log(`\nExpected-redacted entities OCR found: ${matchedExpected.join(", ") || "(none — text may not have OCR'd cleanly)"}`);
+    console.log(
+      `\nExpected-redacted entities OCR found: ${matchedExpected.join(", ") || "(none — text may not have OCR'd cleanly)"}`,
+    );
     console.log(`Expected-kept tokens (must NOT be boxed): ${KEEP.join(", ")}`);
   }
 

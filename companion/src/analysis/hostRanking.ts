@@ -18,10 +18,10 @@ export interface EntityRank {
   high: number;
   medium: number;
   total: number;
-  techniques: number;       // distinct ATT&CK techniques seen on it
-  connectiveIocs: number;   // cross-host / multi-tool IOCs touching it (hosts only)
-  eventIds: string[];       // forensic-event ids that contributed to this entity's score (#237)
-  iocIds: string[];         // IOC ids connected to this entity, via the asset graph (#237)
+  techniques: number; // distinct ATT&CK techniques seen on it
+  connectiveIocs: number; // cross-host / multi-tool IOCs touching it (hosts only)
+  eventIds: string[]; // forensic-event ids that contributed to this entity's score (#237)
+  iocIds: string[]; // IOC ids connected to this entity, via the asset graph (#237)
   firstSeen: string;
   lastSeen: string;
 }
@@ -29,17 +29,26 @@ export interface EntityRank {
 export interface HostRankingResult {
   ranks: EntityRank[];
   suggestedWindow: { start: string | null; end: string | null };
-  topHosts: string[];       // the host names that carry the bulk of the signal
+  topHosts: string[]; // the host names that carry the bulk of the signal
 }
 
 interface Acc {
-  name: string; type: "host" | "account";
-  crit: number; high: number; med: number; total: number;
-  tech: Set<string>; first: string; last: string;
+  name: string;
+  type: "host" | "account";
+  crit: number;
+  high: number;
+  med: number;
+  total: number;
+  tech: Set<string>;
+  first: string;
+  last: string;
   ids: string[];
 }
 
-export interface RankHostsOptions { max?: number; coverage?: number }
+export interface RankHostsOptions {
+  max?: number;
+  coverage?: number;
+}
 
 export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}): HostRankingResult {
   const max = opts.max ?? 20;
@@ -55,7 +64,10 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
   const ensure = (type: "host" | "account", name: string): Acc => {
     const key = `${type}:${name.toLowerCase()}`;
     let a = map.get(key);
-    if (!a) { a = { name, type, crit: 0, high: 0, med: 0, total: 0, tech: new Set(), first: "", last: "", ids: [] }; map.set(key, a); }
+    if (!a) {
+      a = { name, type, crit: 0, high: 0, med: 0, total: 0, tech: new Set(), first: "", last: "", ids: [] };
+      map.set(key, a);
+    }
     return a;
   };
   const bump = (a: Acc, e: ForensicEvent): void => {
@@ -66,7 +78,10 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
     else if (e.severity === "Medium") a.med++;
     for (const t of e.mitreTechniques ?? []) a.tech.add(t);
     const ts = e.timestamp ?? "";
-    if (ts) { if (!a.first || ts < a.first) a.first = ts; if (!a.last || ts > a.last) a.last = ts; }
+    if (ts) {
+      if (!a.first || ts < a.first) a.first = ts;
+      if (!a.last || ts > a.last) a.last = ts;
+    }
   };
 
   for (const e of state.forensicTimeline) {
@@ -78,23 +93,35 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
   // (structured fields + related-finding IOCs + description matches) instead of re-deriving it.
   const iocIdsByKey = new Map(buildAssetGraph(state).assets.map((a) => [a.id, a.iocIds] as const));
 
-  const ranks: EntityRank[] = [...map.values()].map((a) => {
-    const key = `${a.type}:${a.name.toLowerCase()}`;
-    const connectiveIocs = a.type === "host" ? (connByHost.get(a.name.toLowerCase()) ?? 0) : 0;
-    // Real Critical/High events dominate; the connective-IOC contribution is capped so a host that
-    // merely shares many (possibly noisy) cross-host indicators can't flatten the ranking past the
-    // host that actually has the severe events.
-    const score = a.crit * 5 + a.high * 3 + a.med * 1 + a.tech.size * 2 + Math.min(connectiveIocs, 8) * 3;
-    return {
-      name: a.name, type: a.type, score,
-      critical: a.crit, high: a.high, medium: a.med, total: a.total,
-      techniques: a.tech.size, connectiveIocs,
-      eventIds: a.ids, iocIds: iocIdsByKey.get(key) ?? [],
-      firstSeen: a.first, lastSeen: a.last,
-    };
-  })
-    .filter((r) => r.score > 0)                 // only entities that carry signal
-    .sort((x, y) => y.score - x.score || y.critical - x.critical || y.high - x.high || x.name.localeCompare(y.name));
+  const ranks: EntityRank[] = [...map.values()]
+    .map((a) => {
+      const key = `${a.type}:${a.name.toLowerCase()}`;
+      const connectiveIocs = a.type === "host" ? (connByHost.get(a.name.toLowerCase()) ?? 0) : 0;
+      // Real Critical/High events dominate; the connective-IOC contribution is capped so a host that
+      // merely shares many (possibly noisy) cross-host indicators can't flatten the ranking past the
+      // host that actually has the severe events.
+      const score = a.crit * 5 + a.high * 3 + a.med * 1 + a.tech.size * 2 + Math.min(connectiveIocs, 8) * 3;
+      return {
+        name: a.name,
+        type: a.type,
+        score,
+        critical: a.crit,
+        high: a.high,
+        medium: a.med,
+        total: a.total,
+        techniques: a.tech.size,
+        connectiveIocs,
+        eventIds: a.ids,
+        iocIds: iocIdsByKey.get(key) ?? [],
+        firstSeen: a.first,
+        lastSeen: a.last,
+      };
+    })
+    .filter((r) => r.score > 0) // only entities that carry signal
+    .sort(
+      (x, y) =>
+        y.score - x.score || y.critical - x.critical || y.high - x.high || x.name.localeCompare(y.name),
+    );
 
   // Top HOSTS that cumulatively cover `coverage` of the host signal (min 1, max 5).
   const hostRanks = ranks.filter((r) => r.type === "host");
@@ -108,8 +135,14 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
   }
   const topHosts = topHostRanks.map((r) => r.name);
 
-  const starts = topHostRanks.map((r) => r.firstSeen).filter(Boolean).sort();
-  const ends = topHostRanks.map((r) => r.lastSeen).filter(Boolean).sort();
+  const starts = topHostRanks
+    .map((r) => r.firstSeen)
+    .filter(Boolean)
+    .sort();
+  const ends = topHostRanks
+    .map((r) => r.lastSeen)
+    .filter(Boolean)
+    .sort();
   const suggestedWindow = {
     start: starts.length ? starts[0] : null,
     end: ends.length ? ends[ends.length - 1] : null,

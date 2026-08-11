@@ -4,7 +4,8 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
-    id, timestamp,
+    id,
+    timestamp,
     description: extra.description ?? "",
     severity: extra.severity ?? "Info",
     mitreTechniques: extra.mitreTechniques ?? [],
@@ -68,7 +69,12 @@ describe("clampOutlierYears", () => {
   });
 
   it("ignores undated events", () => {
-    const events = [ev("u", ""), ev("bad", "not-a-date"), ...body(2024, 12), ev("old", "2023-05-14T12:00:00Z")];
+    const events = [
+      ev("u", ""),
+      ev("bad", "not-a-date"),
+      ...body(2024, 12),
+      ev("old", "2023-05-14T12:00:00Z"),
+    ];
     const out = clampOutlierYears(events);
     expect(out.find((e) => e.id === "u")!.timestamp).toBe("");
     expect(out.find((e) => e.id === "bad")!.timestamp).toBe("not-a-date");

@@ -58,7 +58,11 @@ describe("buildAiDiagnostics honors the rename", () => {
   });
 
   it("prefers the new name when both are set", () => {
-    const d = buildAiDiagnostics({ DFIR_VISION_MODEL: "new", DFIR_AI_MODEL: "old", DFIR_VISION_PROVIDER: "openai" });
+    const d = buildAiDiagnostics({
+      DFIR_VISION_MODEL: "new",
+      DFIR_AI_MODEL: "old",
+      DFIR_VISION_PROVIDER: "openai",
+    });
     expect(d.model).toBe("new");
   });
 });

@@ -24,13 +24,17 @@ describe("buildGraphContext — empty / no edges", () => {
 
   it("returns '' when maxEdges is 0 even with edges present", () => {
     const s = emptyState("c1");
-    s.forensicTimeline.push(ev({ id: "e1", asset: "H", parentName: "excel.exe", processName: "powershell.exe" }));
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "H", parentName: "excel.exe", processName: "powershell.exe" }),
+    );
     expect(buildGraphContext(s, { maxEdges: 0 })).toBe("");
   });
 
   it("clamps a negative maxEdges to 0 → ''", () => {
     const s = emptyState("c1");
-    s.forensicTimeline.push(ev({ id: "e1", asset: "H", parentName: "excel.exe", processName: "powershell.exe" }));
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "H", parentName: "excel.exe", processName: "powershell.exe" }),
+    );
     expect(buildGraphContext(s, { maxEdges: -5 })).toBe("");
   });
 });
@@ -39,7 +43,13 @@ describe("buildGraphContext — rendering", () => {
   it("renders the header, a process-spawn section, and cites the backing event id", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "WEB01", parentName: "excel.exe", processName: "powershell.exe", severity: "High" }),
+      ev({
+        id: "e1",
+        asset: "WEB01",
+        parentName: "excel.exe",
+        processName: "powershell.exe",
+        severity: "High",
+      }),
     );
     const out = buildGraphContext(s);
     expect(out).toContain("ATTACK GRAPH");
@@ -51,7 +61,13 @@ describe("buildGraphContext — rendering", () => {
   it("groups multiple edge types under their own labelled sections", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "WEB01", parentName: "excel.exe", processName: "powershell.exe", severity: "High" }),
+      ev({
+        id: "e1",
+        asset: "WEB01",
+        parentName: "excel.exe",
+        processName: "powershell.exe",
+        severity: "High",
+      }),
       ev({ id: "e2", asset: "WEB01", dstIp: "1.2.3.4", port: 443, severity: "High" }),
     );
     const out = buildGraphContext(s);
@@ -80,7 +96,13 @@ describe("buildGraphContext — capping", () => {
     // to its host) = 10 total edges; cap the render to 2.
     for (let i = 0; i < 5; i++) {
       s.forensicTimeline.push(
-        ev({ id: `e${i}`, asset: "WEB01", parentName: `p${i}.exe`, processName: `c${i}.exe`, severity: "High" }),
+        ev({
+          id: `e${i}`,
+          asset: "WEB01",
+          parentName: `p${i}.exe`,
+          processName: `c${i}.exe`,
+          severity: "High",
+        }),
       );
     }
     const out = buildGraphContext(s, { maxEdges: 2 });
@@ -92,7 +114,13 @@ describe("buildGraphContext — capping", () => {
   it("does not add a truncation footer when everything fits", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
-      ev({ id: "e1", asset: "WEB01", parentName: "excel.exe", processName: "powershell.exe", severity: "High" }),
+      ev({
+        id: "e1",
+        asset: "WEB01",
+        parentName: "excel.exe",
+        processName: "powershell.exe",
+        severity: "High",
+      }),
     );
     const out = buildGraphContext(s);
     expect(out).not.toContain("showing");

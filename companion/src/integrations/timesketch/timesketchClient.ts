@@ -12,18 +12,28 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 
 export interface TimesketchClientOptions {
-  baseUrl: string;          // e.g. https://timesketch.example.org
-  username: string;         // local-auth username
-  password: string;         // local-auth password
-  fetchFn?: FetchFn;        // injectable transport (tests pass a mock; TLS-custom in prod)
-  timeoutMs?: number;       // per-request timeout (default 60s — uploads can be larger)
+  baseUrl: string; // e.g. https://timesketch.example.org
+  username: string; // local-auth username
+  password: string; // local-auth password
+  fetchFn?: FetchFn; // injectable transport (tests pass a mock; TLS-custom in prod)
+  timeoutMs?: number; // per-request timeout (default 60s — uploads can be larger)
 }
 
-export interface TimesketchSketchRef { id: number; name: string }
-export interface TimesketchTimelineRef { id: number; name: string }
+export interface TimesketchSketchRef {
+  id: number;
+  name: string;
+}
+export interface TimesketchTimelineRef {
+  id: number;
+  name: string;
+}
 
 export class TimesketchApiError extends Error {
-  constructor(message: string, readonly status: number, readonly kind: "auth" | "notfound" | "http" | "network") {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly kind: "auth" | "notfound" | "http" | "network",
+  ) {
     super(message);
     this.name = "TimesketchApiError";
   }
@@ -78,7 +88,7 @@ interface SendOptions {
   body?: BodyInit;
   json?: unknown;
   redirect?: RequestRedirect;
-  sendCsrf?: boolean;       // default true — attach the x-csrftoken header
+  sendCsrf?: boolean; // default true — attach the x-csrftoken header
 }
 
 export class TimesketchClient {
@@ -113,7 +123,10 @@ export class TimesketchClient {
   }
 
   private async send(method: string, url: string, opts: SendOptions = {}): Promise<Response> {
-    const headers: Record<string, string> = { Accept: "application/json, text/html", Referer: `${this.base}/` };
+    const headers: Record<string, string> = {
+      Accept: "application/json, text/html",
+      Referer: `${this.base}/`,
+    };
     const cookie = this.cookieHeader();
     if (cookie) headers.Cookie = cookie;
     if (opts.sendCsrf !== false && this.csrf) headers["x-csrftoken"] = this.csrf;
@@ -160,7 +173,8 @@ export class TimesketchClient {
     if (!this.csrf) {
       throw new TimesketchApiError(
         "Timesketch login: no CSRF token on the login page (check DFIR_TIMESKETCH_URL and that local auth is enabled)",
-        page.status, "auth",
+        page.status,
+        "auth",
       );
     }
 
@@ -175,13 +189,18 @@ export class TimesketchClient {
 
     const check = await this.send("GET", `${this.apiRoot}/sketches/?per_page=1`);
     if (check.status === 401 || check.status === 403) {
-      throw new TimesketchApiError("Timesketch auth failed (check DFIR_TIMESKETCH_USER / DFIR_TIMESKETCH_PASSWORD)", check.status, "auth");
+      throw new TimesketchApiError(
+        "Timesketch auth failed (check DFIR_TIMESKETCH_USER / DFIR_TIMESKETCH_PASSWORD)",
+        check.status,
+        "auth",
+      );
     }
     if (!check.ok) throw await this.errorFor(check, "login check");
     if (!(check.headers.get("content-type") ?? "").includes("application/json")) {
       throw new TimesketchApiError(
         "Timesketch auth failed (login did not establish a session — the API returned the login page)",
-        check.status, "auth",
+        check.status,
+        "auth",
       );
     }
   }
@@ -196,7 +215,12 @@ export class TimesketchClient {
       const res = await this.send("GET", `${this.apiRoot}/sketches/?per_page=100&page=${page}`);
       if (!res.ok) throw await this.errorFor(res, "list sketches");
       const rows = objectList(await res.json().catch(() => ({})));
-      const hit = rows.find((r) => String(r.name ?? "").trim().toLowerCase() === target);
+      const hit = rows.find(
+        (r) =>
+          String(r.name ?? "")
+            .trim()
+            .toLowerCase() === target,
+      );
       if (hit) return { id: Number(hit.id), name: String(hit.name ?? name) };
       if (rows.length < 100) break;
     }
@@ -208,7 +232,8 @@ export class TimesketchClient {
     if (!res.ok) throw await this.errorFor(res, "create sketch");
     const obj = firstObject(await res.json().catch(() => ({})));
     const id = Number(obj?.id);
-    if (!Number.isFinite(id)) throw new TimesketchApiError("Timesketch create sketch: no sketch id in response", res.status, "http");
+    if (!Number.isFinite(id))
+      throw new TimesketchApiError("Timesketch create sketch: no sketch id in response", res.status, "http");
     return { id, name };
   }
 
@@ -219,7 +244,9 @@ export class TimesketchClient {
     const res = await this.send("GET", `${this.apiRoot}/sketches/${sketchId}/`);
     if (!res.ok) throw await this.errorFor(res, "get sketch");
     const sketch = firstObject(await res.json().catch(() => ({})));
-    const timelines = Array.isArray(sketch?.timelines) ? (sketch.timelines as Array<Record<string, unknown>>) : [];
+    const timelines = Array.isArray(sketch?.timelines)
+      ? (sketch.timelines as Array<Record<string, unknown>>)
+      : [];
     return timelines.map((t) => ({ id: Number(t.id), name: String(t.name ?? "") }));
   }
 

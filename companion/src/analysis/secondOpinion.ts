@@ -17,24 +17,24 @@ export type DeltaStatus = "pending" | "accepted" | "rejected";
 export type DeltaRecommendation = "accept_b" | "keep_a" | "review";
 
 export interface SecondOpinionDelta {
-  id: string;                         // stable across runs: `${kind}:${slug(semanticKey|title|techniqueId)}` (#69)
+  id: string; // stable across runs: `${kind}:${slug(semanticKey|title|techniqueId)}` (#69)
   kind: SecondOpinionDeltaKind;
-  title: string;                      // finding title, or the ATT&CK technique id for mitre_* deltas
-  aSeverity?: Severity;               // severity/ a_only: model A's severity
-  bSeverity?: Severity;               // severity / b_only: model B's severity
-  finding?: Finding;                  // b_only: B's finding (merged on accept); a_only/severity: A's finding (edited in place)
-  techniqueName?: string;             // mitre_added: the technique name, so accept can add a labelled Technique
-  rationale: string;                  // one-line reconcile-AI judgement (default "")
+  title: string; // finding title, or the ATT&CK technique id for mitre_* deltas
+  aSeverity?: Severity; // severity/ a_only: model A's severity
+  bSeverity?: Severity; // severity / b_only: model B's severity
+  finding?: Finding; // b_only: B's finding (merged on accept); a_only/severity: A's finding (edited in place)
+  techniqueName?: string; // mitre_added: the technique name, so accept can add a labelled Technique
+  rationale: string; // one-line reconcile-AI judgement (default "")
   recommendation: DeltaRecommendation; // reconcile-AI suggestion (default "review")
-  status: DeltaStatus;                // pending | accepted | rejected
+  status: DeltaStatus; // pending | accepted | rejected
 }
 
 export interface SecondOpinion {
   generatedAt: string;
-  modelA: string;                     // primary synthesis model label
-  modelB: string;                     // second-opinion model label
-  summary: string;                    // reconcile-AI overall assessment (default "")
-  agreementCount: number;             // findings BOTH models share (by matchKey — semanticKey or title)
+  modelA: string; // primary synthesis model label
+  modelB: string; // second-opinion model label
+  summary: string; // reconcile-AI overall assessment (default "")
+  agreementCount: number; // findings BOTH models share (by matchKey — semanticKey or title)
   deltas: SecondOpinionDelta[];
 }
 
@@ -51,7 +51,13 @@ const matchKey = (f: Finding): string => f.semanticKey?.trim() || deriveSemantic
 
 // URL/id-safe slug for a stable delta id. Collapses runs of non-alphanumerics to single dashes.
 function slug(text: string): string {
-  return String(text).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+  return (
+    String(text)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "x"
+  );
 }
 
 // A cross-run finding index. A counterpart is matched by semanticKey FIRST (so a reworded title with
@@ -60,8 +66,8 @@ function slug(text: string): string {
 // dominant techniques — that divergence surfaces separately as mitre deltas, not as finding noise).
 // The side's own list is de-duped by matchKey (first wins), mirroring the previous byTitle behavior.
 interface FindingIndex {
-  all: readonly Finding[];                          // de-duped findings (first per matchKey)
-  match: (f: Finding) => Finding | undefined;       // this side's counterpart to `f`, by semanticKey then title
+  all: readonly Finding[]; // de-duped findings (first per matchKey)
+  match: (f: Finding) => Finding | undefined; // this side's counterpart to `f`, by semanticKey then title
 }
 
 function indexFindings(findings: readonly Finding[]): FindingIndex {
@@ -107,12 +113,19 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
     } else if (!matchedA.has(af)) {
       matchedA.add(af); // one delta per A finding — a second B finding mapping to it agrees, no delta
       if (af.severity !== bf.severity) {
-        deltas.push(delta("severity", matchKey(af), af.title, { finding: af, aSeverity: af.severity, bSeverity: bf.severity }));
+        deltas.push(
+          delta("severity", matchKey(af), af.title, {
+            finding: af,
+            aSeverity: af.severity,
+            bSeverity: bf.severity,
+          }),
+        );
       }
     }
   }
   for (const af of aIdx.all) {
-    if (!matchedA.has(af)) deltas.push(delta("a_only", matchKey(af), af.title, { finding: af, aSeverity: af.severity }));
+    if (!matchedA.has(af))
+      deltas.push(delta("a_only", matchKey(af), af.title, { finding: af, aSeverity: af.severity }));
   }
 
   const aTech = new Map(a.mitreTechniques.map((t) => [t.id, t]));
@@ -130,7 +143,12 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
 // or normalized title) or, for mitre deltas, the technique id. Keying the id off semanticKey rather
 // than the raw title is what keeps the delta stable across a reworded re-run (issue #69). `title`
 // remains the human-readable label rendered to the analyst.
-function delta(kind: SecondOpinionDeltaKind, keyBasis: string, title: string, extra: Partial<SecondOpinionDelta>): SecondOpinionDelta {
+function delta(
+  kind: SecondOpinionDeltaKind,
+  keyBasis: string,
+  title: string,
+  extra: Partial<SecondOpinionDelta>,
+): SecondOpinionDelta {
   return {
     id: `${kind}:${slug(keyBasis)}`,
     kind,
@@ -179,12 +197,16 @@ export function buildSecondOpinion(input: BuildSecondOpinionInput): SecondOpinio
 
 export const reconcileResponseSchema = z.object({
   summary: z.string().catch(""),
-  verdicts: z.array(z.object({
-    id: z.string(),
-    rationale: z.string().catch(""),
-    // Lenient enum: an unexpected value falls back to "review" instead of rejecting the response.
-    recommendation: z.enum(["accept_b", "keep_a", "review"]).catch("review"),
-  })).catch([]),
+  verdicts: z
+    .array(
+      z.object({
+        id: z.string(),
+        rationale: z.string().catch(""),
+        // Lenient enum: an unexpected value falls back to "review" instead of rejecting the response.
+        recommendation: z.enum(["accept_b", "keep_a", "review"]).catch("review"),
+      }),
+    )
+    .catch([]),
 });
 
 export type ReconcileResponse = z.infer<typeof reconcileResponseSchema>;
@@ -203,10 +225,20 @@ export const RECONCILE_PROMPT = [
   "Also write a 1-2 sentence 'summary' of how the two analyses compare overall.",
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape — echo each delta's id verbatim:",
-  JSON.stringify({
-    summary: "one to two sentences comparing the two analyses",
-    verdicts: [{ id: "b_only:example-finding", rationale: "why one model's call is better supported", recommendation: "accept_b|keep_a|review" }],
-  }, null, 2),
+  JSON.stringify(
+    {
+      summary: "one to two sentences comparing the two analyses",
+      verdicts: [
+        {
+          id: "b_only:example-finding",
+          rationale: "why one model's call is better supported",
+          recommendation: "accept_b|keep_a|review",
+        },
+      ],
+    },
+    null,
+    2,
+  ),
 ].join("\n");
 
 const sevLabel = (s?: Severity): string => s ?? "?";
@@ -229,7 +261,11 @@ function renderDelta(d: SecondOpinionDelta): string {
 }
 
 // Build the reconcile USER prompt: the two case summaries + every disagreement, each tagged with its id.
-export function buildReconcilePrompt(a: InvestigationState, b: InvestigationState, deltas: readonly SecondOpinionDelta[]): string {
+export function buildReconcilePrompt(
+  a: InvestigationState,
+  b: InvestigationState,
+  deltas: readonly SecondOpinionDelta[],
+): string {
   const aSummary = a.lastSummary?.trim() || a.attackerPath?.trim() || "(no summary)";
   const bSummary = b.lastSummary?.trim() || b.attackerPath?.trim() || "(no summary)";
   return [
@@ -278,7 +314,10 @@ export function setAllPendingStatus(so: SecondOpinion, status: DeltaStatus): Sec
 // Findings are matched by matchKey (semanticKey, falling back to title — issue #69) so an accepted
 // delta re-applies to the same finding even after a reworded re-synthesis.
 // Used by both the apply route (on the live state) and synthesize() post-processing (durability).
-export function applyAcceptedSecondOpinion(state: InvestigationState, so: SecondOpinion | null): InvestigationState {
+export function applyAcceptedSecondOpinion(
+  state: InvestigationState,
+  so: SecondOpinion | null,
+): InvestigationState {
   if (!so) return state;
   const accepted = so.deltas.filter((d) => d.status === "accepted");
   if (accepted.length === 0) return state;
@@ -303,7 +342,10 @@ export function applyAcceptedSecondOpinion(state: InvestigationState, so: Second
       findings = mapByKey(findings, deltaKey(d), (f) => ({ ...f, severity: sev }));
     } else if (d.kind === "mitre_added") {
       if (!techniques.some((t) => t.id === d.title)) {
-        techniques = [...techniques, { id: d.title, name: d.techniqueName || d.title, findingIds: [] } satisfies Technique];
+        techniques = [
+          ...techniques,
+          { id: d.title, name: d.techniqueName || d.title, findingIds: [] } satisfies Technique,
+        ];
       }
     } else if (d.kind === "mitre_removed") {
       techniques = techniques.filter((t) => t.id !== d.title);

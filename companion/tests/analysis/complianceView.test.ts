@@ -62,7 +62,11 @@ describe("parseDuration", () => {
 
 describe("computeDeadline", () => {
   it("adds calendar hours for a calendar clock", () => {
-    const d = computeDeadline(GDPR_33.notification, "2026-03-02T00:00:00.000Z", new Date("2026-03-02T00:00:00.000Z"));
+    const d = computeDeadline(
+      GDPR_33.notification,
+      "2026-03-02T00:00:00.000Z",
+      new Date("2026-03-02T00:00:00.000Z"),
+    );
     expect(d?.dueAt).toBe("2026-03-05T00:00:00.000Z"); // +72h, weekend or not
     expect(d?.status).toBe("due-soon");
   });
@@ -71,18 +75,30 @@ describe("computeDeadline", () => {
     // Discovery on Thursday 2026-03-05. Four business days lands on Wednesday 2026-03-11,
     // because the 7th and 8th are a Saturday and Sunday. A naive +4 days would say the 9th.
     expect(new Date("2026-03-05T00:00:00.000Z").getUTCDay()).toBe(4); // Thursday
-    const d = computeDeadline(SEC_8K.notification, "2026-03-05T00:00:00.000Z", new Date("2026-03-05T00:00:00.000Z"));
+    const d = computeDeadline(
+      SEC_8K.notification,
+      "2026-03-05T00:00:00.000Z",
+      new Date("2026-03-05T00:00:00.000Z"),
+    );
     expect(d?.dueAt).toBe("2026-03-11T00:00:00.000Z");
   });
 
   it("counts remaining business days in business days", () => {
     // Due Wednesday, asking on the preceding Friday: Mon/Tue/Wed remain, not the 5 calendar days.
-    const d = computeDeadline(SEC_8K.notification, "2026-03-05T00:00:00.000Z", new Date("2026-03-06T00:00:00.000Z"));
+    const d = computeDeadline(
+      SEC_8K.notification,
+      "2026-03-05T00:00:00.000Z",
+      new Date("2026-03-06T00:00:00.000Z"),
+    );
     expect(d?.remainingDays).toBe(3);
   });
 
   it("reports overdue once the due date has passed", () => {
-    const d = computeDeadline(GDPR_33.notification, "2026-03-02T00:00:00.000Z", new Date("2026-03-09T00:00:00.000Z"));
+    const d = computeDeadline(
+      GDPR_33.notification,
+      "2026-03-02T00:00:00.000Z",
+      new Date("2026-03-09T00:00:00.000Z"),
+    );
     expect(d?.status).toBe("overdue");
     expect(d!.remainingDays).toBeLessThan(0);
   });

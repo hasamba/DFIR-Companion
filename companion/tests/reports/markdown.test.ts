@@ -29,14 +29,38 @@ describe("renderMarkdownReport uncertainty ledger (#73)", () => {
 describe("renderMarkdownReport", () => {
   it("cites each finding's supporting forensic events as a numbered footnote list (#222)", () => {
     const state = emptyState("c1");
-    state.findings.push({ id: "f1", severity: "High", title: "Lateral movement", description: "PsExec used",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "2026-05-28T10:00:00.000Z",
-      lastUpdated: "2026-05-28T10:00:00.000Z", status: "open", relatedEventIds: ["e1", "e2"] });
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Lateral movement",
+      description: "PsExec used",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-28T10:00:00.000Z",
+      lastUpdated: "2026-05-28T10:00:00.000Z",
+      status: "open",
+      relatedEventIds: ["e1", "e2"],
+    });
     state.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00.000Z", description: "PsExec service installed on DC01",
-        severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00.000Z", description: "PsExec connected to FS01",
-        severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00.000Z",
+        description: "PsExec service installed on DC01",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: ["f1"],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00.000Z",
+        description: "PsExec connected to FS01",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: ["f1"],
+        sourceScreenshots: [],
+      },
     );
 
     const md = renderMarkdownReport(state);
@@ -47,13 +71,27 @@ describe("renderMarkdownReport", () => {
 
   it("falls back to the reverse relatedFindingIds link when a finding has no relatedEventIds of its own (#222)", () => {
     const state = emptyState("c1");
-    state.findings.push({ id: "f1", severity: "High", title: "Legacy finding", description: "no citations field",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "2026-05-28T10:00:00.000Z",
-      lastUpdated: "2026-05-28T10:00:00.000Z", status: "open" });
-    state.forensicTimeline.push(
-      { id: "e9", timestamp: "2026-05-28T09:00:00.000Z", description: "legacy backlinked event",
-        severity: "High", mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [] },
-    );
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Legacy finding",
+      description: "no citations field",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-28T10:00:00.000Z",
+      lastUpdated: "2026-05-28T10:00:00.000Z",
+      status: "open",
+    });
+    state.forensicTimeline.push({
+      id: "e9",
+      timestamp: "2026-05-28T09:00:00.000Z",
+      description: "legacy backlinked event",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+    });
 
     const md = renderMarkdownReport(state);
     expect(md).toContain("Cited events: [1] e9");
@@ -62,12 +100,25 @@ describe("renderMarkdownReport", () => {
   it("renders the derived technical sections under the template structure", () => {
     const state = emptyState("c1");
     state.lastSummary = "Host WIN-01 compromised via phishing.";
-    state.findings.push({ id: "f1", severity: "Critical", title: "Ransomware", description: "encryptor dropped",
-      relatedIocs: ["i1"], mitreTechniques: ["T1486"], sourceScreenshots: ["000005_t.webp"],
-      firstSeen: "2026-05-28T10:00:00.000Z", lastUpdated: "2026-05-28T10:05:00.000Z", status: "confirmed" });
+    state.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Ransomware",
+      description: "encryptor dropped",
+      relatedIocs: ["i1"],
+      mitreTechniques: ["T1486"],
+      sourceScreenshots: ["000005_t.webp"],
+      firstSeen: "2026-05-28T10:00:00.000Z",
+      lastUpdated: "2026-05-28T10:05:00.000Z",
+      status: "confirmed",
+    });
     state.iocs.push({ id: "i1", type: "hash", value: "abc123", firstSeen: "2026-05-28T10:00:00.000Z" });
-    state.timeline.push({ timestamp: "2026-05-28T10:00:00.000Z", windowSequence: 1,
-      description: "Reviewed file system", sourceScreenshots: ["000005_t.webp"] });
+    state.timeline.push({
+      timestamp: "2026-05-28T10:00:00.000Z",
+      windowSequence: 1,
+      description: "Reviewed file system",
+      sourceScreenshots: ["000005_t.webp"],
+    });
     state.mitreTechniques.push({ id: "T1486", name: "Data Encrypted for Impact", findingIds: ["f1"] });
 
     const md = renderMarkdownReport(state);
@@ -90,9 +141,18 @@ describe("renderMarkdownReport", () => {
   it("renders the adversary-group hints subsection (4.6.1) with the not-attribution caveat", () => {
     const state = emptyState("c1");
     // Common techniques several real groups share → at least one hint clears the 3-overlap default.
-    state.findings.push({ id: "f1", severity: "High", title: "intrusion", description: "",
-      relatedIocs: [], mitreTechniques: ["T1566", "T1059.001", "T1078", "T1003", "T1021", "T1053"],
-      sourceScreenshots: [], firstSeen: "2026-05-28T10:00:00.000Z", lastUpdated: "2026-05-28T10:00:00.000Z", status: "open" });
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "intrusion",
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: ["T1566", "T1059.001", "T1078", "T1003", "T1021", "T1053"],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-28T10:00:00.000Z",
+      lastUpdated: "2026-05-28T10:00:00.000Z",
+      status: "open",
+    });
 
     const md = renderMarkdownReport(state);
     expect(md).toContain("#### 4.6.1 Adversary group hints");
@@ -108,8 +168,14 @@ describe("renderMarkdownReport", () => {
     const chain = ["T1566.001", "T1059.001", "T1003.001", "T1021.002", "T1486"];
     chain.forEach((t, i) => {
       state.forensicTimeline.push({
-        id: `e${i}`, timestamp: `2026-05-28T10:0${i}:00.000Z`, description: t, severity: "High",
-        mitreTechniques: [t], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN01",
+        id: `e${i}`,
+        timestamp: `2026-05-28T10:0${i}:00.000Z`,
+        description: t,
+        severity: "High",
+        mitreTechniques: [t],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WKSTN01",
       });
     });
 
@@ -130,8 +196,14 @@ describe("renderMarkdownReport", () => {
     const chain = ["T1566.001", "T1059.001", "T1021.002", "T1486"];
     chain.forEach((t, i) => {
       state.forensicTimeline.push({
-        id: `e${i}`, timestamp: `2026-05-28T10:0${i}:00.000Z`, description: t, severity: "High",
-        mitreTechniques: [t], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN01",
+        id: `e${i}`,
+        timestamp: `2026-05-28T10:0${i}:00.000Z`,
+        description: t,
+        severity: "High",
+        mitreTechniques: [t],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WKSTN01",
       });
     });
 
@@ -148,12 +220,28 @@ describe("renderMarkdownReport", () => {
     // Dense one-minute cadence, then a 2-hour blackout, then activity resumes — one source.
     let ms = Date.parse("2026-05-28T08:00:00.000Z");
     for (let i = 0; i < 8; i++) {
-      state.forensicTimeline.push({ id: `a${i}`, timestamp: new Date(ms).toISOString(), description: "logon",
-        severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["EventLog"] });
+      state.forensicTimeline.push({
+        id: `a${i}`,
+        timestamp: new Date(ms).toISOString(),
+        description: "logon",
+        severity: "Info",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sources: ["EventLog"],
+      });
       ms += 60_000;
     }
-    state.forensicTimeline.push({ id: "b0", timestamp: "2026-05-28T10:07:00.000Z", description: "logon",
-      severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], sources: ["EventLog"] });
+    state.forensicTimeline.push({
+      id: "b0",
+      timestamp: "2026-05-28T10:07:00.000Z",
+      description: "logon",
+      severity: "Info",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sources: ["EventLog"],
+    });
 
     const md = renderMarkdownReport(state);
     expect(md).toContain("### 3.3 Timeline coverage");
@@ -232,7 +320,8 @@ describe("renderMarkdownReport", () => {
   });
 
   it("renders the optional company name and logo on the title page (above the title)", () => {
-    const logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const logo =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
     const meta = emptyReportMeta();
     meta.companyName = "Acme DFIR";
     meta.companyLogo = logo;
@@ -252,15 +341,34 @@ describe("renderMarkdownReport", () => {
     const s = emptyState("c1");
     const hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
     s.iocs.push({ id: "i1", type: "hash", value: hash, firstSeen: "" });
-    s.findings.push({ id: "f1", severity: "Critical", title: "RW", description: "", relatedIocs: ["i1"],
-      sourceScreenshots: [], mitreTechniques: [], firstSeen: "", lastUpdated: "", status: "confirmed" });
-    s.forensicTimeline.push({ id: "e1", timestamp: "", description: "encryptor", severity: "Critical",
-      mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [], asset: "WIN-01", sha256: hash });
+    s.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "RW",
+      description: "",
+      relatedIocs: ["i1"],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "confirmed",
+    });
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: "",
+      description: "encryptor",
+      severity: "Critical",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+      sha256: hash,
+    });
 
     const md = renderMarkdownReport(s);
     expect(md).toContain("### 4.2 Compromised assets");
     expect(md).toContain("| WIN-01 | host |");
-    expect(md).toContain(hash);                              // related IoC value listed
+    expect(md).toContain(hash); // related IoC value listed
 
     // Empty case shows the placeholder, not a table.
     expect(renderMarkdownReport(emptyState("c9"))).toContain("_No compromised assets identified yet._");
@@ -277,7 +385,8 @@ describe("renderMarkdownReport", () => {
 
   it("auto-calculates the glossary from the report text unless overridden", () => {
     const state = emptyState("c1");
-    state.attackerPath = "Initial access via phishing, credentials dumped from LSASS, then ransomware deployed.";
+    state.attackerPath =
+      "Initial access via phishing, credentials dumped from LSASS, then ransomware deployed.";
     const md = renderMarkdownReport(state);
     expect(md).toContain("## 2.4 Glossary of terms");
     expect(md).toContain("| LSASS |");
@@ -325,10 +434,24 @@ describe("renderMarkdownReport", () => {
     const state = emptyState("c1");
     state.attackerPath = "Initial access via phishing, then PsExec lateral movement, then ransomware.";
     state.forensicTimeline.push(
-      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "Ransomware encryptor executed",
-        severity: "Critical", mitreTechniques: ["T1486"], relatedFindingIds: ["f1"], sourceScreenshots: ["s2.webp"] },
-      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "Phishing email opened",
-        severity: "High", mitreTechniques: ["T1566"], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
+      {
+        id: "e2",
+        timestamp: "2026-05-20T15:00:00Z",
+        description: "Ransomware encryptor executed",
+        severity: "Critical",
+        mitreTechniques: ["T1486"],
+        relatedFindingIds: ["f1"],
+        sourceScreenshots: ["s2.webp"],
+      },
+      {
+        id: "e1",
+        timestamp: "2026-05-20T09:00:00Z",
+        description: "Phishing email opened",
+        severity: "High",
+        mitreTechniques: ["T1566"],
+        relatedFindingIds: [],
+        sourceScreenshots: ["s1.webp"],
+      },
     );
 
     const md = renderMarkdownReport(state);
@@ -352,7 +475,9 @@ describe("renderMarkdownReport", () => {
     // \r\n into a space so the row stays a single row.
     const state = emptyState("c2");
     const meta = emptyReportMeta();
-    meta.revisions = [{ version: "1.0", date: "2026-05-22", author: "Analyst", comments: "Initial\r\ndraft\nwith newlines" }];
+    meta.revisions = [
+      { version: "1.0", date: "2026-05-22", author: "Analyst", comments: "Initial\r\ndraft\nwith newlines" },
+    ];
     const md = renderMarkdownReport(state, meta);
     // The revisions row must be a single line; the newlines collapsed to a space.
     const row = md.split("\n").find((l) => l.includes("Initial") && l.includes("draft"));
@@ -365,8 +490,18 @@ describe("renderMarkdownReport", () => {
 
   it("sorts findings by severity (Critical first)", () => {
     const state = emptyState("c1");
-    const mk = (id: string, sev: "Critical" | "Low") => ({ id, severity: sev, title: id, description: "",
-      relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" as const });
+    const mk = (id: string, sev: "Critical" | "Low") => ({
+      id,
+      severity: sev,
+      title: id,
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open" as const,
+    });
     state.findings.push(mk("low1", "Low"), mk("crit1", "Critical"));
     const md = renderMarkdownReport(state);
     expect(md.indexOf("crit1")).toBeLessThan(md.indexOf("low1"));
@@ -375,8 +510,20 @@ describe("renderMarkdownReport", () => {
   it("renders key investigative questions and the IOC section", () => {
     const state = emptyState("c1");
     state.keyQuestions.push(
-      { id: "q1", question: "What was the initial access vector?", status: "answered", answer: "phishing email", pointer: "finding f3" },
-      { id: "q2", question: "Was there lateral movement?", status: "unknown", answer: "", pointer: "collect 4624 logs on targets" },
+      {
+        id: "q1",
+        question: "What was the initial access vector?",
+        status: "answered",
+        answer: "phishing email",
+        pointer: "finding f3",
+      },
+      {
+        id: "q2",
+        question: "Was there lateral movement?",
+        status: "unknown",
+        answer: "",
+        pointer: "collect 4624 logs on targets",
+      },
     );
     state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
 
@@ -391,7 +538,13 @@ describe("renderMarkdownReport", () => {
   it("falls back to recommended next steps as draft recommendations when none are authored", () => {
     const state = emptyState("c1");
     state.nextSteps.push(
-      { id: "n1", priority: "critical", action: "Pull Security.evtx on ALClient07", rationale: "confirm initial access", pointer: "event e3" },
+      {
+        id: "n1",
+        priority: "critical",
+        action: "Pull Security.evtx on ALClient07",
+        rationale: "confirm initial access",
+        pointer: "event e3",
+      },
       { id: "n2", priority: "high", action: "Detonate Bubeus.exe", rationale: "find C2", pointer: "ioc i2" },
     );
     const md = renderMarkdownReport(state);
@@ -404,8 +557,20 @@ describe("renderMarkdownReport", () => {
   it("does not render investigation threads (removed from the report)", () => {
     const state = emptyState("c1");
     state.openThreads.push(
-      { id: "t1", description: "trace lateral movement", status: "open", openedAt: "2026-05-20T10:00:00Z", closedAt: null },
-      { id: "t2", description: "identify C2 domain", status: "closed", openedAt: "2026-05-20T10:00:00Z", closedAt: "2026-05-20T12:00:00Z" },
+      {
+        id: "t1",
+        description: "trace lateral movement",
+        status: "open",
+        openedAt: "2026-05-20T10:00:00Z",
+        closedAt: null,
+      },
+      {
+        id: "t2",
+        description: "identify C2 domain",
+        status: "closed",
+        openedAt: "2026-05-20T10:00:00Z",
+        closedAt: "2026-05-20T12:00:00Z",
+      },
     );
     const md = renderMarkdownReport(state);
     expect(md).not.toContain("Investigation threads");
@@ -415,9 +580,13 @@ describe("renderMarkdownReport", () => {
 
   it("does not render the answered-questions block in conclusions", () => {
     const state = emptyState("c1");
-    state.keyQuestions.push(
-      { id: "q1", question: "What was the initial access vector?", status: "answered", answer: "phishing email", pointer: "f3" },
-    );
+    state.keyQuestions.push({
+      id: "q1",
+      question: "What was the initial access vector?",
+      status: "answered",
+      answer: "phishing email",
+      pointer: "f3",
+    });
     const md = renderMarkdownReport(state);
     expect(md).not.toContain("Answered investigation questions");
   });
@@ -427,16 +596,18 @@ describe("renderMarkdownReport", () => {
       checkedAt: "2026-06-08T12:00:00Z",
       providers: ["Have I Been Pwned"],
       targets: { domains: ["example.com"], emails: ["alice@example.com"] },
-      results: [{
-        provider: "Have I Been Pwned",
-        targetType: "email",
-        target: "alice@example.com",
-        email: "alice@example.com",
-        breach: "Adobe",
-        breachDate: "2013-10-04",
-        exposedData: ["Email addresses", "Passwords"],
-        secretPresent: true,
-      }],
+      results: [
+        {
+          provider: "Have I Been Pwned",
+          targetType: "email",
+          target: "alice@example.com",
+          email: "alice@example.com",
+          breach: "Adobe",
+          breachDate: "2013-10-04",
+          exposedData: ["Email addresses", "Passwords"],
+          secretPresent: true,
+        },
+      ],
       errors: [],
     });
 
@@ -451,8 +622,19 @@ describe("renderMarkdownReport", () => {
       providers: ["Have I Been Pwned"],
       targets: { domains: [], emails: ["alice@example.com", "bob@example.com"] },
       results: [
-        { provider: "Have I Been Pwned", targetType: "email", target: "alice@example.com", email: "alice@example.com", breach: "Adobe" },
-        { provider: "Have I Been Pwned", targetType: "email", target: "bob@example.com", email: "bob@example.com" }, // clean → dropped
+        {
+          provider: "Have I Been Pwned",
+          targetType: "email",
+          target: "alice@example.com",
+          email: "alice@example.com",
+          breach: "Adobe",
+        },
+        {
+          provider: "Have I Been Pwned",
+          targetType: "email",
+          target: "bob@example.com",
+          email: "bob@example.com",
+        }, // clean → dropped
       ],
       errors: [],
     });
@@ -468,7 +650,14 @@ describe("renderMarkdownReport", () => {
       checkedAt: "2026-06-08T12:00:00Z",
       providers: ["Have I Been Pwned"],
       targets: { domains: [], emails: ["clean@example.com"] },
-      results: [{ provider: "Have I Been Pwned", targetType: "email", target: "clean@example.com", email: "clean@example.com" }],
+      results: [
+        {
+          provider: "Have I Been Pwned",
+          targetType: "email",
+          target: "clean@example.com",
+          email: "clean@example.com",
+        },
+      ],
       errors: [],
     });
 
@@ -512,7 +701,8 @@ describe("renderMarkdownReport", () => {
     expect(mdEmpty).toContain("_Narrative not yet generated");
 
     const withNarrative = emptyState("c1");
-    withNarrative.narrativeTimeline = "At 09:00 UTC the attacker sent a phishing email.\n\nThis led to execution of a malicious macro.";
+    withNarrative.narrativeTimeline =
+      "At 09:00 UTC the attacker sent a phishing email.\n\nThis led to execution of a malicious macro.";
     const mdWithNarrative = renderMarkdownReport(withNarrative);
     expect(mdWithNarrative).toContain("### 3.2 Narrative timeline");
     expect(mdWithNarrative).toContain("At 09:00 UTC the attacker sent a phishing email.");
@@ -523,22 +713,68 @@ describe("renderMarkdownReport", () => {
     const s = emptyState("c1");
     const now = "2026-06-22T00:00:00.000Z";
     const hyp = [
-      { id: "h1", title: "Open lead", description: "", expectedOutcome: "proxy logs showing a click",
-        status: "open" as const, relatedTechniques: ["T1566"], relatedEventIds: ["e1"], relatedIocIds: [],
-        contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
-        assignee: "", notes: "", source: "analyst" as const, analystTouched: true, needsReview: false,
-        createdAt: now, updatedAt: now, statusHistory: [] },
-      { id: "h2", title: "Initial access was phishing", description: "macro-laden attachment",
-        expectedOutcome: "", status: "supported" as const, relatedTechniques: [], relatedEventIds: ["e2", "e3"],
-        relatedIocIds: ["i1"], assignee: "", notes: "confirmed via prefetch", source: "synthesis" as const,
-        contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
-        analystTouched: false, needsReview: false, sourceKey: "synth:abc",
-        createdAt: now, updatedAt: now, statusHistory: [] },
+      {
+        id: "h1",
+        title: "Open lead",
+        description: "",
+        expectedOutcome: "proxy logs showing a click",
+        status: "open" as const,
+        relatedTechniques: ["T1566"],
+        relatedEventIds: ["e1"],
+        relatedIocIds: [],
+        contradictingEventIds: [],
+        discriminator: "",
+        exhausted: false,
+        exhaustedReason: "",
+        assignee: "",
+        notes: "",
+        source: "analyst" as const,
+        analystTouched: true,
+        needsReview: false,
+        createdAt: now,
+        updatedAt: now,
+        statusHistory: [],
+      },
+      {
+        id: "h2",
+        title: "Initial access was phishing",
+        description: "macro-laden attachment",
+        expectedOutcome: "",
+        status: "supported" as const,
+        relatedTechniques: [],
+        relatedEventIds: ["e2", "e3"],
+        relatedIocIds: ["i1"],
+        assignee: "",
+        notes: "confirmed via prefetch",
+        source: "synthesis" as const,
+        contradictingEventIds: [],
+        discriminator: "",
+        exhausted: false,
+        exhaustedReason: "",
+        analystTouched: false,
+        needsReview: false,
+        sourceKey: "synth:abc",
+        createdAt: now,
+        updatedAt: now,
+        statusHistory: [],
+      },
     ];
-    const md = renderMarkdownReport(s, undefined, undefined, undefined, undefined, undefined, undefined, undefined, hyp);
+    const md = renderMarkdownReport(
+      s,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      hyp,
+    );
     expect(md).toContain("## Hypotheses");
     expect(md).toContain("### Initial access was phishing — Supported");
-    expect(md).toContain("**Expected outcome (what would prove or disprove this):** proxy logs showing a click");
+    expect(md).toContain(
+      "**Expected outcome (what would prove or disprove this):** proxy logs showing a click",
+    );
     expect(md).toContain("**Analyst notes:** confirmed via prefetch");
     expect(md).toContain("2 supporting events");
     // Concluded (supported) hypothesis is rendered before the still-open one.
@@ -553,26 +789,72 @@ describe("renderMarkdownReport", () => {
     const s = emptyState("c1");
     const now = "2026-06-22T00:00:00.000Z";
     const hyp = [
-      { id: "h1", title: "Initial access was an unpatched VPN CVE", description: "", expectedOutcome: "",
-        status: "refuted" as const, relatedTechniques: [], relatedEventIds: [], relatedIocIds: [],
-        contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
-        assignee: "", notes: "VPN was fully patched at time of breach.", source: "analyst" as const,
-        analystTouched: true, needsReview: false, createdAt: now, updatedAt: "2026-06-23T00:00:00.000Z",
+      {
+        id: "h1",
+        title: "Initial access was an unpatched VPN CVE",
+        description: "",
+        expectedOutcome: "",
+        status: "refuted" as const,
+        relatedTechniques: [],
+        relatedEventIds: [],
+        relatedIocIds: [],
+        contradictingEventIds: [],
+        discriminator: "",
+        exhausted: false,
+        exhaustedReason: "",
+        assignee: "",
+        notes: "VPN was fully patched at time of breach.",
+        source: "analyst" as const,
+        analystTouched: true,
+        needsReview: false,
+        createdAt: now,
+        updatedAt: "2026-06-23T00:00:00.000Z",
         statusHistory: [
           { status: "open" as const, changedAt: now },
           { status: "refuted" as const, changedAt: "2026-06-23T00:00:00.000Z" },
-        ] },
-      { id: "h2", title: "Attacker persisted via a scheduled task", description: "", expectedOutcome: "",
-        status: "open" as const, relatedTechniques: [], relatedEventIds: [], relatedIocIds: [],
-        contradictingEventIds: [], discriminator: "", exhausted: true,
+        ],
+      },
+      {
+        id: "h2",
+        title: "Attacker persisted via a scheduled task",
+        description: "",
+        expectedOutcome: "",
+        status: "open" as const,
+        relatedTechniques: [],
+        relatedEventIds: [],
+        relatedIocIds: [],
+        contradictingEventIds: [],
+        discriminator: "",
+        exhausted: true,
         exhaustedReason: "2 hunt(s) for its expected outcome came back empty",
-        assignee: "", notes: "", source: "analyst" as const, analystTouched: true, needsReview: false,
-        createdAt: now, updatedAt: now, statusHistory: [{ status: "open" as const, changedAt: now }] },
+        assignee: "",
+        notes: "",
+        source: "analyst" as const,
+        analystTouched: true,
+        needsReview: false,
+        createdAt: now,
+        updatedAt: now,
+        statusHistory: [{ status: "open" as const, changedAt: now }],
+      },
     ];
-    const md = renderMarkdownReport(s, undefined, undefined, undefined, undefined, undefined, undefined, undefined, hyp);
+    const md = renderMarkdownReport(
+      s,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      hyp,
+    );
     expect(md).toContain("**Negative knowledge — ruled out.**");
-    expect(md).toContain("- **[Refuted]** Initial access was an unpatched VPN CVE — VPN was fully patched at time of breach.");
-    expect(md).toContain("- **[Exhausted]** Attacker persisted via a scheduled task — 2 hunt(s) for its expected outcome came back empty");
+    expect(md).toContain(
+      "- **[Refuted]** Initial access was an unpatched VPN CVE — VPN was fully patched at time of breach.",
+    );
+    expect(md).toContain(
+      "- **[Exhausted]** Attacker persisted via a scheduled task — 2 hunt(s) for its expected outcome came back empty",
+    );
     expect(md).toContain("### Attacker persisted via a scheduled task — Open ⊘ Exhausted");
     expect(md).toContain("**Status history:** Open (2026-06-22) → Refuted (2026-06-23)");
   });
@@ -585,16 +867,18 @@ describe("renderMarkdownReport", () => {
         type: "ip",
         value: "8.8.8.8",
         firstSeen: "2026-01-01T00:00:00Z",
-        enrichments: [{
-          source: "GeoIP",
-          verdict: "unknown",
-          fetchedAt: "2026-01-01T00:00:00Z",
-          lat: 37.4,
-          lon: -122.1,
-          country: "US",
-          city: "Mountain View",
-          tags: ["AS15169"],
-        }],
+        enrichments: [
+          {
+            source: "GeoIP",
+            verdict: "unknown",
+            fetchedAt: "2026-01-01T00:00:00Z",
+            lat: 37.4,
+            lon: -122.1,
+            country: "US",
+            city: "Mountain View",
+            tags: ["AS15169"],
+          },
+        ],
       });
       s.forensicTimeline.push({
         id: "e1",
@@ -626,12 +910,14 @@ describe("renderMarkdownReport", () => {
         type: "ip",
         value: "1.2.3.4",
         firstSeen: "2026-01-01T00:00:00Z",
-        enrichments: [{
-          source: "GeoIP",
-          verdict: "unknown",
-          fetchedAt: "2026-01-01T00:00:00Z",
-          country: "DE",
-        }],
+        enrichments: [
+          {
+            source: "GeoIP",
+            verdict: "unknown",
+            fetchedAt: "2026-01-01T00:00:00Z",
+            country: "DE",
+          },
+        ],
       });
       const md = renderMarkdownReport(s);
       expect(md).toContain("### 4.10 Geographic distribution");
@@ -642,12 +928,27 @@ describe("renderMarkdownReport", () => {
   describe("IOC composite risk column (#63)", () => {
     it("renders a Risk column with the tier + top factor", () => {
       const s = emptyState("c1");
-      s.iocs.push({ id: "i1", type: "ip", value: "9.9.9.9", firstSeen: "t0", enrichments: [
-        { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
-        { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
-      ] });
-      s.forensicTimeline.push({ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "C2 to 9.9.9.9",
-        severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], srcIp: "9.9.9.9", sources: ["EDR", "FW"] });
+      s.iocs.push({
+        id: "i1",
+        type: "ip",
+        value: "9.9.9.9",
+        firstSeen: "t0",
+        enrichments: [
+          { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
+          { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
+        ],
+      });
+      s.forensicTimeline.push({
+        id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: "C2 to 9.9.9.9",
+        severity: "Critical",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        srcIp: "9.9.9.9",
+        sources: ["EDR", "FW"],
+      });
       const md = renderMarkdownReport(s);
       expect(md).toContain("| ID | Type | Value | First seen | Sources | Risk |");
       expect(md).toContain("**critical**");
@@ -655,11 +956,33 @@ describe("renderMarkdownReport", () => {
   });
 
   describe("synthesis coverage footnote (#62)", () => {
-    const coverage = { inWindow: 412, considered: 287, omittedBudget: 120, omittedLegitimate: 5, omittedScope: 0,
-      omittedHighSeverity: 8, omittedInfo: 0, groupEntries: 0, groupedEvents: 0, promptTokensEstimate: 61000 };
+    const coverage = {
+      inWindow: 412,
+      considered: 287,
+      omittedBudget: 120,
+      omittedLegitimate: 5,
+      omittedScope: 0,
+      omittedHighSeverity: 8,
+      omittedInfo: 0,
+      groupEntries: 0,
+      groupedEvents: 0,
+      promptTokensEstimate: 61000,
+    };
 
     it("renders the coverage section when a snapshot is passed", () => {
-      const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], coverage);
+      const md = renderMarkdownReport(
+        emptyState("c1"),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        coverage,
+      );
       expect(md).toContain("### 3.4 Synthesis coverage");
       expect(md).toContain("considered 287 of 412");
       expect(md).toContain("safety-net backfill");
@@ -672,13 +995,32 @@ describe("renderMarkdownReport", () => {
   });
 
   describe("model performance footnote (#74)", () => {
-    const modelPerf = { synthModel: "anthropic/claude-sonnet-5", findingsCount: 12, highSeverityBackfillCount: 2, parseRetries: 1 };
+    const modelPerf = {
+      synthModel: "anthropic/claude-sonnet-5",
+      findingsCount: 12,
+      highSeverityBackfillCount: 2,
+      parseRetries: 1,
+    };
 
     // NOTE the argument count: modelPerf is the LAST parameter, with master's `lateralPaths`
     // immediately before it. These are positional, so an off-by-one silently passes the snapshot
     // as lateralPaths and leaves modelPerf undefined — the footnote then never renders.
     it("renders the model-performance section when a snapshot is passed", () => {
-      const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], undefined, undefined, modelPerf);
+      const md = renderMarkdownReport(
+        emptyState("c1"),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        modelPerf,
+      );
       expect(md).toContain("### 3.5 Model performance");
       expect(md).toContain("anthropic/claude-sonnet-5");
       expect(md).toContain("12 findings");
@@ -688,9 +1030,30 @@ describe("renderMarkdownReport", () => {
     it("adds the second-opinion agreement clause when recorded", () => {
       const withSecondOpinion = {
         ...modelPerf,
-        secondOpinionPerf: { modelA: "anthropic/claude-sonnet-5", modelB: "openai/gpt-5", agreementCount: 8, deltaCount: 2, agreementRate: 0.8, at: "2026-07-18T10:05:00.000Z" },
+        secondOpinionPerf: {
+          modelA: "anthropic/claude-sonnet-5",
+          modelB: "openai/gpt-5",
+          agreementCount: 8,
+          deltaCount: 2,
+          agreementRate: 0.8,
+          at: "2026-07-18T10:05:00.000Z",
+        },
       };
-      const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], undefined, undefined, withSecondOpinion);
+      const md = renderMarkdownReport(
+        emptyState("c1"),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        withSecondOpinion,
+      );
       expect(md).toContain("openai/gpt-5");
       expect(md).toContain("80% agreement");
     });

@@ -1,4 +1,10 @@
-import type { InvestigationState, ForensicEvent, Finding, FindingStatus, Severity } from "../analysis/stateTypes.js";
+import type {
+  InvestigationState,
+  ForensicEvent,
+  Finding,
+  FindingStatus,
+  Severity,
+} from "../analysis/stateTypes.js";
 import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
@@ -164,7 +170,11 @@ function selectTimeline(events: ForensicEvent[]): { rows: TimelineRow[]; truncat
   return { rows: kept.map((e) => e.row), truncated: kept.length < all.length };
 }
 
-function buildData(state: InvestigationState, caseMeta: CaseMeta | null, reportMeta: ReportMeta): InteractiveCaseData {
+function buildData(
+  state: InvestigationState,
+  caseMeta: CaseMeta | null,
+  reportMeta: ReportMeta,
+): InteractiveCaseData {
   const { rows, truncated } = selectTimeline(state.forensicTimeline);
   return {
     caseId: state.caseId,

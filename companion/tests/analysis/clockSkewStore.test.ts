@@ -8,8 +8,15 @@ import type { ClockSkewReport, ClockSkewResult } from "../../src/analysis/clockS
 
 function result(hostKey: string, offsetMs: number, anchorCount = 4): ClockSkewResult {
   return {
-    host: hostKey.toUpperCase(), hostKey, offsetMs, anchorCount, dispersionMs: 0,
-    confidence: "medium", qualified: true, skewed: Math.abs(offsetMs) > 60_000, sources: ["THOR"],
+    host: hostKey.toUpperCase(),
+    hostKey,
+    offsetMs,
+    anchorCount,
+    dispersionMs: 0,
+    confidence: "medium",
+    qualified: true,
+    skewed: Math.abs(offsetMs) > 60_000,
+    sources: ["THOR"],
   };
 }
 
@@ -30,7 +37,13 @@ beforeEach(async () => {
 describe("ClockSkewStore", () => {
   it("returns empty defaults for a case that has none", async () => {
     expect(await store.load("c1")).toEqual({
-      alignEnabled: false, results: [], overrides: {}, detectedAt: "", anchorGroups: 0, referenceHost: "", updatedAt: "",
+      alignEnabled: false,
+      results: [],
+      overrides: {},
+      detectedAt: "",
+      anchorGroups: 0,
+      referenceHost: "",
+      updatedAt: "",
     });
   });
 
@@ -96,20 +109,32 @@ describe("ClockSkewStore", () => {
 
   // A bad offset here would silently shift a real timeline, so anything unparseable is dropped.
   it("drops malformed results and overrides from a hand-edited file", async () => {
-    await writeFile(join(cases.stateDir("c1"), "clock-skew.json"), JSON.stringify({
-      alignEnabled: "yes",
-      results: [
-        { hostKey: "ws-01", offsetMs: 5_000, anchorCount: 4, dispersionMs: 0, confidence: "medium", qualified: true, skewed: false, sources: ["THOR"] },
-        { hostKey: "", offsetMs: 1 },
-        "nonsense",
-        { hostKey: "ws-09", offsetMs: "later", confidence: "certain" },
-      ],
-      overrides: { "ws-02": 1_000, "ws-03": "soon", "": 5 },
-    }));
+    await writeFile(
+      join(cases.stateDir("c1"), "clock-skew.json"),
+      JSON.stringify({
+        alignEnabled: "yes",
+        results: [
+          {
+            hostKey: "ws-01",
+            offsetMs: 5_000,
+            anchorCount: 4,
+            dispersionMs: 0,
+            confidence: "medium",
+            qualified: true,
+            skewed: false,
+            sources: ["THOR"],
+          },
+          { hostKey: "", offsetMs: 1 },
+          "nonsense",
+          { hostKey: "ws-09", offsetMs: "later", confidence: "certain" },
+        ],
+        overrides: { "ws-02": 1_000, "ws-03": "soon", "": 5 },
+      }),
+    );
     const loaded = await store.load("c1");
-    expect(loaded.alignEnabled).toBe(false);                    // only a real boolean enables it
+    expect(loaded.alignEnabled).toBe(false); // only a real boolean enables it
     expect(loaded.results.map((r) => r.hostKey)).toEqual(["ws-01", "ws-09"]);
-    expect(loaded.results[1].offsetMs).toBe(0);                 // unparseable offset → 0, never trusted
+    expect(loaded.results[1].offsetMs).toBe(0); // unparseable offset → 0, never trusted
     expect(loaded.results[1].confidence).toBe("low");
     expect(loaded.overrides).toEqual({ "ws-02": 1_000 });
   });

@@ -1,41 +1,61 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  runMcpAgent, allowedToolPatterns, parseDelta, DEFAULT_MAX_TURNS, DEFAULT_AGENT_TIMEOUT_MS,
+  runMcpAgent,
+  allowedToolPatterns,
+  parseDelta,
+  DEFAULT_MAX_TURNS,
+  DEFAULT_AGENT_TIMEOUT_MS,
 } from "../../src/integrations/mcp/mcpAgentRunner.js";
 import { finalText } from "../../src/integrations/mcp/mcpBridge.js";
 import { DEFAULT_DELIVERY, type McpServer } from "../../src/integrations/mcp/mcpServerStore.js";
 import type { ClaudeRunner, ClaudeRunOptions } from "../../src/providers/claudeRunner.js";
 
 const server = (over: Partial<McpServer> = {}): McpServer => ({
-  id: "sift-mcp", label: "SIFT", enabled: true,
-  allowedTools: ["run_command"], allowedCommands: ["vol.py"], agentEnabled: true,
-  timeoutMs: 1000, delivery: DEFAULT_DELIVERY, ...over,
+  id: "sift-mcp",
+  label: "SIFT",
+  enabled: true,
+  allowedTools: ["run_command"],
+  allowedCommands: ["vol.py"],
+  agentEnabled: true,
+  timeoutMs: 1000,
+  delivery: DEFAULT_DELIVERY,
+  ...over,
 });
 
 /** stream-json output ending in a successful terminal result carrying `text`. */
 const stdoutWith = (text: string, turns: string[] = []): string =>
   [
-    ...turns.map((t) => JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: t }] } })),
+    ...turns.map((t) =>
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: t }] } }),
+    ),
     JSON.stringify({ type: "result", subtype: "success", result: text }),
   ].join("\n") + "\n";
 
-const DELTA = '{"findings":[{"title":"Injected process","detail":"malfind hit","severity":"High","confidence":70}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
+const DELTA =
+  '{"findings":[{"title":"Injected process","detail":"malfind hit","severity":"High","confidence":70}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
 
 let seen: ClaudeRunOptions[];
 
-function runnerReturning(stdout: string, extra: Partial<Awaited<ReturnType<ClaudeRunner>>> = {}): ClaudeRunner {
+function runnerReturning(
+  stdout: string,
+  extra: Partial<Awaited<ReturnType<ClaudeRunner>>> = {},
+): ClaudeRunner {
   return async (opts) => {
     seen.push(opts);
     return { code: 0, stdout, stderr: "", ...extra };
   };
 }
 
-beforeEach(() => { seen = []; });
+beforeEach(() => {
+  seen = [];
+});
 
 describe("allowedToolPatterns", () => {
   it("enumerates tool by tool when an allowlist was configured", () => {
-    expect(allowedToolPatterns([server({ allowedTools: ["run_command", "check_tools"] })]))
-      .toEqual(["mcp__sift-mcp__run_command", "mcp__sift-mcp__check_tools"]);
+    expect(allowedToolPatterns([server({ allowedTools: ["run_command", "check_tools"] })])).toEqual([
+      "mcp__sift-mcp__run_command",
+      "mcp__sift-mcp__check_tools",
+    ]);
   });
 
   // The default. Use Claude Code's explicit wildcard form so every current and future tool from
@@ -54,7 +74,9 @@ describe("finalText", () => {
   // more than one can only be a continuation. Here they are ordinary turns and stitching them would
   // splice the agent's intermediate reasoning into its answer.
   it("ignores the per-turn assistant messages", () => {
-    expect(finalText(stdoutWith("final answer", ["let me check pslist", "now malfind"]), "", 0)).toBe("final answer");
+    expect(finalText(stdoutWith("final answer", ["let me check pslist", "now malfind"]), "", 0)).toBe(
+      "final answer",
+    );
   });
 
   it("throws when there is no result event, quoting stderr", () => {
@@ -75,7 +97,9 @@ describe("parseDelta", () => {
   });
 
   it("tolerates code fences and surrounding prose", () => {
-    expect(parseDelta("Here is what I found:\n```json\n" + DELTA + "\n```\nHope that helps.").iocs).toHaveLength(1);
+    expect(
+      parseDelta("Here is what I found:\n```json\n" + DELTA + "\n```\nHope that helps.").iocs,
+    ).toHaveLength(1);
   });
 
   // Everything the agent saw came from tool output, which is untrusted; extractedFrom asserts an
@@ -94,24 +118,34 @@ describe("parseDelta", () => {
   });
 
   it("accepts detail as an alias for description, and drops entries with nothing in them", () => {
-    const d = parseDelta('{"findings":[{"title":"A","detail":"seen in malfind"},{"description":"no title"}],"iocs":[{"type":"ip","value":""}]}');
+    const d = parseDelta(
+      '{"findings":[{"title":"A","detail":"seen in malfind"},{"description":"no title"}],"iocs":[{"type":"ip","value":""}]}',
+    );
     expect(d.findings).toHaveLength(1);
     expect(d.findings?.[0]).toMatchObject({ title: "A", description: "seen in malfind" });
     expect(d.iocs).toHaveLength(0);
   });
 
   it("maps the agent's timeline onto forensic events, dropping undated ones", () => {
-    const d = parseDelta('{"timeline":[{"timestamp":"2026-07-29T10:00:00Z","description":"beacon"},{"description":"no time"}]}');
+    const d = parseDelta(
+      '{"timeline":[{"timestamp":"2026-07-29T10:00:00Z","description":"beacon"},{"description":"no time"}]}',
+    );
     expect(d.forensicEvents).toHaveLength(1);
     expect(d.forensicEvents?.[0]).toMatchObject({ timestamp: "2026-07-29T10:00:00Z", description: "beacon" });
   });
 
   it("turns a supported malicious verdict into a finding when the agent omitted findings", () => {
-    const d = parseDelta(JSON.stringify({
-      verdict: { classification: "malicious", confidence: 0.95, summary: "Memory injection and beaconing were observed." },
-      findings: [],
-      iocs: [],
-    }));
+    const d = parseDelta(
+      JSON.stringify({
+        verdict: {
+          classification: "malicious",
+          confidence: 0.95,
+          summary: "Memory injection and beaconing were observed.",
+        },
+        findings: [],
+        iocs: [],
+      }),
+    );
 
     expect(d.findings).toHaveLength(1);
     expect(d.findings[0]).toMatchObject({
@@ -145,7 +179,11 @@ describe("parseDelta", () => {
 
 describe("runMcpAgent", () => {
   it("returns the parsed delta and the agent's own text", async () => {
-    const r = await runMcpAgent({ servers: [server()], prompt: "investigate", runner: runnerReturning(stdoutWith(DELTA)) });
+    const r = await runMcpAgent({
+      servers: [server()],
+      prompt: "investigate",
+      runner: runnerReturning(stdoutWith(DELTA)),
+    });
     expect(r.rawText).toBe(DELTA);
     expect(r.delta.iocs).toHaveLength(1);
   });
@@ -153,7 +191,7 @@ describe("runMcpAgent", () => {
   it("scopes the CLI to the allowed tools only", async () => {
     await runMcpAgent({ servers: [server()], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
     const args = seen[0].args;
-    expect(args).toContain("--setting-sources");              // no CLAUDE.md, hooks or settings
+    expect(args).toContain("--setting-sources"); // no CLAUDE.md, hooks or settings
     expect(args[args.indexOf("--setting-sources") + 1]).toBe("user");
     expect(args[args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__run_command");
     expect(args[args.indexOf("--max-turns") + 1]).toBe(String(DEFAULT_MAX_TURNS));
@@ -170,24 +208,34 @@ describe("runMcpAgent", () => {
   });
 
   it("refuses to run with no servers selected at all", async () => {
-    await expect(runMcpAgent({ servers: [], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) }))
-      .rejects.toThrow(/no MCP servers were selected/);
+    await expect(
+      runMcpAgent({ servers: [], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) }),
+    ).rejects.toThrow(/no MCP servers were selected/);
     expect(seen).toHaveLength(0);
   });
 
   it("says the whole feature needs Claude Code on this host when the binary is missing", async () => {
-    const enoent = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }) as NodeJS.ErrnoException;
-    await expect(runMcpAgent({
-      servers: [server()], prompt: "go",
-      runner: async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent }),
-    })).rejects.toThrow(/installed and authenticated on THIS host.*configured in it/s);
+    const enoent = Object.assign(new Error("spawn claude ENOENT"), {
+      code: "ENOENT",
+    }) as NodeJS.ErrnoException;
+    await expect(
+      runMcpAgent({
+        servers: [server()],
+        prompt: "go",
+        runner: async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent }),
+      }),
+    ).rejects.toThrow(/installed and authenticated on THIS host.*configured in it/s);
   });
 
   it("reports a timeout as one", async () => {
-    await expect(runMcpAgent({
-      servers: [server()], prompt: "go", timeoutMs: 5000,
-      runner: async () => ({ code: null, stdout: "", stderr: "", timedOut: true }),
-    })).rejects.toThrow(/exceeded 5000ms/);
+    await expect(
+      runMcpAgent({
+        servers: [server()],
+        prompt: "go",
+        timeoutMs: 5000,
+        runner: async () => ({ code: null, stdout: "", stderr: "", timedOut: true }),
+      }),
+    ).rejects.toThrow(/exceeded 5000ms/);
   });
 
   it("uses a one-hour default timeout for long memory and disk investigations", async () => {
@@ -198,28 +246,49 @@ describe("runMcpAgent", () => {
   it("streams sanitized tool activity without exposing arguments or tool output", async () => {
     const progress: string[] = [];
     const runner: ClaudeRunner = async (opts) => {
-      opts.onStdout?.(JSON.stringify({
-        type: "assistant",
-        message: { content: [{ type: "tool_use", id: "tool-1", name: "mcp__sift-mcp__run_command", input: { command: "secret" } }] },
-      }) + "\n");
-      opts.onStdout?.(JSON.stringify({
-        type: "user",
-        message: { content: [{ type: "tool_result", tool_use_id: "tool-1", content: "sensitive evidence" }] },
-      }) + "\n");
+      opts.onStdout?.(
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "tool-1",
+                name: "mcp__sift-mcp__run_command",
+                input: { command: "secret" },
+              },
+            ],
+          },
+        }) + "\n",
+      );
+      opts.onStdout?.(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "tool-1", content: "sensitive evidence" }],
+          },
+        }) + "\n",
+      );
       opts.onStdout?.(JSON.stringify({ type: "result", subtype: "success", result: DELTA }) + "\n");
       return { code: 0, stderr: "", stdout: stdoutWith(DELTA) };
     };
 
     await runMcpAgent({ servers: [server()], prompt: "go", runner, onProgress: (s) => progress.push(s) });
 
-    expect(progress).toEqual(["running run_command", "run_command completed; reviewing result", "finalizing report"]);
+    expect(progress).toEqual([
+      "running run_command",
+      "run_command completed; reviewing result",
+      "finalizing report",
+    ]);
     expect(progress.join(" ")).not.toMatch(/secret|sensitive evidence/);
   });
 
   it("exposes several servers at once", async () => {
     const two = [server(), server({ id: "remnux", allowedTools: ["run_tool"] })];
     await runMcpAgent({ servers: two, prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
-    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__run_command,mcp__remnux__run_tool");
+    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe(
+      "mcp__sift-mcp__run_command,mcp__remnux__run_tool",
+    );
   });
 
   it("turns a max-turns investigation into a report in the same session with tools disabled", async () => {
@@ -228,11 +297,16 @@ describe("runMcpAgent", () => {
       seen.push(opts);
       if (seen.length === 1) {
         return {
-          code: 0, stderr: "",
-          stdout: JSON.stringify({
-            type: "result", subtype: "error_max_turns", is_error: true,
-            result: "", session_id: sessionId,
-          }) + "\n",
+          code: 0,
+          stderr: "",
+          stdout:
+            JSON.stringify({
+              type: "result",
+              subtype: "error_max_turns",
+              is_error: true,
+              result: "",
+              session_id: sessionId,
+            }) + "\n",
         };
       }
       return { code: 0, stderr: "", stdout: stdoutWith(DELTA) };
@@ -249,11 +323,19 @@ describe("runMcpAgent", () => {
   });
 
   it("explains a max-turns failure when Claude Code provides no resumable session", async () => {
-    const out = JSON.stringify({
-      type: "result", subtype: "error_max_turns", is_error: true, result: "",
-    }) + "\n";
-    await expect(runMcpAgent({
-      servers: [server()], prompt: "investigate", runner: runnerReturning(out),
-    })).rejects.toThrow(/turn safety limit.*could not open the final reporting turn/i);
+    const out =
+      JSON.stringify({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        result: "",
+      }) + "\n";
+    await expect(
+      runMcpAgent({
+        servers: [server()],
+        prompt: "investigate",
+        runner: runnerReturning(out),
+      }),
+    ).rejects.toThrow(/turn safety limit.*could not open the final reporting turn/i);
   });
 });

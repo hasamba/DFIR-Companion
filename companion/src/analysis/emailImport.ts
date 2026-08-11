@@ -53,30 +53,30 @@ export interface EmailAuth {
 
 export interface ParsedEmail {
   format: "eml" | "msg";
-  date: string;            // normalized to UTC ISO ("" if unparseable / absent)
-  rawDate: string;         // the original Date: header
+  date: string; // normalized to UTC ISO ("" if unparseable / absent)
+  rawDate: string; // the original Date: header
   subject: string;
   messageId: string;
   from?: EmailAddress;
   replyTo?: EmailAddress;
   returnPath?: EmailAddress;
   to: EmailAddress[];
-  originatingIp: string;   // X-Originating-IP / earliest external Received hop
+  originatingIp: string; // X-Originating-IP / earliest external Received hop
   auth: EmailAuth;
   urls: string[];
   attachments: EmailAttachment[];
-  hashes: string[];        // MD5 / SHA-1 / SHA-256 seen in headers or body
+  hashes: string[]; // MD5 / SHA-1 / SHA-256 seen in headers or body
   headers: Map<string, string[]>;
 }
 
 export interface EmailParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;   // messages parsed (1 for a single .eml/.msg, 0 if nothing recoverable)
-  kept: number;    // events emitted
+  total: number; // messages parsed (1 for a single .eml/.msg, 0 if nothing recoverable)
+  kept: number; // events emitted
   dropped: number; // messages not represented
-  groups: number;  // = kept (parity with the other importers)
-  format: string;  // "eml" | "msg" | "empty"
+  groups: number; // = kept (parity with the other importers)
+  format: string; // "eml" | "msg" | "empty"
   subject: string; // best-effort, for the import banner
   sender: string;
 }
@@ -229,7 +229,8 @@ function parseAuth(headers: Map<string, string[]>): EmailAuth {
     const m = re.exec(hay);
     return m ? m[1] : undefined;
   };
-  const spf = pick(/\bspf=(\w+)/, ar) ?? pick(/\b(pass|fail|softfail|neutral|none|permerror|temperror)\b/, recvSpf);
+  const spf =
+    pick(/\bspf=(\w+)/, ar) ?? pick(/\b(pass|fail|softfail|neutral|none|permerror|temperror)\b/, recvSpf);
   const dkim = pick(/\bdkim=(\w+)/, ar);
   const dmarc = pick(/\bdmarc=(\w+)/, ar);
   return {
@@ -258,7 +259,8 @@ function suspiciousSender(p: ParsedEmail): boolean {
   // From-domain vs Reply-To-domain across different orgs is a classic BEC reply-redirect.
   if (fromDom && p.replyTo?.domain && registrable(fromDom) !== registrable(p.replyTo.domain)) return true;
   // Return-Path (envelope sender) across a different org from the header From is spoof-shaped.
-  if (fromDom && p.returnPath?.domain && registrable(fromDom) !== registrable(p.returnPath.domain)) return true;
+  if (fromDom && p.returnPath?.domain && registrable(fromDom) !== registrable(p.returnPath.domain))
+    return true;
   // A display name that itself contains an email/domain different from the actual sending domain
   // (e.g. From: "support@paypal.com <attacker@evil.ru>").
   const dnAddr = p.from?.name ? ADDR_RE.exec(p.from.name)?.[1] : undefined;
@@ -272,7 +274,7 @@ function suspiciousSender(p: ParsedEmail): boolean {
 // ───────────────────────────── MIME body walk (URLs + attachments) ─────────────────────────────
 
 interface BodyScan {
-  text: string[];          // decoded text/html bodies, for URL + hash scanning
+  text: string[]; // decoded text/html bodies, for URL + hash scanning
   attachments: EmailAttachment[];
 }
 
@@ -342,7 +344,7 @@ function urlHost(url: string): string {
   const m = /^[a-z]+:\/\/([^/?#]+)/i.exec(refang(url));
   if (!m) return "";
   return (m[1].split("@").pop() ?? "") // strip userinfo
-    .replace(/:\d+$/, "")               // strip port
+    .replace(/:\d+$/, "") // strip port
     .toLowerCase();
 }
 
@@ -353,8 +355,11 @@ const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
 // A `.msg` file forced through UTF-8 text decoding keeps its MAPI stream-name markers as ASCII.
 export function looksLikeMsg(raw: string): boolean {
-  return raw.includes("__substg1.0_") || raw.includes("__properties_version1.0") ||
-    raw.includes("__nameid_version1.0");
+  return (
+    raw.includes("__substg1.0_") ||
+    raw.includes("__properties_version1.0") ||
+    raw.includes("__nameid_version1.0")
+  );
 }
 
 // Recover the RFC 822 transport-headers block embedded in a `.msg` (MAPI property 0x007D). The
@@ -369,10 +374,20 @@ function recoverMsgHeaders(raw: string): string {
   const kept: string[] = [];
   let miss = 0;
   for (const line of lines) {
-    if (/^[ \t]/.test(line) && kept.length) { kept.push(line); continue; } // folded continuation
-    if (/^[\x21-\x39\x3b-\x7e]+:\s?/.test(line)) { kept.push(line); miss = 0; continue; }
-    if (line.trim() === "") { if (kept.length) break; continue; }            // blank ends the block
-    if (++miss > 2) break;                                                   // drifted into binary noise
+    if (/^[ \t]/.test(line) && kept.length) {
+      kept.push(line);
+      continue;
+    } // folded continuation
+    if (/^[\x21-\x39\x3b-\x7e]+:\s?/.test(line)) {
+      kept.push(line);
+      miss = 0;
+      continue;
+    }
+    if (line.trim() === "") {
+      if (kept.length) break;
+      continue;
+    } // blank ends the block
+    if (++miss > 2) break; // drifted into binary noise
   }
   return kept.join("\n");
 }
@@ -455,7 +470,10 @@ function pickOriginatingIp(headers: Map<string, string[]>): string {
   if (xorig) {
     const m = IPV4_G.exec(xorig);
     IPV4_G.lastIndex = 0;
-    if (m) { const ip = cleanIp(m[0]); if (ip) return ip; }
+    if (m) {
+      const ip = cleanIp(m[0]);
+      if (ip) return ip;
+    }
   }
   // Received headers are most-recent first; the LAST is the origin hop. Walk bottom-up for the
   // first public IPv4.
@@ -472,11 +490,13 @@ function pickOriginatingIp(headers: Map<string, string[]>): string {
 function isPrivateIp(ip: string): boolean {
   const o = ip.split(".").map(Number);
   if (o.length !== 4) return false;
-  return o[0] === 10 ||
+  return (
+    o[0] === 10 ||
     (o[0] === 172 && o[1] >= 16 && o[1] <= 31) ||
     (o[0] === 192 && o[1] === 168) ||
     o[0] === 127 ||
-    (o[0] === 169 && o[1] === 254);
+    (o[0] === 169 && o[1] === 254)
+  );
 }
 
 // ───────────────────────────── event + IOC building ─────────────────────────────
@@ -520,7 +540,9 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
     desc += ` | ${p.urls.length} URL(s)`;
     // Surface the link HOST(s) (not the sender/recipient domains) so analysts see where the link
     // pointed AND the initial-access correlation (#201) can match a later host contact to it.
-    const linkHosts = [...new Set(p.urls.map(urlHost).filter((h): h is string => !!h && !IPV4.test(h) && DOMAIN_RE.test(h)))];
+    const linkHosts = [
+      ...new Set(p.urls.map(urlHost).filter((h): h is string => !!h && !IPV4.test(h) && DOMAIN_RE.test(h))),
+    ];
     if (linkHosts.length) desc += ` linking ${linkHosts.slice(0, 5).join(", ")}`;
   }
   const sender = p.from?.address;
@@ -529,14 +551,16 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
     event: { category: "email", type: "message", action: "receive" },
     ...(sender ? { actor: { kind: "mailbox", name: sender } } : {}),
     ...(recipient ? { target: { kind: "mailbox", name: recipient } } : {}),
-    ...(p.attachments[0] ? {
-      object: { kind: "file", name: p.attachments[0].filename },
-      file: {
-        name: p.attachments[0].filename,
-        ...(p.attachments[0].sha256 ? { sha256: p.attachments[0].sha256 } : {}),
-        ...(p.attachments[0].md5 ? { md5: p.attachments[0].md5 } : {}),
-      },
-    } : {}),
+    ...(p.attachments[0]
+      ? {
+          object: { kind: "file", name: p.attachments[0].filename },
+          file: {
+            name: p.attachments[0].filename,
+            ...(p.attachments[0].sha256 ? { sha256: p.attachments[0].sha256 } : {}),
+            ...(p.attachments[0].md5 ? { md5: p.attachments[0].md5 } : {}),
+          },
+        }
+      : {}),
     mailbox: {
       ...(p.messageId ? { messageId: p.messageId } : {}),
       ...(sender ? { sender } : {}),
@@ -546,11 +570,13 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
     ...(p.originatingIp ? { network: { source: { address: p.originatingIp } } } : {}),
     time: { observed: p.rawDate, normalized: p.date },
     evidence: {
-      rawRecords: [{
-        source: p.format === "eml" ? "rfc822-message" : "outlook-msg",
-        locator: p.messageId ? `message-id:${p.messageId}` : "message:0",
-        ...(p.messageId ? { recordId: p.messageId } : {}),
-      }],
+      rawRecords: [
+        {
+          source: p.format === "eml" ? "rfc822-message" : "outlook-msg",
+          locator: p.messageId ? `message-id:${p.messageId}` : "message:0",
+          ...(p.messageId ? { recordId: p.messageId } : {}),
+        },
+      ],
     },
     producer: {
       importer: "email",
@@ -566,7 +592,9 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
       ...(p.messageId ? { "mailbox.messageId": ["Message-ID"] } : {}),
       ...(p.subject ? { "mailbox.subject": ["Subject"] } : {}),
       ...(p.originatingIp ? { "network.source.address": ["X-Originating-IP", "Received"] } : {}),
-      ...(p.attachments[0] ? { "object.name": ["Content-Disposition.filename"], "file.name": ["Content-Disposition.filename"] } : {}),
+      ...(p.attachments[0]
+        ? { "object.name": ["Content-Disposition.filename"], "file.name": ["Content-Disposition.filename"] }
+        : {}),
     },
   });
 
@@ -589,7 +617,10 @@ function collectIocs(p: ParsedEmail, maxIocs: number): SiemIoc[] {
     addIoc(sink, "url", u);
     const host = urlHost(u);
     if (host && !IPV4.test(host) && DOMAIN_RE.test(host)) addIoc(sink, "domain", host);
-    else if (host && IPV4.test(host)) { const ip = cleanIp(host); if (ip) addIoc(sink, "ip", ip); }
+    else if (host && IPV4.test(host)) {
+      const ip = cleanIp(host);
+      if (ip) addIoc(sink, "ip", ip);
+    }
   }
 
   // Sender / reply-to / return-path domains are themselves indicators worth tracking.
@@ -617,9 +648,25 @@ export function parseEmail(text: string, opts: EmailImportOptions = {}): EmailPa
   const maxIocs = opts.maxIocs ?? 5000;
   const parsed = parseMimeEmail(text);
 
-  const recoverable = !!(parsed.subject || parsed.from || parsed.date || parsed.urls.length || parsed.messageId);
+  const recoverable = !!(
+    parsed.subject ||
+    parsed.from ||
+    parsed.date ||
+    parsed.urls.length ||
+    parsed.messageId
+  );
   if (!recoverable) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", subject: "", sender: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      format: "empty",
+      subject: "",
+      sender: "",
+    };
   }
 
   const severity = emailSeverity(parsed);

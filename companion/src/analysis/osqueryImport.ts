@@ -66,7 +66,21 @@ const CMD_KEYS = ["cmdline", "command_line", "cmd", "arguments"];
 const PATH_KEYS = ["path", "target_path", "binary_path", "exe", "executable", "source"];
 const HASH_KEYS = ["sha256", "sha1", "md5"];
 const IP_KEYS = ["remote_address", "address", "destination", "remote_ip", "src_ip", "dst_ip"];
-const SUMMARY_KEYS = ["name", "path", "cmdline", "command_line", "remote_address", "address", "username", "user", "uid", "pid", "port", "key", "value"];
+const SUMMARY_KEYS = [
+  "name",
+  "path",
+  "cmdline",
+  "command_line",
+  "remote_address",
+  "address",
+  "username",
+  "user",
+  "uid",
+  "pid",
+  "port",
+  "key",
+  "value",
+];
 
 function timeOf(rec: Row): string {
   const unix = Number(getCI(rec, "unixTime"));
@@ -80,12 +94,22 @@ function timeOf(rec: Row): string {
 }
 
 function firstCol(cols: Row, keys: string[]): string {
-  for (const k of keys) { const v = str(getCI(cols, k)).trim(); if (v && v !== "-") return v; }
+  for (const k of keys) {
+    const v = str(getCI(cols, k)).trim();
+    if (v && v !== "-") return v;
+  }
   return "";
 }
 
 // Map ONE result row (a `columns` object or one element of a `snapshot`) to a forensic event.
-function mapRow(name: string, host: string, action: string, ts: string, cols: Row, sink: Map<string, SiemIoc>): MappedEvent {
+function mapRow(
+  name: string,
+  host: string,
+  action: string,
+  ts: string,
+  cols: Row,
+  sink: Map<string, SiemIoc>,
+): MappedEvent {
   const path = firstCol(cols, PATH_KEYS);
   const cmd = firstCol(cols, CMD_KEYS);
   const image = path || baseName(cmd.split(/\s+/)[0] || "");
@@ -95,8 +119,10 @@ function mapRow(name: string, host: string, action: string, ts: string, cols: Ro
   // Conservative tradecraft grading on a command-line column (process_events / process rows).
   if (cmd) {
     const susp = isSuspiciousCmd(image, cmd);
-    if (susp === "strong") { severity = worst(severity, "High"); if (!mitre.includes("T1003")) mitre.push("T1003"); }
-    else if (susp === "weak") severity = worst(severity, "Medium");
+    if (susp === "strong") {
+      severity = worst(severity, "High");
+      if (!mitre.includes("T1003")) mitre.push("T1003");
+    } else if (susp === "weak") severity = worst(severity, "Medium");
     const tc = tradecraftSignal(image, cmd);
     if (tc) {
       severity = worst(severity, tc.weight === "strong" ? "High" : "Medium");
@@ -107,7 +133,13 @@ function mapRow(name: string, host: string, action: string, ts: string, cols: Ro
   }
 
   // IOCs from structured columns.
-  for (const hk of HASH_KEYS) { const h = str(getCI(cols, hk)).trim(); if (/^[a-f0-9]{32,64}$/i.test(h)) { addIoc(sink, "hash", h.toLowerCase()); break; } }
+  for (const hk of HASH_KEYS) {
+    const h = str(getCI(cols, hk)).trim();
+    if (/^[a-f0-9]{32,64}$/i.test(h)) {
+      addIoc(sink, "hash", h.toLowerCase());
+      break;
+    }
+  }
   if (path && /[\\/]/.test(path)) addIoc(sink, "file", path.slice(0, 300));
   const procName = baseName(image) || undefined;
   if (procName) addIoc(sink, "process", procName);
@@ -130,8 +162,13 @@ function mapRow(name: string, host: string, action: string, ts: string, cols: Ro
   const colSig = parts.join("|") || firstCol(cols, SUMMARY_KEYS);
   return {
     timestamp: ts,
-    description, severity, mitre,
-    aggKey: `osquery|${name}|${action}|${colSig}`.toLowerCase().replace(/\b\d{3,}\b/g, "#").slice(0, 400),
+    description,
+    severity,
+    mitre,
+    aggKey: `osquery|${name}|${action}|${colSig}`
+      .toLowerCase()
+      .replace(/\b\d{3,}\b/g, "#")
+      .slice(0, 400),
     sources: ["osquery"],
     ...(host ? { asset: host } : {}),
     ...(path && /[\\/]/.test(path) ? { path } : {}),

@@ -24,8 +24,8 @@ function nextIocSeq(iocs: readonly IOC[]): number {
 
 export interface DeobfuscationApplyResult {
   state: InvestigationState;
-  deobfuscated: number;  // events decoded this run
-  newIocs: number;       // net-new IOCs added from decoded content
+  deobfuscated: number; // events decoded this run
+  newIocs: number; // net-new IOCs added from decoded content
 }
 
 // Apply deobfuscation to every unprocessed event in the case's forensic timeline.

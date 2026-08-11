@@ -14,8 +14,15 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 // the first synthesis overwrite it — so these tests pin the prompt, not the state.
 
 const SYNTH_DELTA = JSON.stringify({
-  findings: [], iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-  forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+  findings: [],
+  iocs: [],
+  mitreTechniques: [],
+  attackerPath: "p",
+  summary: "s",
+  forensicEvents: [],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "",
 });
 
 class CapturingProvider implements AIProvider {
@@ -30,8 +37,13 @@ class CapturingProvider implements AIProvider {
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    timestamp: "2026-01-01T00:00:00Z", description: "", severity: "High",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p,
+    timestamp: "2026-01-01T00:00:00Z",
+    description: "",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
   };
 }
 
@@ -48,7 +60,9 @@ async function makePipeline(opts: { withStore?: boolean } = {}) {
   const incidentTypeStore = new IncidentTypeStore(cases, join(root, "incident-types"));
   const provider = new CapturingProvider();
   const pipeline = new AnalysisPipeline({
-    provider, synthesisProvider: provider, stateStore,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
     imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
     ...(opts.withStore === false ? {} : { incidentTypeStore }),
   });

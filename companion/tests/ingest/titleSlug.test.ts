@@ -15,8 +15,8 @@ describe("slugifyTitle", () => {
     expect(slugifyTitle("VirusTotal: hash a1b2c3")).toBe("VirusTotal-hash-a1b2c3");
   });
 
-  it("strips OS-reserved characters (<>:\"/\\|?*) and control chars", () => {
-    expect(slugifyTitle('C:\\Windows\\System32')).toBe("C-Windows-System32");
+  it('strips OS-reserved characters (<>:"/\\|?*) and control chars', () => {
+    expect(slugifyTitle("C:\\Windows\\System32")).toBe("C-Windows-System32");
     expect(slugifyTitle('file<name>:"weird"|?*')).toBe("file-name-weird");
   });
 

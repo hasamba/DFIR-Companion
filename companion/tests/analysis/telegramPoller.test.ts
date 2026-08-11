@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../../src/analysis/telegramPoller.js";
+import {
+  TelegramPoller,
+  sendTelegramMessage,
+  type TelegramUpdate,
+} from "../../src/analysis/telegramPoller.js";
 import type { Logger } from "../../src/logging/logger.js";
 
 // The long-poll transport (#235): the Companion calls Telegram rather than being called, so
@@ -15,11 +19,18 @@ const yieldingSleep = (record?: number[]) => async (ms: number) => {
 
 function fakeLog(): Logger & { lines: string[] } {
   const lines: string[] = [];
-  const push = (level: string) => (m: string) => { lines.push(`${level} ${m}`); };
+  const push = (level: string) => (m: string) => {
+    lines.push(`${level} ${m}`);
+  };
   return {
     lines,
-    debug: push("debug"), info: push("info"), warn: push("warn"), error: push("error"),
-    getLevel: () => "info", setLevel: () => {}, close: async () => {},
+    debug: push("debug"),
+    info: push("info"),
+    warn: push("warn"),
+    error: push("error"),
+    getLevel: () => "info",
+    setLevel: () => {},
+    close: async () => {},
   } as unknown as Logger & { lines: string[] };
 }
 
@@ -48,10 +59,16 @@ function fetchServing(rounds: Array<{ status?: number; body: unknown }>) {
 describe("TelegramPoller", () => {
   it("delivers each update to the handler", async () => {
     const seen: string[] = [];
-    const { fn } = fetchServing([{ body: { ok: true, result: [message(1, "/dfir status"), message(2, "/dfir findings")] } }]);
+    const { fn } = fetchServing([
+      { body: { ok: true, result: [message(1, "/dfir status"), message(2, "/dfir findings")] } },
+    ]);
     const poller = new TelegramPoller({
-      botToken: "T", fetchFn: fn, log: fakeLog(),
-      onUpdate: async (u) => { seen.push(u.message?.text ?? ""); },
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async (u) => {
+        seen.push(u.message?.text ?? "");
+      },
     });
     poller.start();
     await vi.waitFor(() => expect(seen).toHaveLength(2));
@@ -66,12 +83,17 @@ describe("TelegramPoller", () => {
       { body: { ok: true, result: [message(10, "/dfir status"), message(11, "/dfir help")] } },
       { body: { ok: true, result: [] } },
     ]);
-    const poller = new TelegramPoller({ botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {} });
+    const poller = new TelegramPoller({
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
+    });
     poller.start();
     await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(2));
     await poller.stop();
-    expect(urls[0]).not.toContain("offset=");   // first call has no cursor yet
-    expect(urls[1]).toContain("offset=12");     // 11 + 1
+    expect(urls[0]).not.toContain("offset="); // first call has no cursor yet
+    expect(urls[1]).toContain("offset=12"); // 11 + 1
   });
 
   // One malformed command must not wedge the bot, and must not be redelivered forever.
@@ -82,8 +104,12 @@ describe("TelegramPoller", () => {
     ]);
     const log = fakeLog();
     const poller = new TelegramPoller({
-      botToken: "T", fetchFn: fn, log,
-      onUpdate: async () => { throw new Error("handler exploded"); },
+      botToken: "T",
+      fetchFn: fn,
+      log,
+      onUpdate: async () => {
+        throw new Error("handler exploded");
+      },
     });
     poller.start();
     await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(2));
@@ -99,8 +125,12 @@ describe("TelegramPoller", () => {
   it("falls back to the public Bot API when apiBase is explicitly undefined", async () => {
     const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
     const poller = new TelegramPoller({
-      botToken: "T", apiBase: undefined, pollTimeoutSeconds: undefined,
-      fetchFn: fn, log: fakeLog(), onUpdate: async () => {},
+      botToken: "T",
+      apiBase: undefined,
+      pollTimeoutSeconds: undefined,
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
     });
     poller.start();
     await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(1));
@@ -111,7 +141,12 @@ describe("TelegramPoller", () => {
 
   it("requests only message updates, with a long-poll timeout", async () => {
     const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
-    const poller = new TelegramPoller({ botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {} });
+    const poller = new TelegramPoller({
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
+    });
     poller.start();
     await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(1));
     await poller.stop();
@@ -127,7 +162,10 @@ describe("TelegramPoller", () => {
       { body: { ok: true, result: [] } },
     ]);
     const poller = new TelegramPoller({
-      botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {},
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
       sleepFn: yieldingSleep(slept),
     });
     poller.start();
@@ -138,9 +176,15 @@ describe("TelegramPoller", () => {
 
   it("escalates the backoff while failures continue", async () => {
     const slept: number[] = [];
-    const fn = (async () => new Response(JSON.stringify({ ok: false, description: "nope" }), { status: 500 })) as unknown as typeof fetch;
+    const fn = (async () =>
+      new Response(JSON.stringify({ ok: false, description: "nope" }), {
+        status: 500,
+      })) as unknown as typeof fetch;
     const poller = new TelegramPoller({
-      botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {},
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
       sleepFn: yieldingSleep(slept),
     });
     poller.start();
@@ -155,9 +199,19 @@ describe("TelegramPoller", () => {
   it("explains a 409 instead of retrying silently", async () => {
     const log = fakeLog();
     const fn = (async () =>
-      new Response(JSON.stringify({ ok: false, description: "Conflict: can't use getUpdates method while webhook is active" }), { status: 409 })) as unknown as typeof fetch;
+      new Response(
+        JSON.stringify({
+          ok: false,
+          description: "Conflict: can't use getUpdates method while webhook is active",
+        }),
+        { status: 409 },
+      )) as unknown as typeof fetch;
     const poller = new TelegramPoller({
-      botToken: "T", fetchFn: fn, log, onUpdate: async () => {}, sleepFn: yieldingSleep(),
+      botToken: "T",
+      fetchFn: fn,
+      log,
+      onUpdate: async () => {},
+      sleepFn: yieldingSleep(),
     });
     poller.start();
     await vi.waitFor(() => expect(log.lines.some((l) => l.startsWith("error"))).toBe(true));
@@ -169,8 +223,17 @@ describe("TelegramPoller", () => {
 
   it("names a bad bot token rather than retrying quietly", async () => {
     const log = fakeLog();
-    const fn = (async () => new Response(JSON.stringify({ ok: false, description: "Unauthorized" }), { status: 401 })) as unknown as typeof fetch;
-    const poller = new TelegramPoller({ botToken: "bad", fetchFn: fn, log, onUpdate: async () => {}, sleepFn: yieldingSleep() });
+    const fn = (async () =>
+      new Response(JSON.stringify({ ok: false, description: "Unauthorized" }), {
+        status: 401,
+      })) as unknown as typeof fetch;
+    const poller = new TelegramPoller({
+      botToken: "bad",
+      fetchFn: fn,
+      log,
+      onUpdate: async () => {},
+      sleepFn: yieldingSleep(),
+    });
     poller.start();
     await vi.waitFor(() => expect(log.lines.some((l) => l.startsWith("error"))).toBe(true));
     await poller.stop();
@@ -179,7 +242,12 @@ describe("TelegramPoller", () => {
 
   it("stop() is idempotent and safe before any round completes", async () => {
     const { fn } = fetchServing([]);
-    const poller = new TelegramPoller({ botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {} });
+    const poller = new TelegramPoller({
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
+    });
     poller.start();
     await poller.stop();
     await expect(poller.stop()).resolves.toBeUndefined();
@@ -187,7 +255,12 @@ describe("TelegramPoller", () => {
 
   it("start() twice does not run two loops", async () => {
     const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
-    const poller = new TelegramPoller({ botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {} });
+    const poller = new TelegramPoller({
+      botToken: "T",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
+    });
     poller.start();
     poller.start();
     await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(1));
@@ -211,15 +284,29 @@ describe("sendTelegramMessage", () => {
 
   it("logs rather than throws when delivery fails", async () => {
     const log = fakeLog();
-    const fn = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
-    await expect(sendTelegramMessage({ botToken: "T", chatId: "-100", text: "x", fetchFn: fn, log })).resolves.toBeUndefined();
+    const fn = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    await expect(
+      sendTelegramMessage({ botToken: "T", chatId: "-100", text: "x", fetchFn: fn, log }),
+    ).resolves.toBeUndefined();
     expect(log.lines.some((l) => l.includes("network down"))).toBe(true);
   });
 
   it("honours an API base override", async () => {
     const urls: string[] = [];
-    const fn = (async (url: string) => { urls.push(String(url)); return new Response("ok", { status: 200 }); }) as unknown as typeof fetch;
-    await sendTelegramMessage({ botToken: "T", chatId: "1", text: "x", apiBase: "http://localhost:9099/", fetchFn: fn, log: fakeLog() });
+    const fn = (async (url: string) => {
+      urls.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    await sendTelegramMessage({
+      botToken: "T",
+      chatId: "1",
+      text: "x",
+      apiBase: "http://localhost:9099/",
+      fetchFn: fn,
+      log: fakeLog(),
+    });
     expect(urls[0]).toBe("http://localhost:9099/botT/sendMessage");
   });
 });

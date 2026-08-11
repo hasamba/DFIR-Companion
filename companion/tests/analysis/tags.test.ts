@@ -27,7 +27,12 @@ describe("TagsStore", () => {
   });
 
   it("adds a tag (server-assigned id + createdAt) and lists it", async () => {
-    const t = await store.add("c1", { targetType: "ioc", targetId: "i1", author: "Alice", label: "c2-comms" });
+    const t = await store.add("c1", {
+      targetType: "ioc",
+      targetId: "i1",
+      author: "Alice",
+      label: "c2-comms",
+    });
     expect(t.id).toBeTruthy();
     expect(t.createdAt).toBeTruthy();
     expect(t.author).toBe("Alice");
@@ -37,14 +42,29 @@ describe("TagsStore", () => {
   });
 
   it("normalizes the label and defaults a blank author to anonymous", async () => {
-    const t = await store.add("c1", { targetType: "event", targetId: "e1", author: "   ", label: "  Key Evidence " });
+    const t = await store.add("c1", {
+      targetType: "event",
+      targetId: "e1",
+      author: "   ",
+      label: "  Key Evidence ",
+    });
     expect(t.author).toBe("anonymous");
     expect(t.label).toBe("key-evidence");
   });
 
   it("is idempotent per target: re-adding the same label returns the existing tag", async () => {
-    const a = await store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", label: "Needs Review" });
-    const b = await store.add("c1", { targetType: "event", targetId: "e1", author: "Carol", label: "needs-review" });
+    const a = await store.add("c1", {
+      targetType: "event",
+      targetId: "e1",
+      author: "Bob",
+      label: "Needs Review",
+    });
+    const b = await store.add("c1", {
+      targetType: "event",
+      targetId: "e1",
+      author: "Carol",
+      label: "needs-review",
+    });
     expect(b.id).toBe(a.id);
     expect(await store.load("c1")).toHaveLength(1);
   });
@@ -56,11 +76,18 @@ describe("TagsStore", () => {
   });
 
   it("throws on an empty label", async () => {
-    await expect(store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", label: "   " })).rejects.toThrow(/label/);
+    await expect(
+      store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", label: "   " }),
+    ).rejects.toThrow(/label/);
   });
 
   it("removes a tag by id (returns the removed tag, or null if absent)", async () => {
-    const t = await store.add("c1", { targetType: "finding", targetId: "f1", author: "Bob", label: "false-positive" });
+    const t = await store.add("c1", {
+      targetType: "finding",
+      targetId: "f1",
+      author: "Bob",
+      label: "false-positive",
+    });
     expect(await store.remove("c1", t.id)).toMatchObject({ id: t.id, label: "false-positive" });
     expect(await store.load("c1")).toHaveLength(0);
     expect(await store.remove("c1", "does-not-exist")).toBeNull();

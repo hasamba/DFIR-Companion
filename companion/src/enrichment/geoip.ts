@@ -1,4 +1,11 @@
-import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind } from "./provider.js";
+import {
+  RateLimitError,
+  parseRetryAfterMs,
+  type EnrichmentProvider,
+  type EnrichmentResult,
+  type FetchFn,
+  type IocKind,
+} from "./provider.js";
 
 // Geo-IP lookup for an IP IOC — "what country (and city / ASN / hosting org) did this address
 // come from?". Answers the analyst's first question about any external IP. Pure geo/network
@@ -13,35 +20,35 @@ import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type Enrich
 // (ipinfo.io, ip-api.com, ipwho.is field names) so swapping the URL usually "just works".
 // Injectable fetchFn so tests never hit the network.
 export interface GeoIpOptions {
-  baseUrl?: string;     // default https://ipinfo.io/{ip}/json
-  apiKey?: string;      // optional; substituted for {key} or appended as ?token=
+  baseUrl?: string; // default https://ipinfo.io/{ip}/json
+  apiKey?: string; // optional; substituted for {key} or appended as ?token=
   fetchFn?: FetchFn;
   timeoutMs?: number;
 }
 
 // Union of the fields the supported keyless backends use (ipinfo.io + ip-api.com + ipwho.is).
 interface GeoResponse {
-  success?: boolean;        // ipwho.is: false on a reserved/invalid IP (still HTTP 200)
-  status?: string;          // ip-api.com: "success" | "fail"
-  error?: unknown;          // ipinfo: { error: {...} } on a bogon/error
+  success?: boolean; // ipwho.is: false on a reserved/invalid IP (still HTTP 200)
+  status?: string; // ip-api.com: "success" | "fail"
+  error?: unknown; // ipinfo: { error: {...} } on a bogon/error
   message?: string;
-  country?: string;         // ipwho.is: name; ip-api: name; ipinfo: 2-letter code
+  country?: string; // ipwho.is: name; ip-api: name; ipinfo: 2-letter code
   country_name?: string;
-  country_code?: string;    // ipwho.is
-  countryCode?: string;     // ip-api.com
-  region?: string;          // ipwho.is / ipinfo
-  regionName?: string;      // ip-api.com
+  country_code?: string; // ipwho.is
+  countryCode?: string; // ip-api.com
+  region?: string; // ipwho.is / ipinfo
+  regionName?: string; // ip-api.com
   city?: string;
-  connection?: { asn?: number; org?: string; isp?: string; domain?: string };  // ipwho.is
+  connection?: { asn?: number; org?: string; isp?: string; domain?: string }; // ipwho.is
   asn?: number;
-  as?: string;              // ip-api.com, e.g. "AS15169 Google LLC"
-  org?: string;             // ip-api ("Google Public DNS") | ipinfo ("AS15169 Google LLC")
+  as?: string; // ip-api.com, e.g. "AS15169 Google LLC"
+  org?: string; // ip-api ("Google Public DNS") | ipinfo ("AS15169 Google LLC")
   isp?: string;
-  loc?: string;             // ipinfo: "lat,lon"
-  lat?: number;             // ip-api.com
-  lon?: number;             // ip-api.com
-  latitude?: number;        // ipwho.is
-  longitude?: number;       // ipwho.is
+  loc?: string; // ipinfo: "lat,lon"
+  lat?: number; // ip-api.com
+  lon?: number; // ip-api.com
+  latitude?: number; // ipwho.is
+  longitude?: number; // ipwho.is
 }
 
 function firstStr(...vals: Array<string | undefined>): string | undefined {
@@ -85,12 +92,16 @@ export class GeoIpProvider implements EnrichmentProvider {
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
-  supports(kind: IocKind): boolean { return kind === "ip"; }
+  supports(kind: IocKind): boolean {
+    return kind === "ip";
+  }
 
   // Build the request URL from the template + the optional key.
   private buildUrl(value: string): string {
     const ip = encodeURIComponent(value);
-    let url = this.template.includes("{ip}") ? this.template.replace("{ip}", ip) : `${this.template.replace(/\/+$/, "")}/${ip}`;
+    let url = this.template.includes("{ip}")
+      ? this.template.replace("{ip}", ip)
+      : `${this.template.replace(/\/+$/, "")}/${ip}`;
     const key = this.opts.apiKey;
     if (key) {
       if (url.includes("{key}")) url = url.replace("{key}", encodeURIComponent(key));
@@ -105,8 +116,10 @@ export class GeoIpProvider implements EnrichmentProvider {
       headers: { Accept: "application/json", "User-Agent": "DFIR-Companion" },
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
-    if (res.status === 401 || res.status === 403) throw new Error("GeoIP auth failed / blocked (set DFIR_GEOIP_URL or DFIR_GEOIP_KEY)");
-    if (res.status === 429) throw new RateLimitError("GeoIP rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
+    if (res.status === 401 || res.status === 403)
+      throw new Error("GeoIP auth failed / blocked (set DFIR_GEOIP_URL or DFIR_GEOIP_KEY)");
+    if (res.status === 429)
+      throw new RateLimitError("GeoIP rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`GeoIP HTTP ${res.status}`);
 
     const json = (await res.json()) as GeoResponse;
@@ -116,7 +129,10 @@ export class GeoIpProvider implements EnrichmentProvider {
     let country = firstStr(json.country_name, json.country);
     let code = firstStr(json.country_code, json.countryCode);
     // ipinfo returns `country` as a 2-letter code with no separate code field.
-    if (!code && country && /^[A-Za-z]{2}$/.test(country)) { code = country.toUpperCase(); country = undefined; }
+    if (!code && country && /^[A-Za-z]{2}$/.test(country)) {
+      code = country.toUpperCase();
+      country = undefined;
+    }
 
     // ASN: a numeric field (ipwho.is), or the leading "AS\d+" of an "AS15169 Google LLC"
     // string (ip-api `as`, ipinfo `org`).
@@ -124,7 +140,10 @@ export class GeoIpProvider implements EnrichmentProvider {
     let asn: string | undefined;
     if (typeof json.connection?.asn === "number") asn = `AS${json.connection.asn}`;
     else if (typeof json.asn === "number") asn = `AS${json.asn}`;
-    else { const m = /^(AS\d+)/i.exec(asString ?? ""); if (m) asn = m[1].toUpperCase(); }
+    else {
+      const m = /^(AS\d+)/i.exec(asString ?? "");
+      if (m) asn = m[1].toUpperCase();
+    }
 
     // Org name: prefer an explicit org/isp; strip a leading "AS\d+ " prefix (ipinfo bakes it in).
     let org = firstStr(json.connection?.org, json.connection?.isp, json.org, json.isp);
@@ -140,7 +159,7 @@ export class GeoIpProvider implements EnrichmentProvider {
     if (org) tags.push(org);
 
     const countryLabel = country ? (code ? `${country} (${code})` : country) : code;
-    const scoreParts = [countryLabel, asn && org ? `${asn} ${org}` : asn ?? org].filter(Boolean);
+    const scoreParts = [countryLabel, asn && org ? `${asn} ${org}` : (asn ?? org)].filter(Boolean);
     const coords = parseGeoCoords(json);
     const cityName = firstStr(json.city);
     const countryField = country ?? code; // human name if present, else 2-letter code

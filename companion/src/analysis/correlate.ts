@@ -51,9 +51,13 @@ function eventHashes(e: ForensicEvent): string[] {
   if (e.sha256) out.add(e.sha256.toLowerCase());
   if (e.md5) out.add(e.md5.toLowerCase());
   // Fallback: pull a hash out of the description (e.g. an AI-extracted Velociraptor row).
-  const s256 = SHA256_RE.exec(e.description); if (s256) out.add(s256[0].toLowerCase());
+  const s256 = SHA256_RE.exec(e.description);
+  if (s256) out.add(s256[0].toLowerCase());
   // Only treat a bare 32-hex as MD5 if no sha256 present in the text (avoid matching part of a sha).
-  if (!s256) { const m = MD5_RE.exec(e.description); if (m) out.add(m[0].toLowerCase()); }
+  if (!s256) {
+    const m = MD5_RE.exec(e.description);
+    if (m) out.add(m[0].toLowerCase());
+  }
   return [...out];
 }
 
@@ -76,9 +80,22 @@ function epoch(ts: string): number | undefined {
 // Union-find over event indices.
 class DSU {
   private parent: number[];
-  constructor(n: number) { this.parent = Array.from({ length: n }, (_, i) => i); }
-  find(x: number): number { let i = x; while (this.parent[i] !== i) { this.parent[i] = this.parent[this.parent[i]]; i = this.parent[i]; } return i; }
-  union(a: number, b: number): void { const ra = this.find(a), rb = this.find(b); if (ra !== rb) this.parent[Math.max(ra, rb)] = Math.min(ra, rb); }
+  constructor(n: number) {
+    this.parent = Array.from({ length: n }, (_, i) => i);
+  }
+  find(x: number): number {
+    let i = x;
+    while (this.parent[i] !== i) {
+      this.parent[i] = this.parent[this.parent[i]];
+      i = this.parent[i];
+    }
+    return i;
+  }
+  union(a: number, b: number): void {
+    const ra = this.find(a),
+      rb = this.find(b);
+    if (ra !== rb) this.parent[Math.max(ra, rb)] = Math.min(ra, rb);
+  }
 }
 
 function worse(a: Severity, b: Severity): Severity {
@@ -114,7 +131,10 @@ function hostScopedGroups(indices: number[], evs: ForensicEvent[], crossHost: bo
   const unknown = byHost.get("") ?? [];
   byHost.delete("");
   const groups = [...byHost.values()];
-  if (groups.length === 1) { groups[0].push(...unknown); return groups; }   // unambiguous → attach
+  if (groups.length === 1) {
+    groups[0].push(...unknown);
+    return groups;
+  } // unambiguous → attach
   if (unknown.length) groups.push(unknown);
   return groups;
 }
@@ -152,14 +172,22 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   // Primary (its description is the canonical shown text): most SEVERE first — a Critical detection's
   // wording must win over an Info row of the same fact — then highest TRUST (#66: prefer the reliable
   // tool's phrasing over a noisy artifact row), then the longest description as the final tie-break.
-  const primary = [...events].sort((a, b) =>
-    (SEV_RANK[a.severity] - SEV_RANK[b.severity]) ||
-    (trustForSources(b.sources, trustMap) - trustForSources(a.sources, trustMap)) ||
-    (b.description.length - a.description.length))[0];
-  const uniq = <T,>(xs: T[]): T[] => [...new Set(xs)];
+  const primary = [...events].sort(
+    (a, b) =>
+      SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+      trustForSources(b.sources, trustMap) - trustForSources(a.sources, trustMap) ||
+      b.description.length - a.description.length,
+  )[0];
+  const uniq = <T>(xs: T[]): T[] => [...new Set(xs)];
   const sources = realSources(events);
-  const times = events.map((e) => e.timestamp).filter(Boolean).sort();
-  const ends = events.map((e) => e.endTimestamp || e.timestamp).filter(Boolean).sort();
+  const times = events
+    .map((e) => e.timestamp)
+    .filter(Boolean)
+    .sort();
+  const ends = events
+    .map((e) => e.endTimestamp || e.timestamp)
+    .filter(Boolean)
+    .sort();
 
   const merged: ForensicEvent = {
     ...primary,
@@ -220,7 +248,10 @@ function withSignature(e: ForensicEvent): ForensicEvent {
 // the groups BEFORE mergeGroup collapses them — a group whose members were recorded by different
 // tools is exactly the "same event, two clocks" anchor the skew detector needs, and after the merge
 // only one timestamp survives. correlateEvents is the sole other caller; the two must stay in step.
-function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): { evs: ForensicEvent[]; groups: number[][] } {
+function groupEvents(
+  events: readonly ForensicEvent[],
+  opts: CorrelateOptions,
+): { evs: ForensicEvent[]; groups: number[][] } {
   const windowMs = (opts.windowSeconds ?? 2) * 1000;
   const timeOf = opts.epochOf ?? ((e: ForensicEvent) => epoch(e.timestamp));
   const crossHostArtifacts = opts.crossHostArtifacts === true;
@@ -288,12 +319,18 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
     const structuredBy = new Map(entries.map((x) => [x.i, x.structured]));
     // Same path on two machines is two files, not one (#345) — so pair within a host, exactly like
     // the hash step above.
-    for (const group of hostScopedGroups(entries.map((x) => x.i), evs, crossHostArtifacts)) {
+    for (const group of hostScopedGroups(
+      entries.map((x) => x.i),
+      evs,
+      crossHostArtifacts,
+    )) {
       if (group.length < 2) continue;
-      const dated = group.map((i) => ({ i, structured: structuredBy.get(i) === true, t: timeOf(evs[i]) }))
+      const dated = group
+        .map((i) => ({ i, structured: structuredBy.get(i) === true, t: timeOf(evs[i]) }))
         .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
       for (let k = 1; k < dated.length; k++) {
-        const a = dated[k - 1], b = dated[k];
+        const a = dated[k - 1],
+          b = dated[k];
         if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
         if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
         // Undated events on the same path correlate too (no time to disprove); dated ones
@@ -318,10 +355,12 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
   });
   for (const idxs of byPid.values()) {
     if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: timeOf(evs[i]) }))
+    const dated = idxs
+      .map((i) => ({ i, t: timeOf(evs[i]) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
-      const a = dated[k - 1], b = dated[k];
+      const a = dated[k - 1],
+        b = dated[k];
       if (!corroborates(evs[a.i], evs[b.i])) continue;
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= pidWindowMs) dsu.union(a.i, b.i);
     }
@@ -342,10 +381,12 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
   });
   for (const idxs of bySig.values()) {
     if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: timeOf(evs[i]) }))
+    const dated = idxs
+      .map((i) => ({ i, t: timeOf(evs[i]) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
-      const a = dated[k - 1], b = dated[k];
+      const a = dated[k - 1],
+        b = dated[k];
       if (!corroborates(evs[a.i], evs[b.i])) continue;
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= cmdWindowMs) dsu.union(a.i, b.i);
     }
@@ -372,22 +413,38 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
 // Singleton groups are included so a caller can tell "seen once" from "not seen". The events carry a
 // populated chainSignature (as correlateEvents emits them) but are otherwise untouched. Used by
 // clock-skew detection (#228) — see groupEvents above for why the pre-merge view matters.
-export function correlationGroups(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[][] {
+export function correlationGroups(
+  events: readonly ForensicEvent[],
+  opts: CorrelateOptions = {},
+): ForensicEvent[][] {
   if (events.length === 0) return [];
   if (events.length < 2) return [[withSignature(events[0])]];
   const { evs, groups } = groupEvents(events, opts);
   return groups.map((members) => members.map((m) => evs[m]));
 }
 
-export function correlateEvents(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[] {
+export function correlateEvents(
+  events: readonly ForensicEvent[],
+  opts: CorrelateOptions = {},
+): ForensicEvent[] {
   // Always strip any legacy corroboration note from descriptions, even for a single
   // event, so old polluted state self-heals on the next merge/synthesis.
-  if (events.length < 2) return events.map((e) => withSignature(CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e));
+  if (events.length < 2)
+    return events.map((e) =>
+      withSignature(
+        CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e,
+      ),
+    );
   const { evs, groups } = groupEvents(events, opts);
   const out: ForensicEvent[] = [];
   for (const members of groups) {
     if (members.length > 1) {
-      out.push(mergeGroup(members.map((m) => evs[m]), opts.sourceTrust));
+      out.push(
+        mergeGroup(
+          members.map((m) => evs[m]),
+          opts.sourceTrust,
+        ),
+      );
     } else {
       // Singleton: still strip any legacy corroboration note so old state self-heals.
       const e = evs[members[0]];

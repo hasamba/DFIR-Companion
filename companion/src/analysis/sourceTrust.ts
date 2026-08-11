@@ -38,7 +38,7 @@ export const DEFAULT_SOURCE_TRUST: SourceTrustMap = {
   volatility: 0.85,
   // SIEM / aggregators
   splunk: 0.8,
-  sentinel: 0.8,      // Microsoft Sentinel (resolved AFTER sentinelone — see trustForSource ordering)
+  sentinel: 0.8, // Microsoft Sentinel (resolved AFTER sentinelone — see trustForSource ordering)
   elastic: 0.8,
   qradar: 0.8,
   wazuh: 0.8,
@@ -59,7 +59,9 @@ export const DEFAULT_SOURCE_TRUST: SourceTrustMap = {
 };
 
 export function normalizeSourceKey(source: string): string {
-  return String(source ?? "").trim().toLowerCase();
+  return String(source ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 // Trust for ONE raw source string. Exact key first; otherwise the MAX trust among every tier keyword that
@@ -80,7 +82,10 @@ export function trustForSource(source: string, map: SourceTrustMap = DEFAULT_SOU
 
 // The trust of an EVENT = the MAX over its sources: an event corroborated by even one high-trust tool
 // inherits that tool's authority. A source-less event falls back to SOURCE_TRUST_UNKNOWN.
-export function trustForSources(sources: readonly string[] | undefined, map: SourceTrustMap = DEFAULT_SOURCE_TRUST): number {
+export function trustForSources(
+  sources: readonly string[] | undefined,
+  map: SourceTrustMap = DEFAULT_SOURCE_TRUST,
+): number {
   const real = (sources ?? []).filter((s) => s && s !== "unknown source");
   if (!real.length) return SOURCE_TRUST_UNKNOWN;
   return Math.max(...real.map((s) => trustForSource(s, map)));

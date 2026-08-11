@@ -10,7 +10,12 @@ import {
   DEFAULT_GAP_MAX_FINDINGS,
   DEFAULT_GAP_OUTLIER_SPAN,
 } from "../../src/analysis/gapDetect.js";
-import { emptyState, type ForensicEvent, type Finding, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type ForensicEvent,
+  type Finding,
+  type InvestigationState,
+} from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
@@ -26,7 +31,13 @@ function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): 
 }
 
 // N events spaced `intervalS` seconds apart starting at `startISO`, tagged with `source`.
-function series(prefix: string, source: string, startISO: string, intervalS: number, count: number): ForensicEvent[] {
+function series(
+  prefix: string,
+  source: string,
+  startISO: string,
+  intervalS: number,
+  count: number,
+): ForensicEvent[] {
   const out: ForensicEvent[] = [];
   let ms = Date.parse(startISO);
   for (let i = 0; i < count; i++) {
@@ -272,7 +283,9 @@ describe("backfillSilenceGapFindings", () => {
     // Five separated complete-silence blackouts in one sparse timeline → five complete gaps.
     const blocks = ["08:00", "12:00", "16:00", "20:00", "23:30"].flatMap((_, b) => {
       const base = Date.parse(`2026-05-2${b}T08:00:00Z`); // each on its own day → big inter-block gaps
-      return [0, 1, 2].map((i) => ev(`b${b}_${i}`, new Date(base + i * 60_000).toISOString(), { sources: ["EventLog"] }));
+      return [0, 1, 2].map((i) =>
+        ev(`b${b}_${i}`, new Date(base + i * 60_000).toISOString(), { sources: ["EventLog"] }),
+      );
     });
     const gaps = detectTimelineGaps(blocks);
     expect(gaps.filter((g) => g.complete).length).toBeGreaterThanOrEqual(4);
@@ -328,7 +341,13 @@ describe("gapEnvOptions", () => {
     process.env.DFIR_GAP_ACTIVE_HOURS = "9-17";
     process.env.DFIR_GAP_MAX_FINDINGS = "3";
     process.env.DFIR_GAP_OUTLIER_SPAN = "8";
-    expect(gapEnvOptions()).toEqual({ minGapMinutes: 60, densityFactor: 0, activeHours: { start: 9, end: 17 }, maxFindings: 3, outlierSpanFactor: 8 });
+    expect(gapEnvOptions()).toEqual({
+      minGapMinutes: 60,
+      densityFactor: 0,
+      activeHours: { start: 9, end: 17 },
+      maxFindings: 3,
+      outlierSpanFactor: 8,
+    });
     delete process.env.DFIR_GAP_MIN_MINUTES;
     delete process.env.DFIR_GAP_DENSITY_FACTOR;
     delete process.env.DFIR_GAP_ACTIVE_HOURS;

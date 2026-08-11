@@ -29,12 +29,12 @@ const severityEnum = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 
 // One proposed next step. Every field is lenient so one off value never rejects the whole reply.
 export const memoryNextStepSchema = z.object({
-  anomaly: z.string().catch(""),             // the suspicious observation, e.g. "svchost.exe (PID 1234) has no services.exe parent"
-  command: z.string().catch(""),             // the EXACT next Volatility 3 command, e.g. "vol -f <image> windows.malfind --pid 1234"
-  plugin: z.string().catch(""),              // the Volatility 3 plugin it runs, e.g. "windows.malfind"
-  rationale: z.string().catch(""),           // why this command + how to triage what it returns
-  severity: severityEnum.catch("Medium"),    // priority of the underlying anomaly (drives display ordering)
-  pid: z.string().catch(""),                 // the PID the step targets, if any (echoed for the analyst)
+  anomaly: z.string().catch(""), // the suspicious observation, e.g. "svchost.exe (PID 1234) has no services.exe parent"
+  command: z.string().catch(""), // the EXACT next Volatility 3 command, e.g. "vol -f <image> windows.malfind --pid 1234"
+  plugin: z.string().catch(""), // the Volatility 3 plugin it runs, e.g. "windows.malfind"
+  rationale: z.string().catch(""), // why this command + how to triage what it returns
+  severity: severityEnum.catch("Medium"), // priority of the underlying anomaly (drives display ordering)
+  pid: z.string().catch(""), // the PID the step targets, if any (echoed for the analyst)
   mitreTechniques: z.array(z.string()).catch([]),
 });
 
@@ -51,7 +51,7 @@ export type MemoryNextStepResponse = z.infer<typeof memoryNextStepResponseSchema
 // short, high-signal list beats a wall of near-duplicate commands the analyst won't run.
 export const MEMORY_NEXTSTEP_MAX_DEFAULT = 8;
 
-const MAX_COMMAND_LEN = 600;     // a runaway command is a sign of a confused model; keep it pasteable
+const MAX_COMMAND_LEN = 600; // a runaway command is a sign of a confused model; keep it pasteable
 const MAX_ANOMALY_LEN = 400;
 const MAX_RATIONALE_LEN = 2000;
 const MAX_PLUGIN_LEN = 80;
@@ -103,21 +103,34 @@ export function renderMemoryEvidence(events: readonly ForensicEvent[], limit = 3
 // Drop unusable suggestions and clamp fields. A step with no command or no anomaly is useless; a list
 // longer than `max` is trimmed. Pure — deterministic, no I/O. Order is preserved (display sorting by
 // severity happens in the dashboard).
-export function sanitizeMemoryNextSteps(raw: readonly MemoryNextStep[] | undefined, max: number = MEMORY_NEXTSTEP_MAX_DEFAULT): MemoryNextStep[] {
+export function sanitizeMemoryNextSteps(
+  raw: readonly MemoryNextStep[] | undefined,
+  max: number = MEMORY_NEXTSTEP_MAX_DEFAULT,
+): MemoryNextStep[] {
   const out: MemoryNextStep[] = [];
   const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : MEMORY_NEXTSTEP_MAX_DEFAULT;
   for (const s of raw ?? []) {
-    const command = String(s?.command ?? "").replace(/\s+/g, " ").trim();
+    const command = String(s?.command ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
     const anomaly = String(s?.anomaly ?? "").trim();
-    if (!command || !anomaly) continue;       // no command or no observation → nothing to act on
+    if (!command || !anomaly) continue; // no command or no observation → nothing to act on
     out.push({
       anomaly: anomaly.slice(0, MAX_ANOMALY_LEN),
       command: command.slice(0, MAX_COMMAND_LEN),
-      plugin: String(s?.plugin ?? "").trim().slice(0, MAX_PLUGIN_LEN),
-      rationale: String(s?.rationale ?? "").trim().slice(0, MAX_RATIONALE_LEN),
+      plugin: String(s?.plugin ?? "")
+        .trim()
+        .slice(0, MAX_PLUGIN_LEN),
+      rationale: String(s?.rationale ?? "")
+        .trim()
+        .slice(0, MAX_RATIONALE_LEN),
       severity: s?.severity ?? "Medium",
-      pid: String(s?.pid ?? "").trim().slice(0, MAX_PID_LEN),
-      mitreTechniques: dedupeStrings((s?.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean)).slice(0, 20),
+      pid: String(s?.pid ?? "")
+        .trim()
+        .slice(0, MAX_PID_LEN),
+      mitreTechniques: dedupeStrings(
+        (s?.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean),
+      ).slice(0, 20),
     });
     if (out.length >= cap) break;
   }

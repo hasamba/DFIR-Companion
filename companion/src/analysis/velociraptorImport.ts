@@ -93,14 +93,24 @@ function unflattenDotted(row: Row): Row {
     const parts = key.split(".");
     // Never walk INTO or write THROUGH a __proto__/constructor/prototype segment (would reach
     // Object.prototype). The dotted key can't equal a bare "__proto__", so keeping it flat is safe.
-    if (parts.some((p) => DANGEROUS_SEGMENT.has(p))) { out[key] = val; continue; }
+    if (parts.some((p) => DANGEROUS_SEGMENT.has(p))) {
+      out[key] = val;
+      continue;
+    }
     let cur: Row = out;
     let ok = true;
     for (let i = 0; i < parts.length - 1; i++) {
       const next = cur[parts[i]];
-      if (next === undefined) { const o: Row = {}; cur[parts[i]] = o; cur = o; }
-      else if (isObject(next)) { cur = next; }
-      else { ok = false; break; } // collision — a leaf sits where a branch is needed
+      if (next === undefined) {
+        const o: Row = {};
+        cur[parts[i]] = o;
+        cur = o;
+      } else if (isObject(next)) {
+        cur = next;
+      } else {
+        ok = false;
+        break;
+      } // collision — a leaf sits where a branch is needed
     }
     const leaf = parts[parts.length - 1];
     if (ok && !(leaf in cur && isObject(cur[leaf]))) cur[leaf] = val;
@@ -119,8 +129,9 @@ function normalizeElasticRow(row: Row): Row {
   const collapsed: Row = {};
   for (const [k, v] of Object.entries(row)) {
     const bare = k.replace(/\.(keyword|text|raw)$/i, "");
-    if (bare !== k) { if (!(bare in collapsed) && !(bare in row)) safeSet(collapsed, bare, v); }
-    else safeSet(collapsed, k, v);
+    if (bare !== k) {
+      if (!(bare in collapsed) && !(bare in row)) safeSet(collapsed, bare, v);
+    } else safeSet(collapsed, k, v);
   }
   // 2) Un-flatten the remaining dotted keys to nested objects.
   const nested = unflattenDotted(collapsed);
@@ -136,19 +147,19 @@ export interface VelociraptorImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  artifact?: string;   // fallback artifact/source label (e.g. the filename) when rows carry no _Source
-  hostFallback?: string;   // asset to stamp on events whose row carries no host (single-client flow import)
+  artifact?: string; // fallback artifact/source label (e.g. the filename) when rows carry no _Source
+  hostFallback?: string; // asset to stamp on events whose row carries no host (single-client flow import)
 }
 
 export interface VelociraptorParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;       // rows found
-  kept: number;        // events emitted (after aggregation + cap)
-  dropped: number;     // rows not represented (below floor / capped)
-  groups: number;      // distinct event groups before the cap
-  detections: number;  // Sigma + YARA detection rows seen
-  format: string;      // "array" | "jsonl" | "artifact-map" | "single" | …
+  total: number; // rows found
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // rows not represented (below floor / capped)
+  groups: number; // distinct event groups before the cap
+  detections: number; // Sigma + YARA detection rows seen
+  format: string; // "array" | "jsonl" | "artifact-map" | "single" | …
   hostname: string;
 }
 
@@ -156,17 +167,36 @@ const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 
 const SIGMA_LEVEL: Record<string, Severity> = {
-  critical: "Critical", crit: "Critical",
+  critical: "Critical",
+  crit: "Critical",
   high: "High",
-  medium: "Medium", med: "Medium",
+  medium: "Medium",
+  med: "Medium",
   low: "Low",
-  informational: "Info", info: "Info",
+  informational: "Info",
+  info: "Info",
 };
 const SEV_WORDS: Record<string, Severity> = {
-  ...SIGMA_LEVEL, warning: "Medium", warn: "Medium", error: "High", notice: "Low", alert: "Critical",
+  ...SIGMA_LEVEL,
+  warning: "Medium",
+  warn: "Medium",
+  error: "High",
+  notice: "Low",
+  alert: "Critical",
 };
 
-const WRAPPER_KEYS = new Set(["data", "hits", "events", "records", "results", "logs", "rows", "items", "alerts", "value"]);
+const WRAPPER_KEYS = new Set([
+  "data",
+  "hits",
+  "events",
+  "records",
+  "results",
+  "logs",
+  "rows",
+  "items",
+  "alerts",
+  "value",
+]);
 
 // Pull MITRE technique ids out of any tactic/tag/meta text.
 function mitreFromText(...parts: string[]): string[] {
@@ -212,12 +242,23 @@ function fullMessage(row: Row, description: string): string {
 // header ("Creator Subject… Target Subject…") buries past the description cut-off. Surfacing them
 // makes e.g. "Use of 32-bit LOLBINs" name the binary that ran, not just the rule. (#102)
 const MSG_FIELD_LABELS = [
-  "New Process Name", "Process Command Line", "CommandLine", "Command Line",
-  "Image", "Application Name", "TargetFilename", "Service File Name", "ServiceFileName", "ScriptBlockText",
+  "New Process Name",
+  "Process Command Line",
+  "CommandLine",
+  "Command Line",
+  "Image",
+  "Application Name",
+  "TargetFilename",
+  "Service File Name",
+  "ServiceFileName",
+  "ScriptBlockText",
 ];
 // Velociraptor renders some fields with a trailing "!S!" sentinel — strip it for readability.
 function cleanFieldValue(v: string): string {
-  return v.trim().replace(/!S!\s*$/, "").trim();
+  return v
+    .trim()
+    .replace(/!S!\s*$/, "")
+    .trim();
 }
 function fieldFromMessage(msg: string, label: string): string {
   const re = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
@@ -230,7 +271,10 @@ function salientFromMessage(msg: string): string {
   const out: string[] = [];
   for (const label of MSG_FIELD_LABELS) {
     const v = fieldFromMessage(msg, label);
-    if (v && v !== "-" && !seen.has(v)) { seen.add(v); out.push(`${label}: ${v}`); }
+    if (v && v !== "-" && !seen.has(v)) {
+      seen.add(v);
+      out.push(`${label}: ${v}`);
+    }
   }
   return out.join(" - ").slice(0, 400);
 }
@@ -243,7 +287,7 @@ function parsedNewProcess(msg: string): string {
 // A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
 function hashStr(s: string): string {
   let h = 5381;
-  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) + s.charCodeAt(i)) | 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 }
 
@@ -254,7 +298,8 @@ function hashStr(s: string): string {
 // hash (not a prefix) means a distinguishing token anywhere in a long, boilerplate-heavy message
 // still separates the events.
 function msgFingerprint(msg: string): string {
-  const norm = oneLine(msg).toLowerCase()
+  const norm = oneLine(msg)
+    .toLowerCase()
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "")
     .replace(/\d+/g, "")
     .replace(/[^a-z]+/g, " ")
@@ -269,7 +314,11 @@ function msgFingerprint(msg: string): string {
 // rule `Name` (+ optional `Criticality`/`Severity`) — or in `RuleName`/`RuleID`. Per the
 // post-detection principle we consume that verdict (we don't re-evaluate the rule): its text
 // leads the description, its own criticality drives severity, and any Txxxx ids become MITRE.
-interface Verdict { title: string; critWord: string; mitre: string[] }
+interface Verdict {
+  title: string;
+  critWord: string;
+  mitre: string[];
+}
 
 function rowVerdict(row: Row): Verdict | null {
   const d = getCI(row, "Detection");
@@ -278,7 +327,9 @@ function rowVerdict(row: Row): Verdict | null {
   if (typeof d === "string") title = d.trim();
   else if (isObject(d)) {
     title = str(getCI(d, "Name") ?? getCI(d, "Title") ?? getCI(d, "Rule") ?? getCI(d, "ID")).trim();
-    critWord = str(getCI(d, "Criticality") ?? getCI(d, "Severity") ?? getCI(d, "Level")).trim().toLowerCase();
+    critWord = str(getCI(d, "Criticality") ?? getCI(d, "Severity") ?? getCI(d, "Level"))
+      .trim()
+      .toLowerCase();
     // DetectRaptor "keyword scan" detections (e.g. .Detection.MFT) carry the matched string in
     // StringHit/HitString rather than a rule Name — use it as the verdict subject so the row is
     // treated as a detection (severity escalates on a malware/tool keyword) instead of generic noise.
@@ -286,14 +337,20 @@ function rowVerdict(row: Row): Verdict | null {
   }
   if (!title) title = firstStr(row, ["RuleName", "RuleID"]).trim();
   if (!title) return null;
-  const mitre = mitreFromText(title, firstStr(row, ["RuleName"]), flatStr(getCI(row, "Tags") ?? getCI(row, "Mitre")));
+  const mitre = mitreFromText(
+    title,
+    firstStr(row, ["RuleName"]),
+    flatStr(getCI(row, "Tags") ?? getCI(row, "Mitre")),
+  );
   return { title, critWord, mitre };
 }
 
 // Known malware-family / offensive-tooling keywords in a verdict title → escalate. These read
 // the tool's OWN verdict wording, not the raw artifact, so it stays "consume, don't re-detect".
-const CRIT_KEYWORDS = /ransom|lockbit|\bconti\b|wannacry|black\s*cat|\balphv\b|emotet|trickbot|qakbot|\bhive\b/i;
-const HIGH_KEYWORDS = /cobalt\s*strike|mimikatz|web\s*shell|webshell|lazagne|rubeus|sharphound|bloodhound|meterpreter|\bbeacon\b|reverse\s*shell|secretsdump|psexec|\bsliver\b|brute\s*ratel|nanodump|seatbelt|\blsass\b|kerberoast|dcsync|impacket/i;
+const CRIT_KEYWORDS =
+  /ransom|lockbit|\bconti\b|wannacry|black\s*cat|\balphv\b|emotet|trickbot|qakbot|\bhive\b/i;
+const HIGH_KEYWORDS =
+  /cobalt\s*strike|mimikatz|web\s*shell|webshell|lazagne|rubeus|sharphound|bloodhound|meterpreter|\bbeacon\b|reverse\s*shell|secretsdump|psexec|\bsliver\b|brute\s*ratel|nanodump|seatbelt|\blsass\b|kerberoast|dcsync|impacket/i;
 
 // Severity for a detection verdict: the rule's explicit Criticality/Severity wins; else
 // DetectRaptor conventions (a "BAU …" baseline or an "IN DEVELOPMENT" rule → Low); else a
@@ -330,27 +387,62 @@ function vrTime(v: unknown): string {
 // nested forensic containers (MFT $SI/$FN, file-info, hit-context) and registry/app keys so the
 // detection artifacts that bury their time one level down still get a real timestamp.
 const TIME_KEYS = [
-  "System.TimeCreated.SystemTime", "System.TimeCreated", "EventTime", "EventTimestamp", "Mtime", "Btime",
-  "Ctime", "Created", "CreationTime", "LastWriteTime", "KeyLastWriteTimestamp", "KeyMTime", "TimeGenerated",
-  "Timestamp", "timestamp", "time", "StartTime",
-  "SITimestamps.LastModified0x10", "SITimestamps.LastRecordChange0x10", "SITimestamps.Created0x10", "FNTimestamps.Created0x30",
+  "System.TimeCreated.SystemTime",
+  "System.TimeCreated",
+  "EventTime",
+  "EventTimestamp",
+  "Mtime",
+  "Btime",
+  "Ctime",
+  "Created",
+  "CreationTime",
+  "LastWriteTime",
+  "KeyLastWriteTimestamp",
+  "KeyMTime",
+  "TimeGenerated",
+  "Timestamp",
+  "timestamp",
+  "time",
+  "StartTime",
+  "SITimestamps.LastModified0x10",
+  "SITimestamps.LastRecordChange0x10",
+  "SITimestamps.Created0x10",
+  "FNTimestamps.Created0x30",
   // Bare NTFS $FILE_NAME / $STANDARD_INFO timestamps: Windows.NTFS.MFT (and USN) emit these as TOP-LEVEL
   // columns on many server versions (not nested under SITimestamps/FNTimestamps), so an MFT row would
   // otherwise land with NO time. Prefer $FN Created (0x30 — harder to timestomp) per analyst preference,
   // then $SI Created, then last-modified / record-change / access.
-  "Created0x30", "Created0x10", "LastModified0x10", "LastModified0x30", "LastRecordChange0x10", "LastAccess0x10",
+  "Created0x30",
+  "Created0x10",
+  "LastModified0x10",
+  "LastModified0x30",
+  "LastRecordChange0x10",
+  "LastAccess0x10",
   // Windows.Forensics.Lnk buries the target's birth time under OSPath (the stat object), so the shortcut
   // lands dated at its target's creation. Browser-history (visit) + registry (UserAssist/Shellbags) time
   // columns whose exact names vary by version.
-  "OSPath.Btime", "visit_time", "last_visit_time", "LastVisited", "LastExecution", "LastExecutionTime", "last_run",
+  "OSPath.Btime",
+  "visit_time",
+  "last_visit_time",
+  "LastVisited",
+  "LastExecution",
+  "LastExecutionTime",
+  "last_run",
   // Nested file-stat blocks: FileInfo.* (DetectRaptor PSReadline), Stat.* (the Generic PSReadline /
   // QuickWins shape), so history-line + Amcache/LolDrivers (KeyMTime) rows land dated, not at epoch 0.
-  "FileInfo.Mtime", "FileInfo.Ctime", "FileInfo.Btime", "Stat.Mtime", "Stat.Ctime", "Stat.Btime", "HitContext.Mtime",
+  "FileInfo.Mtime",
+  "FileInfo.Ctime",
+  "FileInfo.Btime",
+  "Stat.Mtime",
+  "Stat.Ctime",
+  "Stat.Btime",
+  "HitContext.Mtime",
   "@timestamp", // Elasticsearch-indexed rows (Kibana push) carry the event time here
 ];
 
 // A column whose NAME denotes an event time — used by the fallback scan when no explicit TIME_KEY matched.
-const TIME_NAME_RE = /(?:time|date|created|modif|written|changed|access|visit|execut|last.?run|last.?used|btime|mtime|ctime|atime|\bborn\b)/i;
+const TIME_NAME_RE =
+  /(?:time|date|created|modif|written|changed|access|visit|execut|last.?run|last.?used|btime|mtime|ctime|atime|\bborn\b)/i;
 // Plausibility window for the fallback: skip FILETIME (1601) / Unix (1970) / epoch-0 "unset" sentinels
 // and absurd far-future values, so a blank timestamp field can't date an event to the year 1601.
 const MIN_TIME_MS = Date.parse("2000-01-01T00:00:00Z");
@@ -366,22 +458,29 @@ function pickTime(row: Row): string {
   // whose time column varies by Velociraptor version). Scan every time-NAMED column (incl. one nesting
   // level) for the EARLIEST plausible timestamp — a real artifact time beats the `_ts` collection time
   // below, and a blank/sentinel field can't win.
-  let best = "", bestMs = Infinity;
+  let best = "",
+    bestMs = Infinity;
   const scan = (obj: Row, prefix: string, depth: number): void => {
     for (const [k, v] of Object.entries(obj)) {
       if (v == null) continue;
-      if (isObject(v)) { if (depth < 1) scan(v, `${prefix}${k}.`, depth + 1); continue; }
+      if (isObject(v)) {
+        if (depth < 1) scan(v, `${prefix}${k}.`, depth + 1);
+        continue;
+      }
       if (Array.isArray(v)) continue;
       if (!TIME_NAME_RE.test(prefix + k)) continue;
       const t = vrTime(v);
       if (!t) continue;
       const ms = Date.parse(t);
-      if (ms >= MIN_TIME_MS && ms <= MAX_TIME_MS && ms < bestMs) { bestMs = ms; best = t; }
+      if (ms >= MIN_TIME_MS && ms <= MAX_TIME_MS && ms < bestMs) {
+        bestMs = ms;
+        best = t;
+      }
     }
   };
   scan(row, "", 0);
   if (best) return best;
-  return vrTime(getCI(row, "_ts"));   // collection time — absolute last resort, only when nothing else dated the row
+  return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
 }
 
 const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "System.Computer", "Host", "ClientName"];
@@ -400,7 +499,15 @@ function vrHashes(row: Row): { sha256?: string; md5?: string } {
   const h = parseHashes(row, row); // "Hashes" string + hashes_ex object
   let { sha256, md5 } = h;
   if (!sha256) {
-    const d = firstStr(row, ["HashSHA256", "SHA256", "Sha256", "sha256", "UploadSHA256", "Hash.SHA256", "Hash.Sha256"]).toLowerCase();
+    const d = firstStr(row, [
+      "HashSHA256",
+      "SHA256",
+      "Sha256",
+      "sha256",
+      "UploadSHA256",
+      "Hash.SHA256",
+      "Hash.Sha256",
+    ]).toLowerCase();
     if (/^[a-f0-9]{64}$/.test(d)) sha256 = d;
   }
   if (!md5) {
@@ -418,7 +525,10 @@ const isYmsPath = (v: string): boolean => /\.yms$/i.test(v.trim());
 function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string; md5?: string } {
   const pairs: [string, string][] = [];
   flatten(row, pairs);
-  genericIocs(pairs.filter(([, v]) => !isYmsPath(v)), sink);
+  genericIocs(
+    pairs.filter(([, v]) => !isYmsPath(v)),
+    sink,
+  );
   const { sha256, md5 } = vrHashes(row);
   if (sha256) addIoc(sink, "hash", sha256);
   else if (md5) addIoc(sink, "hash", md5);
@@ -442,7 +552,10 @@ const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
-  for (const m of text.matchAll(TEXT_IPV4)) { const ip = cleanIp(m[0]); if (ip) addIoc(sink, "ip", ip); }
+  for (const m of text.matchAll(TEXT_IPV4)) {
+    const ip = cleanIp(m[0]);
+    if (ip) addIoc(sink, "ip", ip);
+  }
   for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
 }
 
@@ -459,17 +572,29 @@ function scrapeEvidence(row: Row, sink: Map<string, SiemIoc>): void {
 // `Channel`/`EventID`/`EventData`. Reshape either to the flat record `mapWindows` consumes,
 // normalizing the EventID (number or `{ Value }`/`{ #text }`) to a bare value, plus the host.
 function winRowToFlat(row: Row): { rec: Row; host: string } | null {
-  const sys = isObject(getCI(row, "System")) ? (getCI(row, "System") as Row)
-    : isObject(getPath(row, "Event.System")) ? (getPath(row, "Event.System") as Row) : null;
+  const sys = isObject(getCI(row, "System"))
+    ? (getCI(row, "System") as Row)
+    : isObject(getPath(row, "Event.System"))
+      ? (getPath(row, "Event.System") as Row)
+      : null;
   const edRaw = getCI(row, "EventData") ?? getPath(row, "Event.EventData");
 
   if (sys) {
     let eid: unknown = getCI(sys, "EventID");
     if (isObject(eid)) eid = getCI(eid, "Value") ?? getCI(eid, "#text");
-    const channel = str(getCI(sys, "Channel")) || str(getPath(sys, "Provider.Name")) || str(getPath(sys, "Provider.#attributes.Name"));
+    const channel =
+      str(getCI(sys, "Channel")) ||
+      str(getPath(sys, "Provider.Name")) ||
+      str(getPath(sys, "Provider.#attributes.Name"));
     return {
       host: str(getCI(sys, "Computer")).trim(),
-      rec: { event_id: eid, channel, event_data: isObject(edRaw) ? edRaw : {}, "@timestamp": vrTime(getCI(sys, "TimeCreated")), message: str(getCI(row, "Message")) },
+      rec: {
+        event_id: eid,
+        channel,
+        event_data: isObject(edRaw) ? edRaw : {},
+        "@timestamp": vrTime(getCI(sys, "TimeCreated")),
+        message: str(getCI(row, "Message")),
+      },
     };
   }
 
@@ -479,13 +604,40 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
   if (isObject(eidFlat)) eidFlat = getCI(eidFlat, "Value") ?? getCI(eidFlat, "#text");
   return {
     host: str(getCI(row, "Computer")).trim(),
-    rec: { event_id: eidFlat, channel: str(getCI(row, "Channel")), event_data: isObject(edRaw) ? edRaw : {}, "@timestamp": pickTime(row), message: str(getCI(row, "Message")) },
+    rec: {
+      event_id: eidFlat,
+      channel: str(getCI(row, "Channel")),
+      event_data: isObject(edRaw) ? edRaw : {},
+      "@timestamp": pickTime(row),
+      message: str(getCI(row, "Message")),
+    },
   };
 }
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "chainsaw" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "usn" | "mft" | "browser" | "prefetch" | "userassist" | "shimcache" | "shellbags" | "amcacheApp" | "amcacheFile" | "lnk" | "generic";
+type Kind =
+  | "sigma"
+  | "yara"
+  | "chainsaw"
+  | "detection"
+  | "eventlog"
+  | "pslist"
+  | "netstat"
+  | "download"
+  | "startup"
+  | "taskscheduler"
+  | "usn"
+  | "mft"
+  | "browser"
+  | "prefetch"
+  | "userassist"
+  | "shimcache"
+  | "shellbags"
+  | "amcacheApp"
+  | "amcacheFile"
+  | "lnk"
+  | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -503,7 +655,12 @@ function classify(row: Row, artifact: string): Kind {
   if (/taskscheduler/i.test(a)) return "taskscheduler";
 
   const rule = getCI(row, "Rule");
-  if (typeof rule === "string" && rule.trim() && (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))) return "yara";
+  if (
+    typeof rule === "string" &&
+    rule.trim() &&
+    (getCI(row, "Strings") || getCI(row, "Meta") || getCI(row, "Namespace") || getCI(row, "Rules"))
+  )
+    return "yara";
   if (isObject(rule) && (getCI(rule, "Title") || getCI(rule, "Level"))) return "sigma";
 
   // Chainsaw's flat Sigma-mapping row (Detection/Severity/Rule Group siblings) — BEFORE the
@@ -520,40 +677,62 @@ function classify(row: Row, artifact: string): Kind {
     return "eventlog";
   }
   // Column-based fallbacks for files without _Source markers
-  if (getCI(row, "CallChain") != null && getCI(row, "Pid") != null && getCI(row, "Name") != null) return "pslist";
-  if (getCI(row, "Laddr") != null && getCI(row, "Lport") != null && getCI(row, "Status") != null) return "netstat";
+  if (getCI(row, "CallChain") != null && getCI(row, "Pid") != null && getCI(row, "Name") != null)
+    return "pslist";
+  if (getCI(row, "Laddr") != null && getCI(row, "Lport") != null && getCI(row, "Status") != null)
+    return "netstat";
   // Evidence-of-download rows: Zone.Identifier ADS data (DownloadedFilePath + HostUrl)
   if (getCI(row, "DownloadedFilePath") != null && getCI(row, "HostUrl") != null) return "download";
   // Startup/autorun rows: Name + OSPath + Enabled (Windows.Sys.StartupItems and similar)
-  if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null) return "startup";
+  if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null)
+    return "startup";
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
-  if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null)) return "taskscheduler";
+  if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
+    return "taskscheduler";
   // Windows.Forensics.Usn — the USN change-journal row: a `Reason` (the filesystem operation:
   // FILE_CREATE / FILE_DELETE / DATA_EXTEND / RENAME_* …) alongside a Usn/MFTId. Mapped specially so
   // the operation lands in the description + agg key (mapGeneric drops it → path-only events).
-  if (getCI(row, "Reason") != null && (getCI(row, "Usn") != null || getCI(row, "MFTId") != null)) return "usn";
+  if (getCI(row, "Reason") != null && (getCI(row, "Usn") != null || getCI(row, "MFTId") != null))
+    return "usn";
   // Windows.NTFS.MFT — an $MFT entry carrying the bare MACB timestamp columns. Expanded to one
   // labeled event per distinct $SI/$FN timestamp so a file's modification/access (not just its
   // creation) shows on the timeline.
-  if (getCI(row, "EntryNumber") != null && (getCI(row, "Created0x10") != null || getCI(row, "LastModified0x10") != null)) return "mft";
+  if (
+    getCI(row, "EntryNumber") != null &&
+    (getCI(row, "Created0x10") != null || getCI(row, "LastModified0x10") != null)
+  )
+    return "mft";
   // Forensic artifacts whose row carries an implicit ACTION (visited / executed / browsed / installed)
   // — each detected by a field unique to that artifact, and mapped to lead with the verb + real subject
   // instead of the raw registry key / DB-file path the generic mapper would surface.
-  if (getCI(row, "visited_url") != null) return "browser";                                             // browser history → visited URL
-  if (getCI(row, "PrefetchFileName") != null || (getCI(row, "Executable") != null && getCI(row, "RunCount") != null)) return "prefetch"; // → executed
-  if (getCI(row, "NumberOfExecutions") != null) return "userassist";                                   // UserAssist → ran (count)
-  if (getCI(row, "ExecutionFlag") != null && getCI(row, "Path") != null) return "shimcache";           // AppCompatCache → execution evidence
-  if (getCI(row, "_RawData") != null && getCI(row, "FullPath") != null) return "shellbags";            // Shellbags → folder browsed
-  if (getCI(row, "InstallDate") != null && getCI(row, "Publisher") != null) return "amcacheApp";       // Amcache app → installed
-  if (getCI(row, "BinaryType") != null || (getCI(row, "SHA1") != null && getCI(row, "OriginalFileName") != null)) return "amcacheFile"; // Amcache file → present
-  if (getCI(row, "ShellLinkHeader") != null || getCI(row, "LinkTarget") != null) return "lnk";         // LNK → shortcut to target
+  if (getCI(row, "visited_url") != null) return "browser"; // browser history → visited URL
+  if (
+    getCI(row, "PrefetchFileName") != null ||
+    (getCI(row, "Executable") != null && getCI(row, "RunCount") != null)
+  )
+    return "prefetch"; // → executed
+  if (getCI(row, "NumberOfExecutions") != null) return "userassist"; // UserAssist → ran (count)
+  if (getCI(row, "ExecutionFlag") != null && getCI(row, "Path") != null) return "shimcache"; // AppCompatCache → execution evidence
+  if (getCI(row, "_RawData") != null && getCI(row, "FullPath") != null) return "shellbags"; // Shellbags → folder browsed
+  if (getCI(row, "InstallDate") != null && getCI(row, "Publisher") != null) return "amcacheApp"; // Amcache app → installed
+  if (
+    getCI(row, "BinaryType") != null ||
+    (getCI(row, "SHA1") != null && getCI(row, "OriginalFileName") != null)
+  )
+    return "amcacheFile"; // Amcache file → present
+  if (getCI(row, "ShellLinkHeader") != null || getCI(row, "LinkTarget") != null) return "lnk"; // LNK → shortcut to target
   return "generic";
 }
 
 function mapYara(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const rule = getCI(row, "Rule");
-  const ruleName = typeof rule === "string" && rule.trim() ? rule.trim()
-    : str(getPath(row, "Rule.id")) || str(getPath(row, "Rule.Name")) || firstStr(row, ["RuleName", "Namespace"]) || "match";
+  const ruleName =
+    typeof rule === "string" && rule.trim()
+      ? rule.trim()
+      : str(getPath(row, "Rule.id")) ||
+        str(getPath(row, "Rule.Name")) ||
+        firstStr(row, ["RuleName", "Namespace"]) ||
+        "match";
   // A YARA hit's only OBSERVED indicator is the matched file (+ its hash / owning process). The rule's
   // Meta (reference/source_url/author/sample hashes), Strings, and the binary HitContext are detection
   // LOGIC — flattening the whole row (collectRowIocs) scrapes the rule's GitHub links and match-context
@@ -582,7 +761,11 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
     description,
     severity: "High", // a YARA hit is a real detection verdict
     mitre,
-    aggKey: `vr-yara|${ruleName.toLowerCase()}|${(path || procName).toLowerCase()}|${host.toLowerCase()}`.slice(0, 400),
+    aggKey:
+      `vr-yara|${ruleName.toLowerCase()}|${(path || procName).toLowerCase()}|${host.toLowerCase()}`.slice(
+        0,
+        400,
+      ),
     sources: ["Velociraptor"],
     ...(sha256 ? { sha256 } : {}),
     ...(md5 && !sha256 ? { md5 } : {}),
@@ -594,10 +777,17 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
 
 function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const ruleObj = isObject(getCI(row, "Rule")) ? (getCI(row, "Rule") as Row) : undefined;
-  const title = (ruleObj ? str(getCI(ruleObj, "Title")) : "") || firstStr(row, ["Title", "SigmaTitle", "RuleTitle"]) || "detection";
+  const title =
+    (ruleObj ? str(getCI(ruleObj, "Title")) : "") ||
+    firstStr(row, ["Title", "SigmaTitle", "RuleTitle"]) ||
+    "detection";
   const level = (ruleObj ? str(getCI(ruleObj, "Level")) : "") || firstStr(row, ["Level"]);
   const sev = SIGMA_LEVEL[level.toLowerCase()];
-  const tags = mitreFromText(flatStr(ruleObj ? getCI(ruleObj, "Tags") : getCI(row, "Tags")), flatStr(getCI(row, "MitreTags")), title);
+  const tags = mitreFromText(
+    flatStr(ruleObj ? getCI(ruleObj, "Tags") : getCI(row, "Tags")),
+    flatStr(getCI(row, "MitreTags")),
+    title,
+  );
 
   const flat = winRowToFlat(row);
   const win = flat ? mapWindows(flat.rec, flat.host || host, sink) : null;
@@ -629,7 +819,6 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
     ...(host ? { asset: host } : {}),
   };
 }
-
 
 // DetectRaptor ships many distinct "*.Detection.*" rule packs (MFT, Amcache, LolDrivers,
 // PSReadline, ...) that all flow through rowVerdict()/mapDetection() — folding them all under the
@@ -677,9 +866,20 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   // The triggering FILE: include the Amcache/driver/registry path fields (EntryPath/EntryName/
   // Detection.PathName) and the nested FileInfo.OSPath (DetectRaptor ISEAutoSave/PSReadline shape)
   // so a verdict names the file that fired it even when OSPath is nested one level down.
-  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path", "KeyPath", "EntryPath", "EntryName"])
-    || str(getPath(row, "FileInfo.OSPath")).trim()
-    || str(getPath(row, "Detection.PathName"));
+  const path =
+    firstStr(row, [
+      "OSPath",
+      "FullPath",
+      "_FullPath",
+      "File",
+      "FilePath",
+      "Path",
+      "KeyPath",
+      "EntryPath",
+      "EntryName",
+    ]) ||
+    str(getPath(row, "FileInfo.OSPath")).trim() ||
+    str(getPath(row, "Detection.PathName"));
   // The matched file is itself a Sigma rule (.yms — Velociraptor's compiled Sigma signature
   // format): the "hit" is a keyword match against the RULE's own text (tool names, MITRE ids,
   // etc. embedded in the signature), not against attacker-controlled content. Treat as Info
@@ -695,13 +895,21 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   let evidence = "";
   for (const k of EVIDENCE_FIELD_KEYS) {
     const v = str(getCI(row, k)).trim();
-    if (v) { evidenceKey = k; evidence = v; break; }
+    if (v) {
+      evidenceKey = k;
+      evidence = v;
+      break;
+    }
   }
   if (!evidence) {
     const hit = str(getPath(row, "Detection.HitString")).trim();
-    if (hit) { evidenceKey = "HitString"; evidence = hit; }
+    if (hit) {
+      evidenceKey = "HitString";
+      evidence = hit;
+    }
   }
-  const procRaw = firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
+  const procRaw =
+    firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
   const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
   const processName = procRaw ? baseName(procRaw) : undefined;
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
@@ -743,10 +951,11 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 4000);
 
-  const aggKey = `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey =
+    `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
 
   return {
     timestamp: pickTime(row),
@@ -774,10 +983,26 @@ function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return win;
 }
 
-const GENERIC_MSG_KEYS = ["Message", "Details", "message", "Description", "Category", "DisplayName", "Line", "Stdout", "CommandLine", "PipeName", "KeyPath", "OSPath", "FullPath", "Name"];
+const GENERIC_MSG_KEYS = [
+  "Message",
+  "Details",
+  "message",
+  "Description",
+  "Category",
+  "DisplayName",
+  "Line",
+  "Stdout",
+  "CommandLine",
+  "PipeName",
+  "KeyPath",
+  "OSPath",
+  "FullPath",
+  "Name",
+];
 // Keys whose values are big/structured (rule regexes, PE internals, raw file content) — useful
 // for IOC scanning but noise in a one-line description, so they're skipped in the key=value fallback.
-const NOISE_KEY = /regex|ignore|imports|exports|sections|resources|directories|versioninformation|dllinfo|hitcontext|\bmeta\b|content|reference|url|license/i;
+const NOISE_KEY =
+  /regex|ignore|imports|exports|sections|resources|directories|versioninformation|dllinfo|hitcontext|\bmeta\b|content|reference|url|license/i;
 // Collection-metadata keys (the artifact id surfaced in the "[artifact]" prefix, the _ts collection
 // time) — skipped in the key=value fallback so they don't duplicate the prefix / add noise.
 const META_KEY = /^(_ts|_Source|_Artifact|ArtifactName)$/i;
@@ -806,8 +1031,13 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   const msg = firstStr(row, GENERIC_MSG_KEYS);
   const pairs: [string, string][] = [];
   flatten(row, pairs);
-  const base = msg ? oneLine(msg)
-    : pairs.filter(([k, v]) => !META_KEY.test(k) && !NOISE_KEY.test(k) && v.length <= 200).slice(0, 8).map(([k, v]) => `${k}=${v}`).join(" - ");
+  const base = msg
+    ? oneLine(msg)
+    : pairs
+        .filter(([k, v]) => !META_KEY.test(k) && !NOISE_KEY.test(k) && v.length <= 200)
+        .slice(0, 8)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" - ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
   const severity: Severity = SEV_WORDS[sevWord] ?? "Info";
@@ -817,7 +1047,8 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
 
   let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`.slice(0, 600);
-  if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
+  if (host && !description.toLowerCase().includes(host.toLowerCase()))
+    description = `${description} @ ${host}`.slice(0, 600);
 
   const aggKey = `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
@@ -846,7 +1077,11 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
 // Velociraptor emits it as an array on most versions, a bare string on a few — handle both.
 function usnReason(row: Row): string {
   const r = getCI(row, "Reason");
-  if (Array.isArray(r)) return r.map((x) => str(x).trim()).filter(Boolean).join(", ");
+  if (Array.isArray(r))
+    return r
+      .map((x) => str(x).trim())
+      .filter(Boolean)
+      .join(", ");
   return str(r).trim();
 }
 
@@ -856,12 +1091,19 @@ function usnReason(row: Row): string {
 // isn't in the agg key either — collapses a CREATE and a DELETE on the same path into one event. Here
 // the operation drives both the description AND the agg key so distinct operations stay distinct.
 function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
-  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "Filename")).trim();
+  const path =
+    firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "Filename")).trim();
   const reason = usnReason(row);
   const label = reason || "change";
-  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${label} — ${oneLine(path)}`.slice(0, 600);
-  if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
-  const aggKey = `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
+  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${label} — ${oneLine(path)}`.slice(
+    0,
+    600,
+  );
+  if (host && !description.toLowerCase().includes(host.toLowerCase()))
+    description = `${description} @ ${host}`.slice(0, 600);
+  const aggKey = `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
   return {
     timestamp: pickTime(row),
     description,
@@ -877,8 +1119,18 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
 // The MACB timestamp columns, grouped by NTFS attribute stream: $STANDARD_INFORMATION (0x10, the
 // commonly-referenced set) and $FILE_NAME (0x30, harder to timestomp). Letters follow the standard
 // bodyfile convention — M=modified, A=accessed, C=MFT-record changed, B=born (created).
-const MFT_SI: [string, string][] = [["M", "LastModified0x10"], ["A", "LastAccess0x10"], ["C", "LastRecordChange0x10"], ["B", "Created0x10"]];
-const MFT_FN: [string, string][] = [["M", "LastModified0x30"], ["A", "LastAccess0x30"], ["C", "LastRecordChange0x30"], ["B", "Created0x30"]];
+const MFT_SI: [string, string][] = [
+  ["M", "LastModified0x10"],
+  ["A", "LastAccess0x10"],
+  ["C", "LastRecordChange0x10"],
+  ["B", "Created0x10"],
+];
+const MFT_FN: [string, string][] = [
+  ["M", "LastModified0x30"],
+  ["A", "LastAccess0x30"],
+  ["C", "LastRecordChange0x30"],
+  ["B", "Created0x30"],
+];
 
 // Render the present letters of a stream as the fixed-position "macb" token (dots for absent), e.g. a
 // timestamp that is both the modified and born time → "m..b".
@@ -893,7 +1145,8 @@ function macbToken(present: Set<string>): string {
 // timestamps are all equal (the common case) collapse back to one event, so this doesn't blow up unless
 // the times genuinely differ (which is exactly the forensically-interesting case).
 function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
-  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "FileName")).trim();
+  const path =
+    firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "FileName")).trim();
   // distinct timestamp value → { si: letters, fn: letters }
   const byTime = new Map<string, { si: Set<string>; fn: Set<string> }>();
   const add = (stream: "si" | "fn", letter: string, key: string): void => {
@@ -914,9 +1167,15 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
     if (si.size) parts.push(`$SI:${macbToken(si)}`);
     if (fn.size) parts.push(`$FN:${macbToken(fn)}`);
     const macb = parts.join(" ");
-    let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${macb} — ${oneLine(path)}`.slice(0, 600);
-    if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
-    const aggKey = `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
+    let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${macb} — ${oneLine(path)}`.slice(
+      0,
+      600,
+    );
+    if (host && !description.toLowerCase().includes(host.toLowerCase()))
+      description = `${description} @ ${host}`.slice(0, 600);
+    const aggKey = `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
     events.push({
       timestamp: t,
       description,
@@ -952,42 +1211,81 @@ function firstTime(row: Row, keys: string[]): string {
 // Shared "<action> (N×): <subject> @ host" shape. `aggSubject` overrides the agg-key subject when the
 // visible subject is too volatile to group on (a URL with a cache-buster, a versioned path).
 function actionEvent(o: {
-  artifact: string; host: string; action: string; subject: string; time: string;
-  count?: unknown; severity?: Severity; path?: string; processName?: string; aggSubject?: string;
+  artifact: string;
+  host: string;
+  action: string;
+  subject: string;
+  time: string;
+  count?: unknown;
+  severity?: Severity;
+  path?: string;
+  processName?: string;
+  aggSubject?: string;
 }): MappedEvent {
   const n = Number(o.count);
   const cnt = Number.isFinite(n) && n > 1 ? ` (${n}×)` : "";
-  let description = `Velociraptor${o.artifact ? ` [${o.artifact}]` : ""}: ${o.action}${cnt}: ${oneLine(o.subject)}`.slice(0, 600);
-  if (o.host && !description.toLowerCase().includes(o.host.toLowerCase())) description = `${description} @ ${o.host}`.slice(0, 600);
-  const aggKey = `vr|${o.artifact.toLowerCase()}|${o.host.toLowerCase()}|${o.action.toLowerCase()}|${(o.aggSubject ?? o.subject).toLowerCase()}`
-    .replace(/\d+/g, "#").slice(0, 400);
+  let description =
+    `Velociraptor${o.artifact ? ` [${o.artifact}]` : ""}: ${o.action}${cnt}: ${oneLine(o.subject)}`.slice(
+      0,
+      600,
+    );
+  if (o.host && !description.toLowerCase().includes(o.host.toLowerCase()))
+    description = `${description} @ ${o.host}`.slice(0, 600);
+  const aggKey =
+    `vr|${o.artifact.toLowerCase()}|${o.host.toLowerCase()}|${o.action.toLowerCase()}|${(o.aggSubject ?? o.subject).toLowerCase()}`
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
   return {
-    timestamp: o.time, description, severity: o.severity ?? "Info", mitre: [], aggKey, sources: ["Velociraptor"],
-    ...(o.path ? { path: o.path } : {}), ...(o.host ? { asset: o.host } : {}), ...(o.processName ? { processName: baseName(o.processName) } : {}),
+    timestamp: o.time,
+    description,
+    severity: o.severity ?? "Info",
+    mitre: [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(o.path ? { path: o.path } : {}),
+    ...(o.host ? { asset: o.host } : {}),
+    ...(o.processName ? { processName: baseName(o.processName) } : {}),
   };
 }
 
 // Windows.Applications.Chrome/Edge.History — a browsing VISIT. The generic mapper showed the History
 // DB file path (OSPath); the actual visited URL + title live in dedicated columns.
-function mapBrowserHistory(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+function mapBrowserHistory(
+  row: Row,
+  artifact: string,
+  host: string,
+  sink: Map<string, SiemIoc>,
+): MappedEvent {
   collectRowIocs(row, sink);
   const url = firstStr(row, ["visited_url", "url", "URL", "Url"]);
   const title = str(getCI(row, "title")).trim();
   if (url) addIoc(sink, "url", url.slice(0, 300));
   const subject = title ? `"${title}" — ${url}` : url;
   return actionEvent({
-    artifact, host, action: "Visited", subject: subject || "(url)", aggSubject: url,
-    time: firstTime(row, ["visit_time", "last_visit_time"]) || pickTime(row), count: getCI(row, "visit_count"),
+    artifact,
+    host,
+    action: "Visited",
+    subject: subject || "(url)",
+    aggSubject: url,
+    time: firstTime(row, ["visit_time", "last_visit_time"]) || pickTime(row),
+    count: getCI(row, "visit_count"),
   });
 }
 
 // Windows.Forensics.Shellbags — a FOLDER the user browsed in Explorer. The generic mapper showed the
 // raw BagMRU registry key; the decoded folder is FullPath / Description.LongName.
 function mapShellbag(row: Row, artifact: string, host: string): MappedEvent {
-  const folder = firstStr(row, ["FullPath"]) || str(getPath(row, "Description.LongName")).trim() || firstStr(row, ["KeyPath"]);
+  const folder =
+    firstStr(row, ["FullPath"]) ||
+    str(getPath(row, "Description.LongName")).trim() ||
+    firstStr(row, ["KeyPath"]);
   return actionEvent({
-    artifact, host, action: "Folder browsed (shellbag)", subject: folder || "(folder)",
-    time: firstTime(row, ["ModTime", "ModificationTime"]) || pickTime(row), path: folder || undefined,
+    artifact,
+    host,
+    action: "Folder browsed (shellbag)",
+    subject: folder || "(folder)",
+    time: firstTime(row, ["ModTime", "ModificationTime"]) || pickTime(row),
+    path: folder || undefined,
   });
 }
 
@@ -996,8 +1294,13 @@ function mapShellbag(row: Row, artifact: string, host: string): MappedEvent {
 function mapUserAssist(row: Row, artifact: string, host: string): MappedEvent {
   const prog = firstStr(row, ["Name"]) || str(getCI(row, "_KeyPath")).trim();
   return actionEvent({
-    artifact, host, action: "Ran (UserAssist)", subject: prog || "(program)", count: getCI(row, "NumberOfExecutions"),
-    time: firstTime(row, ["LastExecution", "LastExecutionTS", "LastExecutionTime"]) || pickTime(row), path: prog || undefined,
+    artifact,
+    host,
+    action: "Ran (UserAssist)",
+    subject: prog || "(program)",
+    count: getCI(row, "NumberOfExecutions"),
+    time: firstTime(row, ["LastExecution", "LastExecutionTS", "LastExecutionTime"]) || pickTime(row),
+    path: prog || undefined,
   });
 }
 
@@ -1006,8 +1309,13 @@ function mapUserAssist(row: Row, artifact: string, host: string): MappedEvent {
 function mapShimcache(row: Row, artifact: string, host: string): MappedEvent {
   const path = firstStr(row, ["Path", "OSPath"]);
   return actionEvent({
-    artifact, host, action: "Execution evidence (Shimcache)", subject: path || "(path)",
-    time: firstTime(row, ["ModificationTime"]) || pickTime(row), path: path || undefined, processName: path || undefined,
+    artifact,
+    host,
+    action: "Execution evidence (Shimcache)",
+    subject: path || "(path)",
+    time: firstTime(row, ["ModificationTime"]) || pickTime(row),
+    path: path || undefined,
+    processName: path || undefined,
   });
 }
 
@@ -1019,7 +1327,11 @@ function mapAmcacheApp(row: Row, artifact: string, host: string): MappedEvent {
   const subject = [name, ver && `v${ver}`, pub && `(${pub})`].filter(Boolean).join(" ");
   return actionEvent({
     // Prefer the ISO Amcache key time over InstallDate (US MM/DD/YYYY, which won't sort on the timeline).
-    artifact, host, action: "Installed program (Amcache)", subject: subject || name || "(program)", aggSubject: name,
+    artifact,
+    host,
+    action: "Installed program (Amcache)",
+    subject: subject || name || "(program)",
+    aggSubject: name,
     time: firstTime(row, ["Timestamp", "InstallDate"]) || pickTime(row),
   });
 }
@@ -1032,8 +1344,13 @@ function mapAmcacheFile(row: Row, artifact: string, host: string, sink: Map<stri
   const sha1 = str(getCI(row, "SHA1")).trim();
   if (/^[0-9a-f]{40}$/i.test(sha1)) addIoc(sink, "hash", sha1.toLowerCase());
   return actionEvent({
-    artifact, host, action: "Program file present (Amcache)", subject: path || "(file)",
-    time: firstTime(row, ["Timestamp"]) || pickTime(row), path: path || undefined, processName: path || undefined,
+    artifact,
+    host,
+    action: "Program file present (Amcache)",
+    subject: path || "(file)",
+    time: firstTime(row, ["Timestamp"]) || pickTime(row),
+    path: path || undefined,
+    processName: path || undefined,
   });
 }
 
@@ -1044,22 +1361,33 @@ function mapPrefetch(row: Row, artifact: string, host: string): MappedEvent {
   const exePath = firstStr(row, ["ExecutablePath", "ExecutableDosPath"]);
   const subject = exePath && exe ? `${exe} (${exePath})` : exe || exePath || firstStr(row, ["OSPath"]);
   return actionEvent({
-    artifact, host, action: "Executed (prefetch)", subject: subject || "(executable)", count: getCI(row, "RunCount"),
+    artifact,
+    host,
+    action: "Executed (prefetch)",
+    subject: subject || "(executable)",
+    count: getCI(row, "RunCount"),
     time: firstTime(row, ["LastRunTimes", "CreationTime", "ModificationTime"]) || pickTime(row),
-    path: exePath || undefined, processName: exe || undefined, aggSubject: exe || exePath,
+    path: exePath || undefined,
+    processName: exe || undefined,
+    aggSubject: exe || exePath,
   });
 }
 
 // Windows.Forensics.Lnk — a shortcut whose existence is evidence a TARGET was opened. The generic
 // mapper dumped the nested LNK structure; the target is in StringData.TargetPath / LinkTarget.
 function mapLnk(row: Row, artifact: string, host: string): MappedEvent {
-  const target = str(getPath(row, "StringData.TargetPath")).trim()
-    || str(getPath(row, "LinkTarget.LinkTarget")).trim()
-    || str(getPath(row, "LinkInfo.Target.Path")).trim();
+  const target =
+    str(getPath(row, "StringData.TargetPath")).trim() ||
+    str(getPath(row, "LinkTarget.LinkTarget")).trim() ||
+    str(getPath(row, "LinkInfo.Target.Path")).trim();
   const lnkFile = str(getPath(row, "SourceFile.OSPath")).trim();
   return actionEvent({
-    artifact, host, action: "Shortcut (LNK) →", subject: target || lnkFile || "(target)",
-    time: pickTime(row), path: target || undefined,
+    artifact,
+    host,
+    action: "Shortcut (LNK) →",
+    subject: target || lnkFile || "(target)",
+    time: pickTime(row),
+    path: target || undefined,
   });
 }
 
@@ -1083,10 +1411,11 @@ function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEv
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
-  const aggKey = `vr-pslist|${name.toLowerCase()}|${ppid}|${host.toLowerCase()}|${(cmdline || exe || name).toLowerCase()}`
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey =
+    `vr-pslist|${name.toLowerCase()}|${ppid}|${host.toLowerCase()}|${(cmdline || exe || name).toLowerCase()}`
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
 
   return {
     timestamp: pickTime(row),
@@ -1115,7 +1444,8 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   const path = firstStr(row, ["Path", "Exe"]);
 
   // Remote IP as IOC for non-zero, non-loopback addresses
-  const rAddrIsReal = raddr && raddr !== "0.0.0.0" && raddr !== "::" && raddr !== "::1" && raddr !== "127.0.0.1";
+  const rAddrIsReal =
+    raddr && raddr !== "0.0.0.0" && raddr !== "::" && raddr !== "::1" && raddr !== "127.0.0.1";
   if (rAddrIsReal) addIoc(sink, "ip", raddr);
   if (name) addIoc(sink, "process", name);
 
@@ -1133,9 +1463,10 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
-  const aggKey = `vr-netstat|${name.toLowerCase()}|${status.toLowerCase()}|${lport}|${raddr.toLowerCase()}|${rport}|${host.toLowerCase()}`
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey =
+    `vr-netstat|${name.toLowerCase()}|${status.toLowerCase()}|${lport}|${raddr.toLowerCase()}|${rport}|${host.toLowerCase()}`
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
 
   return {
     timestamp: pickTime(row),
@@ -1200,7 +1531,8 @@ function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   const ospath = str(getCI(row, "OSPath")).trim();
   const details = str(getCI(row, "Details")).trim();
   const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
-  const enabled = enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
+  const enabled =
+    enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
 
   // Add the executable path or registry path as file/process IOC when it looks like a real path.
   const cmdPath = details.replace(/^["']?([A-Za-z]:\\[^"'\s]+).*$/, "$1");
@@ -1243,10 +1575,14 @@ function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): M
   if (command && /^[A-Za-z]:\\/.test(command)) addIoc(sink, "file", command.slice(0, 300));
 
   const cmd = [command, args].filter(Boolean).join(" ");
-  const userLabel = userId === "S-1-5-18" ? "SYSTEM"
-    : userId === "S-1-5-19" ? "LOCAL SERVICE"
-    : userId === "S-1-5-20" ? "NETWORK SERVICE"
-    : userId;
+  const userLabel =
+    userId === "S-1-5-18"
+      ? "SYSTEM"
+      : userId === "S-1-5-19"
+        ? "LOCAL SERVICE"
+        : userId === "S-1-5-20"
+          ? "NETWORK SERVICE"
+          : userId;
 
   let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
   if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
@@ -1254,9 +1590,7 @@ function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): M
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
-  const aggKey = `vr-task|${taskName.toLowerCase()}|${host.toLowerCase()}`
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey = `vr-task|${taskName.toLowerCase()}|${host.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
 
   return {
     timestamp: pickTime(row),
@@ -1303,18 +1637,24 @@ function extractRows(text: string): { rows: Row[]; format: string } {
   }
 
   let root: unknown = null;
-  try { root = JSON.parse(trimmed); } catch { /* NDJSON path below */ }
+  try {
+    root = JSON.parse(trimmed);
+  } catch {
+    /* NDJSON path below */
+  }
 
   if (root && isObject(root) && !Array.isArray(root)) {
     const entries = Object.entries(root);
-    const isArtifactMap = entries.length > 0
-      && entries.every(([k, v]) => Array.isArray(v) && !WRAPPER_KEYS.has(k.toLowerCase()))
-      && entries.some(([, v]) => (v as unknown[]).some((x) => isObject(x)));
+    const isArtifactMap =
+      entries.length > 0 &&
+      entries.every(([k, v]) => Array.isArray(v) && !WRAPPER_KEYS.has(k.toLowerCase())) &&
+      entries.some(([, v]) => (v as unknown[]).some((x) => isObject(x)));
     if (isArtifactMap) {
       const rows: Row[] = [];
       for (const [artifact, arr] of entries) {
         for (const r of arr as unknown[]) {
-          if (isObject(r)) rows.push(getCI(r, "_Source") || getCI(r, "Artifact") ? r : { ...r, _Source: artifact });
+          if (isObject(r))
+            rows.push(getCI(r, "_Source") || getCI(r, "Artifact") ? r : { ...r, _Source: artifact });
         }
       }
       return { rows, format: "artifact-map" };
@@ -1353,27 +1693,57 @@ function mapRowToEvents(rawRow: Row, ctx: VrParseCtx): { events: MappedEvent[]; 
     // Most mappers yield one event per row; MFT yields one per DISTINCT MACB timestamp, so the
     // dispatch produces an array (usually length 1). An empty array = the row produced nothing.
     let ms: MappedEvent[];
-    if (kind === "yara") { const m = mapYara(row, artifact, host, rowSink); detections++; ms = [m]; }
-    else if (kind === "sigma") { const m = mapSigma(row, host, rowSink); detections++; ms = [m]; }
-    else if (kind === "chainsaw") { const m = mapFlatChainsawRow(row, host, rowSink); detections++; ms = [m]; }
-    else if (kind === "detection") { const m = mapDetection(row, artifact, host, rowSink); detections++; ms = [m]; }
-    else if (kind === "eventlog") { ms = [mapEventlog(row, host, rowSink) ?? mapGeneric(row, artifact, host, rowSink)]; }
-    else if (kind === "pslist") { ms = [mapPslist(row, host, rowSink)]; }
-    else if (kind === "netstat") { ms = [mapNetstat(row, host, rowSink)]; }
-    else if (kind === "download") { ms = [mapDownload(row, host, rowSink)]; }
-    else if (kind === "startup") { ms = [mapStartup(row, host, rowSink)]; }
-    else if (kind === "taskscheduler") { ms = [mapTaskScheduler(row, host, rowSink)]; }
-    else if (kind === "usn") { ms = [mapUsn(row, artifact, host)]; }
-    else if (kind === "mft") { ms = mapMft(row, artifact, host); }
-    else if (kind === "browser") { ms = [mapBrowserHistory(row, artifact, host, rowSink)]; }
-    else if (kind === "prefetch") { ms = [mapPrefetch(row, artifact, host)]; }
-    else if (kind === "userassist") { ms = [mapUserAssist(row, artifact, host)]; }
-    else if (kind === "shimcache") { ms = [mapShimcache(row, artifact, host)]; }
-    else if (kind === "shellbags") { ms = [mapShellbag(row, artifact, host)]; }
-    else if (kind === "amcacheApp") { ms = [mapAmcacheApp(row, artifact, host)]; }
-    else if (kind === "amcacheFile") { ms = [mapAmcacheFile(row, artifact, host, rowSink)]; }
-    else if (kind === "lnk") { ms = [mapLnk(row, artifact, host)]; }
-    else { ms = [mapGeneric(row, artifact, host, rowSink)]; }
+    if (kind === "yara") {
+      const m = mapYara(row, artifact, host, rowSink);
+      detections++;
+      ms = [m];
+    } else if (kind === "sigma") {
+      const m = mapSigma(row, host, rowSink);
+      detections++;
+      ms = [m];
+    } else if (kind === "chainsaw") {
+      const m = mapFlatChainsawRow(row, host, rowSink);
+      detections++;
+      ms = [m];
+    } else if (kind === "detection") {
+      const m = mapDetection(row, artifact, host, rowSink);
+      detections++;
+      ms = [m];
+    } else if (kind === "eventlog") {
+      ms = [mapEventlog(row, host, rowSink) ?? mapGeneric(row, artifact, host, rowSink)];
+    } else if (kind === "pslist") {
+      ms = [mapPslist(row, host, rowSink)];
+    } else if (kind === "netstat") {
+      ms = [mapNetstat(row, host, rowSink)];
+    } else if (kind === "download") {
+      ms = [mapDownload(row, host, rowSink)];
+    } else if (kind === "startup") {
+      ms = [mapStartup(row, host, rowSink)];
+    } else if (kind === "taskscheduler") {
+      ms = [mapTaskScheduler(row, host, rowSink)];
+    } else if (kind === "usn") {
+      ms = [mapUsn(row, artifact, host)];
+    } else if (kind === "mft") {
+      ms = mapMft(row, artifact, host);
+    } else if (kind === "browser") {
+      ms = [mapBrowserHistory(row, artifact, host, rowSink)];
+    } else if (kind === "prefetch") {
+      ms = [mapPrefetch(row, artifact, host)];
+    } else if (kind === "userassist") {
+      ms = [mapUserAssist(row, artifact, host)];
+    } else if (kind === "shimcache") {
+      ms = [mapShimcache(row, artifact, host)];
+    } else if (kind === "shellbags") {
+      ms = [mapShellbag(row, artifact, host)];
+    } else if (kind === "amcacheApp") {
+      ms = [mapAmcacheApp(row, artifact, host)];
+    } else if (kind === "amcacheFile") {
+      ms = [mapAmcacheFile(row, artifact, host, rowSink)];
+    } else if (kind === "lnk") {
+      ms = [mapLnk(row, artifact, host)];
+    } else {
+      ms = [mapGeneric(row, artifact, host, rowSink)];
+    }
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
     const realArtifact = artifactName(row);
@@ -1400,10 +1770,16 @@ function mapRowToEvents(rawRow: Row, ctx: VrParseCtx): { events: MappedEvent[]; 
       // end. Only a REAL artifact name (from _Source) is shown — never the filename fallback.
       // Skip when mapDetection already led with a DetectRaptor-specific label (detectionLabel()) —
       // that already names the rule pack, so bracketing the full dotted artifact too is redundant.
-      if (realArtifact && !m.description.includes(realArtifact) && !m.description.startsWith("DetectRaptor ")) {
-        m.description = (m.description.startsWith("Velociraptor")
-          ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
-          : `[${realArtifact}] ${m.description}`).slice(0, 1200);
+      if (
+        realArtifact &&
+        !m.description.includes(realArtifact) &&
+        !m.description.startsWith("DetectRaptor ")
+      ) {
+        m.description = (
+          m.description.startsWith("Velociraptor")
+            ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
+            : `[${realArtifact}] ${m.description}`
+        ).slice(0, 1200);
       }
       // Forensic distinctness: detections sharing a rule title/EID but describing different
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
@@ -1420,7 +1796,11 @@ function mapRowToEvents(rawRow: Row, ctx: VrParseCtx): { events: MappedEvent[]; 
 // Aggregate the accumulated mapped events (collapse repeats, apply the severity floor + event cap),
 // then compute represented/dropped counts and the dominant host. Shared tail for both parse drivers.
 function finalizeVrParse(
-  mapped: MappedEvent[], ctx: VrParseCtx, total: number, format: string, detections: number,
+  mapped: MappedEvent[],
+  ctx: VrParseCtx,
+  total: number,
+  format: string,
+  detections: number,
   opts: VelociraptorImportOptions,
 ): VelociraptorParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
@@ -1445,7 +1825,17 @@ function finalizeVrParse(
 }
 
 function emptyVrResult(): VelociraptorParseResult {
-  return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, detections: 0, format: "empty", hostname: "" };
+  return {
+    events: [],
+    iocs: [],
+    total: 0,
+    kept: 0,
+    dropped: 0,
+    groups: 0,
+    detections: 0,
+    format: "empty",
+    hostname: "",
+  };
 }
 
 function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
@@ -1461,7 +1851,10 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
 
 // Synchronous parse (unchanged behaviour) — used by the many callers that need a result inline (import
 // preview, detection routing, tests). For a large import prefer parseVelociraptorJsonProgress.
-export function parseVelociraptorJson(text: string, opts: VelociraptorImportOptions = {}): VelociraptorParseResult {
+export function parseVelociraptorJson(
+  text: string,
+  opts: VelociraptorImportOptions = {},
+): VelociraptorParseResult {
   const { rows, format } = extractRows(text);
   if (rows.length === 0) return emptyVrResult();
   const ctx = newVrCtx(opts);
@@ -1479,11 +1872,16 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
 // rows in chunks, reports (rowsDone, rowsTotal) after each chunk, and yields to the event loop between
 // chunks — so a multi-hundred-thousand-row parse streams live progress instead of freezing the server.
 export async function parseVelociraptorJsonProgress(
-  text: string, opts: VelociraptorImportOptions = {}, onProgress?: (done: number, total: number) => void,
+  text: string,
+  opts: VelociraptorImportOptions = {},
+  onProgress?: (done: number, total: number) => void,
 ): Promise<VelociraptorParseResult> {
   const { rows, format } = extractRows(text);
   const total = rows.length;
-  if (total === 0) { onProgress?.(0, 0); return emptyVrResult(); }
+  if (total === 0) {
+    onProgress?.(0, 0);
+    return emptyVrResult();
+  }
   const ctx = newVrCtx(opts);
   const mapped: MappedEvent[] = [];
   let detections = 0;

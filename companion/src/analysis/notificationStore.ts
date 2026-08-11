@@ -56,7 +56,12 @@ const channelSchema = z.object({
   name: z.string().catch(""),
   enabled: z.boolean().catch(false),
   minSeverity: z.enum(SEVERITIES).catch("High"),
-  events: eventsSchema.catch({ critical_finding: true, playbook_update: true, milestone: false, mention: false } as Record<NotificationEventKind, boolean>),
+  events: eventsSchema.catch({
+    critical_finding: true,
+    playbook_update: true,
+    milestone: false,
+    mention: false,
+  } as Record<NotificationEventKind, boolean>),
   webhookUrl: z.string().optional(),
   smtp: smtpSchema.optional(),
   telegram: telegramSchema.optional(),
@@ -75,7 +80,7 @@ export class NotificationConfigStore {
       return raw
         .map((c) => {
           const parsed = channelSchema.safeParse(c);
-          return parsed.success ? (parsed.data) : null;
+          return parsed.success ? parsed.data : null;
         })
         .filter((c): c is NotificationChannel => c !== null);
     } catch (err) {
@@ -114,7 +119,11 @@ export class NotificationConfigStore {
 
   // Update a channel, preserving secrets the edit left blank (applyChannelPatch). Returns null when
   // the id is unknown.
-  async update(id: string, draft: ChannelDraft, at: string = new Date().toISOString()): Promise<NotificationChannel | null> {
+  async update(
+    id: string,
+    draft: ChannelDraft,
+    at: string = new Date().toISOString(),
+  ): Promise<NotificationChannel | null> {
     const channels = await this.load();
     const idx = channels.findIndex((c) => c.id === id);
     if (idx === -1) return null;

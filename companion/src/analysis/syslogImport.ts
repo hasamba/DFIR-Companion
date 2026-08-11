@@ -27,7 +27,15 @@
 // tag (see importDetect.ts), so an ASA export never reaches here.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, cleanIp, oneLine, worst, type MappedEvent, type SiemIoc, type SiemParseResult,
+import {
+  aggregateEvents,
+  addIoc,
+  cleanIp,
+  oneLine,
+  worst,
+  type MappedEvent,
+  type SiemIoc,
+  type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 import { parseSshAuth, markSshBruteForce, type SshAuthEvent } from "./sshBruteForce.js";
@@ -46,8 +54,18 @@ export type SyslogParseResult = SiemParseResult;
 export const SYSLOG_SOURCE = "Syslog";
 
 const MONTHS: Record<string, string> = {
-  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  Jan: "01",
+  Feb: "02",
+  Mar: "03",
+  Apr: "04",
+  May: "05",
+  Jun: "06",
+  Jul: "07",
+  Aug: "08",
+  Sep: "09",
+  Oct: "10",
+  Nov: "11",
+  Dec: "12",
 };
 
 // RFC 5424: "<PRI>VER TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MSG". The timestamp
@@ -55,11 +73,13 @@ const MONTHS: Record<string, string> = {
 const RFC5424_RE = /^<(\d{1,3})>\d{1,2}\s+(\d{4}-\d{2}-\d{2}T\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/;
 // RFC 3164: "[<PRI>]MMM DD HH:MM:SS HOSTNAME TAG[pid]: MSG". The trailing colon after the tag is
 // required so an arbitrary "Mmm dd hh:mm:ss …" prose line isn't misclaimed.
-const RFC3164_RE = /^(?:<(\d{1,3})>)?([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+([^\s\[:]+)(?:\[(\d+)\])?:\s*(.*)$/;
+const RFC3164_RE =
+  /^(?:<(\d{1,3})>)?([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+([^\s\[:]+)(?:\[(\d+)\])?:\s*(.*)$/;
 
 // Auth-failure signals worth a Low bump — the generic brute-force / access-abuse markers that
 // appear across sshd/PAM/sudo/su, independent of distro. Auth SUCCESS is deliberately NOT matched.
-const AUTH_FAIL = /\b(?:failed password|authentication failure|invalid user|failed publickey|possible break-in attempt|failed login|incorrect password|authentication failed)\b/i;
+const AUTH_FAIL =
+  /\b(?:failed password|authentication failure|invalid user|failed publickey|possible break-in attempt|failed login|incorrect password|authentication failed)\b/i;
 
 const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>()]+/gi;
@@ -151,7 +171,11 @@ export function parseSyslogLine(line: string, year: number): ParsedSyslog | null
 // carry the RFC 5424 or RFC 3164 framing. Conservative (>=3 hits and >=50%) so an arbitrary log
 // that isn't syslog is left to the generic (AI) line-triage path.
 export function looksLikeSyslog(text: string): boolean {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 50);
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 50);
   if (!lines.length) return false;
   const hits = lines.filter((l) => RFC5424_RE.test(l) || RFC3164_RE.test(l)).length;
   return hits >= 3 && hits >= lines.length * 0.5;
@@ -190,7 +214,10 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
   const description = oneLine(`syslog ${appTag}${p.message}`).slice(0, 600);
   // Collapse repetitive templated lines (rotating pids/session ids/counters) while keeping a
   // genuinely distinct message its own event: mask digit and hex runs in the aggregation key only.
-  const template = p.message.replace(/0x[0-9a-f]+/gi, "#").replace(/\d+/g, "#").slice(0, 300);
+  const template = p.message
+    .replace(/0x[0-9a-f]+/gi, "#")
+    .replace(/\d+/g, "#")
+    .slice(0, 300);
 
   return {
     timestamp: p.timestamp,
@@ -200,7 +227,8 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
     // A spill-bearing line gets its own key: the template masks digit runs, so two different
     // tokens from the same daemon would otherwise collapse into one first-description-wins row.
     aggKey: `syslog|${p.host}|${p.app}|${template}${spill ? `|spill:${spill.families.join(",")}` : ""}`
-      .toLowerCase().slice(0, 400),
+      .toLowerCase()
+      .slice(0, 400),
     sources: [SYSLOG_SOURCE],
     ...(p.host ? { asset: p.host } : {}),
   };
@@ -226,7 +254,8 @@ export function parseSyslog(text: string, opts: SyslogImportOptions = {}): Syslo
     // Collect sshd login successes/failures for the brute-force-success correlation below.
     if (/^sshd\b/i.test(p.app)) {
       const auth = parseSshAuth(p.message);
-      if (auth) sshAuth.push({ key: idx, ms: Date.parse(p.timestamp) || 0, ip: auth.ip, result: auth.result });
+      if (auth)
+        sshAuth.push({ key: idx, ms: Date.parse(p.timestamp) || 0, ip: auth.ip, result: auth.result });
     }
   }
 
@@ -237,7 +266,11 @@ export function parseSyslog(text: string, opts: SyslogImportOptions = {}): Syslo
     const e = mapped[hit.key];
     e.severity = worst(e.severity, "Medium");
     if (!e.mitre.includes("T1110.001")) e.mitre.push("T1110.001");
-    e.description = `${e.description} — SSH login succeeded after ${hit.failures} failed attempts from ${hit.ip} (possible brute-force success)`.slice(0, 600);
+    e.description =
+      `${e.description} — SSH login succeeded after ${hit.failures} failed attempts from ${hit.ip} (possible brute-force success)`.slice(
+        0,
+        600,
+      );
     e.aggKey = `${e.aggKey}|bruteforce|${hit.ip}`.slice(0, 400);
   }
 

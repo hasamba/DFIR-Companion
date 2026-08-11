@@ -27,29 +27,29 @@ export interface TimesketchClientLike {
 }
 
 export interface TimesketchPushInput {
-  sketchName: string;          // = the Companion case id (used as the Timesketch sketch name)
+  sketchName: string; // = the Companion case id (used as the Timesketch sketch name)
   state: InvestigationState;
-  timelineName?: string;       // overrides the default managed-timeline name
+  timelineName?: string; // overrides the default managed-timeline name
 }
 
 export interface TimesketchSuperPushInput {
-  sketchName: string;          // = the Companion case id (used as the Timesketch sketch name)
-  events: ForensicEvent[];     // the super-timeline's event list (caller already queried it)
-  timelineName?: string;       // overrides the default managed-timeline name
+  sketchName: string; // = the Companion case id (used as the Timesketch sketch name)
+  events: ForensicEvent[]; // the super-timeline's event list (caller already queried it)
+  timelineName?: string; // overrides the default managed-timeline name
 }
 
 export interface TimesketchPushOptions {
-  baseUrl?: string;            // to build a clickable sketch URL in the result
-  timelineName?: string;       // managed FORENSIC timeline name (default "DFIR-Companion Forensic Timeline")
+  baseUrl?: string; // to build a clickable sketch URL in the result
+  timelineName?: string; // managed FORENSIC timeline name (default "DFIR-Companion Forensic Timeline")
 }
 
 export interface TimesketchPushResult {
   sketchId: number;
   sketchName: string;
-  created: boolean;            // true = the sketch was newly created
+  created: boolean; // true = the sketch was newly created
   timelineName: string;
-  events: number;              // events uploaded (with a parseable timestamp)
-  replacedTimeline: boolean;   // true = an existing same-named timeline was deleted first
+  events: number; // events uploaded (with a parseable timestamp)
+  replacedTimeline: boolean; // true = an existing same-named timeline was deleted first
   sketchUrl?: string;
   warnings: string[];
 }
@@ -118,7 +118,9 @@ async function pushEventsToTimesketch(
     timelineName,
     events: events.length,
     replacedTimeline,
-    sketchUrl: options.baseUrl ? `${options.baseUrl.replace(/\/+$/, "")}/sketch/${sketch.id}/explore` : undefined,
+    sketchUrl: options.baseUrl
+      ? `${options.baseUrl.replace(/\/+$/, "")}/sketch/${sketch.id}/explore`
+      : undefined,
     warnings,
   };
 }
@@ -129,7 +131,11 @@ export async function pushCaseToTimesketch(
   options: TimesketchPushOptions = {},
 ): Promise<TimesketchPushResult> {
   const timelineName = input.timelineName ?? options.timelineName ?? DEFAULT_TIMELINE;
-  return pushEventsToTimesketch(client, { sketchName: input.sketchName, events: input.state.forensicTimeline, timelineName }, options);
+  return pushEventsToTimesketch(
+    client,
+    { sketchName: input.sketchName, events: input.state.forensicTimeline, timelineName },
+    options,
+  );
 }
 
 export async function pushSuperTimelineToTimesketch(
@@ -138,5 +144,9 @@ export async function pushSuperTimelineToTimesketch(
   options: TimesketchPushOptions = {},
 ): Promise<TimesketchPushResult> {
   const timelineName = input.timelineName ?? DEFAULT_SUPER_TIMELINE;
-  return pushEventsToTimesketch(client, { sketchName: input.sketchName, events: input.events, timelineName }, options);
+  return pushEventsToTimesketch(
+    client,
+    { sketchName: input.sketchName, events: input.events, timelineName },
+    options,
+  );
 }

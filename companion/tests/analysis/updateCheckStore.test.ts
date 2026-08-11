@@ -35,7 +35,12 @@ describe("UpdateCheckStore", () => {
   it("round-trips the cached result and preserves the toggle", async () => {
     const store = new UpdateCheckStore(file);
     await store.setEnabled(true);
-    await store.setResult({ latestVersion: "0.24.0", latestTag: "v0.24.0", htmlUrl: "https://x", checkedAt: 42 });
+    await store.setResult({
+      latestVersion: "0.24.0",
+      latestTag: "v0.24.0",
+      htmlUrl: "https://x",
+      checkedAt: 42,
+    });
     const rec = await new UpdateCheckStore(file).load();
     expect(rec.enabled).toBe(true);
     expect(rec.result?.latestVersion).toBe("0.24.0");

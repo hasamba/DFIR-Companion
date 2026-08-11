@@ -50,13 +50,22 @@ describe("parseCloudActivity — GCP", () => {
   });
 
   it("setIamPolicy on storage maps to data-exposure (T1530)", () => {
-    const r = parseCloudActivity(JSON.stringify([gcp("storage.setIamPermissions", { serviceName: "storage.googleapis.com" })]));
+    const r = parseCloudActivity(
+      JSON.stringify([gcp("storage.setIamPermissions", { serviceName: "storage.googleapis.com" })]),
+    );
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].mitreTechniques).toContain("T1530");
   });
 
   it("a non-OK status code bumps severity to at least Medium", () => {
-    const r = parseCloudActivity(JSON.stringify([gcp("storage.objects.get", { serviceName: "storage.googleapis.com", status: { code: 7, message: "PERMISSION_DENIED" } })]));
+    const r = parseCloudActivity(
+      JSON.stringify([
+        gcp("storage.objects.get", {
+          serviceName: "storage.googleapis.com",
+          status: { code: 7, message: "PERMISSION_DENIED" },
+        }),
+      ]),
+    );
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].description).toContain("[DENIED");
   });
@@ -82,7 +91,9 @@ describe("parseCloudActivity — Azure", () => {
   });
 
   it("a Failed status bumps severity to Medium", () => {
-    const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Resources/deployments/read", { status: { value: "Failed" } })]));
+    const r = parseCloudActivity(
+      JSON.stringify([azure("Microsoft.Resources/deployments/read", { status: { value: "Failed" } })]),
+    );
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].description).toContain("[Failed]");
   });
@@ -91,8 +102,11 @@ describe("parseCloudActivity — Azure", () => {
     const la = {
       TimeGenerated: "2023-07-01T12:00:00Z",
       OperationNameValue: "Microsoft.Storage/storageAccounts/listKeys/action",
-      Caller: "sp@acme.com", CallerIpAddress: "203.0.113.33", ActivityStatusValue: "Success",
-      ResourceId: "/subscriptions/abc/.../storageAccounts/sa1", Type: "AzureActivity",
+      Caller: "sp@acme.com",
+      CallerIpAddress: "203.0.113.33",
+      ActivityStatusValue: "Success",
+      ResourceId: "/subscriptions/abc/.../storageAccounts/sa1",
+      Type: "AzureActivity",
     };
     const r = parseCloudActivity(JSON.stringify([la]));
     expect(r.format).toBe("azure");
@@ -103,8 +117,12 @@ describe("parseCloudActivity — Azure", () => {
 
 describe("parseCloudActivity — inputs, floor & edges", () => {
   it("reads NDJSON and reports 'mixed' when both clouds appear", () => {
-    const text = [gcp("google.iam.admin.v1.CreateServiceAccountKey"), azure("Microsoft.Authorization/roleAssignments/write")]
-      .map((o) => JSON.stringify(o)).join("\n");
+    const text = [
+      gcp("google.iam.admin.v1.CreateServiceAccountKey"),
+      azure("Microsoft.Authorization/roleAssignments/write"),
+    ]
+      .map((o) => JSON.stringify(o))
+      .join("\n");
     const r = parseCloudActivity(text);
     expect(r.format).toBe("mixed");
     expect(r.events).toHaveLength(2);
@@ -112,7 +130,7 @@ describe("parseCloudActivity — inputs, floor & edges", () => {
 
   it("applies a severity floor", () => {
     const text = JSON.stringify([
-      gcp("google.iam.admin.v1.CreateServiceAccountKey"),                 // High
+      gcp("google.iam.admin.v1.CreateServiceAccountKey"), // High
       gcp("storage.objects.get", { serviceName: "storage.googleapis.com" }), // Info
     ]);
     const r = parseCloudActivity(text, { minSeverity: "Medium" });

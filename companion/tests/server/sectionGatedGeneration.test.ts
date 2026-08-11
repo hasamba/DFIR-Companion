@@ -27,8 +27,13 @@ class CountingProvider implements AIProvider {
 function seededState(): InvestigationState {
   const s = emptyState("c1");
   s.forensicTimeline.push({
-    id: "e1", timestamp: "2026-06-10T00:00:00.000Z", description: "malware.exe executed",
-    severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    id: "e1",
+    timestamp: "2026-06-10T00:00:00.000Z",
+    description: "malware.exe executed",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
   });
   return s;
 }
@@ -41,12 +46,18 @@ async function harness() {
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const provider = new CountingProvider();
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
-    pipeline, stateStore, aiConfigured: true,
-    reportTemplateStore, reportTemplateControlStore,
+    pipeline,
+    stateStore,
+    aiConfigured: true,
+    reportTemplateStore,
+    reportTemplateControlStore,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save(seededState());
@@ -55,7 +66,9 @@ async function harness() {
 
 // Create a custom template that disables a given section and select it for case c1.
 async function selectTemplateDisabling(app: ReturnType<typeof createApp>, key: string) {
-  const tpl = await request(app).post("/report-templates").send({ name: `no-${key}`, sections: [{ key, enabled: false }] });
+  const tpl = await request(app)
+    .post("/report-templates")
+    .send({ name: `no-${key}`, sections: [{ key, enabled: false }] });
   await request(app).put("/cases/c1/report-template").send({ templateId: tpl.body.id });
 }
 

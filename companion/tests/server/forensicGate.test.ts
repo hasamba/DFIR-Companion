@@ -13,25 +13,42 @@ import type { VelociraptorRunResult } from "../../src/integrations/velociraptor/
 // Info telemetry (an ungraded MFT row) — routed to the super-timeline only under the default gate; a
 // High YARA detection stays in the forensic timeline. Mirrors veloImportExternal.test.ts's fixtures.
 const MFT_ROW = { OSPath: "C:\\evil.exe", Created0x10: "2026-06-01T00:00:00Z", FileName: "evil.exe" };
-const YARA_ROW = { _Source: "Windows.Detection.Yara", Rule: "EvilRule", Namespace: "n", OSPath: "C:\\bad.dll", Created0x10: "2026-06-01T01:00:00Z" };
+const YARA_ROW = {
+  _Source: "Windows.Detection.Yara",
+  Rule: "EvilRule",
+  Namespace: "n",
+  OSPath: "C:\\bad.dll",
+  Created0x10: "2026-06-01T01:00:00Z",
+};
 
 interface MockVeloClient {
   getHuntArtifacts(huntId: string): Promise<string[]>;
-  huntResultsByArtifact(huntId: string, artifacts: string[]): Promise<{ results: Record<string, unknown[]>; skipped: string[] }>;
+  huntResultsByArtifact(
+    huntId: string,
+    artifacts: string[],
+  ): Promise<{ results: Record<string, unknown[]>; skipped: string[] }>;
   getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }>;
   collectionResults(clientId: string, flowId: string, artifact: string): Promise<VelociraptorRunResult>;
   huntGuiUrlFor(huntId: string): string | undefined;
   flowGuiUrlFor(clientId: string, flowId: string): string | undefined;
 }
 
-async function makeApp(huntResults: Record<string, unknown[]> = { "Windows.Detection.Yara": [YARA_ROW], "Windows.NTFS.MFT": [MFT_ROW] }) {
+async function makeApp(
+  huntResults: Record<string, unknown[]> = {
+    "Windows.Detection.Yara": [YARA_ROW],
+    "Windows.NTFS.MFT": [MFT_ROW],
+  },
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-fgate-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const superTimelineStore = new SuperTimelineStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
 
@@ -57,8 +74,13 @@ async function makeApp(huntResults: Record<string, unknown[]> = { "Windows.Detec
   };
 
   const app = createApp(store, {
-    pipeline, stateStore, superTimelineStore, forensicGateControlStore,
-    velociraptorClient: client as unknown as NonNullable<Parameters<typeof createApp>[1]>["velociraptorClient"],
+    pipeline,
+    stateStore,
+    superTimelineStore,
+    forensicGateControlStore,
+    velociraptorClient: client as unknown as NonNullable<
+      Parameters<typeof createApp>[1]
+    >["velociraptorClient"],
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore, superTimelineStore };
@@ -72,8 +94,8 @@ describe("forensic-timeline severity gate at the import seams", () => {
 
     const forensic = (await stateStore.load("c1")).forensicTimeline;
     const sevs = forensic.map((e) => e.severity);
-    expect(sevs).toContain("High");                                  // graded detection stays
-    expect(sevs.some((s) => s === "Info")).toBe(false);              // Info telemetry demoted out
+    expect(sevs).toContain("High"); // graded detection stays
+    expect(sevs.some((s) => s === "Info")).toBe(false); // Info telemetry demoted out
 
     // The super-timeline is the COMPLETE record — it must still hold both the High and the Info event.
     const st = (await request(app).get("/cases/c1/super-timeline")).body;
@@ -103,7 +125,7 @@ describe("forensic-timeline severity gate at the import seams", () => {
 
     const sevs = (await stateStore.load("c1")).forensicTimeline.map((e) => e.severity);
     expect(sevs).toContain("High");
-    expect(sevs).toContain("Info");                                  // no longer demoted
+    expect(sevs).toContain("Info"); // no longer demoted
   });
 
   it("rejects an invalid minSeverity with 400", async () => {
@@ -129,9 +151,13 @@ describe("forensic-timeline severity gate at the import seams", () => {
 
     // Find the Info super event and promote it — promotion must NOT be gated.
     const st = (await request(app).get("/cases/c1/super-timeline")).body;
-    const infoEvent = (st.events as Array<{ id: string; severity: string }>).find((e) => e.severity === "Info");
+    const infoEvent = (st.events as Array<{ id: string; severity: string }>).find(
+      (e) => e.severity === "Info",
+    );
     expect(infoEvent).toBeDefined();
-    const prom = await request(app).post("/cases/c1/super-timeline/promote").send({ eventIds: [infoEvent!.id] });
+    const prom = await request(app)
+      .post("/cases/c1/super-timeline/promote")
+      .send({ eventIds: [infoEvent!.id] });
     expect(prom.status).toBe(200);
     expect(prom.body.promoted).toBe(1);
 

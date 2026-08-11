@@ -60,7 +60,10 @@ function isIgnorableEntry(path: string): boolean {
 function archiveIsEncrypted(archive: Buffer): boolean {
   let eocd = -1;
   for (let i = archive.length - 22; i >= 0; i--) {
-    if (archive.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    if (archive.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
   }
   if (eocd < 0) return false;
   const total = archive.readUInt16LE(eocd + 10);
@@ -68,7 +71,8 @@ function archiveIsEncrypted(archive: Buffer): boolean {
   for (let i = 0; i < total; i++) {
     if (archive.readUInt32LE(ptr) !== 0x02014b50) return false;
     if ((archive.readUInt16LE(ptr + 8) & 0x0001) !== 0) return true;
-    ptr += 46 + archive.readUInt16LE(ptr + 28) + archive.readUInt16LE(ptr + 30) + archive.readUInt16LE(ptr + 32);
+    ptr +=
+      46 + archive.readUInt16LE(ptr + 28) + archive.readUInt16LE(ptr + 30) + archive.readUInt16LE(ptr + 32);
   }
   return false;
 }
@@ -112,7 +116,7 @@ export function extractZipEntries(archive: Buffer, filename: string, supplied?: 
     const tried = candidates.length === 1 ? "the default password" : `${candidates.length} passwords`;
     throw new Error(
       `could not open "${filename}": wrong password (tried ${tried}). ` +
-      `Enter the archive password in the import dialog.`,
+        `Enter the archive password in the import dialog.`,
       { cause: lastErr },
     );
   }
@@ -124,8 +128,14 @@ export function extractZipEntries(archive: Buffer, filename: string, supplied?: 
   for (const e of raw) {
     assertContained(e.path);
     if (isIgnorableEntry(e.path)) continue;
-    if (e.data.subarray(0, 2).toString("latin1") === "PK") { skippedNested.push(e.path); continue; }
-    if (entries.length >= MAX_ZIP_ENTRIES) { truncated = true; break; }
+    if (e.data.subarray(0, 2).toString("latin1") === "PK") {
+      skippedNested.push(e.path);
+      continue;
+    }
+    if (entries.length >= MAX_ZIP_ENTRIES) {
+      truncated = true;
+      break;
+    }
     entries.push({ path: e.path, data: e.data });
   }
 

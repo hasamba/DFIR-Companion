@@ -45,10 +45,10 @@ export interface SecurityOnionImportOptions {
 export interface SecurityOnionParseResult {
   events: SiemEvent[];
   iocs: SiemIoc[];
-  total: number;     // records found
-  kept: number;      // events emitted (after aggregation + cap)
-  dropped: number;   // records not turned into events (below floor / capped)
-  groups: number;    // distinct event groups before the cap
+  total: number; // records found
+  kept: number; // events emitted (after aggregation + cap)
+  dropped: number; // records not turned into events (below floor / capped)
+  groups: number; // distinct event groups before the cap
   hostname: string;
 }
 
@@ -70,9 +70,11 @@ function fstr(row: Row, key: string): string {
 const SEV_LABEL: Record<string, Severity> = {
   critical: "Critical",
   high: "High",
-  medium: "Medium", moderate: "Medium",
+  medium: "Medium",
+  moderate: "Medium",
   low: "Low",
-  informational: "Info", info: "Info",
+  informational: "Info",
+  info: "Info",
 };
 
 // Suricata signature priority (`event.severity`): 1 = most severe (ET/Talos use 1–4).
@@ -88,8 +90,11 @@ function numSeverity(n: number): Severity {
 export function securityOnionSeverity(row: Row): Severity {
   const label = fstr(row, "event.severity_label").toLowerCase();
   if (label && SEV_LABEL[label]) return SEV_LABEL[label];
-  const alt = str(field(row, "signal.rule.severity") ?? field(row, "kibana.alert.severity") ?? field(row, "rule.severity"))
-    .trim().toLowerCase();
+  const alt = str(
+    field(row, "signal.rule.severity") ?? field(row, "kibana.alert.severity") ?? field(row, "rule.severity"),
+  )
+    .trim()
+    .toLowerCase();
   if (alt && SEV_LABEL[alt]) return SEV_LABEL[alt];
   const num = Number(field(row, "event.severity"));
   if (Number.isFinite(num) && num >= 1 && num <= 4) return numSeverity(num);
@@ -108,7 +113,10 @@ function soTime(v: unknown): string {
 }
 
 function pushTxxxx(set: Set<string>, v: unknown): void {
-  if (Array.isArray(v)) { for (const el of v) pushTxxxx(set, el); return; }
+  if (Array.isArray(v)) {
+    for (const el of v) pushTxxxx(set, el);
+    return;
+  }
   for (const m of str(v).matchAll(/\bt\d{4}(?:\.\d{3})?\b/gi)) set.add(m[0].toUpperCase());
 }
 function soMitre(row: Row): string[] {
@@ -144,13 +152,21 @@ function addFile(sink: Map<string, SiemIoc>, v: string): void {
 }
 
 function pickHost(row: Row): string {
-  return fstr(row, "observer.name") || fstr(row, "host.name") || fstr(row, "host.hostname") ||
-    fstr(row, "agent.name") || fstr(row, "agent.hostname");
+  return (
+    fstr(row, "observer.name") ||
+    fstr(row, "host.name") ||
+    fstr(row, "host.hostname") ||
+    fstr(row, "agent.name") ||
+    fstr(row, "agent.hostname")
+  );
 }
 
 function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
-  const ruleName = fstr(row, "rule.name") || fstr(row, "signal.rule.name") ||
-    fstr(row, "message") || fstr(row, "event.action");
+  const ruleName =
+    fstr(row, "rule.name") ||
+    fstr(row, "signal.rule.name") ||
+    fstr(row, "message") ||
+    fstr(row, "event.action");
   const moduleName = fstr(row, "event.module") || fstr(row, "event.dataset");
   const category = fstr(row, "rule.category");
   const severity = securityOnionSeverity(row);
@@ -188,7 +204,10 @@ function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent 
     description,
     severity,
     mitre: soMitre(row),
-    aggKey: `securityonion|${(ruleName || moduleName || "event").toLowerCase()}|${src}|${dst}|${dp}`.slice(0, 400),
+    aggKey: `securityonion|${(ruleName || moduleName || "event").toLowerCase()}|${src}|${dst}|${dp}`.slice(
+      0,
+      400,
+    ),
     sources: ["Security Onion"],
     ...(host ? { asset: host } : {}),
     ...(src ? { srcIp: src } : {}),
@@ -199,7 +218,10 @@ function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent 
   };
 }
 
-export function parseSecurityOnion(text: string, opts: SecurityOnionImportOptions = {}): SecurityOnionParseResult {
+export function parseSecurityOnion(
+  text: string,
+  opts: SecurityOnionImportOptions = {},
+): SecurityOnionParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const { records } = extractRecords(text);
   const total = records.length;

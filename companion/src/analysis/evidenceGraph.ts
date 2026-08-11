@@ -41,27 +41,27 @@ export type Confidence = "high" | "medium" | "low";
 export type EvidenceNodeKind = "process" | "host" | "account" | "file" | "network";
 
 export interface EvidenceNode {
-  id: string;                 // "proc:<asset>:<name>" | "host:<name>" | "account:<name>" | "file:<hash>" | "net:<ip>[:<port>]"
+  id: string; // "proc:<asset>:<name>" | "host:<name>" | "account:<name>" | "file:<hash>" | "net:<ip>[:<port>]"
   kind: EvidenceNodeKind;
-  label: string;              // display name
-  asset?: string;             // owning host, for process nodes
-  ip?: string;                // IP address, for network nodes
-  maxSeverity: Severity;      // worst severity among the events backing this node
-  tactic?: IrisTactic;        // dominant ATT&CK tactic across backing events — the kill-chain phase
-                              // this node sits in. Undefined when no backing event maps to a tactic
-                              // (powers the dashboard's optional color-by-kill-chain overlay, #93).
-  eventIds: string[];         // forensic events that produced this node (provenance)
+  label: string; // display name
+  asset?: string; // owning host, for process nodes
+  ip?: string; // IP address, for network nodes
+  maxSeverity: Severity; // worst severity among the events backing this node
+  tactic?: IrisTactic; // dominant ATT&CK tactic across backing events — the kill-chain phase
+  // this node sits in. Undefined when no backing event maps to a tactic
+  // (powers the dashboard's optional color-by-kill-chain overlay, #93).
+  eventIds: string[]; // forensic events that produced this node (provenance)
 }
 
 export interface EvidenceEdge {
   id: string;
   type: EvidenceEdgeType;
-  source: string;             // node id
-  target: string;             // node id
+  source: string; // node id
+  target: string; // node id
   confidence: Confidence;
-  rule: string;               // derivation rule, e.g. "process-parent-child" | "shared-hash" | "shared-account" | "process-on-host"
-  basis: string;              // human one-liner, e.g. "excel.exe → powershell.exe on ALCLIENT07"
-  eventIds: string[];         // backing events (provenance)
+  rule: string; // derivation rule, e.g. "process-parent-child" | "shared-hash" | "shared-account" | "process-on-host"
+  basis: string; // human one-liner, e.g. "excel.exe → powershell.exe on ALCLIENT07"
+  eventIds: string[]; // backing events (provenance)
 }
 
 export interface EvidenceGraph {
@@ -70,15 +70,26 @@ export interface EvidenceGraph {
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+function worse(a: Severity, b: Severity): Severity {
+  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+}
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a node reads as the stage it leads with). Same order
 // as burstDetect.ts, kept local per the codebase's copy-the-order convention.
 const CHAIN_ORDER: IrisTactic[] = [
-  "Initial Access", "Execution", "Persistence", "Privilege Escalation",
-  "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
-  "Collection", "Command and Control", "Exfiltration", "Impact",
+  "Initial Access",
+  "Execution",
+  "Persistence",
+  "Privilege Escalation",
+  "Defense Evasion",
+  "Credential Access",
+  "Discovery",
+  "Lateral Movement",
+  "Collection",
+  "Command and Control",
+  "Exfiltration",
+  "Impact",
 ];
 
 // The dominant ATT&CK tactic across a node's backing events: each event resolves to a tactic via
@@ -86,7 +97,10 @@ const CHAIN_ORDER: IrisTactic[] = [
 // frequent tactic wins, and ties break toward the earliest kill-chain stage. Undefined when no
 // backing event maps to any tactic — so a node with no ATT&CK signal degrades cleanly (no overlay
 // color). Pure; the eventIds → event lookup is passed in so the whole graph shares one map.
-function dominantTactic(eventIds: readonly string[], eventById: Map<string, ForensicEvent>): IrisTactic | undefined {
+function dominantTactic(
+  eventIds: readonly string[],
+  eventById: Map<string, ForensicEvent>,
+): IrisTactic | undefined {
   const counts = new Map<IrisTactic, number>();
   for (const id of eventIds) {
     const e = eventById.get(id);
@@ -96,9 +110,13 @@ function dominantTactic(eventIds: readonly string[], eventById: Map<string, Fore
   }
   let best: IrisTactic | undefined;
   let bestCount = 0;
-  for (const tac of CHAIN_ORDER) {                 // iterate in chain order so the earliest stage wins ties
+  for (const tac of CHAIN_ORDER) {
+    // iterate in chain order so the earliest stage wins ties
     const c = counts.get(tac) ?? 0;
-    if (c > bestCount) { best = tac; bestCount = c; }
+    if (c > bestCount) {
+      best = tac;
+      bestCount = c;
+    }
   }
   return best;
 }
@@ -125,8 +143,10 @@ function shortHash(h: string): string {
 // Windows host in a case into one confident-looking path (LOCAL/NETWORK/ANONYMOUS run everywhere).
 // Anchored full-token matches, so real accounts that merely start with these words (CORP\network.admin)
 // are unaffected.
-const PSEUDO_ACCT_DOMAIN = /^(global|local|session|nt authority|authority|nt service|service|window manager|font driver host|iis apppool|apppool)$/i;
-const PSEUDO_ACCT_USER = /^(dwm-\d+|umfd-\d+|msi[0-9a-f]+|system|local service|network service|anonymous logon|local|network|anonymous)$/i;
+const PSEUDO_ACCT_DOMAIN =
+  /^(global|local|session|nt authority|authority|nt service|service|window manager|font driver host|iis apppool|apppool)$/i;
+const PSEUDO_ACCT_USER =
+  /^(dwm-\d+|umfd-\d+|msi[0-9a-f]+|system|local service|network service|anonymous logon|local|network|anonymous)$/i;
 function isPseudoAccount(acct: string): boolean {
   const i = acct.indexOf("\\");
   const domain = i >= 0 ? acct.slice(0, i) : "";
@@ -158,7 +178,14 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   const timeline = filterTimeline(state.forensicTimeline, window).map(upgradeForensicEvent);
   // Nodes are materialized lazily so only those that participate in ≥1 edge are emitted.
   const nodeMap = new Map<string, EvidenceNode>();
-  function mergeNode(id: string, kind: EvidenceNodeKind, label: string, asset: string | undefined, eventIds: readonly string[], sev: Severity): EvidenceNode {
+  function mergeNode(
+    id: string,
+    kind: EvidenceNodeKind,
+    label: string,
+    asset: string | undefined,
+    eventIds: readonly string[],
+    sev: Severity,
+  ): EvidenceNode {
     let n = nodeMap.get(id);
     if (!n) {
       n = { id, kind, label, asset, maxSeverity: "Info", eventIds: [] };
@@ -168,8 +195,13 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     for (const eid of eventIds) if (!n.eventIds.includes(eid)) n.eventIds.push(eid);
     return n;
   }
-  const ensureNode = (id: string, kind: EvidenceNodeKind, label: string, asset: string | undefined, e: ForensicEvent) =>
-    mergeNode(id, kind, label, asset, [e.id], e.severity);
+  const ensureNode = (
+    id: string,
+    kind: EvidenceNodeKind,
+    label: string,
+    asset: string | undefined,
+    e: ForensicEvent,
+  ) => mergeNode(id, kind, label, asset, [e.id], e.severity);
 
   const edgeMap = new Map<string, EvidenceEdge>();
   function addEdge(edge: Omit<EvidenceEdge, "eventIds"> & { eventId: string }): void {
@@ -186,16 +218,23 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   for (const e of timeline) {
     const process = canonicalProcess(e);
     if (!process?.parent?.name || !process.name) continue;
-    const parent = process.parent.name.trim(), child = process.name.trim();
+    const parent = process.parent.name.trim(),
+      child = process.name.trim();
     if (!parent || !child || parent.toLowerCase() === child.toLowerCase()) continue; // skip self-spawn
     const asset = eventAsset(e);
-    const pId = procNodeId(asset, parent), cId = procNodeId(asset, child);
+    const pId = procNodeId(asset, parent),
+      cId = procNodeId(asset, child);
     ensureNode(pId, "process", parent, asset || undefined, e);
     ensureNode(cId, "process", child, asset || undefined, e);
     addEdge({
-      id: `spawned|${pId}|${cId}`, type: "spawned", source: pId, target: cId,
-      confidence: "high", rule: "process-parent-child",
-      basis: `${parent} → ${child}${asset ? ` on ${asset}` : ""}`, eventId: e.id,
+      id: `spawned|${pId}|${cId}`,
+      type: "spawned",
+      source: pId,
+      target: cId,
+      confidence: "high",
+      rule: "process-parent-child",
+      basis: `${parent} → ${child}${asset ? ` on ${asset}` : ""}`,
+      eventId: e.id,
     });
   }
 
@@ -213,14 +252,21 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     if (hosts.size < 2) continue;
     const entries = [...hosts.entries()].sort((a, b) => a[0].localeCompare(b[0])); // [assetLower, event]
     for (let i = 1; i < entries.length; i++) {
-      const [, ea] = entries[i - 1], [, eb] = entries[i]; // chain consecutive hosts → k-1 edges
-      const aAsset = eventAsset(ea), bAsset = eventAsset(eb);
+      const [, ea] = entries[i - 1],
+        [, eb] = entries[i]; // chain consecutive hosts → k-1 edges
+      const aAsset = eventAsset(ea),
+        bAsset = eventAsset(eb);
       const aNode = ensureNode(hostNodeId(aAsset), "host", aAsset, undefined, ea);
       const bNode = ensureNode(hostNodeId(bAsset), "host", bAsset, undefined, eb);
       addEdge({
-        id: `lateral|hash:${h}|${aNode.id}|${bNode.id}`, type: "lateral_move",
-        source: aNode.id, target: bNode.id, confidence: "high", rule: "shared-hash",
-        basis: `same binary ${shortHash(h)} on ${aAsset} + ${bAsset}`, eventId: eb.id,
+        id: `lateral|hash:${h}|${aNode.id}|${bNode.id}`,
+        type: "lateral_move",
+        source: aNode.id,
+        target: bNode.id,
+        confidence: "high",
+        rule: "shared-hash",
+        basis: `same binary ${shortHash(h)} on ${aAsset} + ${bAsset}`,
+        eventId: eb.id,
       });
     }
   }
@@ -231,7 +277,7 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     const asset = eventAsset(e);
     if (!asset) continue;
     for (const acct of canonicalAccounts(e)) {
-      if (isPseudoAccount(acct)) continue;   // skip DWM/UMFD/MSI… virtual principals — not users
+      if (isPseudoAccount(acct)) continue; // skip DWM/UMFD/MSI… virtual principals — not users
       const hosts = byAccount.get(acct) ?? new Map();
       if (!hosts.has(asset.toLowerCase())) hosts.set(asset.toLowerCase(), e);
       byAccount.set(acct, hosts);
@@ -245,9 +291,14 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
       ensureNode(acctId, "account", acct, undefined, e);
       const hNode = ensureNode(hostNodeId(asset), "host", asset, undefined, e);
       addEdge({
-        id: `lateral|acct:${acct}|${hNode.id}`, type: "lateral_move",
-        source: acctId, target: hNode.id, confidence: "medium", rule: "shared-account",
-        basis: `${acct} active on ${asset}`, eventId: e.id,
+        id: `lateral|acct:${acct}|${hNode.id}`,
+        type: "lateral_move",
+        source: acctId,
+        target: hNode.id,
+        confidence: "medium",
+        rule: "shared-account",
+        basis: `${acct} active on ${asset}`,
+        eventId: e.id,
       });
     }
   }
@@ -263,9 +314,13 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     const h = eventHash(e);
     if (!h) continue;
     if (action === "write") {
-      const arr = writesByHash.get(h) ?? []; arr.push(e); writesByHash.set(h, arr);
+      const arr = writesByHash.get(h) ?? [];
+      arr.push(e);
+      writesByHash.set(h, arr);
     } else if (action === "execute") {
-      const arr = execsByHash.get(h) ?? []; arr.push(e); execsByHash.set(h, arr);
+      const arr = execsByHash.get(h) ?? [];
+      arr.push(e);
+      execsByHash.set(h, arr);
     }
   }
   for (const [h, writes] of writesByHash) {
@@ -283,9 +338,14 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
       const wHId = hostNodeId(wAsset);
       ensureNode(wHId, "host", wAsset, undefined, we);
       addEdge({
-        id: `file_lineage|wrote|${wHId}|${fId}`, type: "file_lineage",
-        source: wHId, target: fId, confidence: "high", rule: "wrote-file",
-        basis: `${wAsset} wrote ${fileName} (${shortHash(h)})`, eventId: we.id,
+        id: `file_lineage|wrote|${wHId}|${fId}`,
+        type: "file_lineage",
+        source: wHId,
+        target: fId,
+        confidence: "high",
+        rule: "wrote-file",
+        basis: `${wAsset} wrote ${fileName} (${shortHash(h)})`,
+        eventId: we.id,
       });
     }
     for (const xe of execs) {
@@ -302,9 +362,14 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
         ensureNode(xNodeId, "host", xAsset, undefined, xe);
       }
       addEdge({
-        id: `file_lineage|exec|${fId}|${xNodeId}`, type: "file_lineage",
-        source: fId, target: xNodeId, confidence: "high", rule: "executed-file",
-        basis: `${fileName} (${shortHash(h)}) executed on ${xAsset}`, eventId: xe.id,
+        id: `file_lineage|exec|${fId}|${xNodeId}`,
+        type: "file_lineage",
+        source: fId,
+        target: xNodeId,
+        confidence: "high",
+        rule: "executed-file",
+        basis: `${fileName} (${shortHash(h)}) executed on ${xAsset}`,
+        eventId: xe.id,
       });
     }
   }
@@ -334,9 +399,14 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     mergeNode(dstId, "network", dstLabel, undefined, [e.id], e.severity);
     nodeMap.get(dstId)!.ip = dst;
     addEdge({
-      id: `network_flow|${srcId}|${dstId}`, type: "network_flow",
-      source: srcId, target: dstId, confidence: "high", rule: "network-connection",
-      basis: `${src} → ${dstLabel}`, eventId: e.id,
+      id: `network_flow|${srcId}|${dstId}`,
+      type: "network_flow",
+      source: srcId,
+      target: dstId,
+      confidence: "high",
+      rule: "network-connection",
+      basis: `${src} → ${dstLabel}`,
+      eventId: e.id,
     });
   }
 
@@ -347,16 +417,22 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   // HOST-A and a tree on HOST-B both hang off their host nodes, which lateral_move already links.
   const spawnedChildIds = new Set<string>();
   for (const e of edgeMap.values()) if (e.type === "spawned") spawnedChildIds.add(e.target);
-  for (const n of [...nodeMap.values()]) {            // snapshot: mergeNode may add host nodes
+  for (const n of [...nodeMap.values()]) {
+    // snapshot: mergeNode may add host nodes
     if (n.kind !== "process" || spawnedChildIds.has(n.id)) continue;
     const host = (n.asset ?? "").trim();
-    if (!host) continue;                               // can't anchor a process with no host
+    if (!host) continue; // can't anchor a process with no host
     const hId = hostNodeId(host);
     mergeNode(hId, "host", host, undefined, n.eventIds, n.maxSeverity);
     addEdge({
-      id: `ran_on|${hId}|${n.id}`, type: "ran_on", source: hId, target: n.id,
-      confidence: "high", rule: "process-on-host",
-      basis: `${n.label} ran on ${host}`, eventId: n.eventIds[0],
+      id: `ran_on|${hId}|${n.id}`,
+      type: "ran_on",
+      source: hId,
+      target: n.id,
+      confidence: "high",
+      rule: "process-on-host",
+      basis: `${n.label} ran on ${host}`,
+      eventId: n.eventIds[0],
     });
   }
 
@@ -369,8 +445,9 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     if (tac) n.tactic = tac;
   }
 
-  const nodes = [...nodeMap.values()].sort((a, b) =>
-    a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
+  const nodes = [...nodeMap.values()].sort(
+    (a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id),
+  );
   const edges = [...edgeMap.values()].sort((a, b) => a.id.localeCompare(b.id));
   return { nodes, edges };
 }
@@ -392,10 +469,10 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
 // paths ≤ number of hops, no combinatorial blow-up) and identical full chains are de-duplicated.
 
 export interface LateralHop {
-  from: string;                 // host node id — where the artifact/account was before this hop
-  to: string;                   // host node id — where it appeared next
-  fromTimestamp: string;        // earliest evidence tying the FROM host to this hop's hash/account
-  toTimestamp: string;          // earliest evidence tying the TO host to this hop's hash/account — the hop's order key
+  from: string; // host node id — where the artifact/account was before this hop
+  to: string; // host node id — where it appeared next
+  fromTimestamp: string; // earliest evidence tying the FROM host to this hop's hash/account
+  toTimestamp: string; // earliest evidence tying the TO host to this hop's hash/account — the hop's order key
   confidence: Confidence;
   rule: "shared-hash" | "shared-account";
   // WHO/WHAT carried this hop, as a STRUCTURED field: the account for a shared-account hop, the
@@ -404,15 +481,15 @@ export interface LateralHop {
   // format-coupling is exactly what silently empties a view when the wording changes.
   actor: string;
   actorKind: "account" | "binary";
-  basis: string;                // human one-liner
-  eventIds: string[];           // the two backing events (from-host + to-host sightings) for this hop
+  basis: string; // human one-liner
+  eventIds: string[]; // the two backing events (from-host + to-host sightings) for this hop
 }
 
 export interface LateralPath {
   id: string;
-  hostIds: string[];             // ordered host node ids: entry host → pivot(s) → target
-  hops: LateralHop[];             // per-hop evidence; length = hostIds.length - 1
-  confidence: Confidence;         // weakest-link confidence across the chain's hops
+  hostIds: string[]; // ordered host node ids: entry host → pivot(s) → target
+  hops: LateralHop[]; // per-hop evidence; length = hostIds.length - 1
+  confidence: Confidence; // weakest-link confidence across the chain's hops
   startTime: string;
   endTime: string;
 }
@@ -432,7 +509,9 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
 
   // The EARLIEST event tying each host to a given hash/account (not just "a" event, as in
   // buildEvidenceGraph's byHash/byAccount — here the hop order depends on real chronology).
-  function earliestPerHost(pick: (e: ForensicEvent) => string | undefined): Map<string, Map<string, ForensicEvent>> {
+  function earliestPerHost(
+    pick: (e: ForensicEvent) => string | undefined,
+  ): Map<string, Map<string, ForensicEvent>> {
     const byKey = new Map<string, Map<string, ForensicEvent>>();
     for (const e of timeline) {
       const key = (pick(e) ?? "").trim().toLowerCase();
@@ -472,10 +551,10 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   const GRAVE_SEVERITY: ReadonlySet<Severity> = new Set<Severity>(["Critical", "High"]);
   const VENDOR_INSTALL_ROOT = new RegExp(
     "^[a-z]:[\\\\/](" +
-      "windows|program files( \\(x86\\))?|programdata[\\\\/]microsoft" +          // machine-wide
-      "|users[\\\\/][^\\\\/]+[\\\\/]appdata[\\\\/](local|roaming)[\\\\/]" +       // per-user vendor roots
-        "(microsoft|zoom|slack|google|mozilla|discord|dropbox|programs[\\\\/]microsoft)" +
-    ")[\\\\/]",
+      "windows|program files( \\(x86\\))?|programdata[\\\\/]microsoft" + // machine-wide
+      "|users[\\\\/][^\\\\/]+[\\\\/]appdata[\\\\/](local|roaming)[\\\\/]" + // per-user vendor roots
+      "(microsoft|zoom|slack|google|mozilla|discord|dropbox|programs[\\\\/]microsoft)" +
+      ")[\\\\/]",
     "i",
   );
   const provenance = new Map<string, { vendorOnly: boolean; hasPath: boolean; grave: boolean }>();
@@ -511,17 +590,23 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   const byHash = earliestPerHost(eventHash);
   for (const [h, hosts] of byHash) {
     if (hosts.size < 2) continue;
-    if (isInstalledSoftware(h)) continue;              // installed vendor software ≠ movement
+    if (isInstalledSoftware(h)) continue; // installed vendor software ≠ movement
     const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
     const binary = binaryNameByHash.get(h) ?? shortHash(h);
     for (let i = 1; i < ordered.length; i++) {
-      const from = ordered[i - 1], to = ordered[i];
-      const fromAsset = eventAsset(from), toAsset = eventAsset(to);
+      const from = ordered[i - 1],
+        to = ordered[i];
+      const fromAsset = eventAsset(from),
+        toAsset = eventAsset(to);
       hops.push({
-        from: hostNodeId(fromAsset), to: hostNodeId(toAsset),
-        fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
-        confidence: "high", rule: "shared-hash",
-        actor: binary, actorKind: "binary",
+        from: hostNodeId(fromAsset),
+        to: hostNodeId(toAsset),
+        fromTimestamp: from.timestamp,
+        toTimestamp: to.timestamp,
+        confidence: "high",
+        rule: "shared-hash",
+        actor: binary,
+        actorKind: "binary",
         basis: `same binary ${shortHash(h)}: ${fromAsset} → ${toAsset}`,
         eventIds: [from.id, to.id],
       });
@@ -547,13 +632,19 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
     if (hosts.size < 2) continue;
     const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
     for (let i = 1; i < ordered.length; i++) {
-      const from = ordered[i - 1], to = ordered[i];
-      const fromAsset = eventAsset(from), toAsset = eventAsset(to);
+      const from = ordered[i - 1],
+        to = ordered[i];
+      const fromAsset = eventAsset(from),
+        toAsset = eventAsset(to);
       hops.push({
-        from: hostNodeId(fromAsset), to: hostNodeId(toAsset),
-        fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
-        confidence: "medium", rule: "shared-account",
-        actor: acct, actorKind: "account",
+        from: hostNodeId(fromAsset),
+        to: hostNodeId(toAsset),
+        fromTimestamp: from.timestamp,
+        toTimestamp: to.timestamp,
+        confidence: "medium",
+        rule: "shared-account",
+        actor: acct,
+        actorKind: "account",
         basis: `${acct} active on ${fromAsset} then ${toAsset}`,
         eventIds: [from.id, to.id],
       });
@@ -617,10 +708,13 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
       let best: LateralHop | undefined;
       let bestLen = -1;
       for (const next of outByHost.get(current.to) ?? []) {
-        if (hopTime(next) < hopTime(current)) continue;  // must not move backward in time
-        if (visited.has(next.to)) continue;              // cycle guard — no host twice in one chain
+        if (hopTime(next) < hopTime(current)) continue; // must not move backward in time
+        if (visited.has(next.to)) continue; // cycle guard — no host twice in one chain
         const len = bestTailLen(next);
-        if (len > bestLen) { best = next; bestLen = len; }
+        if (len > bestLen) {
+          best = next;
+          bestLen = len;
+        }
       }
       if (!best) return chain;
       chain.push(best);
@@ -644,8 +738,8 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   }
 
   const paths: LateralPath[] = [];
-  const coveredHops = new Set<LateralHop>();   // hop identity — same objects flow through extend()
-  const seenChains = new Set<string>();        // de-dup identical full chains (never emitted twice)
+  const coveredHops = new Set<LateralHop>(); // hop identity — same objects flow through extend()
+  const seenChains = new Set<string>(); // de-dup identical full chains (never emitted twice)
   let idx = 0;
   // A chain's identity is its ordered (from→to, rule, backing events) sequence — two chains that
   // trace the same hosts via different evidence are legitimately distinct and both kept.
@@ -708,14 +802,19 @@ export function connectedComponents(graph: EvidenceGraph): GraphComponent[] {
     while (parent.get(r) !== r) r = parent.get(r)!;
     // path-compress
     let c = x;
-    while (parent.get(c) !== r) { const n = parent.get(c)!; parent.set(c, r); c = n; }
+    while (parent.get(c) !== r) {
+      const n = parent.get(c)!;
+      parent.set(c, r);
+      c = n;
+    }
     return r;
   };
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n] as const));
   for (const n of graph.nodes) parent.set(n.id, n.id);
   const union = (a: string, b: string): void => {
     if (!parent.has(a) || !parent.has(b)) return; // ignore an edge to a node that wasn't emitted
-    const ra = find(a), rb = find(b);
+    const ra = find(a),
+      rb = find(b);
     if (ra !== rb) parent.set(ra, rb);
   };
   for (const e of graph.edges) union(e.source, e.target);
@@ -724,7 +823,10 @@ export function connectedComponents(graph: EvidenceGraph): GraphComponent[] {
   for (const n of graph.nodes) {
     const root = find(n.id);
     let comp = byRoot.get(root);
-    if (!comp) { comp = { nodeIds: new Set(), eventIds: new Set(), nodeCount: 0, critHighCount: 0 }; byRoot.set(root, comp); }
+    if (!comp) {
+      comp = { nodeIds: new Set(), eventIds: new Set(), nodeCount: 0, critHighCount: 0 };
+      byRoot.set(root, comp);
+    }
     comp.nodeIds.add(n.id);
     comp.nodeCount += 1;
     const sev = nodeById.get(n.id)!.maxSeverity;
@@ -741,17 +843,17 @@ export function connectedComponents(graph: EvidenceGraph): GraphComponent[] {
 export function mainComponent(graph: EvidenceGraph): GraphComponent | null {
   const comps = connectedComponents(graph);
   if (!comps.length) return null;
-  return comps.slice().sort((a, b) =>
-    b.critHighCount - a.critHighCount ||
-    b.eventIds.size - a.eventIds.size ||
-    b.nodeCount - a.nodeCount)[0];
+  return comps
+    .slice()
+    .sort(
+      (a, b) =>
+        b.critHighCount - a.critHighCount || b.eventIds.size - a.eventIds.size || b.nodeCount - a.nodeCount,
+    )[0];
 }
 
 // The host labels in a component, for the "to link it, look for:" discriminator on a disconnected
 // finding — the entities that, if they appeared in the finding's evidence, would tie it to the attack.
 export function componentHostLabels(graph: EvidenceGraph, comp: GraphComponent, max = 4): string[] {
-  const labels = graph.nodes
-    .filter((n) => n.kind === "host" && comp.nodeIds.has(n.id))
-    .map((n) => n.label);
+  const labels = graph.nodes.filter((n) => n.kind === "host" && comp.nodeIds.has(n.id)).map((n) => n.label);
   return [...new Set(labels)].sort().slice(0, max);
 }

@@ -36,18 +36,32 @@ describe("parseCloudTrail — action-derived severity", () => {
   });
 
   it("High for disabling CloudTrail logging (defense evasion)", () => {
-    const r = parseCloudTrail(envelope(record({ eventName: "StopLogging", eventSource: "cloudtrail.amazonaws.com", readOnly: false })));
+    const r = parseCloudTrail(
+      envelope(
+        record({ eventName: "StopLogging", eventSource: "cloudtrail.amazonaws.com", readOnly: false }),
+      ),
+    );
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].mitreTechniques).toContain("T1562.008");
   });
 
   it("read-only Describe/Get with no verdict stays Info", () => {
-    const r = parseCloudTrail(envelope(record({ eventName: "DescribeInstances", eventSource: "ec2.amazonaws.com" })));
+    const r = parseCloudTrail(
+      envelope(record({ eventName: "DescribeInstances", eventSource: "ec2.amazonaws.com" })),
+    );
     expect(r.events[0].severity).toBe("Info");
   });
 
   it("a denied call (errorCode) is bumped to at least Medium", () => {
-    const r = parseCloudTrail(envelope(record({ eventName: "DescribeInstances", eventSource: "ec2.amazonaws.com", errorCode: "Client.UnauthorizedOperation" })));
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "DescribeInstances",
+          eventSource: "ec2.amazonaws.com",
+          errorCode: "Client.UnauthorizedOperation",
+        }),
+      ),
+    );
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].description).toContain("[Client.UnauthorizedOperation]");
   });
@@ -56,13 +70,17 @@ describe("parseCloudTrail — action-derived severity", () => {
     const pass = parseCloudTrail(envelope(record({ eventName: "PassRole", readOnly: false })));
     expect(pass.events[0].severity).toBe("Medium");
     expect(pass.events[0].mitreTechniques).toContain("T1098");
-    const fn = parseCloudTrail(envelope(record({ eventName: "CreateFunction", eventSource: "lambda.amazonaws.com", readOnly: false })));
+    const fn = parseCloudTrail(
+      envelope(record({ eventName: "CreateFunction", eventSource: "lambda.amazonaws.com", readOnly: false })),
+    );
     expect(fn.events[0].severity).toBe("Medium");
     expect(fn.events[0].mitreTechniques).toContain("T1648");
   });
 
   it("grades STS GetSessionToken as Low with T1078.004", () => {
-    const r = parseCloudTrail(envelope(record({ eventName: "GetSessionToken", eventSource: "sts.amazonaws.com", readOnly: false })));
+    const r = parseCloudTrail(
+      envelope(record({ eventName: "GetSessionToken", eventSource: "sts.amazonaws.com", readOnly: false })),
+    );
     expect(r.events[0].severity).toBe("Low");
     expect(r.events[0].mitreTechniques).toContain("T1078.004");
   });
@@ -70,29 +88,49 @@ describe("parseCloudTrail — action-derived severity", () => {
 
 describe("parseCloudTrail — console login & root", () => {
   it("a failed ConsoleLogin is Medium (brute force)", () => {
-    const r = parseCloudTrail(envelope(record({
-      eventName: "ConsoleLogin", eventSource: "signin.amazonaws.com", readOnly: false,
-      responseElements: { ConsoleLogin: "Failure" }, errorMessage: "Failed authentication",
-      userIdentity: { type: "IAMUser", userName: "bob" },
-    })));
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "ConsoleLogin",
+          eventSource: "signin.amazonaws.com",
+          readOnly: false,
+          responseElements: { ConsoleLogin: "Failure" },
+          errorMessage: "Failed authentication",
+          userIdentity: { type: "IAMUser", userName: "bob" },
+        }),
+      ),
+    );
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].mitreTechniques).toContain("T1110");
   });
 
   it("a root console login is High and flagged [root]", () => {
-    const r = parseCloudTrail(envelope(record({
-      eventName: "ConsoleLogin", eventSource: "signin.amazonaws.com", readOnly: false,
-      responseElements: { ConsoleLogin: "Success" }, userIdentity: { type: "Root", arn: "arn:aws:iam::123:root" },
-    })));
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "ConsoleLogin",
+          eventSource: "signin.amazonaws.com",
+          readOnly: false,
+          responseElements: { ConsoleLogin: "Success" },
+          userIdentity: { type: "Root", arn: "arn:aws:iam::123:root" },
+        }),
+      ),
+    );
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].description).toContain("[root]");
   });
 
   it("uses the assumed-role issuer as the principal", () => {
-    const r = parseCloudTrail(envelope(record({
-      eventName: "PutBucketPolicy", eventSource: "s3.amazonaws.com", readOnly: false,
-      userIdentity: { type: "AssumedRole", sessionContext: { sessionIssuer: { userName: "AdminRole" } } },
-    })));
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "PutBucketPolicy",
+          eventSource: "s3.amazonaws.com",
+          readOnly: false,
+          userIdentity: { type: "AssumedRole", sessionContext: { sessionIssuer: { userName: "AdminRole" } } },
+        }),
+      ),
+    );
     expect(r.events[0].description).toContain("by AdminRole");
     expect(r.events[0].severity).toBe("High");
   });
@@ -100,21 +138,34 @@ describe("parseCloudTrail — console login & root", () => {
 
 describe("parseCloudTrail — inputs, floor & edges", () => {
   it("reads NDJSON (CloudTrail Lake / Athena)", () => {
-    const text = [record({ eventName: "CreateAccessKey", readOnly: false }), record({ eventName: "GetCallerIdentity" })]
-      .map((o) => JSON.stringify(o)).join("\n");
+    const text = [
+      record({ eventName: "CreateAccessKey", readOnly: false }),
+      record({ eventName: "GetCallerIdentity" }),
+    ]
+      .map((o) => JSON.stringify(o))
+      .join("\n");
     const r = parseCloudTrail(text);
     expect(r.format).toBe("cloudtrail");
     expect(r.events).toHaveLength(2);
   });
 
   it("does not turn an AWS-service caller into an IP IOC", () => {
-    const r = parseCloudTrail(envelope(record({ eventName: "RunInstances", eventSource: "ec2.amazonaws.com", sourceIPAddress: "ec2.amazonaws.com", readOnly: false })));
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "RunInstances",
+          eventSource: "ec2.amazonaws.com",
+          sourceIPAddress: "ec2.amazonaws.com",
+          readOnly: false,
+        }),
+      ),
+    );
     expect(r.iocs.filter((i) => i.type === "ip")).toHaveLength(0);
   });
 
   it("applies a severity floor", () => {
     const text = envelope(
-      record({ eventName: "CreateAccessKey", readOnly: false }),       // High
+      record({ eventName: "CreateAccessKey", readOnly: false }), // High
       record({ eventName: "DescribeInstances", eventSource: "ec2.amazonaws.com" }), // Info
     );
     const r = parseCloudTrail(text, { minSeverity: "Medium" });

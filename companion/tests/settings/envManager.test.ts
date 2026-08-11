@@ -99,13 +99,22 @@ describe("validateEnvUpdates", () => {
       DFIR_DEMO_MODE: "true",
       DFIR_LOG_DIR: "/tmp",
     });
-    expect(rejected).toEqual(expect.arrayContaining([
-      "DFIR_CASES_ROOT", "DFIR_ENV_FILE", "DFIR_ANONYMIZE", "DFIR_ALLOWED_ORIGINS",
-      // The host allow-lists decide which names reach the API at all — writable would mean the
-      // rebinding gate (#280) could be widened from the dashboard.
-      "DFIR_ALLOWED_HOSTS", "DFIR_ALLOWED_HOST_SUFFIXES",
-      "DFIR_HOST", "DFIR_PORT", "DFIR_DEMO_MODE", "DFIR_LOG_DIR",
-    ]));
+    expect(rejected).toEqual(
+      expect.arrayContaining([
+        "DFIR_CASES_ROOT",
+        "DFIR_ENV_FILE",
+        "DFIR_ANONYMIZE",
+        "DFIR_ALLOWED_ORIGINS",
+        // The host allow-lists decide which names reach the API at all — writable would mean the
+        // rebinding gate (#280) could be widened from the dashboard.
+        "DFIR_ALLOWED_HOSTS",
+        "DFIR_ALLOWED_HOST_SUFFIXES",
+        "DFIR_HOST",
+        "DFIR_PORT",
+        "DFIR_DEMO_MODE",
+        "DFIR_LOG_DIR",
+      ]),
+    );
     expect(rejected).toHaveLength(10);
   });
 
@@ -128,10 +137,14 @@ describe("validateEnvUpdates", () => {
   // The key allowlist saw one allowed key and waved it through.
   it("rejects a value carrying a newline that would land a second .env assignment", () => {
     expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\nDFIR_HOST=0.0.0.0" })).toEqual(["DFIR_AI_MODEL"]);
-    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\r\nDFIR_CASES_ROOT=/etc" })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\r\nDFIR_CASES_ROOT=/etc" })).toEqual([
+      "DFIR_AI_MODEL",
+    ]);
     expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\rDFIR_DEMO_MODE=true" })).toEqual(["DFIR_AI_MODEL"]);
     // A NUL is a control character too — rejected, whatever the reader would make of it.
-    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\u0000DFIR_ANONYMIZE=off" })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\u0000DFIR_ANONYMIZE=off" })).toEqual([
+      "DFIR_AI_MODEL",
+    ]);
     // A plain space is NOT a separator: one record, one value. The guard must not reject it.
     expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o preview" })).toEqual([]);
   });
@@ -141,7 +154,7 @@ describe("validateEnvUpdates", () => {
   it("rejects a key carrying a newline even though it starts with a writable prefix", () => {
     const rejected = validateEnvUpdates({ "DFIR_AI_MODEL\nDFIR_HOST": "0.0.0.0" });
     expect(rejected).toHaveLength(1);
-    expect(rejected[0]).not.toContain("\n");   // the reply and the log must not carry the payload
+    expect(rejected[0]).not.toContain("\n"); // the reply and the log must not carry the payload
   });
 
   it("rejects non-string values rather than stringifying them into the file", () => {
@@ -153,13 +166,15 @@ describe("validateEnvUpdates", () => {
 
   // The guard must not cost anyone a real secret: API keys and URLs are full of punctuation.
   it("still accepts ordinary secrets containing punctuation, spaces and '='", () => {
-    expect(validateEnvUpdates({
-      DFIR_VT_KEY: "sk-live_A1b2/C3+d4=e5==",
-      DFIR_IRIS_URL: "https://iris.example.test:8443/api?x=1&y=2#frag",
-      DFIR_NOTIFY_SLACK_WEBHOOK: "https://hooks.slack.com/services/T0/B0/xXyYzZ",
-      DFIR_AI_SYNTH_MODEL: "claude sonnet 4.5 (preview)",
-      DFIR_SMTP_PASSWORD: "hunter2 — don't tell",
-    })).toEqual([]);
+    expect(
+      validateEnvUpdates({
+        DFIR_VT_KEY: "sk-live_A1b2/C3+d4=e5==",
+        DFIR_IRIS_URL: "https://iris.example.test:8443/api?x=1&y=2#frag",
+        DFIR_NOTIFY_SLACK_WEBHOOK: "https://hooks.slack.com/services/T0/B0/xXyYzZ",
+        DFIR_AI_SYNTH_MODEL: "claude sonnet 4.5 (preview)",
+        DFIR_SMTP_PASSWORD: "hunter2 — don't tell",
+      }),
+    ).toEqual([]);
   });
 
   it("reports a long malformed key truncated, not in full", () => {
@@ -170,10 +185,10 @@ describe("validateEnvUpdates", () => {
 
   it("rejects a mix of allowed and denied keys, reporting only the denied ones", () => {
     const rejected = validateEnvUpdates({
-      DFIR_VISION_MODEL: "gpt-4o-mini",   // ok
-      DFIR_CASES_ROOT: "/evil",           // denied
-      DFIR_SHODAN_KEY: "abc",              // ok
-      DFIR_ENV_FILE: "/evil.env",          // denied
+      DFIR_VISION_MODEL: "gpt-4o-mini", // ok
+      DFIR_CASES_ROOT: "/evil", // denied
+      DFIR_SHODAN_KEY: "abc", // ok
+      DFIR_ENV_FILE: "/evil.env", // denied
     });
     expect(rejected).toEqual(["DFIR_CASES_ROOT", "DFIR_ENV_FILE"]);
   });

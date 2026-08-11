@@ -6,7 +6,11 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
 import { loadOrCreateInstanceSecret } from "../../src/analysis/instanceSecret.js";
-import { verifyCustodyManifest, CUSTODY_MANIFEST_FILENAME, type CustodyManifest } from "../../src/analysis/custodyManifest.js";
+import {
+  verifyCustodyManifest,
+  CUSTODY_MANIFEST_FILENAME,
+  type CustodyManifest,
+} from "../../src/analysis/custodyManifest.js";
 import { importEncryptedCase } from "../../src/analysis/caseExportArchive.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
@@ -21,7 +25,11 @@ beforeEach(async () => {
   cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(cases);
-  app = createApp(cases, { custodyStore: new CustodyStore(cases), stateStore, reportWriter: new ReportWriter(cases, stateStore) });
+  app = createApp(cases, {
+    custodyStore: new CustodyStore(cases),
+    stateStore,
+    reportWriter: new ReportWriter(cases, stateStore),
+  });
   await cases.saveImport("c1", "0001_evidence.csv", "ts,message\n2026-01-01T00:00:00Z,hi\n");
 });
 
@@ -51,7 +59,9 @@ describe("custody manifest in the report", () => {
     expect(res.status).toBe(200);
 
     const raw = await readFile(join(cases.reportsDir("c1"), CUSTODY_MANIFEST_FILENAME), "utf8");
-    expect(verifyCustodyManifest(JSON.parse(raw) as CustodyManifest, loadOrCreateInstanceSecret(root))).toBe(true);
+    expect(verifyCustodyManifest(JSON.parse(raw) as CustodyManifest, loadOrCreateInstanceSecret(root))).toBe(
+      true,
+    );
   });
 });
 

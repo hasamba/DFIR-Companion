@@ -51,7 +51,10 @@ export interface AwsParseResult {
   format: string; // "cloudtrail" | "empty"
 }
 
-interface ActionDef { severity: Severity; mitre?: string[]; }
+interface ActionDef {
+  severity: Severity;
+  mitre?: string[];
+}
 
 // Curated high-risk CloudTrail actions → derived severity + MITRE (keys = lowercased eventName).
 const AWS_ACTIONS: Record<string, ActionDef> = {
@@ -109,20 +112,30 @@ const AWS_ACTIONS: Record<string, ActionDef> = {
   importkeypair: { severity: "Medium", mitre: ["T1098.004"] },
 };
 
-function truthy(v: unknown): boolean { return v === true || /^(true|1|yes)$/i.test(str(v).trim()); }
+function truthy(v: unknown): boolean {
+  return v === true || /^(true|1|yes)$/i.test(str(v).trim());
+}
 
 // The acting principal: IAM user name, the assumed-role's issuer, the ARN, or the type.
-function principal(ui: unknown): { name: string; isRoot: boolean; id?: string; type?: string; arn?: string; accountId?: string } {
+function principal(ui: unknown): {
+  name: string;
+  isRoot: boolean;
+  id?: string;
+  type?: string;
+  arn?: string;
+  accountId?: string;
+} {
   if (!isObject(ui)) return { name: str(ui), isRoot: false };
   const type = str(getCI(ui, "type"));
   const arn = str(getCI(ui, "arn"));
   const id = str(getCI(ui, "principalId")) || str(getCI(ui, "userId"));
   const accountId = str(getCI(ui, "accountId"));
-  const name = str(getCI(ui, "userName"))
-    || str(getPath(ui, "sessionContext.sessionIssuer.userName"))
-    || arn
-    || str(getCI(ui, "invokedBy"))
-    || type;
+  const name =
+    str(getCI(ui, "userName")) ||
+    str(getPath(ui, "sessionContext.sessionIssuer.userName")) ||
+    arn ||
+    str(getCI(ui, "invokedBy")) ||
+    type;
   return {
     name,
     isRoot: /^root$/i.test(type),
@@ -159,7 +172,9 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
   if (/^consolelogin$/i.test(name)) {
     const res = str(getPath(rec, "responseElements.ConsoleLogin"));
     if (/fail/i.test(res) || /failed authentication/i.test(str(getCI(rec, "errorMessage")))) {
-      severity = worst(severity, "Medium"); if (!mitre.includes("T1110")) mitre.push("T1110"); failed = true;
+      severity = worst(severity, "Medium");
+      if (!mitre.includes("T1110")) mitre.push("T1110");
+      failed = true;
     }
     if (isRoot) severity = worst(severity, "High");
   }
@@ -191,13 +206,15 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       action: name,
       outcome: failed ? "failed" : "success",
     },
-    ...(who ? {
-      actor: {
-        kind: "cloud_principal",
-        name: who,
-        ...(identity.id ? { id: identity.id } : {}),
-      },
-    } : {}),
+    ...(who
+      ? {
+          actor: {
+            kind: "cloud_principal",
+            name: who,
+            ...(identity.id ? { id: identity.id } : {}),
+          },
+        }
+      : {}),
     ...(resource ? { target: { kind: "other", name: resource } } : {}),
     ...(ip ? { network: { source: { address: ip } } } : {}),
     cloud: {
@@ -210,11 +227,13 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {
-      rawRecords: [{
-        source: "aws-cloudtrail",
-        locator: `record:${recordIndex}`,
-        ...(str(getCI(rec, "eventID")).trim() ? { recordId: str(getCI(rec, "eventID")).trim() } : {}),
-      }],
+      rawRecords: [
+        {
+          source: "aws-cloudtrail",
+          locator: `record:${recordIndex}`,
+          ...(str(getCI(rec, "eventID")).trim() ? { recordId: str(getCI(rec, "eventID")).trim() } : {}),
+        },
+      ],
     },
     producer: {
       importer: "aws-cloudtrail",
@@ -237,7 +256,9 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
 
   return {
     timestamp: normalizedTimestamp,
-    description, severity, mitre,
+    description,
+    severity,
+    mitre,
     canonical,
     aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}`.toLowerCase().slice(0, 400),
     sources: ["AWS CloudTrail"],

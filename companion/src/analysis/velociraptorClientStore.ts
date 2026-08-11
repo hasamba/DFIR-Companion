@@ -11,7 +11,7 @@ import type { VeloClientRecord } from "../integrations/velociraptor/velociraptor
 // across cases; lives in a subdir beside cases/ (Windows drive-root-safe, like bundles/whitelist/nsrl).
 
 export interface VeloClientInventory {
-  updatedAt: string;                 // ISO time of the last refresh ("" when never refreshed)
+  updatedAt: string; // ISO time of the last refresh ("" when never refreshed)
   clients: VeloClientRecord[];
 }
 

@@ -4,8 +4,13 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 
 function ev(over: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    timestamp: "2026-05-26T12:25:36Z", description: "desc", severity: "Info",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over,
+    timestamp: "2026-05-26T12:25:36Z",
+    description: "desc",
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...over,
   };
 }
 
@@ -21,11 +26,23 @@ describe("backfillHighSeverityFindings", () => {
   it("auto-creates a finding for an uncovered Critical/High event", () => {
     const state = emptyState("c1");
     state.forensicTimeline.push(
-      ev({ id: "e1", severity: "Critical", description: "Microsoft Defender flagged Rubeus.exe", mitreTechniques: ["T1003"], sourceScreenshots: ["s1.webp"] }),
+      ev({
+        id: "e1",
+        severity: "Critical",
+        description: "Microsoft Defender flagged Rubeus.exe",
+        mitreTechniques: ["T1003"],
+        sourceScreenshots: ["s1.webp"],
+      }),
     );
     const out = backfillHighSeverityFindings(state, new Set(["e1"]), "2026-05-26T13:00:00Z");
     expect(out.findings).toHaveLength(1);
-    expect(out.findings[0]).toMatchObject({ id: "f-auto-e1", severity: "Critical", status: "open", mitreTechniques: ["T1003"], sourceScreenshots: ["s1.webp"] });
+    expect(out.findings[0]).toMatchObject({
+      id: "f-auto-e1",
+      severity: "Critical",
+      status: "open",
+      mitreTechniques: ["T1003"],
+      sourceScreenshots: ["s1.webp"],
+    });
     expect(out.findings[0].title).toBe("Microsoft Defender flagged Rubeus.exe");
     // A deterministic backfill is maximally confident — it's a graded artifact row, not a guess.
     expect(out.findings[0].confidence).toBe(100);
@@ -36,9 +53,7 @@ describe("backfillHighSeverityFindings", () => {
 
   it("mentions tool corroboration in confidenceReason when 2+ distinct sources back the event", () => {
     const state = emptyState("c1");
-    state.forensicTimeline.push(
-      ev({ id: "e1", severity: "Critical", sources: ["Velociraptor", "THOR"] }),
-    );
+    state.forensicTimeline.push(ev({ id: "e1", severity: "Critical", sources: ["Velociraptor", "THOR"] }));
     const out = backfillHighSeverityFindings(state, new Set(["e1"]), "t");
     expect(out.findings[0].confidenceReason).toMatch(/2 distinct tools/);
   });
