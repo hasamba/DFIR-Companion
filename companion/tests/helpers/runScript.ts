@@ -1,0 +1,64 @@
+// Running one of scripts/*.mjs from a test, with the child's stderr CAPTURED rather than echoed.
+//
+// execFileSync's default `stdio` writes the child's stderr to the PARENT's stderr as well as into
+// the thrown error. Every negative test — the ones whose whole point is that a script refuses —
+// therefore printed that refusal into the test run's own output. Four did, on every run, for
+// months:
+//
+//   [inventory] FAIL: sections cover 2 lines but the inline script is 4. …
+//   [split] REFUSING: 1 statement(s) start inside 3-4 and end past it (3-5). …
+//   [split] REFUSING: 1 guard stanza(s) inside 3-4 initialise OTHER features (4 initSomethingElse). …
+//   [split] REFUSING: 1 guard stanza(s) inside 3-4 initialise OTHER features (4 initOther). …
+//
+// All four came from throwaway fixtures built inside the tests, and every test passed. That
+// combination is the defect: a green run that prints FAIL teaches people to read past the word
+// FAIL, so the day one of these guards fires against the real dashboard it scrolls by as more of
+// the usual noise. A check nobody will believe has stopped being a check.
+//
+// Setting `stdio` explicitly is the whole fix — `error.stderr` is populated either way, so
+// assertions on the refusal text are unaffected. These helpers exist so that stays true: the four
+// call sites that leaked were four copies of one options object, and a fifth copy is how it comes
+// back. childStderr.test.ts enforces the invariant rather than this file — a spawn that sets its
+// own piping `stdio` is equally correct — so a test with a good reason to call execFileSync
+// directly is not forced through here.
+import { execFileSync } from "node:child_process";
+
+/**
+ * Run `node <script> <args>` and return its stdout. Throws if the script exits non-zero.
+ *
+ * The stdio triple is written out literally rather than hoisted to a shared constant: stderr into
+ * the result, never onto the parent's, and stdin closed because none of these scripts read it.
+ * childStderr.test.ts reads this value to decide whether the call is safe, and it cannot follow an
+ * identifier — a spread of a constant would be reported as unreadable, which is the correct
+ * behaviour for a guard that has to be conservative and a silly thing to make it do here.
+ */
+export function runScript(script: string, args: string[]): string {
+  return execFileSync(process.execPath, [script, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+/** Run it and parse stdout as JSON — the `--json` shape all of these scripts speak. */
+export function runScriptJson<T>(script: string, args: string[]): T {
+  return JSON.parse(runScript(script, args)) as T;
+}
+
+/**
+ * Run it expecting a REFUSAL, returning the exit status and the stderr it refused with.
+ *
+ * Throws when the script SUCCEEDS, so a guard that has quietly stopped guarding fails the test
+ * rather than skipping its assertions inside a catch block that never runs.
+ */
+export function runScriptExpectingFailure(
+  script: string,
+  args: string[],
+): { status: number; stderr: string } {
+  try {
+    runScript(script, args);
+  } catch (e) {
+    const err = e as { status?: number; stderr?: string };
+    return { status: err.status ?? 0, stderr: err.stderr ?? "" };
+  }
+  throw new Error(`expected \`${script} ${args.join(" ")}\` to exit non-zero, but it succeeded`);
+}
