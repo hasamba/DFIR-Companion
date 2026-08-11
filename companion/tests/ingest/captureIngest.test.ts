@@ -132,7 +132,7 @@ describe("ingestCapture", () => {
     expect(landed, "the other must land").toBeDefined();
     // The only copy on disk: it has to be analyzed, not skipped as a duplicate of a frame that
     // never landed.
-    if (landed.status === "fulfilled") expect(landed.value.isDuplicate).toBe(false);
+    if (landed?.status === "fulfilled") expect(landed.value.isDuplicate).toBe(false);
 
     // And it is what the next identical frame dedupes against.
     const third = await ingestCapture(store, payload({ imageBase64: img }));
