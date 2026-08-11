@@ -181,7 +181,9 @@ established, and it works the same way.
   allowed edges. Files are listed by exact path, not by count, so deleting one file never creates
   room for a different one.
 - `scripts/boundary-violations.json` records the **39 violations** that break the map today, as
-  concrete `source-file → target-file [kind]` entries spanning 9 domain edges. Not domain pairs,
+  concrete `source-file → target-file [kind]` entries spanning 27 domain edges — an edge being one
+  ordered `source-domain → target-domain` pair, resolved through this map, so the number is
+  reproducible rather than remembered. Not domain pairs,
   and not counts: an already-recorded edge must not become a licence to add more imports along it.
   The `[kind]` suffix is `runtime` or `type`, and it is part of the key so that a grandfathered
   type-only edge turning into a runtime one reads as a **new** violation rather than passing
@@ -207,14 +209,14 @@ Every entry is small. Grouped by domain edge, with the shape of the problem:
 
 | Files | Edge | What it is |
 |---|---|---|
-| 4 | `detect -> integrations` | five detectors importing `integrations/iris/mitreTactics.ts` for ATT&CK tactic names — reference data filed under a push client. Moving it to `intel/` clears this edge and most of the next two. |
-| 3 | `intel -> integrations` | same `mitreTactics.ts` import |
+| ~~4~~ 0 | `detect -> integrations` | **CLEARED.** Five detectors importing `integrations/iris/mitreTactics.ts` for ATT&CK tactic names — reference data filed under a push client. The predicted fix was the one that worked: the file moved to `analysis/` (intel), and IRIS now imports it downward like any other consumer. |
+| ~~3~~ 0 | `intel -> integrations` | **CLEARED** by the same move — it was the same `mitreTactics.ts` import. |
 | 3 | `timeline -> detect` | `correlate.ts` and `stateMerge.ts` reaching for `chainSignature`, `exfilCorrelate`, `initialAccess` |
 | 3 | `case -> integrations` | Velociraptor stores importing the API client's types |
 | 3 | `intel -> workflow` | `playbook.ts` and `incidentTypes.ts` importing collection directives and templates |
 | 3 | `workflow -> ai` | type-only back-references from `cockpit.ts` and `priorWork.ts`; see the tier note above |
 | 2 each | `case -> ingest`, `intel -> detect`, `timeline -> findings`, `timeline -> ai`, `routes -> composition` | `routes -> composition` is the two `AppOptions` type imports |
-| 1 each | `privacy -> detect`, `privacy -> findings`, `privacy -> ingest`, `case -> detect`, `case -> ai`, `case -> workflow`, `case -> enrichment`, `timeline -> intel`, `timeline -> workflow`, `findings -> ingest`, `detect -> ingest`, `intel -> ingest`, `intel -> findings`, `workflow -> reports`, `workflow -> integrations`, `shared -> findings`, `storage -> privacy`, `auth -> case`, `providers -> ai` | `shared -> findings` is `stateTypes.ts` importing an `IocExcludeRule` type — the event vocabulary should not know about IOC exclusion rules, and it is the one entry that is a genuine modelling wart rather than a misfiling |
+| 1 each | `privacy -> detect`, `privacy -> findings`, `privacy -> ingest`, `case -> detect`, `case -> ai`, `case -> workflow`, `case -> enrichment`, `timeline -> intel`, `timeline -> workflow`, `findings -> ingest`, `detect -> ingest`, `intel -> ingest`, `intel -> findings`, `workflow -> reports`, ~~`workflow -> integrations`~~ (cleared — the third `mitreTactics.ts` importer), `shared -> findings`, `storage -> privacy`, `auth -> case`, `providers -> ai` | `shared -> findings` is `stateTypes.ts` importing an `IocExcludeRule` type — the event vocabulary should not know about IOC exclusion rules, and it is the one entry that is a genuine modelling wart rather than a misfiling |
 
 ### Known structural debt
 
