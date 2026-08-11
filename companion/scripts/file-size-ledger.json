@@ -8,8 +8,5 @@
   "public/dashboard.html#inline-js": 1964,
   "public/js/dashboard-velo-triage.js": 815,
   "reports/markdown.ts": 1461,
-  "routes/caseLifecycle.ts": 1204,
-  "routes/import.ts": 1766,
-  "routes/mcp.ts": 845,
-  "routes/velociraptor.ts": 888
+  "routes/import.ts": 1766
 }
