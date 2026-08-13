@@ -527,6 +527,12 @@ export class AnalysisPipeline {
     return ingest.importOkta(this.importCtx, ...args);
   }
 
+  importGoogleWorkspace(
+    ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
+  ): Promise<InvestigationState> {
+    return ingest.importGoogleWorkspace(this.importCtx, ...args);
+  }
+
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     return ingest.importAws(this.importCtx, ...args);
   }

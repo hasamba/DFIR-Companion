@@ -3,6 +3,7 @@ import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudAct
 import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
 import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
+import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
 import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -105,6 +106,59 @@ export async function importOkta(
     threadsClosed: [],
     timelineNote:
       `Okta import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import a Google Workspace Admin SDK Reports export. Deterministic (no AI call). One activity
+// record can carry several events, so the parser fans them out — `total` counts records read while
+// the timeline gets one row per event.
+export async function importGoogleWorkspace(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "gw") so ids never collide
+    importedAt: string;
+    gws?: GoogleWorkspaceImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseGoogleWorkspaceReport(text, opts.gws);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Google Workspace", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["Google Workspace"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Google Workspace import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

@@ -70,8 +70,12 @@ export const COLLECTION_STEPS: readonly CollectionStepDef[] = [
     satisfiedBy: ["Zeek", "Suricata", "Snort", "Security Onion", "Cisco ASA", "Arkime", "Wireshark"],
   },
   { id: "web-logs", label: "Web server access logs", satisfiedBy: ["Web Access Log"] },
-  { id: "m365", label: "Microsoft 365 / mailbox audit", satisfiedBy: ["Microsoft 365", "Email"] },
-  { id: "identity", label: "Identity sign-in logs", satisfiedBy: ["Entra ID", "Okta"] },
+  {
+    id: "m365",
+    label: "Microsoft 365 / mailbox audit",
+    satisfiedBy: ["Microsoft 365", "Email", "Google Workspace"],
+  },
+  { id: "identity", label: "Identity sign-in logs", satisfiedBy: ["Entra ID", "Okta", "Google Workspace"] },
   {
     id: "cloud-audit",
     label: "Cloud control-plane audit",

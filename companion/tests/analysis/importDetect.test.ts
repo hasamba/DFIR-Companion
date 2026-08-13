@@ -112,6 +112,23 @@ describe("detectImportKind — JSON formats", () => {
       "okta",
     );
   });
+  it("gws: Admin SDK Reports activity", () => {
+    expect(
+      detectImportKind(
+        "gws.json",
+        j({
+          items: [
+            {
+              kind: "admin#reports#activity",
+              id: { time: "2026-05-02T10:00:00.000Z", applicationName: "login" },
+              actor: { email: "jdoe@example.invalid" },
+              events: [{ type: "login", name: "login_success" }],
+            },
+          ],
+        }),
+      ),
+    ).toBe("gws");
+  });
   it("chainsaw: hunt output with document+rule", () => {
     expect(
       detectImportKind(

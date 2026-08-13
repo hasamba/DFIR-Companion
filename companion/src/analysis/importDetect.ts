@@ -36,6 +36,7 @@ export type ImportKind =
   | "cybertriage"
   | "m365"
   | "okta"
+  | "gws"
   | "aws"
   | "cloud"
   | "k8s"
@@ -183,6 +184,28 @@ function isM365(s: Row): boolean {
 function isOkta(s: Row): boolean {
   if (!getCI(s, "eventType") || !getCI(s, "published")) return false;
   return !!getCI(s, "actor") || !!getCI(s, "outcome") || !!getCI(s, "legacyEventType");
+}
+// Google Workspace Admin SDK Reports activity: the id{time,applicationName} envelope plus an
+// events array. Checked against the envelope, not `actor`, which other Google products also send.
+function isWorkspaceActivityRow(s: Row): boolean {
+  const id = getCI(s, "id");
+  if (!isObject(id)) return false;
+  const row = id as Row;
+  if (!getCI(row, "time") || !getCI(row, "applicationName")) return false;
+  return Array.isArray(getCI(s, "events")) || String(getCI(s, "kind") ?? "").includes("reports#activity");
+}
+
+// ROOT-AWARE ON PURPOSE. The Reports API wraps its rows in `{ items: [...] }`, and `items` is not in
+// CONTAINER_KEYS — widening that list would change how every other format samples. Left unhandled
+// the wrapper reads as an object whose values are arrays, which isVelociraptor claims as an artifact
+// map, so the check looks at the envelope itself as well as the sampled row.
+function isGoogleWorkspace(s: Row, root: unknown): boolean {
+  if (isWorkspaceActivityRow(s)) return true;
+  if (!isObject(root)) return false;
+  const items = getCI(root as Row, "items");
+  if (!Array.isArray(items)) return false;
+  const first = firstObj(items);
+  return !!first && isWorkspaceActivityRow(first);
 }
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
@@ -428,6 +451,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isGcp(sample)) return "cloud";
   if (isAzure(sample)) return "cloud";
   if (isOkta(sample)) return "okta";
+  if (isGoogleWorkspace(sample, root)) return "gws";
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
