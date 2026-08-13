@@ -1,5 +1,5 @@
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
-import { buildHostAliasIndex, findNearDuplicates } from "./hostAlias.js";
+import { buildHostAliasIndex, findNearDuplicates, hostMergesFromAssetIds } from "./hostAlias.js";
 import { aggregateHostEvidence, overlayFindingLinks } from "./hostScopeAggregate.js";
 import { buildHostScopeLedger, type HostScopeLedger } from "./hostScope.js";
 import type { HostScopeStore } from "./hostScopeStore.js";
@@ -41,7 +41,8 @@ export async function loadHostScopeLedger(
   const overrides = sources.assetOverrides ? await sources.assetOverrides.load(caseId) : null;
   const inventory = sources.fleet ? await sources.fleet.load() : { updatedAt: "", clients: [] };
 
-  const index = buildHostAliasIndex(inventory.clients, overrides?.merges ?? {});
+  // overrides.merges is keyed by asset id, not host name — see hostMergesFromAssetIds.
+  const index = buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));
   const evidence = await aggregateHostEvidence(sources.superTimeline, caseId, index);
   // The super-timeline is never synthesized, so it carries no finding links. Without this overlay a
   // host with a Critical finding against it still derives as `unknown` — see overlayFindingLinks.

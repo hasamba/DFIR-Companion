@@ -87,6 +87,22 @@ export function buildHostAliasIndex(
   return index;
 }
 
+// Analyst merges arrive from the asset graph, which keys them by asset id — `${type}:${name}`,
+// e.g. "host:ws-042.corp.local" — not by host name. Handed over unwrapped they match no host the
+// ledger knows, so every merge is a silent no-op and the machine the analyst just declared to be
+// one stays two rows. Only host-to-host merges are an identity statement about a host: folding a
+// host into an account says something about ownership, not about which machine this is.
+const HOST_ID_PREFIX = "host:";
+
+export function hostMergesFromAssetIds(merges: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [from, to] of Object.entries(merges)) {
+    if (!from.startsWith(HOST_ID_PREFIX) || !to.startsWith(HOST_ID_PREFIX)) continue;
+    out[from.slice(HOST_ID_PREFIX.length)] = to.slice(HOST_ID_PREFIX.length);
+  }
+  return out;
+}
+
 export function resolveHost(index: HostAliasIndex, raw: string): string {
   const name = canonicalHostName(raw);
   return index.canonicalOf.get(name) ?? name;

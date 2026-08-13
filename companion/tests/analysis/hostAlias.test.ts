@@ -2,9 +2,41 @@ import { describe, it, expect } from "vitest";
 import {
   canonicalHostName,
   buildHostAliasIndex,
+  hostMergesFromAssetIds,
   resolveHost,
   findNearDuplicates,
 } from "../../src/analysis/hostAlias.js";
+
+// AssetOverridesStore.mergeAsset persists asset ids ("host:ws-042.corp.local"), not host names.
+// Fed straight to buildHostAliasIndex those keys match nothing, so every analyst merge was a
+// silent no-op and merged machines stayed split across two rows in the ledger and the report.
+describe("hostMergesFromAssetIds", () => {
+  it("unwraps host asset ids into host names", () => {
+    expect(hostMergesFromAssetIds({ "host:ws-042.corp.local": "host:ws-042.example.invalid" })).toEqual({
+      "ws-042.corp.local": "ws-042.example.invalid",
+    });
+  });
+
+  it("ignores merges that are not host-to-host", () => {
+    expect(
+      hostMergesFromAssetIds({
+        "account:svc-backup": "account:svc-backup@corp",
+        "host:ws-042": "account:ws-042",
+        "service:sshd": "service:ssh",
+      }),
+    ).toEqual({});
+  });
+
+  it("applies a persisted merge end to end", () => {
+    const index = buildHostAliasIndex(
+      [{ clientId: "C.1", hostname: "ws-042", fqdn: "ws-042.corp.local" }],
+      hostMergesFromAssetIds({ "host:ws-042.corp.local": "host:ws-042.example.invalid" }),
+    );
+    expect(resolveHost(index, "ws-042.corp.local")).toBe("ws-042.example.invalid");
+    expect(resolveHost(index, "ws-042")).toBe("ws-042.example.invalid");
+    expect(resolveHost(index, "C.1")).toBe("ws-042.example.invalid");
+  });
+});
 
 describe("canonicalHostName", () => {
   it("lowercases and trims", () => {
