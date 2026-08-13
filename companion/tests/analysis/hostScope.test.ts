@@ -4,6 +4,7 @@ import {
   evidenceFingerprint,
   emptyHostFingerprint,
 } from "../../src/analysis/hostScope.js";
+import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import type { HostEvidence, HostEvidenceMap } from "../../src/analysis/hostScopeAggregate.js";
 import type { HostScopeDecision } from "../../src/analysis/hostScopeStore.js";
 
@@ -185,5 +186,62 @@ describe("coverage figures", () => {
 
   it("reports no fleet figure when there is no snapshot", () => {
     expect(ledgerOf(new Map([["ws-042", evidence()]])).fleet).toBeNull();
+  });
+});
+
+// An analyst merge re-points a host's canonical identity. Evidence is aggregated through the alias
+// index, so it lands on the merged name — the fleet roster and the decision log must be read through
+// the same index or the same machine splits into two rows, and a clearance recorded against the
+// pre-merge spelling detaches from the host it was granted for.
+describe("alias merges", () => {
+  const MERGE = { "ws-042.corp.local": "ws-042.example.invalid" };
+  const CLIENTS = [{ clientId: "C.1", hostname: "ws-042", fqdn: "ws-042.corp.local" }];
+
+  function mergedLedger(decisions: HostScopeDecision[] = []) {
+    return buildHostScopeLedger({
+      evidence: new Map([["ws-042.example.invalid", evidence()]]),
+      decisions,
+      window: WINDOW,
+      caseTactics: [],
+      clients: CLIENTS,
+      fleetSnapshotAt: "2026-08-12T00:00:00Z",
+      nearDuplicates: [],
+      aliasIndex: buildHostAliasIndex(CLIENTS, MERGE),
+    });
+  }
+
+  it("keeps a merged host as one row instead of splitting it across both spellings", () => {
+    const ledger = mergedLedger();
+    expect(ledger.hosts.map((h) => h.name)).toEqual(["ws-042.example.invalid"]);
+    expect(ledger.counts.unknown).toBe(1);
+  });
+
+  it("counts the merged host as collected against the fleet", () => {
+    expect(mergedLedger().fleet).toEqual({
+      enrolled: 1,
+      collected: 1,
+      snapshotAt: "2026-08-12T00:00:00Z",
+    });
+  });
+
+  it("keeps a clearance recorded against the pre-merge spelling attached to the host", () => {
+    const decision: HostScopeDecision = {
+      host: "ws-042.corp.local",
+      from: "unknown",
+      to: "cleared",
+      reason: "full coverage",
+      analyst: "a.analyst@example.invalid",
+      at: "2026-08-13T09:41:00Z",
+      basis: {
+        sources: ["Microsoft Defender"],
+        windowCovered: true,
+        tacticsCovered: [],
+        evidenceFingerprint: evidenceFingerprint(evidence(), WINDOW, []),
+      },
+    };
+    const ledger = mergedLedger([decision]);
+    expect(ledger.hosts).toHaveLength(1);
+    expect(ledger.hosts[0].effectiveStatus).toBe("cleared");
+    expect(ledger.counts.cleared).toBe(1);
   });
 });

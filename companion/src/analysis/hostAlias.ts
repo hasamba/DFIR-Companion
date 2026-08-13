@@ -58,10 +58,26 @@ export function buildHostAliasIndex(
     if (client.clientId) link(index, canonicalHostName(client.clientId), canonical);
   }
 
+  // Merges chain (a→b, b→c) and the overrides record carries them in the order the analyst made
+  // them, which need not be the order of the chain. Applying them as they come would leave `a` at
+  // `b` when b→c was recorded first, so each source is walked to the end of its chain — the same
+  // resolution assetOverrides.resolveCanonical performs, which is where these merges come from.
+  const chain = new Map<string, string>();
   for (const [from, to] of Object.entries(merges)) {
     const source = canonicalHostName(from);
     const target = canonicalHostName(to);
-    if (!source || !target) continue;
+    if (source && target) chain.set(source, target);
+  }
+
+  for (const source of chain.keys()) {
+    let target = source;
+    const walked = new Set<string>([source]);
+    // A cycle would spin forever; stop at its entry and leave the identity where it stands.
+    while (chain.has(target) && !walked.has(chain.get(target)!)) {
+      target = chain.get(target)!;
+      walked.add(target);
+    }
+    if (target === source) continue;
     // Re-point everything that already resolved to `source`, then the source itself.
     for (const alias of index.aliasesOf.get(source) ?? []) link(index, alias, target);
     index.aliasesOf.delete(source);

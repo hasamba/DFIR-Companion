@@ -55,5 +55,6 @@ export async function loadHostScopeLedger(
     clients: inventory.clients,
     fleetSnapshotAt: inventory.updatedAt,
     nearDuplicates: findNearDuplicates(index, [...evidence.keys()]),
+    aliasIndex: index,
   });
 }

@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import type { IrisTactic } from "./mitreTactics.js";
-import { canonicalHostName, type FleetClient, type NearDuplicate } from "./hostAlias.js";
+import {
+  canonicalHostName,
+  resolveHost,
+  type FleetClient,
+  type HostAliasIndex,
+  type NearDuplicate,
+} from "./hostAlias.js";
 import type { HostEvidence, HostEvidenceMap } from "./hostScopeAggregate.js";
 import { evaluateEligibility, type Eligibility } from "./hostScopeEligibility.js";
 import type { HostScopeDecision, HostScopeStatus } from "./hostScopeStore.js";
@@ -51,6 +57,9 @@ export interface BuildHostScopeInput {
   clients: readonly FleetClient[];
   fleetSnapshotAt: string;
   nearDuplicates: NearDuplicate[];
+  // The same index the evidence was aggregated through. Omitted, every name is read literally —
+  // which is only safe when nothing has been merged, so callers holding an index must pass it.
+  aliasIndex?: HostAliasIndex;
 }
 
 function emptyEvidence(): HostEvidence {
@@ -147,13 +156,19 @@ function gapOf(row: {
 export function buildHostScopeLedger(input: BuildHostScopeInput): HostScopeLedger {
   const { evidence, decisions, window, caseTactics, clients, fleetSnapshotAt, nearDuplicates } = input;
 
-  const enrolledNames = new Set(
-    clients.map((c) => canonicalHostName(c.fqdn || c.hostname || "")).filter(Boolean),
-  );
+  // Evidence was keyed through the alias index, so the fleet roster and the decision log must be
+  // read through it too. Reading them literally splits a merged host into two rows — one carrying
+  // the evidence, one enrolled-only and `unknown` — which inflates the not-yet-assessed count,
+  // drops the host out of the fleet-collected figure, and detaches any clearance recorded against
+  // the pre-merge spelling. Every one of those lands in the report as a false claim.
+  const canonical = (raw: string): string =>
+    input.aliasIndex ? resolveHost(input.aliasIndex, raw) : canonicalHostName(raw);
+
+  const enrolledNames = new Set(clients.map((c) => canonical(c.fqdn || c.hostname || "")).filter(Boolean));
   // Latest decision per host wins; the full log stays in the store for the report's appendix.
   const latest = new Map<string, HostScopeDecision>();
   for (const decision of [...decisions].sort((a, b) => a.at.localeCompare(b.at))) {
-    latest.set(canonicalHostName(decision.host), decision);
+    latest.set(canonical(decision.host), decision);
   }
 
   // Decision hosts join the roll call even when the case holds no evidence for them: an analyst who

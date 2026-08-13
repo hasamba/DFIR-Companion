@@ -45,6 +45,35 @@ describe("buildHostAliasIndex + resolveHost", () => {
     );
     expect(resolveHost(merged, "WS-042")).toBe("ws-042.example.invalid");
   });
+
+  // Merges chain, and the overrides record carries them in whatever order the analyst made them.
+  // assetOverrides.resolveCanonical walks the chain to its end, so the ledger must too or the same
+  // merge data resolves one way in the asset graph and another here.
+  it("follows a merge chain recorded out of order", () => {
+    const merged = buildHostAliasIndex([{ clientId: "C.1", hostname: "a", fqdn: "a.example.invalid" }], {
+      "b.example.invalid": "c.example.invalid",
+      "a.example.invalid": "b.example.invalid",
+    });
+    expect(resolveHost(merged, "a.example.invalid")).toBe("c.example.invalid");
+    expect(resolveHost(merged, "C.1")).toBe("c.example.invalid");
+  });
+
+  it("ignores a merge cycle rather than looping", () => {
+    const merged = buildHostAliasIndex([], {
+      "a.example.invalid": "b.example.invalid",
+      "b.example.invalid": "a.example.invalid",
+    });
+    expect(resolveHost(merged, "a.example.invalid")).toBeTruthy();
+  });
+
+  it("leaves a host merged onto itself alone", () => {
+    const merged = buildHostAliasIndex(
+      [{ clientId: "C.1", hostname: "ws-9", fqdn: "ws-9.example.invalid" }],
+      { "ws-9.example.invalid": "ws-9.example.invalid" },
+    );
+    expect(resolveHost(merged, "C.1")).toBe("ws-9.example.invalid");
+    expect(resolveHost(merged, "ws-9")).toBe("ws-9.example.invalid");
+  });
 });
 
 describe("findNearDuplicates", () => {
