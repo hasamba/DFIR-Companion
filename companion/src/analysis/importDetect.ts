@@ -39,6 +39,7 @@ export type ImportKind =
   | "gws"
   | "hindsight"
   | "macos"
+  | "leapp"
   | "aws"
   | "cloud"
   | "k8s"
@@ -685,6 +686,11 @@ function isAuditd(text: string): boolean {
 export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
+
+  // iLEAPP/ALEAPP TSV exports carry NO in-content marker — the columns differ per artifact and the
+  // rows are bare values. The filename is the only signal, which is why this is the one detector
+  // keyed on it alone; a mis-named file simply falls through to the CSV/log path as it does today.
+  if (/\b[ia]leapp\b/i.test(filename) && /\.(tsv|csv|txt)$/i.test(filename)) return "leapp";
 
   // A Velociraptor-named export that only matched the generic SIEM fallback is better served by
   // the Velociraptor importer (a more-specific content match — sandbox/hayabusa/… — always wins).

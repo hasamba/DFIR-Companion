@@ -541,6 +541,10 @@ export class AnalysisPipeline {
     return ingest.importMacos(this.importCtx, ...args);
   }
 
+  importLeapp(...args: ImporterArgs<typeof ingest.importLeapp>): Promise<InvestigationState> {
+    return ingest.importLeapp(this.importCtx, ...args);
+  }
+
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     return ingest.importAws(this.importCtx, ...args);
   }

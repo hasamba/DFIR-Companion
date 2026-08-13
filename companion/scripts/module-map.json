@@ -311,6 +311,7 @@
     "memoryImport.ts": "analysis/ingest",
     "memoryNextStep.ts": "analysis/ai",
     "mitreTactics.ts": "analysis/intel",
+    "mobileLeappImport.ts": "analysis/ingest",
     "mobileSummary.ts": "analysis/workflow",
     "networkImport.ts": "analysis/ingest",
     "notebookStore.ts": "analysis/workflow",

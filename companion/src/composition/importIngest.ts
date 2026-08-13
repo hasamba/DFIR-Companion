@@ -191,6 +191,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importHindsight(caseId, text, base));
       case "macos":
         return observe(pipeline.importMacos(caseId, text, base));
+      case "leapp":
+        return observe(pipeline.importLeapp(caseId, text, base));
       case "aws":
         return observe(pipeline.importAws(caseId, text, base));
       case "cloud":

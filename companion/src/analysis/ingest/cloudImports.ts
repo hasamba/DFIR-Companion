@@ -6,6 +6,7 @@ import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
 import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
 import { parseHindsight, type HindsightImportOptions } from "../hindsightImport.js";
 import { parseMacos, type MacosImportOptions } from "../macosImport.js";
+import { parseLeappTsv, type LeappImportOptions } from "../mobileLeappImport.js";
 import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -266,6 +267,60 @@ export async function importMacos(
     threadsClosed: [],
     timelineNote:
       `macOS import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import one iLEAPP/ALEAPP TSV artifact export. Deterministic, no AI call, every row Info. The
+// filename is load-bearing: LEAPP names the file after the artifact, and it is the only place a
+// bare TSV records what it is.
+export async function importLeapp(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "lp") so ids never collide
+    importedAt: string;
+    filename?: string;
+    leapp?: LeappImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseLeappTsv(text, opts.filename ?? opts.label, opts.leapp);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "LEAPP", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["LEAPP"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `LEAPP import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
