@@ -523,6 +523,10 @@ export class AnalysisPipeline {
     return ingest.importM365(this.importCtx, ...args);
   }
 
+  importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
+    return ingest.importOkta(this.importCtx, ...args);
+  }
+
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     return ingest.importAws(this.importCtx, ...args);
   }

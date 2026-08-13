@@ -71,7 +71,7 @@ export const COLLECTION_STEPS: readonly CollectionStepDef[] = [
   },
   { id: "web-logs", label: "Web server access logs", satisfiedBy: ["Web Access Log"] },
   { id: "m365", label: "Microsoft 365 / mailbox audit", satisfiedBy: ["Microsoft 365", "Email"] },
-  { id: "identity", label: "Identity sign-in logs", satisfiedBy: ["Entra ID"] },
+  { id: "identity", label: "Identity sign-in logs", satisfiedBy: ["Entra ID", "Okta"] },
   {
     id: "cloud-audit",
     label: "Cloud control-plane audit",

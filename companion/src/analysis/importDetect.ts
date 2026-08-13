@@ -35,6 +35,7 @@ export type ImportKind =
   | "kape"
   | "cybertriage"
   | "m365"
+  | "okta"
   | "aws"
   | "cloud"
   | "k8s"
@@ -176,6 +177,12 @@ function isM365(s: Row): boolean {
       (!!getCI(s, "riskState") || !!getCI(s, "riskLevelDuringSignIn") || !!getCI(s, "status"))) ||
     (!!getCI(s, "activityDisplayName") && (!!getCI(s, "initiatedBy") || !!getCI(s, "targetResources")))
   );
+}
+// Okta System Log v1: eventType + published is the pair every record carries, and `outcome.result`
+// or an `actor` object confirms it against another product that happens to use those two names.
+function isOkta(s: Row): boolean {
+  if (!getCI(s, "eventType") || !getCI(s, "published")) return false;
+  return !!getCI(s, "actor") || !!getCI(s, "outcome") || !!getCI(s, "legacyEventType");
 }
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
@@ -420,6 +427,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
   if (isAzure(sample)) return "cloud";
+  if (isOkta(sample)) return "okta";
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";

@@ -318,6 +318,7 @@
     "nsrlStore.ts": "analysis/intel",
     "ocrRedact.ts": "analysis/privacy",
     "ocrSearch.ts": "analysis/privacy",
+    "oktaImport.ts": "analysis/ingest",
     "operationalCapacity.ts": "analysis/case",
     "operationalDiagnostics.ts": "analysis/case",
     "operationalHttpMetrics.ts": "analysis/case",

@@ -183,6 +183,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importCybertriage(caseId, text, base));
       case "m365":
         return observe(pipeline.importM365(caseId, text, base));
+      case "okta":
+        return observe(pipeline.importOkta(caseId, text, base));
       case "aws":
         return observe(pipeline.importAws(caseId, text, base));
       case "cloud":
