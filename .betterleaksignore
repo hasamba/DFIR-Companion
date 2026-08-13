@@ -5,10 +5,3 @@ docs/
 *.md
 **/*_test.go
 
-# internal-hostname false positive: "ws-042.prod.local" in a unit-test fixture.
-# hostAlias.test.ts asserts that an analyst-supplied merge re-points a host to a different
-# canonical name; the value is invented for that assertion and names no real host. Scoped to the
-# exact commit, file, rule and line so any OTHER internal-hostname hit still fails the scan.
-# Note: this fingerprint is commit-pinned — rewriting that commit invalidates it, at which point
-# the fixture should be renamed to a documentation-reserved name instead of re-ignored.
-5af45c6112147b87cc208eb0330c0cec825b17a7:companion/tests/analysis/hostAlias.test.ts:internal-hostname:46
