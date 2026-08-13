@@ -130,7 +130,7 @@ function defFor(name: string): EventDef {
 function isWorkspaceActivity(rec: Row): boolean {
   const id = getCI(rec, "id");
   if (!isObject(id)) return false;
-  return Boolean(getCI(id as Row, "time")) && Boolean(getCI(id as Row, "applicationName"));
+  return Boolean(getCI(id, "time")) && Boolean(getCI(id, "applicationName"));
 }
 
 function text(value: unknown): string {
@@ -160,7 +160,7 @@ function targetLabel(event: Row): string {
   const byName = new Map<string, string>();
   for (const p of params) {
     if (!isObject(p)) continue;
-    const row = p as Row;
+    const row = p;
     const name = text(getCI(row, "name"));
     const raw = getCI(row, "value") ?? getCI(row, "multiValue") ?? getCI(row, "boolValue");
     if (!name || raw == null) continue;
@@ -228,14 +228,14 @@ export function parseGoogleWorkspaceReport(
   const mapped: MappedEvent[] = [];
   for (const raw of records) {
     if (!isObject(raw)) continue;
-    const rec = raw as Row;
+    const rec = raw;
     if (!isWorkspaceActivity(rec)) continue;
     const events = getCI(rec, "events");
     // One record, N events — each is its own thing that happened.
     const list = Array.isArray(events) ? events : [];
     for (const e of list) {
       if (!isObject(e)) continue;
-      mapped.push(mapEvent(rec, e as Row, iocSink));
+      mapped.push(mapEvent(rec, e, iocSink));
     }
   }
 

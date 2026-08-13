@@ -20,6 +20,15 @@ import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { looksLikeSyslog } from "./syslogImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
+// Newer-source detectors live in importDetectSources.ts — this file is at the 800-line limit.
+import {
+  isOkta,
+  isGoogleWorkspace,
+  isHindsight,
+  isMacosUnifiedLog,
+  macosQuarantineCsvSig,
+  hindsightCsvSig,
+} from "./importDetectSources.js";
 
 export type ImportKind =
   | "thor"
@@ -182,58 +191,7 @@ function isM365(s: Row): boolean {
     (!!getCI(s, "activityDisplayName") && (!!getCI(s, "initiatedBy") || !!getCI(s, "targetResources")))
   );
 }
-// Okta System Log v1: eventType + published is the pair every record carries, and `outcome.result`
-// or an `actor` object confirms it against another product that happens to use those two names.
-function isOkta(s: Row): boolean {
-  if (!getCI(s, "eventType") || !getCI(s, "published")) return false;
-  return !!getCI(s, "actor") || !!getCI(s, "outcome") || !!getCI(s, "legacyEventType");
-}
-// Google Workspace Admin SDK Reports activity: the id{time,applicationName} envelope plus an
-// events array. Checked against the envelope, not `actor`, which other Google products also send.
-function isWorkspaceActivityRow(s: Row): boolean {
-  const id = getCI(s, "id");
-  if (!isObject(id)) return false;
-  const row = id as Row;
-  if (!getCI(row, "time") || !getCI(row, "applicationName")) return false;
-  return Array.isArray(getCI(s, "events")) || String(getCI(s, "kind") ?? "").includes("reports#activity");
-}
 
-// ROOT-AWARE ON PURPOSE. The Reports API wraps its rows in `{ items: [...] }`, and `items` is not in
-// CONTAINER_KEYS — widening that list would change how every other format samples. Left unhandled
-// the wrapper reads as an object whose values are arrays, which isVelociraptor claims as an artifact
-// map, so the check looks at the envelope itself as well as the sampled row.
-function isGoogleWorkspace(s: Row, root: unknown): boolean {
-  if (isWorkspaceActivityRow(s)) return true;
-  if (!isObject(root)) return false;
-  const items = getCI(root as Row, "items");
-  if (!Array.isArray(items)) return false;
-  const first = firstObj(items);
-  return !!first && isWorkspaceActivityRow(first);
-}
-// Hindsight browser artifacts: the (type + url + timestamp) triple with Hindsight's own
-// `interpretation`/`profile folder` columns. Requires one of the Hindsight-specific columns so a
-// generic proxy log with a url column is not claimed.
-function isHindsight(s: Row): boolean {
-  if (!getCI(s, "url") && !getCI(s, "URL")) return false;
-  if (!getCI(s, "timestamp") && !getCI(s, "date")) return false;
-  return (
-    getCI(s, "interpretation") != null ||
-    getCI(s, "profile folder") != null ||
-    getCI(s, "profile_folder") != null ||
-    (getCI(s, "type") != null && getCI(s, "profile") != null)
-  );
-}
-// macOS unified log (`log show --style json`): eventMessage plus one of the Apple-specific columns.
-// traceID/machTimestamp/processImagePath are absent from every other JSON feed here.
-function isMacosUnifiedLog(s: Row): boolean {
-  if (!getCI(s, "eventMessage") && !getCI(s, "composedMessage")) return false;
-  return (
-    getCI(s, "processImagePath") != null ||
-    getCI(s, "senderImagePath") != null ||
-    getCI(s, "machTimestamp") != null ||
-    getCI(s, "traceID") != null
-  );
-}
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
   if (
@@ -510,19 +468,6 @@ function detectJson(root: unknown, sample: Row): ImportKind {
 
 const has = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.has(k.toLowerCase()));
 
-// Hindsight CSV export: url + timestamp plus one of its own columns.
-// LSQuarantine CSV dump — the column prefix is unmistakable.
-function macosQuarantineCsvSig(h: Set<string>): boolean {
-  for (const k of h) if (k.startsWith("lsquarantine")) return true;
-  return false;
-}
-function hindsightCsvSig(h: Set<string>): boolean {
-  const has = (k: string) => h.has(k);
-  if (!has("url") || !(has("timestamp") || has("date"))) return false;
-  return (
-    has("interpretation") || has("profile folder") || has("profile_folder") || (has("type") && has("profile"))
-  );
-}
 function m365CsvSig(h: Set<string>): boolean {
   return h.has("auditdata") || (h.has("operations") && h.has("recordtype"));
 }
@@ -687,9 +632,8 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
 
-  // iLEAPP/ALEAPP TSV exports carry NO in-content marker — the columns differ per artifact and the
-  // rows are bare values. The filename is the only signal, which is why this is the one detector
-  // keyed on it alone; a mis-named file simply falls through to the CSV/log path as it does today.
+  // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit
+  // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.
   if (/\b[ia]leapp\b/i.test(filename) && /\.(tsv|csv|txt)$/i.test(filename)) return "leapp";
 
   // A Velociraptor-named export that only matched the generic SIEM fallback is better served by

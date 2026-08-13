@@ -117,6 +117,23 @@ const PREFIX_RULES: ReadonlyArray<readonly [string, EventDef]> = [
   ["app.oauth2.", { severity: "Medium", mitre: ["T1528"] }],
 ];
 
+// Which event types a FAILURE on is credential-access signal. Okta namespaces its types, so the
+// prefixes are the contract: session start/end, the authentication family, and the MFA challenge
+// path. Everything else (policy, app, token, group, user lifecycle) can fail for a hundred
+// operational reasons that have nothing to do with guessing a password.
+const AUTH_EVENT_PREFIXES = [
+  "user.session.",
+  "user.authentication.",
+  "user.mfa.attempt",
+  "user.mfa.factor.verify",
+  "system.push.send_factor_verify",
+] as const;
+
+function isAuthEvent(eventType: string): boolean {
+  const key = eventType.trim().toLowerCase();
+  return AUTH_EVENT_PREFIXES.some((p) => key.startsWith(p));
+}
+
 function defFor(eventType: string): EventDef {
   const key = eventType.trim().toLowerCase();
   const exact = OKTA_EVENTS[key];
@@ -161,9 +178,12 @@ function mapEvent(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const def = defFor(eventType);
   let severity = def.severity;
   const mitre = [...(def.mitre ?? [])];
-  // A failure is a different event from a success: a denied login is brute-force signal, whereas a
-  // successful one is only notable if the operation itself is. Never lower a derived severity.
-  if (failed) {
+  // A failure is a different event from a success, but only an AUTHENTICATION failure is
+  // brute-force signal. Tagging every failed operation T1110 reported a rejected policy edit or a
+  // failed provisioning call as password guessing, which is a different claim about the attacker
+  // entirely. Non-auth failures keep the [FAILED] annotation and their own derived severity — they
+  // are still worth reading, just not as credential access.
+  if (failed && isAuthEvent(eventType)) {
     if (severity === "Info") severity = "Medium";
     if (!mitre.includes("T1110")) mitre.push("T1110");
   }
@@ -210,7 +230,7 @@ export function parseOktaSystemLog(input: string, opts: OktaImportOptions = {}):
   const mapped: MappedEvent[] = [];
   for (const raw of records) {
     if (!isObject(raw)) continue;
-    const rec = raw as Row;
+    const rec = raw;
     if (!isOktaEvent(rec)) continue;
     mapped.push(mapEvent(rec, iocSink));
   }

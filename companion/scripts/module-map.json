@@ -241,7 +241,7 @@
     "graphContext.ts": "analysis/detect",
     "hayabusaImport.ts": "analysis/ingest",
     "highSeverityFindings.ts": "analysis/findings",
-
+    "hindsightImport.ts": "analysis/ingest",
     "hostRanking.ts": "analysis/detect",
     "huntOutcomeStore.ts": "analysis/hunt",
     "huntOutcomes.ts": "analysis/hunt",
@@ -261,6 +261,7 @@
     "imageLoader.ts": "analysis/privacy",
     "imageRedact.ts": "analysis/privacy",
     "importDetect.ts": "analysis/ingest",
+    "importDetectSources.ts": "analysis/ingest",
     "importMeta.ts": "analysis/ingest",
     "importResume.ts": "analysis/ingest",
     "importUndo.ts": "analysis/ingest",

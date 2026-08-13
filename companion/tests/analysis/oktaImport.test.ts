@@ -52,6 +52,37 @@ describe("parseOktaSystemLog", () => {
     expect(r.events[0].description).toContain("FAILED");
   });
 
+  it("does not call a failed non-authentication operation brute force", () => {
+    // A rejected policy edit is worth reading, but it is not password guessing.
+    const r = parseOktaSystemLog(
+      JSON.stringify([
+        evt({
+          eventType: "policy.rule.update",
+          uuid: "e10",
+          outcome: { result: "FAILURE", reason: "ACCESS_DENIED" },
+        }),
+      ]),
+    );
+    expect(r.events[0].mitreTechniques).not.toContain("T1110");
+    expect(r.events[0].description).toContain("FAILED");
+    // Its own derived severity survives the failure.
+    expect(r.events[0].severity).toBe("High");
+  });
+
+  it("does not escalate an unrelated failed operation off the back of the failure alone", () => {
+    const r = parseOktaSystemLog(
+      JSON.stringify([
+        evt({
+          eventType: "some.future.event",
+          uuid: "e11",
+          outcome: { result: "FAILURE", reason: "WHATEVER" },
+        }),
+      ]),
+    );
+    expect(r.events[0].severity).toBe("Info");
+    expect(r.events[0].mitreTechniques).not.toContain("T1110");
+  });
+
   it("treats MFA factor removal as High with the MFA-modification technique", () => {
     const r = parseOktaSystemLog(
       JSON.stringify([evt({ eventType: "user.mfa.factor.deactivate", uuid: "e3" })]),
