@@ -19,6 +19,8 @@ import type { Tokens, TokensList } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { renderScopeSection } from "./scopeSection.js";
+import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import { DEFAULT_ACCENT, defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 
@@ -450,10 +452,37 @@ export async function renderDocxReport(
   meta: ReportMeta = emptyReportMeta(),
   exposure?: CustomerExposureSummary,
   template: ReportTemplate = defaultReportTemplate(),
+  hostScope?: HostScopeLedger | null,
 ): Promise<Buffer> {
-  const md = renderMarkdownReport(state, meta, exposure, undefined, undefined, undefined, template);
+  // Positional pass-through: the scoping statement is the 17th argument. The .docx must carry the
+  // same canonical report as report.md — a Word deliverable that silently omits the scope section
+  // is the one an executive actually reads.
+  const md = renderMarkdownReport(
+    state,
+    meta,
+    exposure,
+    undefined,
+    undefined,
+    undefined,
+    template,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  );
+  // The scoping statement is appended rather than threaded through renderMarkdownReport:
+  // markdown.ts sits at its size cap, and every format must carry the same canonical report.
+  const mdWithScope = hostScope
+    ? `${md}
+
+${renderScopeSection(hostScope)}`
+    : md;
   const marked = new Marked({ gfm: true });
-  const tokens = marked.lexer(md);
+  const tokens = marked.lexer(mdWithScope);
   const children = tokensToDocxChildren(tokens);
   // Brand the headings with the template's accent colour (a validated #rrggbb). The default
   // template keeps the historical theme colour (no override) so an un-templated .docx is unchanged.

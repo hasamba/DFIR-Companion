@@ -26,6 +26,7 @@ import { createTeamAuthRuntime } from "../auth/authFactory.js";
 import { TemplateStore } from "../analysis/templateStore.js";
 import { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
+import { HostScopeStore } from "../analysis/hostScopeStore.js";
 import { ArtifactBundleStore } from "../analysis/artifactBundleStore.js";
 import { ReportTemplateStore } from "../reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "../reports/reportTemplateControl.js";
@@ -93,6 +94,7 @@ import { ClickUpExportStore } from "../integrations/clickup/clickupExportStore.j
 import { IrisExportStore } from "../integrations/iris/irisExportStore.js";
 import { LateralPathDismissStore } from "../analysis/lateralPathDismiss.js";
 import { ScopeStore } from "../analysis/scope.js";
+import { loadHostScopeLedger } from "../analysis/hostScopeLoad.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { CustomerExposureStore } from "../analysis/customerExposure.js";
 import { loadOrCreateInstanceSecret } from "../analysis/instanceSecret.js";
@@ -140,6 +142,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const incidentTypeStore = new IncidentTypeStore(store, join(dirname(casesRoot), "incident-types"));
   // Collection plan (#347): per-case only — the plan is derived from the timeline, so nothing global.
   const collectionPlanStore = new CollectionPlanStore(store);
+  // Host scope ledger: per-case decisions only — the ledger is derived on read, so nothing global.
+  const hostScopeStore = new HostScopeStore(store);
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
@@ -319,6 +323,20 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     // loads; loadOrCreateInstanceSecret reads the persisted file, so both see the same value.
     instanceSecret: loadOrCreateInstanceSecret(store.casesRoot),
     scope: new ScopeStore(store),
+    // The report renders the scope ledger; assembling it from the stores is composition's job, not
+    // the writer's, so it is handed in as a callback.
+    hostScope: (caseId: string) =>
+      loadHostScopeLedger(
+        {
+          state: stateStore,
+          superTimeline: superTimelineStore,
+          decisions: hostScopeStore,
+          scope: new ScopeStore(store),
+          assetOverrides: assetOverridesStore,
+          fleet: velociraptorClientStore,
+        },
+        caseId,
+      ),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
     customerExposure: new CustomerExposureStore(store),
@@ -349,6 +367,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     templateStore,
     incidentTypeStore,
     collectionPlanStore,
+    hostScopeStore,
     artifactBundleStore,
     reportTemplateStore,
     dashboardViewStore,
