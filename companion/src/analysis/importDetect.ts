@@ -20,6 +20,15 @@ import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { looksLikeSyslog } from "./syslogImport.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
+// Newer-source detectors live in importDetectSources.ts — this file is at the 800-line limit.
+import {
+  isOkta,
+  isGoogleWorkspace,
+  isHindsight,
+  isMacosUnifiedLog,
+  macosQuarantineCsvSig,
+  hindsightCsvSig,
+} from "./importDetectSources.js";
 
 export type ImportKind =
   | "thor"
@@ -35,6 +44,11 @@ export type ImportKind =
   | "kape"
   | "cybertriage"
   | "m365"
+  | "okta"
+  | "gws"
+  | "hindsight"
+  | "macos"
+  | "leapp"
   | "aws"
   | "cloud"
   | "k8s"
@@ -177,6 +191,7 @@ function isM365(s: Row): boolean {
     (!!getCI(s, "activityDisplayName") && (!!getCI(s, "initiatedBy") || !!getCI(s, "targetResources")))
   );
 }
+
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
   if (
@@ -420,6 +435,10 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
   if (isAzure(sample)) return "cloud";
+  if (isOkta(sample)) return "okta";
+  if (isGoogleWorkspace(sample, root)) return "gws";
+  if (isHindsight(sample)) return "hindsight";
+  if (isMacosUnifiedLog(sample)) return "macos";
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
@@ -528,6 +547,8 @@ function detectCsv(text: string): ImportKind {
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
+  if (macosQuarantineCsvSig(h)) return "macos";
+  if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
   if (cybertriageCsvSig(h)) return "cybertriage";
   if (plasoSig(h)) return "plaso";
@@ -610,6 +631,10 @@ function isAuditd(text: string): boolean {
 export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
+
+  // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit
+  // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.
+  if (/\b[ia]leapp\b/i.test(filename) && /\.(tsv|csv|txt)$/i.test(filename)) return "leapp";
 
   // A Velociraptor-named export that only matched the generic SIEM fallback is better served by
   // the Velociraptor importer (a more-specific content match — sandbox/hayabusa/… — always wins).

@@ -92,6 +92,43 @@ describe("detectImportKind — JSON formats", () => {
       ),
     ).toBe("m365");
   });
+  it("okta: system log with eventType + published + actor", () => {
+    expect(
+      detectImportKind(
+        "okta.json",
+        j([
+          {
+            eventType: "user.session.start",
+            published: "2026-05-02T10:00:00.000Z",
+            actor: { alternateId: "jdoe@example.invalid" },
+            outcome: { result: "SUCCESS" },
+          },
+        ]),
+      ),
+    ).toBe("okta");
+  });
+  it("okta: an eventType/published pair without an Okta envelope is not claimed", () => {
+    expect(detectImportKind("other.json", j([{ eventType: "something", published: "2026-05-02" }]))).not.toBe(
+      "okta",
+    );
+  });
+  it("gws: Admin SDK Reports activity", () => {
+    expect(
+      detectImportKind(
+        "gws.json",
+        j({
+          items: [
+            {
+              kind: "admin#reports#activity",
+              id: { time: "2026-05-02T10:00:00.000Z", applicationName: "login" },
+              actor: { email: "jdoe@example.invalid" },
+              events: [{ type: "login", name: "login_success" }],
+            },
+          ],
+        }),
+      ),
+    ).toBe("gws");
+  });
   it("chainsaw: hunt output with document+rule", () => {
     expect(
       detectImportKind(

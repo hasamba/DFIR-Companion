@@ -2,6 +2,11 @@ import { parseCloudTrail, type AwsImportOptions } from "../awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudActivityImport.js";
 import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
+import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
+import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
+import { parseHindsight, type HindsightImportOptions } from "../hindsightImport.js";
+import { parseMacos, type MacosImportOptions } from "../macosImport.js";
+import { parseLeappTsv, type LeappImportOptions } from "../mobileLeappImport.js";
 import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -51,6 +56,271 @@ export async function importM365(
     threadsClosed: [],
     timelineNote:
       `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import an Okta System Log export. Deterministic (no AI call): severity is derived from the
+// eventType, never from Okta's own INFO/WARN field, which grades operational importance to an admin
+// rather than maliciousness to an investigator. Sibling of importM365 — same shape, other IdP.
+export async function importOkta(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "ok") so ids never collide
+    importedAt: string;
+    okta?: OktaImportOptions;
+    minSeverity?: Severity; // gate-aware import floor (unified Import button)
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseOktaSystemLog(text, opts.okta);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Okta", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["Okta"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Okta import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import a Google Workspace Admin SDK Reports export. Deterministic (no AI call). One activity
+// record can carry several events, so the parser fans them out — `total` counts records read while
+// the timeline gets one row per event.
+export async function importGoogleWorkspace(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "gw") so ids never collide
+    importedAt: string;
+    gws?: GoogleWorkspaceImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseGoogleWorkspaceReport(text, opts.gws);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Google Workspace", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["Google Workspace"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Google Workspace import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import Hindsight browser-artifact output. Deterministic (no AI call). Every row lands at Info —
+// browser artifacts are evidence, not verdicts; see hindsightImport.ts for why grading them here
+// would invent a conclusion the artifact cannot support.
+export async function importHindsight(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "hs") so ids never collide
+    importedAt: string;
+    hindsight?: HindsightImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseHindsight(text, opts.hindsight);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Hindsight", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["Hindsight"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Hindsight import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import macOS host artifacts (unified log JSON or an LSQuarantine CSV dump). Deterministic, no AI
+// call, every row Info — see macosImport.ts for why a quarantine record is provenance, not a verdict.
+export async function importMacos(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "mc") so ids never collide
+    importedAt: string;
+    macos?: MacosImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseMacos(text, opts.macos);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "macOS", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["macOS"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `macOS import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import one iLEAPP/ALEAPP TSV artifact export. Deterministic, no AI call, every row Info. The
+// filename is load-bearing: LEAPP names the file after the artifact, and it is the only place a
+// bare TSV records what it is.
+export async function importLeapp(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "lp") so ids never collide
+    importedAt: string;
+    filename?: string;
+    leapp?: LeappImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseLeappTsv(text, opts.filename ?? opts.label, opts.leapp);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "LEAPP", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["LEAPP"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `LEAPP import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

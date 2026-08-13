@@ -35,6 +35,11 @@ regexes = [
   # host the ordering tests assert never reaches Presidio in the clear — i.e. the string is the
   # assertion. Both exist only in companion/tests/analysis/presidio*.test.ts.
   '''(?i)\bpresidio\.local\b''',
+  # `ws-042.prod.local` in companion/tests/analysis/hostAlias.test.ts — an invented hostname whose
+  # only job is to assert that an analyst-supplied merge re-points a host to a different canonical
+  # name. It names no real host. Scoped to this one FQDN rather than adding `prod` to the `.local`
+  # alternation above, so a genuinely-new *.prod.local still fails the scan.
+  '''(?i)\bws-042\.prod\.local\b''',
   '''(?i)\bDC01\.victim\.local\b''',
   # `console.example.internal`, a fabricated capture URL in the E2E fixture for #386. The current
   # tree uses example.com (RFC 2606) instead, but `betterleaks git .` scans every reachable commit

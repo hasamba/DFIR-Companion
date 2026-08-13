@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Okta and Google Workspace importers** — the two identity gaps beside Entra/M365: severity derived from the event type (never the vendor's own operational grade), encoding IdP account-takeover tradecraft — MFA/2SV disabled, admin roles granted, API tokens minted, OAuth grants consented, sessions impersonated, and Workspace email monitors that silently copy a user's mail.
+- **Hindsight browser-artifact importer** — Chrome/Edge/Brave history, downloads and interpretations from Hindsight JSON or CSV, giving the super-timeline the minute-by-minute record of the initial-access click, plus domain and URL IOCs. Every row is Info: browser artifacts are evidence, not verdicts.
+- **macOS artifact importer** — unified log (`log show --style json`) and LSQuarantine download provenance, closing the platform gap beside the Windows and Linux paths. Quarantine rows carry both the data URL and the referring origin URL, which is the lure on a phishing question.
+- **iLEAPP / ALEAPP importer** — iOS and Android extraction artifacts from LEAPP's TSV exports, one artifact per import. Generic by design: ~250 LEAPP artifacts share no schema beyond a timestamp column, so the parser finds that column and renders the rest, naming the artifact from the filename.
 - **Local observability and safe support bundles** — bounded evidence-free parser, storage, job, AI, export, WebSocket and capacity diagnostics with proactive warnings and preview-before-download support data (closes #389).
 - **Controlled report review and immutable release** — audited draft/peer-review/approval states, evidence and integrity release gates, identity-bound sign-off, explicit supersession, version diffs, and frozen executive/technical/legal/IOC packs (closes #383).
 - **Authenticated team investigations** — optional OIDC/local sign-in, case RBAC, scoped service identities, signed analyst attribution, secure sessions/CSRF, and single-writer concurrency protection while preserving zero-config localhost mode (closes #382).

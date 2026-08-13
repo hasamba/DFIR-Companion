@@ -13,6 +13,7 @@ import { parseNetworkLogs, type NetworkImportOptions } from "../analysis/network
 import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "../analysis/cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../analysis/m365Import.js";
+import { parseLeappTsv, type LeappImportOptions, type LeappPlatform } from "../analysis/mobileLeappImport.js";
 import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
@@ -270,12 +271,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     const kind = ctx.resolveImportKind()(originalName, text);
     if (kind === "unknown") {
-      return res
-        .status(400)
-        .json({
-          error:
-            "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)",
-        });
+      return res.status(400).json({
+        error:
+          "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)",
+      });
     }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -591,11 +590,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       } catch (err) {
         const m = (err as Error).message;
         if (/Invalid string length/i.test(m)) {
-          return res
-            .status(413)
-            .json({
-              error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file`,
-            });
+          return res.status(413).json({
+            error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file`,
+          });
         }
         return res.status(400).json({ error: `cannot read file: ${m}` });
       }
@@ -1007,11 +1004,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const preview = parseThorReport(json, thorOpts);
       if (preview.total === 0) return res.status(400).json({ error: "no parseable THOR JSON lines" });
       if (preview.kept === 0) {
-        return res
-          .status(400)
-          .json({
-            error: `THOR report has no findings after dropping ${preview.dropped} info/lifecycle row(s)`,
-          });
+        return res.status(400).json({
+          error: `THOR report has no findings after dropping ${preview.dropped} info/lifecycle row(s)`,
+        });
       }
 
       const seq = await store.nextImportSeq(caseId);
@@ -1029,15 +1024,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(json, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          findings: preview.kept,
-          dropped: preview.dropped,
-          total: preview.total,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        findings: preview.kept,
+        dropped: preview.dropped,
+        total: preview.total,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1116,18 +1109,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
       const preview = parseSiemExport(json, siemOpts);
       if (preview.total === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable SIEM/EDR records found (expected a JSON array, an Elastic/Kibana export, or NDJSON)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable SIEM/EDR records found (expected a JSON array, an Elastic/Kibana export, or NDJSON)",
+        });
       if (preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
-          });
+        return res.status(400).json({
+          error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "siem.json";
@@ -1144,17 +1133,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(json, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1232,18 +1219,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
       const preview = parseChainsawReport(json, chainsawOpts);
       if (preview.total === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable Chainsaw/EVTX records found (expected Chainsaw hunt JSON, or evtx_dump JSON/NDJSON)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable Chainsaw/EVTX records found (expected Chainsaw hunt JSON, or evtx_dump JSON/NDJSON)",
+        });
       if (preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
-          });
+        return res.status(400).json({
+          error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "chainsaw.json";
@@ -1260,18 +1243,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(json, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          detections: preview.detections,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        detections: preview.detections,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       const kind = preview.detections > 0 ? "Chainsaw" : "EVTX";
       options.onAiStatus?.(caseId, {
@@ -1349,17 +1330,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
       const preview = parseHayabusaTimeline(text, hayabusaOpts);
       if (preview.total === 0)
-        return res
-          .status(400)
-          .json({
-            error: "no parseable Hayabusa records found (expected a Hayabusa json-timeline or csv-timeline)",
-          });
+        return res.status(400).json({
+          error: "no parseable Hayabusa records found (expected a Hayabusa json-timeline or csv-timeline)",
+        });
       if (preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
-          });
+        return res.status(400).json({
+          error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "hayabusa.csv";
@@ -1376,17 +1353,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1461,18 +1436,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseVelociraptorJson(text, vrOpts);
       if (preview.total === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable Velociraptor rows found (expected JSON array, JSONL collection results, or an artifact map)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable Velociraptor rows found (expected JSON array, JSONL collection results, or an artifact map)",
+        });
       if (preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error: `no events after the '${rawLevel}' severity floor (${preview.total} row(s) parsed)`,
-          });
+        return res.status(400).json({
+          error: `no events after the '${rawLevel}' severity floor (${preview.total} row(s) parsed)`,
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "velociraptor.json";
@@ -1489,18 +1460,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          rows: preview.total,
-          detections: preview.detections,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        rows: preview.total,
+        detections: preview.detections,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1575,18 +1544,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseNetworkLogs(text, netOpts);
       if (preview.total === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable Suricata/Zeek records found (expected Suricata eve.json or Zeek JSON, as NDJSON or an array)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable Suricata/Zeek records found (expected Suricata eve.json or Zeek JSON, as NDJSON or an array)",
+        });
       if (preview.kept === 0 && preview.iocs.length === 0)
-        return res
-          .status(400)
-          .json({
-            error: `no detections or IOCs found (${preview.total} record(s) parsed${rawLevel ? `, after the '${rawLevel}' floor` : ""})`,
-          });
+        return res.status(400).json({
+          error: `no detections or IOCs found (${preview.total} record(s) parsed${rawLevel ? `, after the '${rawLevel}' floor` : ""})`,
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "eve.json";
@@ -1603,18 +1568,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          alerts: preview.alerts,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        alerts: preview.alerts,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1688,12 +1651,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseKapeCsv(text, kapeOpts);
       if (preview.artifact === "unknown")
-        return res
-          .status(400)
-          .json({
-            error:
-              "unrecognized CSV — expected a KAPE / Eric Zimmerman Tools export (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags)",
-          });
+        return res.status(400).json({
+          error:
+            "unrecognized CSV — expected a KAPE / Eric Zimmerman Tools export (Prefetch, Amcache, ShimCache, LNK, JumpLists, UsnJrnl, MFT, SRUM, RecycleBin, Shellbags)",
+        });
       if (preview.kept === 0)
         return res
           .status(400)
@@ -1714,17 +1675,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          artifact: preview.artifact,
-          events: preview.kept,
-          rows: preview.total,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        artifact: preview.artifact,
+        events: preview.kept,
+        rows: preview.total,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1805,12 +1764,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseCybertriage(text, ctOpts);
       if (preview.format === "empty")
-        return res
-          .status(400)
-          .json({
-            error:
-              "unrecognized file — expected a Cyber Triage timeline export (JSONL / JSON array / CSV with event_timestamp,epoch_timestamp,timestamp_description columns)",
-          });
+        return res.status(400).json({
+          error:
+            "unrecognized file — expected a Cyber Triage timeline export (JSONL / JSON array / CSV with event_timestamp,epoch_timestamp,timestamp_description columns)",
+        });
       if (preview.kept === 0 && preview.iocs.length === 0)
         return res
           .status(400)
@@ -1831,18 +1788,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          rows: preview.total,
-          notable: preview.notable,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        rows: preview.total,
+        notable: preview.notable,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -1884,6 +1839,92 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Import Microsoft 365 Unified Audit Log + Entra ID sign-in / directory audit data
   // (cloud/identity IR). Evidence-first; mapping is DETERMINISTIC (no AI extraction): each
   // record is classified and mapped, severity derived from the operation / Entra risk verdict.
+  // Explicit LEAPP endpoint. Auto-detection CANNOT reach these files: LEAPP names each export after
+  // the artifact ("Installed Apps.tsv", "Call History.tsv"), a browser upload carries only that
+  // basename, and a bare TSV has no in-content marker that could be claimed without stealing every
+  // other tab-separated format. So the analyst names the platform here instead of renaming every
+  // file to contain "iLEAPP" — which is what the detection-only path would have demanded.
+  app.post("/cases/:id/import-leapp", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const caseId = req.params.id;
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    const originalName = String(req.body?.filename ?? "leapp.tsv");
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+
+    const rawPlatform = String(req.body?.platform ?? "")
+      .trim()
+      .toLowerCase();
+    const platform: LeappPlatform =
+      rawPlatform === "ios" ? "ios" : rawPlatform === "android" ? "android" : "unknown";
+    const leappOpts: LeappImportOptions = { platform };
+
+    try {
+      const preview = parseLeappTsv(text, originalName, leappOpts);
+      if (preview.total === 0)
+        return res.status(400).json({ error: "no parseable rows found (expected a LEAPP TSV export)" });
+      if (preview.kept === 0)
+        return res.status(400).json({
+          error: `no row carried a usable timestamp column (${preview.total} row(s) parsed) — LEAPP artifacts without a time column cannot be placed on a timeline`,
+        });
+
+      const seq = await store.nextImportSeq(caseId);
+      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "leapp.tsv";
+      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+      const importedAt = new Date().toISOString();
+      await store.saveImport(caseId, storedName, text);
+      await store.appendImport(caseId, {
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName,
+        rows: preview.kept,
+        bytes: Buffer.byteLength(text, "utf8"),
+      });
+
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
+
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "extracting",
+        at: importedAt,
+        detail: `importing ${preview.kept} LEAPP row(s)`,
+      });
+      void options.pipeline
+        .importLeapp(caseId, text, {
+          label: storedName,
+          idPrefix: `lp${seq}`,
+          importedAt,
+          // The ORIGINAL name, not the stored one: the stored name is sequence-prefixed, and the
+          // artifact's identity lives in the basename LEAPP chose.
+          filename: originalName,
+          leapp: leappOpts,
+        })
+        .then(() => {
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          resynthesizeInBackground(caseId);
+        })
+        .catch((err) =>
+          options.onAiStatus?.(caseId, {
+            status: "error",
+            at: new Date().toISOString(),
+            detail: (err as Error).message,
+          }),
+        );
+      return;
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.post("/cases/:id/import-m365", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
@@ -1916,18 +1957,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseM365Audit(text, m365Opts);
       if (preview.total === 0 || preview.format === "empty")
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable M365/Entra records found (expected a Unified Audit Log export — CSV or JSON — or Entra sign-in/audit JSON)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable M365/Entra records found (expected a Unified Audit Log export — CSV or JSON — or Entra sign-in/audit JSON)",
+        });
       if (preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
-          });
+        return res.status(400).json({
+          error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "m365.json";
@@ -1944,17 +1981,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2028,12 +2063,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseCloudTrail(text, awsOpts);
       if (preview.format === "empty" && preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable CloudTrail records found (expected a { Records: [...] } envelope, NDJSON, or a JSON array of CloudTrail events)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable CloudTrail records found (expected a { Records: [...] } envelope, NDJSON, or a JSON array of CloudTrail events)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloudtrail.json";
@@ -2050,17 +2083,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2134,12 +2165,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseCloudActivity(text, cloudOpts);
       if (preview.format === "empty" && preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable GCP/Azure records found (expected GCP Cloud Audit Logs or an Azure Activity Log export, as JSON array or NDJSON)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable GCP/Azure records found (expected GCP Cloud Audit Logs or an Azure Activity Log export, as JSON array or NDJSON)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloud-activity.json";
@@ -2156,17 +2185,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          format: preview.format,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        format: preview.format,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2240,12 +2267,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parsePlasoCsv(text, plasoOpts);
       if (preview.format === "unknown")
-        return res
-          .status(400)
-          .json({
-            error:
-              "unrecognized CSV — expected a Plaso psort export (dynamic: datetime,message,… or l2tcsv: date,time,…,desc,…)",
-          });
+        return res.status(400).json({
+          error:
+            "unrecognized CSV — expected a Plaso psort export (dynamic: datetime,message,… or l2tcsv: date,time,…,desc,…)",
+        });
       if (preview.kept === 0)
         return res
           .status(400)
@@ -2266,17 +2291,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          rows: preview.total,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        rows: preview.total,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2350,12 +2373,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseSandboxReport(text, sandboxOpts);
       if (preview.format === "empty" && preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable sandbox report found (expected a CAPEv2 report.json or a CrowdStrike Falcon Sandbox summary JSON)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable sandbox report found (expected a CAPEv2 report.json or a CrowdStrike Falcon Sandbox summary JSON)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "sandbox.json";
@@ -2372,16 +2393,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          signatures: preview.signatures,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        signatures: preview.signatures,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2462,12 +2481,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseMemory(text, memoryOpts);
       if (preview.format === "empty" && preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "memory.json";
@@ -2484,18 +2501,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          tool: preview.tool,
-          events: preview.kept,
-          injected: preview.injected,
-          connections: preview.connections,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        tool: preview.tool,
+        events: preview.kept,
+        injected: preview.injected,
+        connections: preview.connections,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2569,11 +2584,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseEmail(text, emailOpts);
       if (preview.format === "empty" && preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error: "no parseable email found (expected an .eml RFC 2822 message, or an Outlook .msg export)",
-          });
+        return res.status(400).json({
+          error: "no parseable email found (expected an .eml RFC 2822 message, or an Outlook .msg export)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "message.eml";
@@ -2590,17 +2603,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          subject: preview.subject,
-          sender: preview.sender,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        subject: preview.subject,
+        sender: preview.sender,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2652,12 +2663,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseTheHive(text);
       if (preview.format === "empty")
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable TheHive records found (expected a case/alert JSON export or an observable list)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable TheHive records found (expected a case/alert JSON export or an observable list)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thehive-export.json";
@@ -2674,17 +2683,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          total: preview.total,
-          observables: preview.observables,
-          iocs: preview.iocCount,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        total: preview.total,
+        observables: preview.observables,
+        iocs: preview.iocCount,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2743,12 +2750,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseAuditdLog(text, auditdOpts);
       if (preview.format === "empty")
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "audit.log";
@@ -2765,17 +2770,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2835,12 +2838,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseJournald(text, journaldOpts);
       if (preview.format === "empty")
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "journal.json";
@@ -2857,17 +2858,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          entries: preview.total,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        entries: preview.total,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -2927,12 +2926,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseSysdig(text, sysdigOpts);
       if (preview.format === "empty")
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "falco.json";
@@ -2949,18 +2946,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          records: preview.total,
-          alerts: preview.alerts,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        records: preview.total,
+        alerts: preview.alerts,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -3020,12 +3015,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       const preview = parseWazuhAlerts(text, wazuhOpts);
       if (preview.format === "empty" && preview.kept === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })",
-          });
+        return res.status(400).json({
+          error:
+            "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })",
+        });
 
       const seq = await store.nextImportSeq(caseId);
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "wazuh-alerts.json";
@@ -3042,17 +3035,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      res
-        .status(202)
-        .json({
-          accepted: true,
-          file: storedName,
-          format: preview.format,
-          events: preview.kept,
-          records: preview.total,
-          groups: preview.groups,
-          iocs: preview.iocs.length,
-        });
+      res.status(202).json({
+        accepted: true,
+        file: storedName,
+        format: preview.format,
+        events: preview.kept,
+        records: preview.total,
+        groups: preview.groups,
+        iocs: preview.iocs.length,
+      });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",

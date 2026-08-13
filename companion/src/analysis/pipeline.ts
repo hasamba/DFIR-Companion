@@ -523,6 +523,28 @@ export class AnalysisPipeline {
     return ingest.importM365(this.importCtx, ...args);
   }
 
+  importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
+    return ingest.importOkta(this.importCtx, ...args);
+  }
+
+  importGoogleWorkspace(
+    ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
+  ): Promise<InvestigationState> {
+    return ingest.importGoogleWorkspace(this.importCtx, ...args);
+  }
+
+  importHindsight(...args: ImporterArgs<typeof ingest.importHindsight>): Promise<InvestigationState> {
+    return ingest.importHindsight(this.importCtx, ...args);
+  }
+
+  importMacos(...args: ImporterArgs<typeof ingest.importMacos>): Promise<InvestigationState> {
+    return ingest.importMacos(this.importCtx, ...args);
+  }
+
+  importLeapp(...args: ImporterArgs<typeof ingest.importLeapp>): Promise<InvestigationState> {
+    return ingest.importLeapp(this.importCtx, ...args);
+  }
+
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     return ingest.importAws(this.importCtx, ...args);
   }
