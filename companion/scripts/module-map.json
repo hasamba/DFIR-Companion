@@ -306,6 +306,7 @@
     "loginGraph.ts": "analysis/detect",
     "lookalikeDomains.ts": "analysis/detect",
     "m365Import.ts": "analysis/ingest",
+    "macosImport.ts": "analysis/ingest",
     "manualEntry.ts": "analysis/workflow",
     "memoryImport.ts": "analysis/ingest",
     "memoryNextStep.ts": "analysis/ai",

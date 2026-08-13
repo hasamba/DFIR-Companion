@@ -38,6 +38,7 @@ export type ImportKind =
   | "okta"
   | "gws"
   | "hindsight"
+  | "macos"
   | "aws"
   | "cloud"
   | "k8s"
@@ -219,6 +220,17 @@ function isHindsight(s: Row): boolean {
     getCI(s, "profile folder") != null ||
     getCI(s, "profile_folder") != null ||
     (getCI(s, "type") != null && getCI(s, "profile") != null)
+  );
+}
+// macOS unified log (`log show --style json`): eventMessage plus one of the Apple-specific columns.
+// traceID/machTimestamp/processImagePath are absent from every other JSON feed here.
+function isMacosUnifiedLog(s: Row): boolean {
+  if (!getCI(s, "eventMessage") && !getCI(s, "composedMessage")) return false;
+  return (
+    getCI(s, "processImagePath") != null ||
+    getCI(s, "senderImagePath") != null ||
+    getCI(s, "machTimestamp") != null ||
+    getCI(s, "traceID") != null
   );
 }
 function isChainsaw(s: Row): boolean {
@@ -467,6 +479,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isOkta(sample)) return "okta";
   if (isGoogleWorkspace(sample, root)) return "gws";
   if (isHindsight(sample)) return "hindsight";
+  if (isMacosUnifiedLog(sample)) return "macos";
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
@@ -497,6 +510,11 @@ function detectJson(root: unknown, sample: Row): ImportKind {
 const has = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.has(k.toLowerCase()));
 
 // Hindsight CSV export: url + timestamp plus one of its own columns.
+// LSQuarantine CSV dump — the column prefix is unmistakable.
+function macosQuarantineCsvSig(h: Set<string>): boolean {
+  for (const k of h) if (k.startsWith("lsquarantine")) return true;
+  return false;
+}
 function hindsightCsvSig(h: Set<string>): boolean {
   const has = (k: string) => h.has(k);
   if (!has("url") || !(has("timestamp") || has("date"))) return false;
@@ -583,6 +601,7 @@ function detectCsv(text: string): ImportKind {
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
+  if (macosQuarantineCsvSig(h)) return "macos";
   if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
   if (cybertriageCsvSig(h)) return "cybertriage";

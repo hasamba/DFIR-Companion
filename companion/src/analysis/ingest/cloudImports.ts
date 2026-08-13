@@ -5,6 +5,7 @@ import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
 import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
 import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
 import { parseHindsight, type HindsightImportOptions } from "../hindsightImport.js";
+import { parseMacos, type MacosImportOptions } from "../macosImport.js";
 import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -213,6 +214,58 @@ export async function importHindsight(
     threadsClosed: [],
     timelineNote:
       `Hindsight import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import macOS host artifacts (unified log JSON or an LSQuarantine CSV dump). Deterministic, no AI
+// call, every row Info — see macosImport.ts for why a quarantine record is provenance, not a verdict.
+export async function importMacos(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "mc") so ids never collide
+    importedAt: string;
+    macos?: MacosImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseMacos(text, opts.macos);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "macOS", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["macOS"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `macOS import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

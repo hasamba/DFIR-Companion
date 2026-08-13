@@ -62,6 +62,8 @@ export const COLLECTION_STEPS: readonly CollectionStepDef[] = [
       "RecycleBin",
       "SRUM",
       "Hindsight",
+      "macOS Unified Log",
+      "macOS Quarantine",
     ],
   },
   { id: "memory", label: "Memory image", satisfiedBy: ["MemProcFS", "Volatility", "Rekall", "VolWeb"] },

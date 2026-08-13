@@ -537,6 +537,10 @@ export class AnalysisPipeline {
     return ingest.importHindsight(this.importCtx, ...args);
   }
 
+  importMacos(...args: ImporterArgs<typeof ingest.importMacos>): Promise<InvestigationState> {
+    return ingest.importMacos(this.importCtx, ...args);
+  }
+
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     return ingest.importAws(this.importCtx, ...args);
   }
