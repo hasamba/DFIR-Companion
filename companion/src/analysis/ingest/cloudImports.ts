@@ -4,6 +4,7 @@ import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js"
 import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
 import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
 import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
+import { parseHindsight, type HindsightImportOptions } from "../hindsightImport.js";
 import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -159,6 +160,59 @@ export async function importGoogleWorkspace(
     threadsClosed: [],
     timelineNote:
       `Google Workspace import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import Hindsight browser-artifact output. Deterministic (no AI call). Every row lands at Info —
+// browser artifacts are evidence, not verdicts; see hindsightImport.ts for why grading them here
+// would invent a conclusion the artifact cannot support.
+export async function importHindsight(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string; // unique per import (e.g. "hs") so ids never collide
+    importedAt: string;
+    hindsight?: HindsightImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseHindsight(text, opts.hindsight);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Hindsight", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["Hindsight"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Hindsight import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

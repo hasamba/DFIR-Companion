@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <<<<<<< HEAD
 =======
 - **Okta and Google Workspace importers** — the two identity gaps beside Entra/M365: severity derived from the event type (never the vendor's own operational grade), encoding IdP account-takeover tradecraft — MFA/2SV disabled, admin roles granted, API tokens minted, OAuth grants consented, sessions impersonated, and Workspace email monitors that silently copy a user's mail.
+- **Hindsight browser-artifact importer** — Chrome/Edge/Brave history, downloads and interpretations from Hindsight JSON or CSV, giving the super-timeline the minute-by-minute record of the initial-access click, plus domain and URL IOCs. Every row is Info: browser artifacts are evidence, not verdicts.
 - **Host scope & clearance ledger** — per-host status derived from the evidence, analyst-owned clearance with an eligibility checklist that names the missing evidence class, append-only attributed decisions, flag-don't-revert staleness, a ranked list of hosts named in the evidence but never collected, and an evidence-bounded scoping statement in reports.
 >>>>>>> 67a7b894 (feat(ingest): Google Workspace Admin SDK Reports importer)
 - **Local observability and safe support bundles** — bounded evidence-free parser, storage, job, AI, export, WebSocket and capacity diagnostics with proactive warnings and preview-before-download support data (closes #389).

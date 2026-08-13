@@ -37,6 +37,7 @@ export type ImportKind =
   | "m365"
   | "okta"
   | "gws"
+  | "hindsight"
   | "aws"
   | "cloud"
   | "k8s"
@@ -206,6 +207,19 @@ function isGoogleWorkspace(s: Row, root: unknown): boolean {
   if (!Array.isArray(items)) return false;
   const first = firstObj(items);
   return !!first && isWorkspaceActivityRow(first);
+}
+// Hindsight browser artifacts: the (type + url + timestamp) triple with Hindsight's own
+// `interpretation`/`profile folder` columns. Requires one of the Hindsight-specific columns so a
+// generic proxy log with a url column is not claimed.
+function isHindsight(s: Row): boolean {
+  if (!getCI(s, "url") && !getCI(s, "URL")) return false;
+  if (!getCI(s, "timestamp") && !getCI(s, "date")) return false;
+  return (
+    getCI(s, "interpretation") != null ||
+    getCI(s, "profile folder") != null ||
+    getCI(s, "profile_folder") != null ||
+    (getCI(s, "type") != null && getCI(s, "profile") != null)
+  );
 }
 function isChainsaw(s: Row): boolean {
   // Chainsaw hunt (embedded document/rule) or a raw evtx_dump record ({ Event: { System } }).
@@ -452,6 +466,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isAzure(sample)) return "cloud";
   if (isOkta(sample)) return "okta";
   if (isGoogleWorkspace(sample, root)) return "gws";
+  if (isHindsight(sample)) return "hindsight";
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
@@ -481,6 +496,14 @@ function detectJson(root: unknown, sample: Row): ImportKind {
 
 const has = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.has(k.toLowerCase()));
 
+// Hindsight CSV export: url + timestamp plus one of its own columns.
+function hindsightCsvSig(h: Set<string>): boolean {
+  const has = (k: string) => h.has(k);
+  if (!has("url") || !(has("timestamp") || has("date"))) return false;
+  return (
+    has("interpretation") || has("profile folder") || has("profile_folder") || (has("type") && has("profile"))
+  );
+}
 function m365CsvSig(h: Set<string>): boolean {
   return h.has("auditdata") || (h.has("operations") && h.has("recordtype"));
 }
@@ -560,6 +583,7 @@ function detectCsv(text: string): ImportKind {
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
+  if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
   if (cybertriageCsvSig(h)) return "cybertriage";
   if (plasoSig(h)) return "plaso";

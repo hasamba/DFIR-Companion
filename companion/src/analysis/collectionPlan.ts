@@ -61,6 +61,7 @@ export const COLLECTION_STEPS: readonly CollectionStepDef[] = [
       "Shellbags",
       "RecycleBin",
       "SRUM",
+      "Hindsight",
     ],
   },
   { id: "memory", label: "Memory image", satisfiedBy: ["MemProcFS", "Volatility", "Rekall", "VolWeb"] },

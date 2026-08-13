@@ -533,6 +533,10 @@ export class AnalysisPipeline {
     return ingest.importGoogleWorkspace(this.importCtx, ...args);
   }
 
+  importHindsight(...args: ImporterArgs<typeof ingest.importHindsight>): Promise<InvestigationState> {
+    return ingest.importHindsight(this.importCtx, ...args);
+  }
+
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     return ingest.importAws(this.importCtx, ...args);
   }
