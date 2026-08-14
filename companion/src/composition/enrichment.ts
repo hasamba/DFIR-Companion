@@ -52,9 +52,9 @@ export interface EnrichmentEngine {
   /** Cases waiting on a down provider, resumed by the poller on recovery. */
   readonly pending: Set<string>;
   /**
-   * Self-coalescing: a newer run supersedes an older one for the same case, so N rapid kicks (a
-   * multi-file import) cost one run, not N. The superseded run keeps and saves the lookups it
-   * already made.
+   * Self-coalescing, so N rapid kicks (a multi-file import) cost one run, not N. A kick supersedes
+   * runs still QUEUED, and waits behind one already in flight — replaying after it saves, so
+   * evidence that landed mid-run is still enriched without re-querying what that run covered.
    */
   enrichInBackground(caseId: string, force?: boolean, parentRunId?: string): void;
   /** Enrich fresh IOCs after synthesis/import when the toggle is on; the cache skips checked ones. */
@@ -86,6 +86,24 @@ export function createEnrichmentEngine({
   });
   // Cases waiting for a down provider; the poller resumes only their unchecked IOCs on recovery.
   const pending = new Set<string>();
+  // Cases kicked while a run was already IN FLIGHT, holding the strongest `force` asked for. Replayed
+  // once that run has saved — see the deferral in enrichInBackground for why waiting beats racing.
+  const deferredKicks = new Map<string, boolean>();
+
+  const isEnriching = (caseId: string): boolean =>
+    options.jobManager?.list(caseId).some((j) => j.kind === "enrichment" && j.status === "running") ?? false;
+
+  /**
+   * Replay a kick that arrived mid-run, now that the run has saved. Reached only from a run that
+   * actually finished: replaying after a CANCEL would re-register against the newer job that
+   * cancelled it, cancel that in turn, and ping-pong the pair indefinitely.
+   */
+  const replayDeferredKick = (caseId: string, parentRunId?: string): void => {
+    if (!deferredKicks.has(caseId)) return;
+    const force = deferredKicks.get(caseId)!;
+    deferredKicks.delete(caseId);
+    enrichInBackground(caseId, force, parentRunId);
+  };
 
   function enrichInBackground(caseId: string, force = false, parentRunId?: string): void {
     if (allProviders.length === 0 || !options.stateStore) return;
@@ -111,13 +129,23 @@ export function createEnrichmentEngine({
           return;
         }
       }
+      // SUPERSEDE ONLY WHAT HAS NOT STARTED. Cancelling a run already in flight does not stop it:
+      // enrichIocs finishes its current indicator and still merges and saves below. Meanwhile the
+      // cancel frees the case's concurrency slot immediately, so the newcomer is admitted alongside
+      // it holding a snapshot taken BEFORE that save — it re-queries indicators the first run
+      // already paid a rate-limited provider for, and whichever saves last stamps its own older
+      // copy over the other's `enrichedBy`, which is the marker that stops the next kick querying
+      // them all again. Defer instead, and replay once the run in flight has saved, so evidence
+      // that landed mid-run is still covered.
+      if (isEnriching(caseId)) {
+        deferredKicks.set(caseId, (deferredKicks.get(caseId) ?? false) || force);
+        return;
+      }
       // #225: track enrichment as a cancellable job — a throttled run (up to maxIocs × delayMs) can be long.
-      // exclusive, like the synthesis kick: a multi-file import fires one autoEnrichIfEnabled per
-      // file, and without it a six-file import queued six runs behind the case's single concurrency
-      // slot. Superseding is safe here in a way it is not for most work — enrichIocs stops BETWEEN
-      // indicators and the partial result is still merged and saved below, so an aborted run keeps
-      // every lookup it already paid for and the newer run skips those via `enrichedBy`. No
-      // outbound request is wasted or repeated.
+      // exclusive, so the kicks that are still QUEUED collapse into one: a multi-file import fires
+      // one autoEnrichIfEnabled per file, and without it a six-file import queued six runs behind
+      // the case's single concurrency slot. A queued job has made no request and saved nothing, so
+      // superseding it costs nothing — the guard above is what keeps that true.
       job = options.jobManager?.register({
         caseId,
         kind: "enrichment",
@@ -230,12 +258,19 @@ export function createEnrichmentEngine({
           detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}`,
         });
       }
+      // This run's results are saved, so a kick deferred behind it can now load them and enrich only
+      // what it added. Not after an ABORT: the analyst cancelled, and replaying would restart the
+      // work they just stopped.
+      if (!aborted) replayDeferredKick(caseId, parentRunId);
     })().catch(async (err) => {
       // Superseding a still-QUEUED run rejects its admission rather than resolving it, so a
       // cancellation arrives here as a rejection. It is not a failure to report: stay silent when a
       // newer run owns the case, and otherwise say cancelled rather than erroring.
       const aborted = job?.signal?.aborted === true;
       if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already terminal (cancelled)
+      // A failed run still releases anything deferred behind it, or that kick waits for a run that
+      // will never come. Not after an abort — see the success path.
+      if (!aborted) replayDeferredKick(caseId, parentRunId);
       if (aborted && options.jobManager?.hasActive(caseId, "enrichment")) return;
       options.onAiStatus?.(
         caseId,
