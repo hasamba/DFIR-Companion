@@ -65,6 +65,12 @@
   let connectAbortController = null;
   // Same idea for the panel strip: only the newest generation's loaders may paint it.
   let _panelLoadGen = 0;
+  // How many of the ~60 secondary panel loaders may be in flight at once. FOUR OF THE BROWSER'S
+  // SIX HTTP/1.1 CONNECTIONS, deliberately leaving two free. The fan-out is not the analyst's only
+  // claim on the pool: while it runs they may pick another case (a lock-status probe) or press
+  // "+ New case" (a /cases fetch to suggest the next incident id). Unbounded, those sat behind up
+  // to 86 queued requests — ~8 seconds on an 82 MB case, on routes the server answered in 2ms.
+  const PANEL_LOAD_CONCURRENCY = 4;
 
   function connect() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -176,7 +182,25 @@
   // a replacement case yet.
   function dismissCaseLoading() {
     if (connectAbortController) connectAbortController.abort();
+    // Retire the generation as well as aborting it. The abort stops the requests; this stops the
+    // panel strip from going on reporting progress for a load the analyst has walked away from —
+    // the tally would otherwise keep painting as the abandoned fetches reject one by one.
+    _panelLoadGen++;
+    const api = clpApi();
+    if (api) api.hidePanelStrip();
     hideCaseLoadingOverlay();
+    // Take the case back out of the URL. proceedConnect put it there the moment the load STARTED,
+    // so without this the address bar goes on naming a case that is not loaded — and refreshing
+    // (or sharing the link) would drop the analyst straight back into the load they just walked
+    // out of, since ?caseId= is exactly the signal restoreCaseFromUrl acts on. The hash is kept:
+    // it carries a deep link to an event, which cancelling a load does not invalidate.
+    history.replaceState(null, "", location.pathname + location.hash);
+    // Say what happened. A dashboard that simply stops filling in, with a case id still in the
+    // picker, is indistinguishable from one that finished — and the analyst needs to know this
+    // case is only partly loaded before they read anything off it. The picker keeps the id, so
+    // retrying is one click.
+    const statusEl = document.getElementById("status");
+    if (statusEl) statusEl.textContent = "case load cancelled — pick a case to load";
   }
 
   function proceedConnect(caseId) {
@@ -365,9 +389,22 @@
       panelApi.hidePanelStrip();
       // Generation-guarded like the state load (#174): switching cases mid-load must not let the
       // abandoned case's panels keep painting the strip for the case now on screen.
-      panelApi.runPanelLoaders(CASE_PANEL_LOADERS, (tally) => {
-        if (panelGen === _panelLoadGen) panelApi.paintPanelStrip(tally);
-      });
+      //
+      // The signal and the concurrency cap are what make a big case's load survivable. They carry
+      // the SAME generation as the state/lifecycle load, so dismissing the overlay or picking
+      // another case now cancels these ~60 requests too — previously only state and lifecycle were
+      // abortable, and the panels went on holding the connection pool for a case the analyst had
+      // already walked away from. The cap then keeps two of the browser's six HTTP/1.1 lanes free
+      // for whatever the analyst does next, so "+ New case" (which fetches /cases to suggest an id)
+      // and connecting to a different case answer immediately instead of queueing behind the
+      // fan-out. See runPanelLoaders for the measurements.
+      panelApi.runPanelLoaders(
+        CASE_PANEL_LOADERS,
+        (tally) => {
+          if (panelGen === _panelLoadGen) panelApi.paintPanelStrip(tally);
+        },
+        { signal: loadSignal, concurrency: PANEL_LOAD_CONCURRENCY },
+      );
     } else {
       for (const [, run] of CASE_PANEL_LOADERS) {
         try {
@@ -550,9 +587,42 @@
   // Case templates and incident types moved to js/dashboard-case-templates.js (#415 tier 3).
   // It owns the two caches; js/dashboard-save-template.js calls its invalidateTemplateCache()
 
-  // The cross-case warning's two buttons and the pagehide handler that forgets an unremembered
-  // unlock. All three bind to markup, so they are load-time work.
+  // What the dashboard does with a case id at page load. It lives here rather than in the page's
+  // inline script because it is the same decision connect() implements — and the page's inline
+  // block is under a size freeze (#384) that new code is meant to stay out of.
+  //
+  // ?caseId= is an EXPLICIT navigation: a deep link, a bookmark, or the refresh of a session
+  // already in a case (proceedConnect replaceState's it there). It opens, as it always did.
+  //
+  // The REMEMBERED case does not. Landing on a bare /dashboard used to auto-connect to whatever
+  // was open last, which on a large case meant arriving into a blocking overlay and a
+  // multi-second load nobody asked for — the wrong default, because opening the dashboard is
+  // just as often the moment an analyst wants a DIFFERENT case or a new one. It pre-fills the
+  // picker instead, so reopening it stays one click and the choice stays theirs.
+  function restoreCaseFromUrl() {
+    const fromUrl = (
+      new URLSearchParams(location.search).get("caseId") || ""
+    ).trim();
+    const remembered = (localStorage.getItem("dfir.caseId") || "").trim();
+    const el = document.getElementById("caseId");
+    if (!el) return;
+    if (fromUrl) {
+      el.value = fromUrl;
+      connect();
+    } else if (remembered) {
+      el.value = remembered;
+    }
+  }
+
+  // The loading overlay's Cancel button, the cross-case warning's two buttons and the pagehide
+  // handler that forgets an unremembered unlock. All four bind to markup, so they are load-time
+  // work.
   function initCaseConnect() {
+    // Guarded like every other markup binding here: an older cached dashboard.html without the
+    // button must not throw and take the rest of this wiring — the mismatch banner and the
+    // unlock-forgetting pagehide handler — down with it.
+    const cancelBtn = document.getElementById("caseLoadingCancel");
+    if (cancelBtn) cancelBtn.onclick = dismissCaseLoading;
     document.getElementById("caseMismatchSwitch").onclick = () => {
       if (!foreignCaptureCase) return;
       document.getElementById("caseId").value = foreignCaptureCase;
@@ -572,6 +642,7 @@
   }
 
   window.initCaseConnect = initCaseConnect;
+  window.restoreCaseFromUrl = restoreCaseFromUrl;
   window.connect = connect;
   window.proceedConnect = proceedConnect;
 })();
