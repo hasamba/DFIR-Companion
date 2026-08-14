@@ -160,4 +160,26 @@ describe("team-auth configuration and policy", () => {
     expect(resolveRequestPolicy("POST", "/api/jobs/job_1/cancel")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("POST", "/settings/env")).toEqual({ kind: "global", permission: "admin" });
   });
+
+  // The wizard's suggested incident number. It reads across every case on disk, so it must not be
+  // per-case gated — but anyone who may create a case may ask what to call it, so it is no more
+  // than authenticated either. It deliberately does NOT live under /cases/, where a single
+  // segment would have made it a case policy for a case named "next-id".
+  it("treats the next-case-id suggestion as authenticated, and only for GET", () => {
+    expect(resolveRequestPolicy("GET", "/api/next-case-id")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/api/next-case-id")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+  });
+
+  // The regression that moved it out of /cases/: every /cases/<segment> path is a per-case policy,
+  // so the suggestion would have 404'd for every non-admin as a case they cannot see.
+  it("would have made a /cases-mounted suggestion a per-case policy", () => {
+    expect(resolveRequestPolicy("GET", "/cases/next-id")).toEqual({
+      kind: "case",
+      permission: "read",
+      caseId: "next-id",
+    });
+  });
 });

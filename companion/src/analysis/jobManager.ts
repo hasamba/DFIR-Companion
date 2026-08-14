@@ -26,6 +26,7 @@ import {
   listJobs,
   capJobs,
   capJobsByScope,
+  dropCaseJobs,
   isTerminal,
   type Job,
   type JobFailure,
@@ -118,6 +119,14 @@ function deferred(): Deferred {
     resolve = ok;
     reject = fail;
   });
+  // Cancelling a job that never started REJECTS these (see cancel()), and the reject can land
+  // before anyone is waiting: resume() publishes its admission into this.admissions and only
+  // attaches runResumedJob's handler after the ledger write returns. A rejection with no handler
+  // at that moment is an unhandled rejection, which Node makes fatal — one cancel would take the
+  // whole server down mid-investigation. This keep-alive handler makes the rejection safe to
+  // observe late, or never. It swallows nothing: .catch() returns a NEW promise and the original
+  // still rejects, so every real awaiter of `ready` still sees the AbortError.
+  promise.catch(() => {});
   return { promise, resolve, reject };
 }
 
@@ -245,8 +254,6 @@ export class JobManager {
     }
     const admission = deferred();
     const durability = deferred();
-    void admission.promise.catch(() => {});
-    void durability.promise.catch(() => {});
     this.admissions.set(jobId, admission);
     this.durabilities.set(jobId, durability);
 
@@ -357,6 +364,31 @@ export class JobManager {
     return { ok: true, job: cancelled };
   }
 
+  // Called once a case's folder is gone: its jobs must not outlive it. The table is keyed by case
+  // id alone, so any row left behind is inherited wholesale by the next case that claims the id —
+  // and every one of them still offers a live Resume, which would replay the deleted case's import
+  // into the new one and persist it there. Anything still in flight is aborted first; the work
+  // functions themselves land on a table that no longer holds the row, and every registry
+  // transition ignores an unknown id, so their late checkpoints and completions are no-ops.
+  //
+  // No ledger write: the case's jobs.sqlite lives inside the case folder and was deleted with it.
+  async forgetCase(caseId: string): Promise<void> {
+    await this.ready();
+    const doomed = listJobs(this.table, { caseId });
+    if (doomed.length === 0) return;
+    for (const job of doomed) {
+      this.controllers.get(job.id)?.abort();
+      this.clearBudgetTimer(job.id);
+      this.admissions.get(job.id)?.reject(abortError());
+      this.admissions.delete(job.id);
+      this.durabilities.delete(job.id);
+      this.controllers.delete(job.id);
+    }
+    this.table = dropCaseJobs(this.table, caseId);
+    this.emit(caseId);
+    await this.scheduleQueued();
+  }
+
   registerResumeHandler(kind: JobKind, handler: ResumeHandler, options: ResumeHandlerOptions = {}): void {
     this.resumeHandlers.set(kind, { handler, options });
   }
@@ -388,7 +420,6 @@ export class JobManager {
     }
     const admission = deferred();
     const durability = deferred();
-    void durability.promise.catch(() => {});
     this.admissions.set(jobId, admission);
     this.durabilities.set(jobId, durability);
     await this.persistUpdate(queued);

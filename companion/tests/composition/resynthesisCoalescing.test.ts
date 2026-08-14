@@ -16,6 +16,7 @@ import { createCaptureAnalysis } from "../../src/composition/captureAnalysis.js"
 import type { AppOptions } from "../../src/composition/appOptions.js";
 import type { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { AiControl } from "../../src/analysis/aiControl.js";
+import { pollFor } from "../helpers/poll.js";
 
 const CASE_ID = "case-multi-import";
 
@@ -64,13 +65,21 @@ async function harness() {
   };
 }
 
-/** Let every queued `void (async () => …)()` kick reach its job registration. */
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
-};
+const KICKS = 6;
 
-const liveSynthesisJobs = (jm: JobManager) =>
-  jm.list(CASE_ID).filter((j) => j.kind === "synthesis" && j.status !== "cancelled");
+const synthesisJobs = (jm: JobManager) => jm.list(CASE_ID).filter((j) => j.kind === "synthesis");
+const liveSynthesisJobs = (jm: JobManager) => synthesisJobs(jm).filter((j) => j.status !== "cancelled");
+
+/**
+ * Wait until all six kicks have REGISTERED, on a wall-clock budget rather than a fixed number of
+ * microtask turns — see helpers/poll.ts, which exists because counted spins sample too early under
+ * a loaded run and report the resulting empty read as a logic failure.
+ */
+const allKicksRegistered = (jm: JobManager) =>
+  pollFor(
+    () => `${KICKS} synthesis registrations, last saw ${synthesisJobs(jm).length}`,
+    async () => (synthesisJobs(jm).length >= KICKS ? true : undefined),
+  );
 
 describe("re-synthesis after a multi-file import", () => {
   it("collapses one kick per imported file into a single surviving synthesis job", async () => {
@@ -82,21 +91,23 @@ describe("re-synthesis after a multi-file import", () => {
     await importJob.ready;
 
     // Six files in one import → six kicks.
-    for (let i = 0; i < 6; i++) analysis.resynthesizeInBackground(CASE_ID);
-    await settle();
+    for (let i = 0; i < KICKS; i++) analysis.resynthesizeInBackground(CASE_ID);
+    await allKicksRegistered(jobManager);
 
     const live = liveSynthesisJobs(jobManager);
-    expect(live).toHaveLength(1);
+    expect(live).toHaveLength(1); // the other five superseded each other
     expect(live[0].status).toBe("queued");
     expect(synthesized).toEqual([]); // nothing runs while the import still holds the slot
 
     // Import finishes → the one surviving kick is admitted and runs once.
     await jobManager.finish(importJob.jobId);
-    await settle();
+    await pollFor(
+      () => `the surviving run to synthesize, last saw ${JSON.stringify(synthesized)}`,
+      async () => (synthesized.length > 0 ? true : undefined),
+    );
     expect(synthesized).toEqual([CASE_ID]);
 
     releaseSynthesis();
-    await settle();
   });
 
   it("does not report 'synthesis cancelled' while a newer kick still owns the case", async () => {
@@ -104,17 +115,19 @@ describe("re-synthesis after a multi-file import", () => {
 
     const importJob = jobManager.register({ caseId: CASE_ID, kind: "import", label: "evtx" });
     await importJob.ready;
-    for (let i = 0; i < 6; i++) analysis.resynthesizeInBackground(CASE_ID);
-    await settle();
+    for (let i = 0; i < KICKS; i++) analysis.resynthesizeInBackground(CASE_ID);
+    await allKicksRegistered(jobManager);
+    // Give every superseded kick's rejection handler a turn to run before asserting on silence.
+    await pollFor(
+      () => `${KICKS - 1} superseded kicks, last saw ${KICKS - liveSynthesisJobs(jobManager).length}`,
+      async () => (liveSynthesisJobs(jobManager).length === 1 ? true : undefined),
+    );
 
     // A superseded kick must stay silent: the newer run owns the AI status banner, and stomping it
     // to idle leaves the dashboard claiming the case is idle while synthesis is still pending.
     expect(statuses.map((s) => s.detail)).not.toContain("synthesis cancelled");
     expect(statuses.filter((s) => s.status === "idle")).toEqual([]);
 
-    await jobManager.finish(importJob.jobId);
-    await settle();
     releaseSynthesis();
-    await settle();
   });
 });
