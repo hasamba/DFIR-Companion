@@ -396,6 +396,112 @@ describe("runPanelLoaders", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(seen).toEqual([1, 2]);
   });
+
+  // ── Abandonment ──────────────────────────────────────────────────────────────────────────────
+  // The fan-out outliving its case is what made a big case's load unsurvivable: dismissing the
+  // overlay aborted state and lifecycle only, and ~60 panel requests went on holding the browser's
+  // six HTTP/1.1 connections on behalf of a case nobody was looking at any more.
+
+  /** A fetch stub that records the init it was handed, so signal injection is observable. */
+  function recording() {
+    const calls: RequestInit[] = [];
+    globalThis.fetch = ((_url: string, init?: RequestInit) => {
+      calls.push(init ?? {});
+      return new Promise<Response>(() => {}); // never settles; the signal is the only way out
+    }) as typeof fetch;
+    return calls;
+  }
+
+  it("passes the caller's abort signal to every panel request", () => {
+    const calls = recording();
+    const ac = new AbortController();
+    runPanelLoaders([["geoMap", () => void fetch("/cases/x/geo-map")]], undefined, {
+      signal: ac.signal,
+    });
+    expect(calls[0].signal).toBe(ac.signal);
+  });
+
+  it("leaves a loader's own signal alone", () => {
+    const calls = recording();
+    const ac = new AbortController();
+    const own = new AbortController();
+    runPanelLoaders([["custom", () => void fetch("/x", { signal: own.signal })]], undefined, {
+      signal: ac.signal,
+    });
+    expect(calls[0].signal).toBe(own.signal);
+  });
+
+  it("stops starting queued loaders once the generation is aborted", async () => {
+    const started: string[] = [];
+    // Honours the signal the way a real fetch does — rejecting on abort. A stub that ignored it
+    // would leave the in-flight loader pending forever and misreport the tally as stuck.
+    globalThis.fetch = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_res, rej) => {
+        init?.signal?.addEventListener("abort", () => rej(new Error("aborted")), { once: true });
+      })) as typeof fetch;
+    const ac = new AbortController();
+    const entries: [string, () => void][] = ["a", "b", "c", "d"].map((n) => [
+      n,
+      () => {
+        started.push(n);
+        void fetch("/" + n);
+      },
+    ]);
+    // Cap of 1 so exactly one is in flight and three are still queued when the abort lands.
+    const tally = runPanelLoaders(entries, undefined, { signal: ac.signal, concurrency: 1 });
+    expect(started).toEqual(["a"]);
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 0));
+    // b, c and d were never issued — that is the point; the pool is freed rather than refilled.
+    expect(started).toEqual(["a"]);
+    // And the strip still reaches its total instead of sitting short forever on panels that are
+    // never coming.
+    expect(panelProgressOf(tally).fraction).toBe(1);
+  });
+
+  // ── Concurrency cap ──────────────────────────────────────────────────────────────────────────
+
+  it("runs at most `concurrency` loaders at once, starting the next as each settles", async () => {
+    const gates = controllable();
+    const started: string[] = [];
+    const entries: [string, () => void][] = ["a", "b", "c"].map((n) => [
+      n,
+      () => {
+        started.push(n);
+        void fetch("/" + n);
+      },
+    ]);
+    runPanelLoaders(entries, undefined, { concurrency: 2 });
+    expect(started).toEqual(["a", "b"]); // c is held back — a free lane is the whole point
+    gates[0].resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(["a", "b", "c"]);
+  });
+
+  it("does not stall when a capped loader issues no request at all", () => {
+    controllable();
+    const started: string[] = [];
+    const entries: [string, () => void][] = ["a", "b", "c"].map((n) => [n, () => void started.push(n)]);
+    // None of these occupies a slot, so a cap of 1 must not serialize them across event-loop
+    // turns — a loader that starts nothing frees its lane synchronously.
+    const tally = runPanelLoaders(entries, undefined, { concurrency: 1 });
+    expect(started).toEqual(["a", "b", "c"]);
+    expect(panelProgressOf(tally).fraction).toBe(1);
+  });
+
+  it("is unbounded when no concurrency is given", () => {
+    controllable();
+    const started: string[] = [];
+    const entries: [string, () => void][] = ["a", "b", "c"].map((n) => [
+      n,
+      () => {
+        started.push(n);
+        void fetch("/" + n);
+      },
+    ]);
+    runPanelLoaders(entries);
+    expect(started).toEqual(["a", "b", "c"]);
+  });
 });
 
 describe("afterPaint", () => {

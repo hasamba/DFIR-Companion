@@ -1126,17 +1126,64 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).not.toContain("Still loading — click to dismiss");
     // Dismissing still ABANDONS the in-flight load (#174), not merely hides the overlay.
     expect(html).toMatch(/function dismissCaseLoading\(\)[\s\S]{0,200}connectAbortController\.abort\(\)/);
+    // And the overlay is escapable from the first frame, not only after the 15s stall timer has
+    // turned the backdrop into a click target.
+    expect(html).toContain('id="caseLoadingCancel"');
+    expect(html).toMatch(/getElementById\("caseLoadingCancel"\)[\s\S]{0,120}onclick = dismissCaseLoading/);
+    // Cancelling takes the case back out of the URL too. Leaving ?caseId= behind would send a
+    // refresh straight back into the load the analyst just walked out of. Asserted by its
+    // distinctive argument rather than by distance from `function dismissCaseLoading()` — the
+    // other replaceState on this path writes ?caseId=, so pathname+hash names this one uniquely.
+    expect(html).toMatch(
+      /history\.replaceState\(\s*null,\s*"",\s*location\.pathname \+ location\.hash,?\s*\)/,
+    );
   });
 
   it("tracks the secondary panels to completion after the overlay hides", async () => {
     const html = await load();
     expect(html).toContain('id="panelProgressBar"');
     expect(html).toContain("const CASE_PANEL_LOADERS = [");
-    expect(html).toContain("runPanelLoaders(CASE_PANEL_LOADERS");
+    // Whitespace-tolerant for the same reason as the DELETE call above: prettier wraps this call
+    // now that it carries options, and an exact-spacing assertion would fail for a reformat
+    // rather than for a behaviour change.
+    expect(html).toMatch(/runPanelLoaders\(\s*CASE_PANEL_LOADERS/);
     // Generation-guarded like the state load (#174): an abandoned case must not paint the strip
     // for the case now on screen.
     expect(html).toMatch(/panelGen === _panelLoadGen/);
     // Still works with the module absent — the load must never depend on the bar.
     expect(html).toMatch(/for \(const \[, run\] of CASE_PANEL_LOADERS\)/);
+  });
+
+  it("lets the analyst abandon a big case's panel fan-out and act during it", async () => {
+    const html = await load();
+    // The panels run on the SAME abort generation as state/lifecycle, so dismissing the overlay
+    // or switching cases cancels them too. Without this the ~60 requests outlived the case they
+    // belonged to and went on occupying the browser's connection pool.
+    expect(html).toMatch(/runPanelLoaders\(\s*CASE_PANEL_LOADERS[\s\S]{0,400}signal: loadSignal/);
+    // And they are capped below the six-connection HTTP/1.1 limit, so lanes stay free for
+    // whatever the analyst does next while a big case loads.
+    expect(html).toMatch(
+      /runPanelLoaders\(\s*CASE_PANEL_LOADERS[\s\S]{0,400}concurrency: PANEL_LOAD_CONCURRENCY/,
+    );
+    expect(html).toMatch(/const PANEL_LOAD_CONCURRENCY = [1-5];/);
+  });
+
+  it("opens a case on load only when the URL asked for one", async () => {
+    const html = await load();
+    // Anchored on the code rather than on `function restore()`, so the assertion measures the
+    // branch and not the length of the comment explaining it.
+    //
+    // An explicit ?caseId= still opens — deep links, bookmarks, and refreshing a session that is
+    // already in a case all depend on it.
+    expect(html).toMatch(/if \(fromUrl\)\s*\{[\s\S]{0,120}connect\(\)/);
+    // The REMEMBERED case is pre-filled into the picker and nothing more. Landing on a bare
+    // /dashboard must not drag the analyst into the last case's load before they can choose.
+    expect(html).toMatch(/else if \(remembered\)\s*\{\s*el\.value = remembered;\s*\}/);
+    // The two reads are separate: the one that can auto-open comes from the URL, never from
+    // storage. This is the regression that must not come back. Whitespace-tolerant for the same
+    // reason as the DELETE call at the top of this file — prettier wraps these declarations now
+    // that they live in a module, and an exact-spacing regex would fail for a reformat.
+    expect(html).toMatch(/const fromUrl = \(\s*new URLSearchParams\(location\.search\)\.get\("caseId"\)/);
+    expect(html).toMatch(/const remembered = \(\s*localStorage\.getItem\("dfir\.caseId"\)/);
   });
 });

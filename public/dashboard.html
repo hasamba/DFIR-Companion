@@ -3563,6 +3563,14 @@
       <div id="caseLoadingText" data-safe-style="color:var(--text-primary);font-size:14px;font-weight:500;">Loading case…</div>
       <div id="caseLoadingBar"><div class="clp-fill"></div><div class="clp-pending"></div></div>
       <div id="caseLoadingPct"></div>
+      <!-- Always available, from the first frame. The only way out of this modal used to be the
+           15-second stall timer, which turned the overlay itself into a click target — so an
+           analyst who opened a large case by mistake, or who simply changed their mind, was held
+           behind a blocking screen for fifteen seconds before the dashboard would let them do
+           anything at all. Cancelling abandons the whole load generation (state, lifecycle AND
+           the ~60 panel requests), which is what frees the connection pool for whatever they
+           actually wanted to do. -->
+      <button id="caseLoadingCancel" type="button" data-safe-style="margin-top:14px;" data-tip="Stop loading this case and return to the dashboard — you can then pick a different case or create a new one">Cancel</button>
     </div>
   </div>
   <!-- Panel-load strip: the ~60 secondary panels that keep loading after the overlay hides, so
@@ -5324,18 +5332,13 @@
     if (typeof initCaseUnlock !== "undefined") initCaseUnlock();
     else dfirFeatureUnavailable("Case unlock prompt");
 
-    // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
-    // session and reconnect.
+    // On load, populate the case picker, then open a case ONLY if the URL asked for one — a bare
+    // /dashboard leaves the choice to the analyst. Lives in js/dashboard-case-connect.js beside
+    // connect(), which is the decision it makes.
     loadCaseList();
     if (typeof loadDiskStats === "function") loadDiskStats();
-    (function restore() {
-      const fromUrl = new URLSearchParams(location.search).get("caseId");
-      const caseId = (fromUrl || localStorage.getItem("dfir.caseId") || "").trim();
-      if (caseId) {
-        document.getElementById("caseId").value = caseId;
-        typeof connect === "function" && connect();
-      }
-    })();
+    if (typeof restoreCaseFromUrl !== "undefined") restoreCaseFromUrl();
+    else dfirFeatureUnavailable("Case restore");
 
     // Moved to js/dashboard-tooltip.js (#415 tier 3).
     if (typeof initTooltip !== "undefined") initTooltip();
