@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getClaudeCodeStatus, startClaudeLogin } from "../../src/providers/claudeCodeStatus.js";
 import type { ClaudeRunOptions, ClaudeRunResult } from "../../src/providers/claudeRunner.js";
+import { SPLIT_UTF8_TEXT, splitUtf8Script, writeNodeShim } from "../helpers/splitUtf8.js";
 
 function runnerReturning(r: Partial<ClaudeRunResult>) {
   return vi.fn(async (_o: ClaudeRunOptions): Promise<ClaudeRunResult> => ({
@@ -77,6 +78,21 @@ describe("startClaudeLogin", () => {
       const r = await startClaudeLogin({ bin: shim, captureMs: 3000 });
       expect(r.started).toBe(true);
       expect(r.url).toBe("https://example.com/oauth?code=abc");
+    },
+  );
+
+  // The captured banner goes straight to the dashboard. A chunk boundary can fall inside a
+  // character here just as it can anywhere else — see tests/helpers/splitUtf8.ts.
+  it.skipIf(process.platform === "win32")(
+    "reassembles a character split across two output chunks",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "cc-login-utf8-"));
+      const shim = writeNodeShim(
+        join(dir, "claude"),
+        splitUtf8Script({ before: "Signing in as ", after: "\n" }),
+      );
+      const r = await startClaudeLogin({ bin: shim, captureMs: 3000 });
+      expect(r.output).toBe(`Signing in as ${SPLIT_UTF8_TEXT}\n`);
     },
   );
 });

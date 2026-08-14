@@ -8,8 +8,10 @@ import {
   toolSpawnErrorMessage,
   stripAnsi,
   cleanToolOutput,
+  spawnToolRunner,
   type ToolRunner,
 } from "../../src/integrations/tools/toolRunner.js";
+import { SPLIT_UTF8_TEXT, splitUtf8Script, writeOnceScript } from "../helpers/splitUtf8.js";
 import {
   loadToolConfig,
   loadAllToolConfigs,
@@ -396,5 +398,44 @@ describe("SO-CRATES as an http-transport tool", () => {
 
   it("is the suggested tool for a binary nothing else claims", () => {
     expect(suggestedToolForExtension(".exe")).toBe("socrates");
+  });
+});
+
+// Real spawns against `node -e`, so these exercise the actual pipe/collect/cap path rather than an
+// injected runner. Hayabusa and YARA print attacker-controlled filenames and rule names, which are
+// routinely non-ASCII in a real case.
+describe("spawnToolRunner output decoding", () => {
+  const opts = { timeoutMs: 10_000, maxOutputBytes: 1024 * 1024 };
+
+  it("reassembles a character split across two stdout chunks", async () => {
+    const r = await spawnToolRunner()(process.execPath, ["-e", splitUtf8Script()], opts);
+    expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  it("reassembles a character split across two stderr chunks", async () => {
+    const r = await spawnToolRunner()(process.execPath, ["-e", splitUtf8Script({ stream: "stderr" })], opts);
+    expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  // The budget is named maxOutputBytes and its error says "bytes", but the guard used to compare
+  // the accumulated string's UTF-16 length — so non-ASCII output could buffer up to 3-4x the
+  // configured memory before the child was killed.
+  it("counts the cap in bytes, not UTF-16 code units", async () => {
+    const text = "日".repeat(40); // 40 code units, 120 bytes
+    await expect(
+      spawnToolRunner()(process.execPath, ["-e", writeOnceScript(text)], {
+        timeoutMs: 10_000,
+        maxOutputBytes: 60,
+      }),
+    ).rejects.toThrow(/exceeded 60 bytes/);
+  });
+
+  it("lets output through when its byte length is within the cap", async () => {
+    const text = "日".repeat(40); // 120 bytes
+    const r = await spawnToolRunner()(process.execPath, ["-e", writeOnceScript(text)], {
+      timeoutMs: 10_000,
+      maxOutputBytes: 200,
+    });
+    expect(r.stdout).toBe(text);
   });
 });

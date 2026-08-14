@@ -278,13 +278,18 @@ export function spawnTransferRunner(): TransferRunner {
         opts.signal?.removeEventListener("abort", onAbort);
       }
 
-      child.stdout?.on("data", (d: Buffer) => {
-        stdout += d.toString();
+      // A chunk boundary is a BYTE boundary, so a multi-byte character can straddle two chunks and
+      // decoding each chunk on its own would leave U+FFFD in the middle of the remote path scp is
+      // complaining about. setEncoding holds the incomplete tail back until the rest arrives.
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        stdout += chunk;
       });
       // scp is quiet on success and terse on failure, so stderr is the whole diagnostic. Cap it so a
       // pathological failure loop cannot grow it without bound.
-      child.stderr?.on("data", (d: Buffer) => {
-        if (stderr.length < 64 * 1024) stderr += d.toString();
+      child.stderr?.on("data", (chunk: string) => {
+        if (stderr.length < 64 * 1024) stderr += chunk;
       });
 
       child.on("error", (e) => {

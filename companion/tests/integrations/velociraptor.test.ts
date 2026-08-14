@@ -16,10 +16,15 @@ import {
   normalizeHuntExpirySeconds,
   DEFAULT_HUNT_EXPIRY_SECONDS,
   parseArtifactParams,
+  spawnVqlRunner,
   type VeloClientRecord,
   type VelociraptorApiConfig,
   type VqlRunner,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SPLIT_UTF8_TEXT, splitUtf8Script, writeNodeShim, writeOnceScript } from "../helpers/splitUtf8.js";
 
 const cfg: VelociraptorApiConfig = {
   apiConfigPath: "/tmp/api.config.yaml",
@@ -1506,5 +1511,47 @@ describe("extractMonitoredArtifacts", () => {
   it("returns [] for empty / junk input", () => {
     expect(extractMonitoredArtifacts([])).toEqual([]);
     expect(extractMonitoredArtifacts([null, 5, { nope: 1 }])).toEqual([]);
+  });
+});
+
+// Real spawns against a shim binary, so these exercise the actual pipe/collect/parse path. The
+// argv is fixed (`--api_config … query --format jsonl …`), which is why this needs an executable
+// shim rather than `node -e`.
+describe.skipIf(process.platform === "win32")("spawnVqlRunner output decoding", () => {
+  const shimDir = mkdtempSync(join(tmpdir(), "velo-shim-"));
+  const runOpts = { timeoutMs: 10_000, maxOutputBytes: 1024 * 1024 };
+
+  // Non-ASCII usernames and paths are routine in real case data. A chunk boundary landing inside
+  // one used to leave U+FFFD in the parsed row — JSON.parse still succeeds, so nothing errors and
+  // the evidence is simply wrong from here on: the wrong username reaches the timeline, IOC
+  // matching on it misses, and dedup treats it as a different entity.
+  it("reassembles a character split across two stdout chunks into the parsed row", async () => {
+    const shim = writeNodeShim(
+      join(shimDir, "velo-split"),
+      splitUtf8Script({ before: '{"Username":"', after: '","Host":"WS-01"}\n' }),
+    );
+    const { rows } = await spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], runOpts);
+    expect(rows).toEqual([{ Username: SPLIT_UTF8_TEXT, Host: "WS-01" }]);
+  });
+
+  // DFIR_VELOCIRAPTOR_MAX_OUTPUT is documented and reported in bytes, but the guard used to compare
+  // the accumulated string's UTF-16 length — so a query returning CJK could buffer 3x the cap.
+  it("counts maxOutputBytes in bytes, not UTF-16 code units", async () => {
+    const shim = writeNodeShim(join(shimDir, "velo-big"), writeOnceScript("日".repeat(40))); // 120 bytes
+    await expect(
+      spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], {
+        timeoutMs: 10_000,
+        maxOutputBytes: 60,
+      }),
+    ).rejects.toThrow(/exceeded 60 bytes/);
+  });
+
+  it("lets output through when its byte length is within the cap", async () => {
+    const shim = writeNodeShim(join(shimDir, "velo-ok"), writeOnceScript('{"Path":"日本語"}\n')); // 25 bytes
+    const { rows } = await spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], {
+      timeoutMs: 10_000,
+      maxOutputBytes: 200,
+    });
+    expect(rows).toEqual([{ Path: "日本語" }]);
   });
 });
