@@ -911,9 +911,11 @@ export const FEATURES: Feature[] = [
     // The case-load path. Second non-feature extraction, same contract as dashboard-render.js:
     // connect and proceedConnect are NOT stubbed. A stubbed connect() means the Connect button
     // does nothing with no error, and the analyst concludes the case is broken.
+    // restoreCaseFromUrl is the page-load half of the same decision: it is what turns ?caseId=
+    // into a connect() and, deliberately, what does NOT turn the remembered case into one.
     file: "dashboard-case-connect.js",
     initializer: "initCaseConnect",
-    publish: ["initCaseConnect", "connect", "proceedConnect"],
+    publish: ["initCaseConnect", "restoreCaseFromUrl", "connect", "proceedConnect"],
     private: [],
   },
   {

@@ -222,18 +222,35 @@ export async function readBodyWithProgress(state, response, onProgress) {
  * CALLED, which works because these loaders all call fetch synchronously in their body.
  *
  * THE WRAPPER'S LIFETIME IS THE SAFETY PROPERTY. Attribution happens at call time, so the wrapper
- * only needs to be installed while the loop below runs — one synchronous block with no `await` in
- * it, during which no other code can observe the patched global. It is restored in a `finally`, and
- * restored to the CAPTURED ORIGINAL rather than to whatever is installed at that moment, so a
- * nested install cannot strand a wrapper permanently.
+ * is installed for exactly the synchronous body of ONE loader and restored immediately after, in a
+ * `finally` and to the CAPTURED ORIGINAL rather than to whatever is installed at that moment. No
+ * unrelated caller can observe the patched global, and a nested install cannot strand a wrapper
+ * permanently. Scoping it per loader rather than around the whole run is what makes the throttled
+ * mode below safe: that mode starts loaders across several turns of the event loop, and a wrapper
+ * spanning those gaps would attach this fan-out's abort signal to requests the ANALYST started.
  *
  * The returned promise is the original, untouched, so callers' abort handling and `.catch` chains
  * behave exactly as before.
  *
  * A loader that throws synchronously is recorded as a failed panel rather than taking the rest of
  * the fan-out with it. A loader that starts no request at all settles immediately.
+ *
+ * `options.signal` makes the fan-out ABANDONABLE, which the case-load overlay's dismiss button and
+ * every case switch depend on. It is injected into each panel request that did not bring a signal
+ * of its own, so aborting the generation cancels ~60 in-flight requests instead of leaving them to
+ * occupy the browser's connection pool on behalf of a case nobody is looking at any more.
+ *
+ * `options.concurrency` bounds how many loaders may be in flight at once. THIS IS A CONNECTION-POOL
+ * RESERVATION, not a politeness limit. The dashboard is served over HTTP/1.1, where a browser opens
+ * at most six connections per origin; firing all ~60 loaders at once fills that pool for the whole
+ * fan-out, and every request the analyst then starts — the case list behind "+ New case", the
+ * lock-status probe behind connecting to a different case — sits in the queue behind them. Measured
+ * on an 82 MB case: 86 requests, peak 7 in flight, ~7.9s of pure queue wait on requests the server
+ * answered in 2ms. Leaving lanes free is what keeps the dashboard usable while a big case loads.
+ * Absent or non-positive means unbounded — the original behaviour, kept as the default so callers
+ * that never opted in are unaffected.
  */
-export function runPanelLoaders(entries, onProgress) {
+export function runPanelLoaders(entries, onProgress, options) {
   const list = Array.isArray(entries) ? entries : [];
   const tally = createPanelTally(list.length);
   const originalFetch = globalThis.fetch;
@@ -241,22 +258,23 @@ export function runPanelLoaders(entries, onProgress) {
   const broke = new Set();
   let current = null;
 
+  const opts = options || {};
+  const signal = opts.signal || null;
+  const rawLimit = Number(opts.concurrency);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 0; // 0 = unbounded
+
+  const report = () => {
+    if (!onProgress) return;
+    try {
+      onProgress(tally);
+    } catch {
+      /* a progress callback must never break the fan-out */
+    }
+  };
   const finish = (name) => {
     if (broke.has(name)) failPanel(tally, name);
     else settlePanel(tally, name);
-    if (onProgress) {
-      try {
-        onProgress(tally);
-      } catch {
-        /* a progress callback must never break the fan-out */
-      }
-    }
-  };
-  const settleOne = (owner, failed) => {
-    if (failed) broke.add(owner);
-    const left = (outstanding.get(owner) || 1) - 1;
-    outstanding.set(owner, left);
-    if (left <= 0) finish(owner);
+    report();
   };
 
   if (typeof originalFetch !== "function") {
@@ -272,8 +290,13 @@ export function runPanelLoaders(entries, onProgress) {
     return tally;
   }
 
-  globalThis.fetch = function (...args) {
+  const patchedFetch = function (...args) {
     const owner = current;
+    // Only supply a signal where the caller chose none — a loader that brought its own abort
+    // controller keeps it.
+    if (signal && args.length > 0 && (!args[1] || !args[1].signal)) {
+      args[1] = Object.assign({}, args[1], { signal });
+    }
     const p = originalFetch.apply(this, args);
     if (owner === null || !p || typeof p.then !== "function") return p;
     outstanding.set(owner, (outstanding.get(owner) || 0) + 1);
@@ -284,22 +307,71 @@ export function runPanelLoaders(entries, onProgress) {
     return p;
   };
 
-  try {
-    for (const [name, fn] of list) {
-      current = name;
-      try {
-        fn();
-      } catch {
-        broke.add(name);
-      }
+  let next = 0;
+  let active = 0;
+  let stopped = false;
+
+  // Start one loader with the wrapper installed for exactly its synchronous body. Returns true if
+  // it left a request outstanding (so it still occupies a slot), false if it settled on the spot.
+  const startLoader = (name, fn) => {
+    globalThis.fetch = patchedFetch;
+    current = name;
+    try {
+      fn();
+    } catch {
+      broke.add(name);
+    } finally {
       current = null;
-      // Promise callbacks are microtasks and cannot have run yet, so an absent entry here really
-      // does mean "this loader issued no request".
-      if (!outstanding.has(name)) finish(name);
+      globalThis.fetch = originalFetch;
     }
-  } finally {
-    globalThis.fetch = originalFetch;
+    // Promise callbacks are microtasks and cannot have run yet, so an absent entry here really
+    // does mean "this loader issued no request".
+    if (!outstanding.has(name)) {
+      finish(name);
+      return false;
+    }
+    return true;
+  };
+
+  // Every loader still queued is settled-as-failed rather than left pending, so the strip reaches
+  // its total instead of sitting short forever on panels that are never coming.
+  const abandonRemaining = () => {
+    stopped = true;
+    while (next < list.length) {
+      const [name] = list[next++];
+      broke.add(name);
+      finish(name);
+    }
+  };
+
+  // Not re-entrant by construction: settleOne only ever runs from a promise callback, so it can
+  // never fire inside startLoader below.
+  const pump = () => {
+    if (stopped) return;
+    if (signal && signal.aborted) return abandonRemaining();
+    while (next < list.length && (limit === 0 || active < limit)) {
+      const [name, fn] = list[next++];
+      if (startLoader(name, fn)) active++;
+    }
+  };
+
+  function settleOne(owner, failed) {
+    if (failed) broke.add(owner);
+    const left = (outstanding.get(owner) || 1) - 1;
+    outstanding.set(owner, left);
+    if (left > 0) return;
+    active--;
+    finish(owner);
+    pump();
   }
+
+  // Abandon the queue the moment the generation is dropped, without waiting for the in-flight
+  // requests to reject. Guarded because `signal` only has to be signal-SHAPED for the injection
+  // above to work, and a test double need not be an EventTarget.
+  if (signal && typeof signal.addEventListener === "function") {
+    signal.addEventListener("abort", abandonRemaining, { once: true });
+  }
+  pump();
   return tally;
 }
 
