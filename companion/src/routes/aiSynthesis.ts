@@ -174,12 +174,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       cancellable: true,
       exclusive: true,
     });
-    await job?.ready;
-    // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
-    if (options.backupManager) {
-      await options.backupManager.createBackup(caseId, "pre-synthesis").catch(() => {});
-    }
     try {
+      // Inside the try: cancelling a still-QUEUED job rejects its admission, so this throws — and
+      // the catch below reports that as 499 "cancelled" rather than a 500. See jobManager's deferred().
+      await job?.ready;
+      // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
+      await options.backupManager?.createBackup(caseId, "pre-synthesis").catch(() => {});
       // Explicit user action → force, so it always runs even if inputs are unchanged.
       const state = await options.pipeline.synthesize(caseId, {
         force: true,
