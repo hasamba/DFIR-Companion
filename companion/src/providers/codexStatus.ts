@@ -105,8 +105,12 @@ export async function startCodexLogin(
     // decoding each chunk on its own would leave U+FFFD in the banner shown on the dashboard.
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => { output += chunk; });
-    child.stderr?.on("data", (chunk: string) => { output += chunk; });
+    child.stdout?.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      output += chunk;
+    });
     child.on("close", finish);
   });
 }

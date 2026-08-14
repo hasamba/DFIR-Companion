@@ -322,7 +322,9 @@ describe("deliver — scp cleanup", () => {
 // appears in it.
 describe("spawnTransferRunner output decoding", () => {
   it("reassembles a character split across two stderr chunks", async () => {
-    const r = await spawnTransferRunner()(process.execPath, ["-e", splitUtf8Script({ stream: "stderr" })], { timeoutMs: 10_000 });
+    const r = await spawnTransferRunner()(process.execPath, ["-e", splitUtf8Script({ stream: "stderr" })], {
+      timeoutMs: 10_000,
+    });
     expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
   });
 

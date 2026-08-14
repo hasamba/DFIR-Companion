@@ -70,10 +70,16 @@ describe("startCodexLogin", () => {
 
   // The captured banner goes straight to the dashboard. Relies on the OS reading the shebang to
   // exec the shim, which only POSIX does.
-  it.skipIf(process.platform === "win32")("reassembles a character split across two output chunks", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "codex-login-utf8-"));
-    const shim = writeNodeShim(join(dir, "codex"), splitUtf8Script({ before: "Signing in as ", after: "\n" }));
-    const r = await startCodexLogin({ bin: shim, captureMs: 3000 });
-    expect(r.output).toBe(`Signing in as ${SPLIT_UTF8_TEXT}\n`);
-  });
+  it.skipIf(process.platform === "win32")(
+    "reassembles a character split across two output chunks",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "codex-login-utf8-"));
+      const shim = writeNodeShim(
+        join(dir, "codex"),
+        splitUtf8Script({ before: "Signing in as ", after: "\n" }),
+      );
+      const r = await startCodexLogin({ bin: shim, captureMs: 3000 });
+      expect(r.output).toBe(`Signing in as ${SPLIT_UTF8_TEXT}\n`);
+    },
+  );
 });

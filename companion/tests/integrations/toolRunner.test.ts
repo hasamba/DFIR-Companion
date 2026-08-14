@@ -423,13 +423,19 @@ describe("spawnToolRunner output decoding", () => {
   it("counts the cap in bytes, not UTF-16 code units", async () => {
     const text = "日".repeat(40); // 40 code units, 120 bytes
     await expect(
-      spawnToolRunner()(process.execPath, ["-e", writeOnceScript(text)], { timeoutMs: 10_000, maxOutputBytes: 60 }),
+      spawnToolRunner()(process.execPath, ["-e", writeOnceScript(text)], {
+        timeoutMs: 10_000,
+        maxOutputBytes: 60,
+      }),
     ).rejects.toThrow(/exceeded 60 bytes/);
   });
 
   it("lets output through when its byte length is within the cap", async () => {
     const text = "日".repeat(40); // 120 bytes
-    const r = await spawnToolRunner()(process.execPath, ["-e", writeOnceScript(text)], { timeoutMs: 10_000, maxOutputBytes: 200 });
+    const r = await spawnToolRunner()(process.execPath, ["-e", writeOnceScript(text)], {
+      timeoutMs: 10_000,
+      maxOutputBytes: 200,
+    });
     expect(r.stdout).toBe(text);
   });
 });

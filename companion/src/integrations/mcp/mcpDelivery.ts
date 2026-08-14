@@ -283,10 +283,14 @@ export function spawnTransferRunner(): TransferRunner {
       // complaining about. setEncoding holds the incomplete tail back until the rest arrives.
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
-      child.stdout?.on("data", (chunk: string) => { stdout += chunk; });
+      child.stdout?.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
       // scp is quiet on success and terse on failure, so stderr is the whole diagnostic. Cap it so a
       // pathological failure loop cannot grow it without bound.
-      child.stderr?.on("data", (chunk: string) => { if (stderr.length < 64 * 1024) stderr += chunk; });
+      child.stderr?.on("data", (chunk: string) => {
+        if (stderr.length < 64 * 1024) stderr += chunk;
+      });
 
       child.on("error", (e) => {
         const err = new Error(`cannot run "${binary}": ${e.message}`) as Error & { spawnCode?: string };

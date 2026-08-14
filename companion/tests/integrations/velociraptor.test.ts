@@ -1539,13 +1539,19 @@ describe.skipIf(process.platform === "win32")("spawnVqlRunner output decoding", 
   it("counts maxOutputBytes in bytes, not UTF-16 code units", async () => {
     const shim = writeNodeShim(join(shimDir, "velo-big"), writeOnceScript("日".repeat(40))); // 120 bytes
     await expect(
-      spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], { timeoutMs: 10_000, maxOutputBytes: 60 }),
+      spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], {
+        timeoutMs: 10_000,
+        maxOutputBytes: 60,
+      }),
     ).rejects.toThrow(/exceeded 60 bytes/);
   });
 
   it("lets output through when its byte length is within the cap", async () => {
     const shim = writeNodeShim(join(shimDir, "velo-ok"), writeOnceScript('{"Path":"日本語"}\n')); // 25 bytes
-    const { rows } = await spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], { timeoutMs: 10_000, maxOutputBytes: 200 });
+    const { rows } = await spawnVqlRunner({ ...cfg, binary: shim })(["SELECT * FROM info()"], {
+      timeoutMs: 10_000,
+      maxOutputBytes: 200,
+    });
     expect(rows).toEqual([{ Path: "日本語" }]);
   });
 });

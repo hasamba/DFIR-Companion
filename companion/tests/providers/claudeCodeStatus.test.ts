@@ -67,23 +67,32 @@ describe("startClaudeLogin", () => {
   });
 
   // Relies on the OS reading the "#!/bin/sh" shebang to exec the shim, which only POSIX does.
-  it.skipIf(process.platform === "win32")("captures a printed URL and resolves started:true via finish()", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "cc-login-"));
-    const shim = join(dir, "claude");
-    // Ignores its args ("auth login"), prints a URL, exits immediately.
-    writeFileSync(shim, '#!/bin/sh\necho "Visit https://example.com/oauth?code=abc to sign in"\n');
-    chmodSync(shim, 0o755);
-    const r = await startClaudeLogin({ bin: shim, captureMs: 3000 });
-    expect(r.started).toBe(true);
-    expect(r.url).toBe("https://example.com/oauth?code=abc");
-  });
+  it.skipIf(process.platform === "win32")(
+    "captures a printed URL and resolves started:true via finish()",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "cc-login-"));
+      const shim = join(dir, "claude");
+      // Ignores its args ("auth login"), prints a URL, exits immediately.
+      writeFileSync(shim, '#!/bin/sh\necho "Visit https://example.com/oauth?code=abc to sign in"\n');
+      chmodSync(shim, 0o755);
+      const r = await startClaudeLogin({ bin: shim, captureMs: 3000 });
+      expect(r.started).toBe(true);
+      expect(r.url).toBe("https://example.com/oauth?code=abc");
+    },
+  );
 
   // The captured banner goes straight to the dashboard. A chunk boundary can fall inside a
   // character here just as it can anywhere else — see tests/helpers/splitUtf8.ts.
-  it.skipIf(process.platform === "win32")("reassembles a character split across two output chunks", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "cc-login-utf8-"));
-    const shim = writeNodeShim(join(dir, "claude"), splitUtf8Script({ before: "Signing in as ", after: "\n" }));
-    const r = await startClaudeLogin({ bin: shim, captureMs: 3000 });
-    expect(r.output).toBe(`Signing in as ${SPLIT_UTF8_TEXT}\n`);
-  });
+  it.skipIf(process.platform === "win32")(
+    "reassembles a character split across two output chunks",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "cc-login-utf8-"));
+      const shim = writeNodeShim(
+        join(dir, "claude"),
+        splitUtf8Script({ before: "Signing in as ", after: "\n" }),
+      );
+      const r = await startClaudeLogin({ bin: shim, captureMs: 3000 });
+      expect(r.output).toBe(`Signing in as ${SPLIT_UTF8_TEXT}\n`);
+    },
+  );
 });

@@ -83,12 +83,22 @@ describe("defaultCodexRunner", () => {
   // `codex exec --json` emits JSON, so a U+FFFD from a mis-decoded chunk boundary costs the whole
   // response. See tests/helpers/splitUtf8.ts.
   it("reassembles a character split across two stdout chunks", async () => {
-    const r = await defaultCodexRunner({ bin: process.execPath, args: ["-e", splitUtf8Script()], stdin: "", timeoutMs: 10_000 });
+    const r = await defaultCodexRunner({
+      bin: process.execPath,
+      args: ["-e", splitUtf8Script()],
+      stdin: "",
+      timeoutMs: 10_000,
+    });
     expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
   });
 
   it("reassembles a character split across two stderr chunks", async () => {
-    const r = await defaultCodexRunner({ bin: process.execPath, args: ["-e", splitUtf8Script({ stream: "stderr" })], stdin: "", timeoutMs: 10_000 });
+    const r = await defaultCodexRunner({
+      bin: process.execPath,
+      args: ["-e", splitUtf8Script({ stream: "stderr" })],
+      stdin: "",
+      timeoutMs: 10_000,
+    });
     expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
   });
 });

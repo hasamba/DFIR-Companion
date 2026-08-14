@@ -139,12 +139,22 @@ describe("defaultClaudeRunner", () => {
   // The model's answer is JSON. One U+FFFD inside it and the whole response fails to parse — see
   // tests/helpers/splitUtf8.ts for why a chunk boundary lands mid-character in the first place.
   it("reassembles a character split across two stdout chunks", async () => {
-    const r = await defaultClaudeRunner({ bin: process.execPath, args: ["-e", splitUtf8Script()], stdin: "", timeoutMs: 10_000 });
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", splitUtf8Script()],
+      stdin: "",
+      timeoutMs: 10_000,
+    });
     expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
   });
 
   it("reassembles a character split across two stderr chunks", async () => {
-    const r = await defaultClaudeRunner({ bin: process.execPath, args: ["-e", splitUtf8Script({ stream: "stderr" })], stdin: "", timeoutMs: 10_000 });
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", splitUtf8Script({ stream: "stderr" })],
+      stdin: "",
+      timeoutMs: 10_000,
+    });
     expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
   });
 
