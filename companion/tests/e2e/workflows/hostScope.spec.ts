@@ -46,7 +46,10 @@ test("host-scope: the demo case derives a non-empty host-scope ledger from its e
   expect(Array.isArray(body.nearDuplicates)).toBe(true);
 });
 
-test("host-scope: clearing a host requires a reason, and the decision persists", async ({ page, demoCase }) => {
+test("host-scope: clearing a host requires a reason, and the decision persists", async ({
+  page,
+  demoCase,
+}) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
   const empty = await page.request.post(`/cases/${demoCase}/host-scope/ws-e2e-042`, {
