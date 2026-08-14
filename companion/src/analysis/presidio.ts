@@ -67,19 +67,31 @@ export const DEFAULT_PRESIDIO_MIN_SCORE = 0.6;
 export const DEFAULT_PRESIDIO_TIMEOUT_MS = 60_000;
 
 /**
+ * The largest delay setTimeout can actually hold. Node stores it in a 32-bit signed int, and a
+ * larger value does NOT mean "wait longer" — it warns (TimeoutOverflowWarning) and silently uses
+ * 1ms, so the request aborts almost immediately. That is the exact opposite of what someone typing
+ * a huge number is asking for, and it fails in the direction that breaks the product.
+ */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/**
  * Resolve DFIR_PRESIDIO_TIMEOUT_MS into a per-request budget, on the same terms as
  * resolvePresidioMinScore: an empty string (a compose file interpolating an unset variable) falls
  * back to the default rather than becoming `Number("")` → 0, which as a timeout would abort every
  * request before it started. Non-finite and non-positive values fall back too — a zero or negative
- * budget cannot express "wait less", only "always fail". There is deliberately no upper clamp: a
- * long scan on a slow box is the analyst's call, and capping it would reintroduce this same bug.
+ * budget cannot express "wait less", only "always fail".
+ *
+ * Clamped at the top to MAX_TIMER_MS. An earlier version of this function deliberately refused to
+ * clamp, on the reasoning that capping a long scan would reintroduce the very bug this setting
+ * exists to fix. That reasoning was backwards: past the 32-bit ceiling setTimeout drops to 1ms, so
+ * NOT clamping is what reintroduces it — and far more sharply, since every scan then fails at once.
  */
 export function resolvePresidioTimeoutMs(raw: string | undefined): number {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return DEFAULT_PRESIDIO_TIMEOUT_MS;
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PRESIDIO_TIMEOUT_MS;
-  return parsed;
+  return Math.min(parsed, MAX_TIMER_MS);
 }
 
 /**
@@ -123,20 +135,37 @@ export function mapFindings(findings: PresidioFinding[], minScore: number): Cust
 }
 
 /**
- * A scan that ran out of budget, as opposed to one that could not reach the analyzer at all. Its
- * own type because the two need OPPOSITE advice — "start the container" is wrong and costly when
- * the container is up and merely busy — and a message string is too weak a thing to branch on.
+ * A scan that produced NO RESPONSE within the budget. Its own type because a silent request and a
+ * refused connection need opposite advice — "start the container" is wrong and costly when the
+ * container is up and merely busy — and a message string is too weak a thing to branch on.
+ *
+ * Deliberately says "no response", not "Presidio is running". The client cannot tell a busy
+ * analyzer from a connect that is hanging: a dropped SYN, a black-holing firewall or a wrong port
+ * all trip this same timer having never reached Presidio at all. Asserting the host is up on that
+ * evidence would rebuild the misdirection this class exists to prevent, just pointing the other way.
  */
 export class PresidioTimeoutError extends Error {
   constructor(
     readonly timeoutMs: number,
     readonly chars: number,
   ) {
-    super(
-      `timed out after ${timeoutMs}ms scanning ${chars} characters — Presidio is running but ` +
-        `slower than the budget`,
-    );
+    super(`no response within ${timeoutMs}ms while scanning ${chars} characters`);
     this.name = "PresidioTimeoutError";
+  }
+}
+
+/**
+ * A Presidio scan that could not complete, as surfaced to the AI-call layer. `timedOut` is what the
+ * retry policy reads: a scan that ran out of budget must NOT be retried (see retry.ts), because an
+ * aborted request keeps running inside the analyzer and the retry only queues behind it.
+ */
+export class PresidioScanError extends Error {
+  constructor(
+    message: string,
+    readonly timedOut: boolean,
+  ) {
+    super(message);
+    this.name = "PresidioScanError";
   }
 }
 

@@ -27,6 +27,7 @@ import { safeAiErrorKind, safeAiPhase, type OperationalMetricsStore } from "../o
 import {
   mapFindings,
   PresidioApprovalRequired,
+  PresidioScanError,
   PresidioTimeoutError,
   type PresidioClient,
   type PresidioFinding,
@@ -79,6 +80,11 @@ export interface ProviderCallContext {
 // number — and the split/truncate arithmetic below is unit-tested against character counts.
 const PRESIDIO_SCAN_CHUNK_CHARS = 50_000;
 const PRESIDIO_SCAN_MAX_CHARS = 5_000_000;
+// How far the next chunk rewinds when a chunk had to be cut mid-line (see splitOnLineBoundaries).
+// It only has to exceed the longest value Presidio's ENTITY_MAP can produce — names, IBANs, card
+// and phone numbers, national IDs are all far under 256 characters — so this buys the guarantee
+// cheaply: at the 50,000-char chunk size it re-scans at most 0.5% of the text.
+const PRESIDIO_SCAN_OVERLAP_CHARS = 256;
 
 // Write a redacted screenshot copy to DFIR_OCR_DEBUG_DIR for visual inspection. The redacted
 // buffer keeps the source image format (sharp infers it from the input), so the extension is
@@ -230,21 +236,24 @@ function presidioEnabledFor(control: AnonControl | null): boolean {
 }
 
 /** The one message shape for a Presidio scan that could not run — the analyst's next action. */
-function presidioUnreachable(url: string, err: unknown): Error {
-  // A timeout and an unreachable analyzer need opposite advice, and getting that wrong is expensive:
-  // telling someone to start a container that is already running sends them to look in the one place
-  // the problem is not. Branch on the typed error rather than on the wording of a message.
+function presidioScanFailed(url: string, err: unknown): PresidioScanError {
+  // A silent request and a refused connection need opposite advice, and getting that wrong is
+  // expensive: telling someone to start a container that is already running sends them to look in
+  // the one place the problem is not. Branch on the typed error, never on message wording.
   if (err instanceof PresidioTimeoutError)
-    return new Error(
-      `Presidio is enabled and reachable at ${url}, but the scan ran out of time: ` +
-        `${err.message}. Raise DFIR_PRESIDIO_TIMEOUT_MS (currently ${err.timeoutMs}ms), give the ` +
-        `analyzer more workers, or untick Presidio in the case's Anonymization panel to proceed ` +
-        `without name detection.`,
+    return new PresidioScanError(
+      `Presidio is enabled but the scan at ${url} did not finish: ${err.message} ` +
+        `(budget ${err.timeoutMs}ms). The analyzer may be busy — it serializes requests when run ` +
+        `with a single worker — or the connection may be hanging without being refused. Raise ` +
+        `DFIR_PRESIDIO_TIMEOUT_MS, give the analyzer more workers, check the URL and network path, ` +
+        `or untick Presidio in the case's Anonymization panel to proceed without name detection.`,
+      true,
     );
-  return new Error(
+  return new PresidioScanError(
     `Presidio is enabled but the scan at ${url} failed (not reachable, or returned an ` +
       `unusable response): ${(err as Error).message}. Start the container or clear ` +
       `DFIR_PRESIDIO_URL to disable the layer.`,
+    false,
   );
 }
 
@@ -271,11 +280,11 @@ async function presidioGate(
   // unscanned on the way to the model, and this gate's whole contract is to fail closed.
   const chunkChars = ctx.opts.presidioScanCapsOverride?.chunkChars ?? PRESIDIO_SCAN_CHUNK_CHARS;
   const raw: PresidioFinding[] = [];
-  for (const chunk of splitOnLineBoundaries(maskedText, chunkChars)) {
+  for (const chunk of splitOnLineBoundaries(maskedText, chunkChars, PRESIDIO_SCAN_OVERLAP_CHARS)) {
     try {
       raw.push(...(await presidio.client.analyze(chunk)));
     } catch (err) {
-      throw presidioUnreachable(presidio.url, err);
+      throw presidioScanFailed(presidio.url, err);
     }
   }
 
@@ -313,18 +322,34 @@ function capScanLength(ctx: ProviderCallContext, caseId: string, masked: string,
 /**
  * Split on line boundaries so an entity is never cut in half across two /analyze requests — a
  * half an email address on each side of a chunk edge is two values Presidio recognises as neither.
+ *
+ * A line boundary is not always available. A prompt can carry a single line longer than the chunk
+ * size — one enormous JSON object, a base64 blob, a log line with no newline for 60k characters —
+ * and there the split falls back to a hard cut at the limit, which is exactly the mid-entity slice
+ * the line search exists to avoid. That is a fail-OPEN in a fail-closed gate: the halves match
+ * nothing, the scan reports clean, and the intact value goes to the model anyway.
+ *
+ * So a hard cut REWINDS the next chunk by `overlapChars`, making the two chunks share a window
+ * wide enough to contain any entity Presidio maps. A value straddling the cut is therefore whole in
+ * the second chunk even though it was severed in the first. Duplicates that overlap creates cost
+ * nothing: mapFindings already dedupes on category + case-folded value.
  */
-function splitOnLineBoundaries(text: string, chunkChars: number): string[] {
+function splitOnLineBoundaries(text: string, chunkChars: number, overlapChars = 0): string[] {
+  // Never let the rewind consume more than a quarter of a chunk: `start` must advance, and a
+  // pathological overlap >= chunkChars would rewind as far as it stepped and loop forever.
+  const overlap = Math.max(0, Math.min(overlapChars, Math.floor(chunkChars / 4)));
   const chunks: string[] = [];
   let start = 0;
   while (start < text.length) {
     let end = Math.min(start + chunkChars, text.length);
+    let cutMidLine = false;
     if (end < text.length) {
       const nl = text.lastIndexOf("\n", end);
       if (nl > start) end = nl + 1;
+      else cutMidLine = true;
     }
     chunks.push(text.slice(start, end));
-    start = end;
+    start = cutMidLine ? end - overlap : end;
   }
   return chunks;
 }
@@ -351,11 +376,11 @@ export async function presidioPreScan(
   const scanned = capScanLength(ctx, caseId, anon.apply(text), maxChars);
 
   const all: PresidioFinding[] = [];
-  for (const chunk of splitOnLineBoundaries(scanned, chunkChars)) {
+  for (const chunk of splitOnLineBoundaries(scanned, chunkChars, PRESIDIO_SCAN_OVERLAP_CHARS)) {
     try {
       all.push(...(await presidio.client.analyze(chunk)));
     } catch (err) {
-      throw presidioUnreachable(presidio.url, err);
+      throw presidioScanFailed(presidio.url, err);
     }
   }
 
