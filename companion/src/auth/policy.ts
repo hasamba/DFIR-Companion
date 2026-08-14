@@ -168,6 +168,9 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
   if (
     path === "/cases" ||
     path === "/captures/recent" ||
+    // The new-case wizard's suggested id. Same policy as POST /cases directly above: anyone who
+    // may create a case may ask what the next free number is.
+    (normalizedMethod === "GET" && path === "/api/next-case-id") ||
     collectionPath(path) === "/cases/import/encrypted" ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||

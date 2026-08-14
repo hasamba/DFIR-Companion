@@ -227,4 +227,54 @@ describe("JobManager", () => {
       expect(m.hasActive("c1", "import")).toBe(false);
     });
   });
+
+  // A deleted case must take its jobs with it. The table is keyed by case id alone, so anything
+  // left behind is inherited wholesale by the next case that claims the id — and the dashboard's
+  // Resume button would then replay the dead case's import into the live one.
+  describe("forgetCase", () => {
+    it("drops every job belonging to the case", async () => {
+      const m = new JobManager({ now: mkClock() });
+      m.register({ caseId: "c1", kind: "import", label: "a.json" });
+      m.register({ caseId: "c1", kind: "import", label: "b.json" });
+      expect(m.list("c1")).toHaveLength(2);
+      await m.forgetCase("c1");
+      expect(m.list("c1")).toEqual([]);
+    });
+
+    it("leaves other cases and global jobs untouched", async () => {
+      const m = new JobManager({ now: mkClock() });
+      m.register({ caseId: "c1", kind: "import" });
+      m.register({ caseId: "c2", kind: "import" });
+      m.register({ kind: "synthesis" }); // global — caseId null
+      await m.forgetCase("c1");
+      expect(m.list("c1")).toEqual([]);
+      expect(m.list("c2")).toHaveLength(1);
+      expect(m.list()).toHaveLength(2);
+    });
+
+    it("aborts a still-running job before dropping it", async () => {
+      const m = new JobManager({ now: mkClock() });
+      const { jobId, signal } = m.register({ caseId: "c1", kind: "import", cancellable: true });
+      expect(signal!.aborted).toBe(false);
+      await m.forgetCase("c1");
+      expect(signal!.aborted).toBe(true);
+      expect(m.get(jobId)).toBeUndefined();
+    });
+
+    it("forgetting an unknown case is a no-op", async () => {
+      const m = new JobManager({ now: mkClock() });
+      m.register({ caseId: "c1", kind: "import" });
+      await m.forgetCase("nope");
+      expect(m.list("c1")).toHaveLength(1);
+    });
+
+    it("a re-created case with the same id starts with an empty job list", async () => {
+      const m = new JobManager({ now: mkClock() });
+      m.register({ caseId: "INC-2026-003", kind: "import", label: "velociraptor.json" });
+      await m.forgetCase("INC-2026-003");
+      expect(m.list("INC-2026-003")).toEqual([]);
+      m.register({ caseId: "INC-2026-003", kind: "import", label: "fresh.json" });
+      expect(m.list("INC-2026-003").map((job) => job.label)).toEqual(["fresh.json"]);
+    });
+  });
 });

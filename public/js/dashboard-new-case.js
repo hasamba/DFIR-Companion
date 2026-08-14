@@ -28,20 +28,19 @@
     idInput.focus();
     idInput.select();
   }
-  // Next free INC-YYYY-NNN: the highest NNN among this year's existing INC-YYYY-* cases,
-  // plus one, zero-padded to 3. Falls back to a date+time id if the case list can't be
-  // fetched, so the field is never left blank.
+  // Next free INC-YYYY-NNN, from the server. This used to be computed here from /cases, which
+  // could only see live, visible cases — so it happily reissued the number of a case that had been
+  // deleted, and the new case then inherited its predecessor's orphaned background jobs. The
+  // server also counts archived cases and ids retired by a delete. Falls back to a date+time id if
+  // the request fails, so the field is never left blank.
   async function suggestCaseId() {
     const year = new Date().getFullYear();
     try {
-      const cases = await fetch("/cases").then((r) => (r.ok ? r.json() : []));
-      const re = new RegExp(`^INC-${year}-(\\d+)$`);
-      let max = 0;
-      for (const c of cases) {
-        const m = String(c.caseId || "").match(re);
-        if (m) max = Math.max(max, parseInt(m[1], 10));
-      }
-      return `INC-${year}-${String(max + 1).padStart(3, "0")}`;
+      const res = await fetch("/api/next-case-id");
+      if (!res.ok) throw new Error(`next-case-id: ${res.status}`);
+      const { caseId } = await res.json();
+      if (!caseId) throw new Error("next-case-id: empty");
+      return caseId;
     } catch {
       const d = new Date(),
         p = (n) => String(n).padStart(2, "0");

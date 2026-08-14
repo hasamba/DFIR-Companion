@@ -349,6 +349,14 @@ export function listJobs(table: JobTable, opts: { caseId?: string | null } = {})
   return [...filtered].sort((a, b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id));
 }
 
+// Removes a case's rows outright rather than moving them to a terminal status: the case they
+// describe no longer exists, so there is nothing left for a reader to act on. Jobs are keyed by
+// case id alone, so a survivor would silently re-attach to the next case that claims the id.
+export function dropCaseJobs(table: JobTable, caseId: string): JobTable {
+  const remaining = table.jobs.filter((job) => job.caseId !== caseId);
+  return remaining.length === table.jobs.length ? table : { jobs: remaining };
+}
+
 export function capJobs(table: JobTable, max: number): JobTable {
   if (max <= 0 || table.jobs.length <= max) return table;
   const over = table.jobs.length - max;
