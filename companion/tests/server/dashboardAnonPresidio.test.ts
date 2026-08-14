@@ -45,14 +45,45 @@ describe("anonymizer modal — Presidio availability notice", () => {
     expect(modal).toContain("DFIR_PRESIDIO_URL");
   });
 
-  it("shows Real names as a disabled STATUS row, so saveAnon can never persist it as a category", () => {
-    // PERSON has no entry in AnonControl.categories — the server would drop it, and a checkbox
-    // that silently does nothing is worse than no checkbox. The row must be disabled and must not
-    // carry the anon-cb class that saveAnon() reads back.
+  it("never lets the Real names row be persisted as a CATEGORY", () => {
+    // PERSON has no entry in AnonControl.categories, so the server would drop it. The row now
+    // carries a real setting (AnonControl.presidio) under its own id, but it must still stay out
+    // of the .anon-cb set that saveAnon() reads back into `categories` — otherwise the analyst
+    // ticks something that silently does nothing.
     const row = modal.slice(modal.indexOf("insertAdjacentHTML"), modal.indexOf("anonPresidioNote"));
     expect(row).toContain("Real names (people)");
-    expect(row).toContain("disabled");
+    expect(row).toContain('id="anonPresidioEnabled"');
     expect(row).not.toContain("anon-cb");
+  });
+
+  // The row used to be permanently `disabled`, which meant the ONLY way to stop scanning was to
+  // clear DFIR_PRESIDIO_URL and restart — losing the configuration to work around a container
+  // that was merely slow or briefly down.
+  it("is operable when an analyzer is configured, and inert when none is", () => {
+    // `disabled` must be conditional on `configured`, not hardcoded into the row.
+    const row = modal.slice(modal.indexOf("insertAdjacentHTML"), modal.indexOf("anonPresidioNote"));
+    expect(row).toContain('configured ? "" : "disabled"');
+  });
+
+  it("drives the tick from the per-case switch, not merely from it being configured", () => {
+    // Reading `checked` off presidioConfigured alone would show the layer as on for a case that
+    // had switched it off — a UI that lies in the safe-looking direction.
+    expect(modal).toContain("anonControl.presidio === false");
+  });
+
+  it("warns that names go unmasked when the switch is off but an analyzer is configured", () => {
+    // Off-by-choice and never-configured are different states and must not share one message.
+    expect(modal).toContain("configured but switched off");
+  });
+
+  it("posts the switch only when an analyzer is configured", () => {
+    // With none configured the box renders disabled AND unchecked; posting that `false` would
+    // persist "off" for a case that never had the layer, so a later DFIR_PRESIDIO_URL would come
+    // up silently dead on it.
+    const save = js.slice(js.indexOf("function saveAnon("), js.indexOf("function setAi("));
+    expect(save.length, "saveAnon()..setAi() slice is empty").toBeGreaterThan(200);
+    expect(save).toContain("anonControl.presidioConfigured");
+    expect(save).toContain("presidio === undefined");
   });
 
   it("greys out ONLY the Presidio-only row — the local detectors stay togglable", () => {

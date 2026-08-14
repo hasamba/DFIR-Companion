@@ -96,6 +96,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         categories,
         redactSecrets:
           typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
+        presidio: typeof req.body?.presidio === "boolean" ? req.body.presidio : cur.presidio,
       };
       await anonControl.save(req.params.id, next);
       if (next.enabled !== cur.enabled && options.pipeline && options.pipeline.hasSynthesisProvider()) {
@@ -106,6 +107,16 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
           category: "anonymization",
           action: "anon-control",
           detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
+        });
+      }
+      // Standing the name-detection layer down is an evidentiary decision, not a preference: with
+      // it off, PERSON values reach the model unmasked and no approval gate fires. It gets its own
+      // activity entry so the case record says WHEN coverage changed, not just that it did.
+      if (next.presidio !== cur.presidio) {
+        void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+          category: "anonymization",
+          action: "anon-presidio",
+          detail: `Presidio PII scanning ${next.presidio ? "enabled" : "disabled"} for this case`,
         });
       }
       return res

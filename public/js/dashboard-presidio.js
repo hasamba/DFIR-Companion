@@ -317,20 +317,30 @@
   // greying THEM would tell the analyst their card numbers reach the model when they do not.
   // Presidio widens those four; it does not provide them.
   function renderPresidioCategory() {
-    const on = !!(anonControl && anonControl.presidioConfigured);
-    const tip = on
-      ? "Found by Presidio on the already-masked text. Each new name pauses the AI call until you decide below."
-      : "No pattern can find a name — this needs Presidio. Until then, add known names below as PERSON.";
-    document
-      .getElementById("anonCategories")
-      .insertAdjacentHTML(
-        "beforeend",
-        `<label data-safe-style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0;opacity:${on ? "1" : ".55"}" title="${escAttr(tip)}">` +
-          `<input type="checkbox" disabled ${on ? "checked" : ""}> Real names (people) — ${on ? "via Presidio" : "needs Presidio"}</label>`,
-      );
-    document.getElementById("anonPresidioNote").innerHTML = on
-      ? "<strong>Presidio is on.</strong> It catches what no pattern can — names, non-Israeli national IDs, IBANs — plus card / phone / email formats the built-ins miss. New values pause the AI call for your decision below."
-      : "<strong>Presidio is not configured.</strong> Names, non-Israeli national IDs and IBANs go undetected. Nothing else changes: cards, phones, IDs and emails are matched by the built-in patterns either way. Set <code>DFIR_PRESIDIO_URL</code> in Settings → AI (needs a restart); until then add known names below as <code>PERSON</code>.";
+    // Two independent facts, and the row must not conflate them: whether an analyzer is CONFIGURED
+    // (DFIR_PRESIDIO_URL, startup-only, server-side) and whether this case USES it (per-case, live).
+    // Configured is what makes the switch operable at all; used is what the switch holds.
+    const configured = !!(anonControl && anonControl.presidioConfigured);
+    const on = configured && !(anonControl && anonControl.presidio === false);
+    const tip = !configured
+      ? "No pattern can find a name — this needs Presidio. Until then, add known names below as PERSON."
+      : on
+        ? "Found by Presidio on the already-masked text. Each new name pauses the AI call until you decide below. Untick to stand the layer down without losing the configuration."
+        : "Switched off for this case — names are NOT detected. The analyzer stays configured; tick to resume.";
+    document.getElementById("anonCategories").insertAdjacentHTML(
+      "beforeend",
+      `<label data-safe-style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0;opacity:${configured ? "1" : ".55"}" title="${escAttr(tip)}">` +
+        // Deliberately carries no category class: this box holds AnonControl.presidio, not a
+        // category. PERSON has no entry in AnonControl.categories, so letting saveAnon read it
+        // back with the category checkboxes would post a key the server drops on the floor.
+        `<input type="checkbox" id="anonPresidioEnabled" ${configured ? "" : "disabled"} ${on ? "checked" : ""}> ` +
+        `Real names (people) — ${!configured ? "needs Presidio" : on ? "via Presidio" : "Presidio off for this case"}</label>`,
+    );
+    document.getElementById("anonPresidioNote").innerHTML = !configured
+      ? "<strong>Presidio is not configured.</strong> Names, non-Israeli national IDs and IBANs go undetected. Nothing else changes: cards, phones, IDs and emails are matched by the built-in patterns either way. Set <code>DFIR_PRESIDIO_URL</code> in Settings → AI (needs a restart); until then add known names below as <code>PERSON</code>."
+      : on
+        ? "<strong>Presidio is on.</strong> It catches what no pattern can — names, non-Israeli national IDs, IBANs — plus card / phone / email formats the built-ins miss. New values pause the AI call for your decision below. If the analyzer is down or too slow, untick this to keep working — the URL stays configured."
+        : "<strong>Presidio is configured but switched off for this case.</strong> Names, non-Israeli national IDs and IBANs reach the model unmasked and no approval gate fires — everything else is still anonymized by the built-in patterns. Tick to turn scanning back on; no restart needed.";
   }
   function openAnonModal() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -392,13 +402,25 @@
     [...document.querySelectorAll(".anon-cb:checked")].forEach((cb) => {
       categories[cb.value] = true;
     });
+    // Read the switch only when an analyzer is configured. With none, the box is rendered disabled
+    // and unchecked, and posting that `false` would persist "off" for a case that never had the
+    // layer — so a later DFIR_PRESIDIO_URL would come up silently dead on this case.
+    const presidioBox = document.getElementById("anonPresidioEnabled");
+    const presidio =
+      anonControl && anonControl.presidioConfigured && presidioBox
+        ? presidioBox.checked
+        : undefined;
     const msg = document.getElementById("anonMsg");
     msg.textContent = "saving…";
     Promise.all([
       fetch(`/cases/${caseId}/anon-control`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled, categories, redactSecrets }),
+        body: JSON.stringify(
+          presidio === undefined
+            ? { enabled, categories, redactSecrets }
+            : { enabled, categories, redactSecrets, presidio },
+        ),
       }).then((r) => {
         if (!r.ok) throw new Error("control HTTP " + r.status);
         return r.json();

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -49,11 +49,38 @@ describe("AnonControlStore", () => {
         NATID: true,
       },
       redactSecrets: false,
+      presidio: false,
     });
     const c = await store.load("c1");
     expect(c.enabled).toBe(false);
     expect(c.categories.IP).toBe(false);
     expect(c.redactSecrets).toBe(false);
+    expect(c.presidio).toBe(false);
+  });
+
+  it("defaults Presidio scanning ON", async () => {
+    expect((await store.load("c1")).presidio).toBe(true);
+  });
+
+  // Every control file written before the switch existed lacks the key. Treating a missing key as
+  // `false` would silently stand the name-detection layer down on every existing case the first
+  // time this version boots — a coverage loss nobody asked for and nothing would report.
+  it("treats a control file written before the switch existed as ON, not off", async () => {
+    const legacy = {
+      enabled: true,
+      categories: { IP: true },
+      redactSecrets: true,
+    };
+    await writeFile(join(cases.stateDir("c1"), "anon-control.json"), JSON.stringify(legacy));
+    expect((await store.load("c1")).presidio).toBe(true);
+  });
+
+  it("round-trips the switch back on again", async () => {
+    const cur = await store.load("c1");
+    await store.save("c1", { ...cur, presidio: false });
+    expect((await store.load("c1")).presidio).toBe(false);
+    await store.save("c1", { ...cur, presidio: true });
+    expect((await store.load("c1")).presidio).toBe(true);
   });
 });
 

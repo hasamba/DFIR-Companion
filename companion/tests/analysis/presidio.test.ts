@@ -3,8 +3,11 @@ import {
   mapFindings,
   PresidioApprovalRequired,
   HttpPresidioClient,
+  PresidioTimeoutError,
   resolvePresidioMinScore,
+  resolvePresidioTimeoutMs,
   DEFAULT_PRESIDIO_MIN_SCORE,
+  DEFAULT_PRESIDIO_TIMEOUT_MS,
   type PresidioFinding,
 } from "../../src/analysis/presidio.js";
 
@@ -97,6 +100,44 @@ describe("resolvePresidioMinScore", () => {
   });
 });
 
+describe("resolvePresidioTimeoutMs", () => {
+  it("defaults when unset", () => {
+    expect(resolvePresidioTimeoutMs(undefined)).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
+  });
+
+  // Same empty-string trap as the min-score resolver, but the failure here is total rather than
+  // merely strict: Number("") is 0, and a 0ms budget aborts every request before it can start,
+  // which in a fail-closed layer means no AI call in the product ever succeeds again.
+  it("defaults on an empty string, not 0", () => {
+    expect(resolvePresidioTimeoutMs("")).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
+  });
+
+  it("defaults on a whitespace-only string", () => {
+    expect(resolvePresidioTimeoutMs("   ")).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
+  });
+
+  it("defaults on zero and on a negative value", () => {
+    expect(resolvePresidioTimeoutMs("0")).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
+    expect(resolvePresidioTimeoutMs("-5000")).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
+  });
+
+  it("defaults on a non-numeric value", () => {
+    expect(resolvePresidioTimeoutMs("soon")).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
+  });
+
+  it("parses a valid override and does not clamp a long one", () => {
+    expect(resolvePresidioTimeoutMs("90000")).toBe(90_000);
+    expect(resolvePresidioTimeoutMs("600000")).toBe(600_000);
+  });
+
+  // The measured floor this default has to clear is a CONTENDED chunk, not an idle one: on the
+  // reference single-worker container a 50k chunk took ~1.7s alone and ~9.6s with five scans in
+  // flight. The old 10s sat right on that edge, which is the bug this whole change fixes.
+  it("defaults well clear of a contended chunk, not merely an idle one", () => {
+    expect(DEFAULT_PRESIDIO_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
+  });
+});
+
 describe("PresidioApprovalRequired", () => {
   it("carries the findings and names itself", () => {
     const err = new PresidioApprovalRequired([{ value: "Jane Doe", category: "PERSON" }]);
@@ -121,6 +162,37 @@ describe("HttpPresidioClient", () => {
       json: async () => body,
     })) as unknown as typeof fetch;
   }
+
+  // What made the original outage expensive to diagnose: the client aborted with a bare
+  // abort(), so a request that merely ran out of budget surfaced as DOMException "This operation
+  // was aborted", which the pipeline then wrapped in "not reachable". The analyst was told to
+  // start a container that had been up and healthy for an hour. A timeout must say so, name the
+  // budget it blew, and name the setting that widens it.
+  it("reports a timeout AS a timeout, naming the budget and the knob", async () => {
+    // Never resolves on its own — only the client's own timer can end this call.
+    // Rejects with signal.reason exactly as undici does, which is what carries the client's own
+    // message out; `as Error` because AbortSignal.reason is typed `any`.
+    globalThis.fetch = ((_url: string, init: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason as Error));
+      })) as unknown as typeof fetch;
+    const client = new HttpPresidioClient("http://presidio.local", 20);
+    await expect(client.analyze("Jane Doe")).rejects.toBeInstanceOf(PresidioTimeoutError);
+    await expect(client.analyze("Jane Doe")).rejects.toThrow(/timed out after 20ms/);
+    // Naming the size is what tells the analyst whether to raise the budget or shrink the input.
+    await expect(client.analyze("Jane Doe")).rejects.toThrow(/8 characters/);
+    // It must NOT read as a dead container — that is the misdiagnosis this error exists to prevent.
+    await expect(client.analyze("Jane Doe")).rejects.toThrow(/Presidio is running/);
+  });
+
+  it("clears its timer on success, so a slow later call is not aborted by an earlier one", async () => {
+    // A leaked timer from call 1 would fire mid-call 2 and abort a request that was fine.
+    stubFetch([{ entity_type: "PERSON", start: 0, end: 4, score: 0.9 }]);
+    const client = new HttpPresidioClient("http://presidio.local", 30);
+    await client.analyze("Jane Doe");
+    await new Promise((r) => setTimeout(r, 60));
+    await expect(client.analyze("Jane Doe")).resolves.toHaveLength(1);
+  });
 
   it("slices the exact substring named by start/end offsets, not an off-by-one neighbor", async () => {
     // "Jane Doe" sits at [0, 8) in this text. Off-by-one on either end would silently truncate

@@ -27,7 +27,11 @@ import type { SecondOpinionStore } from "../analysis/secondOpinionStore.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
-import { HttpPresidioClient, resolvePresidioMinScore } from "../analysis/presidio.js";
+import {
+  HttpPresidioClient,
+  resolvePresidioMinScore,
+  resolvePresidioTimeoutMs,
+} from "../analysis/presidio.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { isLocalAiProvider } from "../analysis/anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
@@ -97,12 +101,18 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
   // existing behaviour is completely unchanged when the analyst has not opted in.
   const presidioUrl = (process.env.DFIR_PRESIDIO_URL ?? "").trim();
   const presidioMinScore = resolvePresidioMinScore(process.env.DFIR_PRESIDIO_MIN_SCORE);
+  const presidioTimeoutMs = resolvePresidioTimeoutMs(process.env.DFIR_PRESIDIO_TIMEOUT_MS);
   const presidio = presidioUrl
-    ? { client: new HttpPresidioClient(presidioUrl), url: presidioUrl, minScore: presidioMinScore }
+    ? {
+        client: new HttpPresidioClient(presidioUrl, presidioTimeoutMs),
+        url: presidioUrl,
+        minScore: presidioMinScore,
+      }
     : undefined;
   if (presidio)
     logLine(
-      `[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`,
+      `[presidio] enabled — scanning masked AI prompts via ${presidioUrl} ` +
+        `(minScore ${presidio.minScore}, ${presidioTimeoutMs}ms per request)`,
     );
   const wiredPipeline = buildRuntimePipeline({
     provider,

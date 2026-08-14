@@ -28,12 +28,21 @@ This exposes the analyzer's `/analyze` endpoint on `http://localhost:5002`.
 |---|---|---|
 | `DFIR_PRESIDIO_URL` | _(unset)_ | Base URL of the Presidio Analyzer, e.g. `http://localhost:5002`. Empty/unset = the layer is off and every code path around it is skipped. |
 | `DFIR_PRESIDIO_MIN_SCORE` | `0.6` | Confidence floor, 0–1. A blank or non-numeric value falls back to the default; anything outside `[0, 1]` is clamped rather than rejected. |
+| `DFIR_PRESIDIO_TIMEOUT_MS` | `60000` | Budget for **one** `/analyze` request, not for a whole scan — scans are split into 50,000-character chunks and each chunk gets the full budget. Blank, non-numeric, zero or negative falls back to the default. |
+
+The budget has to cover **queueing**, not just analysis. The official image runs a single worker (`WORKERS=1`), so concurrent scans serialize: measured on the stock container, a 50,000-character chunk takes ~1.7s on its own and ~9.6s with five other scans in flight — the same request, 5.8x slower. That is why the default is 60s rather than something close to the idle figure.
+
+It also matters that aborting a scan does not stop it. An HTTP client giving up does not cancel the analyzer's work, so a scan that times out keeps occupying the worker while the retry queues behind it — which is how a budget set too close to the idle time turns one slow moment into a run of failures.
+
+Raise `DFIR_PRESIDIO_TIMEOUT_MS` if you run the analyzer on a slow box, share one between analysts, or see timeouts in the log. Giving the container more workers addresses the same problem from the other end.
 
 Both are also editable in **Settings → AI → Presidio**, alongside a **Test connection** button. It sends a fixed, synthetic sample string (never anything from your case) to the currently-typed URL and reports **Connected** or **Failed** with the reason — nothing more. It answers only "can the Companion reach this analyzer", which is the question you have when you're setting the URL.
 
 ## What the Anonymization panel shows
 
-The panel's category list ends with a read-only **Real names (people)** row, because that category is the one the analyst cannot switch on: `PERSON` tokens are minted only from Presidio findings. With `DFIR_PRESIDIO_URL` unset the row is greyed as *needs Presidio*; with the layer configured it reads *via Presidio*. A note under the list explains which masking depends on the layer, in the terms below.
+The panel's category list ends with a **Real names (people)** row, because that category is the one no local detector can provide: `PERSON` tokens are minted only from Presidio findings. With `DFIR_PRESIDIO_URL` unset the row is greyed as *needs Presidio* and cannot be ticked — there is nothing to switch on. With the layer configured the row becomes a live, per-case switch reading *via Presidio*. A note under the list explains which masking depends on the layer, in the terms below.
+
+**Turning the layer off for a case.** Unticking that row stops Presidio scanning for that case only, takes effect immediately, and needs no restart — `DFIR_PRESIDIO_URL` stays configured, so ticking it again resumes scanning. This is the switch to reach for when the analyzer is down, too slow, or flagging noise mid-investigation; clearing the URL instead would mean editing `.env` and restarting the server, and would throw away the configuration you want back. The trade is real and the panel says so: with the switch off, names, non-Israeli national IDs and IBANs reach the model unmasked and no approval gate fires. Everything else is still masked by the built-in patterns. Flipping it either way is recorded in the case activity log, so the case record shows when coverage changed.
 
 Three kinds of PII are **only** ever found by Presidio, and go undetected without it:
 
