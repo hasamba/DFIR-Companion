@@ -12,6 +12,7 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import { buildStateSummary } from "../../src/analysis/summary.js";
 import {
   PresidioApprovalRequired,
+  PresidioScanError,
   PresidioTimeoutError,
   type PresidioClient,
   type PresidioFinding,
@@ -224,12 +225,17 @@ describe("analyzeRestored + Presidio", () => {
     };
     const { pipeline } = await makePipeline(slow);
     const err = await pipeline.analyzeWindow("c1", [capture()]).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/reachable/);
-    expect((err as Error).message).toMatch(/ran out of time/);
+    expect((err as Error).message).toMatch(/did not finish/);
     expect((err as Error).message).toMatch(/DFIR_PRESIDIO_TIMEOUT_MS/);
-    // The two things an analyst can actually do right now, one of which is the new switch.
+    // The things an analyst can actually do right now, one of which is the per-case switch.
     expect((err as Error).message).toMatch(/Anonymization panel/);
     expect((err as Error).message).not.toMatch(/Start the container/);
+    // And it must not claim the host is up: the same timer fires when a connect hangs, so this
+    // message has no evidence either way. An earlier version asserted "reachable" and was wrong.
+    expect((err as Error).message).not.toMatch(/is reachable/);
+    // Non-retryable, so the analyst is not held for four budgets to learn the same thing.
+    expect(err).toBeInstanceOf(PresidioScanError);
+    expect((err as PresidioScanError).timedOut).toBe(true);
   });
 
   it("does not retry the approval gate", async () => {
@@ -277,6 +283,92 @@ describe("analyzeRestored + Presidio", () => {
     for (const chunk of seen) expect(chunk.length).toBeLessThanOrEqual(500);
     // Chunking must not lose text: the pieces reassemble into the whole masked prompt.
     expect(seen.join("").length).toBeGreaterThan(500);
+  });
+
+  // A prompt can carry a single line longer than the chunk size — one enormous JSON object, a
+  // base64 blob, a log line with no newline for 60k characters. The line-boundary search finds
+  // nothing to split on there and falls back to a hard cut, severing any entity that straddles it:
+  // the halves match nothing, the scan reports clean, and the intact value goes to the model. That
+  // is a fail-OPEN in a gate whose whole contract is to fail closed.
+  it("finds every value straddling a hard cut in a line longer than the chunk", async () => {
+    const seen: string[] = [];
+    const { pipeline, stateStore } = await makePipeline(
+      stubClient([], seen),
+      [],
+      "DC01.victim.local",
+      undefined,
+      {
+        // 407 is deliberately NOT a multiple of the 20-char marker width. The first version of this
+        // test used a 400-char chunk against a 100-char stride; 400 is a multiple of 100, so every
+        // cut landed exactly on a marker boundary and the test passed even with the overlap removed.
+        // A chunk size coprime to the marker width makes successive cuts drift across the markers,
+        // so a severing cut is guaranteed rather than left to luck.
+        presidioScanCapsOverride: { chunkChars: 407, maxChars: 5_000_000 },
+      },
+    );
+    // ONE newline-free 4,000-char line of back-to-back 20-char markers, so there is no filler for a
+    // cut to land harmlessly in: any cut inside the line that is not exactly on a 20-char boundary
+    // severs a marker.
+    const MARKERS = Array.from({ length: 200 }, (_, i) => `Zz${String(i).padStart(3, "0")}${"q".repeat(15)}`);
+    const line = MARKERS.join("");
+    const s = await stateStore.load("c1");
+    s.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: line,
+        severity: "High" as const,
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "DC01.victim.local",
+      },
+    ];
+    await stateStore.save(s);
+
+    await pipeline.analyzeWindow("c1", [capture()]);
+    expect(seen.length).toBeGreaterThan(1);
+
+    // Asserting on the REQUESTS, not on a stub's return value: this tests the split itself. Every
+    // marker must survive intact in at least one chunk, because a severed one matches nothing and
+    // the gate would then pass the whole prompt to the model having "found" no PII in it.
+    const severed = MARKERS.filter((m) => !seen.some((c) => c.includes(m)));
+    expect(severed, `${severed.length} value(s) were cut across chunk edges and would be missed`).toEqual([]);
+  });
+
+  it("terminates on a long unbroken line instead of looping on the rewind", async () => {
+    // The rewind moves `start` backwards. If it ever rewound as far as it stepped the loop would
+    // never end, so the overlap is capped at a quarter of the chunk; this proves progress.
+    const seen: string[] = [];
+    const { pipeline, stateStore } = await makePipeline(
+      stubClient([], seen),
+      [],
+      "DC01.victim.local",
+      undefined,
+      {
+        presidioScanCapsOverride: { chunkChars: 40, maxChars: 5_000_000 },
+      },
+    );
+    const s = await stateStore.load("c1");
+    s.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: "y".repeat(4000),
+        severity: "High" as const,
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "DC01.victim.local",
+      },
+    ];
+    await stateStore.save(s);
+
+    await pipeline.analyzeWindow("c1", [capture()]);
+    // Bounded: with a 40-char chunk and a 10-char rewind each step still advances >= 30 chars.
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.length).toBeLessThan(1000);
+    for (const c of seen) expect(c.length).toBeLessThanOrEqual(40);
   });
 
   it("still gates on a value that only appears in a later chunk", async () => {
