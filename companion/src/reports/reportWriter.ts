@@ -9,13 +9,13 @@ import {
   filterFalsePositiveEvents,
   type FalsePositiveStore,
 } from "../analysis/falsePositive.js";
-import { renderMarkdownReport } from "./markdown.js";
-import type { CustodyRecord, CustodyStore } from "../analysis/custody.js";
+import { renderReportContents } from "./reportContents.js";
+import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { assembleCustodyManifest } from "../analysis/custodyManifest.js";
-import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
-import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } from "./csv.js";
+import type { CustodyStore } from "../analysis/custody.js";
+import { forensicTimelineCsv, geoMapCsv } from "./csv.js";
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
@@ -88,7 +88,7 @@ import {
 } from "./reportTemplate.js";
 import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
-import type { ComplianceControlStore, ComplianceControl } from "../analysis/complianceControl.js";
+import type { ComplianceControlStore } from "../analysis/complianceControl.js";
 import {
   applyAnonDeep,
   redactCustodyRecords,
@@ -119,6 +119,10 @@ export interface ReportPaths {
 // the incident that motivated this.
 export interface ReportWriterOptions {
   scope?: ScopeStore;
+  // Builds the case's scope ledger. A callback, not the three stores it needs: the writer's job is
+  // to render what it is handed, and holding a super-timeline store here only to assemble one
+  // object put ingest plumbing inside the reporting layer.
+  hostScope?: (caseId: string) => Promise<HostScopeLedger | null>;
   falsePositives?: FalsePositiveStore;
   reportMeta?: ReportMetaStore;
   customerExposure?: CustomerExposureStore;
@@ -142,6 +146,7 @@ export interface ReportWriterOptions {
 
 export class ReportWriter {
   private readonly scope?: ScopeStore;
+  private readonly hostScope?: (caseId: string) => Promise<HostScopeLedger | null>;
   private readonly falsePositives?: FalsePositiveStore;
   private readonly reportMeta?: ReportMetaStore;
   private readonly customerExposure?: CustomerExposureStore;
@@ -167,6 +172,7 @@ export class ReportWriter {
     opts: ReportWriterOptions = {},
   ) {
     this.scope = opts.scope;
+    this.hostScope = opts.hostScope;
     this.custodyStore = opts.custodyStore;
     this.instanceSecret = opts.instanceSecret;
     this.falsePositives = opts.falsePositives;
@@ -287,7 +293,13 @@ export class ReportWriter {
   async docx(caseId: string): Promise<Buffer> {
     const state = await this.loadFilteredState(caseId);
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    return renderDocxReport(state, meta, await this.loadExposure(caseId), await this.loadTemplate(caseId));
+    return renderDocxReport(
+      state,
+      meta,
+      await this.loadExposure(caseId),
+      await this.loadTemplate(caseId),
+      (await this.hostScope?.(caseId)) ?? null,
+    );
   }
 
   private async loadExposure(caseId: string): Promise<CustomerExposureSummary | undefined> {
@@ -546,63 +558,6 @@ export class ReportWriter {
     });
   }
 
-  // Render every report artifact (as strings) from an already-loaded state + its metadata/graph.
-  // Shared by writeAll (persists the REAL report) and redactedReportContents (renders an
-  // anonymized copy in-memory) so both stay byte-for-byte consistent in structure.
-  private renderContents(
-    state: InvestigationState,
-    meta: ReportMeta,
-    exposure: CustomerExposureSummary | undefined,
-    graph: AssetGraph,
-    notebookEntries: NotebookEntry[] | undefined,
-    playbookTasks: PlaybookTask[] | undefined,
-    template: ReportTemplate = defaultReportTemplate(),
-    kevCatalog?: KevCatalog,
-    hypotheses?: Hypothesis[],
-    secondLookLeads?: string[],
-    coverage?: SynthesisCoverage | null,
-    lateralPaths?: LateralPath[],
-    modelPerf?: ModelPerfSnapshot | null,
-    complianceControl?: ComplianceControl,
-    custody?: CustodyRecord[],
-  ): RedactedReportContents {
-    return {
-      markdown: renderMarkdownReport(
-        state,
-        meta,
-        exposure,
-        graph,
-        notebookEntries,
-        playbookTasks,
-        template,
-        kevCatalog,
-        hypotheses,
-        secondLookLeads,
-        coverage,
-        lateralPaths,
-        modelPerf,
-        complianceControl,
-        custody,
-      ),
-      html: renderHtmlReport(
-        state,
-        meta,
-        exposure,
-        graph,
-        notebookEntries,
-        playbookTasks,
-        template,
-        hypotheses,
-        custody,
-      ),
-      findingsCsv: findingsCsv(state),
-      iocsCsv: iocsCsv(state),
-      timelineCsv: timelineCsv(state),
-      forensicTimelineCsv: forensicTimelineCsv(state),
-      stateJson: JSON.stringify(state, null, 2),
-    };
-  }
-
   async writeAll(caseId: string, opts: { parentRunId?: string } = {}): Promise<ReportPaths> {
     const startedAt = new Date().toISOString();
     const state = await this.loadFilteredState(caseId);
@@ -636,7 +591,7 @@ export class ReportWriter {
     const modelPerf = await this.loadModelPerf(caseId);
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
     const custody = this.custodyStore ? await this.custodyStore.load(caseId) : undefined;
-    const c = this.renderContents(
+    const c = renderReportContents(
       state,
       meta,
       exposure,
@@ -652,6 +607,7 @@ export class ReportWriter {
       modelPerf,
       complianceControl,
       custody,
+      (await this.hostScope?.(caseId)) ?? null,
     );
     // Staged, not published: nothing in reports/ changes until every artifact AND the provenance
     // record below have succeeded. Writing them straight over the previous report left a mixed
@@ -838,7 +794,7 @@ export class ReportWriter {
           })
         : undefined;
     return {
-      ...this.renderContents(
+      ...renderReportContents(
         state,
         meta,
         exposure,
@@ -854,6 +810,7 @@ export class ReportWriter {
         undefined,
         complianceControl,
         custody,
+        (await this.hostScope?.(caseId)) ?? null,
       ),
       custodyManifest,
     };

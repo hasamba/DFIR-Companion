@@ -310,6 +310,7 @@
       ["learnedPatterns", () => loadLearnedPatterns(caseId)],
       ["sourceTrust", () => loadSourceTrust(caseId)],
       ["scope", () => loadScope(caseId)],
+      ["hostScope", () => loadHostScope(caseId)],
       ["confidenceControl", () => loadConfidenceControl(caseId)],
       ["corrProfile", () => loadCorrProfile(caseId)],
       ["reportMeta", () => loadReportMeta(caseId)],

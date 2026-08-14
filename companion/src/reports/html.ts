@@ -3,8 +3,10 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { renderScopeSection } from "./scopeSection.js";
 import { escapeHtml } from "./escapeHtml.js";
 import type { CustodyRecord } from "../analysis/custody.js";
+import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
@@ -132,6 +134,7 @@ export function renderHtmlReport(
   template: ReportTemplate = defaultReportTemplate(),
   hypotheses?: Hypothesis[],
   custody?: CustodyRecord[],
+  hostScope?: HostScopeLedger | null,
 ): string {
   const markdown = renderMarkdownReport(
     state,
@@ -150,6 +153,13 @@ export function renderHtmlReport(
     undefined,
     custody,
   );
+  // The scoping statement is appended rather than threaded through renderMarkdownReport:
+  // markdown.ts sits at its size cap, and every format must carry the same canonical report.
+  const markdownWithScope = hostScope
+    ? `${markdown}
+
+${renderScopeSection(hostScope)}`
+    : markdown;
 
   const marked = new Marked({ gfm: true });
   // Escape any raw HTML tokens in the source instead of emitting them verbatim.
@@ -172,7 +182,7 @@ export function renderHtmlReport(
       },
     },
   });
-  const body = marked.parse(markdown, { async: false });
+  const body = marked.parse(markdownWithScope, { async: false });
 
   const graphSvg = renderAssetGraphSvg(buildAssetGraph(state));
   const graphSection = graphSvg

@@ -1431,6 +1431,16 @@ export const FEATURES: Feature[] = [
     private: ["CP_MARK"],
   },
   {
+    // Host scope & clearance. Owns two pieces of view state (the loaded ledger and the status
+    // filter), which is why it is an IIFE rather than bare declarations: a top-level `let` here
+    // would join the shared global lexical environment. All four published names are plain
+    // functions available at load — there is no initializer, because the panel does no DOM wiring
+    // of its own; the case-connect loader calls loadHostScope(caseId) like every other panel.
+    file: "dashboard-host-scope.js",
+    publish: ["renderHostScope", "loadHostScope", "decideHostScope", "setHostScopeFilter"],
+    private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
+  },
+  {
     // The canvas chart. Like dashboard-tickets.js, all of its load-time work is DOM wiring —
     // eleven listeners on the canvas and toolbar plus a ResizeObserver — so it is wrapped in
     // initSwimlane() and the page calls it where the old IIFE sat. Unlike tickets the initializer

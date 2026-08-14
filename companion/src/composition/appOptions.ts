@@ -90,6 +90,7 @@ import type { TimesketchPushOptions } from "../integrations/timesketch/timesketc
 import type { TemplateStore } from "../analysis/templateStore.js";
 import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
+import type { HostScopeStore } from "../analysis/hostScopeStore.js";
 import type { MispPushClient } from "../integrations/misp/mispPushClient.js";
 import type { MispPushOptions } from "../integrations/misp/mispPush.js";
 import type { NotionClient } from "../integrations/notion/notionClient.js";
@@ -448,6 +449,9 @@ export interface AppOptions {
   // Collection plan (#347): per-case analyst overrides for the incident type's evidence checklist.
   // The plan itself is derived on read from the timeline — only the overrides are stored.
   collectionPlanStore?: CollectionPlanStore;
+  // Host scope ledger: analyst decisions only (clearances, out-of-scope). The ledger itself is
+  // derived on read from the super-timeline, findings and the fleet snapshot.
+  hostScopeStore?: HostScopeStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
   // (distribution, analysis state, base URL for the event link).
   mispPushClient?: MispPushClient;

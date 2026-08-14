@@ -37,11 +37,24 @@ export interface DashboardView {
   reportTemplateId?: string;
 }
 
-// The user-managed dashboard section ids — mirrors `SECTION_DEFS` in `public/dashboard.html`.
-// (Conditionally-shown sections like sec-mem-nextsteps / sec-geomap / sec-huntprofile /
-// sec-velohunts are driven by their own logic and are intentionally NOT view-managed.)
+// The user-managed dashboard section ids — mirrors `SECTION_DEFS` in `public/dashboard.html`
+// EXACTLY, and `dashboardViews.test.ts` derives that list from the page and asserts set equality.
+//
+// It has to be exact, because `normalizeDashboardView` drops any id it does not recognise and does
+// so SILENTLY. A section registered in SECTION_DEFS but absent here gets a checkbox in the views
+// editor that unticks itself on save, and — because `applyViewLayout` rewrites SECTIONS_VIS_KEY
+// from the active view on every load — its Settings → section-visibility checkbox is wiped on every
+// refresh too. Five sections sat in that state (sec-host-scope, sec-geomap, sec-huntprofile,
+// sec-velohunts, sec-mcp) because this list was maintained by remembering to append to it.
+//
+// A previous version of this comment claimed conditionally-shown sections were "intentionally NOT
+// view-managed". That was never true of the markup: only sec-mem-nextsteps and sec-collection-plan
+// carry `data-gate-open`, sec-collection-plan was in this list the whole time, and the gate is
+// enforced where it belongs — `applyViewLayout` carries the analyst's choice through untouched for
+// any gated section rather than letting a view pin it off before its evidence lands.
 export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-now",
+  "sec-mem-nextsteps",
   "sec-ask",
   "sec-nlquery",
   "sec-exec",
@@ -52,6 +65,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-findings",
   "sec-next-steps",
   "sec-collection-plan",
+  "sec-host-scope",
   "sec-deep-pass",
   "sec-timeline",
   "sec-hunt-workbench",
@@ -66,15 +80,18 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-evidence",
   "sec-beacons",
   "sec-anomalies",
+  "sec-geomap",
   "sec-iocs",
   "sec-exposure",
   "sec-questions",
   "sec-uncertainties",
+  "sec-huntprofile",
   "sec-threads",
   "sec-mitre",
   "sec-adversary",
   "sec-d3fend",
   "sec-compliance",
+  "sec-velohunts",
   "sec-false-positive",
   "sec-source-trust",
   "sec-hypotheses",
@@ -83,6 +100,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-notebook",
   "sec-inv-log",
   "sec-activity",
+  "sec-mcp",
   "sec-custody",
   "sec-case-details",
 ];
@@ -121,6 +139,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-attack-path",
       "sec-kill-chain",
       "sec-phases",
+      "sec-host-scope",
       "sec-hostranking",
       "sec-gaps",
       "sec-evidence-gaps",
@@ -163,6 +182,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-questions",
       "sec-uncertainties",
       "sec-compliance",
+      "sec-host-scope",
       "sec-hostranking",
       "sec-phases",
       "sec-attack-path",
@@ -223,6 +243,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-findings",
       "sec-mitre",
       "sec-iocs",
+      "sec-host-scope",
       "sec-assets",
       "sec-exposure",
       "sec-questions",
@@ -247,6 +268,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-evidence",
       "sec-assets",
       "sec-login-graph",
+      "sec-host-scope",
       "sec-hostranking",
       "sec-swimlane",
       "sec-findings",

@@ -25,6 +25,7 @@ export const SNAPSHOT_STATE_FILES = [
   "dwell-windows.json", // analyst-defined attacker-presence windows (label/start/end) — investigation data
   "pinned-findings.json", // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
   "cockpit.json", // #375 per-investigator review timestamps + audited cockpit decisions
+  "host-scope.json", // host scope ledger decisions (clearances, out-of-scope) — signed analyst assertions, travel with the case
 ] as const;
 
 // Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A
