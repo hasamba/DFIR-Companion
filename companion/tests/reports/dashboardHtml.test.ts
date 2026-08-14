@@ -1139,6 +1139,36 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     );
   });
 
+  it("retires the live case when a load is cancelled, not just its fetches", async () => {
+    const html = await load();
+    // The abort controller covers FETCHES ONLY. proceedConnect also opens a WebSocket and starts a
+    // 5s capture-count poll, and both used to outlive cancellation — the socket kept pushing
+    // `state` (which rendered, because activeCaseId still named the cancelled case) and ~25 other
+    // message types that each re-fetch a panel.
+    //
+    // Asserted on the statements themselves rather than by distance from the function name: the
+    // reasoning above lives in the code as comments, so a character budget here measures how much
+    // was explained, not what was done.
+    expect(html).toMatch(/if \(typeof retireCount === "function"\) retireCount\(\);\s*activeCaseId = null;/);
+    // ...and the poller it calls really does forget the case, rather than only pausing. stopCount
+    // leaves countUpdate closed over the old id, which visibilitychange would resurrect.
+    expect(html).toMatch(/function retireCount\(\)\s*\{\s*stopCount\(\);\s*countUpdate = null;\s*\}/);
+    // Handlers come off BEFORE close(): onclose writes "disconnected" into the same status line
+    // the cancel message claims, and close() fires it asynchronously — so an attached handler
+    // overwrites the explanation a beat later.
+    expect(html).toMatch(/ws\.onclose = null;[\s\S]{0,160}ws\.close\(\)/);
+  });
+
+  it("drops a case-scoped state push when no case is active", async () => {
+    const html = await load();
+    // The guard must reject on a NULL activeCaseId, not fall through it. Cancelling clears the
+    // active case, so `activeCaseId &&` in front of the comparison would have made the guard
+    // permissive at exactly the moment it matters — every case-scoped state would paint onto a
+    // dashboard the analyst had just emptied.
+    expect(html).toMatch(/if \(rawState && rawState\.caseId && rawState\.caseId !== activeCaseId\) return;/);
+    expect(html).not.toMatch(/rawState\.caseId &&\s*activeCaseId &&/);
+  });
+
   it("tracks the secondary panels to completion after the overlay hides", async () => {
     const html = await load();
     expect(html).toContain('id="panelProgressBar"');

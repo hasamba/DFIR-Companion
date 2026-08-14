@@ -237,6 +237,17 @@
       countTimer = null;
     }
   }
+  // Retire the poller for good, as opposed to stopCount()'s "pause while hidden".
+  //
+  // CLEARING countUpdate IS THE WHOLE POINT. stopCount() only drops the timer, and countUpdate
+  // still closes over the case id it was built for — so the visibilitychange handler below, which
+  // calls countUpdate() and startCount() on every return to the tab, would resurrect a 5-second
+  // poll against a case the analyst has cancelled. Used by the case-load cancel path, which has no
+  // replacement case to re-point the poller at.
+  function retireCount() {
+    stopCount();
+    countUpdate = null;
+  }
 
   function pollCount(caseId) {
     stopCount();
@@ -295,5 +306,6 @@
   window.cancelJob = cancelJob;
   window.loadJobs = loadJobs;
   window.pollCount = pollCount;
+  window.retireCount = retireCount;
   window.scheduleJobUiRefresh = scheduleJobUiRefresh;
 })();

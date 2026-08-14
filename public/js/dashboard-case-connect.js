@@ -188,6 +188,32 @@
     _panelLoadGen++;
     const api = clpApi();
     if (api) api.hidePanelStrip();
+    // THE ABORT CONTROLLER ONLY COVERS FETCHES. proceedConnect also opens a WebSocket and starts a
+    // 5-second capture-count poll, and neither is a fetch, so both survived cancellation: the
+    // socket went on delivering `state` pushes — which render() accepted, because activeCaseId
+    // still named the cancelled case — plus the ~25 other message types that each re-fetch a
+    // panel. The result was a dashboard that kept redrawing and re-loading a case the analyst had
+    // just walked out of, at a URL that named no case at all.
+    //
+    // Order matters: drop activeCaseId LAST. render()'s stale guard compares against it, so
+    // clearing it before the socket is closed would open a window where a push in flight is
+    // measured against nothing.
+    if (ws) {
+      // Detach BEFORE closing. close() fires onclose asynchronously, and this socket's onclose
+      // writes "disconnected" into the same status line the cancel message below claims — so
+      // leaving it attached lets the teardown overwrite the explanation a beat later. Nulling
+      // onmessage with it also closes the gap between close() and the socket actually closing,
+      // during which a frame already in flight can still be delivered.
+      try {
+        ws.onclose = null;
+        ws.onmessage = null;
+        ws.onopen = null;
+        ws.close();
+      } catch {}
+      ws = null;
+    }
+    if (typeof retireCount === "function") retireCount();
+    activeCaseId = null;
     hideCaseLoadingOverlay();
     // Take the case back out of the URL. proceedConnect put it there the moment the load STARTED,
     // so without this the address bar goes on naming a case that is not loaded — and refreshing

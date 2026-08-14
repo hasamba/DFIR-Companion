@@ -421,6 +421,42 @@ describe("runPanelLoaders", () => {
     expect(calls[0].signal).toBe(ac.signal);
   });
 
+  it("hides an abort from the loader, so cancelling raises no false alarms", async () => {
+    // These loaders almost all end in `.catch(() => somethingUnavailable())`, and ~73 of those
+    // report a missing endpoint on the shared status line — several telling the analyst to restart
+    // the companion server. An abort must not reach them: cancelling a case load would otherwise
+    // accuse a perfectly healthy server and hand out actively wrong advice.
+    const ac = new AbortController();
+    globalThis.fetch = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_res, rej) => {
+        init?.signal?.addEventListener("abort", () => rej(new Error("aborted")), { once: true });
+      })) as typeof fetch;
+    let caughtByLoader = false;
+    const tally = runPanelLoaders(
+      [["anonToggle", () => void fetch("/x").catch(() => (caughtByLoader = true))]],
+      undefined,
+      { signal: ac.signal },
+    );
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(caughtByLoader).toBe(false);
+    // The strip is not fooled by the silence — it still counts the panel as settled.
+    expect(panelProgressOf(tally).fraction).toBe(1);
+  });
+
+  it("still delivers a genuine failure to the loader", async () => {
+    // The flip side: suppressing aborts must not suppress real unavailability, or a 501-by-design
+    // route would stop reporting itself.
+    const ac = new AbortController();
+    globalThis.fetch = () => Promise.reject(new Error("network down"));
+    let caughtByLoader = false;
+    runPanelLoaders([["geoMap", () => void fetch("/x").catch(() => (caughtByLoader = true))]], undefined, {
+      signal: ac.signal,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(caughtByLoader).toBe(true);
+  });
+
   it("leaves a loader's own signal alone", () => {
     const calls = recording();
     const ac = new AbortController();
