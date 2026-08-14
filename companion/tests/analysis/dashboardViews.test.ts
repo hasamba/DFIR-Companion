@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   BUILT_IN_DASHBOARD_VIEWS,
@@ -73,6 +74,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-attack-path",
       "sec-kill-chain",
       "sec-phases",
+      "sec-host-scope",
       "sec-hostranking",
       "sec-gaps",
       "sec-evidence-gaps",
@@ -190,5 +192,60 @@ describe("sec-playbook-match registration (#230)", () => {
       const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
       expect(view.sections, `${id} is missing sec-playbook-match`).toContain("sec-playbook-match");
     }
+  });
+});
+
+describe("sec-host-scope registration (#553)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-host-scope");
+  });
+
+  // Registering the id is only half of it. A view's `sections` list IS what it shows, so a section
+  // in no view is a section nobody sees: #553 shipped the panel, the markup and SECTION_DEFS entry
+  // but put it in no profile, and every analyst on a built-in view got an empty slot where Scope &
+  // Clearance should be. Same convention as #347 / #229 / #230.
+  it("appears in the Analyst, Lead, Deep-Dive and Report profiles", () => {
+    for (const id of ["analyst", "lead", "deep-dive", "report"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-host-scope`).toContain("sec-host-scope");
+    }
+  });
+});
+
+// Regression: DASHBOARD_SECTION_IDS must mirror the page's SECTION_DEFS exactly.
+//
+// The spot-checks above are one `toContain` per section, added by whoever remembered. Five sections
+// were added without one — sec-host-scope (#553), sec-geomap, sec-huntprofile, sec-velohunts and
+// sec-mcp — and every one of them was silently unsaveable: `normalizeDashboardView` drops unknown
+// ids without complaint, so the views editor offered a checkbox that unticked itself on save, and
+// `applyViewLayout` (which rewrites SECTIONS_VIS_KEY from the active view on every page load) wiped
+// the Settings → section-visibility checkbox on every refresh.
+//
+// Derived from the page rather than hand-listed, so a section added tomorrow fails HERE instead of
+// silently losing its checkbox. Reported while testing #553 on 2026-08-14.
+describe("dashboardViews — section registry mirrors the page", () => {
+  const dashboardHtml = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  const sectionDefIds = (): string[] => {
+    const block = dashboardHtml.match(/const SECTION_DEFS = \[([\s\S]*?)\n {4}\];/);
+    expect(block, "SECTION_DEFS block in dashboard.html").toBeTruthy();
+    return [...block![1].matchAll(/id: "(sec-[a-z0-9-]+)"/g)].map((m) => m[1]);
+  };
+
+  it("registers every section the visibility editor offers, so none silently unticks on save", () => {
+    const defs = sectionDefIds();
+    expect(defs.length).toBeGreaterThan(30); // sanity: the scrape actually found the list
+    const registered = new Set(DASHBOARD_SECTION_IDS);
+    const unsaveable = defs.filter((id) => !registered.has(id));
+    expect(
+      unsaveable,
+      `offered in SECTION_DEFS but dropped by normalizeDashboardView: ${unsaveable.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("registers nothing the page does not render, so a view cannot reference a dead section", () => {
+    const defs = new Set(sectionDefIds());
+    const orphans = DASHBOARD_SECTION_IDS.filter((id) => !defs.has(id));
+    expect(orphans, `registered but absent from SECTION_DEFS: ${orphans.join(", ")}`).toEqual([]);
   });
 });

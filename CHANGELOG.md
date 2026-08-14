@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Cockpit import counts** — show forensic- and super-timeline additions separately after an import.
 - **Imports into a non-existent case are rejected** — all 24 `/cases/:id/import*` routes now 404 an unknown case id instead of accepting it; a typo'd id used to return 202 and orphan the evidence, an `imports.jsonl` line and a custody record under a directory that never appeared in the case list.
+- **Panels that could not be switched on** — six sections (Scope & Clearance, GeoIP Map, Hunting Profile, Suggested Fleet Hunts, MCP Analysis, Memory Next Steps) were offered as checkboxes but missing from the view section registry, so a save silently dropped them and every reload wiped the choice again. The registry is now derived from the page and asserted both ways, so a new panel cannot ship unsaveable.
 
 ### Security
 - **Strict browser rendering policy** — dashboard views and HTML exports now sanitize untrusted content under nonce-based CSP and Trusted Types, blocking script, URL, and CSS injection (closes #387).
