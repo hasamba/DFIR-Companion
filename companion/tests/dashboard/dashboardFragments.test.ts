@@ -401,4 +401,11 @@ describe("ntfTargetSummary", () => {
     expect(f.ntfTargetSummary(ch)).toBe("token configured → chat: 5");
     expect(f.ntfTargetSummary(ch)).not.toContain("SECRET");
   });
+
+  // A borrowed war-room token is still a working channel, so it must not read as "no token" — but
+  // it says WHERE it came from, so nobody hunts for a token they never typed here.
+  it("names the .env token when the channel borrows the war-room bot's", () => {
+    const ch = { type: "telegram", telegram: { hasBotToken: true, usesEnvBotToken: true, chatId: "5" } };
+    expect(f.ntfTargetSummary(ch)).toBe("token from .env → chat: 5");
+  });
 });

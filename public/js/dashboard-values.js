@@ -180,6 +180,21 @@ function ntfChannelToBody(ch) {
   return body;
 }
 
+// Turn the chats the war-room bot is bound to into what the Chat ID box shows: the first as a
+// pre-filled value, all of them as pickable options labelled with the case each is bound to. The
+// label carries the case because a bare chat id is unrecognisable — "12345678" tells you nothing,
+// "12345678 — bound to demo" tells you which conversation it is.
+function ntfChatPrefill(chats) {
+  const list = Array.isArray(chats) ? chats.filter((c) => c && c.chatId) : [];
+  return {
+    value: list.length ? String(list[0].chatId) : "",
+    options: list.map((c) => ({
+      value: String(c.chatId),
+      label: c.caseId ? `${c.chatId} — bound to ${c.caseId}` : String(c.chatId),
+    })),
+  };
+}
+
 function ntfEventsSummary(ev) {
   const on = [];
   if (ev.critical_finding) on.push("findings");
@@ -215,5 +230,6 @@ window.DfirValues = {
   veloTimeScopeBody,
   veloTimeScopeIncomplete,
   ntfChannelToBody,
+  ntfChatPrefill,
   ntfEventsSummary,
 };

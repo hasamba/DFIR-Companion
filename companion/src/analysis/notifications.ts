@@ -88,9 +88,30 @@ export interface NotificationEvent {
 }
 
 // Telegram bot config. botToken is stored but never echoed back to the browser (the route redacts it).
+// It may be EMPTY: an operator who already set the war-room bot's DFIR_TELEGRAM_BOT_TOKEN in .env
+// does not type it again here, and the sender resolves it at send time (resolveTelegramBotToken).
 export interface TelegramChannelConfig {
-  botToken: string; // secret — never echoed to the browser
+  botToken: string; // secret — never echoed to the browser. Empty = use the env token.
   chatId: string; // chat/channel/group ID (e.g., "@channelname" or "-1001234567890")
+}
+
+// The war-room bot's token, passed in by whichever caller sits at the env boundary (the route, the
+// notifier). This module reads NO env of its own — that is what keeps it pure and its tests
+// order-independent.
+export interface TelegramEnvOpts {
+  envTelegramBotToken?: string;
+}
+
+/**
+ * Which bot token actually sends for this channel: the channel's own if it has one, else the
+ * war-room bot's env token. Resolved at SEND time rather than copied into the store at save time,
+ * so .env stays the single source of truth and rotating it rotates the channel too.
+ */
+export function resolveTelegramBotToken(
+  channel: Pick<NotificationChannel, "telegram">,
+  envBotToken?: string,
+): string {
+  return (channel.telegram?.botToken ?? "").trim() || (envBotToken ?? "").trim();
 }
 
 // SMTP transport config for an email channel. Secrets (password) are stored but never echoed back
@@ -337,8 +358,14 @@ const defaultEvents = (): Record<NotificationEventKind, boolean> => ({
 // a (http/https) URL; email requires host/port/from/to. On an UPDATE the UI never re-sends the
 // redacted secret (webhook URL / SMTP password), so pass the `existing` channel: a blank webhook
 // URL then falls back to the saved one for validation (the same redacted-round-trip the env
-// password fields use). Returns a structured error instead of throwing so the route can answer 400.
-export function parseChannelInput(raw: unknown, existing?: NotificationChannel): ParsedChannelInput {
+// password fields use). `opts.envTelegramBotToken` lets a telegram channel leave its token blank
+// when the war-room bot already has one in .env. Returns a structured error instead of throwing so
+// the route can answer 400.
+export function parseChannelInput(
+  raw: unknown,
+  existing?: NotificationChannel,
+  opts?: TelegramEnvOpts,
+): ParsedChannelInput {
   const parsed = channelInputSchema.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -369,7 +396,19 @@ export function parseChannelInput(raw: unknown, existing?: NotificationChannel):
     // Blank token on update → keep the saved one (same redacted-round-trip pattern as webhookUrl).
     const sameTypeExisting = existing?.type === "telegram" ? existing.telegram : undefined;
     const token = (v.telegram?.botToken ?? "").trim() || (sameTypeExisting?.botToken ?? "");
-    if (!token) return { ok: false, error: "telegram channel requires a bot token" };
+    // Nothing typed and nothing saved is still fine when the war-room bot has a token in .env. The
+    // draft keeps an EMPTY token in that case — deliberately NOT a copy of the env value, so .env
+    // remains the only place it lives and a rotation there takes effect without re-saving here.
+    //
+    // The token is required to CREATE the channel, never to keep editing one. An env-backed channel
+    // stores an empty token, so if DFIR_TELEGRAM_BOT_TOKEN later goes away, demanding one here would
+    // 400 every subsequent edit — including the dashboard's enable/disable toggle, which PUTs a
+    // blank token and ignores a non-2xx. The channel would read "off" in the browser while staying
+    // ON in the store, and would resume sending the moment the token came back. A tokenless channel
+    // simply cannot send (the dispatcher says so, and the list shows it in red), which is the honest
+    // state to leave it in — being unable to turn it off is not.
+    if (!token && !(opts?.envTelegramBotToken ?? "").trim() && !sameTypeExisting)
+      return { ok: false, error: "telegram channel requires a bot token" };
     const chatId = (v.telegram?.chatId ?? "").trim();
     if (!chatId) return { ok: false, error: "telegram channel requires a chat ID" };
     draft.telegram = { botToken: token, chatId };
@@ -449,10 +488,13 @@ export function applyChannelPatch(
 export interface RedactedChannel extends Omit<NotificationChannel, "webhookUrl" | "smtp" | "telegram"> {
   hasWebhookUrl: boolean;
   smtp?: Omit<SmtpChannelConfig, "password"> & { hasPassword: boolean };
-  telegram?: { chatId: string; hasBotToken: boolean };
+  // hasBotToken answers "will this channel be able to send" — true whether the token is the
+  // channel's own or the war-room bot's. usesEnvBotToken says WHICH, so the UI can name the source
+  // instead of implying the analyst typed one here.
+  telegram?: { chatId: string; hasBotToken: boolean; usesEnvBotToken: boolean };
 }
 
-export function redactChannel(channel: NotificationChannel): RedactedChannel {
+export function redactChannel(channel: NotificationChannel, opts?: TelegramEnvOpts): RedactedChannel {
   const { webhookUrl, smtp, telegram, ...rest } = channel;
   const out: RedactedChannel = { ...rest, hasWebhookUrl: Boolean(webhookUrl) };
   if (smtp) {
@@ -460,7 +502,13 @@ export function redactChannel(channel: NotificationChannel): RedactedChannel {
     out.smtp = { ...smtpRest, hasPassword: Boolean(password) };
   }
   if (telegram) {
-    out.telegram = { chatId: telegram.chatId, hasBotToken: Boolean(telegram.botToken) };
+    const own = Boolean(telegram.botToken?.trim());
+    const fromEnv = !own && Boolean((opts?.envTelegramBotToken ?? "").trim());
+    out.telegram = {
+      chatId: telegram.chatId,
+      hasBotToken: own || fromEnv,
+      usesEnvBotToken: fromEnv,
+    };
   }
   return out;
 }

@@ -319,7 +319,7 @@ For Slack and Teams substitute their endpoint paths; the first two rows behave i
     Editing `.env` while the Companion is running changes nothing. Restart it. When in doubt, pass the variable inline — `DFIR_ALLOWED_HOSTS=… npm run dev` — which sidesteps any question of which `.env` is being read or whether a line got mangled.
 
 !!! note "The outbound Telegram notifier is a different thing"
-    If you already have Telegram alerts working, that's the notification channel, configured in the dashboard and stored in `notifications/config.json`. It shares nothing with the bot — it sets none of these variables and needs no tunnel, because it calls Telegram rather than being called.
+    If you already have Telegram alerts working, that's the notification channel, configured in the dashboard and stored in `notifications/config.json`. It needs no tunnel, because it calls Telegram rather than being called, and it sets none of these variables. The one thing the two share is the token: a notification channel saved with a blank bot token borrows `DFIR_TELEGRAM_BOT_TOKEN` from here at send time, so the same bot can carry alerts out and commands back in without the token being stored twice.
 
 Once the request is reaching the bot, the rest are ordinary replies:
 

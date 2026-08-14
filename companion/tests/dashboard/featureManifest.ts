@@ -1161,7 +1161,7 @@ export const FEATURES: Feature[] = [
       "ntfToggle",
       "ntfTypeChanged",
     ],
-    private: ["ntfChannels", "NTF_TYPE_LABEL", "NTF_WEBHOOK_PLACEHOLDER"],
+    private: ["ntfChannels", "NTF_TYPE_LABEL", "NTF_WEBHOOK_PLACEHOLDER", "NTF_TG_TOKEN_PLACEHOLDER"],
   },
   {
     // Starred events. No initializer. Reported five escapes until the IOC view state that shared

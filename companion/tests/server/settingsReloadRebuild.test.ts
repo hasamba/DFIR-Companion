@@ -47,6 +47,7 @@ const ALL_PREFIXES = [
   "DFIR_PUSH_TOKEN",
   "DFIR_NSRL_",
   "DFIR_TOOL_",
+  "DFIR_TELEGRAM_BOT_TOKEN",
 ];
 
 // Keys this file writes into the temp .env and therefore into the live process.env — cleared around
@@ -59,6 +60,7 @@ const TOUCHED = [
   "DFIR_CLICKUP_TOKEN",
   "DFIR_CLICKUP_LIST_ID",
   "DFIR_LEAKCHECK_KEY",
+  "DFIR_TELEGRAM_BOT_TOKEN",
 ];
 
 beforeEach(async () => {
@@ -113,6 +115,22 @@ describe("/settings/reload rebuilds the live client for the prefix (#178)", () =
     expect(control.body.providers.find((p: { name: string }) => p.name === "VirusTotal")?.configured).toBe(
       true,
     );
+  });
+
+  // A Telegram notification channel can borrow the war-room bot's DFIR_TELEGRAM_BOT_TOKEN, and both
+  // the route and the notifier read it live — but "live" only means "current process.env", which an
+  // edit to .env does not touch on its own. Without the key on this allowlist the reload 400s and
+  // the rotated token needs a full restart, so assert the token actually lands in the process.
+  it("applies a rotated Telegram bot token without a restart", async () => {
+    process.env.DFIR_TELEGRAM_BOT_TOKEN = "111:OLD";
+    expect((await request(app).get("/notifications/status")).body.telegramEnvToken).toBe(true);
+
+    await writeFile(envPath, "DFIR_TELEGRAM_BOT_TOKEN=222:ROTATED\n", "utf8");
+    const res = await reload("DFIR_TELEGRAM_BOT_TOKEN");
+
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toContain("DFIR_TELEGRAM_BOT_TOKEN");
+    expect(process.env.DFIR_TELEGRAM_BOT_TOKEN).toBe("222:ROTATED");
   });
 
   it("rebuilds the customer-exposure provider set", async () => {

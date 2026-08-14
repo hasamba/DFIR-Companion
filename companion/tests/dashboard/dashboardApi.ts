@@ -224,6 +224,10 @@ export interface ValuesApi {
     telegram?: { botToken: string; chatId?: string };
     webhookUrl?: string;
   };
+  ntfChatPrefill(chats?: Array<{ chatId: string; caseId?: string }>): {
+    value: string;
+    options: Array<{ value: string; label: string }>;
+  };
   ntfEventsSummary(ev: Record<string, boolean | undefined>): string;
 }
 
