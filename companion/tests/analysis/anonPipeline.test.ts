@@ -106,6 +106,7 @@ describe("pipeline anonymization (default on)", () => {
         NATID: true,
       },
       redactSecrets: true,
+      presidio: true,
     });
     await pipeline.synthesize("c1", { force: true });
     expect(provider.lastReq!.userPrompt).toContain("ALCLIENT07");

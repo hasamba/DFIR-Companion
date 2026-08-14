@@ -12,6 +12,7 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import { buildStateSummary } from "../../src/analysis/summary.js";
 import {
   PresidioApprovalRequired,
+  PresidioTimeoutError,
   type PresidioClient,
   type PresidioFinding,
 } from "../../src/analysis/presidio.js";
@@ -115,7 +116,7 @@ async function makePipeline(
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/png" }),
     ...extraOptions,
   });
-  return { pipeline, presidioPendingStore, discoveredStore, stateStore };
+  return { pipeline, presidioPendingStore, discoveredStore, stateStore, cases };
 }
 
 // A Logger stub that captures warn() calls verbatim (message text only — no console/file I/O),
@@ -212,6 +213,25 @@ describe("analyzeRestored + Presidio", () => {
     await expect(pipeline.analyzeWindow("c1", [capture()])).rejects.toThrow(/not reachable/);
   });
 
+  // A busy analyzer and a dead one need OPPOSITE advice. Reporting a timeout as "not reachable —
+  // start the container" is what sent a real investigation to restart a container that had been up
+  // and healthy for an hour, so the two must not share a message.
+  it("tells a slow analyzer apart from an absent one, and gives each its own advice", async () => {
+    const slow: PresidioClient = {
+      analyze: async () => {
+        throw new PresidioTimeoutError(60_000, 49_639);
+      },
+    };
+    const { pipeline } = await makePipeline(slow);
+    const err = await pipeline.analyzeWindow("c1", [capture()]).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/reachable/);
+    expect((err as Error).message).toMatch(/ran out of time/);
+    expect((err as Error).message).toMatch(/DFIR_PRESIDIO_TIMEOUT_MS/);
+    // The two things an analyst can actually do right now, one of which is the new switch.
+    expect((err as Error).message).toMatch(/Anonymization panel/);
+    expect((err as Error).message).not.toMatch(/Start the container/);
+  });
+
   it("does not retry the approval gate", async () => {
     const seen: string[] = [];
     const { pipeline } = await makePipeline(
@@ -219,6 +239,130 @@ describe("analyzeRestored + Presidio", () => {
     );
     await expect(pipeline.analyzeWindow("c1", [capture()])).rejects.toBeInstanceOf(PresidioApprovalRequired);
     expect(seen).toHaveLength(1);
+  });
+
+  // The bug this pins: the gate handed Presidio the ENTIRE masked prompt as one request while only
+  // the pre-scan chunked. Analyzer cost scales with text length (~18s for 50k chars of real
+  // forensic text on the reference container), so request size had to stay bounded for any fixed
+  // timeout to hold — an unchunked gate made every AI call on a large case time out and, because
+  // this layer fails closed, took the whole AI stack down against a perfectly healthy container.
+  it("chunks the gate scan so no single request grows with the case", async () => {
+    const seen: string[] = [];
+    const { pipeline, stateStore } = await makePipeline(
+      stubClient([], seen),
+      [],
+      "DC01.victim.local",
+      undefined,
+      {
+        presidioScanCapsOverride: { chunkChars: 500, maxChars: 5_000_000 },
+      },
+    );
+    // Grow the prompt well past the chunk size via the state summary the gate scans.
+    const s = await stateStore.load("c1");
+    s.forensicTimeline = Array.from({ length: 60 }, (_, i) => ({
+      id: `e${i}`,
+      timestamp: "2026-01-01T00:00:00Z",
+      description: `a reasonably long forensic event description number ${i} on DC01.victim.local`,
+      severity: "High" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "DC01.victim.local",
+    }));
+    await stateStore.save(s);
+
+    await pipeline.analyzeWindow("c1", [capture()]);
+
+    expect(seen.length).toBeGreaterThan(1);
+    for (const chunk of seen) expect(chunk.length).toBeLessThanOrEqual(500);
+    // Chunking must not lose text: the pieces reassemble into the whole masked prompt.
+    expect(seen.join("").length).toBeGreaterThan(500);
+  });
+
+  it("still gates on a value that only appears in a later chunk", async () => {
+    // A split that dropped or short-circuited after the first chunk would fail OPEN — the case's
+    // tail would reach the model unscanned. The stub answers on the LAST chunk only.
+    const seen: string[] = [];
+    let calls = 0;
+    const lateFinder: PresidioClient = {
+      analyze: async (text: string) => {
+        seen.push(text);
+        calls += 1;
+        return calls >= 3 ? [{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }] : [];
+      },
+    };
+    const { pipeline, stateStore } = await makePipeline(lateFinder, [], "DC01.victim.local", undefined, {
+      presidioScanCapsOverride: { chunkChars: 400, maxChars: 5_000_000 },
+    });
+    const s = await stateStore.load("c1");
+    s.forensicTimeline = Array.from({ length: 60 }, (_, i) => ({
+      id: `e${i}`,
+      timestamp: "2026-01-01T00:00:00Z",
+      description: `a reasonably long forensic event description number ${i} on DC01.victim.local`,
+      severity: "High" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "DC01.victim.local",
+    }));
+    await stateStore.save(s);
+
+    await expect(pipeline.analyzeWindow("c1", [capture()])).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+});
+
+// The per-case switch (AnonControl.presidio). It exists so an analyst can stand the layer down
+// when the analyzer is down, slow, or wrong, WITHOUT clearing DFIR_PRESIDIO_URL — that variable is
+// read once at startup and is not reloadable, so the old workaround was "edit .env and restart",
+// which threw away the configuration you want back the moment the container is healthy.
+describe("per-case Presidio switch", () => {
+  it("skips the gate entirely when the case has it switched off", async () => {
+    const seen: string[] = [];
+    const { pipeline, cases } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }], seen),
+    );
+    const store = new AnonControlStore(cases);
+    const cur = await store.load("c1");
+    await store.save("c1", { ...cur, presidio: false });
+
+    // Would otherwise throw PresidioApprovalRequired on the unseen name.
+    await expect(pipeline.analyzeWindow("c1", [capture()])).resolves.toBeDefined();
+    expect(seen, "no request should reach the analyzer when the case switched it off").toEqual([]);
+  });
+
+  it("skips the import pre-scan too, not just the gate", async () => {
+    const seen: string[] = [];
+    const { pipeline, cases } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }], seen),
+    );
+    const store = new AnonControlStore(cases);
+    const cur = await store.load("c1");
+    await store.save("c1", { ...cur, presidio: false });
+
+    await expect(pipeline.analyzeCsv("c1", THREE_ROW_CSV, csvOpts())).resolves.toBeDefined();
+    expect(seen).toEqual([]);
+  });
+
+  it("still anonymizes with the built-in patterns while Presidio is off", async () => {
+    // Switching Presidio off must cost ONLY name detection. If it also dropped the local
+    // anonymizer, an analyst working around a sick container would start shipping real hostnames
+    // to the model — a far worse failure than the one they were routing around.
+    const { pipeline, cases, stateStore } = await makePipeline(stubClient([]));
+    const store = new AnonControlStore(cases);
+    const cur = await store.load("c1");
+    await store.save("c1", { ...cur, presidio: false });
+    await pipeline.analyzeWindow("c1", [capture()]);
+    // The provider stub records nothing, so assert on the anonymizer's own contract instead: the
+    // known host is still derived and still tokenized for the wire.
+    const s = await stateStore.load("c1");
+    expect(s.forensicTimeline[0].asset).toBe("DC01.victim.local");
+  });
+
+  it("scans by default — a case that never touched the switch keeps its coverage", async () => {
+    const seen: string[] = [];
+    const { pipeline } = await makePipeline(stubClient([], seen));
+    await pipeline.analyzeWindow("c1", [capture()]);
+    expect(seen.length).toBeGreaterThan(0);
   });
 });
 

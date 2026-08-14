@@ -45,6 +45,44 @@ export const PRESIDIO_SAMPLE_TEXT =
 export const DEFAULT_PRESIDIO_MIN_SCORE = 0.6;
 
 /**
+ * Per-REQUEST budget for one /analyze call, not for a whole scan (a scan is chunked, and every
+ * chunk gets a fresh budget).
+ *
+ * The old value was 10s, and what it failed to account for was QUEUEING, not raw analyzer speed.
+ * The official image runs a SINGLE worker (WORKERS=1), so concurrent scans serialize and a request
+ * spends most of its budget waiting for the ones ahead of it. Measured on the reference container:
+ * a 50k-char chunk takes ~1.7s alone, and ~9.6s when five other scans are in flight — the same
+ * request, 5.8x slower, landing right on the old 10s edge.
+ *
+ * That edge is where it turned into a collapse, because ABORTING A FETCH DOES NOT CANCEL THE
+ * SERVER-SIDE WORK. Presidio keeps chewing on an abandoned request, so each retry queued behind
+ * work nobody was waiting for any more, and the next attempt was slower than the last: four
+ * attempts, four aborts, and — since this layer fails CLOSED — the whole AI stack down while the
+ * container sat there healthy and idle-fast.
+ *
+ * 60s is ~6x the measured contended case and ~30x the idle one. Raise it with
+ * DFIR_PRESIDIO_TIMEOUT_MS for a slow box or an analyzer shared between analysts; giving the
+ * container more workers addresses the same problem from the other end.
+ */
+export const DEFAULT_PRESIDIO_TIMEOUT_MS = 60_000;
+
+/**
+ * Resolve DFIR_PRESIDIO_TIMEOUT_MS into a per-request budget, on the same terms as
+ * resolvePresidioMinScore: an empty string (a compose file interpolating an unset variable) falls
+ * back to the default rather than becoming `Number("")` → 0, which as a timeout would abort every
+ * request before it started. Non-finite and non-positive values fall back too — a zero or negative
+ * budget cannot express "wait less", only "always fail". There is deliberately no upper clamp: a
+ * long scan on a slow box is the analyst's call, and capping it would reintroduce this same bug.
+ */
+export function resolvePresidioTimeoutMs(raw: string | undefined): number {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return DEFAULT_PRESIDIO_TIMEOUT_MS;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PRESIDIO_TIMEOUT_MS;
+  return parsed;
+}
+
+/**
  * Resolve DFIR_PRESIDIO_MIN_SCORE into a usable threshold. Trims first and falls back to the
  * default on an EMPTY string, not just `undefined` — a compose file that interpolates an unset
  * variable (`DFIR_PRESIDIO_MIN_SCORE=${SOME_UNSET_VAR}`) hands the process an empty string, and
@@ -84,6 +122,24 @@ export function mapFindings(findings: PresidioFinding[], minScore: number): Cust
   return out;
 }
 
+/**
+ * A scan that ran out of budget, as opposed to one that could not reach the analyzer at all. Its
+ * own type because the two need OPPOSITE advice — "start the container" is wrong and costly when
+ * the container is up and merely busy — and a message string is too weak a thing to branch on.
+ */
+export class PresidioTimeoutError extends Error {
+  constructor(
+    readonly timeoutMs: number,
+    readonly chars: number,
+  ) {
+    super(
+      `timed out after ${timeoutMs}ms scanning ${chars} characters — Presidio is running but ` +
+        `slower than the budget`,
+    );
+    this.name = "PresidioTimeoutError";
+  }
+}
+
 /** Thrown by the pipeline when Presidio surfaces values this case has not seen before. The route
  *  layer turns this into HTTP 409 so the dashboard can render an approval panel. */
 export class PresidioApprovalRequired extends Error {
@@ -97,12 +153,20 @@ export class PresidioApprovalRequired extends Error {
 export class HttpPresidioClient implements PresidioClient {
   constructor(
     private readonly baseUrl: string,
-    private readonly timeoutMs = 10_000,
+    private readonly timeoutMs = DEFAULT_PRESIDIO_TIMEOUT_MS,
   ) {}
 
   async analyze(text: string): Promise<PresidioFinding[]> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // A bare abort() rejects the fetch with DOMException "This operation was aborted", which reads
+    // as a dead container and says nothing about the budget that ran out — it cost a real debugging
+    // session chasing a Presidio that was up and healthy the whole time. Abort with an explicit
+    // reason instead: undici rejects with whatever is passed here, so the caller gets a typed
+    // PresidioTimeoutError it can give the right advice for.
+    const timer = setTimeout(
+      () => controller.abort(new PresidioTimeoutError(this.timeoutMs, text.length)),
+      this.timeoutMs,
+    );
     try {
       const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/analyze`, {
         method: "POST",

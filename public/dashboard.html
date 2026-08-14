@@ -1314,6 +1314,7 @@
             <input id="env-DFIR_PRESIDIO_URL" placeholder="http://localhost:5002" />
           </div>
           <div class="sfield"><label>Presidio confidence floor<span class="sfield-hint">DFIR_PRESIDIO_MIN_SCORE</span></label><input id="env-DFIR_PRESIDIO_MIN_SCORE" placeholder="0.6" /></div>
+          <div class="sfield"><label>Presidio request timeout (ms)<span class="sfield-hint">DFIR_PRESIDIO_TIMEOUT_MS — Budget for ONE scan request; a scan is split into 50,000-character chunks and each chunk gets the full budget. It has to cover queueing, not just analysis: the stock container runs a single worker, so a chunk that takes ~2s alone can take ~10s with other scans in flight. Raise this on a slow or shared analyzer. Needs a restart.</span></label><input id="env-DFIR_PRESIDIO_TIMEOUT_MS" placeholder="60000" /></div>
         </div>
         <div id="presidioLocalWarning" data-safe-style="display:none;margin:2px 0 8px;padding:8px;border-radius:6px;background:var(--warning-bg);color:var(--tag-orange-text);font-size:12px"></div>
         <div class="sfield" data-safe-style="margin:0 0 8px">

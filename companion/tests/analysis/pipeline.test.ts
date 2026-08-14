@@ -255,6 +255,7 @@ describe("AnalysisPipeline", () => {
         NATID: true,
       },
       redactSecrets: true,
+      presidio: true,
     });
 
     const synthDelta = JSON.stringify({

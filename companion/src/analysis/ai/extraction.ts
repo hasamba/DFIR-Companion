@@ -190,6 +190,7 @@ async function preScanWholeImport(
     `${buildStateSummary(state)}\n${payloadText}`,
     importAnonCtx.known,
     importAnonCtx.anon,
+    importAnonCtx.control,
   );
 }
 

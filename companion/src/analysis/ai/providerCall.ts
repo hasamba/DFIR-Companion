@@ -17,7 +17,7 @@ import {
   type CustomEntity,
   type KnownEntities,
 } from "../anonymize.js";
-import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
+import { toAnonPolicy, type AnonControl, type AnonControlStore } from "../anonControl.js";
 import type { CustomEntitiesStore } from "../anonEntities.js";
 import type { DiscoveredEntitiesStore } from "../anonDiscovered.js";
 import { AiCostStore, bucketForLabel } from "../aiCost.js";
@@ -27,6 +27,7 @@ import { safeAiErrorKind, safeAiPhase, type OperationalMetricsStore } from "../o
 import {
   mapFindings,
   PresidioApprovalRequired,
+  PresidioTimeoutError,
   type PresidioClient,
   type PresidioFinding,
 } from "../presidio.js";
@@ -219,8 +220,27 @@ function alreadyApproved(known: KnownEntities): Set<string> {
   ]);
 }
 
+/**
+ * Whether the per-case Presidio switch is on. A null control means the store is not wired, which
+ * everywhere else in this module means "no per-case opinion" — so it leaves the configured layer
+ * running rather than silently standing the gate down.
+ */
+function presidioEnabledFor(control: AnonControl | null): boolean {
+  return control?.presidio !== false;
+}
+
 /** The one message shape for a Presidio scan that could not run — the analyst's next action. */
 function presidioUnreachable(url: string, err: unknown): Error {
+  // A timeout and an unreachable analyzer need opposite advice, and getting that wrong is expensive:
+  // telling someone to start a container that is already running sends them to look in the one place
+  // the problem is not. Branch on the typed error rather than on the wording of a message.
+  if (err instanceof PresidioTimeoutError)
+    return new Error(
+      `Presidio is enabled and reachable at ${url}, but the scan ran out of time: ` +
+        `${err.message}. Raise DFIR_PRESIDIO_TIMEOUT_MS (currently ${err.timeoutMs}ms), give the ` +
+        `analyzer more workers, or untick Presidio in the case's Anonymization panel to proceed ` +
+        `without name detection.`,
+    );
   return new Error(
     `Presidio is enabled but the scan at ${url} failed (not reachable, or returned an ` +
       `unusable response): ${(err as Error).message}. Start the container or clear ` +
@@ -234,15 +254,29 @@ async function presidioGate(
   caseId: string,
   maskedText: string,
   known: KnownEntities,
+  control: AnonControl | null,
 ): Promise<void> {
   const presidio = ctx.opts.presidio;
-  if (!presidio) return;
+  if (!presidio || !presidioEnabledFor(control)) return;
 
-  let raw;
-  try {
-    raw = await presidio.client.analyze(maskedText);
-  } catch (err) {
-    throw presidioUnreachable(presidio.url, err);
+  // CHUNKED, on the same line-boundary split and the same chunk size as presidioPreScan. This used
+  // to hand Presidio the whole prompt in one request, which made the unit of work as large as the
+  // case: a 104k-char synthesis prompt was one indivisible request, so any timeout had to be sized
+  // against however large this case happened to have grown. Chunking is what lets ONE fixed budget
+  // be correct for every case, and it also bounds the damage of a timeout — an abandoned request
+  // keeps running server-side (see DEFAULT_PRESIDIO_TIMEOUT_MS), so a smaller unit of work means
+  // less of the single worker is left occupied by a scan nobody is waiting for any more.
+  //
+  // No maxChars cap here, unlike the pre-scan: capping would silently leave the tail of a prompt
+  // unscanned on the way to the model, and this gate's whole contract is to fail closed.
+  const chunkChars = ctx.opts.presidioScanCapsOverride?.chunkChars ?? PRESIDIO_SCAN_CHUNK_CHARS;
+  const raw: PresidioFinding[] = [];
+  for (const chunk of splitOnLineBoundaries(maskedText, chunkChars)) {
+    try {
+      raw.push(...(await presidio.client.analyze(chunk)));
+    } catch (err) {
+      throw presidioUnreachable(presidio.url, err);
+    }
   }
 
   const found = mapFindings(raw, presidio.minScore);
@@ -302,9 +336,10 @@ export async function presidioPreScan(
   text: string,
   known: KnownEntities,
   anon: Anonymizer,
+  control: AnonControl | null,
 ): Promise<void> {
   const presidio = ctx.opts.presidio;
-  if (!presidio) return;
+  if (!presidio || !presidioEnabledFor(control)) return;
 
   // TEST-ONLY seam (see PipelineOptions.presidioScanCapsOverride) so a test can force the
   // truncation path with a tiny budget instead of generating megabytes of synthetic text.
@@ -348,12 +383,15 @@ export async function buildImportAnonContext(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
-): Promise<{ known: KnownEntities; anon: Anonymizer } | null> {
+): Promise<{ known: KnownEntities; anon: Anonymizer; control: AnonControl | null } | null> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
   if (!policy.enabled) return null;
   const known = await knownEntitiesFor(ctx, caseId, state);
-  return { known, anon: createAnonymizer(policy, known) };
+  // Hands back the control it already loaded so the pre-scan can read the per-case Presidio switch
+  // off the SAME snapshot the anonymizer was built from, rather than re-reading it from disk and
+  // risking a mid-import flip masking one batch under different rules than the scan covered.
+  return { known, anon: createAnonymizer(policy, known), control };
 }
 
 /** OCR-redact the image buffers when an external-provider runner is configured. */
@@ -518,7 +556,7 @@ export async function analyzeRestored(
   // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
   // pass skipPresidioGate=true so the loop that calls this per-chunk doesn't re-gate (and
   // re-approve) the same import one chunk at a time.
-  if (!skipPresidioGate) await presidioGate(ctx, caseId, maskedPrompt, known);
+  if (!skipPresidioGate) await presidioGate(ctx, caseId, maskedPrompt, known, control);
 
   const result = await analyzeProvider(ctx, provider, { ...req, userPrompt: maskedPrompt, images }, label);
   logAiUsage(ctx, caseId, label, provider, result);

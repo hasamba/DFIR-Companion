@@ -12,6 +12,17 @@ export interface AnonControl {
   enabled: boolean;
   categories: Record<AnonCategory, boolean>;
   redactSecrets: boolean;
+  /**
+   * Whether the optional Presidio layer runs for THIS case. Defaults to on, so a configured
+   * analyzer keeps its existing behaviour and nobody loses name detection by upgrading.
+   *
+   * Separate from DFIR_PRESIDIO_URL on purpose. That variable is read once at startup and is not in
+   * /settings/reload's allowlist, so the only way to stand a case down off a sick or slow analyzer
+   * used to be editing .env and restarting the server — which also throws away the configuration
+   * you want back the moment the container is healthy. This is the runtime switch: the URL stays
+   * configured, the layer stops running, and the case keeps working.
+   */
+  presidio: boolean;
 }
 
 const ALL_ON: Record<AnonCategory, boolean> = {
@@ -30,7 +41,7 @@ const ALL_ON: Record<AnonCategory, boolean> = {
 
 function defaultControl(): AnonControl {
   const off = /^(0|false|no|off)$/i.test(process.env.DFIR_ANONYMIZE ?? "");
-  return { enabled: !off, categories: { ...ALL_ON }, redactSecrets: true };
+  return { enabled: !off, categories: { ...ALL_ON }, redactSecrets: true, presidio: true };
 }
 
 // Resolve a stored control (or null) into the policy the anonymizer consumes. A missing control
@@ -61,6 +72,9 @@ export class AnonControlStore {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
         categories: { ...ALL_ON, ...(raw.categories ?? {}) },
         redactSecrets: typeof raw.redactSecrets === "boolean" ? raw.redactSecrets : base.redactSecrets,
+        // A control file written before this field existed has no `presidio` key, and must keep
+        // scanning — absence means "never chose", not "chose off".
+        presidio: typeof raw.presidio === "boolean" ? raw.presidio : base.presidio,
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return defaultControl();

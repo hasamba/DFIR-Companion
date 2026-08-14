@@ -42,6 +42,40 @@ describe("/cases/:id/anon-control", () => {
     expect(reloaded.USER).toBe(true);
   });
 
+  // The per-case Presidio switch. `presidioConfigured` (is an analyzer wired at all, startup-only)
+  // and `presidio` (does THIS case use it, live) are different facts and both cross this route.
+  it("defaults presidio to on and round-trips it off and back", async () => {
+    expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(true);
+
+    const off = await request(app).post("/cases/c1/anon-control").send({ presidio: false });
+    expect(off.status).toBe(200);
+    expect(off.body.presidio).toBe(false);
+    expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(false);
+
+    const on = await request(app).post("/cases/c1/anon-control").send({ presidio: true });
+    expect(on.body.presidio).toBe(true);
+    expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(true);
+  });
+
+  it("keeps the current presidio value when the field is absent or not a boolean", async () => {
+    await request(app).post("/cases/c1/anon-control").send({ presidio: false });
+    // A POST from an older client that never sends the field must not silently switch it back on.
+    const absent = await request(app).post("/cases/c1/anon-control").send({ enabled: true });
+    expect(absent.body.presidio).toBe(false);
+    const nonBool = await request(app).post("/cases/c1/anon-control").send({ presidio: "yes" });
+    expect(nonBool.body.presidio).toBe(false);
+  });
+
+  it("does not let the presidio switch disturb the other fields", async () => {
+    await request(app)
+      .post("/cases/c1/anon-control")
+      .send({ categories: { IP: false }, redactSecrets: false });
+    const res = await request(app).post("/cases/c1/anon-control").send({ presidio: false });
+    expect(res.body.categories.IP).toBe(false);
+    expect(res.body.redactSecrets).toBe(false);
+    expect(res.body.enabled).toBe(true);
+  });
+
   // The anonymization panel shows a "Real names (people)" row it cannot deliver on its own (PERSON
   // tokens are minted only from Presidio findings), so it needs to know whether the layer is wired.
   // Both verbs answer with the same shape — the panel re-reads the control from the POST response.
