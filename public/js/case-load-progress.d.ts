@@ -92,15 +92,28 @@ export declare function readBodyWithProgress(
   onProgress?: () => void,
 ): Promise<string>;
 
+/** How the panel fan-out is allowed to behave. Both fields exist to keep the dashboard usable
+ *  while a large case loads; see runPanelLoaders in the .js for the measurements behind them. */
+export interface PanelRunOptions {
+  /** Abort signal injected into every panel request that did not bring one of its own, so
+   *  cancelling a case load actually stops the ~60 requests instead of only the two the overlay
+   *  blocks on. */
+  signal?: AbortSignal;
+  /** Maximum loaders in flight at once. Absent or non-positive means unbounded. Bounding it
+   *  reserves connections in the browser's six-per-origin HTTP/1.1 pool for the analyst. */
+  concurrency?: number;
+}
+
 /**
  * Run every `[name, thunk]` panel loader, tallying each as its requests settle.
  *
- * Typed for the same reason: it swaps `globalThis.fetch` for the duration of its synchronous loop,
+ * Typed for the same reason: it swaps `globalThis.fetch` around each loader's synchronous body,
  * and the test asserts that the swap is undone even when a loader throws.
  */
 export declare function runPanelLoaders(
   entries: readonly (readonly [string, () => void])[],
   onProgress?: (tally: PanelTally) => void,
+  options?: PanelRunOptions,
 ): PanelTally;
 
 /**

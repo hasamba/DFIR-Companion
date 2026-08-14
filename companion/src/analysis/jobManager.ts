@@ -119,6 +119,14 @@ function deferred(): Deferred {
     resolve = ok;
     reject = fail;
   });
+  // Cancelling a job that never started REJECTS these (see cancel()), and the reject can land
+  // before anyone is waiting: resume() publishes its admission into this.admissions and only
+  // attaches runResumedJob's handler after the ledger write returns. A rejection with no handler
+  // at that moment is an unhandled rejection, which Node makes fatal — one cancel would take the
+  // whole server down mid-investigation. This keep-alive handler makes the rejection safe to
+  // observe late, or never. It swallows nothing: .catch() returns a NEW promise and the original
+  // still rejects, so every real awaiter of `ready` still sees the AbortError.
+  promise.catch(() => {});
   return { promise, resolve, reject };
 }
 
@@ -246,8 +254,6 @@ export class JobManager {
     }
     const admission = deferred();
     const durability = deferred();
-    void admission.promise.catch(() => {});
-    void durability.promise.catch(() => {});
     this.admissions.set(jobId, admission);
     this.durabilities.set(jobId, durability);
 
@@ -414,7 +420,6 @@ export class JobManager {
     }
     const admission = deferred();
     const durability = deferred();
-    void durability.promise.catch(() => {});
     this.admissions.set(jobId, admission);
     this.durabilities.set(jobId, durability);
     await this.persistUpdate(queued);
