@@ -125,9 +125,20 @@ describe("resolvePresidioTimeoutMs", () => {
     expect(resolvePresidioTimeoutMs("soon")).toBe(DEFAULT_PRESIDIO_TIMEOUT_MS);
   });
 
-  it("parses a valid override and does not clamp a long one", () => {
+  it("parses a valid override", () => {
     expect(resolvePresidioTimeoutMs("90000")).toBe(90_000);
     expect(resolvePresidioTimeoutMs("600000")).toBe(600_000);
+  });
+
+  // setTimeout stores its delay in a 32-bit signed int. Past that ceiling Node does not wait
+  // longer — it warns and uses 1ms — so an unclamped huge value makes every scan fail instantly,
+  // the exact opposite of what someone raising the budget is asking for.
+  it("clamps above Node's timer ceiling instead of silently becoming 1ms", () => {
+    const MAX = 2_147_483_647;
+    expect(resolvePresidioTimeoutMs(String(MAX))).toBe(MAX);
+    expect(resolvePresidioTimeoutMs(String(MAX + 1))).toBe(MAX);
+    expect(resolvePresidioTimeoutMs("999999999999")).toBe(MAX);
+    expect(resolvePresidioTimeoutMs("1e30")).toBe(MAX);
   });
 
   // The measured floor this default has to clear is a CONTENDED chunk, not an idle one: on the
@@ -178,11 +189,26 @@ describe("HttpPresidioClient", () => {
       })) as unknown as typeof fetch;
     const client = new HttpPresidioClient("http://presidio.local", 20);
     await expect(client.analyze("Jane Doe")).rejects.toBeInstanceOf(PresidioTimeoutError);
-    await expect(client.analyze("Jane Doe")).rejects.toThrow(/timed out after 20ms/);
+    await expect(client.analyze("Jane Doe")).rejects.toThrow(/no response within 20ms/);
     // Naming the size is what tells the analyst whether to raise the budget or shrink the input.
     await expect(client.analyze("Jane Doe")).rejects.toThrow(/8 characters/);
-    // It must NOT read as a dead container — that is the misdiagnosis this error exists to prevent.
-    await expect(client.analyze("Jane Doe")).rejects.toThrow(/Presidio is running/);
+  });
+
+  // The same timer fires whether the analyzer is busy or the connection is hanging — a dropped SYN,
+  // a black-holing firewall, a wrong port. Claiming the host is up on that evidence would rebuild
+  // the misdirection this error exists to prevent, just pointing the other way.
+  it("does not assert the analyzer is reachable, having received no response", async () => {
+    globalThis.fetch = ((_url: string, init: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason as Error));
+      })) as unknown as typeof fetch;
+    const err = await new HttpPresidioClient("http://presidio.local", 10)
+      .analyze("Jane Doe")
+      .then(() => null)
+      .catch((e: Error) => e);
+    expect(err, "the client must reject, not resolve, when nothing answers").toBeInstanceOf(Error);
+    expect(err?.message).not.toMatch(/is running/);
+    expect(err?.message).not.toMatch(/reachable/);
   });
 
   it("clears its timer on success, so a slow later call is not aborted by an earlier one", async () => {

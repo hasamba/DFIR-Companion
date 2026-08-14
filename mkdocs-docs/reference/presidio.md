@@ -32,7 +32,9 @@ This exposes the analyzer's `/analyze` endpoint on `http://localhost:5002`.
 
 The budget has to cover **queueing**, not just analysis. The official image runs a single worker (`WORKERS=1`), so concurrent scans serialize: measured on the stock container, a 50,000-character chunk takes ~1.7s on its own and ~9.6s with five other scans in flight — the same request, 5.8x slower. That is why the default is 60s rather than something close to the idle figure.
 
-It also matters that aborting a scan does not stop it. An HTTP client giving up does not cancel the analyzer's work, so a scan that times out keeps occupying the worker while the retry queues behind it — which is how a budget set too close to the idle time turns one slow moment into a run of failures.
+It also matters that aborting a scan does not stop it. An HTTP client giving up does not cancel the analyzer's work, so a scan that times out keeps occupying the worker — which is how a budget set too close to the idle time turns one slow moment into a run of failures. For that reason a timed-out scan is **not retried**: the retry would queue behind the scan just abandoned and be slower than the attempt before it, so the failure is surfaced on the first timeout rather than after four budgets. Other scan failures, such as a refused connection, are still retried — nothing was left running on the other end.
+
+A timeout says it timed out, and deliberately does **not** claim the analyzer is reachable. The same budget expires whether the analyzer is merely busy or the connection is hanging — a wrong port, a black-holing firewall — and the client has no evidence either way, so the message names both possibilities instead of sending you to the wrong one.
 
 Raise `DFIR_PRESIDIO_TIMEOUT_MS` if you run the analyzer on a slow box, share one between analysts, or see timeouts in the log. Giving the container more workers addresses the same problem from the other end.
 
