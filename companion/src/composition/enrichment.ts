@@ -51,6 +51,11 @@ export interface EnrichmentEngine {
   readonly health: ProviderHealthCache;
   /** Cases waiting on a down provider, resumed by the poller on recovery. */
   readonly pending: Set<string>;
+  /**
+   * Self-coalescing: a newer run supersedes an older one for the same case, so N rapid kicks (a
+   * multi-file import) cost one run, not N. The superseded run keeps and saves the lookups it
+   * already made.
+   */
   enrichInBackground(caseId: string, force?: boolean, parentRunId?: string): void;
   /** Enrich fresh IOCs after synthesis/import when the toggle is on; the cache skips checked ones. */
   autoEnrichIfEnabled(caseId: string): void;
@@ -107,11 +112,18 @@ export function createEnrichmentEngine({
         }
       }
       // #225: track enrichment as a cancellable job — a throttled run (up to maxIocs × delayMs) can be long.
+      // exclusive, like the synthesis kick: a multi-file import fires one autoEnrichIfEnabled per
+      // file, and without it a six-file import queued six runs behind the case's single concurrency
+      // slot. Superseding is safe here in a way it is not for most work — enrichIocs stops BETWEEN
+      // indicators and the partial result is still merged and saved below, so an aborted run keeps
+      // every lookup it already paid for and the newer run skips those via `enrichedBy`. No
+      // outbound request is wasted or repeated.
       job = options.jobManager?.register({
         caseId,
         kind: "enrichment",
         label: `enrich (${providers.map((p) => p.name).join(", ")})`,
         cancellable: true,
+        exclusive: true,
       });
       if (job) await job.ready;
       options.onAiStatus?.(caseId, {
@@ -206,19 +218,31 @@ export function createEnrichmentEngine({
       const skipNote = summary.unavailable.length
         ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)`
         : "";
+      const aborted = job?.signal?.aborted === true;
       if (job) await options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
-      options.onAiStatus?.(caseId, {
-        status: "idle",
-        at: new Date().toISOString(),
-        detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}`,
-      });
+      // A newer exclusive registration may have superseded this run — if an enrichment job for this
+      // case is still active, that newer run owns the status; don't stomp its live "enriching IOC
+      // 12/40" with this run's partial total.
+      if (!(aborted && options.jobManager?.hasActive(caseId, "enrichment"))) {
+        options.onAiStatus?.(caseId, {
+          status: "idle",
+          at: new Date().toISOString(),
+          detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}`,
+        });
+      }
     })().catch(async (err) => {
+      // Superseding a still-QUEUED run rejects its admission rather than resolving it, so a
+      // cancellation arrives here as a rejection. It is not a failure to report: stay silent when a
+      // newer run owns the case, and otherwise say cancelled rather than erroring.
+      const aborted = job?.signal?.aborted === true;
       if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already terminal (cancelled)
-      options.onAiStatus?.(caseId, {
-        status: "error",
-        at: new Date().toISOString(),
-        detail: (err as Error).message,
-      });
+      if (aborted && options.jobManager?.hasActive(caseId, "enrichment")) return;
+      options.onAiStatus?.(
+        caseId,
+        aborted
+          ? { status: "idle", at: new Date().toISOString(), detail: "enrichment cancelled" }
+          : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
+      );
     });
   }
 
