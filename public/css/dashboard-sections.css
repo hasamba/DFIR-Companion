@@ -43,6 +43,70 @@
   #sec-collection-plan .cp-done{color:var(--text-muted);font-size:12px;margin-bottom:8px}
 
 
+  /* Scope & Clearance (#553). Four unrelated shapes in one panel — a status board, a ranked gap
+     list, a wide host table and a per-row eligibility checklist — and js/dashboard-host-scope.js
+     shipped every one of their class names with nothing here to match them. At browser defaults the
+     board stacked vertically with each count run straight into its label, and the table's automatic
+     layout handed most of the width to the criteria column while the other five squeezed. */
+  #sec-host-scope h4{margin:16px 0 7px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+  #sec-host-scope .hs-empty{color:var(--text-muted);font-size:12px}
+  #sec-host-scope code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--text-bright)}
+  /* The board is the table's filter, so the tiles are real buttons and inherit the page's solid
+     accent fill. Every one of those inherited properties is overridden here, not reset globally. */
+  #sec-host-scope .hs-board{display:flex;flex-wrap:wrap;gap:7px}
+  #sec-host-scope .hs-stat{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:3px;min-width:88px;padding:7px 11px;border:1px solid var(--border-subtle);border-radius:7px;background:var(--bg-secondary);color:var(--text-primary);font:inherit;text-transform:none;letter-spacing:0;cursor:pointer}
+  #sec-host-scope .hs-stat:hover{border-color:var(--accent)}
+  #sec-host-scope .hs-stat[aria-pressed="true"]{border-color:var(--accent);background:var(--surface-selected)}
+  #sec-host-scope .hs-stat-n{font-size:20px;font-weight:700;line-height:1.05;color:var(--text-bright);font-variant-numeric:tabular-nums}
+  #sec-host-scope .hs-stat-l{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap}
+  #sec-host-scope .hs-fleet{margin:9px 0 0;font-size:12px;line-height:1.5;color:var(--text-muted)}
+  #sec-host-scope .hs-fleet strong{color:var(--text-bright)}
+  #sec-host-scope .hs-warn{margin:10px 0 0;padding:8px 11px;border:1px solid var(--warning-border);border-left:3px solid var(--badge-warning-text);border-radius:0 6px 6px 0;background:var(--warning-bg);font-size:12px;color:var(--text-primary)}
+  #sec-host-scope .hs-warn ul{margin:5px 0 0;padding-left:17px}
+  #sec-host-scope .hs-warn li{margin:2px 0;line-height:1.5}
+  /* Gaps are the finding here, so they get card rows rather than an indented <ol>: the host reads
+     as a host and the reason wraps under it instead of pushing the line off the panel. */
+  #sec-host-scope .hs-gaps{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
+  /* Row gap 0, column gap 9: when the reason wraps under the host it must read as the same entry.
+     A symmetric gap put daylight between the two lines and the row looked like two gaps. */
+  #sec-host-scope .hs-gaps li{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 9px;padding:6px 10px;border-left:3px solid var(--badge-warning-text);border-radius:0 5px 5px 0;background:var(--bg-secondary);font-size:12px;line-height:1.5}
+  #sec-host-scope .hs-gaps .hs-why{min-width:0;color:var(--text-muted);overflow-wrap:anywhere}
+  #sec-host-scope .hs-scroll{overflow-x:auto}
+  /* min-width so the panel scrolls rather than squeezes: below this the host column is narrower
+     than an FQDN and `srv-print02.corp.local` breaks mid-label into `corp.loc` / `al`. */
+  #sec-host-scope .hs-table{width:100%;min-width:860px;table-layout:fixed;border-collapse:collapse;font-size:12px}
+  #sec-host-scope .hs-table th{padding:5px 8px;border-bottom:1px solid var(--border-color);text-align:left;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap}
+  #sec-host-scope .hs-table td{padding:9px 8px;border-bottom:1px solid var(--border-subtle);vertical-align:top;overflow-wrap:anywhere}
+  #sec-host-scope .hs-table tbody tr:last-child td{border-bottom:0}
+  #sec-host-scope .hs-table tbody tr:hover td{background:var(--hover-wash)}
+  #sec-host-scope .hs-table .hs-c-host{width:18%}
+  #sec-host-scope .hs-table .hs-c-status{width:11%}
+  #sec-host-scope .hs-table .hs-c-presence{width:10%}
+  #sec-host-scope .hs-table .hs-c-events{width:7%;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted)}
+  #sec-host-scope .hs-table .hs-c-sources{width:20%}
+  #sec-host-scope .hs-table .hs-c-criteria{width:34%}
+  #sec-host-scope .hs-badge{display:inline-block;padding:1px 7px;border:1px solid var(--border-color);border-radius:999px;background:var(--badge-bg-neutral);font-size:10px;font-weight:700;text-transform:uppercase;white-space:nowrap;color:var(--text-muted)}
+  #sec-host-scope .hs-s-confirmed{color:var(--badge-danger-text);border-color:var(--badge-danger-text)}
+  #sec-host-scope .hs-s-suspected{color:var(--badge-warning-text);border-color:var(--badge-warning-text)}
+  #sec-host-scope .hs-s-cleared{color:var(--badge-success-text);border-color:var(--badge-success-text)}
+  #sec-host-scope .hs-src{display:inline-block;margin:0 3px 3px 0;padding:0 6px;border:1px solid var(--border-subtle);border-radius:3px;background:var(--badge-bg-neutral);font-size:10px;white-space:nowrap;color:var(--text-muted)}
+  #sec-host-scope .hs-none{color:var(--text-faint)}
+  #sec-host-scope .hs-stale{padding:0 5px;border-radius:3px;background:var(--warning-bg-strong);color:var(--badge-warning-text);font-size:10px;font-weight:700;text-transform:uppercase;white-space:nowrap}
+  /* The tick is the answer and the sentence is the reason, so the unmet rows carry the contrast:
+     a checklist where all four lines are one colour has to be read word by word. */
+  #sec-host-scope .hs-criteria{display:flex;flex-direction:column;gap:3px;margin:0;padding:0;list-style:none}
+  #sec-host-scope .hs-criteria li{display:flex;gap:7px;font-size:11px;line-height:1.45}
+  #sec-host-scope .hs-criteria .hs-mark{flex:0 0 10px;font-weight:700}
+  #sec-host-scope .hs-criteria .hs-met{color:var(--text-muted)}
+  #sec-host-scope .hs-criteria .hs-met .hs-mark{color:var(--badge-success-text)}
+  #sec-host-scope .hs-criteria .hs-unmet{color:var(--text-primary)}
+  #sec-host-scope .hs-criteria .hs-unmet .hs-mark{color:var(--badge-warning-text)}
+  #sec-host-scope .hs-decision{margin-top:8px;padding:5px 9px;border-left:2px solid var(--accent);border-radius:0 4px 4px 0;background:var(--bg-secondary);font-size:11px;line-height:1.45;color:var(--text-muted)}
+  #sec-host-scope .hs-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  #sec-host-scope .hs-act{padding:2px 9px;border:1px solid var(--border-color);border-radius:5px;background:var(--badge-bg-neutral);color:var(--text-primary);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0}
+  #sec-host-scope .hs-act:hover{border-color:var(--accent);color:var(--text-bright)}
+
+
   #sec-mem-nextsteps .mns-empty{color:var(--text-muted);font-size:12px;margin-top:10px}
   #sec-mem-nextsteps .mns-caveat{color:var(--badge-warning-text);font-size:12px;margin:10px 0 8px}
   #sec-mem-nextsteps .mns-list{display:flex;flex-direction:column;gap:10px}

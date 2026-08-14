@@ -26,6 +26,17 @@
     "out-of-scope": "Out of scope",
   };
 
+  const STATUS_ORDER = ["confirmed", "suspected", "unknown", "cleared", "out-of-scope"];
+
+  // Presence is a derived enum, and its raw values sit in a table column next to sentence-case
+  // statuses. Capitalisation only — "referenced" and "enrolled-only" are the domain's words and
+  // renaming them here would put a second vocabulary in front of the analyst.
+  const PRESENCE_LABEL = {
+    collected: "Collected",
+    referenced: "Referenced",
+    "enrolled-only": "Enrolled only",
+  };
+
   function num(n) {
     return Number(n || 0).toLocaleString("en-US");
   }
@@ -46,15 +57,24 @@
       .sort((a, b) => gapRank(a) - gapRank(b) || a.name.localeCompare(b.name));
   }
 
+  // The board doubles as the table's filter. setHostScopeFilter shipped with nothing on the page
+  // able to call it, which left five inert numbers sitting above a table that can run to thousands
+  // of rows — a legend where the obvious control belongs.
+  function statTile(key, label, count) {
+    return (
+      `<button type="button" class="hs-stat" data-hs-filter="${escAttr(key)}" ` +
+      `aria-pressed="${hostScopeFilter === key ? "true" : "false"}">` +
+      `<span class="hs-stat-n">${num(count)}</span>` +
+      `<span class="hs-stat-l">${esc(label)}</span></button>`
+    );
+  }
+
   function statusBoard(ledger) {
     const c = ledger.counts || {};
-    const cells = ["confirmed", "suspected", "unknown", "cleared", "out-of-scope"]
-      .map(
-        (k) =>
-          `<div class="hs-stat"><span class="hs-stat-n">${num(c[k])}</span>` +
-          `<span class="hs-stat-l">${esc(STATUS_LABEL[k])}</span></div>`,
-      )
-      .join("");
+    const total = STATUS_ORDER.reduce((sum, k) => sum + Number(c[k] || 0), 0);
+    const cells =
+      statTile("all", "All hosts", total) +
+      STATUS_ORDER.map((k) => statTile(k, STATUS_LABEL[k], c[k])).join("");
 
     const fleet = ledger.fleet
       ? `<p class="hs-fleet">Evidence collected from <strong>${num(ledger.fleet.collected)}</strong> of ` +
@@ -85,7 +105,9 @@
     const items = gaps
       .map((h) => {
         const why = h.stale ? `clearance needs review — ${h.stale}` : h.gap;
-        return `<li><code>${esc(h.name)}</code> — ${esc(String(why))}</li>`;
+        return (
+          `<li><code>${esc(h.name)}</code>` + `<span class="hs-why">${esc(String(why))}</span></li>`
+        );
       })
       .join("");
     return `<ol class="hs-gaps">${items}</ol>`;
@@ -94,8 +116,15 @@
   function criteriaList(host) {
     const criteria = (host.eligibility && host.eligibility.criteria) || [];
     if (!criteria.length) return "";
+    // The tick carries the meaning, so it gets its own element to colour. Inlined in the text it
+    // was a glyph in body colour, and a four-line checklist read as four identical lines.
     const items = criteria
-      .map((c) => `<li>${c.met ? "✔" : "✖"} ${esc(String(c.detail))}</li>`)
+      .map(
+        (c) =>
+          `<li class="${c.met ? "hs-met" : "hs-unmet"}">` +
+          `<span class="hs-mark">${c.met ? "✔" : "✖"}</span>` +
+          `<span>${esc(String(c.detail))}</span></li>`,
+      )
       .join("");
     return `<ul class="hs-criteria">${items}</ul>`;
   }
@@ -132,27 +161,37 @@
       ? `<div class="hs-decision">${esc(STATUS_LABEL[host.decision.to] || host.decision.to)} by ` +
         `${esc(host.decision.analyst)} — ${esc(host.decision.reason)}</div>`
       : "";
+    // Chips rather than a comma-joined string: seven tool names on one line pushed every other
+    // column narrow, and the run-on read as prose in a cell that holds a set.
+    const sources = (host.sources || []).length
+      ? host.sources.map((s) => `<span class="hs-src">${esc(s)}</span>`).join("")
+      : `<span class="hs-none">—</span>`;
     return (
       `<tr data-host="${escAttr(host.name)}">` +
-      `<td><code>${esc(host.name)}</code>${host.stale ? ' <span class="hs-stale">review</span>' : ""}</td>` +
-      `<td>${esc(STATUS_LABEL[host.effectiveStatus] || host.effectiveStatus)}</td>` +
-      `<td>${esc(host.presence)}</td>` +
-      `<td>${num(host.eventCount)}</td>` +
-      `<td>${esc((host.sources || []).join(", "))}</td>` +
-      `<td>${criteriaList(host)}${decided}${actionsFor(host)}</td>` +
+      `<td class="hs-c-host"><code>${esc(host.name)}</code>${host.stale ? ' <span class="hs-stale">review</span>' : ""}</td>` +
+      `<td class="hs-c-status"><span class="hs-badge hs-s-${escAttr(host.effectiveStatus)}">` +
+      `${esc(STATUS_LABEL[host.effectiveStatus] || host.effectiveStatus)}</span></td>` +
+      `<td class="hs-c-presence">${esc(PRESENCE_LABEL[host.presence] || host.presence)}</td>` +
+      `<td class="hs-c-events">${num(host.eventCount)}</td>` +
+      `<td class="hs-c-sources">${sources}</td>` +
+      `<td class="hs-c-criteria">${criteriaList(host)}${decided}${actionsFor(host)}</td>` +
       `</tr>`
     );
   }
 
+  // The column classes are on the HEADER cells too, and deliberately: the stylesheet sets
+  // table-layout:fixed, which reads its widths from the first row and ignores every later one.
   function hostTable(ledger) {
     const rows = ledger.hosts.filter(
       (h) => hostScopeFilter === "all" || h.effectiveStatus === hostScopeFilter,
     );
     if (!rows.length) return `<p class="hs-empty">No hosts match this filter.</p>`;
     return (
-      `<table class="hs-table"><thead><tr>` +
-      `<th>Host</th><th>Status</th><th>Presence</th><th>Events</th><th>Sources</th><th>Clearance criteria</th>` +
-      `</tr></thead><tbody>${rows.map(hostRow).join("")}</tbody></table>`
+      `<div class="hs-scroll"><table class="hs-table"><thead><tr>` +
+      `<th class="hs-c-host">Host</th><th class="hs-c-status">Status</th>` +
+      `<th class="hs-c-presence">Presence</th><th class="hs-c-events">Events</th>` +
+      `<th class="hs-c-sources">Sources</th><th class="hs-c-criteria">Clearance criteria</th>` +
+      `</tr></thead><tbody>${rows.map(hostRow).join("")}</tbody></table></div>`
     );
   }
 
@@ -218,7 +257,17 @@
   // repaint, so per-button listeners would be lost each time; delegation survives the repaint and
   // keeps the handler count at one however many hosts a case has.
   function onPanelClick(evt) {
-    const button = evt.target && evt.target.closest ? evt.target.closest("[data-hs-action]") : null;
+    const target = evt.target && evt.target.closest ? evt.target : null;
+    if (!target) return;
+
+    // Filtering is local — no case id, no request, no decision recorded.
+    const tile = target.closest("[data-hs-filter]");
+    if (tile) {
+      setHostScopeFilter(tile.getAttribute("data-hs-filter"));
+      return;
+    }
+
+    const button = target.closest("[data-hs-action]");
     if (!button) return;
     const host = button.getAttribute("data-hs-host");
     const to = button.getAttribute("data-hs-action");

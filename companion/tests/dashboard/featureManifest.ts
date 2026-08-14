@@ -1438,7 +1438,7 @@ export const FEATURES: Feature[] = [
     // of its own; the case-connect loader calls loadHostScope(caseId) like every other panel.
     file: "dashboard-host-scope.js",
     publish: ["renderHostScope", "loadHostScope", "decideHostScope", "setHostScopeFilter"],
-    private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL"],
+    private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
   },
   {
     // The canvas chart. Like dashboard-tickets.js, all of its load-time work is DOM wiring —

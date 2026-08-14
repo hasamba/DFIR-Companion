@@ -43,6 +43,15 @@ const SOURCE_TO_STEP = new Map<string, string>(
   ),
 );
 
+// Minute precision, because the window-coverage detail prints FOUR stamps in one sentence and the
+// panel renders that sentence verbatim. At full ISO the line runs past 110 characters of which 32
+// are `:00.000Z` — seconds nothing in this comparison is decided by.
+function stamp(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const minutes = iso.slice(0, 16).replace("T", " ");
+  return minutes.length === 16 ? `${minutes}Z` : iso;
+}
+
 export function sourceClassesFor(sources: Iterable<string>): Set<string> {
   const out = new Set<string>();
   for (const source of sources) {
@@ -88,7 +97,8 @@ export function evaluateEligibility(input: {
     met: windowMet,
     detail: windowMet
       ? "telemetry spans the incident window"
-      : `covers ${evidence.firstSeen || "—"} → ${evidence.lastSeen || "—"} of ${window.start || "—"} → ${window.end || "—"}`,
+      : `telemetry covers ${stamp(evidence.firstSeen)} → ${stamp(evidence.lastSeen)}; ` +
+        `incident window is ${stamp(window.start)} → ${stamp(window.end)}`,
   };
 
   const uncovered = caseTactics.filter((tactic) => {
