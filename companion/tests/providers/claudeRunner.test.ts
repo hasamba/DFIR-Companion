@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { defaultClaudeRunner } from "../../src/providers/claudeRunner.js";
+import { SPLIT_UTF8_TEXT, splitUtf8Script } from "../helpers/splitUtf8.js";
 
 // A tiny node program that echoes its stdin back with a prefix, so we exercise the real
 // spawn + stdin-write + stdout-collect path without depending on the `claude` binary.
@@ -133,5 +134,31 @@ describe("defaultClaudeRunner", () => {
       timeoutMs: 80,
     });
     expect(r.timedOut).toBe(true);
+  });
+
+  // The model's answer is JSON. One U+FFFD inside it and the whole response fails to parse — see
+  // tests/helpers/splitUtf8.ts for why a chunk boundary lands mid-character in the first place.
+  it("reassembles a character split across two stdout chunks", async () => {
+    const r = await defaultClaudeRunner({ bin: process.execPath, args: ["-e", splitUtf8Script()], stdin: "", timeoutMs: 10_000 });
+    expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  it("reassembles a character split across two stderr chunks", async () => {
+    const r = await defaultClaudeRunner({ bin: process.execPath, args: ["-e", splitUtf8Script({ stream: "stderr" })], stdin: "", timeoutMs: 10_000 });
+    expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  // The tap feeds the live stream in the UI, so it must be handed decoded text — not the raw
+  // per-chunk decode that the accumulated string is built from.
+  it("hands the stdout tap decoded chunks that rejoin into the original text", async () => {
+    const seen: string[] = [];
+    await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", splitUtf8Script()],
+      stdin: "",
+      timeoutMs: 10_000,
+      onStdout: (c) => seen.push(c),
+    });
+    expect(seen.join("")).toBe(SPLIT_UTF8_TEXT);
   });
 });

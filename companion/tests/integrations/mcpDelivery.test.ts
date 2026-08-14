@@ -7,9 +7,11 @@ import {
   rewriteToRemote,
   safeRemoteName,
   shellQuote,
+  spawnTransferRunner,
   type TransferRunner,
   type TransferResult,
 } from "../../src/integrations/mcp/mcpDelivery.js";
+import { SPLIT_UTF8_TEXT, splitUtf8Script } from "../helpers/splitUtf8.js";
 import {
   DEFAULT_DELIVERY,
   type McpServer,
@@ -311,5 +313,21 @@ describe("deliver — scp cleanup", () => {
     const target = await deliver(server(SCP), "/cases/c1/mem.raw", { runner: flaky });
 
     await expect(target.cleanup?.()).resolves.toBeUndefined();
+  });
+});
+
+// A real spawn against `node -e`, so this exercises the actual pipe/collect path rather than the
+// injected runner every test above uses. scp is quiet on success and terse on failure, so stderr is
+// the whole diagnostic an operator gets — and a remote path with a non-ASCII name is exactly what
+// appears in it.
+describe("spawnTransferRunner output decoding", () => {
+  it("reassembles a character split across two stderr chunks", async () => {
+    const r = await spawnTransferRunner()(process.execPath, ["-e", splitUtf8Script({ stream: "stderr" })], { timeoutMs: 10_000 });
+    expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  it("reassembles a character split across two stdout chunks", async () => {
+    const r = await spawnTransferRunner()(process.execPath, ["-e", splitUtf8Script()], { timeoutMs: 10_000 });
+    expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { defaultCodexRunner } from "../../src/providers/codexRunner.js";
+import { SPLIT_UTF8_TEXT, splitUtf8Script } from "../helpers/splitUtf8.js";
 
 // codex's stdin is intentionally ignored (deadlock avoidance), so the child gets its input from
 // argv. These tests spawn a real `node` subprocess to exercise the actual spawn/collect/kill path
@@ -77,5 +78,17 @@ describe("defaultCodexRunner", () => {
       timeoutMs: 80,
     });
     expect(r.timedOut).toBe(true);
+  });
+
+  // `codex exec --json` emits JSON, so a U+FFFD from a mis-decoded chunk boundary costs the whole
+  // response. See tests/helpers/splitUtf8.ts.
+  it("reassembles a character split across two stdout chunks", async () => {
+    const r = await defaultCodexRunner({ bin: process.execPath, args: ["-e", splitUtf8Script()], stdin: "", timeoutMs: 10_000 });
+    expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  it("reassembles a character split across two stderr chunks", async () => {
+    const r = await defaultCodexRunner({ bin: process.execPath, args: ["-e", splitUtf8Script({ stream: "stderr" })], stdin: "", timeoutMs: 10_000 });
+    expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
   });
 });

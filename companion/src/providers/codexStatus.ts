@@ -101,12 +101,12 @@ export async function startCodexLogin(
       clearTimeout(timer);
       resolve({ started: false, output, error: err.code === "ENOENT" ? "Codex CLI not found" : err.message });
     });
-    child.stdout?.on("data", (d) => {
-      output += d.toString();
-    });
-    child.stderr?.on("data", (d) => {
-      output += d.toString();
-    });
+    // A chunk boundary is a BYTE boundary, so a multi-byte character can straddle two chunks;
+    // decoding each chunk on its own would leave U+FFFD in the banner shown on the dashboard.
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => { output += chunk; });
+    child.stderr?.on("data", (chunk: string) => { output += chunk; });
     child.on("close", finish);
   });
 }

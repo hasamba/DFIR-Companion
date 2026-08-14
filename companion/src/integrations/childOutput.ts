@@ -93,3 +93,70 @@ export class ChildOutputCollector {
     };
   }
 }
+
+/**
+ * Collecting a child process's output as text, correctly — the setEncoding variant.
+ *
+ * `text += chunk.toString()` is the obvious way to do this and it is wrong. A chunk boundary is a
+ * BYTE boundary — the pipe hands over whatever bytes have arrived — so a multi-byte character can
+ * straddle two chunks, and decoding each chunk on its own replaces both halves with U+FFFD. Nothing
+ * throws: U+FFFD is a legal character in a JSON string, so a Velociraptor JSONL row still parses
+ * and the username or path inside it is simply wrong from there on. In a tool whose output is
+ * evidence, a silent substitution is the worst possible failure mode.
+ *
+ * `setEncoding("utf8")` puts a StringDecoder in front of the stream, which holds an incomplete
+ * trailing sequence back until the bytes that finish it arrive. That is the whole fix; the reason
+ * it lives here rather than being written twice is the byte budget below.
+ *
+ * Prefer ChildOutputCollector above when a call site can hold both streams as buffers until the
+ * child exits. Use collectText/collectCapped when a call site needs the decoded chunks as they
+ * arrive (e.g. a live stdout tap) rather than only the final joined string.
+ */
+import type { Readable } from "node:stream";
+
+/** Reads back everything collected from the stream so far, decoded. */
+export type ReadCollected = () => string;
+
+/**
+ * Accumulates the stream as UTF-8 text. A null stream reads back as "" — a caller that redirected
+ * the child's stdout to a file descriptor has no pipe to read, and that is not an error.
+ */
+export function collectText(stream: Readable | null): ReadCollected {
+  let text = "";
+  if (!stream) return () => "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    text += chunk;
+  });
+  return () => text;
+}
+
+/**
+ * The same, plus a hard byte budget: `onExceeded` fires as soon as more than `maxBytes` have
+ * arrived, and keeps firing for any chunk after that (the callers kill the child and reject, both
+ * of which are idempotent).
+ *
+ * The budget is counted in BYTES, which is what the callers' `maxOutputBytes` options and their
+ * error messages promise. The accumulated string's `.length` is UTF-16 code units and under-counts
+ * non-ASCII output by 2-4x, so a Hayabusa run over Japanese event logs or a VQL query returning
+ * Cyrillic paths could buffer several times the configured cap before anything stopped it.
+ * Re-encoding each decoded chunk is exact for valid UTF-8 and only ever over-counts invalid bytes
+ * (a replacement character is 3 bytes where the byte it replaced was 1), which errs toward killing
+ * the child rather than letting it run past the budget.
+ */
+export function collectCapped(
+  stream: Readable | null,
+  maxBytes: number,
+  onExceeded: () => void,
+): ReadCollected {
+  let text = "";
+  let bytes = 0;
+  if (!stream) return () => "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    text += chunk;
+    bytes += Buffer.byteLength(chunk, "utf8");
+    if (bytes > maxBytes) onExceeded();
+  });
+  return () => text;
+}
