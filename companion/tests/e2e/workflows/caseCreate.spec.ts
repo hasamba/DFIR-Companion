@@ -14,11 +14,11 @@ import type { Locator, Page } from "@playwright/test";
 /**
  * Open the new-case dialog and wait until it has finished populating itself.
  *
- * openNewCase() adds the .open class, then AWAITS suggestCaseId(), which fetches /cases and
- * overwrites #ncCaseId with the next free INC-YYYY-NNN. Typing before that resolves means the
- * suggestion lands on top of the typed id — under a loaded server that silently turned the
- * path-traversal test into a successful creation of a perfectly valid case, so the dialog closed
- * and the assertion failed for a reason that had nothing to do with validation.
+ * openNewCase() adds the .open class, then AWAITS suggestCaseId(), which fetches
+ * /api/next-case-id and overwrites #ncCaseId with the next free INC-YYYY-NNN. Typing before that
+ * resolves means the suggestion lands on top of the typed id — under a loaded server that silently
+ * turned the path-traversal test into a successful creation of a perfectly valid case, so the
+ * dialog closed and the assertion failed for a reason that had nothing to do with validation.
  *
  * Waiting for the suggested id to arrive is the fix. It is not a timing tweak: without it the test
  * asserts against whichever value won a race.

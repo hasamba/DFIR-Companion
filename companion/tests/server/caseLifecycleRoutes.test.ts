@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
 import { MockProvider } from "../../src/providers/provider.js";
 
 const PASSWORD = "correct horse battery staple";
@@ -407,5 +408,171 @@ describe("POST /cases/seed-demo — force guard (#19)", () => {
     // The orphan is gone — the demo re-seeded into a cleared directory.
     const { stat } = await import("node:fs/promises");
     await expect(stat(join(store.casesRoot, "democlosed", "state", "custom.json"))).rejects.toThrow();
+  });
+});
+
+// #557 follow-up: a deleted case must take its background jobs with it. Jobs are keyed by case id
+// alone, so anything left behind is inherited by the next case that claims the id — and every
+// orphan still offers a live Resume, which would replay the dead case's import into the new one.
+async function harnessWithJobs(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const commentsStore = new CommentsStore(store);
+  const jobManager = new JobManager();
+  const app = createApp(store, { stateStore, commentsStore, jobManager });
+  return { app, store, jobManager };
+}
+
+describe("POST /cases/:id/delete — background jobs", () => {
+  it("forgets the deleted case's jobs", async () => {
+    const { app, jobManager } = await harnessWithJobs("dfir-lifecycle-jobs-");
+    await seedCase(app, "DEL-JOBS", "Case With Jobs");
+    jobManager.register({ caseId: "DEL-JOBS", kind: "import", label: "velociraptor.json" });
+    expect(jobManager.list("DEL-JOBS")).toHaveLength(1);
+
+    await request(app).patch("/cases/DEL-JOBS/status").send({ status: "closed" });
+    const res = await request(app).post("/cases/DEL-JOBS/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    expect(jobManager.list("DEL-JOBS")).toEqual([]);
+  });
+
+  it("a case re-created with the same id sees no jobs from its predecessor", async () => {
+    const { app, jobManager } = await harnessWithJobs("dfir-lifecycle-reuse-");
+    await seedCase(app, "INC-2026-003", "First Investigation");
+    jobManager.register({ caseId: "INC-2026-003", kind: "import", label: "ghost.json" });
+    await request(app).patch("/cases/INC-2026-003/status").send({ status: "closed" });
+    await request(app).post("/cases/INC-2026-003/delete").send({ archiveFirst: "none" });
+
+    await seedCase(app, "INC-2026-003", "Second Investigation");
+    const jobs = await request(app).get("/api/jobs").query({ caseId: "INC-2026-003" });
+    expect(jobs.status).toBe(200);
+    expect(jobs.body.jobs).toEqual([]);
+  });
+
+  it("keeps the jobs when the folder delete fails — the case is still there", async () => {
+    const { app, store, jobManager } = await harnessWithJobs("dfir-lifecycle-jobs-fail-");
+    await seedCase(app, "DEL-JOBS-2", "Case With Jobs");
+    jobManager.register({ caseId: "DEL-JOBS-2", kind: "import", label: "still-mine.json" });
+    await request(app).patch("/cases/DEL-JOBS-2/status").send({ status: "closed" });
+
+    const patch = store as { deleteCaseFolder: CaseStore["deleteCaseFolder"] };
+    const original = store.deleteCaseFolder.bind(store);
+    patch.deleteCaseFolder = async () => {
+      throw new Error("simulated delete failure");
+    };
+    try {
+      const res = await request(app).post("/cases/DEL-JOBS-2/delete").send({ archiveFirst: "none" });
+      expect(res.body.deleted).toBe(false);
+      expect(jobManager.list("DEL-JOBS-2")).toHaveLength(1);
+    } finally {
+      patch.deleteCaseFolder = original;
+    }
+  });
+
+  it("leaves another case's jobs alone", async () => {
+    const { app, jobManager } = await harnessWithJobs("dfir-lifecycle-jobs-other-");
+    await seedCase(app, "DEL-A", "Case A");
+    await seedCase(app, "DEL-B", "Case B");
+    jobManager.register({ caseId: "DEL-A", kind: "import" });
+    jobManager.register({ caseId: "DEL-B", kind: "import" });
+    await request(app).patch("/cases/DEL-A/status").send({ status: "closed" });
+    await request(app).post("/cases/DEL-A/delete").send({ archiveFirst: "none" });
+    expect(jobManager.list("DEL-A")).toEqual([]);
+    expect(jobManager.list("DEL-B")).toHaveLength(1);
+  });
+});
+
+describe("GET /api/next-case-id", () => {
+  const year = new Date().getFullYear();
+
+  it("suggests 001 for an empty cases root", async () => {
+    const { app } = await harness();
+    const res = await request(app).get("/api/next-case-id");
+    expect(res.status).toBe(200);
+    expect(res.body.caseId).toBe(`INC-${year}-001`);
+  });
+
+  it("suggests one past the highest existing case", async () => {
+    const { app } = await harness();
+    await seedCase(app, `INC-${year}-001`, "One");
+    await seedCase(app, `INC-${year}-004`, "Four");
+    const res = await request(app).get("/api/next-case-id");
+    expect(res.body.caseId).toBe(`INC-${year}-005`);
+  });
+
+  it("does not reissue a deleted case's number", async () => {
+    const { app } = await harness();
+    await seedCase(app, `INC-${year}-001`, "One");
+    await seedCase(app, `INC-${year}-002`, "Two");
+    await seedCase(app, `INC-${year}-003`, "Three");
+    await request(app).patch(`/cases/INC-${year}-003/status`).send({ status: "closed" });
+    await request(app).post(`/cases/INC-${year}-003/delete`).send({ archiveFirst: "none" });
+
+    const res = await request(app).get("/api/next-case-id");
+    expect(res.body.caseId).toBe(`INC-${year}-004`);
+  });
+
+  it("ignores ids from other years and other schemes", async () => {
+    const { app } = await harness();
+    await seedCase(app, `INC-${year - 1}-042`, "Last year");
+    await seedCase(app, "CASE-999", "Other scheme");
+    const res = await request(app).get("/api/next-case-id");
+    expect(res.body.caseId).toBe(`INC-${year}-001`);
+  });
+
+  it("counts an archived case, which still owns its number", async () => {
+    const { app } = await harness();
+    await seedCase(app, `INC-${year}-001`, "One");
+    await request(app).patch(`/cases/INC-${year}-001/status`).send({ status: "closed" });
+    await request(app).post(`/cases/INC-${year}-001/archive`).send({ removeFromList: true });
+    const res = await request(app).get("/api/next-case-id");
+    expect(res.body.caseId).toBe(`INC-${year}-002`);
+  });
+});
+
+// The folder delete is the irreversible step and it has already succeeded by the time the two
+// cleanups run. Reporting deleted:false because a cleanup threw would tell the user their case is
+// still on disk when it is gone — the one lie this endpoint must never tell.
+describe("POST /cases/:id/delete — cleanup failures do not misreport the delete", () => {
+  it("still reports deleted when retiring the id fails", async () => {
+    const { app, store } = await harnessWithJobs("dfir-lifecycle-retire-fail-");
+    await seedCase(app, "DEL-RETIRE", "Case");
+    await request(app).patch("/cases/DEL-RETIRE/status").send({ status: "closed" });
+    const patch = store as { retireCaseId: CaseStore["retireCaseId"] };
+    patch.retireCaseId = async () => {
+      throw new Error("simulated ledger write failure");
+    };
+    const res = await request(app).post("/cases/DEL-RETIRE/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    await expect(stat(join(store.casesRoot, "DEL-RETIRE"))).rejects.toThrow();
+  });
+
+  it("still reports deleted when forgetting the jobs fails", async () => {
+    const { app, store, jobManager } = await harnessWithJobs("dfir-lifecycle-forget-fail-");
+    await seedCase(app, "DEL-FORGET", "Case");
+    await request(app).patch("/cases/DEL-FORGET/status").send({ status: "closed" });
+    const patch = jobManager as { forgetCase: JobManager["forgetCase"] };
+    patch.forgetCase = async () => {
+      throw new Error("simulated job manager failure");
+    };
+    const res = await request(app).post("/cases/DEL-FORGET/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    await expect(stat(join(store.casesRoot, "DEL-FORGET"))).rejects.toThrow();
+  });
+
+  it("retires the id even when forgetting the jobs fails first", async () => {
+    const { app, store, jobManager } = await harnessWithJobs("dfir-lifecycle-forget-first-");
+    await seedCase(app, "DEL-BOTH", "Case");
+    await request(app).patch("/cases/DEL-BOTH/status").send({ status: "closed" });
+    const patch = jobManager as { forgetCase: JobManager["forgetCase"] };
+    patch.forgetCase = async () => {
+      throw new Error("simulated job manager failure");
+    };
+    await request(app).post("/cases/DEL-BOTH/delete").send({ archiveFirst: "none" });
+    expect(await store.listRetiredCaseIds()).toEqual(["DEL-BOTH"]);
   });
 });

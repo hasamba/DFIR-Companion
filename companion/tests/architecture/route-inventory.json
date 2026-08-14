@@ -386,6 +386,7 @@
     "ROUTE DELETE /cases/:id/password",
     "ROUTE POST /cases/:id/lock",
     "ROUTE GET /cases",
+    "ROUTE GET /api/next-case-id",
     "ROUTE POST /cases",
     "ROUTE POST /cases/seed-demo",
     "ROUTE PATCH /cases/:id/status",

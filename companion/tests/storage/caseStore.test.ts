@@ -352,3 +352,50 @@ describe("CaseStore.nextImportSeq", () => {
     expect(await new CaseStore(root).nextImportSeq("seq-2")).toBe(2);
   });
 });
+
+// A deleted incident number must never be handed out again: reports, ZIP archives and .dfircase
+// exports written before the delete still carry it, so a reissued id would put two unrelated
+// investigations behind one number.
+describe("CaseStore retired case ids", () => {
+  it("starts empty", async () => {
+    expect(await new CaseStore(root).listRetiredCaseIds()).toEqual([]);
+  });
+
+  it("remembers a retired id across a restart", async () => {
+    await new CaseStore(root).retireCaseId("INC-2026-003");
+    expect(await new CaseStore(root).listRetiredCaseIds()).toEqual(["INC-2026-003"]);
+  });
+
+  it("accumulates ids and never records one twice", async () => {
+    const store = new CaseStore(root);
+    await store.retireCaseId("INC-2026-003");
+    await store.retireCaseId("INC-2026-007");
+    await store.retireCaseId("INC-2026-003");
+    expect(await store.listRetiredCaseIds()).toEqual(["INC-2026-003", "INC-2026-007"]);
+  });
+
+  it("serializes concurrent retirements without losing one", async () => {
+    const store = new CaseStore(root);
+    await Promise.all([1, 2, 3, 4, 5].map((n) => store.retireCaseId(`INC-2026-00${n}`)));
+    expect(await store.listRetiredCaseIds()).toHaveLength(5);
+  });
+
+  it("refuses an id that is not a valid case id", async () => {
+    const store = new CaseStore(root);
+    await expect(store.retireCaseId("../escape")).rejects.toThrow();
+    expect(await store.listRetiredCaseIds()).toEqual([]);
+  });
+
+  it("treats an unreadable ledger as empty rather than blocking case creation", async () => {
+    const store = new CaseStore(root);
+    await store.retireCaseId("INC-2026-003");
+    await writeFile(join(root, ".dfir-companion-retired-cases.json"), "{ not json", "utf8");
+    expect(await store.listRetiredCaseIds()).toEqual([]);
+  });
+
+  it("is not mistaken for a case by listCases", async () => {
+    const store = new CaseStore(root);
+    await store.retireCaseId("INC-2026-003");
+    expect(await store.listCases()).toEqual([]);
+  });
+});

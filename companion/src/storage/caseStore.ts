@@ -9,6 +9,7 @@ import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
 
 const ARCHIVED_DIRNAME = "_archived";
+const RETIRED_IDS_FILENAME = ".dfir-companion-retired-cases.json";
 
 export interface CreateCaseInput {
   caseId: string;
@@ -71,6 +72,9 @@ export class CaseStore {
 
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
+
+  // Serializes the retired-case-id ledger read-modify-write (see retireCaseId).
+  private readonly retiredLock = new StateLock();
 
   // Notified after every artifact write below, so chain-of-custody is recorded for ALL stored
   // evidence rather than only where a caller remembered to ask (#231). It lives here, at the two
@@ -187,6 +191,39 @@ export class CaseStore {
       throw new Error(`refusing to delete "${caseId}": no case.json found at ${dir}`);
     }
     await rm(dir, { recursive: true });
+  }
+
+  // Case ids retired by a delete. An incident number is not free again once it has been used: the
+  // reports, ZIP archives and .dfircase exports written before the delete still carry it, so
+  // reissuing it would file two unrelated investigations under one number. Kept at the cases root
+  // (a dot-file, like the global job ledger) rather than inside any case, because the whole point
+  // is to outlive every folder it names.
+  private retiredCaseIdsPath(): string {
+    return join(this.root, RETIRED_IDS_FILENAME);
+  }
+
+  // A missing or corrupt ledger reads as empty rather than throwing: not knowing which numbers are
+  // retired must never be able to block creating a case.
+  async listRetiredCaseIds(): Promise<string[]> {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(this.retiredCaseIdsPath(), "utf8"));
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((id): id is string => typeof id === "string" && isValidCaseId(id)).sort();
+    } catch {
+      return [];
+    }
+  }
+
+  // Read-modify-write, so it serializes on a lock the same way the OCR index and sequence
+  // allocation do — two deletes landing together must not drop one of the two ids.
+  async retireCaseId(caseId: string): Promise<void> {
+    if (!isValidCaseId(caseId)) throw new Error(`refusing to retire invalid caseId "${caseId}"`);
+    await this.retiredLock.runExclusive(RETIRED_IDS_FILENAME, async () => {
+      const retired = await this.listRetiredCaseIds();
+      if (retired.includes(caseId)) return;
+      const next = [...retired, caseId].sort();
+      await atomicWrite(this.retiredCaseIdsPath(), JSON.stringify(next, null, 2));
+    });
   }
 
   // Creating a case CLAIMS its id, so the write of case.json is exclusive (`wx` — O_CREAT|O_EXCL,

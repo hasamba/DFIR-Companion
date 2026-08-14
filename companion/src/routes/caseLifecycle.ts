@@ -8,6 +8,7 @@ import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templa
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
+import { registerCaseIdentityRoutes, clearStateOutlivingCase } from "./caseIdentity.js";
 import { archiveCase } from "../analysis/caseArchive.js";
 import {
   exportEncryptedCase,
@@ -108,6 +109,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
+  registerCaseIdentityRoutes(app, ctx); // GET /api/next-case-id — the wizard's suggested id
+
   // Create a case. This is the one place a case is born (the dashboard's New case form and
   // `npm run`-style tooling call it); the extension no longer creates cases. The caseExists check
   // is only the friendly duplicate answer — two simultaneous requests both pass it, so createCase's
@@ -118,12 +121,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
       if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
       if (typeof caseId !== "string" || !isValidCaseId(caseId))
-        return res
-          .status(400)
-          .json({
-            error:
-              "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal",
-          });
+        return res.status(400).json({
+          error:
+            "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal",
+        });
       if (await store.caseExists(caseId))
         return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
@@ -289,14 +290,14 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   ): Promise<{ deleted: boolean; error?: string }> {
     try {
       await store.deleteCaseFolder(id);
-      options.teamAuth?.store.deleteCaseAccess(id, actor);
-      logLine(`[delete] case=${id} deleted`);
-      return { deleted: true };
     } catch (err) {
       const message = (err as Error).message;
       errLine(`[delete] case=${id} failed to delete: ${message}`);
       return { deleted: false, error: message };
     }
+    await clearStateOutlivingCase(ctx, id, actor);
+    logLine(`[delete] case=${id} deleted`);
+    return { deleted: true };
   }
 
   // Permanently delete a case: optionally archives it first (ZIP or encrypted), then removes its
@@ -652,13 +653,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.get("/importers", async (_req: Request, res: Response) => {
     if (!options.importerStore)
       return res.status(200).json({ importers: [], precedence: "builtin-first", errors: [] });
-    return res
-      .status(200)
-      .json({
-        importers: ctx.importerRegistry().meta,
-        precedence: ctx.importerPrecedence(),
-        errors: ctx.importerRegistry().errors,
-      });
+    return res.status(200).json({
+      importers: ctx.importerRegistry().meta,
+      precedence: ctx.importerPrecedence(),
+      errors: ctx.importerRegistry().errors,
+    });
   });
 
   app.get("/importers/prompt", (_req: Request, res: Response) => {
