@@ -49,7 +49,11 @@ export interface CaptureAnalysis {
   backfill(caseId: string): Promise<void>;
   /** Debounced auto-synthesis after captures/imports land. No-op unless autoSynthesize is on. */
   scheduleSynthesis(caseId: string): void;
-  /** Immediate background re-synthesis after an import or a false-positive change. */
+  /**
+   * Immediate background re-synthesis after an import or a false-positive change. Self-coalescing:
+   * a newer kick supersedes an older one for the same case, so N rapid changes (a multi-file
+   * import, a batch false-positive) cost one synthesis, not N.
+   */
   resynthesizeInBackground(caseId: string): void;
 }
 
@@ -273,20 +277,31 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
         return;
       }
       // #225: track synthesis as a cancellable job so the dashboard can list it + abort a long/stuck run.
+      // exclusive, like the two sibling synthesis registrations: EVERY caller of this function is a
+      // "the case changed, re-derive it" kick, and synthesize() reads the case fresh, so the newest
+      // kick subsumes every older one — running them in series would spend N LLM calls to reach the
+      // answer the last one produces on its own. That matters most for a multi-file import, where
+      // the dashboard POSTs each file separately and each completed import kicks again: without
+      // exclusive, a six-file import stacked six full re-syntheses behind the case's single
+      // concurrency slot instead of running one after the last file landed.
       const job = options.jobManager?.register({
         caseId,
         kind: "synthesis",
         label: "re-synthesis",
         cancellable: true,
-      });
-      if (job) await job.ready;
-      options.onAiStatus?.(caseId, {
-        status: "analyzing",
-        phase: "synthesizing",
-        at: new Date().toISOString(),
-        detail: "re-synthesizing without legitimate items",
+        exclusive: true,
       });
       try {
+        // Inside the try: superseding a still-QUEUED run rejects its admission (never resolving it),
+        // and this function is fired-and-forgotten, so a rejection escaping here is an unhandled
+        // one rather than a cancellation the catch below can report.
+        if (job) await job.ready;
+        options.onAiStatus?.(caseId, {
+          status: "analyzing",
+          phase: "synthesizing",
+          at: new Date().toISOString(),
+          detail: "re-synthesizing without legitimate items",
+        });
         await pipeline.synthesize(caseId, job?.signal ? { signal: job.signal } : {});
         if (job) await options.jobManager?.finish(job.jobId);
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
@@ -294,12 +309,16 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       } catch (err) {
         const aborted = job?.signal?.aborted === true;
         if (job) await options.jobManager?.fail(job.jobId, err); // no-op if the job was already cancelled
-        options.onAiStatus?.(
-          caseId,
-          aborted
-            ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
-            : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
-        );
+        // A newer exclusive registration may have superseded this run — if a synthesis job for this
+        // case is still active, that newer run owns the status; don't stomp it to idle.
+        if (!(aborted && options.jobManager?.hasActive(caseId, "synthesis"))) {
+          options.onAiStatus?.(
+            caseId,
+            aborted
+              ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
+              : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
+          );
+        }
       }
     })();
   }

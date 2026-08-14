@@ -1,0 +1,120 @@
+// A multi-file import must produce ONE synthesis run, not one per file.
+//
+// The dashboard's import picker takes multiple files and POSTs them one at a time
+// (public/js/dashboard-unified-import.js), and every completed import fires
+// resynthesizeInBackground(). With perCaseConcurrency = 1 those kicks cannot run concurrently, so
+// without supersede semantics they stack up in the queue — the reported bug was six "synthesis is
+// queued / re-synthesis" cards in the cockpit for one six-file import, each of which would have run
+// a full LLM synthesis of the same case.
+import { describe, it, expect } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CaseStore } from "../../src/storage/caseStore.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
+import { createCaptureAnalysis } from "../../src/composition/captureAnalysis.js";
+import type { AppOptions } from "../../src/composition/appOptions.js";
+import type { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import type { AiControl } from "../../src/analysis/aiControl.js";
+
+const CASE_ID = "case-multi-import";
+
+async function harness() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-resynth-"));
+  const store = new CaseStore(root);
+  // perCaseConcurrency: 1 without a ledger — the production default when the durable ledger is
+  // wired (jobManager.ts), and what makes the kicks queue instead of running side by side.
+  const jobManager = new JobManager({ perCaseConcurrency: 1 });
+
+  const synthesized: string[] = [];
+  let releaseSynthesis: () => void = () => {};
+  const pipeline = {
+    hasSynthesisProvider: () => true,
+    synthesize: (caseId: string) => {
+      synthesized.push(caseId);
+      return new Promise((resolve) => {
+        releaseSynthesis = () => resolve({});
+      });
+    },
+  } as unknown as AnalysisPipeline;
+
+  const statuses: { status: string; detail?: string }[] = [];
+  const options = {
+    pipeline,
+    jobManager,
+    onAiStatus: (_caseId: string, s: { status: string; detail?: string }) => statuses.push(s),
+  } as unknown as AppOptions;
+
+  const analysis = createCaptureAnalysis({
+    store,
+    options,
+    hasAiProvider: () => true,
+    getControl: async () => ({ enabled: true }) as AiControl,
+    setControl: async () => ({ enabled: true }) as AiControl,
+    recordAiError: () => {},
+    autoEnrichIfEnabled: () => {},
+  });
+
+  return {
+    analysis,
+    jobManager,
+    synthesized,
+    statuses,
+    releaseSynthesis: () => releaseSynthesis(),
+  };
+}
+
+/** Let every queued `void (async () => …)()` kick reach its job registration. */
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+};
+
+const liveSynthesisJobs = (jm: JobManager) =>
+  jm.list(CASE_ID).filter((j) => j.kind === "synthesis" && j.status !== "cancelled");
+
+describe("re-synthesis after a multi-file import", () => {
+  it("collapses one kick per imported file into a single surviving synthesis job", async () => {
+    const { analysis, jobManager, synthesized, releaseSynthesis } = await harness();
+
+    // Occupy the case's single concurrency slot the way an in-flight import does, so the kicks
+    // queue behind it exactly as they did in the bug report.
+    const importJob = jobManager.register({ caseId: CASE_ID, kind: "import", label: "evtx" });
+    await importJob.ready;
+
+    // Six files in one import → six kicks.
+    for (let i = 0; i < 6; i++) analysis.resynthesizeInBackground(CASE_ID);
+    await settle();
+
+    const live = liveSynthesisJobs(jobManager);
+    expect(live).toHaveLength(1);
+    expect(live[0].status).toBe("queued");
+    expect(synthesized).toEqual([]); // nothing runs while the import still holds the slot
+
+    // Import finishes → the one surviving kick is admitted and runs once.
+    await jobManager.finish(importJob.jobId);
+    await settle();
+    expect(synthesized).toEqual([CASE_ID]);
+
+    releaseSynthesis();
+    await settle();
+  });
+
+  it("does not report 'synthesis cancelled' while a newer kick still owns the case", async () => {
+    const { analysis, jobManager, statuses, releaseSynthesis } = await harness();
+
+    const importJob = jobManager.register({ caseId: CASE_ID, kind: "import", label: "evtx" });
+    await importJob.ready;
+    for (let i = 0; i < 6; i++) analysis.resynthesizeInBackground(CASE_ID);
+    await settle();
+
+    // A superseded kick must stay silent: the newer run owns the AI status banner, and stomping it
+    // to idle leaves the dashboard claiming the case is idle while synthesis is still pending.
+    expect(statuses.map((s) => s.detail)).not.toContain("synthesis cancelled");
+    expect(statuses.filter((s) => s.status === "idle")).toEqual([]);
+
+    await jobManager.finish(importJob.jobId);
+    await settle();
+    releaseSynthesis();
+    await settle();
+  });
+});
