@@ -18,6 +18,7 @@ import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
+import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
 import {
   mountRequestPipeline,
   createUnlockStateReader,
@@ -384,6 +385,9 @@ export {
 // createApp's rebuildForPrefix still call them — so import them too.
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
+  // A stray promise rejection must not take a live investigation down with it. Armed here, at the
+  // real-server boundary, so createApp() unit tests keep Node's fatal default (see the module).
+  installUnhandledRejectionNet();
   loadDatabaseSync();
   // Every store, client and shared runtime object this run needs. See composition/runtimeStores.ts
   // — including why each global store gets its own subdirectory beside cases/ rather than a loose
