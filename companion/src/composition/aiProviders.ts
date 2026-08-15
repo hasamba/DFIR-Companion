@@ -27,6 +27,8 @@ import { ClaudeCodeProvider } from "../providers/claudeCode.js";
 import { CodexProvider } from "../providers/codex.js";
 import { contextTokens as resolveContextTokens } from "../analysis/promptBudget.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
+import { AssetOverridesStore } from "../analysis/assetOverrides.js";
+import { HostDuplicateDismissalStore } from "../analysis/hostDuplicateDismissals.js";
 import { ScopeStore } from "../analysis/scope.js";
 import { AnonControlStore } from "../analysis/anonControl.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
@@ -202,6 +204,12 @@ export interface RuntimePipelineParams {
   stateLock?: StateLock;
   analysisRunStore?: AnalysisRunStore;
   operationalMetrics?: OperationalMetricsStore;
+  // Global, file-backed fleet roster — threaded rather than built inline because it is not a
+  // per-case CaseStore store. Feeds host alias resolution + the pre-synthesis merge gate.
+  velociraptorClientStore?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["velociraptorClientStore"];
+  hostDuplicateDismissalStore?: ConstructorParameters<
+    typeof AnalysisPipelineImpl
+  >[0]["hostDuplicateDismissalStore"];
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -217,6 +225,10 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     stateStore: params.stateStore,
     falsePositiveStore: new FalsePositiveStore(params.store),
     scopeStore: new ScopeStore(params.store),
+    assetOverridesStore: new AssetOverridesStore(params.store),
+    velociraptorClientStore: params.velociraptorClientStore,
+    hostDuplicateDismissalStore:
+      params.hostDuplicateDismissalStore ?? new HostDuplicateDismissalStore(params.store),
     imageLoader: params.imageLoader ?? makeImageLoader(params.store),
     onState: params.onState,
     onSynth: params.onSynth,

@@ -251,6 +251,15 @@ export class AnalysisPipeline {
         get onSynth() {
           return opts.onSynth;
         },
+        get assetOverridesStore() {
+          return opts.assetOverridesStore;
+        },
+        get velociraptorClientStore() {
+          return opts.velociraptorClientStore;
+        },
+        get hostDuplicateDismissalStore() {
+          return opts.hostDuplicateDismissalStore;
+        },
         get retries() {
           return opts.retries;
         },

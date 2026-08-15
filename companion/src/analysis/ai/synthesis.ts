@@ -3,12 +3,22 @@ import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
 import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
+import type { AssetOverridesStore } from "../assetOverrides.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
 import { alignedEpoch, detectClockSkew, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
+import { type HostAliasIndex } from "../hostAlias.js";
+import { loadHostAliasIndex } from "../hostScopeLoad.js";
+import {
+  HostMergeDecisionRequired,
+  hostNamesFromState,
+  pendingNearDuplicates,
+} from "../hostDuplicateGate.js";
 import { sanitizeHypotheses } from "../hypothesis.js";
 import { rankConnectiveIocs } from "../iocAnchors.js";
 import type { PlaybookTask } from "../playbook.js";
@@ -87,6 +97,9 @@ export interface SynthesisContext
       synthesisModelLabel?: string;
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
+      assetOverridesStore?: AssetOverridesStore;
+      velociraptorClientStore?: VelociraptorClientStore;
+      hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
     };
   /** mergeDelta plus the case's analyst IOC-merge aliases (#82). */
   mergeWithAliases(
@@ -417,6 +430,36 @@ async function callSynthesisModel(
   return { delta, thinkingTokens, parseRetries };
 }
 
+// The pre-synthesis merge gate. Runs before the prompt is built so a blocked run spends no tokens
+// and writes no state.
+//
+// RETURNS the index it had to build anyway, because every downstream render site needs the same one
+// and rebuilding it per site would re-read both stores a dozen times per run. The GATE is enabled
+// only when the dismissal store is wired (see PipelineOptions), but the INDEX is always built — a
+// merge must still resolve host names even on an install running with the gate off.
+async function resolveHostsOrThrow(
+  ctx: SynthesisContext,
+  caseId: string,
+  state: InvestigationState,
+): Promise<HostAliasIndex> {
+  const aliasIndex = await loadHostAliasIndex(
+    {
+      ...(ctx.opts.assetOverridesStore ? { assetOverrides: ctx.opts.assetOverridesStore } : {}),
+      ...(ctx.opts.velociraptorClientStore ? { fleet: ctx.opts.velociraptorClientStore } : {}),
+    },
+    caseId,
+  );
+  const dismissalStore = ctx.opts.hostDuplicateDismissalStore;
+  if (!dismissalStore) return aliasIndex;
+  const pending = pendingNearDuplicates(
+    hostNamesFromState(state),
+    aliasIndex,
+    await dismissalStore.load(caseId),
+  );
+  if (pending.length) throw new HostMergeDecisionRequired(pending);
+  return aliasIndex;
+}
+
 /**
  * ABOVE 50 LINES ON PURPOSE (#453). Everything here is a single named step and a hand-off of its
  * result to the next one: load, prepare, decide-to-run, prompt, call, fold, finalize, persist,
@@ -447,6 +490,7 @@ export async function synthesize(
   ctx.warnOnPromptDrift(); // once per process: a stale synthesis-prompt override silently drops shipped capabilities
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
+  await resolveHostsOrThrow(ctx, caseId, loaded);
 
   const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock);
   const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;

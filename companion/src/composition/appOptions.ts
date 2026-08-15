@@ -47,6 +47,7 @@ import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookHuntStore } from "../analysis/playbookHuntStore.js";
 import type { PlaybookControlStore } from "../analysis/playbookControl.js";
 import type { AssetOverridesStore } from "../analysis/assetOverrides.js";
+import type { HostDuplicateDismissalStore } from "../analysis/hostDuplicateDismissals.js";
 import type { LateralPathDismissStore } from "../analysis/lateralPathDismiss.js";
 import type { IocAliasStore } from "../analysis/iocAlias.js";
 import type { SynthMetaStore } from "../analysis/synthMeta.js";
@@ -252,6 +253,10 @@ export interface AppOptions {
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
+  // Pairs the analyst has judged to be different machines, persisted per case in
+  // state/host-duplicate-dismissals.json. Presence of this store is what ENABLES the pre-synthesis
+  // near-duplicate merge gate — see analysis/hostDuplicateGate.ts.
+  hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
   // Analyst-dismissed lateral-movement chains, persisted per case in
   // state/lateral-path-dismissals.json. Rejects a derived INFERENCE without discarding the
   // underlying evidence the way a false-positive marker would.
