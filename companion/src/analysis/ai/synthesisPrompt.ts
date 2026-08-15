@@ -1,4 +1,5 @@
 import type { FalsePositiveMarker } from "../falsePositive.js";
+import type { HostAliasIndex } from "../hostAlias.js";
 import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { ScopeWindow } from "../scope.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
@@ -54,6 +55,9 @@ export interface SynthesisPromptInput {
   priorHuntsBlock: string;
   playbookProgressBlock: string;
   incidentTypeBlock: string;
+  /** Canonical host identity for this run (#host-near-duplicate-merge-gate) — resolved once by the
+   *  caller and threaded through every render/ranking site so a merged host shows as one machine. */
+  aliasIndex?: HostAliasIndex;
 }
 
 /** The prompt, plus what the run record and the second-look sweep need to describe it. */
@@ -106,8 +110,8 @@ export async function buildSynthesisPrompt(
   ctx: SynthesisPromptContext,
   input: SynthesisPromptInput,
 ): Promise<SynthesisPromptResult> {
-  const { caseId, state, scope, markers, inWindowEvents, scopedEvents, ...preloaded } = input;
-  const timeline = createTimelineSelection(state, scopedEvents);
+  const { caseId, state, scope, markers, inWindowEvents, scopedEvents, aliasIndex, ...preloaded } = input;
+  const timeline = createTimelineSelection(state, scopedEvents, aliasIndex);
   const blocks = await buildSynthesisBlocks(ctx, {
     caseId,
     state,
@@ -115,6 +119,7 @@ export async function buildSynthesisPrompt(
     markers,
     scopedEvents,
     preloaded,
+    aliasIndex,
   });
 
   const overhead = trimTimelineToBudget(timeline, blocks, state.lastSummary || "");

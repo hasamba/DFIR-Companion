@@ -84,7 +84,14 @@ describe("pipeline anonymization (default on)", () => {
     expect(provider.lastReq!.userPrompt).toContain("ANON_HOST_1");
     expect(provider.lastReq!.userPrompt).not.toContain("ALCLIENT07"); // real host never sent
     const out = await stateStore.load("c1");
-    expect(out.findings[0].description).toContain("ALCLIENT07"); // restored on the way back
+    // Restored casing, NOT the original "ALCLIENT07": synthesis now always resolves a real
+    // aliasIndex (host-near-duplicate-merge-gate), and resolveHost() canonicalizes via
+    // canonicalHostName() — lowercasing every host it touches, even one with no alias (see
+    // hostAlias.ts). The COMPROMISED ASSETS block (buildSynthesisContext, alias-resolved) now
+    // renders "alclient07" and precedes the raw-cased FORENSIC TIMELINE text in the assembled
+    // prompt, so the anonymizer's first-match-wins token (anonymize.ts assign()) records the
+    // lowercase spelling as ANON_HOST_1's real value, and that is what comes back restored.
+    expect(out.findings[0].description).toContain("alclient07"); // restored on the way back
     expect(out.findings[0].description).not.toContain("ANON_HOST_1");
   });
 

@@ -1,6 +1,7 @@
 import { buildAdversaryHintsResult } from "../adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../adversaryGroupsData.js";
 import { gapEnvOptions } from "../gapDetect.js";
+import type { HostAliasIndex } from "../hostAlias.js";
 import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "../importMeta.js";
 import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } from "../knownUnknowns.js";
 import { loadKnownPlaybooks } from "../knownPlaybooksData.js";
@@ -33,6 +34,7 @@ export function knownUnknownItems(
   state: InvestigationState,
   scopedEvents: ForensicEvent[],
   yieldWarning?: ImportYieldWarning | null,
+  aliasIndex?: HostAliasIndex,
 ): KnownUnknownItem[] {
   try {
     const hints = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
@@ -44,6 +46,7 @@ export function knownUnknownItems(
       nextTechniques: hints.nextTechniques,
       playbookMatch: playbook.matches[0] ?? null,
       yieldWarning,
+      aliasIndex,
     });
   } catch {
     return [];
@@ -73,10 +76,11 @@ export async function knownUnknownsBlock(
   state: InvestigationState,
   scopedEvents: ForensicEvent[],
   caseId: string,
+  aliasIndex?: HostAliasIndex,
 ): Promise<string> {
   const max = Math.max(0, Number(process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX) || 10);
   return renderKnownUnknowns(
-    knownUnknownItems(state, scopedEvents, await loadYieldWarning(ctx, caseId)),
+    knownUnknownItems(state, scopedEvents, await loadYieldWarning(ctx, caseId), aliasIndex),
     max,
   );
 }

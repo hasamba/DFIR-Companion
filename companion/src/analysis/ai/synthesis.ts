@@ -237,6 +237,7 @@ async function finalizeFindings(
     surviving: Set<string>;
     eligibleIds: Set<string>;
     sourceTrust: SourceTrustMap;
+    aliasIndex: HostAliasIndex;
   },
 ): Promise<InvestigationState> {
   const withAccepted = ctx.opts.secondOpinionStore
@@ -249,6 +250,7 @@ async function finalizeFindings(
     eligibleIds: input.eligibleIds,
     sourceTrust: input.sourceTrust,
     kevCatalog: await ctx.getKevCatalog(),
+    aliasIndex: input.aliasIndex,
   });
 }
 
@@ -490,7 +492,7 @@ export async function synthesize(
   ctx.warnOnPromptDrift(); // once per process: a stale synthesis-prompt override silently drops shipped capabilities
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
-  await resolveHostsOrThrow(ctx, caseId, loaded);
+  const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
 
   const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock);
   const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;
@@ -506,6 +508,7 @@ export async function synthesize(
     inWindowEvents: run.inWindowEvents,
     scopedEvents,
     observationsBlock,
+    aliasIndex,
     ...run.blocks,
   });
 
@@ -529,7 +532,7 @@ export async function synthesize(
   let next = folded;
   if (opts.dryRun) return next;
 
-  next = await finalizeFindings(ctx, caseId, next, { delta, surviving, eligibleIds, sourceTrust });
+  next = await finalizeFindings(ctx, caseId, next, { delta, surviving, eligibleIds, sourceTrust, aliasIndex });
 
   // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
   // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the
