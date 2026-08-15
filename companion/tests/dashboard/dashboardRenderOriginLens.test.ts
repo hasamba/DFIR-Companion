@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { callsWithin, functionsOf, scriptFromSource, type DashboardScript } from "../helpers/dashboardAst.js";
 
 // render() is a ~700-line DOM function with no behavioural harness in this repo — the confidence
@@ -24,6 +25,39 @@ function renderBody(script: DashboardScript) {
   const fn = functionsOf(script).find((f) => f.name === "render" && f.declaration);
   if (!fn) throw new Error("render() function declaration not found in dashboard-render.js");
   return fn.node;
+}
+
+// ARGUMENT ORDER at the call site. callsWithin(), used by the two tests above, returns a
+// Set<string> of callee NAMES — it can prove findingPassesOriginLens is called, but "is called"
+// is true whether the call reads findingPassesOriginLens(f, hideAuto, hideGap) or has the second
+// and third arguments transposed. That swap is invisible to every OTHER test that exists: the
+// contract tests above only ask "is it called"; the truth-table unit tests in
+// dashboardFilters.test.ts exercise the function directly, never this call site; and the e2e
+// spec's demo case has no backfill findings, so both checkboxes drive the same "N of M" header
+// change regardless of which boolean lands in which parameter. Two checkboxes doing each other's
+// job would ship silently.
+//
+// No export in dashboardAst.ts returns the CallExpression node itself — functionsOf() finds
+// function-like nodes, callsWithin()/callsByName() see call NAMES, and nothing hands back one
+// call's `arguments` list — so per instruction this is answered locally, narrowed to exactly the
+// one call site render() has, rather than adding a new shared export for a single caller.
+function findingPassesOriginLensArgs(node: ts.Node): string[] {
+  let call: ts.CallExpression | undefined;
+  const visit = (n: ts.Node): void => {
+    if (call) return; // already found the one call site; nothing left to look for
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === "findingPassesOriginLens"
+    ) {
+      call = n;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  if (!call) throw new Error("findingPassesOriginLens call not found in render()");
+  return call.arguments.map((a) => (ts.isIdentifier(a) ? a.text : `<non-identifier: ${a.getText()}>`));
 }
 
 // The span of the findingsFiltering declaration alone — from "const findingsFiltering =" to its
@@ -54,6 +88,30 @@ describe("render() applies the finding-origin lens", () => {
     const stripped = SOURCE.replace(/findingPassesOriginLens/g, "lensCallRemovedByTest");
     const script = scriptFromSource("dashboard-render.js", stripped);
     expect(callsWithin(renderBody(script)).has("findingPassesOriginLens")).toBe(false);
+  });
+
+  // THE ARGUMENT-ORDER GATE. Existence alone (the test above) is not the obligation: render() must
+  // pass the checkbox reads to the RIGHT parameters. findingPassesOriginLens(f, hideAuto, hideGap)
+  // and findingPassesOriginLens(f, hideGap, hideAuto) are both "calls findingPassesOriginLens",
+  // and — see the truth table in dashboardFilters.test.ts — a swap would ship two checkboxes that
+  // each do the OTHER one's job, with every other test in the suite still green.
+  it("calls findingPassesOriginLens with (f, hideAuto, hideGap), in that order", () => {
+    const script = scriptFromSource("dashboard-render.js", SOURCE);
+    expect(findingPassesOriginLensArgs(renderBody(script))).toEqual(["f", "hideAuto", "hideGap"]);
+  });
+
+  it("goes red when the 2nd and 3rd arguments are swapped — this assertion's own mutation check", () => {
+    const swapped = SOURCE.replace(
+      "findingPassesOriginLens(f, hideAuto, hideGap)",
+      "findingPassesOriginLens(f, hideGap, hideAuto)",
+    );
+    // Fails fast if the call text above ever drifts from the real call site, rather than silently
+    // mutating something else and passing for the wrong reason.
+    expect(swapped).not.toEqual(SOURCE);
+    const script = scriptFromSource("dashboard-render.js", swapped);
+    // Mirrors the call-removal check above: assert the POSITIVE test's own predicate no longer
+    // holds against the mutated source, proving the test above it would fail on a real swap.
+    expect(findingPassesOriginLensArgs(renderBody(script))).not.toEqual(["f", "hideAuto", "hideGap"]);
   });
 
   // The count label is the only signal that a row was hidden rather than absent. If the lenses are
