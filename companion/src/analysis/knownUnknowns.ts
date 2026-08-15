@@ -24,6 +24,7 @@ import { rankConnectiveIocs } from "./iocAnchors.js";
 import { buildEvidenceGraph } from "./evidenceGraph.js";
 import { byEventTime } from "./forensicSort.js";
 import type { ImportYieldWarning } from "./importMeta.js";
+import type { HostAliasIndex } from "./hostAlias.js";
 
 // The kill-chain phases an intrusion usually touches. A case with real (Critical/High) findings that
 // has NO finding covering one of these is a conspicuous gap worth calling out ("how did they get
@@ -49,6 +50,7 @@ export interface KnownUnknownsOptions {
   maxNextTechniques?: number; // cap on likely-next-technique lines (default 5)
   maxPlaybookSteps?: number; // cap on unobserved-playbook-step lines (default 4)
   max?: number; // hard cap on TOTAL bullets in the rendered block (default 10)
+  aliasIndex?: HostAliasIndex; // resolve short-name/FQDN spellings onto one host before ranking
 }
 
 const DEFAULT_MAX_GAPS = 3;
@@ -279,7 +281,7 @@ export function buildKnownUnknownItems(
   opts: KnownUnknownsOptions = {},
 ): KnownUnknownItem[] {
   const items: KnownUnknownItem[] = [];
-  const topHosts = rankHosts(state).topHosts;
+  const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
 
   // 1. Uncovered ATT&CK phases — one item per phase, each carrying its collection directive.
   for (const tactic of uncoveredCoreTactics(state)) {

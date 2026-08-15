@@ -11,6 +11,7 @@ import { scoreFindingsRelevance } from "../findingRelevance.js";
 import { reconsiderKeyQuestions } from "../fpCascade.js";
 import { backfillSilenceGapFindings, detectTimelineGaps, gapEnvOptions } from "../gapDetect.js";
 import { backfillHighSeverityFindings } from "../highSeverityFindings.js";
+import type { HostAliasIndex } from "../hostAlias.js";
 import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
@@ -269,6 +270,7 @@ export interface FindingGradeInput {
   eligibleIds: Set<string>;
   sourceTrust: SourceTrustMap;
   kevCatalog: KevCatalog | undefined;
+  aliasIndex?: HostAliasIndex;
 }
 
 /**
@@ -286,7 +288,7 @@ export function gradeFindings(input: FindingGradeInput): InvestigationState {
   const evidenceGraph = buildEvidenceGraph(next);
   const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
   const hostNames = new Set(
-    buildAssetGraph(next)
+    buildAssetGraph(next, undefined, input.aliasIndex)
       .assets.filter((a) => a.type === "host")
       .map((a) => shortHost(a.name)),
   );
