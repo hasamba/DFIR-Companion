@@ -764,13 +764,12 @@ async function resolveHostsOrThrow(
 }
 ```
 
-Then insert the call in `synthesize`, immediately after the empty-timeline early return (line 449). Task 8 uses the returned value; for now the binding is unused, so prefix it with `void` or bind it and use it in Task 8 — bind it now to avoid churn:
+Then insert the call in `synthesize`, immediately after the empty-timeline early return (line 449). This task calls it for its throwing side effect only and discards the return; Task 8 binds the result:
 
 ```ts
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
-  const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
-  void aliasIndex; // consumed in Task 8, when the render sites are threaded
+  await resolveHostsOrThrow(ctx, caseId, loaded);
 ```
 
 Add `import { type HostAliasIndex } from "../hostAlias.js";` alongside the other new imports.
@@ -1351,8 +1350,8 @@ Tasks 5–7 added the parameters. This task supplies the value, so the merge fin
 - Consumes: everything from Tasks 4–7
 - Produces: a single `aliasIndex` computed once per synthesis run and threaded down
 
-**Note:** `resolveHostsOrThrow` (Task 4) already returns the index. This task removes the
-`void aliasIndex;` placeholder line and threads the value instead.
+**Note:** `resolveHostsOrThrow` (Task 4) already returns the index; Task 4 discards it. This task
+binds it — `const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);` — and threads it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1742,9 +1741,18 @@ git add -A && git commit -m "feat(hosts): add list/merge/dismiss routes for near
 
 Append to `tests/server/hostDuplicatesRoutes.test.ts`:
 
+**`resynthesizeInBackground` is NOT an `AppOptions` field** — `createApp` builds it internally from
+`createCaptureAnalysis`, so a spy cannot be injected through `createApp(cases, {...})` (verified).
+Register the route module directly against a stub `RouteContext` instead, which tests the contract
+more directly anyway:
+
 ```ts
+import express from "express";
+import { registerHostDuplicateRoutes } from "../../src/routes/hostDuplicates.js";
+import type { RouteContext } from "../../src/routes/context.js";
+
 describe("auto-run on last resolve", () => {
-  let twoPairApp: ReturnType<typeof createApp>;
+  let twoPairApp: express.Express;
   let kick: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -1761,12 +1769,17 @@ describe("auto-run on last resolve", () => {
     );
     await stateStore.save("c1", s);
     kick = vi.fn();
-    twoPairApp = createApp(cases, {
-      stateStore,
-      assetOverridesStore: new AssetOverridesStore(cases),
-      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+    twoPairApp = express();
+    twoPairApp.use(express.json());
+    registerHostDuplicateRoutes(twoPairApp, {
+      store: cases,
+      options: {
+        stateStore,
+        assetOverridesStore: new AssetOverridesStore(cases),
+        hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+      },
       resynthesizeInBackground: kick,
-    });
+    } as unknown as RouteContext);
   });
 
   it("does not kick synthesis while a pair is still unresolved", async () => {
@@ -1790,8 +1803,6 @@ describe("auto-run on last resolve", () => {
 ```
 
 Add `vi` to the vitest import at the top of the file.
-
-**If `createApp` does not accept a `resynthesizeInBackground` override**, check `AppOptions` first — if there is no such seam, assert on the effect instead: pass a `synthesisProvider` spy and assert it is (not) invoked after a short `await new Promise((r) => setImmediate(r))`, since the kick is fire-and-forget.
 
 - [ ] **Step 2: Run test to verify it fails**
 
