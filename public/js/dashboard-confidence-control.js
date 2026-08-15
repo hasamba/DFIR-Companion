@@ -59,8 +59,9 @@
   // The two finding-origin lenses. Saved IMMEDIATELY rather than joining the min-confidence
   // debounce above: a checkbox click is one discrete edit, not a keystroke stream, so there is
   // nothing to coalesce and nothing to flush on unload. The two save paths PUT disjoint keys and
-  // the route patches key by key, so an in-flight debounced floor save and a checkbox save cannot
-  // clobber each other whichever order they land in.
+  // the route patches key by key, but that alone does not prevent the server's read-modify-write
+  // from clobbering a field; `ConfidenceControlStore.set` wraps the cycle in a per-case lock, so
+  // concurrent saves are safe in either order.
   function saveFindingOriginFilters(caseId, patch) {
     return fetch(`/cases/${caseId}/confidence-control`, {
       method: "PUT",
