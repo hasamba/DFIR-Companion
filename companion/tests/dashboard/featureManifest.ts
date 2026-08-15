@@ -1030,6 +1030,8 @@ export const FEATURES: Feature[] = [
       "cancelJob",
       "loadJobs",
       "pollCount",
+      // The cancel path's counterpart to pollCount: stopCount only pauses, this forgets the case.
+      "retireCount",
       "scheduleJobUiRefresh",
     ],
     // countTimer is NOT here: it lives in the page's state block with the other shared bindings.

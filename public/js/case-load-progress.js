@@ -229,8 +229,10 @@ export async function readBodyWithProgress(state, response, onProgress) {
  * mode below safe: that mode starts loaders across several turns of the event loop, and a wrapper
  * spanning those gaps would attach this fan-out's abort signal to requests the ANALYST started.
  *
- * The returned promise is the original, untouched, so callers' abort handling and `.catch` chains
- * behave exactly as before.
+ * Without a signal the returned promise is the original, untouched, so callers' `.catch` chains
+ * behave exactly as before. With one, an abort is hidden from the loader rather than delivered as
+ * a failure — see the wrapper for why a rejected panel fetch must not be allowed to reach handlers
+ * that read it as "this endpoint is missing".
  *
  * A loader that throws synchronously is recorded as a failed panel rather than taking the rest of
  * the fan-out with it. A loader that starts no request at all settles immediately.
@@ -300,11 +302,28 @@ export function runPanelLoaders(entries, onProgress, options) {
     const p = originalFetch.apply(this, args);
     if (owner === null || !p || typeof p.then !== "function") return p;
     outstanding.set(owner, (outstanding.get(owner) || 0) + 1);
+    // The TALLY watches the real promise, so the strip still settles every panel on abort.
     p.then(
       () => settleOne(owner, false),
       () => settleOne(owner, true),
     );
-    return p;
+    if (!signal) return p;
+    // What the LOADER sees is different, and deliberately so. These loaders overwhelmingly end in
+    // `.catch(() => somethingUnavailable())`, and ~73 of those report a missing endpoint on the
+    // shared status line — several telling the analyst in as many words to restart the companion
+    // server. An abort is not a broken endpoint: cancelling a case load, or switching cases, would
+    // otherwise fill the screen with alarms about a server that is perfectly healthy, and hand out
+    // actively wrong advice.
+    //
+    // So on OUR abort the loader's chain never runs at all: it is handed a promise that stays
+    // pending forever, which is the honest shape for "this request was abandoned, draw nothing".
+    // The pending promises are bounded by the fan-out (~60) and die with the retired generation.
+    // Any other rejection — a real network failure, a real 5xx — is rethrown untouched, so genuine
+    // unavailability still reports exactly as before.
+    return p.catch((err) => {
+      if (signal.aborted) return new Promise(() => {});
+      throw err;
+    });
   };
 
   let next = 0;
