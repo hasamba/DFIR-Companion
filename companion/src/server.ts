@@ -168,6 +168,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     setControl,
     recordAiError,
     autoEnrichIfEnabled: enrichment.autoEnrichIfEnabled,
+    dispatchNotify,
   });
   const imports = createImportIngest({
     store,

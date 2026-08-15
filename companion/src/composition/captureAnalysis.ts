@@ -25,6 +25,10 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
+import type { NotificationEvent } from "../analysis/notifications.js";
+import { milestoneEvent } from "../analysis/notifications.js";
+import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
+import { hostNamesFromState, pendingNearDuplicates } from "../analysis/hostDuplicateGate.js";
 
 export interface CaptureAnalysisDeps {
   store: CaseStore;
@@ -36,6 +40,8 @@ export interface CaptureAnalysisDeps {
   recordAiError: (caseId: string, phase: string, err: unknown) => void;
   /** Enrich any IOCs a synthesis run just produced, when the case has enrichment on. */
   autoEnrichIfEnabled: (caseId: string) => void;
+  /** Fire a notification event (best-effort, fire-and-forget). See composition/caseNotifier.ts. */
+  dispatchNotify: (event: NotificationEvent) => void;
 }
 
 export interface CaptureAnalysis {
@@ -58,7 +64,16 @@ export interface CaptureAnalysis {
 }
 
 export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysis {
-  const { store, options, hasAiProvider, getControl, setControl, recordAiError, autoEnrichIfEnabled } = deps;
+  const {
+    store,
+    options,
+    hasAiProvider,
+    getControl,
+    setControl,
+    recordAiError,
+    autoEnrichIfEnabled,
+    dispatchNotify,
+  } = deps;
   const windowSize = options.windowSize ?? 4;
   const captureBuffers = new Map<string, CaptureMetadata[]>();
 
@@ -257,7 +272,49 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     }
   }
 
+  // Tell someone the case is holding on a merge decision. The gate itself lives in synthesize(),
+  // but a case with AI disabled never reaches it — and that case still needs the badge raised, so
+  // detection runs here too. Fully guarded: notifications are a side channel and must never break
+  // an import.
+  //
+  // NOTE the per-channel `milestone` toggle defaults to FALSE, so on a default configuration this
+  // reaches nobody. The dashboard badge is the reliable surface; this is opt-in escalation.
+  async function notifyHostDuplicates(caseId: string): Promise<void> {
+    try {
+      const dismissalStore = options.hostDuplicateDismissalStore;
+      if (!dismissalStore || !options.stateStore || !options.assetOverridesStore) return;
+      const state = await options.stateStore.load(caseId);
+      const aliasIndex = await loadHostAliasIndex(
+        {
+          assetOverrides: options.assetOverridesStore,
+          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        },
+        caseId,
+      );
+      const pending = pendingNearDuplicates(
+        hostNamesFromState(state),
+        aliasIndex,
+        await dismissalStore.load(caseId),
+      );
+      if (!pending.length) return;
+      dispatchNotify(
+        milestoneEvent(
+          caseId,
+          `Analysis on hold: ${pending.length} possible duplicate host${pending.length === 1 ? "" : "s"}`,
+          pending.map((p) => `• ${p.other} and ${p.canonical} may be the same machine`),
+          new Date().toISOString(),
+        ),
+      );
+    } catch {
+      /* never break an import on a notification */
+    }
+  }
+
   function resynthesizeInBackground(caseId: string): void {
+    // FIRST, above every early return below. The two guards that follow (no pipeline, no synthesis
+    // provider) are exactly the AI-disabled install this notification exists to serve: put this
+    // inside the IIFE and the case that can never reach the synthesize() gate also never gets told.
+    void notifyHostDuplicates(caseId);
     const pipeline = options.pipeline;
     if (!pipeline) return;
     // Gate text synthesis on its provider (with vision fallback), preserving OCR-less installs.

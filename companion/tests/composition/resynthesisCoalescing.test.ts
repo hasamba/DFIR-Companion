@@ -54,6 +54,7 @@ async function harness() {
     setControl: async () => ({ enabled: true }) as AiControl,
     recordAiError: () => {},
     autoEnrichIfEnabled: () => {},
+    dispatchNotify: () => {},
   });
 
   return {
