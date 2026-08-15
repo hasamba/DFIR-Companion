@@ -96,6 +96,50 @@ describe("TelegramPoller", () => {
     expect(urls[1]).toContain("offset=12"); // 11 + 1
   });
 
+  // POST /settings/reload rewrites DFIR_TELEGRAM_BOT_TOKEN in process.env, and the notification
+  // path reads it live — so a poller holding the boot-time string would keep polling on the OLD
+  // credential while everything else moved to the new one. Worse, an operator who rotated because
+  // the old token leaked would be told "applied" while the inbound bot still answered on it.
+  // Resolving per cycle is what makes the rotation whole.
+  it("picks up a rotated bot token on the next poll cycle", async () => {
+    let token = "OLD";
+    const { fn, urls } = fetchServing([
+      { body: { ok: true, result: [] } },
+      { body: { ok: true, result: [] } },
+      { body: { ok: true, result: [] } },
+    ]);
+    const poller = new TelegramPoller({
+      botToken: () => token,
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
+    });
+    poller.start();
+    await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(1));
+    expect(urls[0]).toContain("/botOLD/getUpdates");
+
+    token = "NEW"; // the rotation lands mid-flight, exactly as /settings/reload would apply it
+    await vi.waitFor(() => expect(urls.some((u) => u.includes("/botNEW/"))).toBe(true));
+    await poller.stop();
+    // The in-flight request finishes on the old token; nothing after it uses the old one again.
+    const afterRotation = urls.slice(urls.findIndex((u) => u.includes("/botNEW/")));
+    expect(afterRotation.every((u) => u.includes("/botNEW/"))).toBe(true);
+  });
+
+  it("still accepts a plain string token", async () => {
+    const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
+    const poller = new TelegramPoller({
+      botToken: "STATIC",
+      fetchFn: fn,
+      log: fakeLog(),
+      onUpdate: async () => {},
+    });
+    poller.start();
+    await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(1));
+    await poller.stop();
+    expect(urls[0]).toContain("/botSTATIC/getUpdates");
+  });
+
   // One malformed command must not wedge the bot, and must not be redelivered forever.
   it("keeps polling when a handler throws, and does not replay that update", async () => {
     const { fn, urls } = fetchServing([
