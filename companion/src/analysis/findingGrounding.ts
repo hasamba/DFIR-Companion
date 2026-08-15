@@ -17,6 +17,7 @@ import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { deriveSemanticKey } from "./semanticKey.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -131,6 +132,10 @@ export interface GroundingInput {
   // `kevLinked` when it references one of these. Optional — omit/empty when no KEV catalog is loaded.
   kevCveIds?: ReadonlySet<string>;
   sourceTrust?: SourceTrustMap; // #66: per-source trust; absent → no trust-based capping
+  // Resolves short-name/FQDN spellings onto one host before counting distinct hosts. Without it one
+  // machine spelled two ways reads as corroboration across two hosts, which defeats the
+  // `distinctHosts <= 1` single-source cap below and inflates the finding's confidence.
+  aliasIndex?: HostAliasIndex;
 }
 
 // The IOC ids that carry at least one malicious/suspicious intel verdict — the finding-level "intel
@@ -169,7 +174,7 @@ function findingIsKevLinked(
 }
 
 export function groundAndScoreFindings(input: GroundingInput): Finding[] {
-  const { findings, scopedEvents, iocs, graphLinkedEventIds, sourceTrust } = input;
+  const { findings, scopedEvents, iocs, graphLinkedEventIds, sourceTrust, aliasIndex } = input;
   const kevCveIds = input.kevCveIds ?? new Set<string>();
   const scopedById = new Map(scopedEvents.map((e) => [e.id, e] as const));
   const iocById = new Map(iocs.map((i) => [i.id, i] as const));
@@ -195,7 +200,12 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     for (const e of scopedEvents) if ((e.relatedFindingIds ?? []).includes(f.id)) push(e.id);
 
     const distinctTools = new Set(supporting.flatMap((e) => e.sources ?? [])).size;
-    const distinctHosts = new Set(supporting.map((e) => e.asset).filter((a): a is string => !!a)).size;
+    const distinctHosts = new Set(
+      supporting
+        .map((e) => e.asset)
+        .filter((a): a is string => !!a)
+        .map((a) => (aliasIndex ? resolveHost(aliasIndex, a) : a.toLowerCase())),
+    ).size;
     const graphLinked = supporting.some((e) => graphLinkedEventIds.has(e.id));
     const intelSources = (f.relatedIocs ?? []).filter((id) => intelIocs.has(id)).length;
     // Issue #61 signals: verdict-first = any supporting event is a graded (Low+) detection a tool

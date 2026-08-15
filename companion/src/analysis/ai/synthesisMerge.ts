@@ -300,6 +300,7 @@ export function gradeFindings(input: FindingGradeInput): InvestigationState {
     graphLinkedEventIds: new Set(evidenceGraph.edges.flatMap((e) => e.eventIds)),
     kevCveIds: collectKevCveIds(inScope, next.iocs, kevCatalog),
     sourceTrust,
+    ...(input.aliasIndex ? { aliasIndex: input.aliasIndex } : {}),
   });
   // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
   // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
