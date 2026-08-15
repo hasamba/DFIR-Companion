@@ -71,4 +71,15 @@ describe("ConfidenceControlStore", () => {
     const result = await store.set("c1", patch);
     expect(result).not.toHaveProperty("bogus");
   });
+
+  // The race this store now has two callers for: the debounced confidence-floor PUT and the
+  // immediate lens-checkbox PUT can both be mid-flight at once, each touching a disjoint key.
+  // Fired via Promise.all so both `set` calls start before either's `load()` resolves — exactly
+  // the interleaving a real concurrent PUT produces. Without StateLock this is a lost update:
+  // both `load()`s see the pre-write {} and whichever `atomicWrite` lands second overwrites the
+  // first's key instead of merging with it.
+  it("survives two concurrent sets touching different keys", async () => {
+    await Promise.all([store.set("c1", { minConfidence: 60 }), store.set("c1", { hideAutoFindings: true })]);
+    expect(await store.load("c1")).toEqual({ minConfidence: 60, hideAutoFindings: true });
+  });
 });
