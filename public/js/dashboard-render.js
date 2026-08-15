@@ -256,6 +256,10 @@
     );
     const minConf =
       parseInt(document.getElementById("confFilter").value, 10) || 0;
+    // Finding-origin lenses: hide the deterministic backfills (f-auto-*, f-gap-*) so the panel
+    // shows only what AI synthesis concluded. Read once per render, like minConf above.
+    const hideAuto = document.getElementById("hideAutoFindings").checked;
+    const hideGap = document.getElementById("hideGapFindings").checked;
     const activeDashView = DfirState.activeView(); // read once; this function consults it three times
     // Corroboration lens (#35): a finding's sources are the union of its supporting events' tools.
     const _findingCorrob = (f) => {
@@ -276,6 +280,7 @@
           _findingMatchesExclude(f, DfirTimelineView.excludeTerms())
         ) &&
         _findingCorrob(f) &&
+        findingPassesOriginLens(f, hideAuto, hideGap) &&
         viewMeetsMinSev(f.severity),
     ); // dashboard-view severity floor (#142)
     const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered; // view top-N cap
@@ -289,6 +294,8 @@
         !!DfirTimelineView.search() ||
         DfirTimelineView.excludeTerms().length > 0 ||
         DfirTimelineView.corrobFindings() > 1 ||
+        hideAuto ||
+        hideGap ||
         !!(
           activeDashView &&
           activeDashView.filters &&
