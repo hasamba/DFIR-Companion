@@ -30,8 +30,21 @@ export interface TelegramMessage {
   caption?: string;
 }
 
+/**
+ * A bot token, or a function returning the current one. Pass the function when the value can change
+ * under a long-lived holder: POST /settings/reload rewrites DFIR_TELEGRAM_BOT_TOKEN in process.env,
+ * and a poller that captured the boot-time string would keep polling on the old credential while
+ * the notification path — which reads it live — had already moved to the new one.
+ */
+export type TokenSource = string | (() => string | undefined);
+
+/** Resolve a TokenSource at the moment of use. Trimmed, because a .env value often carries space. */
+export function resolveToken(source: TokenSource): string {
+  return ((typeof source === "function" ? source() : source) ?? "").trim();
+}
+
 export interface TelegramPollerOptions {
-  botToken: string;
+  botToken: TokenSource;
   /** Handle one update. Rejections are logged and the loop continues — one bad command must not
    *  stop the bot. */
   onUpdate: (update: TelegramUpdate) => Promise<void>;
@@ -119,7 +132,9 @@ export class TelegramPoller {
     timer.unref?.();
     try {
       const url =
-        `${this.opts.apiBase.replace(/\/+$/, "")}/bot${this.opts.botToken}/getUpdates` +
+        // Resolved per cycle, not per poller: a token rotated by /settings/reload takes effect on
+        // the next request rather than at the next restart.
+        `${this.opts.apiBase.replace(/\/+$/, "")}/bot${resolveToken(this.opts.botToken)}/getUpdates` +
         `?timeout=${this.opts.pollTimeoutSeconds}` +
         `&allowed_updates=${encodeURIComponent(JSON.stringify(["message", "channel_post"]))}` +
         (this.offset === undefined ? "" : `&offset=${this.offset}`);
@@ -176,7 +191,7 @@ export class TelegramApiError extends Error {
  *  response to piggyback on. Best-effort: a delivery failure is logged, never thrown at the
  *  command that produced it. */
 export async function sendTelegramMessage(input: {
-  botToken: string;
+  botToken: TokenSource;
   chatId: string;
   text: string;
   apiBase?: string;
@@ -186,7 +201,10 @@ export async function sendTelegramMessage(input: {
   const base = (input.apiBase ?? "https://api.telegram.org").replace(/\/+$/, "");
   const doFetch = input.fetchFn ?? fetch;
   try {
-    const res = await doFetch(`${base}/bot${input.botToken}/sendMessage`, {
+    // Resolved at send time for the same reason the poll loop resolves per cycle: the poller's
+    // reply closure outlives a rotation, and a reply on the old token after the poll moved to the
+    // new one is the split this whole change exists to close.
+    const res = await doFetch(`${base}/bot${resolveToken(input.botToken)}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ chat_id: input.chatId, text: input.text }),
