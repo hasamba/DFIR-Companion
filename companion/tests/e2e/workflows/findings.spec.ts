@@ -53,3 +53,32 @@ test("filtering applies to findings as well as events", async ({ page, demoCase 
   // The filter bar says "Filter events, findings, IOCs…" — so findings must actually respond to it.
   await expect.poll(async () => findings.count(), { timeout: 15_000 }).toBe(0);
 });
+
+// The seeded demo case contains only f001-f012 — no f-auto-* or f-gap-* findings — so this cannot
+// watch a backfill row disappear. What it CAN prove is everything around that: the controls exist,
+// they change the header's count form, and the choice is per-case state rather than a lens that
+// evaporates on reload. Whether the right row disappears is findingPassesOriginLens's truth table.
+test("the finding-origin lenses persist across a reload", async ({ page, demoCase }) => {
+  await openCase(page, demoCase);
+
+  const hideAuto = page.locator("#hideAutoFindings");
+  const hideGap = page.locator("#hideGapFindings");
+  await expect(hideAuto).toBeVisible();
+  await expect(hideGap).toBeVisible();
+  await expect(hideAuto).not.toBeChecked();
+  await expect(hideGap).not.toBeChecked();
+
+  // Unfiltered, the header states a plain total.
+  await expect(page.locator("#findingsCount")).toHaveText(/^\(\d+ findings?\)$/);
+
+  await hideAuto.check();
+
+  // Checked, it must switch to the "N of M" form even though this case hides nothing — otherwise a
+  // suppressed finding would be indistinguishable from one that was never there.
+  await expect(page.locator("#findingsCount")).toHaveText(/^\(\d+ of \d+ findings\)$/);
+
+  await page.reload();
+  await expect(page.locator("#sec-findings .finding").first()).toBeAttached({ timeout: 30_000 });
+  await expect(page.locator("#hideAutoFindings")).toBeChecked();
+  await expect(page.locator("#hideGapFindings")).not.toBeChecked();
+});
