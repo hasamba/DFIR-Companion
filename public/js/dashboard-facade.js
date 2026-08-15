@@ -146,6 +146,12 @@
     "loadHostRanking",
     "scheduleHostRankingReload",
     "applyHostRankingScope",
+    // Near-duplicate host review (the merge gate's UI surface). `initHostDuplicates` is the
+    // sentinel, so not here. dashboard-ai-status.js calls loadHostDuplicates bare on the
+    // ai_status "error" branch (right beside loadPresidioPending, which is why it sits here) —
+    // that call site has no try/catch of its own, unlike runPanelLoaders' entries.
+    "loadHostDuplicates",
+    "renderHostDuplicates",
     // NSRL (#63) and the Dashboard Views editor (#142). Their initializers are the sentinels.
     "loadNsrl",
     "nsrlImport",
