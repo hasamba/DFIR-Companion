@@ -24,6 +24,11 @@ spelled two ways reads as "seen on 2 hosts". That trips the `distinctHosts <= 1`
 `findingGrounding.ts:239` and lets an **uncorroborated finding skip its confidence downgrade** — the
 finding is scored as better-evidenced than the evidence supports.
 
+A split host also **doubles an IOC's cross-host score**. `rankConnectiveIocs` scores
+`hosts.size * 4` (`analysis/iocAnchors.ts:174`), so every IOC touching the split host counts it
+twice and is promoted up the `CONNECTIVE INDICATORS` block as if it had genuine cross-host reach —
+which is precisely the signal that block exists to identify.
+
 Other host-keyed state that synthesis writes back, all wrong when a host is split:
 
 - `state.attackerPath` — a one-machine intrusion narrated as two (`stateMerge.ts:377-378`)
@@ -81,10 +86,22 @@ so the gate would never fire, but the analyst is still told.
 
 ### Notification
 
-Reuse the existing notifier — `createCaseNotifier` (`composition/caseNotifier.ts:25`) — with
-`kind: "milestone"`. Milestones **bypass the per-channel severity threshold**
-(`analysis/notifications.ts:77-78`, `shouldNotify`), so a blocked case cannot be filtered into
-silence by a channel configured for Critical-only. No new notification kind is needed.
+Reuse the existing notifier — `createCaseNotifier` (`composition/caseNotifier.ts:25`) — via the
+`milestoneEvent(caseId, title, lines, at)` builder (`analysis/notifications.ts:240`). No new
+notification kind is needed.
+
+Milestones bypass the per-channel **severity** threshold (`notifications.ts:153-155`, `shouldNotify`),
+so a Critical-only channel still receives this. But the per-channel `milestone` **toggle** is a hard
+gate and it **defaults to `false`** (`notifications.ts:350-353`) — so on a default configuration this
+notification reaches nobody. The badge is therefore the primary surface and the notification is an
+opt-in escalation; the release note must say so, or unattended users will believe they are covered
+when they are not.
+
+`createCaptureAnalysis` does **not** currently receive a notifier (`CaptureAnalysisDeps`,
+`composition/captureAnalysis.ts:29-38`), so import-time notification requires adding
+`dispatchNotify` to that dep and wiring it at the `createCaptureAnalysis` call site in `server.ts`.
+Follow the `dropFolder.ts` dep pattern, not the hand-rolled `notifier.dispatch` copies in
+`maintenanceTasks.ts`.
 
 ### What gets stored: dismissals only
 
@@ -109,21 +126,44 @@ per-case JSON under `store.stateDir(caseId)`, written with `atomicWrite`.
 ### Making the merge reach the AI
 
 Wiring `assetOverridesStore` and the fleet client store into `SynthesisContext.opts`
-(`synthesis.ts:75-90`, `ai/pipelineOptions.ts`) is **required, not optional** — without a real
+(`synthesis.ts:68-99`, `ai/pipelineOptions.ts`) is **required, not optional** — without a real
 `HostAliasIndex` the gate cannot distinguish an already-merged pair from an unresolved one and would
 re-prompt forever on hosts the analyst already merged.
+
+The wiring chain is four files, in this order: `ai/pipelineOptions.ts` (declare the two optional
+fields) → `analysis/pipeline.ts` (add two getters to the `aiCtx.opts` block, ~line 257, same
+3-line `get X() { return opts.X; }` form as its ~39 siblings) → `composition/aiProviders.ts`
+(`RuntimePipelineParams` + pass into `buildRuntimePipeline`; `AssetOverridesStore` can be built
+inline as `new AssetOverridesStore(params.store)` like its peers, but `VelociraptorClientStore` is a
+**global** file-backed singleton and must be threaded through `params`) → `composition/aiRuntime.ts`
+(`AiRuntimeDeps` + destructure + pass at the `buildRuntimePipeline` call, line 117).
+
+Note `buildRuntimePipeline` is called from `aiRuntime.ts:117`, **not** from `server.ts` —
+`server.ts` only re-exports it. `server.ts` reaches it via `buildAiRuntime` at line 431, where
+`velociraptorClientStore` is already destructured from `rt` (line 412) and in scope.
 
 Once the index is available there, it must resolve host names at every point synthesis renders or
 ranks them. All of these are called **without** an alias index today:
 
-| Location | What it produces |
-|---|---|
-| `synthesisPromptEvents.ts:157-158`, `synthEvidence.ts:31` | per-event `<host:{e.asset}>` tags |
-| `synthGroup.ts:78`, `:242-251` | `on N hosts (a, b, +k more)` |
-| `synthSelect.ts:351` | `COMPROMISED ASSETS` block via `buildAssetGraph` |
-| `synthSelect.ts:413-417` | `SIGNAL CONCENTRATION` via `buildSignalConcentrationDigest` → `rankHosts` |
-| `knownUnknowns.ts:282` | uncovered-phase collect targets via `rankHosts` |
-| `synthesisMerge.ts:288-290` | `hostNames` set gating corroboration steps |
+| Location | What it produces | Threading cost |
+|---|---|---|
+| `synthSelect.ts:351` | `COMPROMISED ASSETS` via `buildAssetGraph` | one arg — already alias-aware |
+| `synthSelect.ts:416` | `SIGNAL CONCENTRATION` via `rankHosts` | one arg — already alias-aware |
+| `iocAnchors.ts:142` | `CONNECTIVE INDICATORS` via `buildAssetGraph` | one arg — already alias-aware |
+| `ai/synthesisMerge.ts:289` | `hostNames` set gating corroboration steps | one arg — already alias-aware |
+| `knownUnknowns.ts:282` | uncovered-phase collect targets via `rankHosts` | one arg — already alias-aware |
+| `synthEvidence.ts:31` | per-event `<host:{e.asset}>` tags | **new 2nd param** on `renderStructuredTags`; 2 call sites (`synthesisPromptEvents.ts:158`, `ai/deepPassRun.ts:58`) |
+| `synthGroup.ts:147-154`, `:242-251` | `on N hosts (a, b, +k more)` | via `GroupOptions` (`synthGroup.ts:84`) |
+| `findingGrounding.ts:198` | `distinctHosts` — the confidence-cap bug | via `GroundingInput` (`findingGrounding.ts:125`) |
+
+The first five are one-argument changes: `buildAssetGraph(state, window?, aliasIndex?)` and
+`rankHosts(state, { aliasIndex })` already accept an index and are simply never given one. The last
+three need a parameter added.
+
+`tacticCollectDirectives` (`knownUnknowns.ts:205`) is exported with four positional params, so
+prefer threading through `KnownUnknownsOptions` rather than widening its signature.
+`buildSynthesisContext` (`synthSelect.ts:346`) has **8 call sites**, so it takes the index as a
+trailing optional param to avoid touching all of them.
 
 The per-event tags matter most: without resolving those, the model reads both spellings in the raw
 event stream and will narrate two machines no matter what the derived blocks say.
