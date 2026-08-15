@@ -27,6 +27,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { patternKey, commandShape } from "./prevalence.js";
 import { byEventTime } from "./forensicSort.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // Default ceiling on how many forensic events (after burst grouping) reach a prompt, overridable with
 // DFIR_AI_SYNTH_MAX_EVENTS. Raised from 300 to 600 when grouping landed: collapsing repeated detections
@@ -84,6 +85,7 @@ export interface DetectionGroup {
 export interface GroupOptions {
   gapSeconds?: number;
   minRepeats?: number;
+  aliasIndex?: HostAliasIndex; // fold short-name/FQDN spellings into one host in the group's host list
 }
 
 export interface CollapsedPrompt {
@@ -141,14 +143,16 @@ function isDated(e: ForensicEvent): boolean {
   return !Number.isNaN(eventMs(e));
 }
 
-function toGroup(key: string, run: readonly ForensicEvent[]): DetectionGroup {
+function toGroup(key: string, run: readonly ForensicEvent[], aliasIndex?: HostAliasIndex): DetectionGroup {
   const first = run[0];
   const last = run[run.length - 1];
   const hosts: string[] = [];
   const seen = new Set<string>();
   for (const e of run) {
-    const asset = (e.asset ?? "").trim();
-    if (!asset || seen.has(asset.toLowerCase())) continue;
+    const raw = (e.asset ?? "").trim();
+    if (!raw) continue;
+    const asset = aliasIndex ? resolveHost(aliasIndex, raw) : raw;
+    if (seen.has(asset.toLowerCase())) continue;
     seen.add(asset.toLowerCase());
     hosts.push(asset);
   }
@@ -190,7 +194,7 @@ export function groupDetections(events: readonly ForensicEvent[], opts: GroupOpt
     const sorted = [...list].sort(byEventTime);
     let run: ForensicEvent[] = [];
     const flush = (): void => {
-      if (run.length >= minRepeats) out.push(toGroup(key, run));
+      if (run.length >= minRepeats) out.push(toGroup(key, run, opts.aliasIndex));
       run = [];
     };
     for (const e of sorted) {
@@ -255,8 +259,14 @@ export function groupingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !/^(0|false|off|no)$/i.test((env.DFIR_SYNTH_GROUP ?? "").trim());
 }
 
-/** Read the tunables from the environment, falling back to the defaults on absent/invalid values. */
-export function groupEnvOptions(env: NodeJS.ProcessEnv = process.env): Required<GroupOptions> {
+/**
+ * Read the tunables from the environment, falling back to the defaults on absent/invalid values.
+ * Scoped to just the two numeric knobs (not `Required<GroupOptions>`) because `aliasIndex` is never
+ * environment-configured — it is built from fleet/merge state and threaded in by the caller.
+ */
+export function groupEnvOptions(
+  env: NodeJS.ProcessEnv = process.env,
+): Required<Pick<GroupOptions, "gapSeconds" | "minRepeats">> {
   const gap = Number(env.DFIR_SYNTH_GROUP_GAP_SECONDS);
   const min = Number(env.DFIR_SYNTH_GROUP_MIN_REPEATS);
   return {
