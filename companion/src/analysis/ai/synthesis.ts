@@ -564,7 +564,10 @@ export async function synthesize(
   ctx.opts.onSynth?.(caseId, findingsDiff, next);
   ctx.opts.onState?.(next);
 
-  return (await sweepSecondLook(ctx, caseId, opts, { next, scopedEvents, scope, prompt, delta })) ?? next;
+  return (
+    (await sweepSecondLook(ctx, caseId, opts, { next, scopedEvents, scope, prompt, delta, aliasIndex })) ??
+    next
+  );
 }
 
 /**
@@ -589,6 +592,7 @@ async function sweepSecondLook(
     scope: ScopeWindow;
     prompt: Awaited<ReturnType<typeof buildSynthesisPrompt>>;
     delta: ReturnType<typeof stripAiExtractedFrom>;
+    aliasIndex: HostAliasIndex;
   },
 ): Promise<InvestigationState | null> {
   if (opts.skipSecondLook || !ctx.opts.superTimelineStore) return null;
@@ -601,6 +605,7 @@ async function sweepSecondLook(
       promptEvents: input.prompt.representedEvents,
       scope: input.scope,
       evidenceRequests: input.delta.evidenceRequests,
+      aliasIndex: input.aliasIndex,
     });
     if (!outcome) return null;
     // Nothing new to promote still records — empty requests are surfaced as collection leads.
@@ -669,6 +674,7 @@ async function runSecondLook(
     promptEvents: ForensicEvent[];
     scope: ScopeWindow;
     evidenceRequests?: ModelEvidenceRequest[];
+    aliasIndex: HostAliasIndex;
   },
 ): Promise<{ meta: SecondLookMeta } | null> {
   const superStore = ctx.opts.superTimelineStore;
@@ -680,7 +686,10 @@ async function runSecondLook(
     hypotheses: ctx.opts.hypothesisStore ? await ctx.opts.hypothesisStore.load(caseId) : [],
     iocValueById: new Map(input.next.iocs.map((i) => [i.id, i.value] as const)),
     keyQuestions: input.next.keyQuestions,
-    connectiveIocs: rankConnectiveIocs(input.next, input.scopedEvents, { max: 5 }),
+    connectiveIocs: rankConnectiveIocs(input.next, input.scopedEvents, {
+      max: 5,
+      aliasIndex: input.aliasIndex,
+    }),
     modelRequests: input.evidenceRequests,
     window,
   });

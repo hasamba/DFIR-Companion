@@ -61,9 +61,12 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
   const aliasIndex = opts.aliasIndex;
   const resolve = (raw: string): string => (aliasIndex ? resolveHost(aliasIndex, raw) : raw);
 
-  // Connective IOC reach per host (#200).
+  // Connective IOC reach per host (#200). Threading the same aliasIndex through here is what keeps
+  // a split host ("WIN11" / "WIN11.windomain.local") from being counted as two distinct hosts for
+  // the `minHosts` connective gate AND from double-incrementing connByHost below (both spellings
+  // resolve to the same key, so an unresolved anchor would bump it twice).
   const connByHost = new Map<string, number>();
-  for (const a of rankConnectiveIocs(state, state.forensicTimeline, { max: 50 })) {
+  for (const a of rankConnectiveIocs(state, state.forensicTimeline, { max: 50, aliasIndex })) {
     for (const h of a.hosts) {
       const key = resolve(h).toLowerCase();
       connByHost.set(key, (connByHost.get(key) ?? 0) + 1);

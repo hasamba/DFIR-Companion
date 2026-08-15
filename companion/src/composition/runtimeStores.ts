@@ -349,6 +349,9 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     customerExposure: new CustomerExposureStore(store),
     notebook: notebookStore,
     assetOverrides: assetOverridesStore,
+    // Paired with assetOverrides so hostRanking() resolves a host's short-name/FQDN spellings onto
+    // one canonical name, same as the hostScope callback just above.
+    fleet: velociraptorClientStore,
     playbook: playbookStore,
     reportTemplates: reportTemplateStore,
     reportTemplateControl: reportTemplateControlStore,
