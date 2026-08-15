@@ -52,10 +52,14 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
     return { canonical, other };
   }
 
-  // Both resolve paths answer with the freshly-recomputed pending list. Task 10 adds the
-  // auto-synthesis kick here.
+  // Both resolve paths answer with the freshly-recomputed pending list.
+  // Resolving the LAST pair is what lifts the gate, so that is the only moment worth a synthesis.
+  // Kicking on every resolve would spend one run per pair, and every run but the last would
+  // immediately re-throw on the pairs still outstanding.
   async function respond(caseId: string, res: Response): Promise<Response> {
-    return res.status(200).json({ pending: await pending(caseId) });
+    const remaining = await pending(caseId);
+    if (remaining.length === 0) ctx.resynthesizeInBackground(caseId);
+    return res.status(200).json({ pending: remaining });
   }
 
   app.get("/cases/:id/host-duplicates", async (req: Request, res: Response) => {
