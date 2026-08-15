@@ -15,6 +15,7 @@ import {
   type NewHypothesis,
 } from "../analysis/hypothesis.js";
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
+import type { ConfidenceControl } from "../analysis/confidenceControl.js";
 import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { sendPipelineError } from "./presidioApproval.js";
@@ -764,15 +765,20 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
-  // Findings min-confidence display floor (#226): a per-case setting, persisted so it survives a
-  // page reload — purely a display preference (nothing is removed from state). `minConfidence: null`
-  // means "show all" (0). GET returns the current value; PUT sets/clears it.
+  // Findings-panel display preferences: the min-confidence floor (#226) and the two finding-origin
+  // lenses. Per-case and persisted so they survive a page reload; purely display (nothing is
+  // removed from state). `minConfidence: null` means "show all" (0); each lens defaults to false.
+  const confidenceControlBody = (c: ConfidenceControl) => ({
+    minConfidence: c.minConfidence ?? null,
+    hideAutoFindings: c.hideAutoFindings ?? false,
+    hideGapFindings: c.hideGapFindings ?? false,
+  });
+
   app.get("/cases/:id/confidence-control", async (req: Request, res: Response) => {
     if (!options.confidenceControlStore)
       return res.status(501).json({ error: "confidence control not configured" });
     try {
-      const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
-      return res.status(200).json({ minConfidence });
+      return res.status(200).json(confidenceControlBody(await options.confidenceControlStore.load(req.params.id)));
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -781,21 +787,50 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.put("/cases/:id/confidence-control", async (req: Request, res: Response) => {
     if (!options.confidenceControlStore)
       return res.status(501).json({ error: "confidence control not configured" });
-    const raw = req.body?.minConfidence;
-    const cleared = raw === null || raw === undefined || raw === "";
-    if (!cleared && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100)) {
-      return res.status(400).json({ error: "minConfidence must be a number 0-100, or null" });
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    // PATCH ONLY THE KEYS THE REQUEST CARRIES. The dashboard writes the floor (debounced, on
+    // keystrokes) and the lenses (immediate, on click) from two independent paths, so a PUT naming
+    // one must not disturb the others. Reading an ABSENT minConfidence as "clear it" — which is
+    // what this handler used to do — would let a checkbox click wipe the analyst's floor.
+    const patch: ConfidenceControl = {};
+    if ("minConfidence" in body) {
+      const raw = body.minConfidence;
+      const cleared = raw === null || raw === undefined || raw === "";
+      if (!cleared && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100)) {
+        return res.status(400).json({ error: "minConfidence must be a number 0-100, or null" });
+      }
+      patch.minConfidence = cleared ? undefined : raw;
+    }
+    for (const key of ["hideAutoFindings", "hideGapFindings"] as const) {
+      if (!(key in body)) continue;
+      const raw = body[key];
+      if (raw !== null && raw !== undefined && typeof raw !== "boolean") {
+        return res.status(400).json({ error: `${key} must be a boolean, or null` });
+      }
+      patch[key] = raw == null ? undefined : raw;
     }
     try {
-      await options.confidenceControlStore.set(req.params.id, { minConfidence: cleared ? undefined : raw });
+      await options.confidenceControlStore.set(req.params.id, patch);
       options.onConfidenceControl?.(req.params.id);
-      const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
+      const saved = await options.confidenceControlStore.load(req.params.id);
+      const detail =
+        [
+          "minConfidence" in patch
+            ? saved.minConfidence === undefined
+              ? "minConfidence cleared"
+              : `minConfidence set to ${saved.minConfidence}`
+            : null,
+          "hideAutoFindings" in patch ? `hideAutoFindings ${saved.hideAutoFindings ?? false}` : null,
+          "hideGapFindings" in patch ? `hideGapFindings ${saved.hideGapFindings ?? false}` : null,
+        ]
+          .filter(Boolean)
+          .join("; ") || "no change";
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "settings",
         action: "confidence-control",
-        detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
+        detail,
       });
-      return res.status(200).json({ minConfidence });
+      return res.status(200).json(confidenceControlBody(saved));
     } catch (err) {
       return sendPipelineError(res, err);
     }
