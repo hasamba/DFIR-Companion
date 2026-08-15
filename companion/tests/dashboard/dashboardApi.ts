@@ -57,6 +57,7 @@ export interface IocLike {
 }
 
 export interface FindingLike {
+  id?: string | null;
   title?: string | null;
   description?: string | null;
   mitreTechniques?: string[];
@@ -133,6 +134,9 @@ export interface FiltersApi {
   _fpMatchesExclude(m: FpMarkLike, terms: Array<string | null | undefined>): boolean;
   _evMatchesTimeRange(e: EventLike, from: string | null, to: string | null): boolean;
   isFindingFalsePositive(title: string | null, fpTitles: string[]): boolean;
+  isAutoBackfillFinding(f: FindingLike | null): boolean;
+  isGapFinding(f: FindingLike | null): boolean;
+  findingPassesOriginLens(f: FindingLike | null, hideAuto: boolean, hideGap: boolean): boolean;
   ftOriginOf(e: EventLike): string;
   originFacets(ft: EventLike[] | null): string[];
   isLowSignalEvent(e: EventLike): boolean;

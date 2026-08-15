@@ -133,6 +133,39 @@ function lowSignalChip(e) {
   return `<span class="prev-chip lowsig-chip" title="Info-severity telemetry with no finding link, structured identity, ATT&amp;CK tag, or multi-source corroboration — likely low signal">🐇 low signal</span>`;
 }
 
+// Non-AI finding origins. Two DETERMINISTIC backfill passes run after AI synthesis and mint
+// findings of their own, each with a prefixed, idempotent id minted in exactly one place:
+//
+//   f-auto-  companion/src/analysis/highSeverityFindings.ts — an in-scope Critical/High event
+//            synthesis left with no finding, so a graded detection is never silently missed
+//   f-gap-   companion/src/analysis/gapDetect.ts            — a window where EVERY source went
+//            dark, the classic signature of cleared logs or a stopped collector
+//
+// Everything else in state.findings comes from AI synthesis, second opinion's `so:` ids included.
+// On a noisy import these backfills can outnumber the AI's conclusions, which is what the lens is
+// for. The id is the classifier because it is already load-bearing: both generators derive it from
+// their source events precisely so re-synthesis REFRESHES a backfill finding instead of duplicating
+// it. That makes it a stable identity, and means no new field and no migration.
+//
+// The trailing hyphen is part of each prefix on purpose — without it an AI finding id'd
+// "f-automation" would read as a backfill and disappear from the panel.
+function isAutoBackfillFinding(f) {
+  return !!f && typeof f.id === "string" && f.id.startsWith("f-auto-");
+}
+function isGapFinding(f) {
+  return !!f && typeof f.id === "string" && f.id.startsWith("f-gap-");
+}
+
+// The single question render() asks per finding. It exists as its own function rather than two
+// inline clauses because render() is a 700-line DOM function with no behavioural test harness:
+// as a pure function the four-row truth table is directly testable, and render's only obligation
+// is to call it.
+function findingPassesOriginLens(f, hideAuto, hideGap) {
+  if (hideAuto && isAutoBackfillFinding(f)) return false;
+  if (hideGap && isGapFinding(f)) return false;
+  return true;
+}
+
 // Published for the inline script and the other helper modules. EVERY function this file
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
@@ -150,6 +183,9 @@ window.DfirFilters = {
   isLowSignalEvent,
   lowSignalChip,
   isFindingFalsePositive,
+  isAutoBackfillFinding,
+  isGapFinding,
+  findingPassesOriginLens,
   ftOriginOf,
   originFacets,
 };
