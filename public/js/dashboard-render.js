@@ -19,13 +19,14 @@
   function render(rawState) {
     // Ignore a state response/WS push for a case the analyst has already left (#174) — otherwise
     // a slow response for an abandoned case load can silently overwrite the case now on screen.
-    if (
-      rawState &&
-      rawState.caseId &&
-      activeCaseId &&
-      rawState.caseId !== activeCaseId
-    )
-      return;
+    //
+    // NO ACTIVE CASE COUNTS AS "LEFT", which is why the null check on activeCaseId is not here.
+    // Cancelling a case load clears it, and the guard has to reject on that: with `activeCaseId &&`
+    // in front, a null read as "nothing to compare against" made the guard PERMISSIVE at exactly
+    // the moment it was most needed — every case-scoped state would have painted onto a dashboard
+    // the analyst had just emptied. A state carrying no caseId at all is still rendered; only a
+    // state that names a case nobody is looking at is dropped.
+    if (rawState && rawState.caseId && rawState.caseId !== activeCaseId) return;
     // Keep the raw state FIRST — this is the page's ONLY writer of lastState, and every
     // `if (DfirState.lastState()) render(...)` refresh is a silent no-op until it has run once.
     DfirState.setLastState(rawState);

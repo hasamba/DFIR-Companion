@@ -225,12 +225,14 @@ export async function readBodyWithProgress(state, response, onProgress) {
  * is installed for exactly the synchronous body of ONE loader and restored immediately after, in a
  * `finally` and to the CAPTURED ORIGINAL rather than to whatever is installed at that moment. No
  * unrelated caller can observe the patched global, and a nested install cannot strand a wrapper
- * permanently. Scoping it per loader rather than around the whole run is what makes the throttled
- * mode below safe: that mode starts loaders across several turns of the event loop, and a wrapper
- * spanning those gaps would attach this fan-out's abort signal to requests the ANALYST started.
+ * permanently. Scoping it per loader rather than around the whole run keeps that true even though
+ * a queued request now reaches the wire long after its loader's body returned: the wrapper is what
+ * ATTRIBUTES and gates, and it does both at call time, so it never has to outlive the call.
  *
- * The returned promise is the original, untouched, so callers' abort handling and `.catch` chains
- * behave exactly as before.
+ * Without a signal the returned promise is the original, untouched, so callers' `.catch` chains
+ * behave exactly as before. With one, an abort is hidden from the loader rather than delivered as
+ * a failure — see the wrapper for why a rejected panel fetch must not be allowed to reach handlers
+ * that read it as "this endpoint is missing".
  *
  * A loader that throws synchronously is recorded as a failed panel rather than taking the rest of
  * the fan-out with it. A loader that starts no request at all settles immediately.
@@ -240,15 +242,19 @@ export async function readBodyWithProgress(state, response, onProgress) {
  * of its own, so aborting the generation cancels ~60 in-flight requests instead of leaving them to
  * occupy the browser's connection pool on behalf of a case nobody is looking at any more.
  *
- * `options.concurrency` bounds how many loaders may be in flight at once. THIS IS A CONNECTION-POOL
- * RESERVATION, not a politeness limit. The dashboard is served over HTTP/1.1, where a browser opens
- * at most six connections per origin; firing all ~60 loaders at once fills that pool for the whole
- * fan-out, and every request the analyst then starts — the case list behind "+ New case", the
- * lock-status probe behind connecting to a different case — sits in the queue behind them. Measured
- * on an 82 MB case: 86 requests, peak 7 in flight, ~7.9s of pure queue wait on requests the server
- * answered in 2ms. Leaving lanes free is what keeps the dashboard usable while a big case loads.
- * Absent or non-positive means unbounded — the original behaviour, kept as the default so callers
- * that never opted in are unaffected.
+ * `options.concurrency` bounds how many REQUESTS may be on the wire at once. THIS IS A
+ * CONNECTION-POOL RESERVATION, not a politeness limit. The dashboard is served over HTTP/1.1, where
+ * a browser opens at most six connections per origin; firing all ~60 loaders at once fills that
+ * pool for the whole fan-out, and every request the analyst then starts — the case list behind
+ * "+ New case", the lock-status probe behind connecting to a different case — sits in the queue
+ * behind them. Measured on an 82 MB case: 86 requests, peak 7 in flight, ~7.9s of pure queue wait
+ * on requests the server answered in 2ms. Leaving lanes free is what keeps the dashboard usable
+ * while a big case loads. Absent or non-positive means unbounded — the original behaviour, kept as
+ * the default so callers that never opted in are unaffected.
+ *
+ * The unit is the request rather than the loader, and the lane is held until the response BODY has
+ * been read rather than until its headers land. Both are load-bearing; see the lane block for what
+ * each of them was letting through.
  */
 export function runPanelLoaders(entries, onProgress, options) {
   const list = Array.isArray(entries) ? entries : [];
@@ -290,6 +296,106 @@ export function runPanelLoaders(entries, onProgress, options) {
     return tally;
   }
 
+  // ── Lanes ───────────────────────────────────────────────────────────────────────────────────
+  // A lane stands for one of the browser's six per-origin HTTP/1.1 connections, and the cap is a
+  // reservation of them. So a lane has to be held by the thing that actually occupies a connection
+  // — ONE REQUEST, from the moment it goes on the wire until its body is off it.
+  //
+  // Counting LOADERS instead got both halves of that wrong. A loader that fans out internally took
+  // a single lane however many requests it made (loadVeloTriage issues four, loadMcpRun three), so
+  // four such loaders could put a dozen requests on a six-connection pool — the exact saturation
+  // the cap exists to prevent. And a lane came back when `fetch` fulfilled, which is when the
+  // HEADERS arrive: the body is still streaming down the connection at that point, so the next
+  // loader was admitted against a lane that was not free yet.
+  let lanesUsed = 0;
+  const laneQueue = [];
+  // null means "granted, go now". A promise means "queued". Under-cap requests are deliberately
+  // NOT deferred by even a microtask: that would change when the common case hits the wire, and
+  // the point here is to hold back the over-cap ones only.
+  const takeLane = () => {
+    if (limit === 0) return null;
+    if (lanesUsed < limit) {
+      lanesUsed++;
+      return null;
+    }
+    return new Promise((resolve) => laneQueue.push(resolve));
+  };
+  const freeLane = () => {
+    if (limit === 0) return;
+    lanesUsed--;
+    const next = laneQueue.shift();
+    if (next) {
+      lanesUsed++; // re-taken immediately by whoever was waiting; every grant pairs with a release
+      next();
+    }
+  };
+
+  // Hold the lane until the BODY has been read, not until the headers land.
+  //
+  // The reader methods are shadowed with OWN properties, so the Response itself is untouched —
+  // `instanceof Response`, `r.ok`, `r.status`, headers and everything else behave exactly as
+  // before, which matters because 60 loaders poke at these responses in their own ways.
+  const BODY_READERS = ["json", "text", "blob", "arrayBuffer", "formData"];
+  const holdLaneUntilBodyRead = (res) => {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      freeLane();
+    };
+    if (!res || typeof res !== "object") {
+      release();
+      return res;
+    }
+    // A loader that only checks `r.ok` and never reads the body would otherwise hold its lane for
+    // good. setTimeout is a MACROTASK, so every microtask — including the loader's own
+    // `.then(r => r.json())` — runs first and gets to clear it; the backstop fires only for a
+    // loader that really never reads.
+    let backstop = null;
+    try {
+      backstop = setTimeout(release, 0);
+    } catch {
+      /* no timer available (a bare test double) — the readers below still release the lane */
+    }
+    for (const name of BODY_READERS) {
+      const read = typeof res[name] === "function" ? res[name] : null;
+      if (!read) continue;
+      try {
+        Object.defineProperty(res, name, {
+          configurable: true,
+          writable: true,
+          value: function (...readArgs) {
+            if (backstop !== null) clearTimeout(backstop);
+            let out;
+            try {
+              out = read.apply(this, readArgs);
+            } catch (err) {
+              release();
+              throw err;
+            }
+            if (!out || typeof out.then !== "function") {
+              release();
+              return out;
+            }
+            return out.then(
+              (value) => {
+                release();
+                return value;
+              },
+              (err) => {
+                release();
+                throw err;
+              },
+            );
+          },
+        });
+      } catch {
+        /* frozen or exotic response — leave it be; the backstop still frees the lane */
+      }
+    }
+    return res;
+  };
+
   const patchedFetch = function (...args) {
     const owner = current;
     // Only supply a signal where the caller chose none — a loader that brought its own abort
@@ -297,22 +403,75 @@ export function runPanelLoaders(entries, onProgress, options) {
     if (signal && args.length > 0 && (!args[1] || !args[1].signal)) {
       args[1] = Object.assign({}, args[1], { signal });
     }
-    const p = originalFetch.apply(this, args);
-    if (owner === null || !p || typeof p.then !== "function") return p;
+    // Not one of ours. The wrapper is only ever installed around a loader's synchronous body, so
+    // this is belt-and-braces: issue it untouched and take no lane.
+    if (owner === null) return originalFetch.apply(this, args);
+
+    const self = this;
+    // Counted against its loader NOW, synchronously, so attribution survives a lane wait.
     outstanding.set(owner, (outstanding.get(owner) || 0) + 1);
+    const issue = () => {
+      // Abandoned while queued — never put it on the wire at all.
+      if (signal && signal.aborted) {
+        freeLane();
+        throw new Error("panel request abandoned");
+      }
+      let out;
+      try {
+        out = originalFetch.apply(self, args);
+      } catch (err) {
+        freeLane();
+        throw err;
+      }
+      if (!out || typeof out.then !== "function") {
+        freeLane();
+        return out;
+      }
+      return out.then(holdLaneUntilBodyRead, (err) => {
+        freeLane();
+        throw err;
+      });
+    };
+    const queued = takeLane();
+    let p;
+    if (queued === null) {
+      // Granted: run issue() RIGHT HERE, inside the loader's own synchronous body, so an under-cap
+      // request reaches the wire at exactly the moment it always did.
+      try {
+        p = Promise.resolve(issue());
+      } catch (err) {
+        p = Promise.reject(err);
+      }
+    } else {
+      p = queued.then(issue);
+    }
+    // The TALLY watches this promise, so the strip still settles every panel on abort.
     p.then(
       () => settleOne(owner, false),
       () => settleOne(owner, true),
     );
-    return p;
+    if (!signal) return p;
+    // What the LOADER sees is different, and deliberately so. These loaders overwhelmingly end in
+    // `.catch(() => somethingUnavailable())`, and ~73 of those report a missing endpoint on the
+    // shared status line — several telling the analyst in as many words to restart the companion
+    // server. An abort is not a broken endpoint: cancelling a case load, or switching cases, would
+    // otherwise fill the screen with alarms about a server that is perfectly healthy, and hand out
+    // actively wrong advice.
+    //
+    // So on OUR abort the loader's chain never runs at all: it is handed a promise that stays
+    // pending forever, which is the honest shape for "this request was abandoned, draw nothing".
+    // The pending promises are bounded by the fan-out (~60) and die with the retired generation.
+    // Any other rejection — a real network failure, a real 5xx — is rethrown untouched, so genuine
+    // unavailability still reports exactly as before.
+    return p.catch((err) => {
+      if (signal.aborted) return new Promise(() => {});
+      throw err;
+    });
   };
 
   let next = 0;
-  let active = 0;
-  let stopped = false;
 
-  // Start one loader with the wrapper installed for exactly its synchronous body. Returns true if
-  // it left a request outstanding (so it still occupies a slot), false if it settled on the spot.
+  // Start one loader with the wrapper installed for exactly its synchronous body.
   const startLoader = (name, fn) => {
     globalThis.fetch = patchedFetch;
     current = name;
@@ -326,32 +485,17 @@ export function runPanelLoaders(entries, onProgress, options) {
     }
     // Promise callbacks are microtasks and cannot have run yet, so an absent entry here really
     // does mean "this loader issued no request".
-    if (!outstanding.has(name)) {
-      finish(name);
-      return false;
-    }
-    return true;
+    if (!outstanding.has(name)) finish(name);
   };
 
-  // Every loader still queued is settled-as-failed rather than left pending, so the strip reaches
-  // its total instead of sitting short forever on panels that are never coming.
+  // Every loader that never started is settled-as-failed rather than left pending, so the strip
+  // reaches its total instead of sitting short forever on panels that are never coming. Only
+  // reachable when the signal was ALREADY aborted on the way in — see the loop below.
   const abandonRemaining = () => {
-    stopped = true;
     while (next < list.length) {
       const [name] = list[next++];
       broke.add(name);
       finish(name);
-    }
-  };
-
-  // Not re-entrant by construction: settleOne only ever runs from a promise callback, so it can
-  // never fire inside startLoader below.
-  const pump = () => {
-    if (stopped) return;
-    if (signal && signal.aborted) return abandonRemaining();
-    while (next < list.length && (limit === 0 || active < limit)) {
-      const [name, fn] = list[next++];
-      if (startLoader(name, fn)) active++;
     }
   };
 
@@ -360,18 +504,32 @@ export function runPanelLoaders(entries, onProgress, options) {
     const left = (outstanding.get(owner) || 1) - 1;
     outstanding.set(owner, left);
     if (left > 0) return;
-    active--;
     finish(owner);
-    pump();
   }
 
-  // Abandon the queue the moment the generation is dropped, without waiting for the in-flight
-  // requests to reject. Guarded because `signal` only has to be signal-SHAPED for the injection
-  // above to work, and a test double need not be an EventTarget.
+  // Release everything still waiting for a lane so it can observe the abort and reject, instead of
+  // queueing behind lanes that are themselves being torn down. Each resolved waiter runs issue(),
+  // sees signal.aborted and never reaches the wire — so the tally completes without a single extra
+  // request. Granting a lane per waiter keeps the accounting balanced, since each one's issue()
+  // path frees a lane on its way out.
+  const releaseLaneQueue = () => {
+    while (laneQueue.length) {
+      lanesUsed++;
+      laneQueue.shift()();
+    }
+  };
+
+  // Guarded because `signal` only has to be signal-SHAPED for the injection above to work, and a
+  // test double need not be an EventTarget.
   if (signal && typeof signal.addEventListener === "function") {
-    signal.addEventListener("abort", abandonRemaining, { once: true });
+    signal.addEventListener("abort", releaseLaneQueue, { once: true });
   }
-  pump();
+
+  // Every loader starts now. There is no loader-level throttle any more and there should not be:
+  // starting a loader costs nothing until it asks for a connection, and the lane semaphore above
+  // is what gates those. One gate, on the resource that is actually scarce.
+  if (signal && signal.aborted) abandonRemaining();
+  else while (next < list.length) startLoader(...list[next++]);
   return tally;
 }
 
