@@ -71,9 +71,12 @@ export function registerFindingsDisplayRoutes(app: Express, ctx: RouteContext): 
       patch[key] = raw == null ? undefined : raw;
     }
     try {
-      await options.confidenceControlStore.set(req.params.id, patch);
+      // set() already returns the merged, saved object — re-loading it was a second disk read that
+      // bought nothing but another window for a concurrent writer to change what this response
+      // echoes back. Using the return value keeps what THIS request just saved as the source of the
+      // response, and (with the lock set() now takes — see confidenceControl.ts) closes that window.
+      const saved = await options.confidenceControlStore.set(req.params.id, patch);
       options.onConfidenceControl?.(req.params.id);
-      const saved = await options.confidenceControlStore.load(req.params.id);
       const detail =
         [
           "minConfidence" in patch

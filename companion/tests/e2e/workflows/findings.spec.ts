@@ -54,10 +54,11 @@ test("filtering applies to findings as well as events", async ({ page, demoCase 
   await expect.poll(async () => findings.count(), { timeout: 15_000 }).toBe(0);
 });
 
-// The seeded demo case contains only f001-f012 — no f-auto-* or f-gap-* findings — so this cannot
-// watch a backfill row disappear. What it CAN prove is everything around that: the controls exist,
-// they change the header's count form, and the choice is per-case state rather than a lens that
-// evaporates on reload. Whether the right row disappears is findingPassesOriginLens's truth table.
+// The seeded demo case contains only f001-f010 plus f004b and f007b (twelve findings, seedDemoCase.ts)
+// — no f-auto-* or f-gap-* findings — so this cannot watch a backfill row disappear. What it CAN prove
+// is everything around that: the controls exist, they change the header's count form, and the choice
+// is per-case state rather than a lens that evaporates on reload. Whether the right row disappears is
+// findingPassesOriginLens's truth table.
 test("the finding-origin lenses persist across a reload", async ({ page, demoCase }) => {
   await openCase(page, demoCase);
 

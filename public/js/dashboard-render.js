@@ -336,8 +336,11 @@
                 ? f.relatedEventIds
                 : (suppEventsByFinding[f.id] || []).map((e) => e.id);
             // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
-            // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
-            const auto = String(f.id).startsWith("f-auto-")
+            // carry the f-auto- id prefix — badge them so the analyst knows to review/refine. Same
+            // predicate the origin lens above uses (isAutoBackfillFinding, dashboard-filters.js)
+            // rather than a second f-auto- check of its own — two classifiers for one prefix is how
+            // the badge and the lens end up disagreeing if that prefix ever changes.
+            const auto = isAutoBackfillFinding(f)
               ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" data-safe-style="background:var(--info-bg);color:var(--tag-purple-text);border:1px solid var(--info-border);border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>`
               : "";
             // Confidence meter: same high/mid/low tiering as the old badge, now a small bar + %.
