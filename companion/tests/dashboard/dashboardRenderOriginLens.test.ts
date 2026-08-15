@@ -26,6 +26,24 @@ function renderBody(script: DashboardScript) {
   return fn.node;
 }
 
+// The span of the findingsFiltering declaration alone — from "const findingsFiltering =" to its
+// terminating ";". Scoped narrower than SOURCE on purpose: document.getElementById("hideAutoFindings")
+// (edit 1, the checkbox read) already contains the substring "hideAutoFindings", so a whole-file
+// SOURCE.toContain check is satisfied by edit 1 alone and stays green even if edit 3 — the
+// hideAuto/hideGap terms inside findingsFiltering — were never written; that gap is what this helper
+// exists to close. No export in dashboardAst.ts locates a named VariableDeclaration inside an
+// arbitrary node: functionsOf() finds only function-like nodes, and callsWithin()/callsByName() see
+// only call expressions, while findingsFiltering's hideAuto/hideGap references are plain identifier
+// reads in a ||-chain, not calls — so there is no existing AST export this can be built from, and
+// per instruction this narrows the STRING search instead, to exactly the span the fix calls for.
+function findingsFilteringDecl(source: string): string {
+  const start = source.indexOf("const findingsFiltering =");
+  if (start === -1) throw new Error("findingsFiltering declaration not found in dashboard-render.js");
+  const end = source.indexOf(";", start);
+  if (end === -1) throw new Error("findingsFiltering declaration has no terminating ;");
+  return source.slice(start, end);
+}
+
 describe("render() applies the finding-origin lens", () => {
   it("calls findingPassesOriginLens", () => {
     const script = scriptFromSource("dashboard-render.js", SOURCE);
@@ -40,9 +58,24 @@ describe("render() applies the finding-origin lens", () => {
 
   // The count label is the only signal that a row was hidden rather than absent. If the lenses are
   // left out of findingsFiltering the header reads a flat "(11 findings)" while two are suppressed,
-  // which is the failure mode this whole feature must not introduce.
+  // which is the failure mode this whole feature must not introduce. This test covers edit 1 (the
+  // checkbox reads) only — a whole-file substring search can't also prove edit 3 (wiring those reads
+  // into findingsFiltering), because edit 1's own getElementById("hideAutoFindings") already satisfies
+  // it. Edit 3 has its own test below.
   it("reads both checkboxes so the header can report a filtered count", () => {
     expect(SOURCE).toContain("hideAutoFindings");
     expect(SOURCE).toContain("hideGapFindings");
+  });
+
+  // The test above proves the DOM ids are read (edit 1); it does not prove the two local consts —
+  // hideAuto / hideGap, READ from those ids, not the ids themselves — ever reach findingsFiltering
+  // (edit 3). Verified empirically before this test was written: deleting only the "hideAuto ||" /
+  // "hideGap ||" lines from findingsFiltering, with edits 1 and 2 left in place, leaves the test above
+  // green (its strings are still in the file, in edit 1's getElementById calls) while this one goes
+  // red — see the fix report for the transcript.
+  it("wires hideAuto and hideGap into findingsFiltering, not just into the checkbox reads", () => {
+    const decl = findingsFilteringDecl(SOURCE);
+    expect(decl).toContain("hideAuto");
+    expect(decl).toContain("hideGap");
   });
 });
