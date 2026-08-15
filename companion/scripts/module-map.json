@@ -244,6 +244,7 @@
     "hindsightImport.ts": "analysis/ingest",
     "hostAlias.ts": "analysis/timeline",
     "hostDuplicateDismissals.ts": "analysis/timeline",
+    "hostDuplicateGate.ts": "analysis/timeline",
     "hostRanking.ts": "analysis/detect",
     "hostScope.ts": "analysis/workflow",
     "hostScopeAggregate.ts": "analysis/workflow",
