@@ -141,11 +141,18 @@ function lowSignalChip(e) {
 //   f-gap-   companion/src/analysis/gapDetect.ts            — a window where EVERY source went
 //            dark, the classic signature of cleared logs or a stopped collector
 //
-// Everything else in state.findings comes from AI synthesis, second opinion's `so:` ids included.
-// On a noisy import these backfills can outnumber the AI's conclusions, which is what the lens is
-// for. The id is the classifier because it is already load-bearing: both generators derive it from
-// their source events precisely so re-synthesis REFRESHES a backfill finding instead of duplicating
-// it. That makes it a stable identity, and means no new field and no migration.
+// These two prefixes identify findings the backfill passes mint — that is NOT the same claim as
+// "everything else comes from AI synthesis". A synthesis finding's id is whatever the model
+// returned (companion/src/analysis/responseSchema.ts's `z.string().min(1)`, stored verbatim by
+// stateMerge.ts — unlike IOC ids, a finding id is never canonicalised server-side), so a model
+// that echoes one of these reserved prefixes back — plausible on a noisy import, where the ids
+// echoed into its own prompt are overwhelmingly f-auto-/f-gap- — is classified as a backfill too,
+// however it actually originated. On a noisy import these backfills can outnumber the AI's real
+// conclusions, which is what the lens is for. The id is still the classifier because it is already
+// load-bearing: both generators derive it from their source events precisely so re-synthesis
+// REFRESHES a backfill finding instead of duplicating it. That makes it a stable identity, and
+// means no new field and no migration — hardening stateMerge.ts against the model-echo case above
+// is a separate, deliberately out-of-scope follow-up.
 //
 // The trailing hyphen is part of each prefix on purpose — without it an AI finding id'd
 // "f-automation" would read as a backfill and disappear from the panel.
