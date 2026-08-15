@@ -531,6 +531,7 @@ The wiring exists only to serve the gate, so they ship together — the gate tes
 - Modify: `src/server.ts` (pass the two stores into `buildAiRuntime`)
 - Modify: `src/composition/appOptions.ts` (declare `hostDuplicateDismissalStore`)
 - Modify: `src/composition/runtimeStores.ts` (construct + return it)
+- Modify: `src/composition/appWiring.ts` (destructure it AND put it on the AppOptions literal — without this the gate is dead in production while all tests still pass)
 - Test: `tests/analysis/hostDuplicateGateSynthesis.test.ts`
 
 **Interfaces:**
@@ -579,7 +580,7 @@ let analyze: ReturnType<typeof vi.fn>;
 async function seed(assets: string[]): Promise<void> {
   const s = emptyState("c1");
   assets.forEach((a, i) => s.forensicTimeline.push(ev(`e${i}`, a)));
-  await stateStore.save("c1", s);
+  await stateStore.save(s);
 }
 
 function pipeline(): AnalysisPipeline {
@@ -824,6 +825,16 @@ In `src/composition/runtimeStores.ts`, construct it beside `assetOverridesStore`
 ```ts
   const hostDuplicateDismissalStore = new HostDuplicateDismissalStore(store);
 ```
+
+**In `src/composition/appWiring.ts` — the step without which the whole gate is dead in production.**
+`runtimeStores.ts` only *builds* the stores; `appWiring.ts` is what destructures them and puts them
+on the `AppOptions` object handed to `createApp`. A store missing here is `undefined` at runtime, so
+the gate silently never fires and the Task 9 routes answer 501 — while every test still passes,
+because tests construct `createApp(cases, {...})` with the store passed explicitly. Add
+`hostDuplicateDismissalStore,` in **both** places, beside `assetOverridesStore` each time:
+
+1. the destructure of the runtime stores (~line 105)
+2. the `AppOptions` object literal that is returned/passed on (~line 227)
 
 - [ ] **Step 7: Run test to verify it passes**
 
@@ -1404,7 +1415,7 @@ beforeEach(async () => {
   });
   const s = emptyState("c1");
   s.forensicTimeline.push(ev("a", "WIN11"), ev("b", "WIN11.windomain.local"));
-  await stateStore.save("c1", s);
+  await stateStore.save(s);
 });
 
 describe("a merged host reaches the model as one machine", () => {
@@ -1539,7 +1550,7 @@ beforeEach(async () => {
   const stateStore = new StateStore(cases);
   const s = emptyState("c1");
   s.forensicTimeline.push(ev("a", "WIN11"), ev("b", "WIN11.windomain.local"));
-  await stateStore.save("c1", s);
+  await stateStore.save(s);
   app = createApp(cases, {
     stateStore,
     assetOverridesStore: new AssetOverridesStore(cases),
@@ -1767,7 +1778,7 @@ describe("auto-run on last resolve", () => {
       ev("c", "DC01"),
       ev("d", "DC01.corp.local"),
     );
-    await stateStore.save("c1", s);
+    await stateStore.save(s);
     kick = vi.fn();
     twoPairApp = express();
     twoPairApp.use(express.json());
@@ -1889,7 +1900,7 @@ let dispatchNotify: ReturnType<typeof vi.fn>;
 async function seed(assets: string[]): Promise<void> {
   const s = emptyState("c1");
   assets.forEach((a, i) => s.forensicTimeline.push(ev(`e${i}`, a)));
-  await stateStore.save("c1", s);
+  await stateStore.save(s);
 }
 
 function analysis() {
