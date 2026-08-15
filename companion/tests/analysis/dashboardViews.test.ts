@@ -75,6 +75,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-kill-chain",
       "sec-phases",
       "sec-host-scope",
+      "sec-host-duplicates",
       "sec-hostranking",
       "sec-gaps",
       "sec-evidence-gaps",
@@ -208,6 +209,24 @@ describe("sec-host-scope registration (#553)", () => {
     for (const id of ["analyst", "lead", "deep-dive", "report"]) {
       const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
       expect(view.sections, `${id} is missing sec-host-scope`).toContain("sec-host-scope");
+    }
+  });
+});
+
+describe("sec-host-duplicates registration", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-host-duplicates");
+  });
+
+  // Same convention as sec-host-scope above, with one extra reason to hold: the header carries a
+  // `hostDuplicatesBadge` whose click handler scrolls to `#sec-host-duplicates`. A profile that
+  // omits the section leaves that badge visible and its scroll target hidden — the analyst is told
+  // analysis is on hold and then sent to a panel that is not on the page. The panel renders to an
+  // empty string when there is nothing pending, so carrying it costs nothing on a clean case.
+  it("appears in the Analyst, Lead, Deep-Dive and Report profiles", () => {
+    for (const id of ["analyst", "lead", "deep-dive", "report"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-host-duplicates`).toContain("sec-host-duplicates");
     }
   });
 });
