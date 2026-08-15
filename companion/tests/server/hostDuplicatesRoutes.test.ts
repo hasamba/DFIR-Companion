@@ -11,6 +11,7 @@ import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 let app: ReturnType<typeof createApp>;
+let assetOverridesStore: AssetOverridesStore;
 
 function ev(id: string, asset: string): ForensicEvent {
   return {
@@ -34,9 +35,10 @@ beforeEach(async () => {
   const s = emptyState("c1");
   s.forensicTimeline.push(ev("a", "WIN11"), ev("b", "WIN11.windomain.local"));
   await stateStore.save(s);
+  assetOverridesStore = new AssetOverridesStore(cases);
   app = createApp(cases, {
     stateStore,
-    assetOverridesStore: new AssetOverridesStore(cases),
+    assetOverridesStore,
     hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
   });
 });
@@ -55,6 +57,16 @@ describe("/cases/:id/host-duplicates", () => {
       .send({ canonical: "win11.windomain.local", other: "win11" });
     expect(res.status).toBe(200);
     expect(res.body.pending).toEqual([]);
+  });
+
+  it("merges the short name INTO the fqdn, not the reverse", async () => {
+    await request(app)
+      .post("/cases/c1/host-duplicates/merge")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    const overrides = await assetOverridesStore.load("c1");
+    // fromId (the duplicate being folded away) -> intoId (the surviving canonical id). A reversed
+    // call would instead fold the FQDN into the short name and record the opposite key/value.
+    expect(overrides.merges).toEqual({ "host:win11": "host:win11.windomain.local" });
   });
 
   it("dismissing clears the pair", async () => {
