@@ -53,7 +53,8 @@ import { renderStandalonePresentation } from "../reports/presentationExport.js";
  *   - store, options — stable ctx surface. (Text-AI gates ask the pipeline directly via
  *     options.pipeline.hasSynthesisProvider(), NOT ctx.hasAiProvider — that reflects only the
  *     screenshot/vision provider and would 501 every text feature in an OCR-less install.)
- *   - getControl / loadPlaybookControl — already-graduated stable methods, reused as-is.
+ *   - getControl / syncPlaybook — already-graduated stable methods, reused as-is. syncPlaybook owns
+ *     the template setting AND host-alias resolution, so the post-synthesis refresh delegates to it.
  *   - captureBuffers() — the live accessor for the per-case capture buffer Map; the ai-control POST
  *     handler drops the pending buffer through it when pausing (the ONE non-verbatim rebind: the
  *     original `buffers.set(...)` became `ctx.captureBuffers().set(...)`).
@@ -80,7 +81,7 @@ import { renderStandalonePresentation } from "../reports/presentationExport.js";
  *     the moved handler bodies keep their original log calls verbatim.
  */
 export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, getControl, setControl, backfill, loadPlaybookControl } = ctx;
+  const { store, options, getControl, setControl, backfill, syncPlaybook } = ctx;
 
   // Module-private wrappers mirroring createApp's logLine/errLine (serverLogger.info/error), so the
   // moved handler bodies keep their original `logLine(...)` / `errLine(...)` calls verbatim.
@@ -192,8 +193,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
         try {
-          const { useTemplates } = await loadPlaybookControl(caseId);
-          await options.playbookStore.sync(caseId, state, { useTemplates });
+          await syncPlaybook(caseId);
           options.onPlaybook?.(caseId);
         } catch {
           /* non-fatal */

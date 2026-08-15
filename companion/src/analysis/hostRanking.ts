@@ -9,6 +9,7 @@
 import type { InvestigationState, ForensicEvent } from "./stateTypes.js";
 import { extractAccounts, buildAssetGraph } from "./assetGraph.js";
 import { rankConnectiveIocs } from "./iocAnchors.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 export interface EntityRank {
   name: string;
@@ -48,16 +49,25 @@ interface Acc {
 export interface RankHostsOptions {
   max?: number;
   coverage?: number;
+  // Resolves short-name/FQDN spellings (and explicit analyst merges) onto one canonical host name,
+  // so "WIN11" and "WIN11.windomain.local" score and rank as a single entity instead of splitting
+  // the same host's signal across two rows.
+  aliasIndex?: HostAliasIndex;
 }
 
 export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}): HostRankingResult {
   const max = opts.max ?? 20;
   const coverage = opts.coverage ?? 0.7;
+  const aliasIndex = opts.aliasIndex;
+  const resolve = (raw: string): string => (aliasIndex ? resolveHost(aliasIndex, raw) : raw);
 
   // Connective IOC reach per host (#200).
   const connByHost = new Map<string, number>();
   for (const a of rankConnectiveIocs(state, state.forensicTimeline, { max: 50 })) {
-    for (const h of a.hosts) connByHost.set(h.toLowerCase(), (connByHost.get(h.toLowerCase()) ?? 0) + 1);
+    for (const h of a.hosts) {
+      const key = resolve(h).toLowerCase();
+      connByHost.set(key, (connByHost.get(key) ?? 0) + 1);
+    }
   }
 
   const map = new Map<string, Acc>();
@@ -85,13 +95,15 @@ export function rankHosts(state: InvestigationState, opts: RankHostsOptions = {}
   };
 
   for (const e of state.forensicTimeline) {
-    if (e.asset && e.asset.trim()) bump(ensure("host", e.asset.trim()), e);
+    if (e.asset && e.asset.trim()) bump(ensure("host", resolve(e.asset.trim())), e);
     for (const acct of extractAccounts(e.description ?? "")) bump(ensure("account", acct), e);
   }
 
   // Per-entity connected IOC ids (#237) — reuse the asset graph's already-computed linkage
   // (structured fields + related-finding IOCs + description matches) instead of re-deriving it.
-  const iocIdsByKey = new Map(buildAssetGraph(state).assets.map((a) => [a.id, a.iocIds] as const));
+  const iocIdsByKey = new Map(
+    buildAssetGraph(state, undefined, aliasIndex).assets.map((a) => [a.id, a.iocIds] as const),
+  );
 
   const ranks: EntityRank[] = [...map.values()]
     .map((a) => {
