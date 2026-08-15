@@ -4,6 +4,7 @@ import { generatePushToken } from "../analysis/pushTokenStore.js";
 import { resolvePushAuth } from "../analysis/pushAuth.js";
 import { extractPushPayload } from "../analysis/pushPayload.js";
 import { parseChannelInput, redactChannel } from "../analysis/notifications.js";
+import { telegramChatsFromBindings } from "../analysis/slashCommandStore.js";
 import type { RouteContext } from "./context.js";
 import { requestAuthentication } from "../auth/types.js";
 
@@ -142,16 +143,42 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
   // and per-event-kind toggles. Opt-in (the store starts empty). Secrets (webhook URLs, SMTP
   // passwords) are REDACTED in every response — the browser only learns whether each is set.
 
-  app.get("/notifications/status", (_req: Request, res: Response) => {
-    res
-      .status(200)
-      .json({ configured: !!options.notificationStore, emailEnabled: !!options.notifyEmailEnabled });
+  // The env boundary for telegram: a channel may leave its bot token blank and borrow the war-room
+  // bot's DFIR_TELEGRAM_BOT_TOKEN. Read LIVE per request (never captured at wiring time) so a token
+  // added to .env and applied via /settings/reload takes effect without a restart.
+  const telegramEnvOpts = () => ({ envTelegramBotToken: process.env.DFIR_TELEGRAM_BOT_TOKEN });
+
+  app.get("/notifications/status", async (_req: Request, res: Response) => {
+    // The chats the war-room bot is already bound to, offered as candidate destinations for a new
+    // Telegram channel. Best-effort: an unreadable bindings file must not break the Settings pane,
+    // which needs the two flags above far more than it needs the suggestions.
+    let telegramChats: Array<{ chatId: string; caseId: string }> = [];
+    if (options.slashCommandChannelStore) {
+      try {
+        telegramChats = telegramChatsFromBindings(await options.slashCommandChannelStore.loadAll()).map(
+          ({ chatId, caseId }) => ({ chatId, caseId }),
+        );
+      } catch {
+        /* leave the suggestions empty — the analyst can still type a chat ID */
+      }
+    }
+    res.status(200).json({
+      configured: !!options.notificationStore,
+      emailEnabled: !!options.notifyEmailEnabled,
+      // Lets the Settings form say "already set" on the bot token field BEFORE any channel exists.
+      // A boolean only — the token itself never reaches the browser.
+      telegramEnvToken: Boolean((process.env.DFIR_TELEGRAM_BOT_TOKEN ?? "").trim()),
+      telegramChats,
+    });
   });
 
   app.get("/notifications", async (_req: Request, res: Response) => {
     if (!options.notificationStore) return res.status(200).json([]);
     try {
-      return res.status(200).json((await options.notificationStore.load()).map(redactChannel));
+      const opts = telegramEnvOpts();
+      return res
+        .status(200)
+        .json((await options.notificationStore.load()).map((c) => redactChannel(c, opts)));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -159,13 +186,13 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
 
   app.post("/notifications", async (req: Request, res: Response) => {
     if (!options.notificationStore) return res.status(501).json({ error: "notifications not configured" });
-    const parsed = parseChannelInput(req.body);
+    const parsed = parseChannelInput(req.body, undefined, telegramEnvOpts());
     if (!parsed.ok || !parsed.draft)
       return res.status(400).json({ error: parsed.error ?? "invalid channel" });
     try {
       const channel = await options.notificationStore.add(parsed.draft);
       logLine(`[notify] channel added: ${channel.type} "${channel.name}" (${channel.id})`);
-      return res.status(201).json(redactChannel(channel));
+      return res.status(201).json(redactChannel(channel, telegramEnvOpts()));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -177,12 +204,12 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
       const existing = await options.notificationStore.get(req.params.id);
       if (!existing) return res.status(404).json({ error: "notification channel not found" });
       // Pass `existing` so a blank (redacted) webhook URL keeps the saved one.
-      const parsed = parseChannelInput(req.body, existing);
+      const parsed = parseChannelInput(req.body, existing, telegramEnvOpts());
       if (!parsed.ok || !parsed.draft)
         return res.status(400).json({ error: parsed.error ?? "invalid channel" });
       const channel = await options.notificationStore.update(req.params.id, parsed.draft);
       if (!channel) return res.status(404).json({ error: "notification channel not found" });
-      return res.status(200).json(redactChannel(channel));
+      return res.status(200).json(redactChannel(channel, telegramEnvOpts()));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

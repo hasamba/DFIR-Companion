@@ -1120,7 +1120,7 @@ to a channel and paste its URL (the Companion sends a MessageCard). **SMTP email
 optional username+password, and from/to; opportunistic STARTTLS + AUTH LOGIN are used when offered. For a quick
 local test, point it at [Mailpit](https://github.com/axllent/mailpit) (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`).
 
-**Telegram** — uses a Bot API token + a chat/channel/group ID (no env vars needed):
+**Telegram** — uses a Bot API token + a chat/channel/group ID:
 
 1. Open a chat with [@BotFather](https://t.me/BotFather), run `/newbot`, and copy the token (`123456789:AAF…`).
 2. Get your chat ID:
@@ -1130,7 +1130,13 @@ local test, point it at [Mailpit](https://github.com/axllent/mailpit) (`docker r
    - *Private channel* — add the bot as an **administrator**; forward a post to `@getidsbot` to get the numeric ID (usually `-100…`).
 3. In the Companion: **Settings → Notifications → Add a channel → Telegram bot**, paste the token and chat ID, then click **Test**.
 
-The token is stored in `notifications/config.json` (beside `cases/`) and is **never echoed back to the browser**.
+**Already running the [war-room bot](#war-room-slash-command-bot-optional)?** Leave the token blank and fill in only
+the chat ID — the channel reuses `DFIR_TELEGRAM_BOT_TOKEN` from `.env`, and the field shows *(already set)*. The token
+stays in `.env` alone, so rotating it there rotates this channel too. Type a token here only to send through a
+*different* bot; it then overrides the env one for this channel.
+
+A token typed here is stored in `notifications/config.json` (beside `cases/`) and is **never echoed back to the
+browser** — the dashboard only learns whether one is set, and whether it came from `.env`.
 
 | Variable | Default | Meaning |
 |---|---|---|

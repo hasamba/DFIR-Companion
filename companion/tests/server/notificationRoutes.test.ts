@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { NotificationConfigStore } from "../../src/analysis/notificationStore.js";
+import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
 import { createNotifier } from "../../src/integrations/notify/notifyDispatch.js";
 
 async function harness() {
@@ -14,27 +15,55 @@ async function harness() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const notificationStore = new NotificationConfigStore(join(root, "notifications", "config.json"));
+  const slashCommandChannelStore = new SlashCommandChannelStore(
+    join(root, "notifications", "slash-command-bindings.json"),
+  );
   const sent: string[] = [];
   const fetchFn = (async (u: string) => {
     sent.push(String(u));
     return new Response("ok", { status: 200 });
   }) as typeof fetch;
-  const notifier = createNotifier({ store: notificationStore, fetchFn });
+  // Mirrors the production wiring in runtimeStores.ts: the war-room bot's token, read per send.
+  const notifier = createNotifier({
+    store: notificationStore,
+    fetchFn,
+    telegramBotToken: () => process.env.DFIR_TELEGRAM_BOT_TOKEN,
+  });
   const app = createApp(store, {
     stateStore,
     notificationStore,
+    slashCommandChannelStore,
     notifier,
     notifyEmailEnabled: true,
     dashboardBaseUrl: "http://127.0.0.1:4773",
   });
-  return { app, notificationStore, sent };
+  return { app, notificationStore, slashCommandChannelStore, sent };
 }
+
+// This file asserts on /notifications/status, which reads DFIR_TELEGRAM_BOT_TOKEN from the live
+// environment — so it must not inherit whatever the shell that launched vitest happens to export.
+// With the token set out there the route truthfully answers `true` and the default-state assertions
+// fail for a reason that has nothing to do with the code. Cleared before EVERY test and restored
+// after, which also gives the nested suite below a known floor to set its own value on top of.
+const ambientTelegramToken = process.env.DFIR_TELEGRAM_BOT_TOKEN;
+beforeEach(() => {
+  delete process.env.DFIR_TELEGRAM_BOT_TOKEN;
+});
+afterEach(() => {
+  if (ambientTelegramToken === undefined) delete process.env.DFIR_TELEGRAM_BOT_TOKEN;
+  else process.env.DFIR_TELEGRAM_BOT_TOKEN = ambientTelegramToken;
+});
 
 describe("notification channel CRUD routes", () => {
   it("status reports configured + email transport", async () => {
     const { app } = await harness();
     const r = await request(app).get("/notifications/status");
-    expect(r.body).toEqual({ configured: true, emailEnabled: true });
+    expect(r.body).toEqual({
+      configured: true,
+      emailEnabled: true,
+      telegramEnvToken: false,
+      telegramChats: [],
+    });
   });
 
   it("creates, lists (redacted), updates (secret-preserving), and deletes a Slack channel", async () => {
@@ -99,6 +128,79 @@ describe("notification channel CRUD routes", () => {
     expect(t.body.results).toHaveLength(1);
     expect(t.body.results[0].ok).toBe(true);
     expect(sent).toContain("https://hooks/test");
+  });
+
+  // #58 follow-up: an operator who already set DFIR_TELEGRAM_BOT_TOKEN for the war-room bot should
+  // not have to paste the same token into the notification channel form.
+  describe("telegram channels borrowing DFIR_TELEGRAM_BOT_TOKEN", () => {
+    const ENV_TOKEN = "999:ENVTOKEN";
+    // Runs after the file-level hook has cleared the ambient value, and the file-level afterEach
+    // puts the operator's own back — so this only has to set what these tests need.
+    beforeEach(() => {
+      process.env.DFIR_TELEGRAM_BOT_TOKEN = ENV_TOKEN;
+    });
+
+    it("status reports the env token so the form can say it is already set", async () => {
+      const { app } = await harness();
+      expect((await request(app).get("/notifications/status")).body.telegramEnvToken).toBe(true);
+    });
+
+    it("status offers the chats the war-room bot is already bound to", async () => {
+      const { app, slashCommandChannelStore } = await harness();
+      await slashCommandChannelStore.bind("telegram:12345678", "demo");
+      await slashCommandChannelStore.bind("slack:C1", "demo");
+      const r = await request(app).get("/notifications/status");
+      expect(r.body.telegramChats).toEqual([{ chatId: "12345678", caseId: "demo" }]);
+    });
+
+    it("offers no chats when the bindings store is not wired", async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-notify-nobind-"));
+      const notificationStore = new NotificationConfigStore(join(root, "notifications", "config.json"));
+      const app = createApp(new CaseStore(root), { notificationStore });
+      expect((await request(app).get("/notifications/status")).body.telegramChats).toEqual([]);
+    });
+
+    it("accepts a channel with only a chat ID, and sends with the env token", async () => {
+      const { app, sent } = await harness();
+      const add = await request(app)
+        .post("/notifications")
+        .send({ type: "telegram", name: "SOC alerts", telegram: { chatId: "-100" } });
+      expect(add.status).toBe(201);
+      expect(add.body.telegram).toEqual({
+        chatId: "-100",
+        hasBotToken: true,
+        usesEnvBotToken: true,
+      });
+
+      const list = await request(app).get("/notifications");
+      expect(list.body[0].telegram.usesEnvBotToken).toBe(true);
+
+      const t = await request(app).post("/notifications/test").send({ channelId: add.body.id });
+      expect(t.body.results[0].ok).toBe(true);
+      expect(sent).toContain(`https://api.telegram.org/bot${ENV_TOKEN}/sendMessage`);
+    });
+
+    it("keeps the env token out of the stored channel so rotating .env rotates the channel", async () => {
+      const { app, notificationStore, sent } = await harness();
+      const add = await request(app)
+        .post("/notifications")
+        .send({ type: "telegram", telegram: { chatId: "-100" } });
+      const stored = await notificationStore.get(add.body.id);
+      expect(stored?.telegram?.botToken).toBe("");
+
+      process.env.DFIR_TELEGRAM_BOT_TOKEN = "111:ROTATED";
+      await request(app).post("/notifications/test").send({ channelId: add.body.id });
+      expect(sent).toContain("https://api.telegram.org/bot111:ROTATED/sendMessage");
+    });
+
+    it("still rejects a channel with no chat ID", async () => {
+      const { app } = await harness();
+      const r = await request(app)
+        .post("/notifications")
+        .send({ type: "telegram", telegram: { chatId: "  " } });
+      expect(r.status).toBe(400);
+      expect(r.body.error).toContain("chat ID");
+    });
   });
 
   it("returns 501 when notifications are not configured", async () => {

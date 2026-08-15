@@ -309,6 +309,11 @@ Each channel has:
 !!! info
     Notification configs are stored in a global config file (not `.env`) and webhook URLs are redacted in all API responses.
 
+!!! tip "Telegram: leave the bot token blank to reuse the war-room bot's"
+    A Telegram channel with no token of its own falls back to `DFIR_TELEGRAM_BOT_TOKEN` from `.env`, and the token field
+    shows *(already set)*. Fill in only the chat ID. The token is never copied into the notification config, so rotating
+    it in `.env` rotates the channel too. Type a token here only to send through a *different* bot.
+
 ---
 
 ## War-Room Bot

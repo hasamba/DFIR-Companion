@@ -237,6 +237,11 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     store: notificationStore,
     fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
     smtpConnect: nodeSmtpConnect,
+    // Telegram channels with no token of their own borrow the war-room bot's, and every telegram
+    // channel reaches Telegram the way the war-room bot does. Thunks, so both are read per send
+    // rather than frozen here at startup.
+    telegramBotToken: () => process.env.DFIR_TELEGRAM_BOT_TOKEN,
+    telegramApiBase: () => process.env.DFIR_TELEGRAM_API_BASE,
     log: (m) => logLine(m),
   });
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.

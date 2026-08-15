@@ -11,6 +11,7 @@ import {
   parseChannelInput,
   applyChannelPatch,
   redactChannel,
+  resolveTelegramBotToken,
   severityForPriority,
   SEVERITY_RANK,
   type NotificationChannel,
@@ -260,6 +261,121 @@ describe("parseChannelInput", () => {
 
   it("rejects an unknown type", () => {
     expect(parseChannelInput({ type: "sms" }).ok).toBe(false);
+  });
+});
+
+// The war-room bot's token (DFIR_TELEGRAM_BOT_TOKEN) doubles as the notification transport, so an
+// operator who already set it in .env does not type it a second time here. The env token is NEVER
+// copied into the stored channel — it stays the single source of truth, so rotating .env rotates
+// the channel too. This module stays pure: callers read env at their boundary and pass it in.
+describe("telegram bot token falling back to DFIR_TELEGRAM_BOT_TOKEN", () => {
+  const ENV_TOKEN = "999:ENVTOKEN";
+
+  const telegramChannel = (botToken: string, chatId = "-100") =>
+    channel({ type: "telegram", webhookUrl: undefined, telegram: { botToken, chatId } });
+
+  it("accepts a blank bot token when the env has one, without copying it into the draft", () => {
+    const r = parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }, undefined, {
+      envTelegramBotToken: ENV_TOKEN,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.draft?.telegram?.botToken).toBe("");
+    expect(r.draft?.telegram?.chatId).toBe("-100");
+  });
+
+  it("still rejects a blank token when neither the channel nor the env has one", () => {
+    expect(parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }).ok).toBe(false);
+    // Whitespace is not a token.
+    const blank = parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }, undefined, {
+      envTelegramBotToken: "   ",
+    });
+    expect(blank.ok).toBe(false);
+    expect(blank.error).toContain("bot token");
+  });
+
+  it("still requires a chat ID — the env supplies only the token", () => {
+    // Whitespace clears zod's min(1) and reaches the trim check, unlike "" which zod rejects first.
+    const r = parseChannelInput({ type: "telegram", telegram: { chatId: "   " } }, undefined, {
+      envTelegramBotToken: ENV_TOKEN,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("chat ID");
+  });
+
+  it("prefers a typed token, then the saved one, over the env token", () => {
+    const typed = parseChannelInput(
+      { type: "telegram", telegram: { botToken: "own", chatId: "-100" } },
+      undefined,
+      { envTelegramBotToken: ENV_TOKEN },
+    );
+    expect(typed.draft?.telegram?.botToken).toBe("own");
+
+    const saved = parseChannelInput(
+      { type: "telegram", telegram: { botToken: "", chatId: "-100" } },
+      telegramChannel("saved-token"),
+      { envTelegramBotToken: ENV_TOKEN },
+    );
+    expect(saved.draft?.telegram?.botToken).toBe("saved-token");
+  });
+
+  it("resolveTelegramBotToken: own token wins, env fills a blank, neither is empty", () => {
+    expect(resolveTelegramBotToken(telegramChannel("own"), ENV_TOKEN)).toBe("own");
+    expect(resolveTelegramBotToken(telegramChannel(""), ENV_TOKEN)).toBe(ENV_TOKEN);
+    expect(resolveTelegramBotToken(telegramChannel(""), "  ")).toBe("");
+    expect(resolveTelegramBotToken(telegramChannel(""))).toBe("");
+  });
+
+  it("redactChannel reports an env token as configured and flags where it came from", () => {
+    const blank = telegramChannel("", "@soc");
+    const withEnv = redactChannel(blank, { envTelegramBotToken: ENV_TOKEN });
+    expect(withEnv.telegram?.hasBotToken).toBe(true);
+    expect(withEnv.telegram?.usesEnvBotToken).toBe(true);
+
+    const without = redactChannel(blank);
+    expect(without.telegram?.hasBotToken).toBe(false);
+    expect(without.telegram?.usesEnvBotToken).toBe(false);
+
+    // A channel carrying its own token is never reported as using the env one.
+    const own = redactChannel(telegramChannel("own", "@soc"), { envTelegramBotToken: ENV_TOKEN });
+    expect(own.telegram?.hasBotToken).toBe(true);
+    expect(own.telegram?.usesEnvBotToken).toBe(false);
+    expect(Object.hasOwn(own.telegram!, "botToken")).toBe(false);
+  });
+
+  // An env-backed channel stores an EMPTY token, so once DFIR_TELEGRAM_BOT_TOKEN goes away
+  // (removed, rotated to blank, .env not loaded) a "requires a bot token" 400 would reject every
+  // later edit — including the dashboard's enable/disable toggle, whose PUT carries a blank token.
+  // ntfToggle ignores a non-2xx, so the checkbox would read "off" while the channel stayed ON in
+  // the store and resumed sending the moment the token came back. An existing channel is therefore
+  // always editable; a tokenless one simply cannot send, which the list already shows in red.
+  it("still allows editing and disabling an env-backed channel after the env token goes away", () => {
+    const existing = telegramChannel("");
+    const r = parseChannelInput(
+      { type: "telegram", enabled: false, telegram: { botToken: "", chatId: "-100" } },
+      existing,
+      { envTelegramBotToken: "" },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.draft?.enabled).toBe(false);
+    expect(r.draft?.telegram?.botToken).toBe("");
+  });
+
+  it("still refuses to CREATE a tokenless telegram channel, or to convert a webhook one into it", () => {
+    expect(parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }).ok).toBe(false);
+    const slack = channel({ webhookUrl: "https://hooks.slack.com/x" });
+    const converted = parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }, slack);
+    expect(converted.ok).toBe(false);
+    expect(converted.error).toContain("bot token");
+  });
+
+  it("does not resurrect a token on update when the channel and the env are both empty", () => {
+    const existing = telegramChannel("");
+    const draft = parseChannelInput(
+      { type: "telegram", telegram: { botToken: "", chatId: "-100" } },
+      existing,
+      { envTelegramBotToken: ENV_TOKEN },
+    ).draft!;
+    expect(applyChannelPatch(existing, draft, NOW).telegram?.botToken).toBe("");
   });
 });
 

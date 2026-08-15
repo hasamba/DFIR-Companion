@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SlashCommandChannelStore, bindingKey } from "../../src/analysis/slashCommandStore.js";
+import {
+  SlashCommandChannelStore,
+  bindingKey,
+  telegramChatsFromBindings,
+} from "../../src/analysis/slashCommandStore.js";
 
 let file: string;
 let store: SlashCommandChannelStore;
@@ -69,5 +73,40 @@ describe("SlashCommandChannelStore", () => {
   it("writes readable JSON (an operator may need to edit it by hand)", async () => {
     await store.bind("slack:C1", "case-1");
     expect(JSON.parse(await readFile(file, "utf8"))).toHaveProperty("slack:C1.caseId", "case-1");
+  });
+});
+
+// Feeds the notification channel form's Chat ID box, so the operator picks a chat the bot already
+// talks to instead of hunting the number out of this file.
+describe("telegramChatsFromBindings", () => {
+  it("keeps only telegram bindings, strips the prefix, and sorts", () => {
+    expect(
+      telegramChatsFromBindings({
+        "telegram:12345678": { caseId: "demo", boundAt: "2026-07-27T19:09:46.655Z" },
+        "slack:C123": { caseId: "other", boundAt: "2026-07-27T19:09:46.655Z" },
+        "teams:19:meeting": { caseId: "other", boundAt: "2026-07-27T19:09:46.655Z" },
+        "telegram:-1001234567890": { caseId: "INC-1", boundAt: "2026-07-28T00:00:00.000Z" },
+      }),
+    ).toEqual([
+      { chatId: "-1001234567890", caseId: "INC-1", boundAt: "2026-07-28T00:00:00.000Z" },
+      { chatId: "12345678", caseId: "demo", boundAt: "2026-07-27T19:09:46.655Z" },
+    ]);
+  });
+
+  it("keeps a channel id containing a colon whole", () => {
+    const r = telegramChatsFromBindings({
+      "telegram:@my:channel": { caseId: "c", boundAt: "2026-07-27T00:00:00.000Z" },
+    });
+    expect(r[0].chatId).toBe("@my:channel");
+  });
+
+  it("returns nothing for an empty or telegram-free map, and drops an empty chat id", () => {
+    expect(telegramChatsFromBindings({})).toEqual([]);
+    expect(
+      telegramChatsFromBindings({ "slack:C1": { caseId: "c", boundAt: "2026-07-27T00:00:00.000Z" } }),
+    ).toEqual([]);
+    expect(
+      telegramChatsFromBindings({ "telegram:": { caseId: "c", boundAt: "2026-07-27T00:00:00.000Z" } }),
+    ).toEqual([]);
   });
 });

@@ -72,3 +72,24 @@ export type ChatPlatform = "slack" | "teams" | "telegram";
 export function bindingKey(platform: ChatPlatform, channelId: string): string {
   return `${platform}:${channelId}`;
 }
+
+/**
+ * The Telegram chats the bot has been bound to, for the notification channel form to OFFER as
+ * destinations (#58 follow-up). The operator already told the bot about these with `/dfir bind`,
+ * so the Chat ID box can pre-fill instead of sending them to read a JSON file.
+ *
+ * Offer, never auto-send: a notification carries case content, so the chosen chat is pre-filled
+ * into a visible field and still has to be saved — this returns candidates, not a default target.
+ * Keys are `<platform>:<channelId>`, and a channel id may itself contain ":" (`@name` handles do
+ * not, but nothing guarantees that), so the prefix is sliced off rather than split on.
+ */
+export function telegramChatsFromBindings(
+  map: ChannelBindingMap,
+): Array<{ chatId: string; caseId: string; boundAt: string }> {
+  const prefix = "telegram:";
+  return Object.entries(map)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([key, b]) => ({ chatId: key.slice(prefix.length), caseId: b.caseId, boundAt: b.boundAt }))
+    .filter((c) => c.chatId !== "")
+    .sort((a, b) => a.chatId.localeCompare(b.chatId));
+}

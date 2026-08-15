@@ -183,7 +183,9 @@ function caseStatsBarChart(days) {
 
 function ntfTargetSummary(ch) {
   if (ch.type === "email" && ch.smtp) return `${esc(ch.smtp.host)}:${esc(String(ch.smtp.port))} → ${esc((ch.smtp.to || []).join(", "))}${ch.smtp.hasPassword ? " 🔑" : ""}`;
-  if (ch.type === "telegram" && ch.telegram) return `${ch.telegram.hasBotToken ? "token configured" : "<span data-safe-style='color:var(--tag-red-text)'>no token</span>"} → chat: ${esc(ch.telegram.chatId || "?")}`;
+  // usesEnvBotToken = borrowed from the war-room bot's DFIR_TELEGRAM_BOT_TOKEN rather than typed
+  // here. Named explicitly so the channel doesn't look mis-configured to whoever reads it next.
+  if (ch.type === "telegram" && ch.telegram) return `${ch.telegram.hasBotToken ? (ch.telegram.usesEnvBotToken ? "token from .env" : "token configured") : "<span data-safe-style='color:var(--tag-red-text)'>no token</span>"} → chat: ${esc(ch.telegram.chatId || "?")}`;
   return ch.hasWebhookUrl ? "webhook configured" : "<span data-safe-style='color:var(--tag-red-text)'>no webhook URL</span>";
 }
 

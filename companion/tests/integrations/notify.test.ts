@@ -362,6 +362,97 @@ describe("dispatchEvent + createNotifier", () => {
     expect(r.error).toContain("no bot token");
   });
 
+  // A channel left tokenless falls back to the war-room bot's DFIR_TELEGRAM_BOT_TOKEN, injected as
+  // transport config so this stays env-free and unit-testable.
+  it("falls back to the transport's telegram bot token when the channel has none", async () => {
+    const sent: string[] = [];
+    const fetchFn = (async (url: string) => {
+      sent.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({
+      id: "tg3",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "", chatId: "-100" },
+    });
+    const [r] = await dispatchEvent([ch], event(), { fetchFn, telegramBotToken: "999:ENVTOKEN" });
+    expect(r.ok).toBe(true);
+    expect(sent[0]).toBe("https://api.telegram.org/bot999:ENVTOKEN/sendMessage");
+  });
+
+  // DFIR_TELEGRAM_API_BASE points the war-room bot at a self-hosted Bot API or an egress proxy.
+  // A channel borrowing that bot's token has to reach it the same way, or it silently posts to
+  // api.telegram.org — failing on a closed network, or bypassing the proxy the operator required.
+  it("sends through the configured Telegram API base, trailing slash and all", async () => {
+    const sent: string[] = [];
+    const fetchFn = (async (url: string) => {
+      sent.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({
+      id: "tg5",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "", chatId: "-100" },
+    });
+    const [r] = await dispatchEvent([ch], event(), {
+      fetchFn,
+      telegramBotToken: "999:ENVTOKEN",
+      telegramApiBase: "https://tg.example.com/",
+    });
+    expect(r.ok).toBe(true);
+    expect(sent[0]).toBe("https://tg.example.com/bot999:ENVTOKEN/sendMessage");
+  });
+
+  it("applies the API base to a channel carrying its own token too", async () => {
+    const sent: string[] = [];
+    const fetchFn = (async (url: string) => {
+      sent.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({
+      id: "tg6",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "123:OWN", chatId: "-100" },
+    });
+    await dispatchEvent([ch], event(), { fetchFn, telegramApiBase: "https://tg.example.com" });
+    expect(sent[0]).toBe("https://tg.example.com/bot123:OWN/sendMessage");
+  });
+
+  it("falls back to api.telegram.org when no API base is configured", async () => {
+    const sent: string[] = [];
+    const fetchFn = (async (url: string) => {
+      sent.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({
+      id: "tg7",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "123:OWN", chatId: "-100" },
+    });
+    await dispatchEvent([ch], event(), { fetchFn, telegramApiBase: "   " });
+    expect(sent[0]).toBe("https://api.telegram.org/bot123:OWN/sendMessage");
+  });
+
+  it("prefers the channel's own telegram token over the transport fallback", async () => {
+    const sent: string[] = [];
+    const fetchFn = (async (url: string) => {
+      sent.push(String(url));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({
+      id: "tg4",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "123:OWN", chatId: "-100" },
+    });
+    await dispatchEvent([ch], event(), { fetchFn, telegramBotToken: "999:ENVTOKEN" });
+    expect(sent[0]).toBe("https://api.telegram.org/bot123:OWN/sendMessage");
+  });
+
   it("reports email channels as failed when no SMTP transport is available", async () => {
     const fetchFn = (async () => new Response("ok")) as typeof fetch;
     const ch = channel({

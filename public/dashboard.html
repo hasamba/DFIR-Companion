@@ -2425,8 +2425,10 @@
           <div id="ntfTelegramRows" data-safe-style="display:none;margin-bottom:6px">
             <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">
               <input id="ntfTgToken" type="password" placeholder="Bot token (123456789:AAF…)" autocomplete="new-password" data-safe-style="flex:1 1 220px" />
-              <input id="ntfTgChatId" placeholder="Chat ID (@channel or -1001234567890)" data-safe-style="flex:1 1 200px" />
+              <input id="ntfTgChatId" list="ntfTgChatList" placeholder="Chat ID (@channel or -1001234567890)" data-safe-style="flex:1 1 200px" />
+              <datalist id="ntfTgChatList"></datalist>
             </div>
+            <div class="sfield-hint" data-safe-style="margin-top:4px">Leave the token blank to reuse the war-room bot's <code>DFIR_TELEGRAM_BOT_TOKEN</code> from <code>.env</code>. The token stays in <code>.env</code> only — rotate it there and this channel follows. A token typed here overrides it, for a separate bot. The Chat ID offers the chats the bot is already bound to — check it points where you mean before adding, since notifications carry case content.</div>
           </div>
           <!-- Email (smtp) -->
           <div id="ntfSmtpRows" data-safe-style="display:none">

@@ -31,6 +31,7 @@ import {
   updateEnv as updateEnvFile,
   reloadEnvPrefix,
   validateEnvUpdates,
+  RELOADABLE_ENV_PREFIXES,
 } from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
@@ -65,7 +66,8 @@ import type { RouteContext } from "./context.js";
  *     standard JSON 500 instead of Express's default HTML page — the only observable delta.)
  *
  * Module-private helpers moved verbatim (used only by routes here): removeCaseFromActiveListBestEffort,
- * deleteCaseFolderBestEffort (case archive/delete plumbing) and the RELOADABLE_PREFIXES allowlist.
+ * deleteCaseFolderBestEffort (case archive/delete plumbing). The /settings/reload allowlist now
+ * lives in settings/envManager.ts as RELOADABLE_ENV_PREFIXES, beside its writable twin.
  * logLine/errLine mirror createApp's (serverLogger.info/error) so the moved call sites stay verbatim.
  *
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
@@ -796,37 +798,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // "✓ Saved & configured" (that check reads process.env) while the running server ignored the change.
   // `rebuilt` names the components actually swapped; it is empty for a prefix with nothing to rebuild
   // (DFIR_TOOL_ and friends — see rebuildForPrefix in server.ts for why each is excluded).
-  const RELOADABLE_PREFIXES = new Set([
-    "DFIR_VISION_",
-    "DFIR_AI_",
-    "DFIR_IRIS_",
-    "DFIR_VELOCIRAPTOR_",
-    "DFIR_TIMESKETCH_",
-    "DFIR_NOTION_",
-    "DFIR_CLICKUP_",
-    "DFIR_VT_",
-    "DFIR_ABUSEIPDB_",
-    "DFIR_HUNTINGCH_",
-    "DFIR_MB_",
-    "DFIR_CROWDSTRIKE_",
-    "DFIR_SHODAN_",
-    "DFIR_MISP_",
-    "DFIR_YETI_",
-    "DFIR_OPENCTI_",
-    "DFIR_ROCKYRACCOON_",
-    "DFIR_GEOIP_",
-    "DFIR_LEAKCHECK_",
-    "DFIR_HIBP_",
-    "DFIR_DEHASHED_",
-    "DFIR_PUSH_TOKEN",
-    "DFIR_NSRL_",
-    "DFIR_TOOL_",
-  ]);
+  // The allowlist itself lives in settings/envManager.ts, beside the WRITABLE one it has always been
+  // described as mirroring.
   app.post("/settings/reload", async (req: Request, res: Response) => {
     try {
       const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : "";
       if (!prefix) return res.status(400).json({ error: "prefix is required" });
-      if (!RELOADABLE_PREFIXES.has(prefix)) {
+      if (!RELOADABLE_ENV_PREFIXES.has(prefix)) {
         return res.status(400).json({ error: `prefix not in the reloadable allowlist: ${prefix}` });
       }
       const applied = await reloadEnvPrefix(prefix);

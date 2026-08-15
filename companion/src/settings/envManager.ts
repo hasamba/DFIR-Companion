@@ -35,8 +35,51 @@ const DENIED_ENV_KEYS = new Set([
   "DFIR_ALLOW_UNAUTHENTICATED_REMOTE",
 ]);
 
-// Only keys starting with one of these prefixes may be written via POST /settings/env.
-// Mirrors RELOADABLE_PREFIXES in caseLifecycle.ts (the /settings/reload allowlist) — the
+/**
+ * Which prefixes POST /settings/reload may re-read from the .env FILE into the live process.
+ * Read by routes/caseLifecycle.ts, and kept HERE rather than there because it is the twin of
+ * WRITABLE_ENV_PREFIXES below and the two are only comprehensible side by side: writable is what
+ * the dashboard may change, reloadable is what re-reading is allowed to pick up. They are NOT the
+ * same list, and the difference is the interesting part — DFIR_TELEGRAM_BOT_TOKEN is reloadable
+ * (an operator editing .env by hand can rotate it without a restart) but NOT writable (the
+ * dashboard has no business rewriting the war-room bot's credential).
+ *
+ * Membership is exact-match on the string the route sends, so an entry without a trailing
+ * underscore names one key rather than a family.
+ */
+export const RELOADABLE_ENV_PREFIXES = new Set([
+  "DFIR_VISION_",
+  "DFIR_AI_",
+  "DFIR_IRIS_",
+  "DFIR_VELOCIRAPTOR_",
+  "DFIR_TIMESKETCH_",
+  "DFIR_NOTION_",
+  "DFIR_CLICKUP_",
+  "DFIR_VT_",
+  "DFIR_ABUSEIPDB_",
+  "DFIR_HUNTINGCH_",
+  "DFIR_MB_",
+  "DFIR_CROWDSTRIKE_",
+  "DFIR_SHODAN_",
+  "DFIR_MISP_",
+  "DFIR_YETI_",
+  "DFIR_OPENCTI_",
+  "DFIR_ROCKYRACCOON_",
+  "DFIR_GEOIP_",
+  "DFIR_LEAKCHECK_",
+  "DFIR_HIBP_",
+  "DFIR_DEHASHED_",
+  "DFIR_PUSH_TOKEN",
+  "DFIR_NSRL_",
+  "DFIR_TOOL_",
+  // The exact key, not the DFIR_TELEGRAM_ family: a Telegram notification channel may borrow this
+  // token, and both the channel route and the notifier read it live, so a rotation in .env has to be
+  // reachable without a restart. Its siblings stay off deliberately — ACTION_USERS and SECRET_TOKEN
+  // authorize the INBOUND bot, and nothing in the outbound path re-reads them.
+  "DFIR_TELEGRAM_BOT_TOKEN",
+]);
+
+// Only keys starting with one of these prefixes may be written via POST /settings/env. The
 // dashboard can configure AI, integrations, enrichment, push, NSRL, and tools, but cannot
 // rewrite core server config, security toggles, or filesystem paths.
 const WRITABLE_ENV_PREFIXES = [

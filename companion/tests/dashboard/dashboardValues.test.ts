@@ -319,6 +319,37 @@ describe("veloTimeScopeBody / veloTimeScopeIncomplete", () => {
 
 // The secret-blanking contract. A blank credential means "keep what is saved", so the dashboard
 // never round-trips a redacted value back to the server as if it were the real one.
+// The war-room bot already knows which chats it talks to (it saved them on `/dfir bind`), so the
+// Chat ID box offers them instead of making the analyst go dig the number out of a JSON file. A
+// destination is PRE-FILLED, never silently defaulted — notifications carry case content, so what
+// is about to receive it has to be on screen before Add.
+describe("ntfChatPrefill", () => {
+  const chats = [
+    { chatId: "12345678", caseId: "demo" },
+    { chatId: "-1001234567890", caseId: "INC-2026-004" },
+  ];
+
+  it("offers every known chat and pre-fills the first", () => {
+    const r = v.ntfChatPrefill(chats);
+    expect(r.value).toBe("12345678");
+    expect(r.options).toEqual([
+      { value: "12345678", label: "12345678 — bound to demo" },
+      { value: "-1001234567890", label: "-1001234567890 — bound to INC-2026-004" },
+    ]);
+  });
+
+  it("pre-fills nothing when the bot knows no chats", () => {
+    expect(v.ntfChatPrefill([])).toEqual({ value: "", options: [] });
+    expect(v.ntfChatPrefill(undefined)).toEqual({ value: "", options: [] });
+  });
+
+  it("survives a binding with no case id rather than rendering 'undefined'", () => {
+    const r = v.ntfChatPrefill([{ chatId: "5" }]);
+    expect(r.value).toBe("5");
+    expect(r.options[0].label).toBe("5");
+  });
+});
+
 describe("ntfChannelToBody", () => {
   it("blanks the telegram bot token so the server keeps the saved one", () => {
     const body = v.ntfChannelToBody({

@@ -27,6 +27,14 @@
     mattermost: "https://mattermost.example.com/hooks/…",
     discord: "https://discord.com/api/webhooks/…",
   };
+  // The war-room bot's DFIR_TELEGRAM_BOT_TOKEN doubles as the transport for telegram channels, so
+  // when .env already has one the field says so — otherwise an operator who configured the bot sees
+  // an empty box and pastes the same token a second time. Mirrors the "(already set)" wording the
+  // .env secret fields use (dashboard-env-settings.js).
+  const NTF_TG_TOKEN_PLACEHOLDER = {
+    own: "Bot token (123456789:AAF…)",
+    env: "Bot token — (already set) from .env, leave blank to use it",
+  };
   function ntfTypeChanged() {
     const t = document.getElementById("ntfType").value;
     const email = t === "email";
@@ -77,6 +85,40 @@
       .then((r) => r.json())
       .then(renderNotifications)
       .catch(() => {});
+    // Asked separately from the channel list because it must be answerable with NO channels
+    // configured — which is exactly when the empty token field is most confusing. The response
+    // carries a boolean, never the token.
+    fetch("/notifications/status")
+      .then((r) => r.json())
+      .then((s) => {
+        const el = document.getElementById("ntfTgToken");
+        if (el)
+          el.placeholder =
+            s && s.telegramEnvToken
+              ? NTF_TG_TOKEN_PLACEHOLDER.env
+              : NTF_TG_TOKEN_PLACEHOLDER.own;
+        ntfApplyChatPrefill((s && s.telegramChats) || []);
+      })
+      .catch(() => {});
+  }
+  // Pre-fill the Chat ID with a chat the war-room bot already talks to, and offer the rest through
+  // the datalist. Pre-filled, never silently defaulted: the value lands in a VISIBLE field the
+  // analyst can see and change before Add, because this is where case content will be sent. An
+  // analyst who has already typed something keeps it.
+  function ntfApplyChatPrefill(chats) {
+    const input = document.getElementById("ntfTgChatId");
+    const list = document.getElementById("ntfTgChatList");
+    if (!input || !list) return;
+    const { value, options } = ntfChatPrefill(chats);
+    list.replaceChildren(
+      ...options.map((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.label = o.label;
+        return opt;
+      }),
+    );
+    if (!input.value) input.value = value;
   }
   function ntfAddChannel() {
     const type = document.getElementById("ntfType").value;
