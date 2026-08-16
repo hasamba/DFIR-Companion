@@ -5,7 +5,6 @@ import type { AssetOverridesStore } from "../assetOverrides.js";
 import { buildD3fendResult } from "../d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../d3fendData.js";
 import type { HostAliasIndex } from "../hostAlias.js";
-import { loadHostAliasIndex } from "../hostScopeLoad.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
 import { sanitizeHypothesisReviews, type HypothesisReviewItem } from "../hypothesis.js";
 import {
@@ -27,6 +26,7 @@ import {
 import {
   callAiJson,
   fitTimelineText,
+  loadCtxAliasIndex,
   loadScopedEvents,
   promptOverhead,
   type AiCallContext,
@@ -48,7 +48,7 @@ import {
 /**
  * What the case-report generators need on top of the shared AI-call seam: the hypothesis store
  * (hypothesisReview only) plus the two stores every report resolves canonical host identity from
- * (#see loadReportAliasIndex below), so a report reads a merged near-duplicate as one machine.
+ * (see `loadCtxAliasIndex` in aiContext.ts), so a report reads a merged near-duplicate as one machine.
  */
 export interface CaseReportContext extends AiCallContext {
   readonly opts: AiCallContext["opts"] & {
@@ -56,23 +56,6 @@ export interface CaseReportContext extends AiCallContext {
     assetOverridesStore?: AssetOverridesStore;
     velociraptorClientStore?: VelociraptorClientStore;
   };
-}
-
-/**
- * The host-identity index every report prompt renders through. `loadHostAliasIndex` (hostScopeLoad.ts)
- * is the ONE builder the whole host-merge feature shares — reusing it here is what keeps a report and
- * a synthesis run agreeing on which spellings are one machine.
- *
- * Deliberately NOT synthesis's `resolveHostsOrThrow`: that also THROWS `HostMergeDecisionRequired` for
- * an unresolved near-duplicate, which is right for synthesis (it can wait for the analyst's decision)
- * but wrong here — a report is a user-requested export, and the analyst must always be able to
- * generate one, pending merge decision or not. So this only ever builds the index.
- */
-async function loadReportAliasIndex(ctx: CaseReportContext, caseId: string): Promise<HostAliasIndex> {
-  return loadHostAliasIndex(
-    { assetOverrides: ctx.opts.assetOverridesStore, fleet: ctx.opts.velociraptorClientStore },
-    caseId,
-  );
 }
 
 /** `[timestamp] [severity] description` — the row shape for the two audience-facing reports. */
@@ -107,7 +90,7 @@ export async function generateNarrative(
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
 
   const findingsText = findingsPlain(loaded);
-  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
   const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   const narrativePrompt = getNarrativePrompt();
   const timelineText = fitTimelineText(
@@ -150,7 +133,7 @@ export async function executiveSummary(ctx: CaseReportContext, caseId: string): 
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
 
   const findingsText = findingsPlain(loaded);
-  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
   const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   const timelineText = fitTimelineText(
     scoped,
@@ -190,7 +173,7 @@ export async function remediationPlan(ctx: CaseReportContext, caseId: string): P
 
   const { mitigationsText, d3fendText } = renderControlGrounding(filtered);
 
-  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
   const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
 
   const userPrompt =
@@ -227,7 +210,7 @@ export async function hypothesisReview(
 
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
   const validEventIds = new Set(scoped.map((e) => e.id));
-  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
 
   const userPrompt = await buildHypothesisReviewPrompt(ctx, loaded, scoped, open, aliasIndex);
 
