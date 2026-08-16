@@ -38,6 +38,10 @@
       .then((r) => r.json())
       .then((c) => {
         document.getElementById("confFilter").value = c.minConfidence ?? 0;
+        document.getElementById("hideAutoFindings").checked =
+          !!c.hideAutoFindings;
+        document.getElementById("hideGapFindings").checked =
+          !!c.hideGapFindings;
         if (DfirState.lastState())
           typeof render === "function" && render(DfirState.lastState());
       })
@@ -52,6 +56,20 @@
     }, 500);
   }
 
+  // The two finding-origin lenses. Saved IMMEDIATELY rather than joining the min-confidence
+  // debounce above: a checkbox click is one discrete edit, not a keystroke stream, so there is
+  // nothing to coalesce and nothing to flush on unload. The two save paths PUT disjoint keys and
+  // the route patches key by key, but that alone does not prevent the server's read-modify-write
+  // from clobbering a field; `ConfidenceControlStore.set` wraps the cycle in a per-case lock, so
+  // concurrent saves are safe in either order.
+  function saveFindingOriginFilters(caseId, patch) {
+    return fetch(`/cases/${caseId}/confidence-control`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }).catch(() => {});
+  }
+
   // Registered here rather than at load: see the manifest note. Both events fire long after the
   // page is up, so deferring the registration costs nothing and keeps the module loadable.
   function initConfidenceControl() {
@@ -64,4 +82,5 @@
   window.initConfidenceControl = initConfidenceControl;
   window.loadConfidenceControl = loadConfidenceControl;
   window.saveConfidenceControl = saveConfidenceControl;
+  window.saveFindingOriginFilters = saveFindingOriginFilters;
 })();

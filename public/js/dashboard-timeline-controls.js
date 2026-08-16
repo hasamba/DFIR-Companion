@@ -242,6 +242,17 @@
           saveConfidenceControl(caseId, parseInt(this.value, 10) || 0);
       });
 
+    // The two finding-origin lenses: re-render, then persist per case. Same shape as the
+    // confidence filter above, minus the debounce — see saveFindingOriginFilters for why.
+    for (const lensId of ["hideAutoFindings", "hideGapFindings"]) {
+      document.getElementById(lensId).addEventListener("change", function () {
+        if (DfirState.lastState()) render(DfirState.lastState());
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId)
+          saveFindingOriginFilters(caseId, { [lensId]: this.checked });
+      });
+    }
+
     // One-click deploy of a structured collection directive (investigation-guidance #8, phase 3).
     // Delegated (the next-steps / key-questions HTML is re-rendered on every synthesis). Confirms, then
     // POSTs to the case collect-directive route which resolves the artifact VQL and launches the

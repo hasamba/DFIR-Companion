@@ -256,6 +256,10 @@
     );
     const minConf =
       parseInt(document.getElementById("confFilter").value, 10) || 0;
+    // Finding-origin lenses: hide the deterministic backfills (f-auto-*, f-gap-*) so the panel
+    // shows only what AI synthesis concluded. Read once per render, like minConf above.
+    const hideAuto = document.getElementById("hideAutoFindings").checked;
+    const hideGap = document.getElementById("hideGapFindings").checked;
     const activeDashView = DfirState.activeView(); // read once; this function consults it three times
     // Corroboration lens (#35): a finding's sources are the union of its supporting events' tools.
     const _findingCorrob = (f) => {
@@ -276,6 +280,7 @@
           _findingMatchesExclude(f, DfirTimelineView.excludeTerms())
         ) &&
         _findingCorrob(f) &&
+        findingPassesOriginLens(f, hideAuto, hideGap) &&
         viewMeetsMinSev(f.severity),
     ); // dashboard-view severity floor (#142)
     const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered; // view top-N cap
@@ -289,6 +294,8 @@
         !!DfirTimelineView.search() ||
         DfirTimelineView.excludeTerms().length > 0 ||
         DfirTimelineView.corrobFindings() > 1 ||
+        hideAuto ||
+        hideGap ||
         !!(
           activeDashView &&
           activeDashView.filters &&
@@ -329,8 +336,11 @@
                 ? f.relatedEventIds
                 : (suppEventsByFinding[f.id] || []).map((e) => e.id);
             // Auto-flagged findings (from a Critical/High artifact row synthesis didn't cover)
-            // carry the f-auto- id prefix — badge them so the analyst knows to review/refine.
-            const auto = String(f.id).startsWith("f-auto-")
+            // carry the f-auto- id prefix — badge them so the analyst knows to review/refine. Same
+            // predicate the origin lens above uses (isAutoBackfillFinding, dashboard-filters.js)
+            // rather than a second f-auto- check of its own — two classifiers for one prefix is how
+            // the badge and the lens end up disagreeing if that prefix ever changes.
+            const auto = isAutoBackfillFinding(f)
               ? ` <span title="Auto-flagged from a ${esc(f.severity)}-severity artifact row — review and refine" data-safe-style="background:var(--info-bg);color:var(--tag-purple-text);border:1px solid var(--info-border);border-radius:4px;padding:0 6px;font-size:10px">AUTO</span>`
               : "";
             // Confidence meter: same high/mid/low tiering as the old badge, now a small bar + %.

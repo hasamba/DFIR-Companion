@@ -6,8 +6,10 @@ import { revealSections } from "../fixtures/sections.js";
 // (feature-user-stories.csv) — the Findings panel listing real findings and responding to the filter.
 //
 
-// seedDemoCase writes findings f001-f007 (12 in total including the extras), so these assert on
-// known ids. "more than zero findings" would still pass if every row rendered empty.
+// seedDemoCase writes findings f001-f010 plus the f004b/f007b near-duplicates (12 from AI
+// synthesis) and f-auto-e044/f-gap-e043-e019 (the two deterministic backfill findings, 14 in
+// total), so these assert on known ids. "more than zero findings" would still pass if every row
+// rendered empty.
 
 async function openCase(page: Page, caseId: string): Promise<void> {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(caseId)}`);
@@ -52,4 +54,76 @@ test("filtering applies to findings as well as events", async ({ page, demoCase 
 
   // The filter bar says "Filter events, findings, IOCs…" — so findings must actually respond to it.
   await expect.poll(async () => findings.count(), { timeout: 15_000 }).toBe(0);
+});
+
+// seedDemoCase seeds exactly one backfill finding of each kind — f-auto-e044 and
+// f-gap-e043-e019 — specifically so the test below can watch a row disappear instead of only
+// proving the controls exist. Each lens is checked INDEPENDENTLY (not just both together): both
+// boxes checked at once would still pass if they were wired to each other's predicate (i.e. if
+// "hide auto" accidentally hid the gap row too), so step 2 and step 3 each isolate one checkbox
+// and assert the OTHER backfill row is unaffected. That is what actually catches an argument
+// swap at the findingPassesOriginLens(f, hideAuto, hideGap) call site in dashboard-render.js.
+test("the origin lenses hide exactly the row they name, independently", async ({ page, demoCase }) => {
+  await openCase(page, demoCase);
+
+  const hideAuto = page.locator("#hideAutoFindings");
+  const hideGap = page.locator("#hideGapFindings");
+  const autoRow = page.locator("#sec-findings .finding[data-fid='f-auto-e044']");
+  const gapRow = page.locator("#sec-findings .finding[data-fid='f-gap-e043-e019']");
+  const aiRow = page.locator("#sec-findings .finding[data-fid='f001']");
+
+  // Step 1: unfiltered, both backfill rows and an ordinary AI-synthesis row are all present.
+  await expect(autoRow).toHaveCount(1);
+  await expect(gapRow).toHaveCount(1);
+  await expect(aiRow).toHaveCount(1);
+
+  // Step 2: "Hide auto-flagged" alone drops ONLY the f-auto- row.
+  await hideAuto.check();
+  await expect(autoRow).toHaveCount(0);
+  await expect(gapRow).toHaveCount(1);
+  await expect(aiRow).toHaveCount(1);
+
+  // Step 3 — the one that matters most: uncheck it and check "Hide coverage-gap" alone. Collapsing
+  // this into step 2 (checking both together) would still pass even if the two checkboxes were
+  // wired to each other's predicate; only testing each in isolation catches that.
+  await hideAuto.uncheck();
+  await hideGap.check();
+  await expect(gapRow).toHaveCount(0);
+  await expect(autoRow).toHaveCount(1);
+  await expect(aiRow).toHaveCount(1);
+
+  // Step 4: both checked — only AI-synthesis findings remain.
+  await hideAuto.check();
+  await expect(autoRow).toHaveCount(0);
+  await expect(gapRow).toHaveCount(0);
+  await expect(aiRow).toHaveCount(1);
+});
+
+// The row-disappears proof lives in the test above. This one covers a different property: the
+// checkbox states survive a reload instead of evaporating back to unchecked.
+test("the finding-origin lenses persist across a reload", async ({ page, demoCase }) => {
+  await openCase(page, demoCase);
+
+  const hideAuto = page.locator("#hideAutoFindings");
+  const hideGap = page.locator("#hideGapFindings");
+  await expect(hideAuto).toBeVisible();
+  await expect(hideGap).toBeVisible();
+  await expect(hideAuto).not.toBeChecked();
+  await expect(hideGap).not.toBeChecked();
+
+  // Unfiltered, the header states a plain total.
+  await expect(page.locator("#findingsCount")).toHaveText(/^\(\d+ findings?\)$/);
+
+  await hideAuto.check();
+
+  // Checked, the header switches to the "N of M" form. This case's seeded f-auto- finding means
+  // something real is now hidden, but the format must switch regardless of whether a lens actually
+  // hides anything — otherwise a suppressed finding would be indistinguishable from one that was
+  // never there.
+  await expect(page.locator("#findingsCount")).toHaveText(/^\(\d+ of \d+ findings\)$/);
+
+  await page.reload();
+  await expect(page.locator("#sec-findings .finding").first()).toBeAttached({ timeout: 30_000 });
+  await expect(page.locator("#hideAutoFindings")).toBeChecked();
+  await expect(page.locator("#hideGapFindings")).not.toBeChecked();
 });

@@ -90,6 +90,15 @@ timeline** (timestamp + description per event, each with its own jump link) inst
 floor (findings with no confidence score always show); the floor is a per-case setting, so it's
 remembered the next time you open the case.
 
+Two more checkboxes sit beside it. **Hide auto-flagged** hides the deterministic backfill raised for
+any in-scope Critical/High-severity event the AI left unlinked to a finding, so a graded detection is
+never silently missed. **Hide coverage-gap** hides the deterministic backfill raised for a window
+where every log source went silent — the classic signature of cleared logs or a stopped collector.
+Both are lenses, not gates: nothing is deleted, a pinned finding stays in the 📌 strip even while
+hidden from the list below, and each is a per-case choice remembered like the confidence floor.
+Whenever a filter — either of these included — is actually hiding something, the panel header switches
+from a plain count to **(N of M findings)**, so a hidden finding is never silently absent.
+
 **Cited AI answers** — supporting events/findings referenced by a finding, Ask-the-case, Explain Event,
 or an AI-suggested hunt appear as numbered, clickable citations — click a citation number to jump
 straight to the event or finding it's grounded in. Citations carry through to the exported report.
@@ -388,6 +397,8 @@ the investigation log.
 **Forensic Timeline**, **IOCs**, and **Findings** each have an independent corroboration lens in their title bar: show only items observed by **2+** or **3+** distinct tools, cutting single-source noise (internet scanners, benign per-tool telemetry) so the multi-source attack path stands out.
 
 It's a **lens, not a gate** — nothing is dropped from state. Single-source evidence (a Sysmon-only process, a syslog-only logon) still shows at the default "any" setting. Each section's choice is remembered independently.
+
+**Findings has two more lenses of its own** — Hide auto-flagged and Hide coverage-gap, next to the Min confidence box (see Findings, above) — that filter by *origin* (AI-concluded vs. deterministic backfill) rather than by corroboration count. Same contract as this one: hidden, not deleted, per-case and remembered, and folded into the same **N of M** header count.
 
 On the timeline, the lens composes with the **Source** filter: it counts only distinct sources still checked, and while active the Source menu lists only the tools present on corroborated events.
 

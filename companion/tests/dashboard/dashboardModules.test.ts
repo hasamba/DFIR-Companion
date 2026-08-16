@@ -152,8 +152,8 @@ describe("every moved function still resolves at its call sites", () => {
     (name) => name !== "esc" && name !== "escAttr",
   );
 
-  it("moved 96 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(96);
+  it("moved 99 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(99);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

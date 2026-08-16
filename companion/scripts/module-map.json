@@ -373,6 +373,7 @@
     "secondOpinionStore.ts": "analysis/ai",
     "secretSpillRules.ts": "analysis/privacy",
     "securityOnionImport.ts": "analysis/ingest",
+    "seedDemoBackfillFixtures.ts": "analysis/workflow",
     "seedDemoCase.ts": "analysis/workflow",
     "seedDemoPaths.ts": "analysis/workflow",
     "semanticKey.ts": "analysis/timeline",
