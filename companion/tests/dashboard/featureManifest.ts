@@ -1450,6 +1450,17 @@ export const FEATURES: Feature[] = [
     private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
   },
   {
+    // Near-duplicate host review — the pre-synthesis merge gate's UI surface. One piece of view
+    // state (the pending pairs), so it is an IIFE for the same reason dashboard-host-scope.js is.
+    // initHostDuplicates exists only to bind the header badge's click-to-scroll handler: the panel
+    // body itself binds its delegated listener lazily, from paint(), the same as dashboard-host-scope.js
+    // does — but the badge lives outside #hostDuplicatesBody, so nothing else would ever wire it.
+    file: "dashboard-host-duplicates.js",
+    initializer: "initHostDuplicates",
+    publish: ["loadHostDuplicates", "renderHostDuplicates", "initHostDuplicates"],
+    private: ["pending"],
+  },
+  {
     // The canvas chart. Like dashboard-tickets.js, all of its load-time work is DOM wiring —
     // eleven listeners on the canvas and toolbar plus a ResizeObserver — so it is wrapped in
     // initSwimlane() and the page calls it where the old IIFE sat. Unlike tickets the initializer

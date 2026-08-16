@@ -1,12 +1,16 @@
 import type { AIProvider, AnalyzeRequest } from "../../providers/provider.js";
+import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { FalsePositiveMarker, FalsePositiveStore } from "../falsePositive.js";
 import { filterFalsePositiveEvents } from "../falsePositive.js";
+import type { HostAliasIndex } from "../hostAlias.js";
+import { loadHostAliasIndex } from "../hostScopeLoad.js";
 import { filterEventsByScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "../scope.js";
 import { selectSynthesisEvents } from "../synthSelect.js";
 import { maxPromptEvents } from "../synthGroup.js";
 import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { KevCatalog } from "../kev.js";
 
 /**
@@ -150,6 +154,34 @@ export async function loadScopedEvents(
   const scope = ctx.opts.scopeStore ? await ctx.opts.scopeStore.load(caseId) : NO_SCOPE;
   const inWindow = filterEventsByScope(state.forensicTimeline, scope);
   return { markers, scope, inWindow, scoped: filterFalsePositiveEvents(inWindow, markers) };
+}
+
+/**
+ * The host-identity index every AI prompt in this directory renders through — case reports,
+ * analyst Q&A / event explanation, and hunt suggestions alike. `loadHostAliasIndex`
+ * (hostScopeLoad.ts) is the ONE builder the whole host-merge feature shares; every family calling
+ * it here, instead of growing its own copy, is what keeps a report, an answer and a hunt agreeing
+ * with synthesis on which spellings are one machine.
+ *
+ * Deliberately NOT synthesis's `resolveHostsOrThrow` (synthesis.ts): that ALSO throws
+ * `HostMergeDecisionRequired` for an unresolved near-duplicate, which is right for synthesis (it can
+ * wait for the analyst's decision) but wrong for every caller in this directory — a report is a
+ * user-requested export, a question deserves an answer, and a hunt suggestion must not go dark,
+ * merge decision pending or not. So this only ever BUILDS the index: it never reads
+ * hostDuplicateDismissalStore and can never gate. Do not widen it to take one — that would put the
+ * gate back in reach of a call site that must never throw it.
+ *
+ * Takes a minimal structural type — the two stores, not one of the *Context interfaces — so
+ * CaseReportContext, AnalystQueryContext and HuntContext's `opts` all satisfy it without a cast.
+ */
+export async function loadCtxAliasIndex(
+  opts: { assetOverridesStore?: AssetOverridesStore; velociraptorClientStore?: VelociraptorClientStore },
+  caseId: string,
+): Promise<HostAliasIndex> {
+  return loadHostAliasIndex(
+    { assetOverrides: opts.assetOverridesStore, fleet: opts.velociraptorClientStore },
+    caseId,
+  );
 }
 
 /**

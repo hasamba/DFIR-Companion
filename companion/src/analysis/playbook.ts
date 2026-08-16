@@ -4,6 +4,7 @@ import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import { collectSummary, isActionableCollect } from "./collectDirective.js";
 import { uncoveredCoreTactics, tacticCollectDirectives } from "./knownUnknowns.js";
 import { rankHosts } from "./hostRanking.js";
+import type { HostAliasIndex } from "./hostAlias.js";
 
 // Playbook tracking (issue #36, Phase 1). Turns the AI's "next steps" and the
 // high-severity findings into a trackable checklist of remediation/investigation
@@ -186,6 +187,10 @@ export interface DeriveOptions {
   // (Contain/Investigate/Eradicate/Recover) instead of a single "investigate & remediate" task.
   // Opt-in per case (Phase 2) so the playbook isn't flooded by default.
   useTemplates?: boolean;
+  // Resolves short-name/FQDN host spellings (and explicit analyst asset merges) onto one canonical
+  // host, so a duplicate spelling doesn't generate a second "collect evidence" task for a host the
+  // analyst already merged in the Asset Graph.
+  aliasIndex?: HostAliasIndex;
 }
 
 // Fold suppressed next-step notes into the finding-derived seed(s)' description so the concrete
@@ -312,7 +317,7 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   // with no covering finding becomes a status-tracked "collect the evidence that would explain it"
   // task, pointed at the right host + artifact (tacticCollectDirectives). Only fires once the case has
   // a real (Critical/High) finding — uncoveredCoreTactics gates on that. Stable sourceKey `ku:<tactic>`.
-  const topHosts = rankHosts(state).topHosts;
+  const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
   for (const tactic of uncoveredCoreTactics(state)) {
     const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts);
     if (!dirs.length) continue;

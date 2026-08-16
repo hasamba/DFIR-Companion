@@ -55,6 +55,7 @@ function renderBatchRows(rows: readonly ForensicEvent[]): string {
   return rows
     .map(
       (e) =>
+        // No alias index here: the deep pass renders raw evidence excerpts, not the synthesis prompt.
         `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`,
     )
     .join("\n");

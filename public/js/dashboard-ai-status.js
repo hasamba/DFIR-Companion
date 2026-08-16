@@ -62,6 +62,9 @@
       // is how that case surfaces at all. Re-check the persisted pending list rather than assume
       // the error text; it's cheap and this is the ONLY path a stopped import gets noticed on.
       loadPresidioPending(activeCaseId);
+      // Same reason as the Presidio line above: an import is fire-and-forget, so a gate that fires
+      // mid-import has no response to carry its 409. This is the only path it surfaces on.
+      loadHostDuplicates(activeCaseId);
     }
   }
 

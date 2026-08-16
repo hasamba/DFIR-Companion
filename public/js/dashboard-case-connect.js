@@ -361,6 +361,7 @@
       ["sourceTrust", () => loadSourceTrust(caseId)],
       ["scope", () => loadScope(caseId)],
       ["hostScope", () => loadHostScope(caseId)],
+      ["hostDuplicates", () => loadHostDuplicates(caseId)],
       ["confidenceControl", () => loadConfidenceControl(caseId)],
       ["corrProfile", () => loadCorrProfile(caseId)],
       ["reportMeta", () => loadReportMeta(caseId)],

@@ -34,6 +34,8 @@ import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../a
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { rankHosts, type HostRankingResult } from "../analysis/hostRanking.js";
+import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
+import { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 import {
   buildMobileSummary,
   mobileSummaryEnvOptions,
@@ -128,6 +130,11 @@ export interface ReportWriterOptions {
   customerExposure?: CustomerExposureStore;
   notebook?: NotebookStore;
   assetOverrides?: AssetOverridesStore;
+  // Fleet (Velociraptor) inventory. Paired with assetOverrides to resolve a host's short-name/FQDN
+  // spellings onto one canonical name for hostRanking, the same recipe loadHostAliasIndex's other
+  // callers (caseAppliers.syncPlaybook, the hostScope callback below) use. Optional: when absent,
+  // hostRanking still honours any explicit analyst merges, just not fleet-derived pairing.
+  fleet?: VelociraptorClientStore;
   playbook?: PlaybookStore;
   reportTemplates?: ReportTemplateStore;
   reportTemplateControl?: ReportTemplateControlStore;
@@ -152,6 +159,7 @@ export class ReportWriter {
   private readonly customerExposure?: CustomerExposureStore;
   private readonly notebook?: NotebookStore;
   private readonly assetOverrides?: AssetOverridesStore;
+  private readonly fleet?: VelociraptorClientStore;
   private readonly playbook?: PlaybookStore;
   private readonly reportTemplates?: ReportTemplateStore;
   private readonly reportTemplateControl?: ReportTemplateControlStore;
@@ -180,6 +188,7 @@ export class ReportWriter {
     this.customerExposure = opts.customerExposure;
     this.notebook = opts.notebook;
     this.assetOverrides = opts.assetOverrides;
+    this.fleet = opts.fleet;
     this.playbook = opts.playbook;
     this.reportTemplates = opts.reportTemplates;
     this.reportTemplateControl = opts.reportTemplateControl;
@@ -445,7 +454,16 @@ export class ReportWriter {
   // the same scope/legitimate-filtered state as the report.
   async hostRanking(caseId: string): Promise<HostRankingResult> {
     const state = await this.loadFilteredState(caseId);
-    return rankHosts(state);
+    // Without this, an analyst who just merged a near-duplicate pair ("Same host — merge") would see
+    // this derived table keep listing both spellings as separate scored hosts — contradicting the
+    // decision they just made. loadHostAliasIndex is the same lightweight recipe caseAppliers.ts's
+    // syncPlaybook uses; unlike the hostScope callback below, it does not aggregate the super-timeline,
+    // so it stays cheap enough for this read-derived endpoint.
+    const aliasIndex = await loadHostAliasIndex(
+      { assetOverrides: this.assetOverrides, fleet: this.fleet },
+      caseId,
+    );
+    return rankHosts(state, { aliasIndex });
   }
 
   // D3FEND defensive countermeasures (#178): for each ATT&CK technique the case identified, the

@@ -10,6 +10,7 @@ import {
 import { corroborationLabel } from "../findingGrounding.js";
 import { textMentionsFindingId } from "../fpCascade.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
+import type { HostAliasIndex } from "../hostAlias.js";
 import type { LearnedPatternStore } from "../learnedPatternStore.js";
 import { buildLearnedPatternsBlock } from "../learnedPatterns.js";
 import { hasScope, type ScopeWindow } from "../scope.js";
@@ -82,6 +83,8 @@ export interface BlockInput {
   markers: FalsePositiveMarker[];
   scopedEvents: ForensicEvent[];
   preloaded: PreloadedBlocks;
+  /** Canonical host identity for this run — forwarded to every block that renders or ranks a host. */
+  aliasIndex?: HostAliasIndex;
 }
 
 /**
@@ -93,7 +96,7 @@ export async function buildSynthesisBlocks(
   ctx: SynthesisPromptContext,
   input: BlockInput,
 ): Promise<SynthesisBlocks> {
-  const { caseId, state, scope, markers, scopedEvents, preloaded } = input;
+  const { caseId, state, scope, markers, scopedEvents, preloaded, aliasIndex } = input;
   // Loaded FIRST, before getKevCatalog() and knownUnknownsBlock(), because that is where the
   // original read it. A dismissal recorded during those awaits would otherwise land in this block
   // while the rest of the run reflects the earlier snapshot — and a load failure would now surface
@@ -105,7 +108,7 @@ export async function buildSynthesisBlocks(
     scopeNote: buildScopeNote(scope),
     // Compact, corroborated context (compromised assets + threat-intel verdicts + KEV hits) so the
     // model grounds findings/attacker-path in structure instead of inferring blind.
-    contextBlock: buildSynthesisContext(state, scopedEvents, await ctx.getKevCatalog()),
+    contextBlock: buildSynthesisContext(state, scopedEvents, await ctx.getKevCatalog(), aliasIndex),
     // Structured causal evidence (investigation-guidance #5): the deterministic ATTACK GRAPH
     // (spawn/file-lineage/lateral/network edges with confidence+rule — previously fed only to
     // ask()/suggestHunts(), never the call that writes findings), the statistically-confirmed
@@ -120,7 +123,7 @@ export async function buildSynthesisBlocks(
     // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases,
     // likely-next techniques) so the model builds on what's MISSING instead of glossing over it.
     // Plus the (env-gated, default OFF) candidate-actor block.
-    unknownsBlock: await knownUnknownsBlock(ctx, state, scopedEvents, caseId),
+    unknownsBlock: await knownUnknownsBlock(ctx, state, scopedEvents, caseId, aliasIndex),
     adversaryBlock: adversaryHintBlock(state),
     satisfiedBlock: satisfied.block,
     pinnedBlock: buildPinnedBlock(state),

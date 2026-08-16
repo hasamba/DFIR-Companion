@@ -1,3 +1,4 @@
+import type { AssetOverridesStore } from "../assetOverrides.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
 import {
   askSchema,
@@ -9,10 +10,12 @@ import {
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { buildSynthesisContext } from "../synthSelect.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import { getAskPrompt, getExplainEventPrompt, getFpSimilarityPrompt } from "./prompts/index.js";
 import {
   callAiJson,
   fitTimelineText,
+  loadCtxAliasIndex,
   loadScopedEvents,
   promptOverhead,
   type AiCallContext,
@@ -28,9 +31,17 @@ import {
  * event it was asked about.
  */
 
-/** What explainEvent needs on top of the shared AI-call seam, to reach the raw record. */
+/**
+ * What explainEvent needs on top of the shared AI-call seam, to reach the raw record — plus the two
+ * stores ask()/explainEvent() resolve canonical host identity from (see `loadCtxAliasIndex` in
+ * aiContext.ts), so a question or an event explanation reads a merged near-duplicate as one machine.
+ */
 export interface AnalystQueryContext extends AiCallContext {
-  readonly opts: AiCallContext["opts"] & { superTimelineStore?: SuperTimelineStore };
+  readonly opts: AiCallContext["opts"] & {
+    superTimelineStore?: SuperTimelineStore;
+    assetOverridesStore?: AssetOverridesStore;
+    velociraptorClientStore?: VelociraptorClientStore;
+  };
   promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
@@ -40,7 +51,7 @@ export interface AnalystQueryContext extends AiCallContext {
 
 // Answer a free-form analyst question from the case's own evidence. Text-only, EPHEMERAL — the
 // answer is returned for the analyst to act on, never written into the case.
-export async function ask(ctx: AiCallContext, caseId: string, question: string): Promise<AskAnswer> {
+export async function ask(ctx: AnalystQueryContext, caseId: string, question: string): Promise<AskAnswer> {
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("case questions");
   const loaded = await ctx.opts.stateStore.load(caseId);
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
@@ -55,7 +66,8 @@ export async function ask(ctx: AiCallContext, caseId: string, question: string):
   const questionsText =
     loaded.keyQuestions.map((q) => `- ${q.question}${q.answer ? ` → ${q.answer}` : " (open)"}`).join("\n") ||
     "(none)";
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   // GraphRAG (#98): serialize the deterministic evidence-chain graph (causal edges) so the model
   // can trace multi-hop attack paths via the graph's relationships, not just the flat timeline.
   const graphMaxEdges = Number(process.env.DFIR_ASK_GRAPH_MAX_EDGES) || DEFAULT_MAX_GRAPH_EDGES;
@@ -175,7 +187,13 @@ export async function explainEvent(
       .slice(0, 50)
       .map((f) => `[${f.severity}] ${f.title}`)
       .join("\n") || "(none)";
-  const contextBlock = buildSynthesisContext(loaded, [event, ...contextEvents], await ctx.getKevCatalog());
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
+  const contextBlock = buildSynthesisContext(
+    loaded,
+    [event, ...contextEvents],
+    await ctx.getKevCatalog(),
+    aliasIndex,
+  );
 
   const userPrompt =
     contextBlock +

@@ -3,12 +3,22 @@ import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
 import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
+import type { AssetOverridesStore } from "../assetOverrides.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
 import { alignedEpoch, detectClockSkew, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
+import { type HostAliasIndex } from "../hostAlias.js";
+import { loadHostAliasIndex } from "../hostScopeLoad.js";
+import {
+  HostMergeDecisionRequired,
+  hostNamesFromState,
+  pendingNearDuplicates,
+} from "../hostDuplicateGate.js";
 import { sanitizeHypotheses } from "../hypothesis.js";
 import { rankConnectiveIocs } from "../iocAnchors.js";
 import type { PlaybookTask } from "../playbook.js";
@@ -87,6 +97,9 @@ export interface SynthesisContext
       synthesisModelLabel?: string;
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
+      assetOverridesStore?: AssetOverridesStore;
+      velociraptorClientStore?: VelociraptorClientStore;
+      hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
     };
   /** mergeDelta plus the case's analyst IOC-merge aliases (#82). */
   mergeWithAliases(
@@ -224,6 +237,7 @@ async function finalizeFindings(
     surviving: Set<string>;
     eligibleIds: Set<string>;
     sourceTrust: SourceTrustMap;
+    aliasIndex: HostAliasIndex;
   },
 ): Promise<InvestigationState> {
   const withAccepted = ctx.opts.secondOpinionStore
@@ -236,6 +250,7 @@ async function finalizeFindings(
     eligibleIds: input.eligibleIds,
     sourceTrust: input.sourceTrust,
     kevCatalog: await ctx.getKevCatalog(),
+    aliasIndex: input.aliasIndex,
   });
 }
 
@@ -417,6 +432,36 @@ async function callSynthesisModel(
   return { delta, thinkingTokens, parseRetries };
 }
 
+// The pre-synthesis merge gate. Runs before the prompt is built so a blocked run spends no tokens
+// and writes no state.
+//
+// RETURNS the index it had to build anyway, because every downstream render site needs the same one
+// and rebuilding it per site would re-read both stores a dozen times per run. The GATE is enabled
+// only when the dismissal store is wired (see PipelineOptions), but the INDEX is always built — a
+// merge must still resolve host names even on an install running with the gate off.
+async function resolveHostsOrThrow(
+  ctx: SynthesisContext,
+  caseId: string,
+  state: InvestigationState,
+): Promise<HostAliasIndex> {
+  const aliasIndex = await loadHostAliasIndex(
+    {
+      ...(ctx.opts.assetOverridesStore ? { assetOverrides: ctx.opts.assetOverridesStore } : {}),
+      ...(ctx.opts.velociraptorClientStore ? { fleet: ctx.opts.velociraptorClientStore } : {}),
+    },
+    caseId,
+  );
+  const dismissalStore = ctx.opts.hostDuplicateDismissalStore;
+  if (!dismissalStore) return aliasIndex;
+  const pending = pendingNearDuplicates(
+    hostNamesFromState(state),
+    aliasIndex,
+    await dismissalStore.load(caseId),
+  );
+  if (pending.length) throw new HostMergeDecisionRequired(pending);
+  return aliasIndex;
+}
+
 /**
  * ABOVE 50 LINES ON PURPOSE (#453). Everything here is a single named step and a hand-off of its
  * result to the next one: load, prepare, decide-to-run, prompt, call, fold, finalize, persist,
@@ -447,6 +492,7 @@ export async function synthesize(
   ctx.warnOnPromptDrift(); // once per process: a stale synthesis-prompt override silently drops shipped capabilities
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
+  const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
 
   const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock);
   const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;
@@ -462,6 +508,7 @@ export async function synthesize(
     inWindowEvents: run.inWindowEvents,
     scopedEvents,
     observationsBlock,
+    aliasIndex,
     ...run.blocks,
   });
 
@@ -485,7 +532,13 @@ export async function synthesize(
   let next = folded;
   if (opts.dryRun) return next;
 
-  next = await finalizeFindings(ctx, caseId, next, { delta, surviving, eligibleIds, sourceTrust });
+  next = await finalizeFindings(ctx, caseId, next, {
+    delta,
+    surviving,
+    eligibleIds,
+    sourceTrust,
+    aliasIndex,
+  });
 
   // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
   // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the
@@ -517,7 +570,10 @@ export async function synthesize(
   ctx.opts.onSynth?.(caseId, findingsDiff, next);
   ctx.opts.onState?.(next);
 
-  return (await sweepSecondLook(ctx, caseId, opts, { next, scopedEvents, scope, prompt, delta })) ?? next;
+  return (
+    (await sweepSecondLook(ctx, caseId, opts, { next, scopedEvents, scope, prompt, delta, aliasIndex })) ??
+    next
+  );
 }
 
 /**
@@ -542,6 +598,7 @@ async function sweepSecondLook(
     scope: ScopeWindow;
     prompt: Awaited<ReturnType<typeof buildSynthesisPrompt>>;
     delta: ReturnType<typeof stripAiExtractedFrom>;
+    aliasIndex: HostAliasIndex;
   },
 ): Promise<InvestigationState | null> {
   if (opts.skipSecondLook || !ctx.opts.superTimelineStore) return null;
@@ -554,6 +611,7 @@ async function sweepSecondLook(
       promptEvents: input.prompt.representedEvents,
       scope: input.scope,
       evidenceRequests: input.delta.evidenceRequests,
+      aliasIndex: input.aliasIndex,
     });
     if (!outcome) return null;
     // Nothing new to promote still records — empty requests are surfaced as collection leads.
@@ -622,6 +680,7 @@ async function runSecondLook(
     promptEvents: ForensicEvent[];
     scope: ScopeWindow;
     evidenceRequests?: ModelEvidenceRequest[];
+    aliasIndex: HostAliasIndex;
   },
 ): Promise<{ meta: SecondLookMeta } | null> {
   const superStore = ctx.opts.superTimelineStore;
@@ -633,7 +692,10 @@ async function runSecondLook(
     hypotheses: ctx.opts.hypothesisStore ? await ctx.opts.hypothesisStore.load(caseId) : [],
     iocValueById: new Map(input.next.iocs.map((i) => [i.id, i.value] as const)),
     keyQuestions: input.next.keyQuestions,
-    connectiveIocs: rankConnectiveIocs(input.next, input.scopedEvents, { max: 5 }),
+    connectiveIocs: rankConnectiveIocs(input.next, input.scopedEvents, {
+      max: 5,
+      aliasIndex: input.aliasIndex,
+    }),
     modelRequests: input.evidenceRequests,
     window,
   });

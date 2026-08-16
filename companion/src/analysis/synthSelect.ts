@@ -2,6 +2,7 @@ import type { ForensicEvent, InvestigationState, Severity } from "./stateTypes.j
 import { byEventTime } from "./forensicSort.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
+import type { HostAliasIndex } from "./hostAlias.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
 import {
   rankConnectiveIocs,
@@ -347,8 +348,9 @@ export function buildSynthesisContext(
   state: InvestigationState,
   scopedEvents: ForensicEvent[],
   kevCatalog?: KevCatalog,
+  aliasIndex?: HostAliasIndex,
 ): string {
-  const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents });
+  const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents }, undefined, aliasIndex);
   const iocVal = new Map(graph.iocs.map((i) => [i.id, i.value] as const));
   // The case's own host assets — a verdict on one of these (shared internal infra the model would
   // otherwise trust at face value) needs a flag, not silent inclusion. See iocAnchors.ts.
@@ -408,12 +410,12 @@ export function buildSynthesisContext(
   // Connective indicators (#200): rank IOCs by cross-host / multi-tool reach so the model anchors
   // on the attack's backbone (a C2 seen on multiple hosts by multiple tools) instead of the flat
   // list. Leads the digest — it's the highest-signal context.
-  const connectiveBlock = buildConnectiveIocDigest(rankConnectiveIocs(state, scopedEvents));
+  const connectiveBlock = buildConnectiveIocDigest(rankConnectiveIocs(state, scopedEvents, { aliasIndex }));
 
   // Signal concentration (#202): tell the model which host(s) carry the suspicious activity so an
   // automatic run over a noisy multi-host timeline doesn't anchor its narrative on a benign host.
   const concentrationBlock = buildSignalConcentrationDigest(
-    rankHosts({ ...state, forensicTimeline: scopedEvents }),
+    rankHosts({ ...state, forensicTimeline: scopedEvents }, { aliasIndex }),
   );
 
   // Composite IOC risk (#63): surface the actionable critical/high indicators (verdict + severity +

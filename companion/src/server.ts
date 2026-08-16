@@ -168,6 +168,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     setControl,
     recordAiError,
     autoEnrichIfEnabled: enrichment.autoEnrichIfEnabled,
+    dispatchNotify,
   });
   const imports = createImportIngest({
     store,
@@ -439,6 +440,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     analysisRunStore,
     operationalMetrics,
     secondOpinionStore,
+    velociraptorClientStore,
     notifier,
     dashboardBaseUrl,
     onState: (s) => hub.broadcast(s),

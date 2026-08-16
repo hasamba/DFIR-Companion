@@ -1,5 +1,6 @@
 import type { Response } from "express";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
+import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
 import type { AiStatusEvent } from "../server.js";
 
 /**
@@ -32,6 +33,10 @@ export function sendPipelineError(res: Response, err: unknown, ctx?: PipelineErr
   if (err instanceof PresidioApprovalRequired) {
     ctx?.onAiStatus?.(ctx.caseId, { status: "error", at: new Date().toISOString(), detail: err.message });
     return res.status(409).json({ error: "presidio_approval_required", findings: err.findings });
+  }
+  if (err instanceof HostMergeDecisionRequired) {
+    ctx?.onAiStatus?.(ctx.caseId, { status: "error", at: new Date().toISOString(), detail: err.message });
+    return res.status(409).json({ error: "host_merge_decision_required", pairs: err.pairs });
   }
   return res.status(500).json({ error: (err as Error)?.message ?? String(err) });
 }

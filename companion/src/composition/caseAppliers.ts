@@ -23,6 +23,7 @@ import { pushCheckpoint } from "../analysis/importUndo.js";
 import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/playbookControl.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 
 export interface CaseAppliersDeps {
   store: CaseStore;
@@ -220,7 +221,11 @@ export function createCaseAppliers({
       return options.playbookStore ? options.playbookStore.load(caseId) : [];
     const state = await options.stateStore.load(caseId);
     const { useTemplates } = await loadPlaybookControl(caseId);
-    return options.playbookStore.sync(caseId, state, { useTemplates });
+    const aliasIndex = await loadHostAliasIndex(
+      { assetOverrides: options.assetOverridesStore, fleet: options.velociraptorClientStore },
+      caseId,
+    );
+    return options.playbookStore.sync(caseId, state, { useTemplates, aliasIndex });
   }
 
   return {

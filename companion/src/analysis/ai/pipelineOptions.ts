@@ -6,6 +6,9 @@ import type { AnalysisRunStore } from "../analysisRunStore.js";
 import type { AnonControlStore } from "../anonControl.js";
 import type { DiscoveredEntitiesStore } from "../anonDiscovered.js";
 import type { CustomEntitiesStore } from "../anonEntities.js";
+import type { AssetOverridesStore } from "../assetOverrides.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import type { FalsePositiveStore } from "../falsePositive.js";
@@ -173,4 +176,13 @@ export interface PipelineOptions {
   // hint so the model prioritizes the techniques that matter for a ransomware / BEC / exfil case.
   // Absent → no hint (CLI/tests).
   incidentTypeStore?: IncidentTypeStore;
+  // Analyst asset merges + the enrolled-fleet roster: together these resolve a host's short name,
+  // FQDN and client id onto one canonical identity, so synthesis reads and ranks one host instead
+  // of two. Absent → no resolution (the pre-gate behavior).
+  assetOverridesStore?: AssetOverridesStore;
+  velociraptorClientStore?: VelociraptorClientStore;
+  // Pairs the analyst has judged to be different machines. Presence of this store is what ENABLES
+  // the pre-synthesis merge gate: absent → the gate never runs, so CLI scripts and older tests are
+  // unaffected. See analysis/hostDuplicateGate.ts.
+  hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
 }

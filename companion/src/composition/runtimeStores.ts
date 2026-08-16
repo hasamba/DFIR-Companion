@@ -81,6 +81,7 @@ import { PlaybookStore } from "../analysis/playbookStore.js";
 import { PlaybookHuntStore } from "../analysis/playbookHuntStore.js";
 import { PlaybookControlStore } from "../analysis/playbookControl.js";
 import { AssetOverridesStore } from "../analysis/assetOverrides.js";
+import { HostDuplicateDismissalStore } from "../analysis/hostDuplicateDismissals.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 import { AiCostStore } from "../analysis/aiCost.js";
@@ -305,6 +306,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
+  const hostDuplicateDismissalStore = new HostDuplicateDismissalStore(store);
   const iocAliasStore = new IocAliasStore(store); // #82: analyst IOC merges (survive re-synthesis)
   const synthMetaStore = new SynthMetaStore(store);
   const aiCostStore = new AiCostStore(store);
@@ -347,6 +349,9 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     customerExposure: new CustomerExposureStore(store),
     notebook: notebookStore,
     assetOverrides: assetOverridesStore,
+    // Paired with assetOverrides so hostRanking() resolves a host's short-name/FQDN spellings onto
+    // one canonical name, same as the hostScope callback just above.
+    fleet: velociraptorClientStore,
     playbook: playbookStore,
     reportTemplates: reportTemplateStore,
     reportTemplateControl: reportTemplateControlStore,
@@ -429,6 +434,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     playbookHuntStore,
     playbookControlStore,
     assetOverridesStore,
+    hostDuplicateDismissalStore,
     iocAliasStore,
     synthMetaStore,
     aiCostStore,

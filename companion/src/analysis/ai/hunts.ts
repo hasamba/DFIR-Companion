@@ -1,4 +1,5 @@
 import type { AIProvider } from "../../providers/provider.js";
+import type { AssetOverridesStore } from "../assetOverrides.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
 import {
   deployedFingerprints,
@@ -43,8 +44,9 @@ import {
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../synthSelect.js";
 import { maxPromptEvents } from "../synthGroup.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import { getHuntSuggestPrompt, getPlaybookHuntPrompt, getQueryTranslatePrompt } from "./prompts/index.js";
-import { callAiJson, loadScopedEvents, retryPolicy } from "./aiContext.js";
+import { callAiJson, loadCtxAliasIndex, loadScopedEvents, retryPolicy } from "./aiContext.js";
 import { knownUnknownsBlock, type PromptBlockContext } from "./promptBlocks.js";
 
 /**
@@ -57,11 +59,18 @@ import { knownUnknownsBlock, type PromptBlockContext } from "./promptBlocks.js";
  * pivots on what worked. All four are EPHEMERAL — nothing here mutates the case.
  */
 
-/** What a hunt generator needs beyond the shared AI-call seam and the derived prompt blocks. */
+/**
+ * What a hunt generator needs beyond the shared AI-call seam and the derived prompt blocks — plus
+ * the two stores buildFleetHuntPrompt/buildPlaybookHuntPrompt resolve canonical host identity from
+ * (see `loadCtxAliasIndex` in aiContext.ts), so a suggested hunt reads a merged near-duplicate as
+ * one machine.
+ */
 export interface HuntContext extends PromptBlockContext {
   readonly opts: PromptBlockContext["opts"] & {
     velociraptorProvider?: AIProvider;
     huntOutcomeStore?: HuntOutcomeStore;
+    assetOverridesStore?: AssetOverridesStore;
+    velociraptorClientStore?: VelociraptorClientStore;
   };
 }
 
@@ -181,7 +190,8 @@ async function buildFleetHuntPrompt(
   const findingsText = renderHuntFindings(loaded.findings);
   const iocText = renderHuntIocs(loaded.iocs);
   const techText = loaded.mitreTechniques.map((t) => `${t.id} ${t.name}`).join(", ") || "(none)";
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   // Causal grounding (#124): serialize the deterministic evidence-chain graph — process spawn
   // chains, file lineage, lateral-movement edges — so the model hunts the RELATIONSHIP (the
   // parent→child chain, the binary/account that moved between hosts) fleet-wide, not just the leaf
@@ -235,7 +245,8 @@ async function buildPlaybookHuntPrompt(
 ): Promise<string> {
   const feedback = huntFeedbackBlocks(outcomes);
   const findingsText = renderHuntFindings(loaded.findings);
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   const leading = feedback.prior + feedback.productivity + contextBlock;
   const timelineText = renderHuntTimeline(
     scoped,

@@ -1,5 +1,10 @@
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
-import { buildHostAliasIndex, findNearDuplicates, hostMergesFromAssetIds } from "./hostAlias.js";
+import {
+  buildHostAliasIndex,
+  findNearDuplicates,
+  hostMergesFromAssetIds,
+  type HostAliasIndex,
+} from "./hostAlias.js";
 import { aggregateHostEvidence, overlayFindingLinks } from "./hostScopeAggregate.js";
 import { buildHostScopeLedger, type HostScopeLedger } from "./hostScope.js";
 import type { HostScopeStore } from "./hostScopeStore.js";
@@ -30,6 +35,18 @@ export function caseTacticsOf(state: InvestigationState): IrisTactic[] {
     if (tactic) tactics.add(tactic);
   }
   return [...tactics];
+}
+
+// Standalone alias-index loader for callers that need canonical host resolution but not the full
+// ledger (e.g. playbook derivation) — same recipe loadHostScopeLedger uses below, factored out so
+// both stay in sync instead of growing their own copy.
+export async function loadHostAliasIndex(
+  sources: Pick<HostScopeSources, "assetOverrides" | "fleet">,
+  caseId: string,
+): Promise<HostAliasIndex> {
+  const overrides = sources.assetOverrides ? await sources.assetOverrides.load(caseId) : null;
+  const inventory = sources.fleet ? await sources.fleet.load() : { updatedAt: "", clients: [] };
+  return buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));
 }
 
 export async function loadHostScopeLedger(

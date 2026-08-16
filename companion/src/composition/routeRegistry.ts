@@ -45,6 +45,7 @@ import { registerDeepPassRoutes } from "../routes/deepPass.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
 import { registerHostScopeRoutes } from "../routes/hostScope.js";
+import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
 import { registerClockSkewRoutes } from "../routes/clockSkew.js";
 import {
   registerSlashCommandRoutes,
@@ -128,6 +129,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerIncidentTypeRoutes(app, ctx);
   registerCollectionPlanRoutes(app, ctx);
   registerHostScopeRoutes(app, ctx);
+  registerHostDuplicateRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
   registerCockpitRoutes(app, ctx);

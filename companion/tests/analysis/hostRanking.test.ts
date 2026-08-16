@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import { rankHosts, buildSignalConcentrationDigest } from "../../src/analysis/hostRanking.js";
+import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 
 function ev(
   id: string,
@@ -91,6 +92,25 @@ describe("rankHosts (#202)", () => {
     const digest = buildSignalConcentrationDigest(rankHosts(caseState()));
     expect(digest).toContain("SIGNAL CONCENTRATION");
     expect(digest).toContain("WS-DEV-01");
+  });
+
+  it("merges a short-name/FQDN duplicate into one ranked entity when an alias index is given", () => {
+    const s = emptyState("veridia");
+    s.forensicTimeline.push(
+      ev("a1", "WIN11", "Critical", "2024-03-18T15:24:38Z", ["T1003.001"], "LSASS dump"),
+      ev("a2", "WIN11.windomain.local", "High", "2024-03-18T14:17:07Z", ["T1204.002"], "dropper"),
+    );
+    const merged = rankHosts(s).ranks.filter((r) => r.type === "host");
+    expect(merged).toHaveLength(2); // no alias index: two distinct rows
+
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const { ranks, topHosts } = rankHosts(s, { aliasIndex });
+    const hosts = ranks.filter((r) => r.type === "host");
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].name).toBe("win11.windomain.local");
+    expect(hosts[0].critical).toBe(1);
+    expect(hosts[0].high).toBe(1);
+    expect(topHosts).toEqual(["win11.windomain.local"]);
   });
 
   it("returns empty ranking when nothing carries signal", () => {

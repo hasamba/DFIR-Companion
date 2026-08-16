@@ -12,6 +12,7 @@ import type { ForensicEvent } from "./stateTypes.js";
 import type { BeaconCandidate } from "./beaconDetect.js";
 import { BEACON_CAVEAT } from "./beaconDetect.js";
 import type { AttackPhase } from "./burstDetect.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
 
@@ -26,9 +27,12 @@ function clip(v: string): string {
 //   <host:WS07> <proc:powershell.exe←excel.exe> <net:10.1.2.3→52.1.1.1:443> <src:3>
 // Only set fields are emitted. `src:N` (N≥2) flags cross-tool corroboration. Returns "" (no leading
 // space) when the event carries no structured fields, so a bare event line is unchanged.
-export function renderStructuredTags(e: ForensicEvent): string {
+export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasIndex): string {
   const tags: string[] = [];
-  if (e.asset) tags.push(`<host:${clip(e.asset)}>`);
+  // Resolve at RENDER time only — the stored event keeps its original spelling. Without this the
+  // model reads both spellings in the raw event stream and narrates two machines regardless of
+  // what the derived context blocks say.
+  if (e.asset) tags.push(`<host:${clip(aliasIndex ? resolveHost(aliasIndex, e.asset) : e.asset)}>`);
 
   if (e.processName || e.parentName) {
     const child = e.processName ? clip(e.processName) : "";

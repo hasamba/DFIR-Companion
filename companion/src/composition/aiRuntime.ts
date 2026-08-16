@@ -24,6 +24,7 @@ import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { AnalysisRunStore } from "../analysis/analysisRunStore.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 import type { SecondOpinionStore } from "../analysis/secondOpinionStore.js";
+import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
@@ -56,6 +57,7 @@ export interface AiRuntimeDeps {
   analysisRunStore: AnalysisRunStore;
   operationalMetrics: OperationalMetricsStore;
   secondOpinionStore: SecondOpinionStore;
+  velociraptorClientStore?: VelociraptorClientStore;
   notifier: Notifier;
   dashboardBaseUrl: string;
   /** Broadcast a fresh state to live dashboards (the LiveHub's broadcast). */
@@ -74,6 +76,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     analysisRunStore,
     operationalMetrics,
     secondOpinionStore,
+    velociraptorClientStore,
     notifier,
     dashboardBaseUrl,
     onState,
@@ -129,6 +132,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     incidentTypeStore,
     analysisRunStore,
     operationalMetrics,
+    velociraptorClientStore,
     presidio,
     presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider,

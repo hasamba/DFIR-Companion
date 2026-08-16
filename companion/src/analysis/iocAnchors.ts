@@ -12,6 +12,7 @@
 import type { InvestigationState, ForensicEvent } from "./stateTypes.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { deriveIocSources } from "./iocCorroboration.js";
+import type { HostAliasIndex } from "./hostAlias.js";
 
 export interface IocAnchor {
   value: string;
@@ -126,6 +127,9 @@ export interface RankConnectiveOptions {
   max?: number; // cap the returned anchors (default 12)
   minHosts?: number; // hosts touched to qualify as cross-host (default 2)
   minTools?: number; // tools observing to qualify as corroborated (default 2)
+  // Without this, one host spelled two ways counts as two hosts — and since the score is
+  // `hosts.size * 4`, every IOC touching it is promoted on cross-host reach it does not have.
+  aliasIndex?: HostAliasIndex;
 }
 
 // Rank the case's indicators by connective reach. Only indicators that are connective (touch ≥
@@ -139,7 +143,7 @@ export function rankConnectiveIocs(
   const minHosts = opts.minHosts ?? 2;
   const minTools = opts.minTools ?? 2;
 
-  const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents });
+  const graph = buildAssetGraph({ ...state, forensicTimeline: scopedEvents }, undefined, opts.aliasIndex);
   const assetById = new Map(graph.assets.map((a) => [a.id, a] as const));
   const toolsByIocId = deriveIocSources(state.iocs, scopedEvents);
   // The FULL set of the case's own host assets (not just this IOC's touched hosts) — used to catch

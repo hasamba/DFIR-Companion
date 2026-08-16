@@ -1,5 +1,6 @@
 import { ProviderError, type ProviderErrorKind } from "../../providers/provider.js";
 import { PresidioApprovalRequired, PresidioScanError } from "../presidio.js";
+import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 
 /**
  * Retry policy for AI calls (#418).
@@ -18,6 +19,9 @@ function isRetryableError(err: unknown): boolean {
   // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays
   // the 409 the analyst is waiting on, so surface it on the first throw.
   if (err instanceof PresidioApprovalRequired) return false;
+  // Same reasoning as the approval gate above: a merge decision is a wall, not a blip. Retrying
+  // re-derives the identical pending list and delays the 409 the analyst is waiting on.
+  if (err instanceof HostMergeDecisionRequired) return false;
   // A Presidio scan that ran out of budget is actively made WORSE by retrying, which is why it is
   // singled out from scan failures in general (a refused connection can still be a blip worth one
   // more go). Aborting the request does not cancel the analyzer's work, so the retry queues behind

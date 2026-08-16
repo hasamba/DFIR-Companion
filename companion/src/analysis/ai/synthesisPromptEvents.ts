@@ -1,5 +1,6 @@
 import { eventPrevalence, buildPrevalenceIndex, prevalenceTag, rarityScore } from "../prevalence.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
+import type { HostAliasIndex } from "../hostAlias.js";
 import { renderStructuredTags } from "../synthEvidence.js";
 import {
   collapseForPrompt,
@@ -65,8 +66,9 @@ export interface TimelineSelection {
 export function createTimelineSelection(
   state: InvestigationState,
   scopedEvents: ForensicEvent[],
+  aliasIndex?: HostAliasIndex,
 ): TimelineSelection {
-  const { grouping, omittedInfo } = collapseBursts(scopedEvents);
+  const { grouping, omittedInfo } = collapseBursts(scopedEvents, aliasIndex);
   const collapsedEvents = grouping.events;
 
   // Per-case prevalence/baseline (investigation-guidance #15): how common each activity PATTERN is
@@ -97,7 +99,7 @@ export function createTimelineSelection(
     get promptEvents() {
       return promptEvents;
     },
-    renderEvent: (event) => renderPromptEvent(event, { grouping, prevalenceIndex, isContext }),
+    renderEvent: (event) => renderPromptEvent(event, { grouping, prevalenceIndex, isContext, aliasIndex }),
     fitTo(count) {
       if (count >= promptEvents.length) return;
       selection = selectSynthesisEventsAnnotated(collapsedEvents, count, rarityOf);
@@ -117,7 +119,10 @@ export function createTimelineSelection(
  * detections their place. They remain in the case, the timeline and the coverage denominators — this
  * only decides who gets budget.
  */
-function collapseBursts(scopedEvents: ForensicEvent[]): {
+function collapseBursts(
+  scopedEvents: ForensicEvent[],
+  aliasIndex?: HostAliasIndex,
+): {
   grouping: CollapsedPrompt;
   omittedInfo: number;
 } {
@@ -125,7 +130,7 @@ function collapseBursts(scopedEvents: ForensicEvent[]): {
   // The explicit CollapsedPrompt annotation matters: without it the disabled branch's bare
   // `new Map()` infers Map<unknown, unknown> and every later `groupById.get(...)` fails to typecheck.
   const grouping: CollapsedPrompt = groupingEnabled()
-    ? collapseForPrompt(eligible, groupEnvOptions())
+    ? collapseForPrompt(eligible, { ...groupEnvOptions(), aliasIndex })
     : { events: [...eligible], groupById: new Map(), memberIdsByRepresentative: new Map() };
   return { grouping, omittedInfo: scopedEvents.length - eligible.length };
 }
@@ -134,6 +139,7 @@ interface RenderContext {
   grouping: CollapsedPrompt;
   prevalenceIndex: ReturnType<typeof buildPrevalenceIndex>;
   isContext: (id: string) => boolean;
+  aliasIndex?: HostAliasIndex;
 }
 
 /**
@@ -155,5 +161,5 @@ function renderPromptEvent(e: ForensicEvent, ctx: RenderContext): string {
   // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
   const prefix = ctx.isContext(e.id) ? "~" : "";
   const description = e.description.slice(0, 240);
-  return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
+  return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e, ctx.aliasIndex)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
 }

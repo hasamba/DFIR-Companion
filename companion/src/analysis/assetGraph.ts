@@ -1,4 +1,5 @@
 import type { InvestigationState, IOC, ForensicEvent, Severity } from "./stateTypes.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // Derives the asset ↔ IoC graph from the investigation state. An "asset" is a victim
 // entity an event happened on: a HOST (from each event's `asset` field — populated by THOR,
@@ -182,7 +183,11 @@ export function extractAccounts(text: string): string[] {
   return [...out];
 }
 
-export function buildAssetGraph(state: InvestigationState, window?: TimeWindow): AssetGraph {
+export function buildAssetGraph(
+  state: InvestigationState,
+  window?: TimeWindow,
+  aliasIndex?: HostAliasIndex,
+): AssetGraph {
   // Scope the timeline first (#83); IoCs/findings are still keyed off the full state, so only those
   // reached by an in-window event end up linked — out-of-window links simply don't form.
   const timeline = filterTimeline(state.forensicTimeline, window);
@@ -254,7 +259,12 @@ export function buildAssetGraph(state: InvestigationState, window?: TimeWindow):
 
   for (const e of timeline) {
     const assetsForEvent: GraphAsset[] = [];
-    if (e.asset && e.asset.trim()) assetsForEvent.push(ensureAsset("host", e.asset.trim()));
+    if (e.asset && e.asset.trim()) {
+      // Merge alias spellings (short name vs FQDN, or an explicit analyst merge) onto one asset
+      // node — otherwise "WIN11" and "WIN11.windomain.local" show up as two separate hosts.
+      const hostName = aliasIndex ? resolveHost(aliasIndex, e.asset.trim()) : e.asset.trim();
+      assetsForEvent.push(ensureAsset("host", hostName));
+    }
     for (const acct of extractAccounts(e.description)) assetsForEvent.push(ensureAsset("account", acct));
     if (assetsForEvent.length === 0) continue;
 
