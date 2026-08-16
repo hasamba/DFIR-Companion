@@ -216,6 +216,14 @@
       document.getElementById("jobsBadge").click();
       return;
     }
+    // Deliberately NOT in the panelIds/panelViews tables below: those switch the analyst into
+    // another view first, and the duplicate-host panel is reachable from the one they are already
+    // in — it is data-gated, and its own module opens the gate. Sending them to Analyst to answer a
+    // yes/no question would throw away the cockpit they are working in.
+    if (target.panel === "host-duplicates") {
+      revealHostDuplicates();
+      return;
+    }
     const panelIds = {
       findings: "sec-findings",
       hypotheses: "sec-hypotheses",

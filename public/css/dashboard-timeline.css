@@ -308,6 +308,9 @@
 .ai-idle { background: var(--success-bg); color: var(--sev-low); }
 .ai-analyzing { background: var(--warning-bg-strong); color: var(--sev-medium); }
 .ai-error { background: var(--danger-bg); color: var(--sev-critical); }
+/* A gate waiting on the analyst — amber like the chips it points at, deliberately NOT the red of
+   .ai-error: the run has not failed, it is holding for a decision. */
+.ai-blocked { background: var(--warning-bg-strong); color: var(--sev-high); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .ai-analyzing { animation: pulse 1s ease-in-out infinite; }

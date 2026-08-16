@@ -38,10 +38,19 @@ describe("HostMergeDecisionRequired wiring", () => {
     expect(res.payload).toEqual({ error: "host_merge_decision_required", pairs: PAIRS });
   });
 
-  it("broadcasts ai_status error when a context is supplied", () => {
+  // "blocked", NOT "error". The gate is a question waiting on the analyst, and painting it red as a
+  // crash told them the AI had broken when it was only holding — the reason nobody went looking for
+  // a merge button. Both gates in this helper report the same way for the same reason.
+  it("broadcasts ai_status blocked when a context is supplied", () => {
     const onAiStatus = vi.fn();
     sendPipelineError(fakeRes(), new HostMergeDecisionRequired(PAIRS), { caseId: "c1", onAiStatus });
-    expect(onAiStatus).toHaveBeenCalledWith("c1", expect.objectContaining({ status: "error" }));
+    expect(onAiStatus).toHaveBeenCalledWith("c1", expect.objectContaining({ status: "blocked" }));
+  });
+
+  it("carries the pair count in the detail so the pill can say what is held", () => {
+    const onAiStatus = vi.fn();
+    sendPipelineError(fakeRes(), new HostMergeDecisionRequired(PAIRS), { caseId: "c1", onAiStatus });
+    expect(onAiStatus.mock.calls[0][1].detail).toContain("duplicate host");
   });
 
   it("still maps an unrelated error to 500", () => {

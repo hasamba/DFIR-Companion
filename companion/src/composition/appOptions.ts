@@ -111,7 +111,13 @@ import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import type { BackupManager } from "../storage/backupManager.js";
 import type { PreflightReport } from "../analysis/preflight.js";
 
-export type AiStatus = "analyzing" | "idle" | "error";
+// "blocked" is a GATE, not a failure: the pipeline stopped on purpose and is waiting for an analyst
+// decision (a Presidio approval, a duplicate-host merge). It exists because both gates used to
+// report as "error", which painted a red "AI: error" pill over a question nobody knew they had been
+// asked — the analyst read it as a crash and went looking for a broken provider instead of the
+// decision that would release the run. Anything that ends the run WITHOUT a pending decision stays
+// "error".
+export type AiStatus = "analyzing" | "idle" | "error" | "blocked";
 // What the AI is actually doing, so the dashboard can say "processing screenshots"
 // vs "synthesizing" vs idle rather than a generic "analyzing".
 // "deep-pass" is its own phase rather than another "synthesizing": its detail already reads as a

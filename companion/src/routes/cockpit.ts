@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { deriveCockpit, type CockpitAction, type CockpitSnapshot } from "../analysis/cockpit.js";
 import { CockpitStore } from "../analysis/cockpitStore.js";
+import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+import type { InvestigationState } from "../analysis/stateTypes.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
 import type { RouteContext } from "./context.js";
@@ -35,6 +37,37 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     return meta?.investigator?.trim().slice(0, 120) || "analyst";
   }
 
+  /**
+   * Pairs still awaiting a merge decision, or none when the review feature is not wired.
+   *
+   * TAKES THE ALREADY-LOADED STATE. StateStore.load() is uncached — a full SQLite round-trip plus a
+   * map over every forensic event — and this endpoint is polled, so letting the shared helper load
+   * its own copy meant parsing the whole case twice per cockpit refresh. Handing it the state the
+   * snapshot already holds is why the call below waits on that one load instead of running beside it.
+   *
+   * Fully guarded and fail-quiet: this is one card in a snapshot of a dozen, and the cockpit is the
+   * dashboard's default view. A store that throws here must not take the whole cockpit down with it
+   * — the header chip and the Duplicate Hosts panel both load the same list independently, so a
+   * missed card costs a redundant surface, not the decision.
+   */
+  async function pendingHostDuplicates(caseId: string, state: InvestigationState) {
+    const { assetOverridesStore, hostDuplicateDismissalStore } = options;
+    if (!assetOverridesStore || !hostDuplicateDismissalStore) return [];
+    try {
+      return await loadPendingHostDuplicates(
+        {
+          state: { load: async () => state },
+          assetOverrides: assetOverridesStore,
+          dismissals: hostDuplicateDismissalStore,
+          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        },
+        caseId,
+      );
+    } catch {
+      return [];
+    }
+  }
+
   async function loadSnapshot(
     caseId: string,
     requestedInvestigator?: unknown,
@@ -43,15 +76,18 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     const stateStore = options.stateStore;
     if (!stateStore) throw new Error("state store not configured");
     const investigator = await resolveInvestigator(caseId, requestedInvestigator);
-    const [state, hypotheses, workflows, pins, importMeta, synthMeta, decisions] = await Promise.all([
-      stateStore.load(caseId),
-      options.hypothesisStore?.load(caseId) ?? Promise.resolve([]),
-      options.findingWorkflowStore?.load(caseId) ?? Promise.resolve([]),
-      options.pinnedFindingsStore?.load(caseId) ?? Promise.resolve([]),
-      options.importMetaStore?.load(caseId),
-      options.synthMetaStore?.load(caseId),
-      cockpitStore.load(caseId),
-    ]);
+    const state = await stateStore.load(caseId);
+    const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates] = await Promise.all(
+      [
+        options.hypothesisStore?.load(caseId) ?? Promise.resolve([]),
+        options.findingWorkflowStore?.load(caseId) ?? Promise.resolve([]),
+        options.pinnedFindingsStore?.load(caseId) ?? Promise.resolve([]),
+        options.importMetaStore?.load(caseId),
+        options.synthMetaStore?.load(caseId),
+        cockpitStore.load(caseId),
+        pendingHostDuplicates(caseId, state),
+      ],
+    );
     return deriveCockpit({
       state,
       ...(options.hypothesisStore ? { hypotheses } : {}),
@@ -61,6 +97,7 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
       importMeta,
       synthMeta,
       decisions,
+      hostDuplicates,
       investigator,
     });
   }

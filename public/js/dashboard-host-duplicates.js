@@ -32,12 +32,41 @@
     );
   }
 
+  // The section is DATA-GATED: hidden while nothing is pending, shown the moment something is.
+  //
+  // Opening the gate alone is not enough. applyViewLayout writes `false` into SECTIONS_VIS_KEY for
+  // every section a view omits, and the Now view omitted this one — so on any dashboard that had
+  // ever shown the cockpit, the stored preference said "hidden", and applyViewLayout carries a
+  // GATED section's stored choice through untouched. The gate would open onto a section the
+  // preference still hid. Forcing the stored value on while a pair is pending is deliberate: this
+  // is a stopped pipeline, not a layout taste, and the only control that can restart it lives here.
+  // The gate closing is what hides it again, so the analyst's choice is never permanently rewritten
+  // into "always show".
+  function paintSectionGate() {
+    const sec = document.getElementById("sec-host-duplicates");
+    if (!sec) return;
+    sec.dataset.gateOpen = pending.length ? "1" : "";
+    if (pending.length) {
+      try {
+        const vis = JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}");
+        if (vis["sec-host-duplicates"] !== true) {
+          vis["sec-host-duplicates"] = true;
+          localStorage.setItem(SECTIONS_VIS_KEY, JSON.stringify(vis));
+        }
+      } catch {
+        // A wedged localStorage must not stop the gate itself from opening.
+      }
+    }
+    applySectionsVis();
+  }
+
   function paint() {
     const badge = document.getElementById("hostDuplicatesBadge");
     if (badge) {
       badge.style.display = pending.length ? "" : "none";
       badge.textContent = "⚠ Duplicate hosts: " + pending.length;
     }
+    paintSectionGate();
     const el = document.getElementById("hostDuplicatesBody");
     if (!el) return;
     el.innerHTML = renderHostDuplicates(pending);
@@ -94,12 +123,23 @@
 
   // The badge lives in the page header, so this binds at load, not on module evaluation.
   function initHostDuplicates() {
-    document.getElementById("hostDuplicatesBadge")?.addEventListener("click", () => {
-      document.getElementById("sec-host-duplicates")?.scrollIntoView({ behavior: "smooth" });
-    });
+    document.getElementById("hostDuplicatesBadge")?.addEventListener("click", revealHostDuplicates);
+  }
+
+  // Re-open the gate before scrolling. paint() already opened it, but a dashboard-view switch
+  // between then and now re-runs applySectionsVis from stored preferences, and scrolling to a
+  // display:none section is a silent no-op — which is exactly how this chip came to look dead.
+  function revealHostDuplicates() {
+    paintSectionGate();
+    const sec = document.getElementById("sec-host-duplicates");
+    if (!sec) return;
+    sec.classList.remove("collapsed");
+    sec.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   window.loadHostDuplicates = loadHostDuplicates;
   window.renderHostDuplicates = renderHostDuplicates;
   window.initHostDuplicates = initHostDuplicates;
+  // Published for the cockpit's blocker card, which targets panel "host-duplicates".
+  window.revealHostDuplicates = revealHostDuplicates;
 })();

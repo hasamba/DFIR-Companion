@@ -47,7 +47,11 @@ describe("dashboardViews — seed integrity", () => {
   });
 
   it("Now is the focused default while Analyst remains the densest existing workspace", () => {
-    expect(getDashboardView("now")!.sections).toEqual(["sec-now"]);
+    // sec-host-duplicates rides along with the cockpit, and it is the ONLY passenger: it is
+    // data-gated in the markup, so it stays invisible until a pair is actually pending. Before it
+    // was listed here the Now view hid it outright, and the merge buttons — the one thing that can
+    // release a held synthesis — were unreachable from the default view.
+    expect(getDashboardView("now")!.sections).toEqual(["sec-now", "sec-host-duplicates"]);
     const analyst = getDashboardView("analyst");
     expect(analyst).toBeDefined();
     // Curated to match the default onboarding layout — excludes the handful of sections that are
@@ -165,7 +169,7 @@ describe("sec-collection-plan registration (#347)", () => {
 describe("sec-now registration (#375)", () => {
   it("is registered and included in the focused Now and comprehensive Analyst profiles", () => {
     expect(DASHBOARD_SECTION_IDS).toContain("sec-now");
-    expect(getDashboardView("now")!.sections).toEqual(["sec-now"]);
+    expect(getDashboardView("now")!.sections[0]).toBe("sec-now");
     expect(getDashboardView("analyst")!.sections).toContain("sec-now");
   });
 });

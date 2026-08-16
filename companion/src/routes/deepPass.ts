@@ -4,13 +4,19 @@ import { deepPassCheckpointSchema, type DeepPassCheckpoint } from "../analysis/d
 import type { Job } from "../analysis/jobRegistry.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import type { Severity } from "../analysis/stateTypes.js";
-import { sendPipelineError } from "./presidioApproval.js";
+import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
 
-  const aiStatus = (caseId: string, status: "analyzing" | "idle" | "error", detail?: string): void => {
+  // "blocked" is in the union because a deep pass ends with synthesize() (deepPassRun.ts), so it
+  // inherits the merge gate. Without it this helper could only call a held run an error.
+  const aiStatus = (
+    caseId: string,
+    status: "analyzing" | "idle" | "error" | "blocked",
+    detail?: string,
+  ): void => {
     options.onAiStatus?.(caseId, {
       status,
       ...(status === "analyzing" ? { phase: "deep-pass" as const } : {}),
@@ -153,6 +159,14 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
       return res.status(200).json(result);
     } catch (error) {
       const message = String((error as Error).message ?? "");
+      // FIRST, above the fail() below. Marking a held run `deep_pass_failed` with `retryable: true`
+      // would invite a retry that cannot succeed: the gate is on the case, so every retry stops at
+      // the same unresolved pair until the analyst merges. Cancel and report the hold instead.
+      if (isAnalystDecisionGate(error)) {
+        if (registered) await options.jobManager?.cancel(registered.jobId);
+        aiStatus(caseId, "blocked", message);
+        return sendPipelineError(res, error);
+      }
       if (registered) {
         await options.jobManager?.fail(registered.jobId, error, {
           code: /batches/i.test(message) ? "budget_exceeded" : "deep_pass_failed",
