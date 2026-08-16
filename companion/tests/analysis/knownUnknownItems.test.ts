@@ -43,6 +43,11 @@ function ev(id: string, ts: string, asset: string): ForensicEvent {
 // A same-binary-on-two-hosts hash, shared by every host-alias fixture below (evidenceGraph's
 // lateral_move (hash) rule just needs it non-empty and shared across ≥2 hosts).
 const ALIAS_FIXTURE_HASH = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+// A second, distinct hash for fixtures that need TWO separate lateral_move edges (i.e. more than
+// one pivot pair). buildEvidenceGraph sorts edges lexicographically by id, which embeds the hash
+// (`lateral|hash:${h}|...`) — ALIAS_FIXTURE_HASH starts with "a" and this starts with "f", so an
+// edge built from this hash always sorts AFTER one built from ALIAS_FIXTURE_HASH.
+const ALIAS_FIXTURE_HASH_2 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 // Minimal forensic-event factory for fixtures that need fields ev() doesn't take (sha256, sources,
 // description) — same "state only what this test cares about" shape used in evidenceGraph.test.ts.
 function partialEvent(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
@@ -189,6 +194,44 @@ describe("tacticCollectDirectives — host alias resolution", () => {
     ];
     const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
     const dirs = tacticCollectDirectives("Command and Control", s, s.forensicTimeline, [], aliasIndex);
+    expect(dirs.map((d) => d.host)).toEqual(["win11.windomain.local", "dc01", "filesvr01"]);
+  });
+
+  it("Lateral Movement: resolves+dedupes BEFORE the MAX_HOSTS_PER_TACTIC cap, so collapsing a duplicate doesn't lose a distinct host", () => {
+    const s = emptyState("c");
+    // Two shared-hash pairs → two lateral_move edges. buildEvidenceGraph sorts edges lexicographically
+    // by id, and the id embeds the hash — ALIAS_FIXTURE_HASH ("abcdef...") sorts before
+    // ALIAS_FIXTURE_HASH_2 ("ffff..."), so the WIN11 pair's edge is visited first. Within an edge,
+    // source/target are the two hosts ordered by lowercased name ("win11" < "win11.windomain.local",
+    // "dc01" < "filesvr01"). So lateralHosts()'s raw order is exactly
+    // [WIN11, WIN11.windomain.local, DC01, FILESVR01] — the merged pair at positions 0-1, and
+    // FILESVR01 (a genuinely distinct host) at position 3, past the MAX_HOSTS_PER_TACTIC=3 cap.
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: ALIAS_FIXTURE_HASH, severity: "Critical" }),
+      partialEvent({
+        id: "e2",
+        asset: "WIN11.windomain.local",
+        sha256: ALIAS_FIXTURE_HASH,
+        severity: "High",
+      }),
+      partialEvent({ id: "e3", asset: "DC01", sha256: ALIAS_FIXTURE_HASH_2, severity: "Medium" }),
+      partialEvent({ id: "e4", asset: "FILESVR01", sha256: ALIAS_FIXTURE_HASH_2, severity: "Medium" }),
+    ];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, [], aliasIndex);
+    expect(dirs.map((d) => d.host)).toEqual(["win11.windomain.local", "dc01", "filesvr01"]);
+  });
+
+  it("Initial Access: resolves+dedupes BEFORE the MAX_HOSTS_PER_TACTIC cap, so collapsing a duplicate doesn't lose a distinct host", () => {
+    const s = emptyState("c");
+    // Initial Access's raw list is [earliestAsset(scopedEvents), ...topHosts] — uncapped before the
+    // resolve step. earliestAsset supplies the short-name spelling at raw position 0; topHosts (the
+    // caller-supplied ranked-hosts list, e.g. from rankHosts) supplies the FQDN spelling at position 1
+    // plus two MORE distinct hosts at positions 2-3, past the MAX_HOSTS_PER_TACTIC=3 cap.
+    s.forensicTimeline = [partialEvent({ id: "e1", asset: "WIN11", timestamp: "2026-05-20T08:00:00Z" })];
+    const topHosts = ["WIN11.windomain.local", "DC01", "FILESVR01"];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const dirs = tacticCollectDirectives("Initial Access", s, s.forensicTimeline, topHosts, aliasIndex);
     expect(dirs.map((d) => d.host)).toEqual(["win11.windomain.local", "dc01", "filesvr01"]);
   });
 
