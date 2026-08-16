@@ -87,6 +87,7 @@ test("every import route 400s an empty payload", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
   const wrong: string[] = [];
+  const misnamed: string[] = [];
   for (const { route, required } of ROUTES) {
     const res = await page.request.post(`/cases/${demoCase}/${route}`, {
       data: { [required]: "   ", filename: "empty.txt" },
@@ -94,8 +95,26 @@ test("every import route 400s an empty payload", async ({ page, demoCase }) => {
     // A whitespace-only payload is the shape a mis-wired dashboard upload sends. It must be
     // refused rather than recorded as a zero-event import, which would leave a custody entry
     // claiming evidence was ingested when none was.
-    if (res.status() !== 400) wrong.push(`${route} -> ${res.status()}`);
+    if (res.status() !== 400) {
+      wrong.push(`${route} -> ${res.status()}`);
+      continue;
+    }
+
+    // ...and the 400 must be the BLANK-payload rejection, not an "I never saw that field" one.
+    // Those are different behaviours and only the first is what this test claims to check. A wrong
+    // REQUIRED_FIELD entry drops the blank into a box the route never reads, so the route rejects
+    // an ABSENT field, still answers 400, and the test stays green while silently checking the
+    // weaker of the two — the typo is invisible. Every route names the field it wanted in the
+    // message ("text is required", "path is required (…)"), so requiring the name back pins
+    // REQUIRED_FIELD to what the route actually reads.
+    const error = String(((await res.json()) as { error?: unknown }).error ?? "");
+    if (!error.includes(required)) misnamed.push(`${route} sent ${required}, answered "${error}"`);
   }
 
   expect(wrong, `routes that accepted an empty payload: ${wrong.join(", ")}`).toEqual([]);
+  expect(
+    misnamed,
+    `routes whose 400 did not name the field REQUIRED_FIELD sent — the entry is wrong, so the ` +
+      `blank never reached the field being tested: ${misnamed.join("; ")}`,
+  ).toEqual([]);
 });
