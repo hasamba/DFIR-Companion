@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { buildMitigationsResult } from "../attackMitigations.js";
 import { loadMitigationsDataset } from "../attackMitigationsData.js";
+import type { AssetOverridesStore } from "../assetOverrides.js";
 import { buildD3fendResult } from "../d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../d3fendData.js";
+import type { HostAliasIndex } from "../hostAlias.js";
+import { loadHostAliasIndex } from "../hostScopeLoad.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
 import { sanitizeHypothesisReviews, type HypothesisReviewItem } from "../hypothesis.js";
 import {
@@ -14,6 +17,7 @@ import {
 } from "../responseSchema.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildSynthesisContext } from "../synthSelect.js";
+import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import {
   getExecSummaryPrompt,
   getHypothesisReviewPrompt,
@@ -41,9 +45,34 @@ import {
  * writes anything back, and only its own field.
  */
 
-/** What the two hypothesis-aware reports need on top of the shared AI-call seam. */
+/**
+ * What the case-report generators need on top of the shared AI-call seam: the hypothesis store
+ * (hypothesisReview only) plus the two stores every report resolves canonical host identity from
+ * (#see loadReportAliasIndex below), so a report reads a merged near-duplicate as one machine.
+ */
 export interface CaseReportContext extends AiCallContext {
-  readonly opts: AiCallContext["opts"] & { hypothesisStore?: HypothesisStore };
+  readonly opts: AiCallContext["opts"] & {
+    hypothesisStore?: HypothesisStore;
+    assetOverridesStore?: AssetOverridesStore;
+    velociraptorClientStore?: VelociraptorClientStore;
+  };
+}
+
+/**
+ * The host-identity index every report prompt renders through. `loadHostAliasIndex` (hostScopeLoad.ts)
+ * is the ONE builder the whole host-merge feature shares — reusing it here is what keeps a report and
+ * a synthesis run agreeing on which spellings are one machine.
+ *
+ * Deliberately NOT synthesis's `resolveHostsOrThrow`: that also THROWS `HostMergeDecisionRequired` for
+ * an unresolved near-duplicate, which is right for synthesis (it can wait for the analyst's decision)
+ * but wrong here — a report is a user-requested export, and the analyst must always be able to
+ * generate one, pending merge decision or not. So this only ever builds the index.
+ */
+async function loadReportAliasIndex(ctx: CaseReportContext, caseId: string): Promise<HostAliasIndex> {
+  return loadHostAliasIndex(
+    { assetOverrides: ctx.opts.assetOverridesStore, fleet: ctx.opts.velociraptorClientStore },
+    caseId,
+  );
 }
 
 /** `[timestamp] [severity] description` — the row shape for the two audience-facing reports. */
@@ -70,7 +99,7 @@ const findingsPlain = (state: InvestigationState): string =>
 // that persists: it re-reads state after the AI call so imports/edits that arrived during it aren't
 // clobbered, then saves only its own field.
 export async function generateNarrative(
-  ctx: AiCallContext,
+  ctx: CaseReportContext,
   caseId: string,
 ): Promise<{ narrativeTimeline: string }> {
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("narrative generation");
@@ -78,7 +107,8 @@ export async function generateNarrative(
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
 
   const findingsText = findingsPlain(loaded);
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   const narrativePrompt = getNarrativePrompt();
   const timelineText = fitTimelineText(
     scoped,
@@ -114,13 +144,14 @@ export async function generateNarrative(
 // Generate a management-facing executive summary of the case (single-shot, no state change).
 // Text-only over the synthesized digest, like ask(); returns plain prose for the analyst to
 // review and save into the report's executive-summary section.
-export async function executiveSummary(ctx: AiCallContext, caseId: string): Promise<ExecSummary> {
+export async function executiveSummary(ctx: CaseReportContext, caseId: string): Promise<ExecSummary> {
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("executive summary");
   const loaded = await ctx.opts.stateStore.load(caseId);
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
 
   const findingsText = findingsPlain(loaded);
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   const timelineText = fitTimelineText(
     scoped,
     renderPlainEvent,
@@ -142,7 +173,7 @@ export async function executiveSummary(ctx: AiCallContext, caseId: string): Prom
 // Incident-specific remediation plan (#178): a concrete, prioritized action list for the IR team,
 // GROUNDED in the deterministic ATT&CK Mitigations for the case's techniques so the model turns
 // generic guidance into specific steps instead of hallucinating. Single-shot, no state change.
-export async function remediationPlan(ctx: AiCallContext, caseId: string): Promise<RemediationPlan> {
+export async function remediationPlan(ctx: CaseReportContext, caseId: string): Promise<RemediationPlan> {
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("remediation plan");
   const loaded = await ctx.opts.stateStore.load(caseId);
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
@@ -159,7 +190,8 @@ export async function remediationPlan(ctx: AiCallContext, caseId: string): Promi
 
   const { mitigationsText, d3fendText } = renderControlGrounding(filtered);
 
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
 
   const userPrompt =
     contextBlock +
@@ -195,8 +227,9 @@ export async function hypothesisReview(
 
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
   const validEventIds = new Set(scoped.map((e) => e.id));
+  const aliasIndex = await loadReportAliasIndex(ctx, caseId);
 
-  const userPrompt = await buildHypothesisReviewPrompt(ctx, loaded, scoped, open);
+  const userPrompt = await buildHypothesisReviewPrompt(ctx, loaded, scoped, open, aliasIndex);
 
   const knownHypotheses = new Map(open.map((h) => [h.id, h.title] as const));
   return callAiJson(
@@ -260,9 +293,10 @@ async function buildHypothesisReviewPrompt(
   loaded: InvestigationState,
   scoped: ForensicEvent[],
   open: OpenHypothesis[],
+  aliasIndex: HostAliasIndex,
 ): Promise<string> {
   const findingsText = findingsWithIds(loaded);
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   const hypothesesText = renderOpenHypotheses(open);
   const timelineText = fitTimelineText(
     scoped,
