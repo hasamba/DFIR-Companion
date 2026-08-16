@@ -316,8 +316,13 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // CSV/… imports populate the timeline without an AI call) still needs synthesis. Trigger it —
     // skip-if-unchanged makes it a no-op when nothing actually changed — so turning AI on analyzes
     // the imported data, not just screenshots. If synthesis can't run, clear the optimistic message.
+    // hasSynthesisProvider(), NOT hasAiProvider() — the distinction the file header opens with, and
+    // this function got it wrong in both places below. Synthesis runs on the TEXT model (falling
+    // back to the vision one), so asking about vision here is asking the wrong question, and
+    // scheduleSynthesis re-asks the right one anyway.
+    const canSynthesize = Boolean(options.pipeline?.hasSynthesisProvider());
     const catchUpSynthesis = async () => {
-      if (autoSynth && options.pipeline && hasAiProvider()) {
+      if (autoSynth && canSynthesize) {
         // announceSynthesis reports "blocked" and returns false when the case is held, so turning
         // AI on for a gated case says so at once instead of claiming a run for the whole debounce.
         // Still schedule either way: scheduleSynthesis re-checks, and if the analyst resolves the
@@ -328,8 +333,19 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
         idle();
       }
     };
-    if (!options.pipeline || !hasAiProvider()) {
+    // "No AI model configured" has to mean NEITHER model. An OCR-less install (only
+    // DFIR_AI_SYNTH_PROVIDER set) has no vision model by design, and this guard used to send it
+    // straight out of the function with that message — which was false, and which meant turning AI
+    // on for an import-only case did nothing at all: no synthesis was ever scheduled. Exactly the
+    // failure the file header warns about, committed here.
+    if (!options.pipeline || (!hasAiProvider() && !canSynthesize)) {
       idle("AI on — no AI model configured"); // can't analyze, but clear the optimistic message
+      return;
+    }
+    // Text model but no vision model: there are no screenshots to catch up on — nothing could have
+    // produced any — but imported evidence still needs synthesizing.
+    if (!hasAiProvider()) {
+      await catchUpSynthesis();
       return;
     }
     let control = await getControl(caseId);
