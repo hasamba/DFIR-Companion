@@ -12,7 +12,7 @@ import type { APIRequestContext } from "@playwright/test";
 // Each row asserts SUBSTANCE, not a status code. Every one of these panels renders whatever its
 // endpoint returns, so a 200 carrying an empty object paints an empty panel and looks like "this
 // case has no beacons" rather than "the derivation broke". The seeded case has known content —
-// 58 events, 12 findings, 17 IOCs, fixed hosts — so the assertions can name it.
+// 59 events, 14 findings, 17 IOCs, fixed hosts — so the assertions can name it.
 //
 // Where a panel is legitimately empty for the demo case (no hunts have been run, no findings
 // pinned, no activity logged yet) the row asserts the CONTRACT instead, and says so. Asserting
