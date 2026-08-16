@@ -611,6 +611,7 @@
     "ROUTE GET /js/dashboard-hypotheses.js",
     "ROUTE GET /js/dashboard-ioc-quick-actions.js",
     "ROUTE GET /js/dashboard-keyboard-nav.js",
+    "ROUTE GET /js/dashboard-host-duplicates.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
