@@ -53,6 +53,24 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
+
+  /**
+   * Restart the synthesis the approval gate was holding, once nothing is left to approve.
+   *
+   * The chip is driven by the pending list, so it vanishes on the last approval — and until this
+   * existed, that was the ONLY thing that happened. No run was kicked and no ai_status was emitted,
+   * so the header pill sat on "AI: on hold — Presidio…" forever and the analyst had to know to press
+   * Re-synthesize. Reported verbatim: "i handled all, the presidio chip is gone but ai does not
+   * continue."
+   *
+   * ONLY ON THE LAST ONE, the same rule the sibling gate documents in routes/hostDuplicates.ts:
+   * kicking per approval would spend one run per finding, and every run but the last would re-throw
+   * on whatever is still pending. The two gates are the same shape and report the same "blocked"
+   * status, so they must resolve the same way.
+   */
+  function resumeIfClear(caseId: string, remaining: readonly unknown[]): void {
+    if (remaining.length === 0) ctx.resynthesizeInBackground(caseId);
+  }
   const visionIsLocal = isLocalAiProvider(
     visionEnv(process.env, "PROVIDER"),
     visionEnv(process.env, "BASE_URL"),
@@ -270,6 +288,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         action: "presidio-approve",
         detail: `Approved a Presidio ${entities[0].category} finding for masking`,
       });
+      resumeIfClear(caseId, rest);
       return res.json({ pending: rest });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -297,6 +316,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         action: "presidio-suppress",
         detail: "Suppressed a Presidio finding (marked not PII)",
       });
+      resumeIfClear(caseId, rest);
       return res.json({ pending: rest });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
