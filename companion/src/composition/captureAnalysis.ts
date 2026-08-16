@@ -28,6 +28,9 @@ import type { CaptureMetadata } from "../types.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+// The class, for its MESSAGE — announceSynthesis words the pre-emptive "blocked" with it so the
+// header pill and the gate's own 409 can never drift into saying different things.
+import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
 import { isAnalystDecisionGate } from "../routes/presidioApproval.js";
 
 export interface CaptureAnalysisDeps {
@@ -134,6 +137,65 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     );
   }
 
+  /**
+   * Pairs holding this case at the merge gate, or none when the review feature is not wired.
+   *
+   * Fail-open (`[]` on any problem): a false "held" would stop a synthesis that should run, whereas
+   * a missed one only costs the optimistic label below — synthesize() still consults the real gate.
+   */
+  async function heldPairs(caseId: string) {
+    const { stateStore, assetOverridesStore, hostDuplicateDismissalStore } = options;
+    if (!stateStore || !assetOverridesStore || !hostDuplicateDismissalStore) return [];
+    try {
+      return await loadPendingHostDuplicates(
+        {
+          state: stateStore,
+          assetOverrides: assetOverridesStore,
+          dismissals: hostDuplicateDismissalStore,
+          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        },
+        caseId,
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Say what synthesis is ABOUT to do — unless the case is already held, in which case say that.
+   * Returns false when the caller must not start a run.
+   *
+   * WHY THE CHECK IS HERE AND NOT ONLY INSIDE synthesize(). Both synthesis paths announce
+   * "synthesizing…" optimistically, because the debounce below means the alternative is eight
+   * seconds of silence after the analyst turns AI on. That announcement was made before anything
+   * consulted the gate, so a held case showed "AI: synthesizing…" in the header while the Now
+   * cockpit showed "AI analysis is on hold" — the two surfaces flatly contradicting each other,
+   * which is exactly how it was reported. synthesize() still throws the real gate; this only stops
+   * the UI claiming a run that is not going to happen.
+   *
+   * The extra state read costs one load per synthesis ATTEMPT (not per kick — the debounce has
+   * already collapsed those), immediately before a run whose next step is an LLM call.
+   */
+  async function announceSynthesis(caseId: string, detail: string): Promise<boolean> {
+    const pending = await heldPairs(caseId);
+    if (pending.length) {
+      // Worded by the gate class itself, so the pill and the 409 can never drift apart.
+      options.onAiStatus?.(caseId, {
+        status: "blocked",
+        at: new Date().toISOString(),
+        detail: new HostMergeDecisionRequired(pending).message,
+      });
+      return false;
+    }
+    options.onAiStatus?.(caseId, {
+      status: "analyzing",
+      phase: "synthesizing",
+      at: new Date().toISOString(),
+      detail,
+    });
+    return true;
+  }
+
   function scheduleSynthesis(caseId: string): void {
     // synthesize() is TEXT work — it runs on the synthesis provider (falling back to the vision
     // provider), so gate on that, not hasAiProvider(): an OCR-less install (only
@@ -149,36 +211,42 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
           scheduleSynthesis(caseId);
           return;
         } // busy — retry after debounce
-        synthInFlight.add(caseId);
-        options.onAiStatus?.(caseId, {
-          status: "analyzing",
-          phase: "synthesizing",
-          at: new Date().toISOString(),
-          detail: "synthesizing conclusions",
-        });
-        // #225: this debounced/auto path (live re-synth after captures, and the AI off→on backfill
-        // catch-up) previously ran outside the job registry, so it never showed up in the Jobs panel
-        // or offered a Cancel button — only the manual "re-synthesize" button did. Track it the same way.
-        // exclusive: a manual re-synthesize racing this live run (synthInFlight only serializes
-        // auto-vs-auto) supersedes rather than running alongside it.
-        const job = options.jobManager?.register({
-          caseId,
-          kind: "synthesis",
-          label: "live synthesis",
-          cancellable: true,
-          exclusive: true,
-        });
-        (job?.ready ?? Promise.resolve())
-          .then(() => options.pipeline!.synthesize(caseId, job?.signal ? { signal: job.signal } : {}))
-          .then(async () => {
-            if (job) await options.jobManager?.finish(job.jobId);
-            options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-            autoEnrichIfEnabled(caseId);
-          })
-          .catch((err) => settleSynthesisRejection(caseId, job, err, "synthesizing"))
-          .finally(() => synthInFlight.delete(caseId));
+        void (async () => {
+          // Held → say so and stop. No job is registered and synthInFlight is never entered, so
+          // there is nothing to clean up and the next kick re-checks from scratch.
+          if (!(await announceSynthesis(caseId, "synthesizing conclusions"))) return;
+          synthInFlight.add(caseId);
+          runScheduledSynthesis(caseId);
+        })();
       }, synthDebounceMs),
     );
+  }
+
+  /** The synthesis run itself, once the gate has been consulted and the slot taken. */
+  function runScheduledSynthesis(caseId: string): void {
+    {
+      // #225: this debounced/auto path (live re-synth after captures, and the AI off→on backfill
+      // catch-up) previously ran outside the job registry, so it never showed up in the Jobs panel
+      // or offered a Cancel button — only the manual "re-synthesize" button did. Track it the same way.
+      // exclusive: a manual re-synthesize racing this live run (synthInFlight only serializes
+      // auto-vs-auto) supersedes rather than running alongside it.
+      const job = options.jobManager?.register({
+        caseId,
+        kind: "synthesis",
+        label: "live synthesis",
+        cancellable: true,
+        exclusive: true,
+      });
+      (job?.ready ?? Promise.resolve())
+        .then(() => options.pipeline!.synthesize(caseId, job?.signal ? { signal: job.signal } : {}))
+        .then(async () => {
+          if (job) await options.jobManager?.finish(job.jobId);
+          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          autoEnrichIfEnabled(caseId);
+        })
+        .catch((err) => settleSynthesisRejection(caseId, job, err, "synthesizing"))
+        .finally(() => synthInFlight.delete(caseId));
+    }
   }
 
   async function flush(caseId: string): Promise<void> {
@@ -248,14 +316,13 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // CSV/… imports populate the timeline without an AI call) still needs synthesis. Trigger it —
     // skip-if-unchanged makes it a no-op when nothing actually changed — so turning AI on analyzes
     // the imported data, not just screenshots. If synthesis can't run, clear the optimistic message.
-    const catchUpSynthesis = () => {
+    const catchUpSynthesis = async () => {
       if (autoSynth && options.pipeline && hasAiProvider()) {
-        options.onAiStatus?.(caseId, {
-          status: "analyzing",
-          phase: "synthesizing",
-          at: new Date().toISOString(),
-          detail: "synthesizing imported evidence",
-        });
+        // announceSynthesis reports "blocked" and returns false when the case is held, so turning
+        // AI on for a gated case says so at once instead of claiming a run for the whole debounce.
+        // Still schedule either way: scheduleSynthesis re-checks, and if the analyst resolves the
+        // pair in the meantime the queued kick is what picks the work back up.
+        await announceSynthesis(caseId, "synthesizing imported evidence");
         scheduleSynthesis(caseId);
       } else {
         idle();
@@ -274,12 +341,12 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
         .filter((l) => l.trim().length > 0)
         .map((l) => JSON.parse(l) as CaptureMetadata);
     } catch {
-      catchUpSynthesis(); // no capture log (import-only case) → still synthesize imported evidence
+      await catchUpSynthesis(); // no capture log (import-only case) → still synthesize imported evidence
       return;
     }
     const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
     if (pending.length === 0) {
-      catchUpSynthesis(); // no new screenshots → still synthesize anything imported while off
+      await catchUpSynthesis(); // no new screenshots → still synthesize anything imported while off
       return;
     }
     options.onAiStatus?.(caseId, {
