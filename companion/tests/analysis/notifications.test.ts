@@ -203,6 +203,27 @@ describe("parseChannelInput", () => {
     expect(ok.draft?.minSeverity).toBe("High"); // default
   });
 
+  // The milestone default is load-bearing, not cosmetic: a milestone is the only push a BLOCKED
+  // case produces (the host near-duplicate gate stops synthesis and says so via one), so a default
+  // of false means nobody is told. Nothing pinned this before, which is how it sat off.
+  it("defaults milestone notifications ON when the input names no events", () => {
+    const ch = parseChannelInput({ type: "slack", webhookUrl: "https://hooks.slack.com/services/x" });
+    expect(ch.ok).toBe(true);
+    expect(ch.draft?.events.milestone).toBe(true);
+  });
+
+  // The other half of the contract: ON by default must still mean opt-OUT-able, or the default is
+  // not a default, it is a mandate.
+  it("keeps an explicit milestone opt-out", () => {
+    const ch = parseChannelInput({
+      type: "slack",
+      webhookUrl: "https://hooks.slack.com/services/x",
+      events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
+    });
+    expect(ch.ok).toBe(true);
+    expect(ch.draft?.events.milestone).toBe(false);
+  });
+
   it("treats mattermost + discord as webhook channels with default names", () => {
     expect(parseChannelInput({ type: "mattermost", webhookUrl: "not-a-url" }).ok).toBe(false);
     const mm = parseChannelInput({ type: "mattermost", webhookUrl: "https://mm.example.com/hooks/abc" });

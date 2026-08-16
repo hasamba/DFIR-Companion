@@ -347,10 +347,21 @@ export interface ParsedChannelInput {
   error?: string;
 }
 
+// Milestones default ON. They were off because they are lifecycle chatter — case opened, report
+// generated, drop import finished — and a channel that wanted findings did not want a feed. The
+// class changed when a milestone became the only push an analyst gets for a case that is BLOCKED:
+// the host near-duplicate gate stops synthesis and, with this off, said so to nobody. Defaulting
+// off made the quietest choice for the noisiest events and the loudest choice for the one that
+// matters. A channel that wants findings only still opts out per-kind, which is the point of the
+// toggle; what it no longer does is silently withhold "this case is on hold".
+//
+// This also reaches EXISTING channels: the default fills any kind a stored config never set, so a
+// channel saved before this change starts receiving milestones. That is intended — it is the same
+// upgrade every user would otherwise have to perform by hand — but it belongs in the release note.
 const defaultEvents = (): Record<NotificationEventKind, boolean> => ({
   critical_finding: true,
   playbook_update: true,
-  milestone: false,
+  milestone: true,
   mention: true,
 });
 
