@@ -6,6 +6,7 @@ import {
   renderKnownUnknowns,
 } from "../../src/analysis/knownUnknowns.js";
 import { derivePlaybookTasks } from "../../src/analysis/playbook.js";
+import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import {
   emptyState,
   type Finding,
@@ -37,6 +38,27 @@ function ev(id: string, ts: string, asset: string): ForensicEvent {
     relatedFindingIds: [],
     sourceScreenshots: [],
     asset,
+  };
+}
+// A same-binary-on-two-hosts hash, shared by every host-alias fixture below (evidenceGraph's
+// lateral_move (hash) rule just needs it non-empty and shared across ≥2 hosts).
+const ALIAS_FIXTURE_HASH = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+// A second, distinct hash for fixtures that need TWO separate lateral_move edges (i.e. more than
+// one pivot pair). buildEvidenceGraph sorts edges lexicographically by id, which embeds the hash
+// (`lateral|hash:${h}|...`) — ALIAS_FIXTURE_HASH starts with "a" and this starts with "f", so an
+// edge built from this hash always sorts AFTER one built from ALIAS_FIXTURE_HASH.
+const ALIAS_FIXTURE_HASH_2 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+// Minimal forensic-event factory for fixtures that need fields ev() doesn't take (sha256, sources,
+// description) — same "state only what this test cares about" shape used in evidenceGraph.test.ts.
+function partialEvent(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
+  return {
+    timestamp: "2026-05-20T08:00:00Z",
+    description: "",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...p,
   };
 }
 // A serious case: only Impact (T1486) covered; hosts WEB01 (earliest) + DC01 present.
@@ -81,6 +103,152 @@ describe("tacticCollectDirectives", () => {
   });
 });
 
+// A duplicate-host case: the same machine appears as both a short name and an FQDN. Three of
+// targetHostsForTactic's four branches (Initial Access/earliestAsset, Lateral Movement/lateralHosts,
+// Command and Control/connectiveHosts) read RAW host names, so without an alias index a merged host
+// shows up as TWO separate collection targets. The optional trailing `aliasIndex` param resolves and
+// dedupes them onto one, at the single point where targetHostsForTactic returns.
+describe("tacticCollectDirectives — host alias resolution", () => {
+  const HASH = ALIAS_FIXTURE_HASH;
+
+  it("Lateral Movement: without an index a merged host is still two targets (today's behavior)", () => {
+    const s = emptyState("c");
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: HASH, severity: "Critical" }),
+      partialEvent({ id: "e2", asset: "WIN11.windomain.local", sha256: HASH, severity: "High" }),
+    ];
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, []);
+    expect(dirs.map((d) => d.host)).toEqual(["WIN11", "WIN11.windomain.local"]);
+  });
+
+  it("Lateral Movement: with an index, the same merged host yields ONE collection target", () => {
+    const s = emptyState("c");
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: HASH, severity: "Critical" }),
+      partialEvent({ id: "e2", asset: "WIN11.windomain.local", sha256: HASH, severity: "High" }),
+    ];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, [], aliasIndex);
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0].host).toBe("win11.windomain.local");
+  });
+
+  it("Command and Control: with an index, the same merged host yields ONE collection target", () => {
+    const s = emptyState("c");
+    s.iocs = [{ id: "i1", type: "domain", value: "evil-c2.example", firstSeen: "" }];
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", description: "beacon to evil-c2.example", sources: ["Zeek"] }),
+      partialEvent({
+        id: "e2",
+        asset: "WIN11.windomain.local",
+        description: "beacon to evil-c2.example",
+        sources: ["Zeek"],
+      }),
+    ];
+    const withoutIndex = tacticCollectDirectives("Command and Control", s, s.forensicTimeline, []);
+    expect(withoutIndex.map((d) => d.host)).toEqual(["WIN11", "WIN11.windomain.local"]); // today: split in two
+
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const withIndex = tacticCollectDirectives("Command and Control", s, s.forensicTimeline, [], aliasIndex);
+    expect(withIndex).toHaveLength(1);
+    expect(withIndex[0].host).toBe("win11.windomain.local");
+  });
+
+  it("resolves+dedupes BEFORE the MAX_HOSTS_PER_TACTIC cap, so collapsing a duplicate doesn't lose a distinct host", () => {
+    const s = emptyState("c");
+    // Two connective IOCs. "primary-c2" ranks first (2 tools beat 1) so its hosts land at raw
+    // positions 0/1 — the merged host. "secondary-c2" ranks second, contributing two MORE distinct
+    // hosts at raw positions 2/3. MAX_HOSTS_PER_TACTIC is 3: resolving the duplicate away BEFORE
+    // slicing leaves room for all 3 distinct hosts; slicing the raw 4 down to 3 first (capturing
+    // both spellings of the same host) then resolving would collapse to only 2, silently dropping
+    // FILESVR01 — the case the task description warns about ("the more useful one" gets dropped).
+    s.iocs = [
+      { id: "i1", type: "domain", value: "primary-c2.example", firstSeen: "" },
+      { id: "i2", type: "domain", value: "secondary-c2.example", firstSeen: "" },
+    ];
+    s.forensicTimeline = [
+      partialEvent({
+        id: "e1",
+        asset: "WIN11",
+        description: "beacon to primary-c2.example",
+        sources: ["Zeek"],
+      }),
+      partialEvent({
+        id: "e2",
+        asset: "WIN11.windomain.local",
+        description: "beacon to primary-c2.example",
+        sources: ["Sysmon"],
+      }),
+      partialEvent({
+        id: "e3",
+        asset: "DC01",
+        description: "beacon to secondary-c2.example",
+        sources: ["Zeek"],
+      }),
+      partialEvent({
+        id: "e4",
+        asset: "FILESVR01",
+        description: "beacon to secondary-c2.example",
+        sources: ["Zeek"],
+      }),
+    ];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const dirs = tacticCollectDirectives("Command and Control", s, s.forensicTimeline, [], aliasIndex);
+    expect(dirs.map((d) => d.host)).toEqual(["win11.windomain.local", "dc01", "filesvr01"]);
+  });
+
+  it("Lateral Movement: resolves+dedupes BEFORE the MAX_HOSTS_PER_TACTIC cap, so collapsing a duplicate doesn't lose a distinct host", () => {
+    const s = emptyState("c");
+    // Two shared-hash pairs → two lateral_move edges. buildEvidenceGraph sorts edges lexicographically
+    // by id, and the id embeds the hash — ALIAS_FIXTURE_HASH ("abcdef...") sorts before
+    // ALIAS_FIXTURE_HASH_2 ("ffff..."), so the WIN11 pair's edge is visited first. Within an edge,
+    // source/target are the two hosts ordered by lowercased name ("win11" < "win11.windomain.local",
+    // "dc01" < "filesvr01"). So lateralHosts()'s raw order is exactly
+    // [WIN11, WIN11.windomain.local, DC01, FILESVR01] — the merged pair at positions 0-1, and
+    // FILESVR01 (a genuinely distinct host) at position 3, past the MAX_HOSTS_PER_TACTIC=3 cap.
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: ALIAS_FIXTURE_HASH, severity: "Critical" }),
+      partialEvent({
+        id: "e2",
+        asset: "WIN11.windomain.local",
+        sha256: ALIAS_FIXTURE_HASH,
+        severity: "High",
+      }),
+      partialEvent({ id: "e3", asset: "DC01", sha256: ALIAS_FIXTURE_HASH_2, severity: "Medium" }),
+      partialEvent({ id: "e4", asset: "FILESVR01", sha256: ALIAS_FIXTURE_HASH_2, severity: "Medium" }),
+    ];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, [], aliasIndex);
+    expect(dirs.map((d) => d.host)).toEqual(["win11.windomain.local", "dc01", "filesvr01"]);
+  });
+
+  it("Initial Access: resolves+dedupes BEFORE the MAX_HOSTS_PER_TACTIC cap, so collapsing a duplicate doesn't lose a distinct host", () => {
+    const s = emptyState("c");
+    // Initial Access's raw list is [earliestAsset(scopedEvents), ...topHosts] — uncapped before the
+    // resolve step. earliestAsset supplies the short-name spelling at raw position 0; topHosts (the
+    // caller-supplied ranked-hosts list, e.g. from rankHosts) supplies the FQDN spelling at position 1
+    // plus two MORE distinct hosts at positions 2-3, past the MAX_HOSTS_PER_TACTIC=3 cap.
+    s.forensicTimeline = [partialEvent({ id: "e1", asset: "WIN11", timestamp: "2026-05-20T08:00:00Z" })];
+    const topHosts = ["WIN11.windomain.local", "DC01", "FILESVR01"];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const dirs = tacticCollectDirectives("Initial Access", s, s.forensicTimeline, topHosts, aliasIndex);
+    expect(dirs.map((d) => d.host)).toEqual(["win11.windomain.local", "dc01", "filesvr01"]);
+  });
+
+  it("with no alias index, host names pass through completely untouched — no implicit lowercasing/merging", () => {
+    const s = emptyState("c");
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: HASH, severity: "Critical" }),
+      // Deliberately mixed-case: if resolution ran even without an index (e.g. through an
+      // accidentally-constructed empty one), canonicalHostName would lowercase this and the two
+      // spellings would incorrectly merge.
+      partialEvent({ id: "e2", asset: "Win11.WinDomain.Local", sha256: HASH, severity: "High" }),
+    ];
+    const dirs = tacticCollectDirectives("Lateral Movement", s, s.forensicTimeline, []);
+    expect(dirs.map((d) => d.host)).toEqual(["WIN11", "Win11.WinDomain.Local"]);
+  });
+});
+
 describe("buildKnownUnknownItems", () => {
   it("emits an uncovered_tactic item per missing phase, each with a collect directive", () => {
     const items = buildKnownUnknownItems(seriousState(), seriousState().forensicTimeline);
@@ -91,6 +259,25 @@ describe("buildKnownUnknownItems", () => {
       expect(i.collect.length).toBeGreaterThan(0); // #9: each carries a where-to-collect directive
       expect(i.collect[0].host).toBeTruthy();
     }
+  });
+
+  it("threads opts.aliasIndex down into each uncovered tactic's collect directive", () => {
+    const s = emptyState("c");
+    s.findings = [finding("f1", "Critical", ["T1486"])]; // Impact covered; Lateral Movement stays uncovered
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: ALIAS_FIXTURE_HASH, severity: "Critical" }),
+      partialEvent({
+        id: "e2",
+        asset: "WIN11.windomain.local",
+        sha256: ALIAS_FIXTURE_HASH,
+        severity: "High",
+      }),
+    ];
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const items = buildKnownUnknownItems(s, s.forensicTimeline, { aliasIndex });
+    const lat = items.find((i) => i.kind === "uncovered_tactic" && i.tactic === "Lateral Movement");
+    expect(lat).toBeDefined();
+    expect(lat!.collect.map((d) => d.host)).toEqual(["win11.windomain.local"]); // one target, not two
   });
 
   it("emits a silence_gap item with a window and NO collect (links to Timeline Gaps panel)", () => {
@@ -126,6 +313,31 @@ describe("derivePlaybookTasks — uncovered-tactic seeds (#9)", () => {
     expect(ku.some((t) => t.sourceKey === "ku:lateral-movement")).toBe(true);
     expect(ku[0].title).toMatch(/unexplained phase/i);
     expect(ku[0].description).toMatch(/collect/i);
+  });
+  it("threads opts.aliasIndex down into the known_unknown task's collect directive", () => {
+    const s = emptyState("c");
+    s.findings = [finding("f1", "Critical", ["T1486"])]; // Impact covered; Lateral Movement stays uncovered
+    s.forensicTimeline = [
+      partialEvent({ id: "e1", asset: "WIN11", sha256: ALIAS_FIXTURE_HASH, severity: "Critical" }),
+      partialEvent({
+        id: "e2",
+        asset: "WIN11.windomain.local",
+        sha256: ALIAS_FIXTURE_HASH,
+        severity: "High",
+      }),
+    ];
+
+    const withoutIndex = derivePlaybookTasks(s);
+    const latWithout = withoutIndex.find((t) => t.sourceKey === "ku:lateral-movement")!;
+    expect(latWithout.description.match(/windomain\.local/gi) ?? []).toHaveLength(1); // FQDN spelling
+    expect(latWithout.description).toContain("WIN11 "); // short-name spelling, still separate
+
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
+    const withIndex = derivePlaybookTasks(s, { aliasIndex });
+    const latWith = withIndex.find((t) => t.sourceKey === "ku:lateral-movement")!;
+    // Merged: the resolved host appears exactly once, not once per spelling.
+    expect(latWith.description.match(/win11\.windomain\.local/gi) ?? []).toHaveLength(1);
+    expect(latWith.description).not.toMatch(/WIN11 /); // the bare short-name line is gone
   });
   it("emits no known_unknown seeds for a low-signal case", () => {
     const s = emptyState("c");

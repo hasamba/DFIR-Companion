@@ -319,7 +319,7 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   // a real (Critical/High) finding — uncoveredCoreTactics gates on that. Stable sourceKey `ku:<tactic>`.
   const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
   for (const tactic of uncoveredCoreTactics(state)) {
-    const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts);
+    const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts, opts.aliasIndex);
     if (!dirs.length) continue;
     seeds.push({
       title: `Collect evidence for the unexplained phase: ${tactic}`,

@@ -24,7 +24,7 @@ import { rankConnectiveIocs } from "./iocAnchors.js";
 import { buildEvidenceGraph } from "./evidenceGraph.js";
 import { byEventTime } from "./forensicSort.js";
 import type { ImportYieldWarning } from "./importMeta.js";
-import type { HostAliasIndex } from "./hostAlias.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // The kill-chain phases an intrusion usually touches. A case with real (Critical/High) findings that
 // has NO finding covering one of these is a conspicuous gap worth calling out ("how did they get
@@ -178,22 +178,40 @@ function connectiveHosts(state: InvestigationState): string[] {
 
 // The hosts to point an uncovered-tactic collection at, tactic-specific where the case's own structure
 // says where to look, else the top signal-carrying hosts. Always non-empty when the case has any host.
+//
+// Three of the four branches (earliestAsset / lateralHosts / connectiveHosts) read RAW host names —
+// threading an aliasIndex into each of them separately (and into buildEvidenceGraph, which doesn't
+// accept one) is out of scope, so instead every branch is resolved through the SAME aliasIndex at this
+// one return point, collapsing a merged host ("WIN11" / "WIN11.windomain.local") onto one spelling
+// before anything downstream sees it. `topHosts` is the exception: callers already build it via
+// rankHosts(state, { aliasIndex }), so it arrives pre-resolved — resolving it again here is a no-op
+// (resolveHost is idempotent on an already-canonical name), never a double-transform.
+//
+// MUST resolve+dedupe BEFORE the MAX_HOSTS_PER_TACTIC slice, not after: slicing first can capture both
+// spellings of one merged host, which then collapse into a single entry post-slice and silently drop a
+// distinct host that would otherwise have made the cut. Resolving first means the slice always picks
+// MAX_HOSTS_PER_TACTIC *distinct* hosts (when that many exist), never fewer.
 function targetHostsForTactic(
   tactic: IrisTactic,
   state: InvestigationState,
   scopedEvents: readonly ForensicEvent[],
   topHosts: readonly string[],
+  aliasIndex?: HostAliasIndex,
 ): string[] {
-  const fallback = topHosts.slice(0, MAX_HOSTS_PER_TACTIC);
+  const resolve = (raw: string): string => (aliasIndex ? resolveHost(aliasIndex, raw) : raw);
+  const resolveUniq = (hosts: readonly (string | undefined)[]): string[] =>
+    uniq(hosts.map((h) => (h ? resolve(h) : h)));
+
+  const fallback = resolveUniq(topHosts).slice(0, MAX_HOSTS_PER_TACTIC);
   switch (tactic) {
     case "Initial Access":
-      return uniq([earliestAsset(scopedEvents), ...topHosts]).slice(0, MAX_HOSTS_PER_TACTIC);
+      return resolveUniq([earliestAsset(scopedEvents), ...topHosts]).slice(0, MAX_HOSTS_PER_TACTIC);
     case "Lateral Movement": {
-      const l = lateralHosts(state);
+      const l = resolveUniq(lateralHosts(state));
       return (l.length ? l : fallback).slice(0, MAX_HOSTS_PER_TACTIC);
     }
     case "Command and Control": {
-      const c = connectiveHosts(state);
+      const c = resolveUniq(connectiveHosts(state));
       return (c.length ? c : fallback).slice(0, MAX_HOSTS_PER_TACTIC);
     }
     default:
@@ -203,17 +221,21 @@ function targetHostsForTactic(
 
 // The deployable collection directives for one uncovered tactic: the primary artifact on each target
 // host, expected-outcome set to the phase it would confirm. Empty when the tactic has no evidence spec
-// or the case has no host to point at.
+// or the case has no host to point at. `aliasIndex` is optional and trailing so every existing
+// positional call site keeps compiling untouched; omitted, host names pass through completely raw (see
+// targetHostsForTactic — resolveHost lowercases even with an empty index, so this must stay a true
+// no-op rather than resolve through an implicit empty one).
 export function tacticCollectDirectives(
   tactic: IrisTactic,
   state: InvestigationState,
   scopedEvents: readonly ForensicEvent[],
   topHosts: readonly string[],
+  aliasIndex?: HostAliasIndex,
 ): CollectDirective[] {
   const specs = TACTIC_EVIDENCE[tactic];
   if (!specs || !specs.length) return [];
   const primary = specs[0];
-  const hosts = targetHostsForTactic(tactic, state, scopedEvents, topHosts);
+  const hosts = targetHostsForTactic(tactic, state, scopedEvents, topHosts, aliasIndex);
   return hosts.map((host) => ({
     host,
     logSource: primary.logSource,
@@ -289,7 +311,7 @@ export function buildKnownUnknownItems(
       kind: "uncovered_tactic",
       tactic,
       label: uncoveredTacticLabel(tactic),
-      collect: tacticCollectDirectives(tactic, state, scopedEvents, topHosts),
+      collect: tacticCollectDirectives(tactic, state, scopedEvents, topHosts, opts.aliasIndex),
     });
   }
 
@@ -351,7 +373,9 @@ export function buildKnownUnknownItems(
           `Not observed: ${s.step.technique} (${s.step.name})${s.tactic ? ` [${s.tactic}]` : ""} — ` +
           `a step of the ${pb.name} playbook, which this case${where} otherwise matches ${pb.score}%. ` +
           `Either it did not happen, or the evidence for it was not collected.`,
-        collect: s.tactic ? tacticCollectDirectives(s.tactic, state, scopedEvents, topHosts) : [],
+        collect: s.tactic
+          ? tacticCollectDirectives(s.tactic, state, scopedEvents, topHosts, opts.aliasIndex)
+          : [],
       });
     }
   }
