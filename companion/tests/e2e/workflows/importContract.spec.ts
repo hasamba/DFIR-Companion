@@ -27,6 +27,7 @@ const ROUTES: ReadonlyArray<{ route: string; required: string }> = [
   { route: "import-network", required: "text" },
   { route: "import-kape", required: "text" },
   { route: "import-cybertriage", required: "text" },
+  { route: "import-leapp", required: "text" },
   { route: "import-aws", required: "text" },
   { route: "import-cloud-activity", required: "text" },
   { route: "import-m365", required: "text" },
