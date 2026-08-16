@@ -467,59 +467,191 @@ describe("runPanelLoaders", () => {
     expect(calls[0].signal).toBe(own.signal);
   });
 
-  it("stops starting queued loaders once the generation is aborted", async () => {
-    const started: string[] = [];
+  it("puts no further requests on the wire once the generation is aborted", async () => {
+    const onWire: string[] = [];
     // Honours the signal the way a real fetch does — rejecting on abort. A stub that ignored it
-    // would leave the in-flight loader pending forever and misreport the tally as stuck.
-    globalThis.fetch = ((_url: string, init?: RequestInit) =>
-      new Promise<Response>((_res, rej) => {
+    // would leave the in-flight request pending forever and misreport the tally as stuck.
+    globalThis.fetch = ((url: string, init?: RequestInit) => {
+      onWire.push(String(url));
+      return new Promise<Response>((_res, rej) => {
         init?.signal?.addEventListener("abort", () => rej(new Error("aborted")), { once: true });
-      })) as typeof fetch;
+      });
+    }) as typeof fetch;
     const ac = new AbortController();
-    const entries: [string, () => void][] = ["a", "b", "c", "d"].map((n) => [
-      n,
-      () => {
-        started.push(n);
-        void fetch("/" + n);
-      },
-    ]);
-    // Cap of 1 so exactly one is in flight and three are still queued when the abort lands.
+    const entries: [string, () => void][] = ["a", "b", "c", "d"].map((n) => [n, () => void fetch("/" + n)]);
+    // Cap of 1, so one request is on the wire and three are queued behind a lane when abort lands.
     const tally = runPanelLoaders(entries, undefined, { signal: ac.signal, concurrency: 1 });
-    expect(started).toEqual(["a"]);
+    expect(onWire).toEqual(["/a"]);
     ac.abort();
     await new Promise((r) => setTimeout(r, 0));
-    // b, c and d were never issued — that is the point; the pool is freed rather than refilled.
-    expect(started).toEqual(["a"]);
+    // The queued three are released to observe the abort, and each rejects WITHOUT being issued —
+    // that is the point; the pool is freed rather than refilled.
+    expect(onWire).toEqual(["/a"]);
     // And the strip still reaches its total instead of sitting short forever on panels that are
     // never coming.
     expect(panelProgressOf(tally).fraction).toBe(1);
   });
 
+  it("starts nothing at all when the signal is already aborted", () => {
+    const onWire: string[] = [];
+    globalThis.fetch = ((url: string) => {
+      onWire.push(String(url));
+      return new Promise<Response>(() => {});
+    }) as typeof fetch;
+    const ac = new AbortController();
+    ac.abort();
+    const tally = runPanelLoaders([["a", () => void fetch("/a")]], undefined, {
+      signal: ac.signal,
+    });
+    expect(onWire).toEqual([]);
+    expect(panelProgressOf(tally).fraction).toBe(1);
+  });
+
   // ── Concurrency cap ──────────────────────────────────────────────────────────────────────────
 
-  it("runs at most `concurrency` loaders at once, starting the next as each settles", async () => {
-    const gates = controllable();
-    const started: string[] = [];
-    const entries: [string, () => void][] = ["a", "b", "c"].map((n) => [
-      n,
-      () => {
-        started.push(n);
-        void fetch("/" + n);
-      },
-    ]);
-    runPanelLoaders(entries, undefined, { concurrency: 2 });
-    expect(started).toEqual(["a", "b"]); // c is held back — a free lane is the whole point
-    gates[0].resolve();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(started).toEqual(["a", "b", "c"]);
+  /**
+   * Drain microtasks AND a couple of macrotask ticks.
+   *
+   * One `setTimeout(0)` is not enough here. The lane's no-body-read backstop is itself a
+   * `setTimeout(0)`, and it is armed from a microtask that runs AFTER the test has already
+   * scheduled its own timer — so a single tick fires before the backstop, not after it. The
+   * backstop has to be a macrotask (a microtask would beat the loader's own `r.json()` to the
+   * release), so the test waits rather than the code hurrying.
+   */
+  // Deliberately NOT pollFor: these tests assert what has and has NOT reached the wire at a given
+  // moment, and absence is not a condition you can poll for. A fixed drain, written out rather
+  // than looped so it cannot be read as a hand-rolled poll.
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const flush = async () => {
+    await tick();
+    await tick();
+    await tick();
+  };
+
+  /** A fetch stub recording the URLs that actually reached the wire, gated by hand. */
+  function wireLog() {
+    const urls: string[] = [];
+    const gates: { ok: (body?: string) => void; fail: () => void }[] = [];
+    globalThis.fetch = ((url: string) => {
+      urls.push(String(url));
+      return new Promise<Response>((res, rej) => {
+        gates.push({ ok: (body = "{}") => res(new Response(body)), fail: () => rej(new Error("x")) });
+      });
+    }) as typeof fetch;
+    return { urls, gates };
+  }
+
+  it("caps REQUESTS on the wire, not loaders — a fan-out loader cannot exceed the cap", async () => {
+    // loadVeloTriage issues four requests and loadMcpRun three, all from one synchronous body.
+    // Counting loaders let a single one of those put its whole fan-out on a six-connection pool,
+    // which is the saturation the cap exists to prevent.
+    const { urls, gates } = wireLog();
+    runPanelLoaders(
+      [
+        [
+          "veloTriage",
+          () => {
+            void fetch("/a");
+            void fetch("/b");
+            void fetch("/c");
+            void fetch("/d");
+          },
+        ],
+      ],
+      undefined,
+      { concurrency: 2 },
+    );
+    expect(urls).toEqual(["/a", "/b"]); // /c and /d are held back, inside one loader
+    gates[0].ok();
+    await flush();
+    expect(urls).toEqual(["/a", "/b", "/c"]);
+  });
+
+  /**
+   * A fetch stub that separates the two moments a real response has: headers, then body.
+   *
+   * wireLog() cannot tell the two apart — its `new Response("{}")` has a body that resolves on its
+   * own — so a test built on it passes whether the lane is released at the headers or at the body.
+   * Confirmed by mutation: reverting to a header-release left all of these green.
+   */
+  function bodyGated() {
+    const urls: string[] = [];
+    const headers: (() => void)[] = [];
+    const bodies: (() => void)[] = [];
+    globalThis.fetch = ((url: string) => {
+      urls.push(String(url));
+      return new Promise<Response>((resolve) => {
+        headers.push(() =>
+          resolve({
+            ok: true,
+            status: 200,
+            json: () => new Promise((r) => bodies.push(() => r({}))),
+          } as unknown as Response),
+        );
+      });
+    }) as typeof fetch;
+    return { urls, headers, bodies };
+  }
+
+  it("holds a lane until the body is read, not just until the headers land", async () => {
+    // fetch fulfils on HEADERS while the body is still coming down the connection. Releasing there
+    // admits the next request against a lane that is not actually free.
+    const { urls, headers, bodies } = bodyGated();
+    runPanelLoaders(
+      [
+        ["a", () => void fetch("/a").then((r) => r.json())],
+        ["b", () => void fetch("/b")],
+      ],
+      undefined,
+      { concurrency: 1 },
+    );
+    expect(urls).toEqual(["/a"]);
+    headers[0](); // headers land; the body is still streaming
+    await flush();
+    // THE ASSERTION THAT MATTERS: /b must still be held back. A header-release fails right here.
+    expect(urls).toEqual(["/a"]);
+    bodies[0](); // body finishes — only now is the connection genuinely free
+    await flush();
+    expect(urls).toEqual(["/a", "/b"]);
+  });
+
+  it("frees the lane for a loader that never reads the body at all", async () => {
+    // Plenty of loaders only check r.ok. Without a backstop their lane would never come back.
+    const { urls, gates } = wireLog();
+    runPanelLoaders(
+      [
+        ["a", () => void fetch("/a").then((r) => r.ok)],
+        ["b", () => void fetch("/b")],
+      ],
+      undefined,
+      { concurrency: 1 },
+    );
+    gates[0].ok();
+    await flush();
+    expect(urls).toEqual(["/a", "/b"]);
+  });
+
+  it("frees the lane when a request fails outright", async () => {
+    const { urls, gates } = wireLog();
+    runPanelLoaders(
+      [
+        ["a", () => void fetch("/a").catch(() => {})],
+        ["b", () => void fetch("/b")],
+      ],
+      undefined,
+      { concurrency: 1 },
+    );
+    gates[0].fail();
+    await flush();
+    expect(urls).toEqual(["/a", "/b"]);
   });
 
   it("does not stall when a capped loader issues no request at all", () => {
     controllable();
     const started: string[] = [];
     const entries: [string, () => void][] = ["a", "b", "c"].map((n) => [n, () => void started.push(n)]);
-    // None of these occupies a slot, so a cap of 1 must not serialize them across event-loop
-    // turns — a loader that starts nothing frees its lane synchronously.
+    // A loader that asks for no connection takes no lane, so a cap of 1 must not serialize these
+    // across event-loop turns.
     const tally = runPanelLoaders(entries, undefined, { concurrency: 1 });
     expect(started).toEqual(["a", "b", "c"]);
     expect(panelProgressOf(tally).fraction).toBe(1);
