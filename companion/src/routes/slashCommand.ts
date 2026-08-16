@@ -195,9 +195,15 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
 export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefined {
   const { options } = ctx;
   const channelStore = options.slashCommandChannelStore;
-  const botToken = (process.env.DFIR_TELEGRAM_BOT_TOKEN ?? "").trim();
+  // A THUNK, not the value: DFIR_TELEGRAM_BOT_TOKEN is on the /settings/reload allowlist, so an
+  // operator can rotate it in .env and apply it without a restart. The poller and its reply closure
+  // both outlive that, and everything else on the Telegram surface (async result delivery below,
+  // notification channels) already reads the token live — a captured string here is what would
+  // leave the INBOUND bot on a credential the rest of the process had abandoned.
+  const botToken = () => process.env.DFIR_TELEGRAM_BOT_TOKEN;
   if (!channelStore) return undefined;
-  if (!botToken) {
+  // Startup still needs a concrete value: with none there is no bot to poll for.
+  if (!botToken()?.trim()) {
     ctx.serverLogger.warn(
       "[telegram] polling requested but DFIR_TELEGRAM_BOT_TOKEN is not set — not starting",
     );

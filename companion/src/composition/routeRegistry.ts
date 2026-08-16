@@ -33,6 +33,7 @@ import { registerMcpRoutes } from "../routes/mcp.js";
 import { registerPlaybookHuntsRoutes } from "../routes/playbookHunts.js";
 import { registerPlaybookMatchRoutes } from "../routes/playbookMatch.js";
 import { registerAiSynthesisRoutes } from "../routes/aiSynthesis.js";
+import { registerFindingsDisplayRoutes } from "../routes/findingsDisplay.js";
 import { registerReportsExportRoutes } from "../routes/reportsExport.js";
 import { registerInteractiveReportRoutes } from "../routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "../routes/reportVersions.js";
@@ -113,6 +114,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerPlaybookHuntsRoutes(app, ctx);
   registerPlaybookMatchRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
+  registerFindingsDisplayRoutes(app, ctx);
   registerDeepPassRoutes(app, ctx);
   // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
   // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so

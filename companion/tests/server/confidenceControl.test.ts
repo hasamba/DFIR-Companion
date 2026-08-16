@@ -62,4 +62,58 @@ describe("GET/PUT /cases/:id/confidence-control", () => {
     const res = await request(app).get("/cases/c1/confidence-control");
     expect(res.status).toBe(501);
   });
+
+  it("GET defaults both origin lenses to false for a fresh case", async () => {
+    const { app } = await makeApp();
+    const res = await request(app).get("/cases/c1/confidence-control");
+    expect(res.body.hideAutoFindings).toBe(false);
+    expect(res.body.hideGapFindings).toBe(false);
+  });
+
+  it("PUT persists each origin lens and GET reflects it", async () => {
+    const { app } = await makeApp();
+    const put = await request(app)
+      .put("/cases/c1/confidence-control")
+      .send({ hideAutoFindings: true, hideGapFindings: true });
+    expect(put.status).toBe(200);
+    expect(put.body.hideAutoFindings).toBe(true);
+    expect(put.body.hideGapFindings).toBe(true);
+
+    const get = await request(app).get("/cases/c1/confidence-control");
+    expect(get.body.hideAutoFindings).toBe(true);
+    expect(get.body.hideGapFindings).toBe(true);
+  });
+
+  // THE REGRESSION THIS TASK EXISTS TO PREVENT. The handler used to read req.body.minConfidence
+  // and treat ABSENT as "clear it", so a PUT carrying only a checkbox would have wiped the
+  // analyst's confidence floor — a filter they set elsewhere, silently reset by an unrelated click.
+  it("a lens-only PUT leaves minConfidence untouched", async () => {
+    const { app } = await makeApp();
+    await request(app).put("/cases/c1/confidence-control").send({ minConfidence: 60 });
+    const put = await request(app).put("/cases/c1/confidence-control").send({ hideAutoFindings: true });
+    expect(put.status).toBe(200);
+    expect(put.body.minConfidence).toBe(60);
+    expect(put.body.hideAutoFindings).toBe(true);
+  });
+
+  it("a minConfidence-only PUT leaves the lenses untouched", async () => {
+    const { app } = await makeApp();
+    await request(app).put("/cases/c1/confidence-control").send({ hideGapFindings: true });
+    const put = await request(app).put("/cases/c1/confidence-control").send({ minConfidence: 40 });
+    expect(put.body.hideGapFindings).toBe(true);
+    expect(put.body.minConfidence).toBe(40);
+  });
+
+  it("clears a lens when it is sent as null", async () => {
+    const { app } = await makeApp();
+    await request(app).put("/cases/c1/confidence-control").send({ hideAutoFindings: true });
+    const cleared = await request(app).put("/cases/c1/confidence-control").send({ hideAutoFindings: null });
+    expect(cleared.body.hideAutoFindings).toBe(false);
+  });
+
+  it("rejects a non-boolean lens with 400", async () => {
+    const { app } = await makeApp();
+    const res = await request(app).put("/cases/c1/confidence-control").send({ hideAutoFindings: "yes" });
+    expect(res.status).toBe(400);
+  });
 });

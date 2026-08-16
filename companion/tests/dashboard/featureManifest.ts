@@ -1059,7 +1059,12 @@ export const FEATURES: Feature[] = [
     // the way down would make the module unloadable rather than merely early.
     file: "dashboard-confidence-control.js",
     initializer: "initConfidenceControl",
-    publish: ["initConfidenceControl", "loadConfidenceControl", "saveConfidenceControl"],
+    publish: [
+      "initConfidenceControl",
+      "loadConfidenceControl",
+      "saveConfidenceControl",
+      "saveFindingOriginFilters",
+    ],
     private: ["confSaveTimer", "confPending"],
   },
   {

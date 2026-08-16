@@ -1,9 +1,9 @@
 // Seed the rich demo case ("GlobalTech Industries — BEC & Ransomware Precursor, May 2026").
-// Shared between the CLI script (scripts/seed-demo-case.ts) and the POST /cases/seed-demo
-// server route, so EXE users who don't have tsx/Node can trigger it from the dashboard.
+// Shared between the CLI script (scripts/seed-demo-case.ts) and the POST /cases/seed-demo server route, so EXE users who don't have tsx/Node can trigger it from the dashboard.
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { demoCaseDir, caseAlreadySeeded } from "./seedDemoPaths.js";
+import { demoBackfillEvent, demoBackfillFindings } from "./seedDemoBackfillFixtures.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export const DEMO_CASE_ID_DEFAULT = "demo";
@@ -314,7 +314,7 @@ export async function seedDemoCase(
       lastUpdated: ts(22, 8, 0),
       status: "confirmed",
     },
-  ];
+  ].concat(demoBackfillFindings); // 2 deterministic backfill findings, not AI synthesis — seedDemoBackfillFixtures.ts
 
   const iocs = [
     {
@@ -942,7 +942,7 @@ export async function seedDemoCase(
       timestamp: ts(16, 10, 13),
       severity: "Critical",
       mitreTechniques: ["T1562.001"],
-      relatedFindingIds: ["f010"],
+      relatedFindingIds: ["f010", "f-gap-e043-e019"],
       sourceScreenshots: [],
       asset: "DC01",
       sources: ["CrowdStrike Falcon"],
@@ -957,7 +957,7 @@ export async function seedDemoCase(
       timestamp: ts(17, 2, 15),
       severity: "High",
       mitreTechniques: ["T1071.001"],
-      relatedFindingIds: ["f001"],
+      relatedFindingIds: ["f001", "f-gap-e043-e019"],
       sourceScreenshots: [],
       asset: "WKSTN-JSMITH",
       count: 38,
@@ -1222,7 +1222,7 @@ export async function seedDemoCase(
     },
     ...dc01EnumBurst,
     ...beaconCheckIns,
-  ];
+  ].concat(demoBackfillEvent); // e044, deliberately UNCOVERED — sorts to May 22 07:45, seedDemoBackfillFixtures.ts
 
   // ── Super-Timeline (raw host-triage artifact feed) ───────────────────────────
   // A separate, import-only store (analysis/superTimelineStore.ts) never touched by synthesis —

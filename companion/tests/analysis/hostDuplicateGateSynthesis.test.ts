@@ -74,7 +74,9 @@ describe("synthesize() near-duplicate gate", () => {
   it("does not throw once the pair is merged", async () => {
     await seed(["WIN11", "WIN11.windomain.local"]);
     await assetOverridesStore.mergeAsset("c1", "host:win11", "host:win11.windomain.local");
-    await pipeline().synthesize("c1").catch(() => undefined);
+    await pipeline()
+      .synthesize("c1")
+      .catch(() => undefined);
     expect(analyze).toHaveBeenCalled();
   });
 
@@ -86,13 +88,17 @@ describe("synthesize() near-duplicate gate", () => {
       dismissedAt: "t",
       dismissedBy: "a",
     });
-    await pipeline().synthesize("c1").catch(() => undefined);
+    await pipeline()
+      .synthesize("c1")
+      .catch(() => undefined);
     expect(analyze).toHaveBeenCalled();
   });
 
   it("does not throw on a case with no near-duplicates", async () => {
     await seed(["WIN11", "DC01"]);
-    await pipeline().synthesize("c1").catch(() => undefined);
+    await pipeline()
+      .synthesize("c1")
+      .catch(() => undefined);
     expect(analyze).toHaveBeenCalled();
   });
 

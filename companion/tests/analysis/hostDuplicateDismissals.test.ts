@@ -3,10 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import {
-  HostDuplicateDismissalStore,
-  dismissalKey,
-} from "../../src/analysis/hostDuplicateDismissals.js";
+import { HostDuplicateDismissalStore, dismissalKey } from "../../src/analysis/hostDuplicateDismissals.js";
 
 let cases: CaseStore;
 let store: HostDuplicateDismissalStore;

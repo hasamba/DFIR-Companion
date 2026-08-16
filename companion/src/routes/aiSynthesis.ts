@@ -36,8 +36,6 @@ import { renderStandalonePresentation } from "../reports/presentationExport.js";
  *   - events/:eid/explain   — explain one forensic event in context (ephemeral).
  *   - questions             — pin an analyst key question so synthesis preserves + answers it.
  *   - hypotheses (CRUD)     — status-tracked investigative hypotheses.
- *   - confidence-control (GET/PUT) — the findings min-confidence DISPLAY floor (#226); left here by
- *     the findings domain because it belongs to AI output presentation, not analyst annotations.
  *   - narrative (POST generate / PUT save-edit) — prose narrative timeline.
  *   - executive-summary / remediation-plan — one-shot management/defensive AI generations.
  *   - adversary-hints (GET) + adversary-hints/hunt-technique (POST) — offline ATT&CK-group hints +
@@ -759,43 +757,6 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       if (!removed) return res.status(404).json({ error: "hypothesis not found" });
       options.onHypotheses?.(req.params.id);
       return res.status(204).end();
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
-
-  // Findings min-confidence display floor (#226): a per-case setting, persisted so it survives a
-  // page reload — purely a display preference (nothing is removed from state). `minConfidence: null`
-  // means "show all" (0). GET returns the current value; PUT sets/clears it.
-  app.get("/cases/:id/confidence-control", async (req: Request, res: Response) => {
-    if (!options.confidenceControlStore)
-      return res.status(501).json({ error: "confidence control not configured" });
-    try {
-      const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
-      return res.status(200).json({ minConfidence });
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
-
-  app.put("/cases/:id/confidence-control", async (req: Request, res: Response) => {
-    if (!options.confidenceControlStore)
-      return res.status(501).json({ error: "confidence control not configured" });
-    const raw = req.body?.minConfidence;
-    const cleared = raw === null || raw === undefined || raw === "";
-    if (!cleared && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100)) {
-      return res.status(400).json({ error: "minConfidence must be a number 0-100, or null" });
-    }
-    try {
-      await options.confidenceControlStore.set(req.params.id, { minConfidence: cleared ? undefined : raw });
-      options.onConfidenceControl?.(req.params.id);
-      const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
-      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "settings",
-        action: "confidence-control",
-        detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
-      });
-      return res.status(200).json({ minConfidence });
     } catch (err) {
       return sendPipelineError(res, err);
     }

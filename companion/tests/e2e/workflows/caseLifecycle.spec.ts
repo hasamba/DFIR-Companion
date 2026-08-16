@@ -92,10 +92,10 @@ test("US-134: per-case stats count what the case actually holds", async ({ page,
   expect(res.status(), await res.text()).toBe(200);
   const totals = ((await res.json()) as { totals: Record<string, number> }).totals;
 
-  // The seeded case is fixed at 58 events / 12 findings / 17 IOCs, so these are exact rather than
+  // The seeded case is fixed at 59 events / 14 findings / 17 IOCs, so these are exact rather than
   // "greater than zero" — a stats endpoint that under-counts is worse than one that errors.
-  expect(totals.events).toBe(58);
-  expect(totals.findings).toBe(12);
+  expect(totals.events).toBe(59);
+  expect(totals.findings).toBe(14);
   expect(totals.iocs).toBe(17);
 });
 

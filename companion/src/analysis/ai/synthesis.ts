@@ -532,7 +532,13 @@ export async function synthesize(
   let next = folded;
   if (opts.dryRun) return next;
 
-  next = await finalizeFindings(ctx, caseId, next, { delta, surviving, eligibleIds, sourceTrust, aliasIndex });
+  next = await finalizeFindings(ctx, caseId, next, {
+    delta,
+    surviving,
+    eligibleIds,
+    sourceTrust,
+    aliasIndex,
+  });
 
   // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
   // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the

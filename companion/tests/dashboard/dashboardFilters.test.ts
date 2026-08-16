@@ -296,3 +296,62 @@ describe("agrees with the server's applyFalsePositive", () => {
     for (const [, t, r] of suppressing) expect(f.isFindingFalsePositive(t, r)).toBe(true);
   });
 });
+
+describe("isAutoBackfillFinding / isGapFinding", () => {
+  it("classifies the two deterministic backfill id prefixes", () => {
+    expect(f.isAutoBackfillFinding({ id: "f-auto-e1" })).toBe(true);
+    expect(f.isGapFinding({ id: "f-gap-e1-e2" })).toBe(true);
+  });
+
+  it("leaves AI-synthesised findings alone", () => {
+    for (const id of ["f1", "f12", "so:encoded-powershell"]) {
+      expect(f.isAutoBackfillFinding({ id })).toBe(false);
+      expect(f.isGapFinding({ id })).toBe(false);
+    }
+  });
+
+  // The trailing hyphen is the whole point of matching on a PREFIX rather than a stem: without it
+  // an AI finding that happened to be id'd "f-automation" would silently vanish from the panel.
+  it("requires the trailing hyphen", () => {
+    expect(f.isAutoBackfillFinding({ id: "f-automation" })).toBe(false);
+    expect(f.isGapFinding({ id: "f-gapless" })).toBe(false);
+  });
+
+  it("keeps the two kinds distinct", () => {
+    expect(f.isGapFinding({ id: "f-auto-e1" })).toBe(false);
+    expect(f.isAutoBackfillFinding({ id: "f-gap-e1-e2" })).toBe(false);
+  });
+
+  it("survives a finding with no id at all", () => {
+    expect(f.isAutoBackfillFinding({})).toBe(false);
+    expect(f.isGapFinding(null)).toBe(false);
+  });
+});
+
+describe("findingPassesOriginLens", () => {
+  const ai = { id: "f1" };
+  const auto = { id: "f-auto-e1" };
+  const gap = { id: "f-gap-e1-e2" };
+
+  it("keeps every kind when both lenses are off", () => {
+    for (const x of [ai, auto, gap]) expect(f.findingPassesOriginLens(x, false, false)).toBe(true);
+  });
+
+  it("drops only backfill findings when the auto lens is on", () => {
+    expect(f.findingPassesOriginLens(auto, true, false)).toBe(false);
+    expect(f.findingPassesOriginLens(gap, true, false)).toBe(true);
+    expect(f.findingPassesOriginLens(ai, true, false)).toBe(true);
+  });
+
+  it("drops only gap findings when the gap lens is on", () => {
+    expect(f.findingPassesOriginLens(gap, false, true)).toBe(false);
+    expect(f.findingPassesOriginLens(auto, false, true)).toBe(true);
+    expect(f.findingPassesOriginLens(ai, false, true)).toBe(true);
+  });
+
+  it("keeps only the AI finding when both lenses are on", () => {
+    expect(f.findingPassesOriginLens(ai, true, true)).toBe(true);
+    expect(f.findingPassesOriginLens(auto, true, true)).toBe(false);
+    expect(f.findingPassesOriginLens(gap, true, true)).toBe(false);
+  });
+});

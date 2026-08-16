@@ -11,7 +11,7 @@
   "public/js/dashboard-velo-triage.js": 815,
   "reports/markdown.ts": 1597,
   "reports/reportWriter.ts": 862,
-  "routes/aiSynthesis.ts": 918,
+  "routes/aiSynthesis.ts": 879,
   "routes/caseLifecycle.ts": 924,
   "routes/findings.ts": 835,
   "routes/import.ts": 3209,

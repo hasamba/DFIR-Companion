@@ -103,7 +103,7 @@ describe("rankHosts (#202)", () => {
     const merged = rankHosts(s).ranks.filter((r) => r.type === "host");
     expect(merged).toHaveLength(2); // no alias index: two distinct rows
 
-    const aliasIndex = buildHostAliasIndex([], { "win11": "win11.windomain.local" });
+    const aliasIndex = buildHostAliasIndex([], { win11: "win11.windomain.local" });
     const { ranks, topHosts } = rankHosts(s, { aliasIndex });
     const hosts = ranks.filter((r) => r.type === "host");
     expect(hosts).toHaveLength(1);

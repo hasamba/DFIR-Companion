@@ -410,9 +410,7 @@ export function buildSynthesisContext(
   // Connective indicators (#200): rank IOCs by cross-host / multi-tool reach so the model anchors
   // on the attack's backbone (a C2 seen on multiple hosts by multiple tools) instead of the flat
   // list. Leads the digest — it's the highest-signal context.
-  const connectiveBlock = buildConnectiveIocDigest(
-    rankConnectiveIocs(state, scopedEvents, { aliasIndex }),
-  );
+  const connectiveBlock = buildConnectiveIocDigest(rankConnectiveIocs(state, scopedEvents, { aliasIndex }));
 
   // Signal concentration (#202): tell the model which host(s) carry the suspicious activity so an
   // automatic run over a noisy multi-host timeline doesn't anchor its narrative on a benign host.
