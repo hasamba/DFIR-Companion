@@ -1,8 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requestAuthentication } from "../auth/types.js";
 import { canonicalHostName, type NearDuplicate } from "../analysis/hostAlias.js";
-import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
-import { hostNamesFromState, pendingNearDuplicates } from "../analysis/hostDuplicateGate.js";
+import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -29,18 +28,14 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
   }
 
   async function pending(caseId: string): Promise<NearDuplicate[]> {
-    const state = await options.stateStore!.load(caseId);
-    const aliasIndex = await loadHostAliasIndex(
+    return loadPendingHostDuplicates(
       {
+        state: options.stateStore!,
         assetOverrides: options.assetOverridesStore!,
+        dismissals: options.hostDuplicateDismissalStore!,
         ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
       },
       caseId,
-    );
-    return pendingNearDuplicates(
-      hostNamesFromState(state),
-      aliasIndex,
-      await options.hostDuplicateDismissalStore!.load(caseId),
     );
   }
 

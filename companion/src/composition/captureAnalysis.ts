@@ -27,8 +27,8 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import { milestoneEvent } from "../analysis/notifications.js";
-import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
-import { hostNamesFromState, pendingNearDuplicates } from "../analysis/hostDuplicateGate.js";
+import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+import { isAnalystDecisionGate } from "../routes/presidioApproval.js";
 
 export interface CaptureAnalysisDeps {
   store: CaseStore;
@@ -84,6 +84,56 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   const synthTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const synthInFlight = new Set<string>();
 
+  /**
+   * What both synthesis paths in this file do when the run rejects.
+   *
+   * ONE FUNCTION BECAUSE THERE ARE TWO CALLERS AND THEY MUST NOT DIVERGE. They were separate
+   * near-identical catch blocks, and the first attempt at the gate fix changed only one of them —
+   * so the debounced live-synthesis path kept reporting a held run as a crash while the unit tests,
+   * which only drove the other path, stayed green.
+   *
+   * A GATE IS NOT A FAILURE. `HostMergeDecisionRequired` is thrown before any prompt is built, so
+   * the run never started: it is cancelled rather than failed (a `failed` job is what put "synthesis
+   * failed" in the cockpit), it is not written to the AI-error ledger (it is not an AI error), and
+   * it reports "blocked" so the header pill says "on hold" instead of turning red.
+   *
+   * @param errorPhase  when set, a genuine failure is recorded against this phase; a gate never is.
+   */
+  async function settleSynthesisRejection(
+    caseId: string,
+    job: { jobId: string; signal?: AbortSignal } | undefined,
+    err: unknown,
+    errorPhase?: string,
+  ): Promise<void> {
+    const aborted = job?.signal?.aborted === true;
+    const held = isAnalystDecisionGate(err);
+    if (job) {
+      if (held) await options.jobManager?.cancel(job.jobId);
+      else await options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
+    }
+    if (!held && errorPhase) recordAiError(caseId, errorPhase, err);
+    if (held) {
+      // Reported even when a newer run is queued, unlike the supersede guard below: superseding
+      // changes nothing about a gate. The newer run reads the same case and stops at the same
+      // unresolved pair, so staying quiet would hide the hold behind a run that cannot clear it.
+      options.onAiStatus?.(caseId, {
+        status: "blocked",
+        at: new Date().toISOString(),
+        detail: (err as Error).message,
+      });
+      return;
+    }
+    // A newer exclusive registration may have superseded this run — if a synthesis job for this
+    // case is still active, that newer run owns the status; don't stomp it to idle.
+    if (aborted && options.jobManager?.hasActive(caseId, "synthesis")) return;
+    options.onAiStatus?.(
+      caseId,
+      aborted
+        ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
+        : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
+    );
+  }
+
   function scheduleSynthesis(caseId: string): void {
     // synthesize() is TEXT work — it runs on the synthesis provider (falling back to the vision
     // provider), so gate on that, not hasAiProvider(): an OCR-less install (only
@@ -125,21 +175,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
             options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
             autoEnrichIfEnabled(caseId);
           })
-          .catch(async (err) => {
-            const aborted = job?.signal?.aborted === true;
-            if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
-            recordAiError(caseId, "synthesizing", err);
-            // A newer exclusive registration may have superseded this run — if a synthesis job for
-            // this case is still active, that newer run owns the status; don't stomp it to idle.
-            if (!(aborted && options.jobManager?.hasActive(caseId, "synthesis"))) {
-              options.onAiStatus?.(
-                caseId,
-                aborted
-                  ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
-                  : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
-              );
-            }
-          })
+          .catch((err) => settleSynthesisRejection(caseId, job, err, "synthesizing"))
           .finally(() => synthInFlight.delete(caseId));
       }, synthDebounceMs),
     );
@@ -283,18 +319,14 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     try {
       const dismissalStore = options.hostDuplicateDismissalStore;
       if (!dismissalStore || !options.stateStore || !options.assetOverridesStore) return;
-      const state = await options.stateStore.load(caseId);
-      const aliasIndex = await loadHostAliasIndex(
+      const pending = await loadPendingHostDuplicates(
         {
+          state: options.stateStore,
           assetOverrides: options.assetOverridesStore,
+          dismissals: dismissalStore,
           ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
         },
         caseId,
-      );
-      const pending = pendingNearDuplicates(
-        hostNamesFromState(state),
-        aliasIndex,
-        await dismissalStore.load(caseId),
       );
       if (!pending.length) return;
       dispatchNotify(
@@ -364,18 +396,9 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         autoEnrichIfEnabled(caseId);
       } catch (err) {
-        const aborted = job?.signal?.aborted === true;
-        if (job) await options.jobManager?.fail(job.jobId, err); // no-op if the job was already cancelled
-        // A newer exclusive registration may have superseded this run — if a synthesis job for this
-        // case is still active, that newer run owns the status; don't stomp it to idle.
-        if (!(aborted && options.jobManager?.hasActive(caseId, "synthesis"))) {
-          options.onAiStatus?.(
-            caseId,
-            aborted
-              ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
-              : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
-          );
-        }
+        // No errorPhase: this path never wrote to the AI-error ledger, and adding it here would be
+        // a behaviour change unrelated to the gate.
+        await settleSynthesisRejection(caseId, job, err);
       }
     })();
   }

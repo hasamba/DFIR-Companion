@@ -53,6 +53,18 @@
       hideImportProgress();
       setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
       clearTransientStatus(); // re-synthesis finished → drop the "…re-synthesizing" line
+    } else if (evt.status === "blocked") {
+      // A GATE, not a failure: the pipeline stopped on purpose and is waiting for a decision (a
+      // Presidio approval, a duplicate-host merge). Both used to arrive as "error", which painted
+      // a red "AI: error" over a question — analysts read it as a broken provider and never went
+      // looking for the buttons that would release the run. Amber, and it says "on hold".
+      hideImportProgress();
+      setAi("blocked", "on hold — " + (evt.detail || "waiting on your decision"));
+      clearTransientStatus();
+      // Refresh BOTH pending lists rather than parse the detail text: the two gates share this
+      // status, each list is a cheap request, and whichever one is empty simply hides its chip.
+      loadPresidioPending(activeCaseId);
+      loadHostDuplicates(activeCaseId);
     } else if (evt.status === "error") {
       hideImportProgress();
       setAi("error", "error — " + (evt.detail || "see server log"));
@@ -61,6 +73,10 @@
       // Presidio approval gate stops one, there is no synchronous response to carry a 409, so this
       // is how that case surfaces at all. Re-check the persisted pending list rather than assume
       // the error text; it's cheap and this is the ONLY path a stopped import gets noticed on.
+      //
+      // STILL CHECKED HERE even though the gates now report "blocked": a gate that fires on a path
+      // which reports its own generic error (rather than routing through sendPipelineError) would
+      // otherwise leave the chip down, and this check is what caught that case before.
       loadPresidioPending(activeCaseId);
       // Same reason as the Presidio line above: an import is fire-and-forget, so a gate that fires
       // mid-import has no response to carry its 409. This is the only path it surfaces on.

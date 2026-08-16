@@ -17,7 +17,8 @@ import {
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
 import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
-import { sendPipelineError } from "./presidioApproval.js";
+import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
+import { sendSynthesisRouteFailure } from "./analystGate.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentation } from "../reports/presentationExport.js";
 
@@ -211,32 +212,13 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         narrativeTimeline: Boolean(state.narrativeTimeline),
       });
     } catch (err) {
-      const aborted = job?.signal?.aborted === true;
-      if (job) await options.jobManager?.fail(job.jobId, err); // no-op if a cancel already marked it cancelled
-      if (aborted) {
-        // A newer exclusive registration may have superseded this run (see above) — if a synthesis
-        // job for this case is still active, that newer run owns the status; don't stomp it to idle.
-        if (!options.jobManager?.hasActive(caseId, "synthesis")) {
-          options.onAiStatus?.(caseId, {
-            status: "idle",
-            at: new Date().toISOString(),
-            detail: "synthesis cancelled",
-          });
-        }
-        return res.status(499).json({ error: "synthesis cancelled" });
-      }
-      options.onAiStatus?.(caseId, {
-        status: "error",
-        at: new Date().toISOString(),
-        detail: (err as Error).message,
+      // Gate → 409 + "blocked"; superseded → 499; anything else → the error path. See analystGate.ts.
+      return sendSynthesisRouteFailure(res, err, {
+        caseId,
+        options,
+        ...(job ? { job } : {}),
+        activityAction: "synthesis",
       });
-      void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai",
-        action: "synthesis",
-        detail: (err as Error).message,
-        outcome: "error",
-      });
-      return sendPipelineError(res, err);
     }
   });
 
@@ -270,8 +252,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(record);
     } catch (err) {
+      // secondOpinion() calls synthesize() twice (secondOpinionRun.ts), so it inherits the merge
+      // gate — and a gate is a question, not a failed second opinion.
       options.onAiStatus?.(caseId, {
-        status: "error",
+        status: isAnalystDecisionGate(err) ? "blocked" : "error",
         at: new Date().toISOString(),
         detail: (err as Error).message,
       });

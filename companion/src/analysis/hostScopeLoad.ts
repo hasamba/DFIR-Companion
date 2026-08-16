@@ -4,7 +4,10 @@ import {
   findNearDuplicates,
   hostMergesFromAssetIds,
   type HostAliasIndex,
+  type NearDuplicate,
 } from "./hostAlias.js";
+import type { HostDuplicateDismissal } from "./hostDuplicateDismissals.js";
+import { hostNamesFromState, pendingNearDuplicates } from "./hostDuplicateGate.js";
 import { aggregateHostEvidence, overlayFindingLinks } from "./hostScopeAggregate.js";
 import { buildHostScopeLedger, type HostScopeLedger } from "./hostScope.js";
 import type { HostScopeStore } from "./hostScopeStore.js";
@@ -47,6 +50,32 @@ export async function loadHostAliasIndex(
   const overrides = sources.assetOverrides ? await sources.assetOverrides.load(caseId) : null;
   const inventory = sources.fleet ? await sources.fleet.load() : { updatedAt: "", clients: [] };
   return buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));
+}
+
+/**
+ * The pairs still awaiting a merge decision, loaded from the case's stores.
+ *
+ * The pure derivation lives in hostDuplicateGate.ts; this is the store recipe that feeds it, and it
+ * is here for the same reason loadHostAliasIndex is — THREE callers now need the same answer (the
+ * host-duplicates route, the import-time notification, and the Now cockpit's blocker card), and
+ * three hand-rolled copies of "load state, load alias index, load dismissals" is exactly how they
+ * drift into disagreeing about whether a case is held.
+ *
+ * `dismissals` is required, not optional: without it every dismissed pair reads as pending again,
+ * which would resurrect a decision the analyst has already made.
+ */
+export async function loadPendingHostDuplicates(
+  sources: Pick<HostScopeSources, "state" | "assetOverrides" | "fleet"> & {
+    dismissals: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
+  },
+  caseId: string,
+): Promise<NearDuplicate[]> {
+  const [state, index, dismissals] = await Promise.all([
+    sources.state.load(caseId),
+    loadHostAliasIndex(sources, caseId),
+    sources.dismissals.load(caseId),
+  ]);
+  return pendingNearDuplicates(hostNamesFromState(state), index, dismissals);
 }
 
 export async function loadHostScopeLedger(

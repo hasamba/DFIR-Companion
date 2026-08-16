@@ -42,8 +42,8 @@ class StubProvider implements AIProvider {
 // every route funnelling errors through the shared helper is covered without hand-wiring each one
 // — including routes added later. This test picks explain-event (one of the listed routes, NOT
 // Ask/Synthesize/Second-opinion, which already had their own coverage) and asserts BOTH halves.
-describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequired (explain-event)", () => {
-  it("returns 409 with the approval marker AND fires an ai_status:error broadcast", async () => {
+describe("sendPipelineError broadcasts ai_status:blocked for PresidioApprovalRequired (explain-event)", () => {
+  it("returns 409 with the approval marker AND fires an ai_status:blocked broadcast", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-presidiobroadcast-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -94,7 +94,7 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
     // Half 2: the status broadcast fired for THIS case, with an error status — this is what lets
     // the dashboard's applyAiStatus → loadPresidioPending path surface the panel for a route that
     // has no dedicated client-side 409 handler.
-    const errorEvents = statusEvents.filter((e) => e.event.status === "error");
+    const errorEvents = statusEvents.filter((e) => e.event.status === "blocked");
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0].caseId).toBe("c1");
     expect(errorEvents[0].event.detail).toMatch(/Presidio/i);
@@ -145,7 +145,7 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
     const res = await request(app).post("/cases/c1/events/ev1/explain");
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/provider exploded/);
-    expect(statusEvents.filter((e) => e.event.status === "error")).toHaveLength(0);
+    expect(statusEvents.filter((e) => e.event.status === "blocked")).toHaveLength(0);
   });
 });
 
@@ -162,8 +162,8 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
 // route file, not just the ones named in review. This test picks translate-query — a DIFFERENT
 // file from explain-event above (anonymization.ts, not aiSynthesis.ts) — to prove the pattern holds
 // outside the file the helper was first adopted in.
-describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequired (translate-query, a route that never called the helper before this fix)", () => {
-  it("returns 409 with the approval marker AND fires an ai_status:error broadcast", async () => {
+describe("sendPipelineError broadcasts ai_status:blocked for PresidioApprovalRequired (translate-query, a route that never called the helper before this fix)", () => {
+  it("returns 409 with the approval marker AND fires an ai_status:blocked broadcast", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-presidiobroadcast-translate-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -210,7 +210,7 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
       findings: [{ value: "Jane Doe", category: "PERSON" }],
     });
 
-    const errorEvents = statusEvents.filter((e) => e.event.status === "error");
+    const errorEvents = statusEvents.filter((e) => e.event.status === "blocked");
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0].caseId).toBe("c1");
     expect(errorEvents[0].event.detail).toMatch(/Presidio/i);
@@ -261,6 +261,6 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
       .send({ request: "outbound RDP from this host" });
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/provider exploded/);
-    expect(statusEvents.filter((e) => e.event.status === "error")).toHaveLength(0);
+    expect(statusEvents.filter((e) => e.event.status === "blocked")).toHaveLength(0);
   });
 });

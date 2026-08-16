@@ -114,7 +114,12 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     name: "Now",
     description:
       "Decision cockpit — active leads, contradictions, gaps, live work, changes and report blockers.",
-    sections: ["sec-now"],
+    // sec-host-duplicates is the only passenger, and it earns the seat by being DATA-GATED in the
+    // markup: it stays hidden until a near-duplicate pair is actually pending. Without it the Now
+    // view — the default for every new case — hid the merge buttons outright, so a synthesis held by
+    // the gate had no reachable release: the header chip scrolled to a display:none section and the
+    // cockpit's only trace of the hold was a failed job pointing at Background Jobs.
+    sections: ["sec-now", "sec-host-duplicates"],
     defaultSort: "severity",
     reportTemplateId: "standard",
   },

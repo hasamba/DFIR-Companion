@@ -1,4 +1,5 @@
 import type { FindingWorkflow } from "./findingWorkflow.js";
+import type { NearDuplicate } from "./hostAlias.js";
 import type { Hypothesis } from "./hypothesis.js";
 import type { ImportMeta } from "./importMeta.js";
 import type { Job } from "./jobRegistry.js";
@@ -106,6 +107,10 @@ export interface CockpitInput {
   importMeta?: ImportMeta;
   synthMeta?: SynthMeta;
   decisions?: CockpitDecisionState;
+  // Host pairs still awaiting a merge decision (analysis/hostDuplicateGate.ts). Optional so every
+  // existing caller keeps compiling, and an absent list reads as "nothing pending" — never as
+  // "unknown, so warn", which would put a permanent blocker on any caller that doesn't supply it.
+  hostDuplicates?: readonly NearDuplicate[];
   investigator?: string;
   now?: string;
 }
@@ -449,8 +454,35 @@ function activityCards(jobs: readonly Job[]): CockpitCard[] {
     .slice(0, 6);
 }
 
-function blockerCards(state: InvestigationState, jobs: readonly Job[]): CockpitCard[] {
+function blockerCards(
+  state: InvestigationState,
+  jobs: readonly Job[],
+  hostDuplicates: readonly NearDuplicate[],
+): CockpitCard[] {
   const cards: CockpitCard[] = [];
+  // FIRST, and Critical: this one is not "the report isn't finished yet", it is "the pipeline is
+  // stopped". Until it clears, synthesis cannot run at all, so every other blocker below is
+  // downstream of it. The card is also the cockpit's only route to the merge buttons — the failed
+  // synthesis job it used to leave behind pointed at Background Jobs, which cannot merge anything.
+  if (hostDuplicates.length > 0) {
+    const named = hostDuplicates
+      .slice(0, 2)
+      .map((pair) => `${pair.other} and ${pair.canonical}`)
+      .join("; ");
+    const rest = hostDuplicates.length - Math.min(2, hostDuplicates.length);
+    cards.push({
+      id: "blocker:host-duplicates",
+      kind: "blocker",
+      title: `${hostDuplicates.length} host${hostDuplicates.length === 1 ? "" : "s"} may be listed under more than one name`,
+      summary:
+        `AI analysis is on hold: ${named}${rest > 0 ? `, and ${rest} more` : ""}. ` +
+        "Until you decide, the AI would treat one machine as two — splitting its evidence and its timeline.",
+      severity: "Critical",
+      evidenceIds: [],
+      target: { panel: "host-duplicates" },
+      action: "Resolve duplicate hosts",
+    });
+  }
   const hasEvidence = state.forensicTimeline.length > 0 || state.timeline.length > 0;
   if (!hasEvidence) {
     cards.push({
@@ -583,7 +615,7 @@ export function deriveCockpit(input: CockpitInput): CockpitSnapshot {
   const decisions = input.decisions ?? EMPTY_DECISIONS;
   const review = decisions.reviews.find((item) => item.investigatorKey === identityKey(investigator));
   const lastReviewedAt = review?.reviewedAt ?? null;
-  const blockers = blockerCards(input.state, input.jobs ?? []);
+  const blockers = blockerCards(input.state, input.jobs ?? [], input.hostDuplicates ?? []);
   const leads = leadCards(input).map((item) => item.card);
   const raw: CockpitSections = {
     leads,

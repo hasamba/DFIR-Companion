@@ -1457,7 +1457,9 @@ export const FEATURES: Feature[] = [
     // does — but the badge lives outside #hostDuplicatesBody, so nothing else would ever wire it.
     file: "dashboard-host-duplicates.js",
     initializer: "initHostDuplicates",
-    publish: ["loadHostDuplicates", "renderHostDuplicates", "initHostDuplicates"],
+    // revealHostDuplicates is published for the cockpit's blocker card (target panel
+    // "host-duplicates"), which lives in js/dashboard-cockpit.js and calls it by bare name.
+    publish: ["loadHostDuplicates", "renderHostDuplicates", "initHostDuplicates", "revealHostDuplicates"],
     private: ["pending"],
   },
   {

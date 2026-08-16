@@ -412,3 +412,82 @@ describe("deriveCockpit — review and card decisions", () => {
     expect(result.sections.leads[0]).toMatchObject({ pinned: true, assignee: "Carol" });
   });
 });
+
+// The near-duplicate host gate (#572) blocks synthesis before a prompt is built. Until this suite,
+// the only cockpit trace of that hold was the FAILED synthesis job it left behind — an activity card
+// pointing at Background Jobs, which cannot merge anything. The blocker below is the cockpit's own
+// account of the hold, and it targets the panel that carries the two decision buttons.
+describe("deriveCockpit host-duplicate blocker", () => {
+  const pair = { canonical: "win11.windomain.local", other: "win11", reason: "shortname-fqdn" as const };
+
+  it("raises a blocker naming both spellings and targeting the merge panel", () => {
+    const result = deriveCockpit({
+      state: state({ findings: [finding("f1")] }),
+      hostDuplicates: [pair],
+      investigator: "Alice",
+      now: NOW,
+    });
+
+    const card = result.readiness.blockers.find((item) => item.id === "blocker:host-duplicates");
+    expect(card).toMatchObject({
+      kind: "blocker",
+      severity: "Critical",
+      target: { panel: "host-duplicates" },
+    });
+    expect(card?.title).toContain("1 host");
+    expect(card?.summary).toContain("win11.windomain.local");
+    expect(card?.summary).toContain("win11");
+  });
+
+  it("counts the pairs and names only the first two in the summary", () => {
+    const result = deriveCockpit({
+      state: state(),
+      hostDuplicates: [
+        pair,
+        { canonical: "dc01.windomain.local", other: "dc01", reason: "shortname-fqdn" as const },
+        { canonical: "srv02.windomain.local", other: "srv02", reason: "shortname-fqdn" as const },
+      ],
+      now: NOW,
+    });
+
+    const card = result.readiness.blockers.find((item) => item.id === "blocker:host-duplicates");
+    expect(card?.title).toContain("3 hosts");
+    expect(card?.summary).toContain("dc01");
+    expect(card?.summary).not.toContain("srv02");
+  });
+
+  // The field is optional so every existing caller keeps compiling; an absent list must read as
+  // "nothing pending", never as "unknown, so warn".
+  it("raises nothing when no pair is pending, and nothing when the field is absent", () => {
+    const withEmpty = deriveCockpit({ state: state(), hostDuplicates: [], now: NOW });
+    const withoutField = deriveCockpit({ state: state(), now: NOW });
+    for (const result of [withEmpty, withoutField]) {
+      expect(result.readiness.blockers.map((card) => card.id)).not.toContain("blocker:host-duplicates");
+    }
+  });
+
+  // A case whose ONLY outstanding item is the merge decision must not read as report-ready.
+  it("keeps the case out of report-ready while a pair is pending", () => {
+    const ready = {
+      state: state({
+        findings: [finding("f1", "High", { status: "confirmed" })],
+        forensicTimeline: [
+          {
+            id: "e-f1",
+            timestamp: "2026-07-30T09:15:00.000Z",
+            description: "LSASS access on WS-01",
+            severity: "Critical" as const,
+            mitreTechniques: ["T1003"],
+            relatedFindingIds: ["f1"],
+            sourceScreenshots: [],
+          },
+        ],
+        lastSummary: "Summary",
+        attackerPath: "Path",
+      }),
+      now: NOW,
+    };
+    expect(deriveCockpit(ready).readiness.ready).toBe(true);
+    expect(deriveCockpit({ ...ready, hostDuplicates: [pair] }).readiness.ready).toBe(false);
+  });
+});
