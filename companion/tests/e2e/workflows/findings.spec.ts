@@ -127,3 +127,33 @@ test("the finding-origin lenses persist across a reload", async ({ page, demoCas
   await expect(page.locator("#hideAutoFindings")).toBeChecked();
   await expect(page.locator("#hideGapFindings")).not.toBeChecked();
 });
+
+// Ticking a lens re-renders the whole dashboard, and the re-render used to re-append EVERY <section>
+// to <main> whether or not the order had changed. appendChild() on a node that is already a child is
+// a remove followed by an insert, so the section holding the analyst's viewport — and the checkbox
+// they had just clicked — left the document for an instant. Chrome answers that by blurring the
+// control and dropping window.scrollY to 0: one click on a filter and the analyst was back at the
+// top of a 50-section page, hunting for the findings list again.
+//
+// The scroll assertion needs a page long enough to scroll, hence the extra revealed sections, and it
+// is deliberately NOT `toBe(before)`. Panels above the findings list finish loading on their own
+// schedule, so the exact offset can legitimately drift a few pixels; what must never happen is the
+// jump to the top. Focus is asserted too because it is the same defect seen from the other side and
+// it is exact — the checkbox either survived the re-render still focused or it did not.
+test("ticking an origin lens leaves the analyst where they were", async ({ page, demoCase }) => {
+  await openCase(page, demoCase);
+  await revealSections(page, "sec-timeline", "sec-iocs");
+
+  const hideAuto = page.locator("#hideAutoFindings");
+  await hideAuto.scrollIntoViewIfNeeded();
+  const before = await page.evaluate(() => window.scrollY);
+  expect(before).toBeGreaterThan(0);
+
+  await hideAuto.click();
+
+  // The re-render really happened — otherwise this passes by doing nothing at all.
+  await expect(page.locator("#sec-findings .finding[data-fid='f-auto-e044']")).toHaveCount(0);
+
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(before * 0.9);
+  await expect(hideAuto).toBeFocused();
+});
