@@ -451,6 +451,7 @@
     "ROUTE GET /cases/:id/host-duplicates",
     "ROUTE POST /cases/:id/host-duplicates/merge",
     "ROUTE POST /cases/:id/host-duplicates/dismiss",
+    "ROUTE GET /cases/:id/ai-state",
     "ROUTE GET /cases/:id/clock-skew",
     "ROUTE POST /cases/:id/clock-skew/recompute",
     "ROUTE POST /cases/:id/clock-skew/align",

@@ -136,6 +136,7 @@
     "adversaryTechniques.ts": "analysis/intel",
     "aiControl.ts": "analysis/ai",
     "aiCost.ts": "analysis/ai",
+    "aiState.ts": "analysis/workflow",
     "analysisRunCompare.ts": "analysis/case",
     "analysisRunHash.ts": "analysis/case",
     "analysisRunRecorders.ts": "analysis/case",

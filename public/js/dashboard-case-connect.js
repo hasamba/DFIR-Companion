@@ -362,6 +362,9 @@
       ["scope", () => loadScope(caseId)],
       ["hostScope", () => loadHostScope(caseId)],
       ["hostDuplicates", () => loadHostDuplicates(caseId)],
+      // Alongside the two gate chips, and for the same reason they are here: the pill has to be
+      // told what this case is doing, because a freshly-loaded page has no event history at all.
+      ["aiState", () => refreshAiState(caseId)],
       ["confidenceControl", () => loadConfidenceControl(caseId)],
       ["corrProfile", () => loadCorrProfile(caseId)],
       ["reportMeta", () => loadReportMeta(caseId)],
@@ -457,8 +460,12 @@
     fetch("/health")
       .then((r) => r.json())
       .then((h) => {
-        if (h.aiEnabled) setAi("idle", "ready (waiting for activity)");
-        else setAi("off", "off (no provider configured)");
+        // The pill is NOT set from /health any more. /health is server-wide — it knows whether a
+        // model is configured and nothing whatsoever about this case — so this line used to claim
+        // "ready (waiting for activity)" on a case that was held at a gate, contradicting the
+        // cockpit two panels below. refreshAiState() below asks the case instead. Only the
+        // no-provider answer survives here, as the immediate paint before that request returns.
+        if (!h.aiEnabled) setAi("off", "off (no provider configured)");
         veloEnabled = !!h.velociraptorEnabled; // gates the "Run in Velociraptor" button in the hunt modal
         applyVeloEnabled(); // gates the triage panel's Run buttons + disabled note
         if (Array.isArray(h.huntPlatforms))
@@ -498,8 +505,12 @@
       ws = null;
       return;
     }
-    ws.onopen = () =>
-      (document.getElementById("status").textContent = "connected (live)");
+    ws.onopen = () => {
+      document.getElementById("status").textContent = "connected (live)";
+      // Anything that happened while the socket was down was never delivered, so the pill may be
+      // holding a state the case left behind. Re-derive rather than assume the gap was quiet.
+      refreshAiState(document.getElementById("caseId").value.trim());
+    };
     ws.onclose = () =>
       (document.getElementById("status").textContent = "disconnected");
     ws.onmessage = (ev) => {
