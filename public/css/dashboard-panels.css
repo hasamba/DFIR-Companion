@@ -81,6 +81,18 @@
 .anon-auto-grp { margin-bottom:6px; }
 .anon-cust-row { display:flex; align-items:center; gap:8px; padding:2px 0; }
 .anon-cust-rm { background:var(--info-bg); border:none; color:var(--tag-red-text); border-radius:4px; cursor:pointer; padding:0 6px; }
+/* Presidio approval rows. The row was a flex line with no shrink control on any item, and flex
+   shrinks whatever it CAN: a Presidio value is a rule name or a path with no break opportunity, so
+   its min-content width is the whole string, while the two button labels have spaces and collapse
+   to their longest word. The buttons therefore absorbed the entire overflow and rendered a
+   different size on every row — three lines tall beside a long value, one line beside a short one.
+   The value wraps and the buttons never shrink; `margin-left:auto` keeps the pair right-aligned so
+   the columns line up across rows of unequal length. */
+.presidio-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:4px 0; }
+.presidio-row code { flex:1 1 200px; min-width:0; overflow-wrap:anywhere; }
+.presidio-row .presidio-cat { flex:none; color:var(--text-muted); font-size:11px; }
+.presidio-row .presidio-actions { flex:none; display:flex; gap:8px; margin-left:auto; }
+.presidio-row .presidio-actions button { flex:none; white-space:nowrap; }
 .comment-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 50; }
 .comment-overlay.open { display: block; }
 .comment-modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);

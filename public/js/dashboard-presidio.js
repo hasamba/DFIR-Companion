@@ -227,13 +227,18 @@
       presidioPending
         .map(
           (e) =>
-            `<div data-safe-style="display:flex;align-items:center;gap:8px;margin:4px 0">` +
-            `<code>${esc(e.value)}</code><span data-safe-style="color:var(--text-muted);font-size:11px">${esc(e.category)}</span>` +
+            // The row's layout is a stylesheet rule (.presidio-row in dashboard-panels.css), not
+            // an inline data-safe-style as it was: it needs flex-shrink control on four items, and
+            // the buttons are wrapped in .presidio-actions so the pair stays together and stays
+            // one size when a long value wraps beneath it.
+            `<div class="presidio-row">` +
+            `<code>${esc(e.value)}</code><span class="presidio-cat">${esc(e.category)}</span>` +
+            `<span class="presidio-actions">` +
             `<button data-presidio-approve="${escAttr(e.value)}" data-presidio-cat="${escAttr(e.category)}" ` +
             `title="Replace this value with a token before anything is sent to the AI. It is restored in the answer you see.">Hide from AI</button>` +
             `<button data-presidio-suppress="${escAttr(e.value)}" ` +
             `title="Leave this value visible to the AI. It won't be flagged again in this case.">Leave visible — not PII</button>` +
-            `</div>`,
+            `</span></div>`,
         )
         .join("");
     el.querySelectorAll("[data-presidio-approve]").forEach((btn) =>
