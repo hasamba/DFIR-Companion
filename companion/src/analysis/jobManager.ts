@@ -26,6 +26,7 @@ import {
   listJobs,
   capJobs,
   capJobsByScope,
+  dropJob,
   dropCaseJobs,
   isTerminal,
   type Job,
@@ -101,6 +102,12 @@ type Deferred = {
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
+  /**
+   * Whether resolve/reject has already been called. Read SYNCHRONOUSLY by the supersede path to
+   * answer "has this job's ledger INSERT landed yet" — a question a Promise cannot answer without
+   * awaiting, and awaiting is what the supersede cannot do (register() is synchronous).
+   */
+  settled: () => boolean;
 };
 
 type ResumeHandler = (job: Job, signal?: AbortSignal) => Promise<void>;
@@ -127,7 +134,19 @@ function deferred(): Deferred {
   // observe late, or never. It swallows nothing: .catch() returns a NEW promise and the original
   // still rejects, so every real awaiter of `ready` still sees the AbortError.
   promise.catch(() => {});
-  return { promise, resolve, reject };
+  let done = false;
+  return {
+    promise,
+    resolve: () => {
+      done = true;
+      resolve();
+    },
+    reject: (error: Error) => {
+      done = true;
+      reject(error);
+    },
+    settled: () => done,
+  };
 }
 
 function abortError(): Error {
@@ -192,7 +211,7 @@ export class JobManager {
     const caseId = input.caseId ?? null;
     const existing = this.reusedRegistration(input, caseId);
     if (existing) return existing;
-    this.cancelExclusiveJobs(input, caseId);
+    this.supersedeExclusiveJobs(input, caseId);
     const jobId = this.appendQueuedJob(input, caseId);
     return this.prepareRegistration(jobId, input);
   }
@@ -211,11 +230,11 @@ export class JobManager {
     };
   }
 
-  private cancelExclusiveJobs(input: RegisterInput, caseId: string | null): void {
+  private supersedeExclusiveJobs(input: RegisterInput, caseId: string | null): void {
     if (!input.exclusive) return;
     for (const job of listJobs(this.table, { caseId })) {
       if (job.kind === input.kind && !isTerminal(job.status)) {
-        this.cancelForExclusiveRegistration(job);
+        this.dropForExclusiveRegistration(job);
       }
     }
   }
@@ -423,6 +442,19 @@ export class JobManager {
     this.admissions.set(jobId, admission);
     this.durabilities.set(jobId, durability);
     await this.persistUpdate(queued);
+    // SUPERSEDED WHILE THAT WRITE WAS IN FLIGHT. dropForExclusiveRegistration only deletes the
+    // ledger row itself when durability has settled; otherwise it defers to the insert in
+    // persistNewAndSchedule, and a resume never goes near one — the row it requeues has been on
+    // disk since the run that was interrupted. So this await is the only place left that can clean
+    // up, and skipping it strands a `queued` row for a job nothing points at: the next restore()
+    // reloads it as `interrupted` and offers Resume on work a newer run already took over.
+    //
+    // Only a supersede (or forgetCase) can remove the row here — capJobsByScope evicts terminal
+    // rows only, and this one is queued — so a missing row means the resume lost the race.
+    if (!getJob(this.table, jobId)) {
+      await this.ledger?.delete(queued);
+      return { ok: false, reason: "unknown" };
+    }
     durability.resolve();
     this.emit(queued.caseId);
     void this.scheduleQueued();
@@ -477,23 +509,54 @@ export class JobManager {
         `job idempotency conflict for ${job.id}; the supported job writer model is single-process`,
       );
     }
+    // Superseded WHILE this insert was in flight. dropForExclusiveRegistration ran synchronously
+    // against a job with no ledger row yet, so it left the DELETE to whoever created one — this
+    // await, which has just returned holding the only reference to a row nothing points at any
+    // more. Skipped, it is reloaded as `cancelled` by the next restore().
+    if (!getJob(this.table, jobId)) {
+      await this.ledger.delete(job);
+      return;
+    }
     this.durabilities.get(jobId)?.resolve();
     this.emit(job.caseId);
     await this.scheduleQueued();
   }
 
-  private cancelForExclusiveRegistration(job: Job): void {
+  // A SUPERSEDE, not a cancellation — the row is REMOVED rather than marked cancelled.
+  //
+  // Every `exclusive` caller registers a "the case changed, re-derive it" kick whose newest
+  // registration subsumes all the older ones, so a superseded job is a queue entry that was
+  // replaced, not a result. Marking it `cancelled` claimed otherwise: that is the exact status the
+  // ✕ Cancel button produces, and a multi-file import mints one kick per file — so an eleven-file
+  // import filled the jobs popover with eleven "cancelled" rows the analyst never cancelled, and
+  // pushed the still-queued imports the badge was counting past the end of the list.
+  //
+  // Removal changes nothing about scheduling: `cancelled` was terminal too, so the case's
+  // concurrency slot was already freed at this same point.
+  private dropForExclusiveRegistration(job: Job): void {
     if (!job.cancellable) return;
+    // WHO DELETES THE LEDGER ROW depends on whether the INSERT has already landed, because
+    // register() supersedes synchronously and cannot wait to find out. Settled durability means the
+    // row is on disk and this path owns the DELETE. Unsettled means the insert is still in flight
+    // (or has not started), and persistNewAndSchedule owns it — it re-reads the table after its
+    // insert returns and deletes the row it finds superseded. Either way the ledger loses the row,
+    // which is what matters: restore() is the one place it would ever be read again, and it would
+    // come back as a `cancelled` job the analyst never cancelled.
+    const durability = this.durabilities.get(job.id);
+    const inLedger = durability?.settled() === true;
     this.controllers.get(job.id)?.abort();
     this.clearBudgetTimer(job.id);
-    this.table = cancelJob(this.table, job.id, this.now());
-    const cancelled = getJob(this.table, job.id)!;
+    this.table = dropJob(this.table, job.id);
     this.admissions.get(job.id)?.reject(abortError());
+    // The row is gone, so it can never become durable. Rejecting says so; leaving it pending would
+    // hang anyone who awaits `durable` (routes/import.ts does) for the life of the process.
+    durability?.reject(abortError());
     this.admissions.delete(job.id);
     this.durabilities.delete(job.id);
     this.controllers.delete(job.id);
-    this.emit(cancelled.caseId);
-    void this.persistUpdate(cancelled)
+    this.emit(job.caseId);
+    if (!inLedger) return;
+    void (this.ledger?.delete(job) ?? Promise.resolve())
       .then(() => this.scheduleQueued())
       .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
   }

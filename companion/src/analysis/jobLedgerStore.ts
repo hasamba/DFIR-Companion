@@ -65,6 +65,20 @@ export class JobLedgerStore {
     });
   }
 
+  /**
+   * Erase one row. Used for a supersede, where the row is not a record of anything that happened:
+   * the newer registration took the work over before this one ran. Returns the rows removed, so a
+   * caller that expected exactly one can tell that the row was already gone.
+   */
+  async delete(job: Pick<Job, "id" | "caseId">): Promise<number> {
+    return jobLedgerWorker.request<number>({
+      op: "deleteJob",
+      dbPath: this.dbPath(job.caseId),
+      scopeKey: this.scopeKey(job.caseId),
+      jobId: job.id,
+    });
+  }
+
   async list(caseId: string | null): Promise<Job[]> {
     const payloads = await jobLedgerWorker.request<string[]>({
       op: "listJobs",
