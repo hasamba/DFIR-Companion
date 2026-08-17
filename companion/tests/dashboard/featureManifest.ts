@@ -756,7 +756,9 @@ export const FEATURES: Feature[] = [
   {
     // The AI status banner — the singleton cluster under that heading.
     file: "dashboard-ai-status.js",
-    publish: ["applyAiStatus", "clearTransientStatus"],
+    // refreshAiState is the derived-state corrector: case-connect, the websocket onopen handler and
+    // both gate panels call it by bare name to re-read GET /cases/:id/ai-state.
+    publish: ["applyAiStatus", "clearTransientStatus", "refreshAiState"],
     private: [],
   },
   {
