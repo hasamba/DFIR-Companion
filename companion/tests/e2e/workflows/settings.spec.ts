@@ -161,3 +161,45 @@ test("US-191: per-source trust exposes defaults and accepts an override", async 
   };
   expect(after.overrides?.crowdstrike).toBe(0.5);
 });
+
+// applySecOrder() is the only thing that puts the <section> elements into the analyst's configured
+// order, and it was rewritten to stop re-appending sections that are already in place — an
+// unconditional appendChild() detached the section under the viewport on every render and threw the
+// page back to the top (see findings.spec.ts for that symptom). This test guards the half that
+// rewrite could silently break: that a real reorder still lands.
+//
+// The two claims are separate. "Reverses correctly" proves the new insertBefore walk still moves
+// every section that must move; "second apply changes nothing" proves it stops there. A version
+// that reorders correctly by re-appending everything would pass the first and fail the second, and
+// that version is exactly the bug.
+test("US-112: applySecOrder reorders the sections, and re-applying moves nothing", async ({ page }) => {
+  await page.goto("/dashboard");
+  await expect(page.locator("main section").first()).toBeAttached({ timeout: 30_000 });
+
+  const result = await page.evaluate(async () => {
+    const main = document.querySelector("main")!;
+    const sectionIds = () => [...main.children].map((c) => c.id).filter((id) => id.startsWith("sec-"));
+
+    const reversed = [...sectionIds()].reverse();
+    (window as unknown as { saveSectionsOrder: (ids: string[]) => void }).saveSectionsOrder(reversed);
+    (window as unknown as { applySecOrder: () => void }).applySecOrder();
+    const afterReorder = sectionIds();
+
+    // Count what a second, redundant apply actually does to <main>. Zero is the contract.
+    let churn = 0;
+    const obs = new MutationObserver((records) => {
+      for (const r of records) churn += r.addedNodes.length + r.removedNodes.length;
+    });
+    obs.observe(main, { childList: true });
+    (window as unknown as { applySecOrder: () => void }).applySecOrder();
+    await new Promise((r) => setTimeout(r, 50));
+    obs.disconnect();
+
+    return { reversed, afterReorder, afterSecondApply: sectionIds(), churn };
+  });
+
+  expect(result.reversed.length, "sections present to reorder").toBeGreaterThan(10);
+  expect(result.afterReorder).toEqual(result.reversed);
+  expect(result.afterSecondApply).toEqual(result.reversed);
+  expect(result.churn, "DOM nodes added/removed by a redundant applySecOrder()").toBe(0);
+});

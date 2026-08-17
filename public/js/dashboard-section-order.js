@@ -39,13 +39,49 @@
     });
     return result;
   }
+  // Put the sections in their configured order, MOVING ONLY THE ONES THAT ARE OUT OF PLACE.
+  //
+  // The obvious version of this — appendChild() every section in order — is not a no-op when the
+  // order already matches. appendChild() on a node that is already a child is defined as a REMOVE
+  // followed by an INSERT, so every section left the document for an instant on every call. That
+  // is fine at init and ruinous afterwards, because render() reaches here on every redraw
+  // (render -> renderCollectionPlan -> applySectionsVis -> applySecOrder). Removing the section
+  // the viewport is sitting on makes Chrome blur whatever had focus inside it and reset
+  // window.scrollY to 0: one click on a findings filter, and the analyst was thrown back to the
+  // top of a fifty-section page. Every other control that re-renders — the confidence floor, the
+  // corroboration lenses — did the same thing.
+  //
+  // So walk the desired order against the children already there and only call insertBefore for a
+  // section that is genuinely in the wrong place. An unchanged order now touches the DOM zero
+  // times, and a real reorder still moves the minimum.
   function applySecOrder() {
     const main = document.querySelector("main");
     if (!main) return;
-    getEffectiveOrder().forEach(({ id }) => {
-      const el = document.getElementById(id);
-      if (el && el.parentElement === main) main.appendChild(el);
-    });
+    const ordered = getEffectiveOrder()
+      .map(({ id }) => document.getElementById(id))
+      .filter((el) => el && el.parentElement === main);
+    // Children that no section def claims (and any section rendered outside the ordered list) keep
+    // their relative order ahead of the ordered run — which is where appendChild() left them, since
+    // it only ever moved sections to the end.
+    const orderedSet = new Set(ordered);
+    const want = [
+      ...Array.prototype.filter.call(
+        main.children,
+        (el) => !orderedSet.has(el),
+      ),
+      ...ordered,
+    ];
+    // `cursor` is the child currently occupying the slot `el` must end up in. If it is already the
+    // right node, step over it and touch nothing; otherwise insert `el` in front of it, which
+    // leaves `cursor` sitting on the next slot for the following iteration.
+    let cursor = main.firstElementChild;
+    for (const el of want) {
+      if (el === cursor) {
+        cursor = cursor.nextElementSibling;
+        continue;
+      }
+      main.insertBefore(el, cursor);
+    }
   }
 
   function applySectionsVis() {
