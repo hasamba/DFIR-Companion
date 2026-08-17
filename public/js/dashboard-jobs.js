@@ -21,6 +21,7 @@
   let _jobsLoadPromise = null;
   let _jobsLoadCaseId = "";
   const JOB_UI_REFRESH_MS = 1000;
+  const JOBS_MENU_ROWS = 12; // rows the popover renders; active jobs are never crowded out of them
   let _jobUiRefreshTimer = null;
   let _jobUiRefreshRunning = false;
   let _jobUiRefreshQueued = false;
@@ -128,7 +129,16 @@
     }
     if (badgeText && badge.textContent !== badgeText)
       badge.textContent = badgeText;
-    const views = _jobsCache.slice(0, 12).map(jobMenuView); // running + recently finished
+    // EVERY job the badge counts, then the newest finished rows to fill the remaining budget.
+    // Taking the newest 12 rows outright let a burst of finished rows fill all 12 and push the
+    // work the badge was counting off the end — "⚙ 3 jobs" over a list with no queued row in it.
+    // Order is preserved (newest first): this only chooses WHICH rows fit, never reorders them.
+    const shown = new Set(running.concat(attention).map((j) => j.id));
+    for (const j of _jobsCache) {
+      if (shown.size >= JOBS_MENU_ROWS) break;
+      shown.add(j.id);
+    }
+    const views = _jobsCache.filter((j) => shown.has(j.id)).map(jobMenuView);
     const shape = JSON.stringify(
       views.map((v) => [v.job.id, v.cancel, v.resume]),
     );

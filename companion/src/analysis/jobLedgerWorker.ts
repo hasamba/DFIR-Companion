@@ -103,6 +103,20 @@ function listJobs(message) {
   }
 }
 
+// Scoped by scope_key as well as id: the id is the primary key, but every other statement here
+// carries the scope and a DELETE that did not would be the one place a wrong dbPath could reach
+// across scopes unnoticed.
+function deleteJob(message) {
+  const db = openDatabase(message.dbPath);
+  try {
+    return Number(db.prepare(
+      "DELETE FROM job_ledger WHERE scope_key=? AND id=?"
+    ).run(message.scopeKey, message.jobId).changes);
+  } finally {
+    db.close();
+  }
+}
+
 function pruneJobs(message) {
   const db = openDatabase(message.dbPath);
   try {
@@ -130,6 +144,7 @@ function dispatch(message) {
   switch (message.op) {
     case "putJob": return putJob(message);
     case "listJobs": return listJobs(message);
+    case "deleteJob": return deleteJob(message);
     case "pruneJobs": return pruneJobs(message);
     default: throw new Error("unknown job-ledger worker operation: " + message.op);
   }

@@ -17,6 +17,7 @@ import type { AppOptions } from "../../src/composition/appOptions.js";
 import type { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { AiControl } from "../../src/analysis/aiControl.js";
 import { pollFor } from "../helpers/poll.js";
+import { countRegistrations } from "../helpers/jobRegistrations.js";
 
 const CASE_ID = "case-multi-import";
 
@@ -26,6 +27,7 @@ async function harness() {
   // perCaseConcurrency: 1 without a ledger — the production default when the durable ledger is
   // wired (jobManager.ts), and what makes the kicks queue instead of running side by side.
   const jobManager = new JobManager({ perCaseConcurrency: 1 });
+  const kicks = countRegistrations(jobManager, "synthesis");
 
   const synthesized: string[] = [];
   let releaseSynthesis: () => void = () => {};
@@ -60,6 +62,7 @@ async function harness() {
   return {
     analysis,
     jobManager,
+    kicks,
     synthesized,
     statuses,
     releaseSynthesis: () => releaseSynthesis(),
@@ -69,22 +72,10 @@ async function harness() {
 const KICKS = 6;
 
 const synthesisJobs = (jm: JobManager) => jm.list(CASE_ID).filter((j) => j.kind === "synthesis");
-const liveSynthesisJobs = (jm: JobManager) => synthesisJobs(jm).filter((j) => j.status !== "cancelled");
-
-/**
- * Wait until all six kicks have REGISTERED, on a wall-clock budget rather than a fixed number of
- * microtask turns — see helpers/poll.ts, which exists because counted spins sample too early under
- * a loaded run and report the resulting empty read as a logic failure.
- */
-const allKicksRegistered = (jm: JobManager) =>
-  pollFor(
-    () => `${KICKS} synthesis registrations, last saw ${synthesisJobs(jm).length}`,
-    async () => (synthesisJobs(jm).length >= KICKS ? true : undefined),
-  );
 
 describe("re-synthesis after a multi-file import", () => {
   it("collapses one kick per imported file into a single surviving synthesis job", async () => {
-    const { analysis, jobManager, synthesized, releaseSynthesis } = await harness();
+    const { analysis, jobManager, kicks, synthesized, releaseSynthesis } = await harness();
 
     // Occupy the case's single concurrency slot the way an in-flight import does, so the kicks
     // queue behind it exactly as they did in the bug report.
@@ -93,9 +84,13 @@ describe("re-synthesis after a multi-file import", () => {
 
     // Six files in one import → six kicks.
     for (let i = 0; i < KICKS; i++) analysis.resynthesizeInBackground(CASE_ID);
-    await allKicksRegistered(jobManager);
+    await kicks.waitFor(KICKS);
 
-    const live = liveSynthesisJobs(jobManager);
+    // ONE row, and no wreckage beside it. A superseded kick is REMOVED, not marked `cancelled`:
+    // that status is what the ✕ Cancel button produces, so five of them read as five aborts the
+    // analyst never ordered — and they crowd the still-queued import out of the jobs popover,
+    // which renders a bounded number of rows newest-first.
+    const live = synthesisJobs(jobManager);
     expect(live).toHaveLength(1); // the other five superseded each other
     expect(live[0].status).toBe("queued");
     expect(synthesized).toEqual([]); // nothing runs while the import still holds the slot
@@ -112,16 +107,16 @@ describe("re-synthesis after a multi-file import", () => {
   });
 
   it("does not report 'synthesis cancelled' while a newer kick still owns the case", async () => {
-    const { analysis, jobManager, statuses, releaseSynthesis } = await harness();
+    const { analysis, jobManager, kicks, statuses, releaseSynthesis } = await harness();
 
     const importJob = jobManager.register({ caseId: CASE_ID, kind: "import", label: "evtx" });
     await importJob.ready;
     for (let i = 0; i < KICKS; i++) analysis.resynthesizeInBackground(CASE_ID);
-    await allKicksRegistered(jobManager);
+    await kicks.waitFor(KICKS);
     // Give every superseded kick's rejection handler a turn to run before asserting on silence.
     await pollFor(
-      () => `${KICKS - 1} superseded kicks, last saw ${KICKS - liveSynthesisJobs(jobManager).length}`,
-      async () => (liveSynthesisJobs(jobManager).length === 1 ? true : undefined),
+      () => `${KICKS - 1} superseded kicks, last saw ${KICKS - synthesisJobs(jobManager).length}`,
+      async () => (synthesisJobs(jobManager).length === 1 ? true : undefined),
     );
 
     // A superseded kick must stay silent: the newer run owns the AI status banner, and stomping it

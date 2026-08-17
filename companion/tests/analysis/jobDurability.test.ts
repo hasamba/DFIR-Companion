@@ -384,4 +384,183 @@ describe("durable job ledger", () => {
     await behind.ready;
     expect(manager.get(behind.jobId)?.status).toBe("running");
   });
+
+  // A superseded job leaves NO row — not in memory, and not in the ledger, which is the only place
+  // one would survive a restart. The reported bug was eleven "cancelled" re-synthesis rows in the
+  // jobs popover after a multi-file import, none of which the analyst cancelled: each imported file
+  // kicks a re-synthesis, and each kick supersedes the one before it.
+  //
+  // The first kick is left to commit before the rest fire, so this covers both halves of the
+  // supersede: a row already on disk (the supersede itself deletes it) and six that are superseded
+  // before their inserts even begin (nothing is ever written). The test after this one covers the
+  // third case — superseded mid-insert — which needs a held write to reproduce.
+  it("erases a superseded row from the ledger", async () => {
+    const { ledger, manager } = await harness({ perCaseConcurrency: 1 });
+    // Hold the case's one slot the way an in-flight import does, so every kick stays queued.
+    const importJob = manager.register({ caseId: "case-a", kind: "import" });
+    await importJob.ready;
+
+    const committed = manager.register({
+      caseId: "case-a",
+      kind: "synthesis",
+      cancellable: true,
+      exclusive: true,
+    });
+    await committed.durable; // on disk before anything supersedes it
+    const kicks = Array.from({ length: 6 }, () =>
+      manager.register({ caseId: "case-a", kind: "synthesis", cancellable: true, exclusive: true }),
+    );
+    const survivor = kicks[kicks.length - 1];
+    await survivor.durable;
+
+    let seen: string[] = [];
+    const synthesisRows = async () => {
+      const rows = (await ledger.list("case-a")).filter((row) => row.kind === "synthesis");
+      seen = rows.map((row) => row.id);
+      return rows;
+    };
+    // The deletes are chained off each insert, so poll rather than assume they have all landed.
+    // The description is resolved LAST and must stay synchronous — an async closure here reports
+    // "[object Promise]" and throws away the one observation that makes the failure diagnosable.
+    await pollFor(
+      () => `one synthesis row in the ledger, last saw ${JSON.stringify(seen)}`,
+      async () => ((await synthesisRows()).length === 1 ? true : undefined),
+    );
+    expect((await synthesisRows())[0]).toMatchObject({ id: survivor.jobId, status: "queued" });
+    expect(manager.list("case-a").filter((job) => job.kind === "synthesis")).toHaveLength(1);
+
+    // The restart is the point: a ledger row left behind comes back, and comes back `cancelled`.
+    const restarted = new JobManager({ ledger, now: clock(), id: () => "job_after_restart" });
+    await restarted.ready();
+    const restored = restarted.list("case-a").filter((job) => job.kind === "synthesis");
+    expect(restored).toHaveLength(1);
+    expect(restored[0]).toMatchObject({ id: survivor.jobId, status: "interrupted" });
+  });
+
+  // The half the burst above cannot reach: a job superseded WHILE its own INSERT is in flight.
+  // register() supersedes synchronously, so at that moment there is nothing on disk to delete — and
+  // a row appears a moment later with nothing left pointing at it. Two imports finishing a few
+  // milliseconds apart is all it takes, and the row survives to the next restart.
+  it("erases a row superseded while its own insert was in flight", async () => {
+    const { ledger, manager } = await harness({ perCaseConcurrency: 1 });
+    const importJob = manager.register({ caseId: "case-a", kind: "import" });
+    await importJob.ready;
+
+    // Hold the first kick's insert open, so the second kick supersedes it mid-write.
+    let releaseInsert = (): void => {};
+    const insertStarted = new Promise<void>((started) => {
+      const realInsert = ledger.insert.bind(ledger);
+      ledger.insert = async (job) => {
+        if (job.kind !== "synthesis") return realInsert(job);
+        ledger.insert = realInsert; // only the first one waits
+        const result = await realInsert(job);
+        started();
+        await new Promise<void>((release) => {
+          releaseInsert = release;
+        });
+        return result;
+      };
+    });
+
+    const first = manager.register({
+      caseId: "case-a",
+      kind: "synthesis",
+      cancellable: true,
+      exclusive: true,
+    });
+    await insertStarted; // the row is on disk; nothing has superseded it yet
+    const second = manager.register({
+      caseId: "case-a",
+      kind: "synthesis",
+      cancellable: true,
+      exclusive: true,
+    });
+    releaseInsert();
+    await second.durable;
+
+    let seen: string[] = [];
+    const synthesisRows = async () => {
+      const rows = (await ledger.list("case-a")).filter((row) => row.kind === "synthesis");
+      seen = rows.map((row) => row.id);
+      return rows;
+    };
+    await pollFor(
+      () => `only the surviving kick in the ledger, last saw ${JSON.stringify(seen)}`,
+      async () => ((await synthesisRows()).length === 1 ? true : undefined),
+    );
+    expect((await synthesisRows())[0]).toMatchObject({ id: second.jobId });
+    expect(manager.get(first.jobId)).toBeUndefined();
+  });
+
+  // The third owner of the DELETE. A resume puts a row back in the queue WITHOUT going through
+  // persistNewAndSchedule — the row has been on disk since the run that was interrupted — so if a
+  // supersede lands while resume() is writing, neither of the other two paths cleans up. Deep pass
+  // is the kind that can reach it: resumable, exclusive and cancellable all at once.
+  it("erases a resumed row superseded while resume() was writing it back", async () => {
+    const { ledger, manager } = await harness({ perCaseConcurrency: 1 });
+    const original = manager.register({
+      caseId: "case-a",
+      kind: "deep-pass",
+      cancellable: true,
+      resumable: true,
+      exclusive: true,
+      maxRetries: 2,
+    });
+    await original.ready;
+
+    // Restart: the running deep pass comes back interrupted, with a live Resume.
+    const restarted = new JobManager({ ledger, now: clock(), id: () => "job_new_deep_pass" });
+    await restarted.ready();
+    restarted.registerResumeHandler("deep-pass", async () => {});
+    expect(restarted.get(original.jobId)?.status).toBe("interrupted");
+
+    // Hold the requeue write open, so the new deep pass supersedes the resumed row mid-write.
+    let releaseUpdate = (): void => {};
+    const updateStarted = new Promise<void>((started) => {
+      const realUpdate = ledger.update.bind(ledger);
+      ledger.update = async (job) => {
+        if (job.id !== original.jobId || job.status !== "queued") return realUpdate(job);
+        ledger.update = realUpdate; // only the requeue waits
+        await realUpdate(job);
+        started();
+        await new Promise<void>((release) => {
+          releaseUpdate = release;
+        });
+      };
+    });
+
+    const resuming = restarted.resume(original.jobId);
+    await updateStarted;
+    // The analyst starts a fresh deep pass instead of waiting — exclusive, so it takes over.
+    const replacement = restarted.register({
+      caseId: "case-a",
+      kind: "deep-pass",
+      cancellable: true,
+      exclusive: true,
+    });
+    releaseUpdate();
+
+    // The resume lost the race and says so, rather than reporting a job it no longer owns.
+    expect(await resuming).toEqual({ ok: false, reason: "unknown" });
+    expect(restarted.get(original.jobId)).toBeUndefined();
+    await replacement.durable;
+
+    const deepPassRows = async () => (await ledger.list("case-a")).filter((row) => row.kind === "deep-pass");
+    let seen: string[] = [];
+    await pollFor(
+      () => `only the replacement deep pass in the ledger, last saw ${JSON.stringify(seen)}`,
+      async () => {
+        const rows = await deepPassRows();
+        seen = rows.map((row) => row.id);
+        return rows.length === 1 ? true : undefined;
+      },
+    );
+    expect((await deepPassRows())[0]).toMatchObject({ id: replacement.jobId });
+
+    // The point of the delete: a row left behind comes back offering Resume on work that a newer
+    // run has already taken over.
+    const afterRestart = new JobManager({ ledger, now: clock(), id: () => "job_unused" });
+    await afterRestart.ready();
+    expect(afterRestart.get(original.jobId)).toBeUndefined();
+  });
 });

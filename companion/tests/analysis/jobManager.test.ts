@@ -175,13 +175,34 @@ describe("JobManager", () => {
   });
 
   describe("exclusive registration", () => {
-    it("cancels a running same-kind job for the same case and aborts its signal", () => {
+    it("removes a running same-kind job for the same case and aborts its signal", () => {
       const m = new JobManager({ now: mkClock() });
       const first = m.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
       const second = m.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
-      expect(m.get(first.jobId)!.status).toBe("cancelled");
+      expect(m.get(first.jobId)).toBeUndefined();
       expect(first.signal!.aborted).toBe(true);
       expect(m.get(second.jobId)!.status).toBe("running");
+    });
+
+    // The superseded row is GONE, not `cancelled`. `cancelled` is what the ✕ Cancel button
+    // produces, so a supersede wearing it reported an analyst action that never happened — eleven
+    // times over for an eleven-file import, each kick superseding the one before.
+    it("leaves no cancelled row behind for a superseded job", () => {
+      const m = new JobManager({ now: mkClock() });
+      for (let i = 0; i < 6; i++) {
+        m.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
+      }
+      expect(m.list("c1")).toHaveLength(1);
+      expect(m.list("c1").map((j) => j.status)).toEqual(["running"]);
+    });
+
+    // A job that cannot be cancelled cannot be superseded either — nothing can stop its work, so
+    // dropping the row would only hide a run that is still going.
+    it("leaves a non-cancellable same-kind job in place", () => {
+      const m = new JobManager({ now: mkClock() });
+      const first = m.register({ caseId: "c1", kind: "synthesis" });
+      m.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
+      expect(m.get(first.jobId)!.status).toBe("running");
     });
 
     it("leaves other cases and other kinds alone", () => {

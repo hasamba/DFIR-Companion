@@ -14,6 +14,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { createEnrichmentEngine } from "../../src/composition/enrichment.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { pollFor } from "../helpers/poll.js";
+import { countRegistrations } from "../helpers/jobRegistrations.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
 import type { EnrichmentProvider } from "../../src/enrichment/provider.js";
 import type { InvestigationState } from "../../src/analysis/stateTypes.js";
@@ -38,6 +39,7 @@ async function harness(opts: { blockLookups?: boolean } = {}) {
   // perCaseConcurrency: 1 — the production default once the durable ledger is wired, and what makes
   // the kicks queue behind one another instead of running side by side.
   const jobManager = new JobManager({ perCaseConcurrency: 1 });
+  const kicks = countRegistrations(jobManager, "enrichment");
 
   const lookups: string[] = [];
   let releaseLookups = (): void => {};
@@ -93,6 +95,7 @@ async function harness(opts: { blockLookups?: boolean } = {}) {
   return {
     engine,
     jobManager,
+    kicks,
     lookups,
     statuses,
     addIoc,
@@ -105,23 +108,10 @@ async function harness(opts: { blockLookups?: boolean } = {}) {
 const KICKS = 6;
 
 const enrichmentJobs = (jm: JobManager) => jm.list(CASE_ID).filter((j) => j.kind === "enrichment");
-const liveEnrichmentJobs = (jm: JobManager) => enrichmentJobs(jm).filter((j) => j.status !== "cancelled");
-
-/**
- * Wait until all six kicks have REGISTERED. A kick reads the case's enrich-control file and its
- * state before it registers, so the barrier has to be a wall-clock poll on the observable outcome —
- * spinning a fixed number of microtask turns is exactly the pattern helpers/poll.ts was written to
- * replace, and under a loaded run it samples before the disk reads land and sees zero jobs.
- */
-const allKicksRegistered = (jm: JobManager) =>
-  pollFor(
-    () => `${KICKS} enrichment registrations, last saw ${enrichmentJobs(jm).length}`,
-    async () => (enrichmentJobs(jm).length >= KICKS ? true : undefined),
-  );
 
 describe("enrichment after a multi-file import", () => {
   it("collapses one kick per imported file into a single surviving enrichment job", async () => {
-    const { engine, jobManager, lookups } = await harness();
+    const { engine, jobManager, kicks, lookups } = await harness();
 
     // Occupy the case's single concurrency slot the way an in-flight import does.
     const importJob = jobManager.register({ caseId: CASE_ID, kind: "import", label: "evtx" });
@@ -129,9 +119,11 @@ describe("enrichment after a multi-file import", () => {
 
     // Six files in one import → six kicks.
     for (let i = 0; i < KICKS; i++) engine.autoEnrichIfEnabled(CASE_ID);
-    await allKicksRegistered(jobManager);
+    await kicks.waitFor(KICKS);
 
-    const live = liveEnrichmentJobs(jobManager);
+    // ONE row, and no wreckage beside it: a superseded kick is REMOVED rather than marked
+    // `cancelled`, which is the status the analyst's own ✕ Cancel produces.
+    const live = enrichmentJobs(jobManager);
     expect(live).toHaveLength(1); // the other five superseded each other
     expect(live[0].status).toBe("queued");
     expect(lookups).toEqual([]); // nothing queries while the import still holds the slot
@@ -146,16 +138,16 @@ describe("enrichment after a multi-file import", () => {
   });
 
   it("does not report a superseded run's outcome over the newer kick", async () => {
-    const { engine, jobManager, statuses } = await harness();
+    const { engine, jobManager, kicks, statuses } = await harness();
 
     const importJob = jobManager.register({ caseId: CASE_ID, kind: "import", label: "evtx" });
     await importJob.ready;
     for (let i = 0; i < KICKS; i++) engine.autoEnrichIfEnabled(CASE_ID);
-    await allKicksRegistered(jobManager);
+    await kicks.waitFor(KICKS);
     // Give every superseded kick's rejection handler a turn to run before asserting on silence.
     await pollFor(
-      () => `${KICKS - 1} superseded kicks, last saw ${KICKS - liveEnrichmentJobs(jobManager).length}`,
-      async () => (liveEnrichmentJobs(jobManager).length === 1 ? true : undefined),
+      () => `${KICKS - 1} superseded kicks, last saw ${KICKS - enrichmentJobs(jobManager).length}`,
+      async () => (enrichmentJobs(jobManager).length === 1 ? true : undefined),
     );
 
     // A superseded kick must stay silent: the newer run owns the status banner, and an "enriched

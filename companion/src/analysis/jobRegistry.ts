@@ -349,6 +349,15 @@ export function listJobs(table: JobTable, opts: { caseId?: string | null } = {})
   return [...filtered].sort((a, b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id));
 }
 
+// Removes one row outright rather than moving it to a terminal status. For a SUPERSEDE: a newer
+// exclusive registration subsumes this job's work, so what is left is not a result the analyst can
+// act on — it is a queue entry that was replaced. Marking it `cancelled` said the opposite, because
+// that is the same status the ✕ Cancel button produces, and a multi-file import minted one per file.
+export function dropJob(table: JobTable, jobId: string): JobTable {
+  const remaining = table.jobs.filter((job) => job.id !== jobId);
+  return remaining.length === table.jobs.length ? table : { jobs: remaining };
+}
+
 // Removes a case's rows outright rather than moving them to a terminal status: the case they
 // describe no longer exists, so there is nothing left for a reader to act on. Jobs are keyed by
 // case id alone, so a survivor would silently re-attach to the next case that claims the id.
