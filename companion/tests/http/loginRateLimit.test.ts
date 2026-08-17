@@ -53,7 +53,11 @@ async function attempt(username: string) {
   return request(app).post("/auth/local/login").send({ username, password: "not the password" });
 }
 
-describe("login limiter — rotating usernames", () => {
+// 30s, not the suite's 15s default. MEASURED at 10.0s on an idle machine: each test here drives 70
+// real login round-trips through the app to reach a client-wide limit, which is the behaviour under
+// test and cannot be faked down. At 67% of the default budget this was the second test to fail under
+// contention (observed at 31s), for no reason other than having no room to be slowed down.
+describe("login limiter — rotating usernames", { timeout: 30_000 }, () => {
   it("reaches the client-wide limit instead of running forever", async () => {
     // Each username is well-formed and nonexistent: on master every one of these got its own
     // bucket and its own scrypt verification, and none ever reached a 429.
