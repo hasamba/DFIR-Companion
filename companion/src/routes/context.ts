@@ -4,6 +4,7 @@ import type { Logger } from "../logging/logger.js";
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
 import type { AiControl } from "../analysis/aiControl.js";
+import type { ImportLock } from "../analysis/importLock.js";
 import type { ImporterRegistry, ImporterPrecedence } from "../analysis/importerStore.js";
 import type { IrisClient } from "../integrations/iris/irisClient.js";
 import type { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
@@ -81,6 +82,13 @@ export interface RouteContext {
   //   reloadImporters    — re-read the on-disk declarative-importer registry into the in-memory copy +
   //                        precedence, then fire onImporters (the importer CRUD writes call it).
   runStateExclusive<T>(caseId: string, fn: () => Promise<T>): Promise<T>;
+  /**
+   * One import writer per case, across EVERY import path — the import routes here, the streamed
+   * ingest behind /push and MCP, the Velociraptor monitors, and the hunt collects. Held from an
+   * import's state snapshot to the import-meta diff + undo checkpoint it derives from that snapshot,
+   * so no foreign write can be counted as this import's own. See analysis/importLock.ts.
+   */
+  importLock: ImportLock;
   ensureDropFolders(caseId: string): Promise<void>;
   reloadImporters(): Promise<void>;
   // Capture→analyze machinery shared with the drop-watch ingest path and the AI-control routes

@@ -15,6 +15,7 @@
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { StateLock } from "../analysis/stateLock.js";
+import type { ImportLock } from "../analysis/importLock.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import type { ReportWriter } from "../reports/reportWriter.js";
@@ -138,6 +139,10 @@ export interface AppOptions {
   // Per-case mutex serializing load->save critical sections so concurrent state writes
   // (manual adds vs background enrichment/synthesis) cannot clobber each other.
   stateLock?: StateLock;
+  // Per-case mutex serializing whole IMPORT sections (snapshot → merge → diff → checkpoint), so an
+  // import never counts a concurrent writer's events as its own. createApp makes one when unset;
+  // pass an instance to hold the section from a test. See analysis/importLock.ts.
+  importLock?: ImportLock;
   aiConfigured?: boolean;
   operationalMetrics?: OperationalMetricsStore;
   liveConnectionCount?: () => number;

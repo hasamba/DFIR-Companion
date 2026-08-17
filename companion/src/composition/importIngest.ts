@@ -23,6 +23,7 @@
 import { Buffer } from "node:buffer";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
+import type { ImportLock } from "../analysis/importLock.js";
 import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
@@ -39,6 +40,8 @@ export interface ImportIngestDeps {
   store: CaseStore;
   options: AppOptions;
   runStateExclusive: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
+  /** One import writer per case, across every import path (see analysis/importLock.ts). */
+  importLock: ImportLock;
   recordImporterRun: (id: string, patch: Omit<ImporterRunStat, "lastRunAt">) => void;
   redactErr: (err: unknown) => string;
   /** Content-based tagger run over just the events an import added (see analysis/taggerAuto.ts). */
@@ -82,6 +85,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     store,
     options,
     runStateExclusive,
+    importLock,
     recordImporterRun,
     redactErr,
     autoTagImported,
@@ -341,69 +345,77 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
     });
 
-    let stateBefore: InvestigationState | null = null;
-    if (options.stateStore) {
-      try {
-        stateBefore = await options.stateStore.load(caseId);
-      } catch {
-        /* keep null */
+    // One import writer per case, held from the snapshot through the diff below: /push, the MCP
+    // ingest and the Velociraptor monitors all land here, none of them passes through the job queue,
+    // and any of them writing inside another import's section would be counted as that import's own
+    // work (and swept into its undo checkpoint). See analysis/importLock.ts.
+    const counts = await importLock.runExclusive(caseId, async () => {
+      let stateBefore: InvestigationState | null = null;
+      if (options.stateStore) {
+        try {
+          stateBefore = await options.stateStore.load(caseId);
+        } catch {
+          /* keep null */
+        }
       }
-    }
 
-    await dispatchImport(kind, caseId, text, {
-      label: storedName,
-      idPrefix: `${seq}`,
-      importedAt,
-      onProgress,
-      minSeverity,
-    });
-    options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      await dispatchImport(kind, caseId, text, {
+        label: storedName,
+        idPrefix: `${seq}`,
+        importedAt,
+        onProgress,
+        minSeverity,
+      });
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 
-    let addedEvents = 0,
-      addedIocs = 0;
-    if (options.stateStore && stateBefore) {
-      try {
-        const imported = await options.stateStore.load(caseId);
-        // Dual-write the newly-imported events into the super-timeline FIRST so it stays a superset of
-        // everything imported (Info telemetry included). The diff is lossy, so resolve the FULL events
-        // from the imported (pre-demote) state. Best-effort — a side record.
-        if (options.superTimelineStore) {
-          const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-          const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-          if (added.length) {
-            try {
-              await options.superTimelineStore.append(caseId, added);
-              options.onSuperTimeline?.(caseId);
-            } catch {
-              /* non-fatal */
+      let addedEvents = 0,
+        addedIocs = 0;
+      if (options.stateStore && stateBefore) {
+        try {
+          const imported = await options.stateStore.load(caseId);
+          // Dual-write the newly-imported events into the super-timeline FIRST so it stays a superset of
+          // everything imported (Info telemetry included). The diff is lossy, so resolve the FULL events
+          // from the imported (pre-demote) state. Best-effort — a side record.
+          if (options.superTimelineStore) {
+            const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
+            const added = addedForensicEvents(imported.forensicTimeline, superDiff);
+            if (added.length) {
+              try {
+                await options.superTimelineStore.append(caseId, added);
+                options.onSuperTimeline?.(caseId);
+              } catch {
+                /* non-fatal */
+              }
+              await autoTagImported(caseId, added);
             }
-            await autoTagImported(caseId, added);
           }
+          // Now demote sub-threshold events out of the forensic timeline (they live on in the super-
+          // timeline). Compute the import-meta diff on the POST-demote state so "+N events" counts only
+          // what actually entered forensic.
+          const s = await demoteForensicForCase(caseId);
+          const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
+          const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+          addedEvents = tDiff.added.length;
+          addedIocs = iDiff.added.length;
+          if (
+            (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
+            options.importMetaStore
+          ) {
+            await options.importMetaStore.record(caseId, {
+              kind,
+              file: storedName,
+              diff: tDiff,
+              iocsDiff: iDiff,
+            });
+            options.onImportMeta?.(caseId);
+          }
+        } catch {
+          /* non-fatal */
         }
-        // Now demote sub-threshold events out of the forensic timeline (they live on in the super-
-        // timeline). Compute the import-meta diff on the POST-demote state so "+N events" counts only
-        // what actually entered forensic.
-        const s = await demoteForensicForCase(caseId);
-        const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-        const iDiff = diffIocs(stateBefore.iocs, s.iocs);
-        addedEvents = tDiff.added.length;
-        addedIocs = iDiff.added.length;
-        if (
-          (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
-          options.importMetaStore
-        ) {
-          await options.importMetaStore.record(caseId, {
-            kind,
-            file: storedName,
-            diff: tDiff,
-            iocsDiff: iDiff,
-          });
-          options.onImportMeta?.(caseId);
-        }
-      } catch {
-        /* non-fatal */
       }
-    }
+      return { addedEvents, addedIocs };
+    });
+    const { addedEvents, addedIocs } = counts;
     // Auto-mark known-good IOCs/hashes legitimate (whitelist + NSRL) BEFORE re-synthesis, like /import.
     try {
       const wl = await applyWhitelistToCase(caseId);

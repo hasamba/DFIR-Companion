@@ -48,6 +48,7 @@ import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportCaseGuard } from "./importCaseGuard.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
+import { beginImportSection, type ImportSection } from "./importSection.js";
 
 /**
  * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence
@@ -64,6 +65,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const {
     store,
     options,
+    importLock,
     recordImportFailure,
     recordAiError,
     getControl,
@@ -368,22 +370,17 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
       });
 
+      // Both assigned by run(), once this import owns the case. The section stays held through the
+      // diff below (the `.finally` releases it), so the numbers this import reports and the
+      // checkpoint it pushes describe only its own work — see routes/importSection.ts.
+      let stateBefore: InvestigationState | null = null;
+      let section: ImportSection | null = null;
       const run = async (): Promise<unknown> => {
         await tracking.start();
+        section = await beginImportSection(importLock, caseId, options.stateStore);
+        stateBefore = section.stateBefore;
         return dispatchImport(kind, caseId, text, base);
       };
-
-      // Snapshot the FULL investigation state BEFORE the import so the .then() below can (a) diff what
-      // this import added (the "last import" banner) and (b) push a pre-import undo checkpoint (#76 —
-      // the whole state, so undo also takes back the findings/MITRE the post-import synthesis derives).
-      let stateBefore: InvestigationState | null = null;
-      if (options.stateStore) {
-        try {
-          stateBefore = await options.stateStore.load(caseId);
-        } catch {
-          /* keep null */
-        }
-      }
 
       run()
         .then(async () => {
@@ -521,6 +518,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             at: new Date().toISOString(),
             detail: (err as Error).message,
           });
+        })
+        .finally(() => {
+          // Unconditional: a section left held would wedge every later import for this case.
+          section?.release();
+          section = null;
         });
       return;
     } catch (err) {
@@ -678,18 +680,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         detail: `importing (${kind}) from path${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
       });
 
+      // Held through the diff below; released in the `.finally`. See routes/importSection.ts.
       let stateBefore: InvestigationState | null = null;
-      if (options.stateStore) {
-        try {
-          stateBefore = await options.stateStore.load(caseId);
-        } catch {
-          /* keep null */
-        }
-      }
-
+      let section: ImportSection | null = null;
       // Plaso streams from disk; everything else dispatches the in-memory string.
       const run = async (): Promise<unknown> => {
         await tracking.start();
+        section = await beginImportSection(importLock, caseId, options.stateStore);
+        stateBefore = section.stateBefore;
         return streaming
           ? pipeline.importPlasoFile(caseId, join(store.importsDir(caseId), storedName), base)
           : dispatchImport(kind, caseId, text, base);
@@ -816,6 +814,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             at: new Date().toISOString(),
             detail: (err as Error).message,
           });
+        })
+        .finally(() => {
+          // Unconditional: a section left held would wedge every later import for this case.
+          section?.release();
+          section = null;
         });
       return;
     } catch (err) {

@@ -51,11 +51,15 @@ import {
   type HuntRunDiff,
 } from "../analysis/huntRunDiff.js";
 import type { InvestigationState, ForensicEvent } from "../analysis/stateTypes.js";
+import type { ImportLock } from "../analysis/importLock.js";
+import type { RegisteredJob } from "../analysis/jobManager.js";
 import { logLine } from "../logging/serverLogger.js";
 
 export interface VeloHuntsDeps {
   store: CaseStore;
   options: AppOptions;
+  /** One import writer per case, across every import path (see analysis/importLock.ts). */
+  importLock: ImportLock;
   persistEvidence: (
     caseId: string,
     originalName: string,
@@ -92,6 +96,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   const {
     store,
     options,
+    importLock,
     persistEvidence,
     dispatchImport,
     resolveImportKind,
@@ -112,6 +117,44 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   // now" all deciding to collect the same hunt at the same moment (VeloHuntStore has no lock/CAS).
   const collectingNow = new Map<string, { rerun: boolean }>();
   const collectKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
+
+  // ── The case's import slot ───────────────────────────────────────────────────────────────────
+  // A collect writes to the same forensic timeline the dashboard's imports write to, and reports
+  // "+N events" as a DIFF of that timeline — so an import running alongside it lands inside the
+  // collect's numbers and inside its undo checkpoint (undoing the collect would then revert that
+  // import too). The job queue already serializes imports at one per case; take the same slot here
+  // so a collect and an import can never overlap, and snapshot only once it is held.
+  //
+  // Claim it AFTER the result fetches and release it after the diff: the slot covers the writes,
+  // not the minutes of network reads that precede them, so a collect of a big hunt does not block
+  // the analyst's own imports while it downloads.
+  //
+  // Returns null when no jobManager is wired (minimal wirings/tests) or when the registration was
+  // dropped before it ever ran. The collect then proceeds without the slot — never without the lock,
+  // which is the one that guarantees exclusivity.
+  async function claimImportSlot(caseId: string, detail: string): Promise<RegisteredJob | null> {
+    const jobManager = options.jobManager;
+    if (!jobManager) return null;
+    const job = jobManager.register({ caseId, kind: "import", label: detail, detail, resumable: false });
+    try {
+      await job.durable;
+      await job.ready;
+      return job;
+    } catch (err) {
+      logLine(`[velociraptor] import slot not granted (${detail}): ${(err as Error).message}`);
+      return null; // terminal already — nothing left to finish
+    }
+  }
+
+  // Always called from a `finally`: a stranded slot would block EVERY later import for the case.
+  async function releaseImportSlot(job: RegisteredJob | null): Promise<void> {
+    if (!job) return;
+    try {
+      await options.jobManager?.finish(job.jobId);
+    } catch (err) {
+      logLine(`[velociraptor] releasing the import slot failed: ${(err as Error).message}`);
+    }
+  }
 
   // ── Velociraptor hunt STATUS polling ─────────────────────────────────────────────────────────
   // Keyed `caseId huntId`, self-rescheduling setTimeout (not setInterval, so a slow poll can't
@@ -238,6 +281,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     if (!job) return;
     // NOTE: a persisted status of "collecting" is deliberately NOT treated as "in flight" — see the
     // file header. The authority on what is actually running now is `collectingNow`.
+    // Both held from just before the first write until the diff is recorded; released in the
+    // `finally`. Acquire order is slot-then-lock everywhere, so the two can never deadlock.
+    let importSlot: RegisteredJob | null = null;
+    let releaseImportLock: (() => void) | null = null;
     try {
       // A last live check right before collecting: was this hunt stopped/deleted in Velociraptor well
       // before its own scheduled expiry? Checked HERE (not just in the status poller) so every entry
@@ -256,19 +303,17 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       options.onVeloHunt?.(caseId);
       const minSeverity = job.minSeverity;
 
-      // Snapshot the full state BEFORE any import so we record one combined import-meta diff for the
-      // whole collection AND can push a single pre-collection undo checkpoint (#76).
-      let stateBefore: InvestigationState | null = null;
-      if (options.stateStore) {
-        try {
-          stateBefore = await options.stateStore.load(caseId);
-        } catch {
-          /* keep null */
-        }
-      }
-
       let importedAny = false;
       let lastFile: string | undefined;
+      // Assigned below, once the import slot is held — see claimImportSlot. It is the state this
+      // collect's combined import-meta diff and its single pre-collection undo checkpoint (#76) are
+      // measured against, so it must be read after the last foreign write can have landed.
+      let stateBefore: InvestigationState | null = null;
+      // Rows appended to the super-timeline by this collect, from BOTH paths: a super-only bundle
+      // appends directly, everything else is dual-written from the forensic diff below. Reported on
+      // import-meta so the cockpit card can cross-check "+N forensic" against it — the mismatch that
+      // exposed a mis-attributed count on the /import path was invisible here for want of this number.
+      let superTimelineAddedCount = 0;
 
       // A bundle flagged superTimelineOnly (the built-in super-timeline-triage) collects raw host
       // artifacts (MFT/USN/Prefetch) whose only purpose is the super-timeline — routing them through the
@@ -303,6 +348,38 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
       const skippedNames = new Set(skipped.map((s) => s.name));
       const emptyArtifacts = job.artifacts.filter((a) => !map[a] && !skippedNames.has(a));
+
+      // 2) Uploaded JSON reports (e.g. THOR/Hayabusa). READ here, IMPORTED further down: every read
+      // this collect needs must finish before it takes the import slot, so the slot covers only the
+      // writes. Best-effort: a wrong upload VQL for the server version must not break the rows import
+      // (set DFIR_VELOCIRAPTOR_UPLOAD_VQL).
+      let uploads: HuntUpload[] = [];
+      try {
+        uploads = await client.huntUploads(job.huntId);
+      } catch (e) {
+        logLine(
+          `[velociraptor] hunt uploads read failed (override DFIR_VELOCIRAPTOR_UPLOAD_VQL?): ${(e as Error).message}`,
+        );
+      }
+
+      // Everything below WRITES to the case. Take the queue slot, then the import lock — that order,
+      // always (see analysis/importLock.ts). The slot keeps the collect visible as work and stops it
+      // starting while an import runs; the lock is what actually guarantees one writer, including
+      // against the paths that never queue at all (/push, MCP, the Velociraptor monitors).
+      importSlot = await claimImportSlot(
+        caseId,
+        `velociraptor: hunt ${job.huntId} (${totalRows} row(s), ${uploads.length} upload(s))`,
+      );
+      releaseImportLock = await importLock.acquire(caseId);
+      if (options.stateStore) {
+        try {
+          stateBefore = await options.stateStore.load(caseId);
+        } catch {
+          /* keep null */
+        }
+      }
+
+      // 3) Result ROWS → the importer.
       if (totalRows > 0) {
         const json = JSON.stringify(map);
         const { storedName, importedAt, seq } = await persistEvidence(
@@ -358,7 +435,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             ...(e.sha256 ? { sha256: e.sha256 } : {}),
             ...(e.md5 ? { md5: e.md5 } : {}),
           }));
-          await options.superTimelineStore!.append(caseId, events);
+          superTimelineAddedCount += await options.superTimelineStore!.append(caseId, events);
           options.onSuperTimeline?.(caseId); // live dashboards refresh as super-only events stream in
           await autoTagImported(caseId, events);
           importedAny = true; // report success even though nothing hit the forensic timeline
@@ -374,16 +451,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         }
       }
 
-      // 2) Uploaded JSON reports (e.g. THOR/Hayabusa) → detect + dispatch. Best-effort: a wrong upload
-      // VQL for the server version must not break the rows import (set DFIR_VELOCIRAPTOR_UPLOAD_VQL).
-      let uploads: HuntUpload[] = [];
-      try {
-        uploads = await client.huntUploads(job.huntId);
-      } catch (e) {
-        logLine(
-          `[velociraptor] hunt uploads read failed (override DFIR_VELOCIRAPTOR_UPLOAD_VQL?): ${(e as Error).message}`,
-        );
-      }
+      // 4) The uploaded JSON reports read above → detect + dispatch.
       for (const up of uploads) {
         const upKind = resolveImportKind(up.name, up.content); // honor custom importers like /import + /push
         if (upKind === "unknown") continue;
@@ -421,7 +489,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 
-      // 3) One combined import-meta diff (so the dashboard's "📥 last import / +N" banner lights up).
+      // 5) One combined import-meta diff (so the dashboard's "📥 last import / +N" banner lights up).
       let addedEvents = 0;
       let addedIocs = 0;
       if (importedAny && options.stateStore && stateBefore) {
@@ -435,7 +503,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             const added = addedForensicEvents(imported.forensicTimeline, superDiff);
             if (added.length) {
               try {
-                await options.superTimelineStore.append(caseId, added);
+                superTimelineAddedCount += await options.superTimelineStore.append(caseId, added);
                 options.onSuperTimeline?.(caseId);
               } catch {
                 /* non-fatal */
@@ -455,6 +523,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               kind: "velociraptor",
               file: lastFile ?? `velo-hunt_${job.huntId}.json`,
               diff,
+              superTimelineAddedCount,
               iocsDiff,
             });
             options.onImportMeta?.(caseId);
@@ -552,6 +621,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         at: new Date().toISOString(),
         detail: `Velociraptor hunt collect failed: ${(err as Error).message}`,
       });
+    } finally {
+      // Never leave either held: both are per-case singletons, so a stranded one would block every
+      // later import — the analyst's included — until the server restarts. Released in the reverse
+      // of the acquire order.
+      releaseImportLock?.();
+      releaseImportLock = null;
+      await releaseImportSlot(importSlot);
     }
   }
 
