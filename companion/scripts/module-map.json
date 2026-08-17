@@ -271,6 +271,7 @@
     "imageRedact.ts": "analysis/privacy",
     "importDetect.ts": "analysis/ingest",
     "importDetectSources.ts": "analysis/ingest",
+    "importLock.ts": "analysis/ingest",
     "importMeta.ts": "analysis/ingest",
     "importResume.ts": "analysis/ingest",
     "importUndo.ts": "analysis/ingest",
