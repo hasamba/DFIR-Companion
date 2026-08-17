@@ -91,14 +91,30 @@ async function tick(ms: number): Promise<void> {
  * Deliberately NOT used by the CANCELLED/DISARMED tests: for those, zero pending timers is the
  * property under test, so waiting for one would be waiting for the bug.
  */
+const REARM_TIMEOUT_MS = 10_000;
+
+/**
+ * The timeout a test must carry PER `tickAndRearm()` CALL, plus room for its own work.
+ *
+ * Derived, not written down twice. A caller that waits up to REARM_TIMEOUT_MS twice can legitimately
+ * spend 2x that before doing anything wrong, and the suite's 15s default would kill it partway
+ * through the second wait — each wait inside its own budget, the pair outside the test's. That is
+ * the arithmetic tests/helpers/poll.ts warns about ("keep the caller's test timeout above the SUM
+ * of its poll budgets"), and this patch's own reviewer caught it here. Computing it means adjusting
+ * REARM_TIMEOUT_MS can never silently outgrow the timeout again.
+ */
+const rearmBudget = (calls: number) => REARM_TIMEOUT_MS * calls + 10_000;
+
 async function tickAndRearm(ms: number): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + REARM_TIMEOUT_MS;
   for (;;) {
     await settle(2);
     if (vi.getTimerCount() > 0) return;
     if (Date.now() >= deadline) {
-      throw new Error("timed out after 10000ms waiting for: the poller to re-arm its next timer");
+      throw new Error(
+        `timed out after ${REARM_TIMEOUT_MS}ms waiting for: the poller to re-arm its next timer`,
+      );
     }
   }
 }
@@ -350,23 +366,28 @@ describe("Evidence drop-folder watcher — timer lifecycle", () => {
   const failedNames = async (store: CaseStore): Promise<string[]> =>
     readdir(join(store.caseDir("c1"), "drop", "_failed")).catch(() => [] as string[]);
 
-  it("ARMED + RE-ARMED: the watcher sweeps, and sweeps again, so a settled file is processed", async () => {
-    const { store } = await freshRoot("dfir-timer-drop-");
-    createApp(store, { dropStatusStore: new DropStatusStore(store) });
-    await settle();
-    await dropJunk(store, "junk.txt");
+  // rearmBudget(2): this test calls tickAndRearm twice, so it must survive two full waits.
+  it(
+    "ARMED + RE-ARMED: the watcher sweeps, and sweeps again, so a settled file is processed",
+    { timeout: rearmBudget(2) },
+    async () => {
+      const { store } = await freshRoot("dfir-timer-drop-");
+      createApp(store, { dropStatusStore: new DropStatusStore(store) });
+      await settle();
+      await dropJunk(store, "junk.txt");
 
-    // A file must be seen unchanged by TWO sweeps before it is read (selectReadyFiles waits for
-    // size+mtime to settle, so a half-copied file is never imported). That makes this assertion
-    // a re-arm test by construction: one sweep alone can never move the file.
-    // tickAndRearm, not tick: the assertion below depends on a SECOND sweep firing, which can only
-    // happen if this first one finished and scheduled it.
-    await tickAndRearm(2_000);
-    expect(await failedNames(store)).toEqual([]);
+      // A file must be seen unchanged by TWO sweeps before it is read (selectReadyFiles waits for
+      // size+mtime to settle, so a half-copied file is never imported). That makes this assertion
+      // a re-arm test by construction: one sweep alone can never move the file.
+      // tickAndRearm, not tick: the assertion below depends on a SECOND sweep firing, which can only
+      // happen if this first one finished and scheduled it.
+      await tickAndRearm(2_000);
+      expect(await failedNames(store)).toEqual([]);
 
-    await tickAndRearm(2_000);
-    expect(await failedNames(store)).toEqual(["junk.txt"]);
-  });
+      await tickAndRearm(2_000);
+      expect(await failedNames(store)).toEqual(["junk.txt"]);
+    },
+  );
 
   it("DISARMED: no dropStatusStore means no filesystem poller at all", async () => {
     const { store } = await freshRoot("dfir-timer-dropoff-");
