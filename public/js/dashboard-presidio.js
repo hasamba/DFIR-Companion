@@ -252,6 +252,10 @@
           .then((d) => {
             presidioPending = d.pending || [];
             renderPresidioPending();
+            // Clearing the LAST finding lifts the gate. The server kicks the held run, but that
+            // kick emits nothing until it starts, so re-derive rather than leave the pill reading
+            // "on hold" over a case that no longer is — the exact bug reported for this gate.
+            refreshAiState(caseId);
             loadAnonEntities(caseId)
               .then(renderAutoEntities)
               .catch(() => {});
@@ -274,6 +278,7 @@
           .then((d) => {
             presidioPending = d.pending || [];
             renderPresidioPending();
+            refreshAiState(caseId); // same reason as the approve path above
           })
           .catch(() => {});
       }),

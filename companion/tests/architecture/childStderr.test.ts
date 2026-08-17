@@ -131,7 +131,13 @@ describe("tests do not leak a child process's stderr into the run", () => {
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("gives every spawn in the suite an explicit stdio that pipes stderr", async () => {
+  // 30s, not the suite's 15s default. MEASURED at 7.7s on an idle machine — this parses every one
+  // of the ~625 test files with the TypeScript compiler, so it is genuinely heavy rather than slow
+  // by accident. At 51% of the default budget it was the first test to fail under any contention
+  // (observed at 21s on a loaded run), which reads as flake and trains people to ignore it. The
+  // headroom is for the machine, not for the test: if this ever approaches 30s the scan itself has
+  // regressed and that is worth failing over.
+  it("gives every spawn in the suite an explicit stdio that pipes stderr", { timeout: 30_000 }, async () => {
     // Structural, not behavioural, and deliberately so. The leak is invisible from inside the
     // process that leaks — the parent's stderr belongs to the test runner — so the cheap thing a
     // test can check is that no call site sets the leak up.

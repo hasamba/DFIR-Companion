@@ -53,6 +53,10 @@
       hideImportProgress();
       setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
       clearTransientStatus(); // re-synthesis finished → drop the "…re-synthesizing" line
+      // "Idle" is the event most likely to be WRONG about a case, because it is emitted by whichever
+      // run just finished and that run knows nothing about a gate still holding the next one. Verify
+      // it against the case rather than let a stale "up to date" sit over an unresolved decision.
+      refreshAiState(activeCaseId);
     } else if (evt.status === "blocked") {
       // A GATE, not a failure: the pipeline stopped on purpose and is waiting for a decision (a
       // Presidio approval, a duplicate-host merge). Both used to arrive as "error", which painted
@@ -101,6 +105,42 @@
     }
   }
 
+  // ── The correction ───────────────────────────────────────────────────────────────────────────
+  //
+  // Everything above reacts to a PUSHED event. That was the pill's only source of state, and it is
+  // why three bugs were possible: a wrong event (it announced a synthesis the merge gate would
+  // refuse), an absent event (it stayed "on hold" after the last Presidio approval cleared), and no
+  // event at all (a page reload set it from /health — which is server-wide and cannot know anything
+  // about a case — so a reload on a held case read "ready (waiting for activity)").
+  //
+  // GET /cases/:id/ai-state derives the answer from the case instead. Pushed events stay the fast
+  // path for live progress; this is what the pill falls back to whenever it needs the truth rather
+  // than the latest rumour.
+
+  /** Render a derived AiState (see companion/src/analysis/aiState.ts) onto the pill. */
+  function paintAiState(s) {
+    // A hold rides ALONGSIDE the state: a running import is real work even while synthesis is held,
+    // so the pill names the work and appends the hold rather than hiding either one.
+    const heldNote = s.holds && s.holds.length ? " (analysis on hold)" : "";
+    if (s.state === "off") setAi("off", s.detail || "off");
+    else if (s.state === "blocked") setAi("blocked", "on hold — " + (s.detail || "waiting on your decision"));
+    else if (s.state === "error") setAi("error", "error — " + (s.detail || "see server log"));
+    else if (s.state === "analyzing") setAi("analyzing", (s.detail || "working…") + heldNote);
+    else setAi("idle", s.detail || "up to date");
+  }
+
+  async function refreshAiState(caseId) {
+    if (!caseId) return;
+    try {
+      const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ai-state`);
+      if (!r.ok) return; // leave the pill as it is; a failed correction must not invent a state
+      paintAiState(await r.json());
+    } catch {
+      // Never let the corrector be the thing that breaks the page it exists to fix.
+    }
+  }
+
   window.applyAiStatus = applyAiStatus;
   window.clearTransientStatus = clearTransientStatus;
+  window.refreshAiState = refreshAiState;
 })();

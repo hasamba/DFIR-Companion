@@ -71,6 +71,38 @@ async function tick(ms: number): Promise<void> {
   await settle();
 }
 
+/**
+ * Advance the clock, then wait until the poller has actually RE-ARMED before returning.
+ *
+ * USE THIS WHENEVER A LATER `tick()` DEPENDS ON THIS SWEEP HAVING SCHEDULED THE NEXT ONE.
+ *
+ * Every poller here re-arms in a `finally` that runs after its async scan (see
+ * composition/dropFolder.ts). `settle()` spends a FIXED number of turns, which is a budget rather
+ * than a guarantee: when the scan outlasts it — as it does under the disk contention of a full
+ * parallel run — no timer is armed, so the next `advanceTimersByTime` fires nothing and a sweep is
+ * silently skipped. The test then sees one fewer sweep than it asked for and reports it as a logic
+ * failure. Observed directly at a reduced turn count: pending timers 0 after sweep 1, still 0 after
+ * advancing for sweep 2, and 1 only after ~300ms of real time.
+ *
+ * Waiting for `getTimerCount() > 0` is that missing guarantee, and it is exact: it consumes no fake
+ * time and fires no extra sweeps, so every "polled exactly N times" assertion in this file keeps
+ * its original meaning.
+ *
+ * Deliberately NOT used by the CANCELLED/DISARMED tests: for those, zero pending timers is the
+ * property under test, so waiting for one would be waiting for the bug.
+ */
+async function tickAndRearm(ms: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    await settle(2);
+    if (vi.getTimerCount() > 0) return;
+    if (Date.now() >= deadline) {
+      throw new Error("timed out after 10000ms waiting for: the poller to re-arm its next timer");
+    }
+  }
+}
+
 /** A Velociraptor runner that answers everything emptily and records what it was asked. */
 function countingRunner(overrides: { huntState?: string } = {}): { runner: VqlRunner; vql: string[] } {
   const vql: string[] = [];
@@ -327,10 +359,12 @@ describe("Evidence drop-folder watcher — timer lifecycle", () => {
     // A file must be seen unchanged by TWO sweeps before it is read (selectReadyFiles waits for
     // size+mtime to settle, so a half-copied file is never imported). That makes this assertion
     // a re-arm test by construction: one sweep alone can never move the file.
-    await tick(2_000);
+    // tickAndRearm, not tick: the assertion below depends on a SECOND sweep firing, which can only
+    // happen if this first one finished and scheduled it.
+    await tickAndRearm(2_000);
     expect(await failedNames(store)).toEqual([]);
 
-    await tick(2_000);
+    await tickAndRearm(2_000);
     expect(await failedNames(store)).toEqual(["junk.txt"]);
   });
 

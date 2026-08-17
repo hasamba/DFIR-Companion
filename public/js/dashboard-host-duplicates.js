@@ -102,6 +102,11 @@
       const d = await r.json();
       pending = d.pending || [];
       paint();
+      // Resolving the last pair lifts the gate and the server kicks the held run — but that kick
+      // emits nothing until it actually starts, so without this the pill sits on "on hold" over a
+      // case that is no longer held. Re-derive now rather than wait for an event that may be
+      // seconds away or, if the kick is a no-op, never come.
+      refreshAiState(caseId);
     } catch {
       /* leave the panel as it was */
     }
