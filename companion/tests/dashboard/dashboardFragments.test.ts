@@ -13,10 +13,31 @@ const f = loadDashboardModule<FragmentsApi>("dashboard-fragments.js", [
   "dashboard-escape.js",
   "dashboard-time.js",
   "dashboard-values.js",
+  // proseHtml calls proseParagraphs. Bare, resolved as a global at call time in the browser; here
+  // the file has to actually be present.
+  "dashboard-text.js",
 ]);
 
 const XSS = "<img src=x onerror=alert(1)>";
 const ATTR_BREAK = '" onmouseover="alert(1)';
+
+// The body of the three AI-prose panels. The split itself is pinned in dashboardText.test.ts; what
+// matters here is that the text reaches innerHTML escaped, and that nothing renders for nothing.
+describe("proseHtml", () => {
+  it("wraps each paragraph in its own <p>", () => {
+    expect(f.proseHtml("First para.\n\nSecond para.")).toBe("<p>First para.</p><p>Second para.</p>");
+  });
+
+  it("escapes model output before it reaches innerHTML", () => {
+    expect(f.proseHtml(XSS)).toBe("<p>&lt;img src=x onerror=alert(1)&gt;</p>");
+  });
+
+  // An empty <p> would leave a blank line under a heading on a case that has no summary yet.
+  it("renders nothing for nothing", () => {
+    expect(f.proseHtml("")).toBe("");
+    expect(f.proseHtml(null)).toBe("");
+  });
+});
 
 describe("mentionHtml", () => {
   it("chips a handle", () => {

@@ -15,6 +15,21 @@
 // page with the function they call.
 (function () {
   // --- Narrative Timeline -------------------------------------------------------
+
+  // The view is display-formatted prose — escaped paragraphs in a .prose container (proseHtml, in
+  // js/dashboard-fragments.js) instead of one full-width block of text.
+  //
+  // THE RAW TEXT RIDES ALONG IN data-raw, and that is not bookkeeping. The Edit button used to seed
+  // its textarea from view.textContent, which is the same string only while the view holds exactly
+  // what the server sent. Once the display splits it into paragraphs, textContent concatenates them
+  // with nothing between — so an analyst who opened the editor and saved would have written the
+  // narrative back with its paragraph boundaries fused. Every writer sets both halves together.
+  function setNarrativeView(text) {
+    const view = document.getElementById("narrativeView");
+    view.dataset.raw = text;
+    view.innerHTML = proseHtml(text);
+  }
+
   function genNarrative() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
@@ -49,8 +64,7 @@
           return;
         }
         msg.textContent = "generated and saved ✓";
-        document.getElementById("narrativeView").textContent =
-          d.narrativeTimeline || "—";
+        setNarrativeView(d.narrativeTimeline || "—");
         setTimeout(() => {
           msg.textContent = "";
         }, 3000);
@@ -225,7 +239,10 @@
         const view = document.getElementById("narrativeView");
         const wrap = document.getElementById("narrativeEditWrap");
         const ta = document.getElementById("narrativeText");
-        ta.value = view.textContent === "—" ? "" : view.textContent;
+        // data-raw, never textContent — see setNarrativeView. The `??` covers the one case where
+        // no writer has run yet: the markup's own "—" placeholder carries no data-raw.
+        const raw = view.dataset.raw ?? view.textContent;
+        ta.value = raw === "—" ? "" : raw;
         view.style.display = "none";
         wrap.style.display = "";
         ta.focus();
@@ -248,7 +265,7 @@
             return r.json();
           })
           .then(() => {
-            document.getElementById("narrativeView").textContent = text || "—";
+            setNarrativeView(text || "—");
             document.getElementById("narrativeView").style.display = "";
             document.getElementById("narrativeEditWrap").style.display = "none";
             msg.textContent = "";

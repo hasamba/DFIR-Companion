@@ -502,3 +502,28 @@
   #sec-playbook .pbh-res{margin-top:6px}
   #sec-playbook .pbh-caveat{color:var(--badge-warning-text);font-size:11px;margin:8px 0 0}
 /* #415: a tier-3 feature whose file failed to load. Loud, but in warning ROLES — var(--sev-high) is a TEXT colour and was 2.04:1 behind white. */ .feature-warnings{display:flex;flex-direction:column;gap:4px;padding:6px 10px 0}.feature-warn{background:var(--warning-bg-strong);border-left:3px solid var(--sev-high);color:var(--text-bright);border-radius:4px;padding:6px 10px;font-size:12px}
+  /* AI PROSE PANELS: Executive Summary, Attack Path, Narrative Timeline.
+     All three span the full grid (`grid-column:1/-1`) and all three render one block of model-written
+     prose, so on a wide screen a sentence ran the whole 1900px between line breaks — around 230
+     characters, three times a readable measure — and the return sweep landed on the wrong line. The
+     text also arrives with no blank lines in it, so the whole narrative was ONE paragraph.
+     Cap the measure, open the leading, and space the paragraphs js/dashboard-text.js splits out.
+     `pre-line` keeps any line breaks an author typed by hand; the split never introduces one. */
+  .prose{max-width:82ch;font-size:14px;line-height:1.75;color:var(--text-primary)}
+  .prose p{margin:0 0 13px;white-space:pre-line;overflow-wrap:break-word}
+  .prose p:last-child{margin-bottom:0}
+  /* One capped measure left half the row empty on a wide monitor, so past 1500px the same text flows
+     into two columns and past 2200px into three.
+     THE max-width IS WHAT MAKES THIS READABLE, and it is not the same cap as above. CSS multi-column
+     divides ALL available width between the columns, so `column-count:2` alone on an 1860px row gives
+     two 900px columns — 120 characters each, which is most of the way back to the problem this panel
+     started with. Capping the CONTAINER at n measures plus the gaps fixes each column at 82ch and
+     leaves the remainder unused, which is the trade: the block gets wider and half as tall, and no
+     line gets longer. `break-inside` keeps a paragraph out of two columns at once. */
+  @media (min-width:1500px){
+    .prose{max-width:calc(82ch * 2 + 44px);column-count:2;column-gap:44px;column-rule:1px solid var(--border-subtle)}
+    .prose p{break-inside:avoid}
+  }
+  @media (min-width:2200px){
+    .prose{max-width:calc(82ch * 3 + 88px);column-count:3}
+  }

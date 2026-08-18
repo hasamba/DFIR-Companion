@@ -99,6 +99,9 @@ export interface TextApi {
   truncate(s: unknown, n: number): string;
   splitEventTitle(desc: string): { title: string; rest: string };
   huntRefang(s: unknown): string;
+  /** Display split for AI prose. `String(text)` first, so anything goes in. */
+  proseParagraphs(text: unknown, targetChars?: number): string[];
+  proseSentences(block: unknown): string[];
   egShortHost(v: unknown): string;
   mdToHtml(src: string | null | undefined): string;
   custodyGroupByArtifact<T extends { artifactPath: string }>(records: T[]): Map<string, T[]>;
@@ -236,6 +239,7 @@ export interface ValuesApi {
 }
 
 export interface FragmentsApi {
+  proseHtml(text: unknown): string;
   mentionHtml(text: string): string;
   ticketPushChips(id: string): string;
   renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }): string;

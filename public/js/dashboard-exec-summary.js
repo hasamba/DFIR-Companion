@@ -43,7 +43,9 @@
         const text = d.summary || "(no summary returned)";
         out.innerHTML =
           `<div class="info-card" data-safe-style="border-left:3px solid var(--accent);margin-top:8px">` +
-          `<div data-safe-style="white-space:pre-wrap">${esc(text)}</div>` +
+          // Paragraphed prose in a capped measure, like the saved summary above it — the review
+          // copy is the one an analyst actually reads before deciding to keep it.
+          `<div class="prose">${proseHtml(text)}</div>` +
           `<div data-safe-style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">` +
           `<button id="execSaveBtn">Save to report's Executive Summary</button>` +
           `<span id="execSaveMsg" data-safe-style="color:var(--text-muted);font-size:12px"></span></div></div>`;
