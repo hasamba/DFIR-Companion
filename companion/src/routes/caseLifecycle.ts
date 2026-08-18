@@ -26,6 +26,7 @@ import { byEventTime } from "../analysis/forensicSort.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
+import { registerVelociraptorSettingsRoutes } from "./velociraptorSettings.js";
 import {
   getEnvForSettings,
   updateEnv as updateEnvFile,
@@ -769,6 +770,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(500).json({ error: (err as Error).message });
     }
   });
+
+  registerVelociraptorSettingsRoutes(app, ctx); // GET /settings/browse-fs, POST …/download-latest
 
   // Apply the just-saved DFIR_AI_* values from .env into process.env WITHOUT a full restart, so the
   // first-run wizard (#181) can save → reload → POST /diagnostics/ai-test in one flow (buildProvider()

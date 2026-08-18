@@ -179,6 +179,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-import-severity.js": "application/javascript; charset=utf-8",
   // Generic merge-target picker — which case to merge the current one into.
   "/js/dashboard-merge-picker.js": "application/javascript; charset=utf-8",
+  // Velociraptor settings "Browse…" file picker + "Download latest release" button.
+  "/js/dashboard-velo-fs-browse.js": "application/javascript; charset=utf-8",
   // Startup pre-flight banner — the warning strip when the server's own checks fail.
   "/js/dashboard-preflight-banner.js": "application/javascript; charset=utf-8",
   // data-act dispatch — the delegated handler that lets the server send script-src 'self'.

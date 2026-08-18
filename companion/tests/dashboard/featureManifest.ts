@@ -623,6 +623,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Velociraptor settings "Browse…" file picker + "Download latest release" button. Deliberately
+    // independent of dashboard-merge-picker.js beside it — see the module header for why.
+    file: "dashboard-velo-fs-browse.js",
+    initializer: "initFsBrowse",
+    publish: ["initFsBrowse"],
+    private: ["state"],
+  },
+  {
     file: "dashboard-preflight-banner.js",
     initializer: "initPreflightBanner",
     publish: ["initPreflightBanner"],
