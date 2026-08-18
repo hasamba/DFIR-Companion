@@ -3,6 +3,7 @@ import { reloadEnvPrefix } from "../settings/envManager.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { parseVeloRef, EXTERNAL_IMPORT_NEEDS_SERVER } from "../analysis/veloRef.js";
+import { preflightBundleArtifacts } from "../integrations/velociraptor/bundlePreflight.js";
 import {
   buildVelociraptorClient,
   matchClient,
@@ -538,50 +539,19 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         return res.status(400).json({ error: (e as Error).message });
       }
 
-      // Pre-flight: Velociraptor's hunt() rejects the ENTIRE hunt if any named artifact doesn't exist
-      // on the server, so one stale/misspelled name in a bundle (e.g. a starter list not yet verified
-      // against THIS server) fails the whole run with an opaque "no hunt id". Intersect with the
-      // server's known client artifacts, launch with the valid subset, and report which were unknown.
-      // (Named `unknownArtifacts`, distinct from the JOB's collect-time `skippedArtifacts` = artifacts
-      // that launched but failed to FETCH.) Best-effort: if the catalog lookup itself fails, launch the
-      // bundle as-is rather than block on a diagnostics query.
-      //
-      // This pre-flight BYPASSES the client's short-TTL catalog cache (`refresh: true`) on purpose: it
-      // is the one caller whose decision is destructive. A stale catalog missing a just-added artifact
-      // would silently DROP it from the hunt (the analyst gets an incomplete collection and no error),
-      // and one that still lists a just-deleted artifact would let hunt() reject the whole run. Unlike
-      // the picker/preview paths this fires once per human-initiated bundle run, so one extra spawn is
-      // nothing next to launching a fleet-wide hunt.
-      let artifactsToRun = bundle.artifacts;
-      let unknownArtifacts: string[] = [];
-      let definitions: VeloArtifactInfo[] = [];
-      try {
-        // `refresh: true` bypasses the catalog cache — a stale list here would drop an artifact the
-        // analyst just added on the server. The result is kept so the time-scope plan below reuses it
-        // rather than fetching the catalog a second time.
-        definitions = await options.velociraptorClient.listClientArtifacts("client", { refresh: true });
-        const known = new Set(definitions.map((a) => a.name));
-        if (known.size) {
-          const valid = bundle.artifacts.filter((a) => known.has(a));
-          unknownArtifacts = bundle.artifacts.filter((a) => !known.has(a));
-          if (!valid.length) {
-            return res
-              .status(400)
-              .json({
-                error: `none of this bundle's artifacts exist on the Velociraptor server — check the names in the bundle editor: ${bundle.artifacts.join(", ")}`,
-              });
-          }
-          artifactsToRun = valid;
-          if (unknownArtifacts.length)
-            logLine(
-              `[velociraptor] bundle "${bundle.name}": skipping ${unknownArtifacts.length} artifact(s) not on this server: ${unknownArtifacts.join(", ")}`,
-            );
-        }
-      } catch (e) {
-        logLine(
-          `[velociraptor] artifact catalog check failed (launching bundle as-is): ${(e as Error).message}`,
-        );
-      }
+      // Pre-flight: Velociraptor compiles a hunt request as a whole, so one artifact this server does
+      // not have — or one whose third-party tool it cannot download — costs the ENTIRE run and reports
+      // only "no hunt id". Launch what can run and say what was left out (see veloBundlePreflight.ts).
+      // `unknownArtifacts`/`unavailableArtifacts` are distinct from the JOB's collect-time
+      // `skippedArtifacts`, which are artifacts that launched but failed to FETCH.
+      const velo = options.velociraptorClient;
+      const pre = await preflightBundleArtifacts(bundle.artifacts, () =>
+        velo.listClientArtifacts("client", { refresh: true }),
+      );
+      for (const note of pre.notes) logLine(`[velociraptor] bundle "${bundle.name}": ${note}`);
+      if (pre.error) return res.status(400).json({ error: pre.error });
+      const { unknownArtifacts, unavailableArtifacts, definitions } = pre;
+      const artifactsToRun = pre.artifacts;
 
       // Fan the ONE chosen window out across the surviving artifacts' own date parameters, so each
       // collects less AT THE SOURCE. Artifacts with no date parameter keep collecting in full.
@@ -593,7 +563,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       );
 
       logLine(
-        `[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`,
+        `[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}${unavailableArtifacts.length ? `, ${unavailableArtifacts.length} missing a tool` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`,
       );
       const launch = await options.velociraptorClient.launchArtifactHunt(
         artifactsToRun,
@@ -652,6 +622,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           waitMinutes,
           artifacts: launch.artifacts,
           unknownArtifacts,
+          unavailableArtifacts,
           timeScope: job.timeScope,
         });
     } catch (err) {

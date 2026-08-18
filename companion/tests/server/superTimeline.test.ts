@@ -653,10 +653,13 @@ describe("superTimelineOnly bundle routing", () => {
 // the run-bundle route pre-flights the bundle against listClientArtifacts() and launches only the valid
 // subset (reporting the rest as skippedArtifacts). A mock client lets us control the catalog + capture
 // exactly which artifacts launchArtifactHunt() was invoked with.
+// One catalog entry: a bare artifact name, or a name plus the third-party tools it needs.
+type CatalogEntry = string | { name: string; tools: Array<Record<string, unknown>> };
+
 interface CapturingVeloClient {
   listClientArtifacts(
     type?: "client" | "client_event",
-  ): Promise<Array<{ name: string; description: string }>>;
+  ): Promise<Array<{ name: string; description: string; tools?: Array<Record<string, unknown>> }>>;
   launchArtifactHunt(
     artifacts: string[],
     desc: string,
@@ -664,7 +667,7 @@ interface CapturingVeloClient {
   ): Promise<{ huntId: string; guiUrl: string; artifacts: string[] }>;
 }
 
-async function makeCatalogApp(catalog: string[], bundleArtifacts: string[]) {
+async function makeCatalogApp(catalog: CatalogEntry[], bundleArtifacts: string[]) {
   const root = await mkdtemp(join(tmpdir(), "dfir-catalog-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -685,7 +688,11 @@ async function makeCatalogApp(catalog: string[], bundleArtifacts: string[]) {
   const launchCalls: string[][] = [];
   const client: CapturingVeloClient = {
     async listClientArtifacts() {
-      return catalog.map((name) => ({ name, description: "" }));
+      return catalog.map((e) =>
+        typeof e === "string"
+          ? { name: e, description: "" }
+          : { name: e.name, description: "", tools: e.tools },
+      );
     },
     async launchArtifactHunt(artifacts) {
       launchCalls.push(artifacts);
@@ -720,6 +727,50 @@ describe("run-bundle validates artifacts against the server catalog", () => {
     // launchArtifactHunt was called with ONLY the valid artifact.
     expect(launchCalls).toEqual([["Windows.NTFS.MFT"]]);
     expect(run.body.unknownArtifacts).toContain("Windows.Bogus.DoesNotExist");
+  });
+
+  // The reported bug: the built-in "Best Practice" bundle ships Generic.Scanner.ThorZIP, whose THOR
+  // Lite download is licensed, so its tool URL on an untouched server is the placeholder
+  // "todo.thor-lite.zip.download.url". Velociraptor resolves tools while compiling the hunt request,
+  // that fetch fails, and hunt() returns NULL for the whole request — all 45 artifacts collected
+  // nothing and the analyst was told to check ACLs.
+  it("drops an artifact whose third-party tool the server cannot download, and launches the rest", async () => {
+    const { app, launchCalls } = await makeCatalogApp(
+      [
+        "Windows.NTFS.MFT",
+        {
+          name: "Generic.Scanner.ThorZIP",
+          tools: [{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }],
+        },
+        {
+          name: "Windows.EventLogs.Chainsaw",
+          tools: [{ name: "Chainsaw", url: "https://github.com/x/y/releases/download/v1/c.zip" }],
+        },
+      ],
+      ["Windows.NTFS.MFT", "Generic.Scanner.ThorZIP", "Windows.EventLogs.Chainsaw"],
+    );
+    const run = await request(app)
+      .post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: "custom-catalog-test" });
+    expect(run.status).toBe(202);
+    expect(launchCalls).toEqual([["Windows.NTFS.MFT", "Windows.EventLogs.Chainsaw"]]);
+    expect(run.body.unavailableArtifacts).toEqual([
+      { artifact: "Generic.Scanner.ThorZIP", reason: expect.stringContaining("ThorZIP") },
+    ]);
+    expect(run.body.unknownArtifacts).toEqual([]); // it EXISTS — it just can't run
+  });
+
+  it("returns 400 (and never launches) when every artifact is missing its tool", async () => {
+    const { app, launchCalls } = await makeCatalogApp(
+      [{ name: "Generic.Scanner.ThorZIP", tools: [{ name: "ThorZIP", url: "todo.thor.url" }] }],
+      ["Generic.Scanner.ThorZIP"],
+    );
+    const run = await request(app)
+      .post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: "custom-catalog-test" });
+    expect(run.status).toBe(400);
+    expect(run.body.error).toContain("ThorZIP");
+    expect(launchCalls).toEqual([]);
   });
 
   it("returns 400 (and never launches) when NONE of the bundle's artifacts exist on the server", async () => {

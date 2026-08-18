@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { ChildOutputCollector } from "../childOutput.js";
+import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
+import { parseArtifactTools, type VeloArtifactTool } from "./artifactTools.js";
 
 // Run the hunt-pivot queries the Companion generates against a Velociraptor server through its API.
 // The hunt-pivot is run as a HUNT across ALL enrolled endpoints (not server-side): the pivot VQL is
@@ -33,6 +35,7 @@ export interface VelociraptorApiConfig {
 export interface VqlRunResult {
   rows: unknown[];
   raw: string;
+  stderr?: string; // the child's bounded stderr — where a VQL-level failure is reported (vqlDiagnostics.ts)
 }
 
 // A runner executes one or more VQL statements (each becomes a positional `query` arg) and returns
@@ -184,7 +187,11 @@ function spawnVqlOnce(
   opts: { timeoutMs: number; maxOutputBytes: number },
 ): Promise<VqlRunResult> {
   return new Promise<VqlRunResult>((resolve, reject) => {
-    const args = ["--api_config", config.apiConfigPath, "query", "--format", "jsonl", ...statements];
+    // `-v` is the only way a VQL-level failure becomes visible at all (see vqlDiagnostics.ts);
+    // `--nobanner` drops the ASCII art it would otherwise add. Both write to stderr, never stdout,
+    // so the jsonl rows stay clean.
+    const flags = ["-v", "--nobanner", "query", "--format", "jsonl"];
+    const args = ["--api_config", config.apiConfigPath, ...flags, ...statements];
     const launchFailed = (e: unknown): void => {
       const code = (e as NodeJS.ErrnoException).code || "ESPAWN";
       const err = new Error(
@@ -230,31 +237,15 @@ function spawnVqlOnce(
       clearTimeout(timer);
       const { stdout: out, stderr: err } = output.text();
       if (code !== 0) {
-        reject(new Error(translateVelociraptorError(err.trim()) || `velociraptor exited with code ${code}`));
+        // Prefer the DIAGNOSIS over the raw log: with `-v` the real error is preceded by a dozen
+        // service-startup INFO lines, and dumping those into the analyst's error banner buries it.
+        const signal = vqlLogErrors(err) || err.trim();
+        reject(new Error(translateVelociraptorError(signal) || `velociraptor exited with code ${code}`));
         return;
       }
-      resolve({ rows: parseVqlOutput(out), raw: out });
+      resolve({ rows: parseVqlOutput(out), raw: out, stderr: err });
     });
   });
-}
-
-// Translate a known Velociraptor CLI error into an actionable message. Unlike our OWN
-// maxOutputBytes/collectMaxOutputBytes caps (DFIR_VELOCIRAPTOR_*_OUTPUT — bound what we capture
-// AFTER gRPC delivers it), the gRPC connection the `velociraptor query` CLI makes to the server
-// enforces its own message-size ceiling, independent of both our caps and the server's own config.
-// Per Velociraptor's source (config/proto/config.proto, ApiClientConfig.max_grpc_recv_size — "This
-// is 4mb by default but you can increase it if you like"), this is a field in the CLIENT-side
-// api_client.yaml — the exact file DFIR_VELOCIRAPTOR_API_CONFIG points to, NOT a CLI flag (an
-// earlier version of this file tried `--max_message_size`, which does not exist and broke every
-// query on some builds; NOT the server's Frontend.resources.max_upload_size either — that's a
-// different data path, HTTP client uploads, not this gRPC query connection). No server restart
-// needed: add `max_grpc_recv_size: <bytes>` as a top-level key in the api_client.yaml file.
-export function translateVelociraptorError(stderr: string): string {
-  if (!stderr) return stderr;
-  if (/received message larger than max/i.test(stderr)) {
-    return `${stderr} — raise this by adding "max_grpc_recv_size: 67108864" (or larger) as a top-level key in the api_client.yaml file your DFIR_VELOCIRAPTOR_API_CONFIG points to (Velociraptor's ApiClientConfig.max_grpc_recv_size, 4MB by default) — no CLI flag or server restart needed. Or narrow the artifact (fewer rows/hosts) so its output stays under the limit.`;
-  }
-  return stderr;
 }
 
 // The real runner: spawn the velociraptor binary with the api config, no shell (each statement is a
@@ -298,6 +289,7 @@ export interface VeloArtifactInfo {
   name: string; // e.g. "Windows.System.Pslist"
   description: string; // one-line summary
   parameters: VeloArtifactParam[]; // [] when the server reports none (older versions / odd shapes)
+  tools?: VeloArtifactTool[]; // omitted when the artifact needs none (most of them)
 }
 
 // Tolerant parse of a definition's `parameters` column: anything that isn't an array of named objects
@@ -685,8 +677,17 @@ export class VelociraptorClient {
     program: string,
     maxOutputBytes: number = this.config.maxOutputBytes,
   ): Promise<unknown[]> {
-    const { rows } = await this.runner([program], { timeoutMs: this.config.timeoutMs, maxOutputBytes });
-    return rows;
+    return (await this.runRawLogged(program, maxOutputBytes)).rows;
+  }
+
+  // Same, but keeping the failure REASON from the child's log — for the three launch paths (hunt /
+  // bundle hunt / collection), each of which fails by returning a NULL row and exiting 0.
+  private async runRawLogged(
+    program: string,
+    maxOutputBytes: number = this.config.maxOutputBytes,
+  ): Promise<{ rows: unknown[]; reason: string }> {
+    const res = await this.runner([program], { timeoutMs: this.config.timeoutMs, maxOutputBytes });
+    return { rows: res.rows, reason: vqlLogErrors(res.stderr ?? "") };
   }
 
   // The larger stdout cap to use for bundle-hunt collection (rows + uploaded JSON), falling back to the
@@ -729,13 +730,10 @@ export class VelociraptorClient {
       `LET def = '''${yaml}'''\n` +
       `LET _set <= artifact_set(definition=def)\n` +
       `SELECT hunt(description='${oneLine("DFIR Companion: " + description)}', artifacts='${name}', expires=now() + ${expires}) AS Hunt FROM scope()`;
-    const rows = await this.runRaw(program);
+    const { rows, reason } = await this.runRawLogged(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId))
-      throw new Error(
-        "Velociraptor did not launch the hunt (no hunt id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)",
-      );
+    if (!HUNT_RE.test(huntId)) throw new Error(noLaunchIdMessage("hunt", reason));
     return {
       huntId,
       artifact: name,
@@ -783,16 +781,10 @@ export class VelociraptorClient {
       `LET def = '''${yaml}'''\n` +
       `LET _set <= artifact_set(definition=def)\n` +
       `SELECT collect_client(client_id='${clientId}', artifacts=['${name}']) AS Flow FROM scope()`;
-    const rows = await this.runRaw(program);
+    const { rows, reason } = await this.runRawLogged(program);
     const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
     const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
-    // collect_client returns a null flow when the custom artifact can't COMPILE — almost always the VQL
-    // references a non-existent Artifact.<Name>/plugin or has a syntax error (the simple cases launch
-    // fine, so it's rarely a permissions issue). Point the analyst at the VQL first.
-    if (!FLOW_RE.test(flowId))
-      throw new Error(
-        "Velociraptor did not launch the collection (no flow id). The VQL likely references a non-existent artifact/plugin or has a syntax error so it can't compile — edit the VQL and retry. (Less commonly: the api_client role lacks COLLECT_CLIENT/ARTIFACT_WRITER.)",
-      );
+    if (!FLOW_RE.test(flowId)) throw new Error(noLaunchIdMessage("collection flow", reason));
     return {
       clientId,
       flowId,
@@ -990,12 +982,12 @@ export class VelociraptorClient {
   // that from the server's own parameter metadata.
   private async fetchClientArtifacts(wanted: string): Promise<VeloArtifactInfo[]> {
     const rows = await this.runRaw(
-      "SELECT name, description, type, parameters FROM artifact_definitions() ORDER BY name",
+      "SELECT name, description, type, parameters, tools FROM artifact_definitions() ORDER BY name",
       this.collectCap(),
     );
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {
-      const r = row as { name?: unknown; description?: unknown; type?: unknown; parameters?: unknown };
+      const r = row as Record<string, unknown>;
       const name = String(r.name ?? "").trim();
       if (!name) continue;
       const t = String(r.type ?? "")
@@ -1003,6 +995,7 @@ export class VelociraptorClient {
         .toLowerCase()
         .replace(/[\s-]+/g, "_");
       if (t !== wanted) continue;
+      const tools = parseArtifactTools(r.tools);
       out.push({
         name,
         description: String(r.description ?? "")
@@ -1010,6 +1003,7 @@ export class VelociraptorClient {
           .trim()
           .slice(0, 300),
         parameters: parseArtifactParams(r.parameters),
+        ...(tools.length ? { tools } : {}), // absent, not [], so a server with no tool metadata reads the same
       });
     }
     return out;
@@ -1144,13 +1138,10 @@ export class VelociraptorClient {
     const spec = buildHuntSpec(names, opts.params); // per-artifact parameters (e.g. Hayabusa RuleLevel/RuleStatus)
     if (spec) clauses.push(spec);
     const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
-    const rows = await this.runRaw(program);
+    const { rows, reason } = await this.runRawLogged(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId))
-      throw new Error(
-        "Velociraptor did not return a hunt id — check the api_client role has COLLECT_CLIENT/ARTIFACT_WRITER",
-      );
+    if (!HUNT_RE.test(huntId)) throw new Error(noLaunchIdMessage("bundle hunt", reason));
     return {
       huntId,
       artifacts: names,

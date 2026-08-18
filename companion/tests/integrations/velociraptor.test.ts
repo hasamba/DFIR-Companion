@@ -10,7 +10,6 @@ import {
   buildVelociraptorClient,
   retryTransientSpawn,
   spawnErrorMessage,
-  translateVelociraptorError,
   matchClient,
   normalizeClientRow,
   normalizeHuntExpirySeconds,
@@ -21,6 +20,15 @@ import {
   type VelociraptorApiConfig,
   type VqlRunner,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import {
+  artifactToolProblem,
+  parseArtifactTools,
+} from "../../src/integrations/velociraptor/artifactTools.js";
+import {
+  noLaunchIdMessage,
+  translateVelociraptorError,
+  vqlLogErrors,
+} from "../../src/integrations/velociraptor/vqlDiagnostics.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -793,6 +801,31 @@ describe("listClientArtifacts — parameter metadata", () => {
   });
 });
 
+describe("listClientArtifacts — tool metadata", () => {
+  it("asks for the tools column and keeps it, omitting the key for artifacts with none", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return {
+        rows: [
+          {
+            name: "Generic.Scanner.ThorZIP",
+            description: "THOR",
+            type: "CLIENT",
+            tools: [{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }],
+          },
+          { name: "Windows.System.Pslist", description: "p", type: "CLIENT", tools: [] },
+        ],
+        raw: "",
+      };
+    };
+    const arts = await new VelociraptorClient(cfg, runner).listClientArtifacts();
+    expect(program).toContain("tools");
+    expect(arts[0].tools).toEqual([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }]);
+    expect(arts[1]).toEqual({ name: "Windows.System.Pslist", description: "p", parameters: [] });
+  });
+});
+
 describe("parseArtifactParams", () => {
   it("keeps only the valid entries, in order, from a mixed-validity array", () => {
     const out = parseArtifactParams([
@@ -1062,6 +1095,131 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     await expect(
       new VelociraptorClient(cfg, runner).launchArtifactHunt(["Windows.System.Pslist"], "x"),
     ).rejects.toThrow(/hunt id/);
+  });
+
+  // The failure this whole path used to hide: hunt() refused, said exactly why in its log, and the
+  // analyst was shown a guess about ACLs instead (wrong — the api_client was an administrator).
+  it("quotes the server's own reason when hunt() returned no id", async () => {
+    const runner: VqlRunner = async () => ({
+      rows: [{ Hunt: null }],
+      raw: '{"Hunt":null}',
+      stderr: [
+        "[INFO] 2026-08-18T16:37:00Z Starting Org Manager service. ",
+        "[INFO] 2026-08-18T16:37:00Z Compiled all artifacts. ",
+        '[INFO] 2026-08-18T16:37:00Z hunt: Get "todo.thor-lite.zip.download.url": unsupported protocol scheme "" ',
+        "[INFO] 2026-08-18T16:37:00Z Time 1: : Sending response part 0 15 B (1 rows). ",
+      ].join("\n"),
+    });
+    await expect(
+      new VelociraptorClient(cfg, runner).launchArtifactHunt(["Generic.Scanner.ThorZIP"], "x"),
+    ).rejects.toThrow(/todo\.thor-lite\.zip\.download\.url/);
+    // …and no longer blames a permission hunt() does not even use.
+    await expect(
+      new VelociraptorClient(cfg, runner).launchArtifactHunt(["Generic.Scanner.ThorZIP"], "x"),
+    ).rejects.not.toThrow(/COLLECT_CLIENT|ARTIFACT_WRITER/);
+  });
+});
+
+describe("vqlLogErrors", () => {
+  const startup = [
+    "[INFO] 2026-08-18T16:36:58Z Loaded api config from /tmp/api.config.yaml ",
+    "[INFO] 2026-08-18T16:36:58Z Starting services for Org  (root) ",
+    "[INFO] 2026-08-18T16:36:58Z Installing Dummy inventory_service. Will download tools to temp directory. ",
+    "[INFO] 2026-08-18T16:36:58Z Loaded 421 built in artifacts in 141.138176ms ",
+    "[INFO] 2026-08-18T16:37:00Z Compiled all artifacts. ",
+    "[INFO] 2026-08-18T16:37:00Z Time 1: : Sending response part 0 15 B (1 rows). ",
+    "[INFO] 2026-08-18T16:37:00Z Exiting notification service for Org  (root)! ",
+  ];
+
+  it("keeps a plugin's scope log and drops every startup line", () => {
+    const log = [
+      ...startup,
+      '[INFO] 2026-08-18T16:37:00Z hunt: Get "todo.thor-lite.zip.download.url": unsupported protocol scheme "" ',
+    ].join("\n");
+    expect(vqlLogErrors(log)).toBe(
+      'hunt: Get "todo.thor-lite.zip.download.url": unsupported protocol scheme ""',
+    );
+  });
+
+  it("returns nothing when the log is only startup noise", () => {
+    expect(vqlLogErrors(startup.join("\n"))).toBe("");
+    expect(vqlLogErrors("")).toBe("");
+  });
+
+  it("keeps a VQL compile error and any non-INFO level", () => {
+    expect(vqlLogErrors("[INFO] 2026-08-18T16:34:54Z ERROR:Symbol hunt_delete not found. ")).toBe(
+      "ERROR:Symbol hunt_delete not found.",
+    );
+    expect(vqlLogErrors("[ERROR] 2026-08-18T16:34:54Z connection refused ")).toBe("connection refused");
+  });
+
+  it("passes through stderr that is not a log line at all", () => {
+    // The gRPC ceiling failure — printed by the binary itself, never as a [LEVEL] line. Losing it
+    // would break translateVelociraptorError's actionable message.
+    expect(vqlLogErrors("rpc error: received message larger than max (5000000 vs 4194304)")).toBe(
+      "rpc error: received message larger than max (5000000 vs 4194304)",
+    );
+  });
+
+  it("reports one failure once, however many statements logged it", () => {
+    const dup = [
+      "[INFO] 2026-01-01T00:00:00Z hunt: no such artifact ",
+      "[INFO] 2026-01-01T00:00:01Z hunt: no such artifact ",
+    ];
+    expect(vqlLogErrors(dup.join("\n"))).toBe("hunt: no such artifact");
+  });
+});
+
+describe("noLaunchIdMessage", () => {
+  it("leads with the server's reason and names START_HUNT, not COLLECT_CLIENT", () => {
+    const msg = noLaunchIdMessage("bundle hunt", "hunt: permission denied");
+    expect(msg).toContain("no bundle hunt id");
+    expect(msg).toContain("hunt: permission denied");
+    expect(msg).toContain("START_HUNT");
+    expect(msg).not.toContain("ARTIFACT_WRITER");
+  });
+
+  it("still reads as a sentence when no reason was captured", () => {
+    expect(noLaunchIdMessage("hunt")).not.toContain("Velociraptor said");
+  });
+});
+
+describe("parseArtifactTools / artifactToolProblem", () => {
+  const info = (tools: unknown) => ({ tools: parseArtifactTools(tools) });
+
+  it("flags a placeholder download URL — the THOR case that killed the whole hunt", () => {
+    const a = info([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "" }]);
+    expect(a.tools).toEqual([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }]);
+    expect(artifactToolProblem(a)).toMatch(/ThorZIP/);
+    expect(artifactToolProblem(a)).toMatch(/todo\.thor-lite\.zip\.download\.url/);
+  });
+
+  it("accepts a real URL, an empty URL, and a tool the server already holds", () => {
+    expect(
+      artifactToolProblem(info([{ name: "Chainsaw", url: "https://github.com/x/y/releases/z.zip" }])),
+    ).toBeUndefined();
+    // Empty is NOT a problem: a healthy server has many such tools and hunts using them compile.
+    expect(artifactToolProblem(info([{ name: "OSQueryLinux", url: "" }]))).toBeUndefined();
+    // Uploaded/served: the placeholder url survives in the definition, but the file is there.
+    expect(
+      artifactToolProblem(
+        info([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "abc123" }]),
+      ),
+    ).toBeUndefined();
+    expect(
+      artifactToolProblem(
+        info([
+          { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", filestore_path: "/tools/thor.zip" },
+        ]),
+      ),
+    ).toBeUndefined();
+    expect(artifactToolProblem({})).toBeUndefined(); // an artifact with no tools at all
+  });
+
+  it("degrades to [] on any shape the server didn't promise", () => {
+    expect(parseArtifactTools(null)).toEqual([]);
+    expect(parseArtifactTools("junk")).toEqual([]);
+    expect(parseArtifactTools([null, 7, {}, { name: "" }])).toEqual([]);
   });
 });
 
@@ -1544,6 +1702,25 @@ describe.skipIf(process.platform === "win32")("spawnVqlRunner output decoding", 
         maxOutputBytes: 60,
       }),
     ).rejects.toThrow(/exceeded 60 bytes/);
+  });
+
+  // Without `-v` the CLI logs NOTHING: a refused hunt() exits 0 with `{"Hunt":null}` and an empty
+  // stderr, which is why the Companion could only guess at the cause for the whole life of the feature.
+  it("runs the binary verbosely and hands the caller its stderr", async () => {
+    const shim = writeNodeShim(
+      join(shimDir, "velo-argv"),
+      'process.stdout.write(JSON.stringify({argv:process.argv.slice(2)})+"\\n");' +
+        'process.stderr.write("[INFO] t hunt: nope\\n");',
+    );
+    const { rows, stderr } = await spawnVqlRunner({ ...cfg, binary: shim })(
+      ["SELECT 1 FROM scope()"],
+      runOpts,
+    );
+    const argv = (rows[0] as { argv: string[] }).argv;
+    expect(argv).toContain("-v");
+    expect(argv).toContain("--nobanner");
+    expect(argv.indexOf("-v")).toBeLessThan(argv.indexOf("query")); // global flags precede the command
+    expect(stderr).toContain("hunt: nope");
   });
 
   it("lets output through when its byte length is within the cap", async () => {
