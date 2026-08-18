@@ -23,6 +23,7 @@ import {
 import {
   artifactToolProblem,
   parseArtifactTools,
+  parseToolInventory,
 } from "../../src/integrations/velociraptor/artifactTools.js";
 import {
   noLaunchIdMessage,
@@ -1171,16 +1172,44 @@ describe("vqlLogErrors", () => {
 });
 
 describe("noLaunchIdMessage", () => {
-  it("leads with the server's reason and names START_HUNT, not COLLECT_CLIENT", () => {
-    const msg = noLaunchIdMessage("bundle hunt", "hunt: permission denied");
+  it("leads with the server's reason and names the permission it was given", () => {
+    const msg = noLaunchIdMessage("bundle hunt", "START_HUNT", "hunt: permission denied");
     expect(msg).toContain("no bundle hunt id");
     expect(msg).toContain("hunt: permission denied");
     expect(msg).toContain("START_HUNT");
-    expect(msg).not.toContain("ARTIFACT_WRITER");
+    expect(msg).not.toContain("ARTIFACT_WRITER"); // a bundle hunt collects EXISTING artifacts
   });
 
   it("still reads as a sentence when no reason was captured", () => {
-    expect(noLaunchIdMessage("hunt")).not.toContain("Velociraptor said");
+    expect(noLaunchIdMessage("hunt", "START_HUNT")).not.toContain("Velociraptor said");
+  });
+});
+
+// Each launch path needs a DIFFERENT permission (acls/acls.go), and naming the wrong one sends the
+// analyst to grant something that cannot fix their failure. collect_client() in particular does not
+// care about START_HUNT.
+describe("per-path permission guidance", () => {
+  const runner: VqlRunner = async () => ({ rows: [{}], raw: "" });
+  const client = () => new VelociraptorClient(cfg, runner);
+
+  it("tells a bundle hunt about START_HUNT only", async () => {
+    await expect(client().launchArtifactHunt(["Windows.System.Pslist"], "x")).rejects.toThrow(
+      /lacks START_HUNT\./,
+    );
+  });
+
+  it("tells a custom-artifact hunt about ARTIFACT_WRITER and START_HUNT", async () => {
+    await expect(client().launchHunt("SELECT 1 FROM scope()", "x")).rejects.toThrow(
+      /ARTIFACT_WRITER and START_HUNT/,
+    );
+  });
+
+  it("tells a single-client collection about COLLECT_CLIENT, never START_HUNT", async () => {
+    const e = await client()
+      .collectOnClient("C.1234", "SELECT 1 FROM scope()", "x")
+      .catch((err: Error) => err);
+    expect((e as Error).message).toContain("ARTIFACT_WRITER and COLLECT_CLIENT");
+    expect((e as Error).message).not.toContain("START_HUNT");
   });
 });
 
@@ -1194,23 +1223,56 @@ describe("parseArtifactTools / artifactToolProblem", () => {
     expect(artifactToolProblem(a)).toMatch(/todo\.thor-lite\.zip\.download\.url/);
   });
 
+  // The finding this test exists for: `artifact_definitions().tools` echoes the artifact YAML, so an
+  // uploaded or re-pointed tool STILL shows the placeholder there. Judging from it alone kept dropping
+  // an artifact the analyst had already fixed — and would 400 a THOR-only bundle.
+  it("lets the server's inventory overrule the placeholder the artifact declares", () => {
+    const declared = info([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }]);
+    const uploaded = parseToolInventory([
+      { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "9f809ea14b71" },
+    ]);
+    const repointed = parseToolInventory([
+      { name: "ThorZIP", url: "https://velo.example/files/thor-lite.zip" },
+    ]);
+    expect(artifactToolProblem(declared, uploaded)).toBeUndefined();
+    expect(artifactToolProblem(declared, repointed)).toBeUndefined();
+    // Still broken in the inventory, or absent from it → still dropped.
+    const stillBroken = parseToolInventory([
+      { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "" },
+    ]);
+    expect(artifactToolProblem(declared, stillBroken)).toMatch(/ThorZIP/);
+    expect(artifactToolProblem(declared, parseToolInventory([]))).toMatch(/ThorZIP/);
+  });
+
+  // Measured on a live 0.77.2 server: every inventory row carries a filestore_path and most carry a
+  // serve_url, INCLUDING the unconfigured ThorZIP that failed the hunt. Only `hash` means the file is
+  // really there, so treating the derived fields as evidence would defeat the whole check.
+  it("counts only a recorded hash as the server holding the file", () => {
+    const derivedOnly = parseToolInventory([
+      {
+        name: "ThorZIP",
+        url: "todo.thor-lite.zip.download.url",
+        filestore_path: "5269de405dbcfe27c34d4d45faf1cab4",
+        serve_url: "https://velo.example:7000/public/5269de405dbcfe27c34d4d45faf1cab4",
+        serve_urls: ["https://velo.example:7000/public/5269de405dbcfe27c34d4d45faf1cab4"],
+      },
+    ]);
+    expect(derivedOnly.get("ThorZIP")?.materialized).toBeUndefined();
+    expect(
+      artifactToolProblem(info([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }]), derivedOnly),
+    ).toMatch(/ThorZIP/);
+  });
+
   it("accepts a real URL, an empty URL, and a tool the server already holds", () => {
     expect(
       artifactToolProblem(info([{ name: "Chainsaw", url: "https://github.com/x/y/releases/z.zip" }])),
     ).toBeUndefined();
     // Empty is NOT a problem: a healthy server has many such tools and hunts using them compile.
     expect(artifactToolProblem(info([{ name: "OSQueryLinux", url: "" }]))).toBeUndefined();
-    // Uploaded/served: the placeholder url survives in the definition, but the file is there.
+    // Uploaded: the placeholder url survives, but the server recorded a hash for the file it holds.
     expect(
       artifactToolProblem(
         info([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "abc123" }]),
-      ),
-    ).toBeUndefined();
-    expect(
-      artifactToolProblem(
-        info([
-          { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", filestore_path: "/tools/thor.zip" },
-        ]),
       ),
     ).toBeUndefined();
     expect(artifactToolProblem({})).toBeUndefined(); // an artifact with no tools at all
