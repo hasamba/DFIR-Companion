@@ -11,6 +11,7 @@ import { CaseStore } from "./storage/caseStore.js";
 import { expandHome } from "./storage/expandHome.js";
 import type { RouteContext } from "./routes/context.js";
 import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
+import { ImportLock } from "./analysis/importLock.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
 import type { ForensicEvent } from "./analysis/stateTypes.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
@@ -91,6 +92,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // cannot clobber each other (lost update). No-op when no StateLock is wired (tests).
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
     options.stateLock ? options.stateLock.runExclusive(caseId, fn) : fn();
+  // One import writer per case, across EVERY import path (routes, /push + MCP ingest, monitors, hunt
+  // collects). Unlike the state lock this one is never optional: an import's "+N events" and its undo
+  // checkpoint are only correct if nothing else writes inside its section. See analysis/importLock.ts.
+  const importLock = options.importLock ?? new ImportLock();
 
   // Automatic content-based tagger: after an import dual-writes its new events into the super-timeline,
   // tag just those events (Timesketch tagger analyzer, ported). Best-effort + non-fatal + gated on
@@ -174,6 +179,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     store,
     options,
     runStateExclusive,
+    importLock,
     recordImporterRun,
     redactErr,
     autoTagImported,
@@ -211,6 +217,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const hunts = createVeloHunts({
     store,
     options,
+    importLock,
     persistEvidence: imports.persistEvidence,
     dispatchImport: imports.dispatchImport,
     resolveImportKind: imports.resolveImportKind,
@@ -224,6 +231,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // launch, so no job record, outcome ledger or checkpoint. See composition/veloExternalIngest.ts.
   const externalIngest = createVeloExternalIngest({
     options,
+    importLock,
     persistEvidence: imports.persistEvidence,
     dispatchImport: imports.dispatchImport,
     resolveImportKind: imports.resolveImportKind,
@@ -261,6 +269,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     // module-level function (kept in server.ts so no route imports a value from ../server.js).
     instanceSecret,
     runStateExclusive,
+    importLock,
     ensureDropFolders: drops.ensureDropFolders,
     reloadImporters: imports.reloadImporters,
     importerPrecedence: imports.importerPrecedence,
