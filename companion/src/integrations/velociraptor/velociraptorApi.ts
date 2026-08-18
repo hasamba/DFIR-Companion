@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { ChildOutputCollector } from "../childOutput.js";
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
-import { parseArtifactTools, type VeloArtifactTool } from "./artifactTools.js";
+import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
 
 // Run the hunt-pivot queries the Companion generates against a Velociraptor server through its API.
 // The hunt-pivot is run as a HUNT across ALL enrolled endpoints (not server-side): the pivot VQL is
@@ -733,7 +733,8 @@ export class VelociraptorClient {
     const { rows, reason } = await this.runRawLogged(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId)) throw new Error(noLaunchIdMessage("hunt", reason));
+    if (!HUNT_RE.test(huntId))
+      throw new Error(noLaunchIdMessage("hunt", "ARTIFACT_WRITER and START_HUNT", reason));
     return {
       huntId,
       artifact: name,
@@ -784,7 +785,8 @@ export class VelociraptorClient {
     const { rows, reason } = await this.runRawLogged(program);
     const flow = (rows[0] as { Flow?: Record<string, unknown> })?.Flow ?? {};
     const flowId = String(flow.flow_id ?? flow.FlowId ?? flow.session_id ?? "");
-    if (!FLOW_RE.test(flowId)) throw new Error(noLaunchIdMessage("collection flow", reason));
+    if (!FLOW_RE.test(flowId))
+      throw new Error(noLaunchIdMessage("collection flow", "ARTIFACT_WRITER and COLLECT_CLIENT", reason));
     return {
       clientId,
       flowId,
@@ -1009,6 +1011,13 @@ export class VelociraptorClient {
     return out;
   }
 
+  // The server's tool inventory, keyed by tool name — what each third-party tool's URL currently is and
+  // whether the server holds the file. Separate from the artifact catalog on purpose: the catalog echoes
+  // each artifact's YAML, while THIS is where an upload or a URL fix lands (see parseToolInventory).
+  async listToolInventory(): Promise<Map<string, VeloArtifactTool>> {
+    return parseToolInventory(await this.runRaw("SELECT name, url, hash FROM inventory()"));
+  }
+
   // Diagnostics for the live-monitor features (#84) when the picker / auto-discovery come back empty
   // on a real server: the distinct artifact `type` strings + counts (so we can see the real casing),
   // the raw `get_client_monitoring()` rows (the configured monitoring table), and how many CLIENT_EVENT
@@ -1141,7 +1150,7 @@ export class VelociraptorClient {
     const { rows, reason } = await this.runRawLogged(program);
     const hunt = (rows[0] as { Hunt?: Record<string, unknown> })?.Hunt ?? {};
     const huntId = String(hunt.HuntId ?? hunt.hunt_id ?? "");
-    if (!HUNT_RE.test(huntId)) throw new Error(noLaunchIdMessage("bundle hunt", reason));
+    if (!HUNT_RE.test(huntId)) throw new Error(noLaunchIdMessage("bundle hunt", "START_HUNT", reason));
     return {
       huntId,
       artifacts: names,

@@ -545,8 +545,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       // `unknownArtifacts`/`unavailableArtifacts` are distinct from the JOB's collect-time
       // `skippedArtifacts`, which are artifacts that launched but failed to FETCH.
       const velo = options.velociraptorClient;
-      const pre = await preflightBundleArtifacts(bundle.artifacts, () =>
-        velo.listClientArtifacts("client", { refresh: true }),
+      const pre = await preflightBundleArtifacts(
+        bundle.artifacts,
+        () => velo.listClientArtifacts("client", { refresh: true }),
+        () => velo.listToolInventory(),
       );
       for (const note of pre.notes) logLine(`[velociraptor] bundle "${bundle.name}": ${note}`);
       if (pre.error) return res.status(400).json({ error: pre.error });

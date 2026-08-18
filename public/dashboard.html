@@ -239,6 +239,7 @@
   <script src="/js/dashboard-exec-summary.js"></script>
   <script src="/js/dashboard-import-severity.js"></script>
   <script src="/js/dashboard-merge-picker.js"></script>
+  <script src="/js/dashboard-velo-fs-browse.js"></script>
   <script src="/js/dashboard-preflight-banner.js"></script>
   <script src="/js/dashboard-data-act.js"></script>
   <script src="/js/dashboard-tooltip.js"></script>
@@ -630,6 +631,19 @@
         <button id="mergeConfirmBtn" type="button" disabled>Merge</button>
         <button id="mergeCancelBtn" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="mergeMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="fsBrowseOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3 id="fsBrowseTitle">Browse</h3>
+      <div id="fsBrowsePath" class="sfield-hint" data-safe-style="display:block; margin-bottom:6px; word-break:break-all"></div>
+      <input id="fsBrowseSearch" type="text" placeholder="Filter…" data-safe-style="width:100%; box-sizing:border-box; margin:6px 0; padding:5px; background:var(--bg-primary); color:var(--text-bright); border:1px solid var(--border-color); border-radius:6px;" />
+      <div id="fsBrowseEntries" data-safe-style="max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; margin-top:4px;"></div>
+      <div data-safe-style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button id="fsBrowseSelectBtn" type="button" disabled>Select</button>
+        <button id="fsBrowseCancelBtn" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
+        <span id="fsBrowseMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -1817,8 +1831,20 @@
         </div>
         <div class="settings-group-head" data-essential>Velociraptor</div>
         <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
-          <div class="sfield" data-essential><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
+          <div class="sfield" data-essential><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label>
+            <div data-safe-style="display:flex; gap:6px; align-items:center">
+              <input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" data-safe-style="flex:1; min-width:0" />
+              <button type="button" id="veloBrowseApiConfigBtn">Browse…</button>
+            </div>
+          </div>
+          <div class="sfield" data-essential><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label>
+            <div data-safe-style="display:flex; gap:6px; align-items:center">
+              <input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" data-safe-style="flex:1; min-width:0" />
+              <button type="button" id="veloBrowseBinaryBtn">Browse…</button>
+              <button type="button" id="veloDownloadLatestBtn" title="Fetches the current Velociraptor release for this server's OS from the project's official GitHub releases (Velocidex/velociraptor) and fills this field with the saved path. Runs only when you click it — the Companion never bundles or auto-downloads a binary on its own.">⬇ Download latest</button>
+            </div>
+            <span id="veloDownloadMsg" class="sfield-hint" data-safe-style="display:block; margin-top:2px"></span>
+          </div>
         </div>
         <div class="sfield-row3" data-essential>
           <div class="sfield" data-essential><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
@@ -5064,6 +5090,8 @@
     // Generic merge-target picker moved to js/dashboard-merge-picker.js (#415 tier 3).
     if (typeof initMergePicker !== "undefined") initMergePicker();
     else dfirFeatureUnavailable("Merge target picker");
+    if (typeof initFsBrowse !== "undefined") initFsBrowse();
+    else dfirFeatureUnavailable("Velociraptor path browse");
 
     // Asset overrides moved to js/dashboard-asset-overrides.js (#415 tier 3) — the block was
     // nothing but listener wiring, so the module is nothing but initAssetOverrides().

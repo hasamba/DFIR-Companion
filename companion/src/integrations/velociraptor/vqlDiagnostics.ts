@@ -54,13 +54,20 @@ export function vqlLogErrors(stderr: string): string {
  * download URL (the `todo.<tool>.download.url` placeholder that ships with e.g. Generic.Scanner.ThorZIP)
  * aborts the whole launch. So `reason` — the server's own log line, when we captured one — comes FIRST,
  * and the guesses come after it.
+ *
+ * `permissions` is what THIS call actually needs, because the three launch paths do not need the same
+ * thing (acls/acls.go): `hunt()` needs START_HUNT ("Allows the user to start a hunt"), `collect_client()`
+ * needs COLLECT_CLIENT ("Schedule or cancel new collections on clients"), and the two paths that first
+ * define a Custom.* artifact with `artifact_set()` also need ARTIFACT_WRITER ("Add or edit custom
+ * artifacts that run on endpoints"). Naming the wrong one sends the analyst to grant a permission that
+ * cannot fix their failure.
  */
-export function noLaunchIdMessage(what: string, reason = ""): string {
+export function noLaunchIdMessage(what: string, permissions: string, reason = ""): string {
   const said = reason.trim() ? ` — Velociraptor said: ${reason.trim()}` : "";
   return (
     `Velociraptor accepted the query but returned no ${what} id${said}.` +
     " Usual causes: an artifact needs a third-party tool whose download URL is not set on the server," +
-    " the VQL references an artifact/plugin that does not exist, or the api_client role lacks START_HUNT."
+    ` the VQL references an artifact/plugin that does not exist, or the api_client role lacks ${permissions}.`
   );
 }
 

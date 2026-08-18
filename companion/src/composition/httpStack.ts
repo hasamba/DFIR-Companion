@@ -84,6 +84,14 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
   // cannot create new cases, import evidence, trigger AI calls, or change global settings.
   if (options.demoMode) {
     app.use(function demoModeReadOnlyGate(req: Request, res: Response, next: NextFunction) {
+      // GET /settings/browse-fs is the one GET that isn't safe to blanket-allow: it walks the
+      // server's own filesystem on request, which on the public demo means any visitor could
+      // enumerate arbitrary directories the server process can read.
+      if (req.path === "/settings/browse-fs") {
+        return res
+          .status(403)
+          .json({ error: "Demo mode: filesystem browsing is disabled on the public demo." });
+      }
       if (req.method === "GET" || req.method === "OPTIONS") return next();
       if (req.path === "/cases/seed-demo") return next();
       return res
