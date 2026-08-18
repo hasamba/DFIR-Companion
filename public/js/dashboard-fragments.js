@@ -15,6 +15,16 @@
 // resolved as globals at CALL time, so the tag order in <head> is documentation rather than a
 // requirement.
 
+// The Executive Summary / Narrative Timeline body: one escaped <p> per paragraph, with the split
+// done by proseParagraphs in js/dashboard-text.js (resolved as a global at CALL time, like esc).
+//
+// The container is the caller's: `.prose` in the markup carries the measure and the leading, so a
+// panel can wrap this in whatever it already has. Empty text returns "" rather than an empty <p>,
+// so a panel with nothing to show collapses instead of leaving a blank line behind.
+function proseHtml(text) {
+  return proseParagraphs(text).map((p) => `<p>${esc(p)}</p>`).join("");
+}
+
 // Highlight @name tokens as chips in a comment body. esc() first (so the raw text can never
 // inject markup), then the @token regex only ever matches already-escaped, HTML-safe text.
 function mentionHtml(text) {
@@ -193,6 +203,7 @@ function ntfTargetSummary(ch) {
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
 window.DfirFragments = {
+  proseHtml,
   mentionHtml,
   ticketPushChips,
   renderVqlRows,

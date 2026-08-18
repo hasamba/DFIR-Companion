@@ -32,11 +32,21 @@
     DfirState.setLastState(rawState);
     if (typeof renderCollectionPlan === "function") renderCollectionPlan(); // fire-and-forget (it reads the plan from the server). Guarded: it ships as its own separate script file, and a ReferenceError here aborted the whole of render() — into a bare `catch {}` on case load and into an uncaught ws.onmessage on every state push.
     const state = DfirScope.project(rawState);
-    document.getElementById("summary").textContent = state.lastSummary || "—";
-    document.getElementById("attackerPath").textContent =
-      state.attackerPath || "—";
-    document.getElementById("narrativeView").textContent =
-      state.narrativeTimeline || "—";
+    // The three AI-prose panels — Executive Summary, Attack Path, Narrative Timeline — render
+    // through proseHtml (js/dashboard-fragments.js): escaped paragraphs inside a .prose container,
+    // rather than one unbroken block of text at full page width. The RAW text stays on the element
+    // as data-raw because the narrative editor loads it back into its textarea, and reading
+    // .textContent off the paragraphs would silently drop every paragraph break the split added.
+    document.getElementById("summary").innerHTML = proseHtml(
+      state.lastSummary || "—",
+    );
+    document.getElementById("attackerPath").innerHTML = proseHtml(
+      state.attackerPath || "—",
+    );
+    const narrative = state.narrativeTimeline || "—";
+    const narrativeView = document.getElementById("narrativeView");
+    narrativeView.dataset.raw = narrative;
+    narrativeView.innerHTML = proseHtml(narrative);
 
     const PRIO = {
       critical: "#ff5c5c",

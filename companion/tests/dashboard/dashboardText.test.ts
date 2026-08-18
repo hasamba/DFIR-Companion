@@ -92,6 +92,98 @@ describe("huntRefang", () => {
   });
 });
 
+// The display split behind the Executive Summary, Attack Path and Narrative Timeline panels. The
+// model writes those as one unbroken block, so without this the whole narrative is a single
+// paragraph running the full width of the page.
+//
+// IT IS A DISPLAY TRANSFORM, so what these pin hardest is what it must NOT do: never lose a
+// character, never cut inside a hostname or a version, and never restructure text the author
+// already shaped by hand.
+describe("proseSentences", () => {
+  it("splits on a sentence end followed by a capital", () => {
+    expect(t.proseSentences("One thing happened. Then another did.")).toEqual([
+      "One thing happened.",
+      "Then another did.",
+    ]);
+  });
+
+  // The reason a naive `split(". ")` is wrong on this data: DFIR prose is full of dotted tokens.
+  it("does not cut inside a hostname, a version or a filename", () => {
+    expect(t.proseSentences("win11.windomain.local ran lsass.exe under v1.2 today")).toEqual([
+      "win11.windomain.local ran lsass.exe under v1.2 today",
+    ]);
+  });
+
+  it("keeps an abbreviation with the sentence it belongs to", () => {
+    expect(t.proseSentences("Tools e.g. Mimikatz were staged.")).toEqual([
+      "Tools e.g. Mimikatz were staged.",
+    ]);
+    expect(t.proseSentences("Reported by A. Smith today.")).toEqual(["Reported by A. Smith today."]);
+  });
+
+  it("splits before a sentence that opens with a date or a quote", () => {
+    expect(t.proseSentences("It began. 2025-03-14 was the first day.")).toEqual([
+      "It began.",
+      "2025-03-14 was the first day.",
+    ]);
+    expect(t.proseSentences("It began. 'vagrant' logged in.")).toEqual(["It began. 'vagrant' logged in."]);
+  });
+});
+
+describe("proseParagraphs", () => {
+  const sentence = (n: number) =>
+    `Sentence number ${n} says something about the host and its ${"x".repeat(60)}.`;
+
+  it("leaves a short block as one paragraph", () => {
+    expect(t.proseParagraphs("A short summary.")).toEqual(["A short summary."]);
+  });
+
+  it("keeps blank-line blocks exactly as the author split them", () => {
+    expect(t.proseParagraphs("First para.\n\n  \nSecond para.")).toEqual(["First para.", "Second para."]);
+  });
+
+  // A block with line structure is a list or a hand-typed narrative. Re-splitting it at sentence
+  // ends would destroy the shape its author chose, so length is not even consulted.
+  it("never splits a block that already has line breaks in it", () => {
+    const list = `- ${"a".repeat(300)}\n- ${"b".repeat(300)}`;
+    expect(t.proseParagraphs(list)).toEqual([list]);
+  });
+
+  it("splits a long undivided block at sentence ends", () => {
+    const paras = t.proseParagraphs([1, 2, 3, 4, 5, 6].map(sentence).join(" "));
+    expect(paras.length).toBeGreaterThan(1);
+    for (const p of paras) expect(p).toMatch(/\.$/);
+  });
+
+  // THE INVARIANT THAT MATTERS. Every word survives the split, in order — this is prose an analyst
+  // will paste into a report, and a transform that quietly drops a clause is worse than a wall.
+  it("loses no text", () => {
+    const src = [1, 2, 3, 4, 5, 6, 7].map(sentence).join(" ");
+    expect(t.proseParagraphs(src).join(" ")).toBe(src);
+  });
+
+  it("folds a short tail into the paragraph before it rather than leaving an orphan", () => {
+    const paras = t.proseParagraphs(`${sentence(1)} ${sentence(2)} ${sentence(3)} ${sentence(4)} Short.`);
+    expect(paras[paras.length - 1]).not.toBe("Short.");
+    expect(paras[paras.length - 1]).toMatch(/ Short\.$/);
+  });
+
+  // …but only into a paragraph THIS block produced. A tail folded across a blank line would move
+  // text the author had deliberately separated into the wrong paragraph.
+  it("never folds a tail into a paragraph from an earlier block", () => {
+    expect(t.proseParagraphs("Author's own first block.\n\nShort.")).toEqual([
+      "Author's own first block.",
+      "Short.",
+    ]);
+  });
+
+  it("renders nothing for nothing", () => {
+    expect(t.proseParagraphs("")).toEqual([]);
+    expect(t.proseParagraphs(null)).toEqual([]);
+    expect(t.proseParagraphs("   \n\n  ")).toEqual([]);
+  });
+});
+
 // A deliberately small markdown subset — headings, both list flavours, bold and code — used for AI
 // narrative output. Everything is escaped BEFORE any markup is added, which is the ordering that
 // matters: the source is model output rendered with innerHTML.

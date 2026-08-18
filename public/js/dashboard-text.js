@@ -77,6 +77,60 @@ function mdToHtml(src) {
   return html;
 }
 
+// AI prose → display paragraphs. The Executive Summary and the Narrative Timeline both arrive as
+// ONE unbroken block: the model writes no blank lines, so a 400-word narrative rendered as a single
+// paragraph spanning the full grid width, and the eye lost its place on every carriage return.
+//
+// DISPLAY ONLY. The stored text is never rewritten — the narrative editor and the report read the
+// raw string, and rejoining these paragraphs with a space is not required to reproduce it.
+//
+// TWO THINGS ARE LEFT ALONE, because breaking them would be worse than a long paragraph:
+//   - text the author already split (blank lines between blocks), which is kept block for block
+//   - a block with any line structure in it (a list, a hand-typed narrative), which is one paragraph
+// Only an undivided wall longer than the target gets cut, and it is cut at sentence ends.
+function proseParagraphs(text, targetChars) {
+  const src = String(text == null ? "" : text).replace(/\r\n?/g, "\n").trim();
+  if (!src) return [];
+  const target = targetChars || 420;
+  const out = [];
+  for (const block of src.split(/\n[ \t]*\n+/).map(b => b.trim()).filter(Boolean)) {
+    if (block.indexOf("\n") >= 0 || block.length <= target) { out.push(block); continue; }
+    const start = out.length;
+    let cur = "";
+    for (const sentence of proseSentences(block)) {
+      cur = cur ? cur + " " + sentence : sentence;
+      if (cur.length >= target) { out.push(cur); cur = ""; }
+    }
+    // The tail. A short remainder joins the paragraph before it rather than standing alone as a
+    // one-line orphan -- but only if THIS block produced that paragraph, never a previous one.
+    if (cur) {
+      if (cur.length < target / 3 && out.length > start) out[out.length - 1] += " " + cur;
+      else out.push(cur);
+    }
+  }
+  return out;
+}
+
+// One block of prose → its sentences. Split after .!? (plus any closing quote or bracket) when the
+// next sentence opens with a capital or a digit; a hostname or a version — "win11.windomain.local",
+// "v1.2" — never matches, because what follows its dot is not whitespace.
+//
+// A LOCAL, NOT A MODULE-LEVEL CONST. A top-level `const` in a classic script joins the global
+// LEXICAL environment, reachable by bare name from every other script on the page and invisible to
+// the own-property gate that would otherwise catch a leak (see js/dashboard-escape.js).
+function proseSentences(block) {
+  // Sentence ends that are really abbreviations: "e.g.", "Inc.", a lone initial ("A. Smith"). Each
+  // has the exact shape the split fires on, so the piece after one is glued back. Not exhaustive
+  // and does not need to be — a miss costs a paragraph break in an odd place, not lost text.
+  const abbrev = /(?:\b[A-Za-z]|\b(?:e\.g|i\.e|etc|vs|approx|fig|dr|mr|ms|jr|sr|st|inc|ltd|no|al))\.["')\]]?$/i;
+  const out = [];
+  for (const part of String(block == null ? "" : block).split(/(?<=[.!?]["')\]]?)\s+(?=["'“(\[]?[A-Z0-9])/)) {
+    if (out.length && abbrev.test(out[out.length - 1])) out[out.length - 1] += " " + part;
+    else out.push(part);
+  }
+  return out;
+}
+
 function custodyGroupByArtifact(records) {
   const byPath = new Map();
   for (const r of records) {
@@ -139,6 +193,8 @@ window.DfirText = {
   truncate,
   splitEventTitle,
   huntRefang,
+  proseParagraphs,
+  proseSentences,
   mdToHtml,
   egShortHost,
   arrayBufferToBase64,

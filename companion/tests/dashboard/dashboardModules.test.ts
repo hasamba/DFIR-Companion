@@ -152,8 +152,10 @@ describe("every moved function still resolves at its call sites", () => {
     (name) => name !== "esc" && name !== "escAttr",
   );
 
-  it("moved 99 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(99);
+  // 99 at the extraction; 102 since the prose split (proseParagraphs / proseSentences / proseHtml)
+  // was added to the text and fragment helpers. The number is a vacuity guard, not a budget.
+  it("moved 102 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(102);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {
