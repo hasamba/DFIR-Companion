@@ -524,14 +524,14 @@
           msg.textContent = "error: " + (j.error || "failed");
           return;
         }
-        // The server drops bundle artifacts that don't exist on THIS Velociraptor (else the whole hunt
-        // fails) — surface which were skipped so the analyst can fix the names in the bundle editor,
-        // and keep the form open so the note is visible; otherwise hide it as usual.
-        const skipped = Array.isArray(j.unknownArtifacts)
-          ? j.unknownArtifacts
-          : [];
+        // The server drops artifacts THIS Velociraptor doesn't have, and artifacts whose third-party
+        // tool it cannot download — either one would have failed the whole hunt. Say what was dropped.
+        const list = (v) => (Array.isArray(v) ? v : []);
+        const skipped = list(j.unknownArtifacts).concat(
+          list(j.unavailableArtifacts).map((u) => `${u.artifact}: ${u.reason}`),
+        );
         if (skipped.length) {
-          msg.innerHTML = `launched ✓ — skipped ${skipped.length} artifact(s) not on this server: <span data-safe-style="color:var(--sev-high)">${esc(skipped.join(", "))}</span> (fix the names via Edit)`;
+          msg.innerHTML = `launched ✓ — skipped ${skipped.length} artifact(s), not on this server or missing their tool: <span data-safe-style="color:var(--sev-high)">${esc(skipped.join(", "))}</span>`;
         } else {
           msg.textContent = "";
           form.style.display = "none";
