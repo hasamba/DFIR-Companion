@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { preflightBundleArtifacts } from "../../src/integrations/velociraptor/bundlePreflight.js";
+import { parseToolInventory } from "../../src/integrations/velociraptor/artifactTools.js";
 import type { VeloArtifactInfo } from "../../src/integrations/velociraptor/velociraptorApi.js";
 
 const def = (name: string, tools?: VeloArtifactInfo["tools"]): VeloArtifactInfo => ({
@@ -54,6 +55,35 @@ describe("preflightBundleArtifacts", () => {
     const empty = await preflightBundleArtifacts(["A.B"], async () => []);
     expect(empty.artifacts).toEqual(["A.B"]);
     expect(empty.notes).toEqual([]);
+  });
+
+  // The server's tool inventory is the authority: the catalog still shows THOR's placeholder URL long
+  // after the analyst has uploaded the file, so the pre-flight must ask the inventory before dropping.
+  it("keeps an artifact whose tool the inventory says the server now holds", async () => {
+    const uploaded = parseToolInventory([
+      { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "9f809ea14b71" },
+    ]);
+    const pre = await preflightBundleArtifacts(
+      ["Generic.Scanner.ThorZIP"],
+      async () => [THOR],
+      async () => uploaded,
+    );
+    expect(pre.artifacts).toEqual(["Generic.Scanner.ThorZIP"]);
+    expect(pre.unavailableArtifacts).toEqual([]);
+    expect(pre.error).toBeUndefined();
+  });
+
+  it("still checks the declared URLs, with a note, when the inventory read fails", async () => {
+    const pre = await preflightBundleArtifacts(
+      ["Windows.NTFS.MFT", "Generic.Scanner.ThorZIP"],
+      async () => [def("Windows.NTFS.MFT"), THOR],
+      async () => {
+        throw new Error("inventory() unavailable");
+      },
+    );
+    expect(pre.artifacts).toEqual(["Windows.NTFS.MFT"]);
+    expect(pre.notes.join(" ")).toContain("inventory() unavailable");
+    expect(pre.error).toBeUndefined();
   });
 
   it("keeps the catalog it fetched, so the caller's time-scope plan needn't fetch it again", async () => {
