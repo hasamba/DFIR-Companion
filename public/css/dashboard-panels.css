@@ -105,6 +105,12 @@
 .mention-chip { background: var(--surface-selected); color: var(--accent); border: 1px solid var(--border-strong);
   border-radius: 8px; padding: 0 5px; font-weight: 600; white-space: nowrap; }
 .comment-del { background: transparent; border: 0; color: var(--badge-danger-text); cursor: pointer; font-size: 11px; padding: 0 4px; }
+/* Settings "Browse…" file picker (js/dashboard-velo-fs-browse.js). Its trigger button lives
+   INSIDE the Settings modal (#settingsOverlay, also a .comment-overlay at z-index 50) — same
+   z-index would let the two fight for paint order by DOM position, and Settings comes later in
+   the markup, so the picker opened underneath it and was unusable. Bumped above every other
+   .comment-overlay use so it always sits on top of the modal that launched it. */
+#fsBrowseOverlay { z-index: 65; }
 /* Command palette (issue #238) — the Ctrl+K launcher, driven by /js/command-palette.js.
    Anchored near the top rather than vertically centred like .comment-modal: the result list
    grows and shrinks on every keystroke, and a centred box would slide up and down under the
