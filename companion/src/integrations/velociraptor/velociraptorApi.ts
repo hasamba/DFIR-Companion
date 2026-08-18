@@ -1165,17 +1165,11 @@ export class VelociraptorClient {
   // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
   // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
   // checked in yet, and the artifact-map needs non-empty arrays).
-  //
-  // `onArtifact`, when given, is handed each artifact's rows as soon as they're fetched, and `results`
-  // is left empty — the caller (a hunt collect processing dozens of artifacts) can persist-and-release
-  // each artifact instead of this method accumulating every artifact's rows in one map for the whole
-  // fetch pass. Without it, behaviour is unchanged (the whole map is built and returned, as before).
   async huntResultsByArtifact(
     huntId: string,
     artifacts: string[],
     filters?: Record<string, string>,
     sourcesByArtifact?: Record<string, string[]>,
-    onArtifact?: (name: string, rows: unknown[]) => Promise<void> | void,
   ): Promise<{ results: Record<string, unknown[]>; skipped: SkippedArtifact[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
@@ -1186,28 +1180,18 @@ export class VelociraptorClient {
         skipped.push({ name: name || artifact, error: "invalid artifact name" });
         continue;
       }
-      let res: { rows: unknown[] };
       try {
         // Named sources are addressed as `artifact/source`. Bundle artifacts use a default source (empty
         // sources is correct); a Companion-launched fleet-hunt artifact stores its rows under named sources
         // (Pivot0…), so its results are 0 unless we pass them (the cause of false "no evidence", #157).
-        res = await this.huntResults(huntId, name, sourcesByArtifact?.[name] ?? [], filters?.[name]);
+        const res = await this.huntResults(huntId, name, sourcesByArtifact?.[name] ?? [], filters?.[name]);
+        if (res.rows.length) results[name] = res.rows;
       } catch (e) {
         // oversized / slow / failed — keep going so the rest of the bundle still imports; the caller
         // logs + persists this reason so a silent per-artifact failure doesn't read as "only one artifact
         // collected" with no way to tell why.
         skipped.push({ name, error: (e as Error).message });
-        continue;
       }
-      if (!res.rows.length) continue;
-      // NOT caught here, deliberately: a Velociraptor fetch failure (above) is expected and resilient —
-      // the rest of the bundle should still import. A failure INSIDE onArtifact (e.g. the caller's
-      // scratch-file write hits ENOSPC) is a local persistence failure, a different class of problem —
-      // silently downgrading it to "skipped artifact" would let the collect finish as a reported success
-      // while this artifact's already-counted rows were never actually written anywhere. Let it propagate
-      // and fail the whole collect pass instead (the caller's own try/catch already handles that).
-      if (onArtifact) await onArtifact(name, res.rows);
-      else results[name] = res.rows;
     }
     return { results, skipped };
   }

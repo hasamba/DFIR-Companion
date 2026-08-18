@@ -32,7 +32,7 @@ import {
   isHuntStoppedEarly,
   type HuntPollDeps,
 } from "../integrations/velociraptor/huntStatusPoller.js";
-import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
+import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
@@ -345,28 +345,47 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // into a single in-memory map, then JSON.stringify the whole thing at once before importing — on a
       // large bundle that held the entire hunt's rows (plus a second, stringified copy) in the process's
       // heap simultaneously, and took the whole server down with it (no crash trace, since V8 exiting on
-      // heap exhaustion happens before any of our own logging can run). Each artifact's rows are now
-      // written to a scratch file the moment they arrive and dropped from memory right after, so at most
-      // one artifact's rows are ever live at once — both here, and again in step 3 on the way back in.
+      // heap exhaustion happens before any of our own logging can run). So this loops `huntResults()`
+      // directly (not the client's huntResultsByArtifact() convenience wrapper, which returns everything
+      // as one map) and writes each artifact's rows to a scratch file the moment they arrive, dropping
+      // them from memory right after — at most one artifact's rows are ever live at once, both here and
+      // again in step 3 on the way back in.
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
       scratchDir = await mkdtemp(path.join(tmpdir(), "dfir-velo-hunt-"));
       const artifactFiles: { name: string; file: string }[] = [];
       const snapshotFragments: HuntRunSnapshot[] = [];
+      const skipped: SkippedArtifact[] = [];
       let totalRows = 0;
-      const { skipped } = await client.huntResultsByArtifact(
-        job.huntId,
-        job.artifacts,
-        job.filters,
-        sourcesByArtifact,
-        async (name, rows) => {
-          totalRows += rows.length;
-          snapshotFragments.push(buildHuntRunSnapshot({ [name]: rows })); // small capped key/host strings only — the rows themselves are never retained
-          const file = path.join(scratchDir!, `${artifactFiles.length}_${name}.json`);
-          await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
-          artifactFiles.push({ name, file });
-        },
-      );
+      for (const artifact of job.artifacts) {
+        const name = String(artifact ?? "").trim();
+        let rows: unknown[];
+        try {
+          const res = await client.huntResults(
+            job.huntId,
+            name,
+            sourcesByArtifact?.[name] ?? [],
+            job.filters?.[name],
+          );
+          rows = res.rows;
+        } catch (e) {
+          // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
+          // imports; logged + persisted below so a silent per-artifact failure doesn't read as "only
+          // one artifact collected" with no way to tell why.
+          skipped.push({ name: name || artifact, error: (e as Error).message });
+          continue;
+        }
+        if (!rows.length) continue;
+        // NOT wrapped in the try/catch above: a Velociraptor fetch failure is resilient-by-design, but a
+        // failure writing the scratch file (e.g. a full disk) is a local persistence bug, a different
+        // class of problem — let it fail the whole collect pass instead of silently reporting success on
+        // rows that were never actually persisted anywhere.
+        totalRows += rows.length;
+        snapshotFragments.push(buildHuntRunSnapshot({ [name]: rows })); // small capped key/host strings only — the rows themselves are never retained
+        const file = path.join(scratchDir, `${artifactFiles.length}_${name}.json`);
+        await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
+        artifactFiles.push({ name, file });
+      }
       if (skipped.length)
         logLine(
           `[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} artifact(s) — ${skipped.map((s) => `${s.name} (${s.error})`).join("; ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS if these are oversized`,
