@@ -86,6 +86,19 @@ export function buildHuntRunSnapshot(
   return { rowKeys: dedupeCapped(rowKeys, maxRows), hosts: dedupeCapped(hosts, maxRows) };
 }
 
+// Combine per-artifact snapshot fragments (each built from ONE artifact's rows, so a collect() never
+// has to hold every artifact's rows in memory at once just to snapshot them) into the same bounded
+// shape buildHuntRunSnapshot(wholeMap) would have produced. Order-independent: values are deduped and
+// capped after merging, same as the single-pass version.
+export function mergeHuntRunSnapshots(
+  fragments: readonly HuntRunSnapshot[],
+  maxRows: number = HUNT_RUN_SNAPSHOT_MAX_ROWS,
+): HuntRunSnapshot {
+  const rowKeys = fragments.flatMap((f) => f.rowKeys);
+  const hosts = fragments.flatMap((f) => f.hosts);
+  return { rowKeys: dedupeCapped(rowKeys, maxRows), hosts: dedupeCapped(hosts, maxRows) };
+}
+
 // Compare this run's snapshot against the PREVIOUS run's (undefined when this fingerprint has never
 // been collected before — isFirstRun true, nothing meaningful to diff yet). Pure.
 export function diffHuntRuns(previous: HuntRunSnapshot | undefined, current: HuntRunSnapshot): HuntRunDiff {
