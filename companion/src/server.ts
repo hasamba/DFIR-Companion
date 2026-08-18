@@ -20,6 +20,7 @@ import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
 import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
+import { installUncaughtExceptionNet } from "./logging/uncaughtExceptionNet.js";
 import {
   mountRequestPipeline,
   createUnlockStateReader,
@@ -398,6 +399,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // A stray promise rejection must not take a live investigation down with it. Armed here, at the
   // real-server boundary, so createApp() unit tests keep Node's fatal default (see the module).
   installUnhandledRejectionNet();
+  // A synchronous exception still ends the process (see the module for why that's correct), but now
+  // it logs first — so "the server crashed with no trace anywhere" stops being possible.
+  installUncaughtExceptionNet();
   loadDatabaseSync();
   // Every store, client and shared runtime object this run needs. See composition/runtimeStores.ts
   // — including why each global store gets its own subdirectory beside cases/ rather than a loose
