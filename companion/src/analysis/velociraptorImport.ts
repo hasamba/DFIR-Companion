@@ -55,6 +55,7 @@ import {
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
+import { withHostSuffix, titleSafe, isMangledUtf16 } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
 
@@ -493,26 +494,6 @@ function pickHost(row: Row): string {
   return "";
 }
 
-// The row's own chip already shows the host, so appending it to `description` is purely for the
-// [details] panel — but dashboard-text.js's splitEventTitle only sends it there if a genuine
-// " - " precedes it. Several mappers below join their fields with "—"/": " and never emit that
-// literal ASCII " - ", so with a plain `+= " @ host"` the WHOLE description (host included)
-// becomes the title. Force the boundary whenever one isn't already guaranteed.
-function withHostSuffix(description: string, host: string): string {
-  if (!host || description.toLowerCase().includes(host.toLowerCase())) return description;
-  return description.includes(" - ") ? `${description} @ ${host}` : `${description} - @ ${host}`;
-}
-
-// A rule/verdict NAME (DetectRaptor's Detection.Name, a Sigma Rule.Title) is analyst-authored and
-// often carries its own " - " ("RMM - Microsoft Quick Assist Execution", "Suspicious Location -
-// Local Temp Executable or Script"). Interpolated raw as the FIRST thing in a description, that
-// internal dash is what splitEventTitle finds first — the title truncates to "RMM" and everything
-// after it (the actual subject, and the file/process this code goes on to promote into the title)
-// gets swallowed into [details]. Neutralize it to an em dash so only OUR intended boundary counts.
-function titleSafe(name: string): string {
-  return name.replace(/ - /g, " — ");
-}
-
 // ───────────────────────────── IOCs / hashes ─────────────────────────────
 
 function vrHashes(row: Row): { sha256?: string; md5?: string } {
@@ -868,11 +849,9 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (win) {
     win.severity = worst(win.severity, severity);
     for (const m of v.mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
-    // Same title-promotion as the non-event branch below: name the process the rule fired on
-    // right in the title, so several hits of the same rule stay distinguishable at a glance.
-    const winEd = isObject(flat!.rec.event_data) ? (flat!.rec.event_data as Row) : {};
+    const winEd = flat && isObject(flat.rec.event_data) ? flat.rec.event_data : {};
     const winImage = firstStr(winEd, ["Image", "NewProcessName", "TargetImage", "TargetFilename"]);
-    const winTag = winImage ? baseName(winImage) : "";
+    const winTag = baseName(winImage);
     win.description =
       `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - ${win.description}`.slice(0, 600);
     win.aggKey = `vr-det|${v.title.toLowerCase()}|${win.aggKey}`.slice(0, 400);
@@ -948,12 +927,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   // " - " so the analyst can read them at a glance without knowing the artifact's column layout.
   // Content-centric detections (ISEAutoSave, PSReadline) get both the filename AND the evidence.
   let subject: string;
-  // The single most specific identifier (the process/pipe/file the rule actually fired on) gets
-  // promoted into the TITLE itself, not just the [details] panel: splitEventTitle only shows what
-  // sits before the first " - ", so a bare "<rule name>" title makes ten hits of the same rule
-  // (ten different RMM tools, say) indistinguishable without opening each one. The row's host chip
-  // already shows the host, so this stays purely about the finding's subject.
-  let titleTag = "";
+  let titleTag = ""; // most specific identifier (process/pipe/file), promoted into the TITLE itself
   if (salient) {
     subject = salient;
   } else {
@@ -973,9 +947,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
-    if (processName) titleTag = processName;
-    else if (pipe) titleTag = pipe;
-    else if (path && !isYmsPath(path)) titleTag = baseName(path);
+    titleTag = processName || pipe || (path && !isYmsPath(path) ? baseName(path) : "");
     subject = parts.join(" - ");
   }
 
@@ -1554,23 +1526,11 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   };
 }
 
-// Windows.Sys.StartupItems' Details column is Velociraptor's own decoding of the registry/INI
-// value — usually a real command line ("wscript ... bginfo.vbs"), but for a desktop.ini
-// [.ShellClassInfo] entry it's the raw UTF-16 string still carrying its inter-character NUL
-// bytes, rendered as "." (".S.h.e.l.l.C.l.a.s.s.I.n.f.o......."). That's registry noise, not an
-// attacker-controlled command — over a third of the string being literal dots is the signal, and
-// it adds nothing worth a title, so it's dropped entirely rather than shown garbled.
-function isMangledUtf16(s: string): boolean {
-  if (s.length < 12) return false;
-  const dots = (s.match(/\./g) || []).length;
-  return dots / s.length > 0.3;
-}
-
 function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const name = str(getCI(row, "Name")).trim();
   const ospath = str(getCI(row, "OSPath")).trim();
   const detailsRaw = str(getCI(row, "Details")).trim();
-  const details = isMangledUtf16(detailsRaw) ? "" : detailsRaw;
+  const details = isMangledUtf16(detailsRaw) ? "" : detailsRaw; // desktop.ini's [.ShellClassInfo] noise
   const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
   const enabled =
     enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
