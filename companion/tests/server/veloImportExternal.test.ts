@@ -7,7 +7,12 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
-import type { VelociraptorRunResult } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import {
+  VelociraptorClient,
+  type VelociraptorApiConfig,
+  type VelociraptorRunResult,
+  type VqlRunner,
+} from "../../src/integrations/velociraptor/velociraptorApi.js";
 
 // The import-external route only calls four VelociraptorClient methods: getHuntArtifacts +
 // huntResultsByArtifact for a hunt ref, getFlowInfo + collectionResults for a flow ref. A hand-rolled
@@ -338,12 +343,10 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
 
   it("rejects combining an uploads-tab URL with superTimelineOnly", async () => {
     const { app } = await makeApp({}, [{ name: "thor.json", clientId: "C.1", content: THOR_LINE }]);
-    const res = await request(app)
-      .post("/cases/c1/velociraptor/import-external")
-      .send({
-        ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads",
-        superTimelineOnly: true,
-      });
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({
+      ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads",
+      superTimelineOnly: true,
+    });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/super-timeline-only/i);
   });
@@ -391,5 +394,113 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     expect(res.status).toBe(200);
     expect(res.body.imported).toEqual([]);
     expect(res.body.note).toBeTruthy();
+  });
+});
+
+// ── a MULTI-SOURCE artifact in an external flow ────────────────────────────────────────────────
+// End-to-end over the REAL VelociraptorClient (a VqlRunner stands in for the binary), because the
+// regression this pins lived in the client's own name validation, which a hand-rolled mock cannot
+// reproduce. Velociraptor reports a multi-source artifact's results one source at a time, in the
+// `Artifact/Source` form — so getFlowInfo() returns "Generic.Scanner.ThorZIP/ThorResultsJson" and
+// hands it straight to collectionResults(). Rejecting the slash there dropped the artifact behind a
+// per-artifact log line: on a live case the entire THOR scan vanished while the flow's 17
+// single-source artifacts imported normally, and the import still reported success.
+// THOR's REAL row shape from Generic.Scanner.ThorZIP/ThorResultsJson. That source is literally
+//   SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))
+// so each finding arrives as ONE JSON document held in an opaque `Line` string. A row like this has
+// no timestamp, host or severity of its own until the payload is unwrapped: it mapped to an undated
+// Info event that the default Low forensic floor then dropped, so the import "succeeded" and the
+// THOR alert still never appeared.
+const THOR_ROW = {
+  Line: JSON.stringify({
+    time: "2025-12-05T03:26:42Z",
+    hostname: "WIN-UK1GV882OK6",
+    level: "Alert",
+    module: "Filescan",
+    message: "Malware file found",
+    file: "C:\\Tools\\mimikatz.exe",
+    sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
+  }),
+};
+
+async function makeRealClientApp() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-velo-multisrc-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const superTimelineStore = new SuperTimelineStore(store);
+  const pipeline = buildRuntimePipeline({
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
+    imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+  });
+  const cfg: VelociraptorApiConfig = {
+    apiConfigPath: "/tmp/api.config.yaml",
+    binary: "velociraptor",
+    timeoutMs: 5000,
+    maxRows: 100,
+    maxOutputBytes: 1 << 20,
+  };
+  const asked: string[] = [];
+  const runner: VqlRunner = async (statements) => {
+    const p = statements[0];
+    if (p.includes("FROM flows("))
+      return {
+        rows: [
+          {
+            artifacts_with_results: [
+              "Generic.Scanner.ThorZIP/ThorExec",
+              "Generic.Scanner.ThorZIP/ThorResultsJson",
+            ],
+          },
+        ],
+        raw: "",
+      };
+    if (p.includes("FROM clients("))
+      return {
+        rows: [{ client_id: "C.14f7b543888d1fbe", os_info: { hostname: "WIN-UK1GV882OK6" } }],
+        raw: "",
+      };
+    if (p.includes("FROM source(")) {
+      const m = /artifact='([^']+)'/.exec(p);
+      if (m) asked.push(m[1]);
+      return { rows: p.includes("ThorResultsJson") ? [THOR_ROW] : [], raw: "" };
+    }
+    return { rows: [], raw: "" };
+  };
+  const app = createApp(store, {
+    pipeline,
+    stateStore,
+    superTimelineStore,
+    velociraptorClient: new VelociraptorClient(cfg, runner),
+  });
+  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  return { app, stateStore, asked };
+}
+
+describe("POST /cases/:id/velociraptor/import-external — multi-source artifacts", () => {
+  it("imports a source-qualified artifact from a flow instead of dropping it", async () => {
+    const { app, stateStore, asked } = await makeRealClientApp();
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({
+      ref: "https://10.0.0.162:8889/app/index.html?org_id=root#/collected/C.14f7b543888d1fbe/F.DA2A4A9E0J2PK.H/results",
+    });
+    expect(res.status).toBe(200);
+    // The qualified refs reached the query verbatim — not rejected as an invalid artifact name.
+    expect(asked).toContain("Generic.Scanner.ThorZIP/ThorResultsJson");
+    expect(asked).toContain("Generic.Scanner.ThorZIP/ThorExec");
+    // …and the source that had rows is reported as imported, not silently absent.
+    expect(res.body.artifacts).toContain("Generic.Scanner.ThorZIP/ThorResultsJson");
+    // The payload's own fields survive. Without the unwrap this is an undated, host-less Info row
+    // carrying the raw JSON as text, and the default Low forensic floor drops it entirely.
+    const state = await stateStore.load("c1");
+    const thor = state.forensicTimeline.find((e) => e.description.includes("Malware file found"));
+    expect(thor).toBeDefined();
+    expect(thor?.severity).toBe("Critical"); // graded from THOR's own level: "Alert"
+    expect(thor?.timestamp).toContain("2025-12-05"); // its own time, not the collection time
+    expect(thor?.asset).toBe("WIN-UK1GV882OK6");
+    expect(thor?.sha256).toBe("4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef");
+    // …and the scanned path is extracted as evidence rather than left inside an opaque string.
+    expect(state.iocs.some((i) => i.value === "C:\\Tools\\mimikatz.exe")).toBe(true);
   });
 });

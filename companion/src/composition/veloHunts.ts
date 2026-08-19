@@ -362,12 +362,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         const name = String(artifact ?? "").trim();
         let rows: unknown[];
         try {
-          const res = await client.huntResults(
-            job.huntId,
-            name,
-            sourcesByArtifact?.[name] ?? [],
-            job.filters?.[name],
-          );
+          // huntArtifactRows, not huntResults: a multi-source artifact's bare-name read is empty and
+          // SILENT (see artifactRefs.ts), landing in `emptyArtifacts` as "found nothing on every host".
+          const srcs = sourcesByArtifact?.[name] ?? [];
+          const res = await client.huntArtifactRows(job.huntId, name, srcs, job.filters?.[name]);
           rows = res.rows;
         } catch (e) {
           // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
