@@ -493,6 +493,26 @@ function pickHost(row: Row): string {
   return "";
 }
 
+// The row's own chip already shows the host, so appending it to `description` is purely for the
+// [details] panel — but dashboard-text.js's splitEventTitle only sends it there if a genuine
+// " - " precedes it. Several mappers below join their fields with "—"/": " and never emit that
+// literal ASCII " - ", so with a plain `+= " @ host"` the WHOLE description (host included)
+// becomes the title. Force the boundary whenever one isn't already guaranteed.
+function withHostSuffix(description: string, host: string): string {
+  if (!host || description.toLowerCase().includes(host.toLowerCase())) return description;
+  return description.includes(" - ") ? `${description} @ ${host}` : `${description} - @ ${host}`;
+}
+
+// A rule/verdict NAME (DetectRaptor's Detection.Name, a Sigma Rule.Title) is analyst-authored and
+// often carries its own " - " ("RMM - Microsoft Quick Assist Execution", "Suspicious Location -
+// Local Temp Executable or Script"). Interpolated raw as the FIRST thing in a description, that
+// internal dash is what splitEventTitle finds first — the title truncates to "RMM" and everything
+// after it (the actual subject, and the file/process this code goes on to promote into the title)
+// gets swallowed into [details]. Neutralize it to an em dash so only OUR intended boundary counts.
+function titleSafe(name: string): string {
+  return name.replace(/ - /g, " — ");
+}
+
 // ───────────────────────────── IOCs / hashes ─────────────────────────────
 
 function vrHashes(row: Row): { sha256?: string; md5?: string } {
@@ -750,11 +770,10 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
 
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
 
-  let description = `Velociraptor YARA: ${ruleName}`;
+  let description = `Velociraptor YARA: ${titleSafe(ruleName)}`;
   if (procName) description += ` - ${baseName(procName)}${pid ? ` (pid ${pid})` : ""}`;
   else if (path) description += ` - ${path}`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
 
   return {
     timestamp: pickTime(row),
@@ -794,7 +813,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   if (win) {
     if (sev) win.severity = worst(win.severity, sev);
     for (const m of tags) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `Velociraptor Sigma: ${title} - ${win.description}`.slice(0, 600);
+    win.description = `Velociraptor Sigma: ${titleSafe(title)} - ${win.description}`.slice(0, 600);
     win.aggKey = `vr-sigma|${title.toLowerCase()}|${win.aggKey}`;
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -806,9 +825,9 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   scrapeEvidence(row, sink);
   const message = rowMessage(row);
   const detail = salientFromMessage(message) || (message ? oneLine(message).slice(0, 400) : "");
-  let description = `Velociraptor Sigma: ${title}`;
+  let description = `Velociraptor Sigma: ${titleSafe(title)}`;
   if (detail) description += ` - ${detail}`;
-  if (host) description += ` @ ${host}`;
+  description = withHostSuffix(description, host);
   return {
     timestamp: pickTime(row),
     description: description.slice(0, 600),
@@ -849,7 +868,13 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (win) {
     win.severity = worst(win.severity, severity);
     for (const m of v.mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `${label}: ${v.title} - ${win.description}`.slice(0, 600);
+    // Same title-promotion as the non-event branch below: name the process the rule fired on
+    // right in the title, so several hits of the same rule stay distinguishable at a glance.
+    const winEd = isObject(flat!.rec.event_data) ? (flat!.rec.event_data as Row) : {};
+    const winImage = firstStr(winEd, ["Image", "NewProcessName", "TargetImage", "TargetFilename"]);
+    const winTag = winImage ? baseName(winImage) : "";
+    win.description =
+      `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - ${win.description}`.slice(0, 600);
     win.aggKey = `vr-det|${v.title.toLowerCase()}|${win.aggKey}`.slice(0, 400);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -923,6 +948,12 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   // " - " so the analyst can read them at a glance without knowing the artifact's column layout.
   // Content-centric detections (ISEAutoSave, PSReadline) get both the filename AND the evidence.
   let subject: string;
+  // The single most specific identifier (the process/pipe/file the rule actually fired on) gets
+  // promoted into the TITLE itself, not just the [details] panel: splitEventTitle only shows what
+  // sits before the first " - ", so a bare "<rule name>" title makes ten hits of the same rule
+  // (ten different RMM tools, say) indistinguishable without opening each one. The row's host chip
+  // already shows the host, so this stays purely about the finding's subject.
+  let titleTag = "";
   if (salient) {
     subject = salient;
   } else {
@@ -942,14 +973,17 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
+    if (processName) titleTag = processName;
+    else if (pipe) titleTag = pipe;
+    else if (path && !isYmsPath(path)) titleTag = baseName(path);
     subject = parts.join(" - ");
   }
 
-  let description = `${label}: ${v.title}`;
+  let description = `${label}: ${titleSafe(v.title)}`;
+  if (titleTag) description += ` — ${titleTag}`;
   if (subject) description += ` - ${subject}`;
   if (fileDeleted) description += ` [deleted]`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 4000);
+  description = withHostSuffix(description, host).slice(0, 4000);
 
   const aggKey =
     `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
@@ -1047,8 +1081,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
 
   let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`.slice(0, 600);
-  if (host && !description.toLowerCase().includes(host.toLowerCase()))
-    description = `${description} @ ${host}`.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
@@ -1099,8 +1132,7 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
     0,
     600,
   );
-  if (host && !description.toLowerCase().includes(host.toLowerCase()))
-    description = `${description} @ ${host}`.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
   const aggKey = `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
     .replace(/\d+/g, "#")
     .slice(0, 400);
@@ -1171,8 +1203,7 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
       0,
       600,
     );
-    if (host && !description.toLowerCase().includes(host.toLowerCase()))
-      description = `${description} @ ${host}`.slice(0, 600);
+    description = withHostSuffix(description, host).slice(0, 600);
     const aggKey = `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
       .replace(/\d+/g, "#")
       .slice(0, 400);
@@ -1229,8 +1260,7 @@ function actionEvent(o: {
       0,
       600,
     );
-  if (o.host && !description.toLowerCase().includes(o.host.toLowerCase()))
-    description = `${description} @ ${o.host}`.slice(0, 600);
+  description = withHostSuffix(description, o.host).slice(0, 600);
   const aggKey =
     `vr|${o.artifact.toLowerCase()}|${o.host.toLowerCase()}|${o.action.toLowerCase()}|${(o.aggSubject ?? o.subject).toLowerCase()}`
       .replace(/\d+/g, "#")
@@ -1408,8 +1438,7 @@ function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEv
   if (callChain && callChain !== name) description += ` [${callChain}]`;
   const subject = cmdline || exe;
   if (subject) description += `: ${oneLine(subject).slice(0, 300)}`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey =
     `vr-pslist|${name.toLowerCase()}|${ppid}|${host.toLowerCase()}|${(cmdline || exe || name).toLowerCase()}`
@@ -1505,8 +1534,7 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   // Prefix with "Velociraptor:" so the artifact-name injection in the main loop can insert
   // [_Source] right after "Velociraptor" (consistent with every other mapper).
   let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-download|${name.toLowerCase()}|${urlDisplay.toLowerCase()}|${host.toLowerCase()}`
     .replace(/\d+/g, "#")
@@ -1526,10 +1554,23 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   };
 }
 
+// Windows.Sys.StartupItems' Details column is Velociraptor's own decoding of the registry/INI
+// value — usually a real command line ("wscript ... bginfo.vbs"), but for a desktop.ini
+// [.ShellClassInfo] entry it's the raw UTF-16 string still carrying its inter-character NUL
+// bytes, rendered as "." (".S.h.e.l.l.C.l.a.s.s.I.n.f.o......."). That's registry noise, not an
+// attacker-controlled command — over a third of the string being literal dots is the signal, and
+// it adds nothing worth a title, so it's dropped entirely rather than shown garbled.
+function isMangledUtf16(s: string): boolean {
+  if (s.length < 12) return false;
+  const dots = (s.match(/\./g) || []).length;
+  return dots / s.length > 0.3;
+}
+
 function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const name = str(getCI(row, "Name")).trim();
   const ospath = str(getCI(row, "OSPath")).trim();
-  const details = str(getCI(row, "Details")).trim();
+  const detailsRaw = str(getCI(row, "Details")).trim();
+  const details = isMangledUtf16(detailsRaw) ? "" : detailsRaw;
   const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
   const enabled =
     enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
@@ -1542,8 +1583,7 @@ function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   const enabledLabel = enabled ? "enabled" : "disabled";
   const subject = details && details !== name ? oneLine(details).slice(0, 300) : ospath;
   let description = `Velociraptor: Startup [${name || "item"}] — ${subject} (${enabledLabel})`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
 
   // Active persistence is worth surfacing; disabled items are informational.
   const severity: Severity = enabled ? "Low" : "Info";
@@ -1587,8 +1627,7 @@ function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): M
   let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
   if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
   if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-task|${taskName.toLowerCase()}|${host.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
 

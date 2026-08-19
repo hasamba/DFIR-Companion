@@ -4,6 +4,15 @@ import {
   parseVelociraptorJsonProgress,
 } from "../../src/analysis/velociraptorImport.js";
 
+// Mirrors public/js/dashboard-text.js's splitEventTitle: the row's displayed TITLE is everything
+// before the first " - "; the rest collapses into the [details] panel. Tests below use this to
+// assert what an analyst actually sees on the row without expanding it — e.g. that the host
+// (already shown in its own chip) never leaks into the title.
+function splitEventTitle(desc: string): { title: string; rest: string } {
+  const i = desc.indexOf(" - ");
+  return i < 0 ? { title: desc, rest: "" } : { title: desc.slice(0, i), rest: desc.slice(i + 3) };
+}
+
 // ── A Velociraptor Sigma detection row (parsed evtx event + matched rule).
 function sigmaRow(): object {
   return {
@@ -166,8 +175,14 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     expect(r.events).toHaveLength(1);
     const e = r.events[0];
     expect(e.severity).toBe("Medium"); // honors Detection.Criticality over the psexec keyword
-    expect(e.description).toContain("Execution - PsExec");
+    // The rule NAME itself has an internal " - " ("Execution - PsExec"); it's neutralized to an
+    // em dash so the dashboard's title/detail split doesn't truncate on it (see titleSafe).
+    expect(e.description).toContain("Execution — PsExec");
+    expect(e.description).not.toContain("Execution - PsExec");
     expect(e.description).toContain("DetectRaptor Amcache detection:");
+    // The triggering file is promoted into the title too, distinguishing this from other hits.
+    const title = splitEventTitle(e.description).title;
+    expect(title).toContain("psexec.exe"); // basename of EntryPath, lowercased in the CSV row
     expect(e.description).not.toContain("-1"); // "-" cells dropped, not rendered
     expect(e.timestamp).toContain("2026-05-07T16:31:04"); // Kibana "@" date → ISO
     expect(e.sources).toEqual(["Velociraptor"]);
@@ -438,6 +453,50 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(r.iocs.some((i) => i.type === "file" && i.value.includes("kprocesshacker.sys"))).toBe(true);
   });
 
+  it("promotes the triggering file into the TITLE itself, so two hits of the same rule stay distinguishable without opening [details]", () => {
+    const quickAssist = {
+      _Source: "DetectRaptor.Windows.Detection.Amcache",
+      Computer: "DESKTOP-OPE297N.localdomain",
+      Detection: { Name: "RMM" },
+      EntryPath: "c:\\program files\\microsoft quick assist\\quickassist.exe",
+    };
+    const anydesk = {
+      _Source: "DetectRaptor.Windows.Detection.Amcache",
+      Computer: "DESKTOP-OPE297N.localdomain",
+      Detection: { Name: "RMM" },
+      EntryPath: "c:\\program files (x86)\\anydesk\\anydesk.exe",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([quickAssist, anydesk]));
+    const [qa, ad] = r.events;
+    const qaTitle = splitEventTitle(qa.description).title;
+    const adTitle = splitEventTitle(ad.description).title;
+    expect(qaTitle).toContain("quickassist.exe");
+    expect(adTitle).toContain("anydesk.exe");
+    expect(qaTitle).not.toBe(adTitle); // same rule, same label — the file is what tells them apart
+    // The host chip already shows the host — it must not also sit inside the title text.
+    expect(qaTitle).not.toContain("DESKTOP-OPE297N");
+    expect(adTitle).not.toContain("DESKTOP-OPE297N");
+  });
+
+  it("keeps the full rule NAME in the title even when the name itself contains a ' - ' (DetectRaptor's own naming convention)", () => {
+    // Real DetectRaptor rule names ("RMM - Microsoft Quick Assist Execution", "Suspicious
+    // Location - Local Temp Executable or Script") embed a " - " — the exact separator
+    // splitEventTitle uses to find the title/detail boundary. Left unhandled, the FIRST " - "
+    // (inside the rule name) wins, and the title truncates to "RMM" before the promoted file tag
+    // ever renders — a bug only visible once the string is actually split, not just substring-matched.
+    const row = {
+      _Source: "DetectRaptor.Windows.Detection.Amcache",
+      Computer: "DESKTOP-OPE297N.localdomain",
+      Detection: { Name: "RMM - Microsoft Quick Assist Execution" },
+      OSPath: "c:\\program files\\windowsapps\\...\\quickassist.exe",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    const { title } = splitEventTitle(r.events[0].description);
+    expect(title).toContain("RMM");
+    expect(title).toContain("Microsoft Quick Assist Execution");
+    expect(title).toContain("quickassist.exe");
+  });
+
   it("surfaces the matched Content of a PSReadline/ISE detection, not just the rule name", () => {
     const row = {
       Detection: {
@@ -503,7 +562,9 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     const r = parseVelociraptorJson(JSON.stringify([row]));
     const e = r.events[0];
     expect(e.severity).toBe("Low");
-    expect(e.description).toContain("Powershell encoded command - IN DEVELOPMENT");
+    // The rule NAME has its own internal " - "; neutralized to an em dash (titleSafe) so it
+    // doesn't get mistaken for the title/detail boundary and truncate the title early.
+    expect(e.description).toContain("Powershell encoded command — IN DEVELOPMENT");
     expect(e.description).not.toContain("nc*o*d*e*d"); // the rule Regex must not leak into the description
     expect(r.iocs.some((i) => i.type === "ip" && i.value === "192.168.56.50")).toBe(true); // scraped from Content
   });
@@ -963,6 +1024,33 @@ describe("parseVelociraptorJson — startup rows (Windows.Sys.StartupItems)", ()
     );
     expect(r.events[0].description).toContain("bginfo");
     expect(r.events[0].description).toContain("enabled");
+  });
+
+  it("drops a mangled UTF-16-noise Details value (desktop.ini [.ShellClassInfo]) instead of showing it garbled", () => {
+    const mangled =
+      "..........S.h.e.l.l.C.l.a.s.s.I.n.f.o.......L.o.c.a.l.i.z.e.d.R.e.s.o.u.r.c.e.N.a.m.e" +
+      ".......S.y.s.t.e.m.R.o.o.t.....s.y.s.t.e.m.3.2.....s.h.e.l.l.3.2...d.l.l...2.1.7.8.7....";
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        startupRow({
+          Name: "desktop.ini",
+          OSPath: "C:\\Users\\bob\\Desktop\\desktop.ini",
+          Details: mangled,
+        }),
+      ]),
+    );
+    const desc = r.events[0].description;
+    expect(desc).not.toContain("S.h.e.l.l");
+    expect(desc).not.toContain(".....");
+    expect(desc).toContain("desktop.ini");
+  });
+
+  it("never puts the host inside the title — it falls in [details], behind the host's own chip", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([{ ...startupRow(), Computer: "DESKTOP-OPE297N.localdomain" }]),
+    );
+    const { title } = splitEventTitle(r.events[0].description);
+    expect(title).not.toContain("DESKTOP-OPE297N");
   });
 });
 
