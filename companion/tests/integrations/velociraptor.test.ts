@@ -15,6 +15,7 @@ import {
   normalizeHuntExpirySeconds,
   DEFAULT_HUNT_EXPIRY_SECONDS,
   parseArtifactParams,
+  parseArtifactSources,
   spawnVqlRunner,
   type VeloClientRecord,
   type VelociraptorApiConfig,
@@ -1316,15 +1317,18 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
   });
 
   it("applies the per-artifact WHERE filter from the filters map", async () => {
-    let program = "";
+    // Collect every statement, not just the last: the read is followed by an artifact_definitions()
+    // lookup for the artifact's named sources, so keeping one variable would assert on the catalog.
+    const programs: string[] = [];
     const runner: VqlRunner = async (statements) => {
-      program = statements[0];
+      programs.push(statements[0]);
       return { rows: [{ a: 1 }], raw: "" };
     };
     await new VelociraptorClient(cfg, runner).huntResultsByArtifact("H.OK1", ["DetectRaptor.X"], {
       "DetectRaptor.X": "NOT OSPath =~ 'pagefile'",
     });
-    expect(program).toContain("WHERE (NOT OSPath =~ 'pagefile')");
+    const read = programs.find((p) => p.includes("hunt_results("));
+    expect(read).toContain("WHERE (NOT OSPath =~ 'pagefile')");
   });
 
   it("rejects a malformed hunt id and skips invalid artifact names", async () => {
@@ -1792,5 +1796,265 @@ describe.skipIf(process.platform === "win32")("spawnVqlRunner output decoding", 
       maxOutputBytes: 200,
     });
     expect(rows).toEqual([{ Path: "日本語" }]);
+  });
+});
+
+// ── source-qualified artifact refs (the THOR import failure) ────────────────────────────────────
+// `flows().artifacts_with_results` reports a MULTI-SOURCE artifact one source at a time, in the
+// `Artifact/Source` form — e.g. "Generic.Scanner.ThorZIP/ThorResultsJson". getFlowInfo() hands those
+// names straight to collectionResults(), so a reader that rejects the slash drops the artifact
+// entirely: on a live import that was every THOR row in the collection, lost behind a per-artifact
+// "invalid artifact name" log line while the 17 single-source artifacts imported fine.
+describe("source-qualified artifact refs", () => {
+  it("collectionResults reads an Artifact/Source ref that getFlowInfo returned", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [{ Rule: "Suspicious file" }], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).collectionResults(
+      "C.14f7b543888d1fbe",
+      "F.DA2A4A9E0J2PK.H",
+      "Generic.Scanner.ThorZIP/ThorResultsJson",
+    );
+    expect(res.rows).toHaveLength(1);
+    expect(program).toContain("artifact='Generic.Scanner.ThorZIP/ThorResultsJson'");
+  });
+
+  it("collectionResults does not stack a qualified ref on top of an explicit source", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [], raw: "" };
+    };
+    await new VelociraptorClient(cfg, runner).collectionResults(
+      "C.abc",
+      "F.flow1",
+      "Generic.Scanner.ThorZIP/ThorResultsJson",
+      ["ThorExec"],
+    );
+    expect(program).toContain("artifact='Generic.Scanner.ThorZIP/ThorResultsJson'");
+    expect(program).not.toContain("ThorResultsJson/ThorExec"); // never "A/B/C"
+  });
+
+  it("huntResults reads an Artifact/Source ref", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [{ Rule: "Suspicious file" }], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntResults(
+      "H.DA2A4A9E0J2PK",
+      "Generic.Scanner.ThorZIP/ThorResultsJson",
+    );
+    expect(res.rows).toHaveLength(1);
+    expect(program).toContain("artifact='Generic.Scanner.ThorZIP/ThorResultsJson'");
+  });
+
+  it("still rejects a genuinely malformed name", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    await expect(c.collectionResults("C.1", "F.1", "bad name")).rejects.toThrow(/artifact name/); // ARTIFACT half stays strict
+    await expect(c.collectionResults("C.1", "F.1", "A/'; DROP --")).rejects.toThrow(/artifact name/);
+    await expect(c.collectionResults("C.1", "F.1", "A/back\\slash")).rejects.toThrow(/artifact name/);
+    await expect(c.huntResults("H.1", "A/B/../C")).rejects.toThrow(/artifact name/);
+  });
+
+  // The P2 half of the same defect: the ref is legal, the SOURCE simply is not an identifier.
+  it("reads a source whose name carries spaces, hyphens or a slash", async () => {
+    const asked: string[] = [];
+    const runner: VqlRunner = async (statements) => {
+      const m = /artifact='([^']+)'/.exec(statements[0]);
+      if (m) asked.push(m[1]);
+      return { rows: [{ a: 1 }], raw: "" };
+    };
+    const c = new VelociraptorClient(cfg, runner);
+    await c.huntResults("H.1", "Windows.Detection.HyperV/Microsoft-Windows-Hyper-V-VMMS-Admin");
+    await c.collectionResults("C.1", "F.1", "MacOS.Forensics.KnockKnock/Login/Logout Hooks");
+    await c.huntResults("H.1", "Linux.Forensics.RecentlyUsed", ["Recent Entries"]);
+    expect(asked).toEqual([
+      "Windows.Detection.HyperV/Microsoft-Windows-Hyper-V-VMMS-Admin",
+      "MacOS.Forensics.KnockKnock/Login/Logout Hooks", // the source itself contains the slash
+      "Linux.Forensics.RecentlyUsed/Recent Entries",
+    ]);
+  });
+});
+
+// ── multi-source bundle artifacts (the other half of the THOR failure) ──────────────────────────
+// A bundle hunt asks for the artifact NAMES it launched, with no sources. For a multi-source artifact
+// Velociraptor stores nothing under the bare name, so the read returns zero rows AND no error — which
+// the collect records as "this artifact found nothing". That is how a completed THOR scan was reported
+// as a clean host. The recovery re-reads the artifact's named sources from the catalog.
+describe("parseArtifactSources", () => {
+  it("keeps named sources and drops unnamed ones", () => {
+    expect(parseArtifactSources([{ name: "ThorExec" }, { name: "ThorResultsJson" }])).toEqual([
+      "ThorExec",
+      "ThorResultsJson",
+    ]);
+    expect(parseArtifactSources([{ query: "SELECT 1" }])).toEqual([]);
+    expect(parseArtifactSources([{ name: "  " }])).toEqual([]);
+  });
+  it("de-duplicates", () => {
+    expect(parseArtifactSources([{ name: "A" }, { name: "A" }])).toEqual(["A"]);
+  });
+
+  // A source name is free-form YAML text, not an identifier. 40 of the 180 source names in the
+  // shipped artifact set carry a space, a hyphen or a slash — judging them by the ARTIFACT charset
+  // dropped every one of their rows.
+  it("keeps the punctuated source names real artifacts use", () => {
+    expect(
+      parseArtifactSources([
+        { name: "Recent Entries" },
+        { name: "Microsoft-Windows-Hyper-V-VMMS-Admin" },
+        { name: "Login/Logout Hooks" },
+        { name: "Sliver PsExec - Services Registry Key" },
+        { name: "Dir. Services Plugins" },
+      ]),
+    ).toEqual([
+      "Recent Entries",
+      "Microsoft-Windows-Hyper-V-VMMS-Admin",
+      "Login/Logout Hooks",
+      "Sliver PsExec - Services Registry Key",
+      "Dir. Services Plugins",
+    ]);
+  });
+
+  it("still drops a name that a single-quoted VQL literal cannot carry", () => {
+    expect(parseArtifactSources([{ name: "a'b" }, { name: "back\\slash" }, { name: "nl\nline" }])).toEqual(
+      [],
+    );
+    expect(parseArtifactSources([{ name: "../etc" }, { name: "a/../b" }])).toEqual([]); // no traversal segment
+  });
+  it("degrades to [] for any unexpected shape", () => {
+    expect(parseArtifactSources(undefined)).toEqual([]);
+    expect(parseArtifactSources("sources")).toEqual([]);
+    expect(parseArtifactSources([null, 7])).toEqual([]);
+  });
+});
+
+describe("VelociraptorClient.huntArtifactRows", () => {
+  // A runner that only knows rows for the source-qualified refs — the multi-source server behaviour.
+  function multiSourceRunner(programs: string[]): VqlRunner {
+    return async (statements) => {
+      const p = statements[0];
+      programs.push(p);
+      if (p.includes("FROM artifact_definitions("))
+        return {
+          rows: [
+            {
+              name: "Generic.Scanner.ThorZIP",
+              type: "CLIENT",
+              sources: [{ name: "ThorExec" }, { name: "ThorResultsJson" }],
+            },
+          ],
+          raw: "",
+        };
+      if (p.includes("ThorResultsJson") || p.includes("ThorExec"))
+        return { rows: [{ Rule: "Suspicious file" }], raw: "" };
+      return { rows: [], raw: "" }; // bare-name read: empty, no error
+    };
+  }
+
+  it("reads a named-sources-only artifact (THOR) whose bare name returns nothing", async () => {
+    const programs: string[] = [];
+    const res = await new VelociraptorClient(cfg, multiSourceRunner(programs)).huntArtifactRows(
+      "H.DA2A4A9E0J2PK",
+      "Generic.Scanner.ThorZIP",
+    );
+    expect(res.rows).toHaveLength(1); // was 0 → the artifact read as "no findings"
+    expect(programs.some((p) => p.includes("artifact='Generic.Scanner.ThorZIP/ThorResultsJson'"))).toBe(true);
+  });
+
+  // The shape that made "retry only when the bare read is empty" wrong. DetectRaptor.Windows.Registry
+  // .NetworkProvider, Custom.Windows.System.Powershell.PSReadline.QuickWins and dozens more in the
+  // shipped bundle declare an UNNAMED source alongside named ones: the bare read returns the unnamed
+  // source's rows and looks like a clean success, so a retry-on-empty rule never fires and every named
+  // source stays lost. Both were among the artifacts that "imported fine" in the live case.
+  it("merges the named sources of a MIXED artifact whose bare read already returned rows", async () => {
+    const programs: string[] = [];
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      programs.push(p);
+      if (p.includes("FROM artifact_definitions("))
+        return {
+          rows: [
+            {
+              name: "DetectRaptor.Windows.Registry.NetworkProvider",
+              type: "CLIENT",
+              sources: [{ query: "SELECT 1" }, { name: "ProviderOrder" }],
+            },
+          ],
+          raw: "",
+        };
+      if (p.includes("ProviderOrder")) return { rows: [{ Stack: "ordered" }], raw: "" };
+      return { rows: [{ Provider: "default source row" }], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows(
+      "H.1",
+      "DetectRaptor.Windows.Registry.NetworkProvider",
+    );
+    expect(res.rows).toEqual([{ Provider: "default source row" }, { Stack: "ordered" }]);
+    expect(res.total).toBe(2);
+  });
+
+  it("de-duplicates rows a source repeats from the bare read", async () => {
+    const row = { Provider: "same row from both reads" };
+    const runner: VqlRunner = async (statements) => {
+      if (statements[0].includes("FROM artifact_definitions("))
+        return { rows: [{ name: "A.B", type: "CLIENT", sources: [{ name: "Upload" }] }], raw: "" };
+      return { rows: [row], raw: "" }; // bare AND named read answer with the same row
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows("H.1", "A.B");
+    expect(res.rows).toEqual([row]); // counted once, not twice
+    expect(res.total).toBe(1);
+  });
+
+  it("issues exactly one read for an artifact with no named sources", async () => {
+    const programs: string[] = [];
+    const runner: VqlRunner = async (statements) => {
+      programs.push(statements[0]);
+      if (statements[0].includes("FROM artifact_definitions("))
+        return { rows: [{ name: "Windows.Sys.StartupItems", type: "CLIENT", sources: [{}] }], raw: "" };
+      return { rows: [{ a: 1 }], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows("H.1", "Windows.Sys.StartupItems");
+    expect(res.rows).toHaveLength(1);
+    const reads = programs.filter((p) => p.includes("hunt_results("));
+    expect(reads).toHaveLength(1); // the catalog is cached; the artifact itself is read once
+    expect(reads[0]).toContain("artifact='Windows.Sys.StartupItems'");
+  });
+
+  it("returns the empty result when an empty artifact has no named sources", async () => {
+    const programs: string[] = [];
+    const runner: VqlRunner = async (statements) => {
+      programs.push(statements[0]);
+      if (statements[0].includes("FROM artifact_definitions("))
+        return { rows: [{ name: "Windows.Sys.StartupItems", type: "CLIENT", sources: [{}] }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows("H.1", "Windows.Sys.StartupItems");
+    expect(res.rows).toEqual([]);
+    expect(programs.filter((p) => p.includes("hunt_results("))).toHaveLength(1); // no pointless re-read
+  });
+
+  it("degrades to the empty result when the catalog lookup fails", async () => {
+    const runner: VqlRunner = async (statements) => {
+      if (statements[0].includes("FROM artifact_definitions(")) throw new Error("server down");
+      return { rows: [], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows("H.1", "Generic.Scanner.ThorZIP");
+    expect(res.rows).toEqual([]); // a catalog failure must not fail the collect
+  });
+
+  it("does not second-guess an explicit source list or an already-qualified ref", async () => {
+    const programs: string[] = [];
+    const runner: VqlRunner = async (statements) => {
+      programs.push(statements[0]);
+      return { rows: [], raw: "" };
+    };
+    const c = new VelociraptorClient(cfg, runner);
+    await c.huntArtifactRows("H.1", "Custom.X", ["Pivot0"]);
+    await c.huntArtifactRows("H.1", "Generic.Scanner.ThorZIP/ThorExec");
+    expect(programs.some((p) => p.includes("FROM artifact_definitions("))).toBe(false);
   });
 });

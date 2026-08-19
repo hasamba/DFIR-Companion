@@ -441,6 +441,7 @@
     "veloTimeScope.ts": "analysis/timeline",
     "velociraptorClientStore.ts": "analysis/case",
     "velociraptorDownload.ts": "analysis/case",
+    "veloRowNormalize.ts": "analysis/ingest",
     "velociraptorImport.ts": "analysis/ingest",
     "velociraptorRelease.ts": "analysis/case",
     "wazuhImport.ts": "analysis/ingest",

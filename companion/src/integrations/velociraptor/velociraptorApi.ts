@@ -1,4 +1,13 @@
 import { spawn } from "node:child_process";
+import { ARTIFACT_RE, artifactRefs, isArtifactRef, readHuntArtifactRows } from "./artifactRefs.js";
+import { parseArtifactParams, parseArtifactSources, type VeloArtifactInfo } from "./artifactCatalog.js";
+// Re-exported so the artifact-definition metadata keeps its long-standing import path.
+export {
+  parseArtifactParams,
+  parseArtifactSources,
+  type VeloArtifactInfo,
+  type VeloArtifactParam,
+} from "./artifactCatalog.js";
 import { ChildOutputCollector } from "../childOutput.js";
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
@@ -276,41 +285,6 @@ export interface HuntLaunchResult {
   guiUrl?: string; // deep link to the hunt in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
 }
 
-// One parameter an artifact accepts, as reported by artifact_definitions(). `type` is lowercased
-// ("timestamp", "string", "bool", …) because Velociraptor's casing varies across versions — the same
-// reason listClientArtifacts normalizes the artifact `type` in TypeScript rather than in VQL.
-export interface VeloArtifactParam {
-  name: string;
-  type?: string; // omitted (never "") when the server reports no type for this parameter
-}
-
-// One collectable CLIENT artifact definition on the server (for the bundle builder's picker).
-export interface VeloArtifactInfo {
-  name: string; // e.g. "Windows.System.Pslist"
-  description: string; // one-line summary
-  parameters: VeloArtifactParam[]; // [] when the server reports none (older versions / odd shapes)
-  tools?: VeloArtifactTool[]; // omitted when the artifact needs none (most of them)
-}
-
-// Tolerant parse of a definition's `parameters` column: anything that isn't an array of named objects
-// degrades to []. Never throws — a server that reports parameters in an unexpected shape must not break
-// the artifact picker, it just means time-scope auto-detection falls back to the shipped table.
-export function parseArtifactParams(raw: unknown): VeloArtifactParam[] {
-  if (!Array.isArray(raw)) return [];
-  const out: VeloArtifactParam[] = [];
-  for (const p of raw) {
-    if (!p || typeof p !== "object") continue;
-    const r = p as { name?: unknown; type?: unknown };
-    const name = String(r.name ?? "").trim();
-    if (!name) continue;
-    const type = String(r.type ?? "")
-      .trim()
-      .toLowerCase();
-    out.push(type ? { name, type } : { name });
-  }
-  return out;
-}
-
 // Optional scoping for a bundle hunt — mirrors Velociraptor's hunt include/exclude conditions.
 // Default (all empty) = every enrolled client. Labels are AND-of-include / NOT-exclude; os pins
 // the client OS. Restricting keeps heavy triage off the whole fleet.
@@ -469,7 +443,6 @@ export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
 export const ARTIFACT_CATALOG_TTL_MS = 45_000;
 
 export const ALL_CLIENTS = "*"; // sentinel client id meaning "every enrolled client"
-const ARTIFACT_RE = /^[A-Za-z0-9._]+$/; // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/; // valid hunt id
 const FLOW_RE = /^F\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$/; // flow id; hunt-launched flows carry a ".H" suffix (F.<base>.H)
 const CLIENT_RE = /^C\.[A-Za-z0-9]+$/; // valid Velociraptor client id
@@ -810,9 +783,7 @@ export class VelociraptorClient {
   ): Promise<VelociraptorRunResult> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
-    if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
-    const safe = sources.filter((s) => ARTIFACT_RE.test(s));
-    const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
+    const refs = artifactRefs(artifact, sources);
     const w = sanitizeWhere(where);
     const whereClause = w ? ` WHERE (${w})` : "";
     const limit = this.config.maxRows + 1; // +1 so cap() flags truncation
@@ -925,10 +896,8 @@ export class VelociraptorClient {
     where?: string,
   ): Promise<VelociraptorRunResult> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
-    if (!ARTIFACT_RE.test(artifact)) throw new Error("invalid artifact name");
     // Named sources are addressed as `artifact/source` (the `source=` param does NOT match them).
-    const safe = sources.filter((s) => ARTIFACT_RE.test(s));
-    const refs = safe.length ? safe.map((s) => `${artifact}/${s}`) : [artifact];
+    const refs = artifactRefs(artifact, sources);
     // Optional analyst WHERE filter applied BEFORE the LIMIT, so noisy rows are dropped at the source
     // and the kept rows are the relevant ones (not the first N pre-filter). LIMIT at the source so a huge
     // result set (e.g. Hayabusa across a fleet) can't blow the stdout cap; maxRows+1 so cap() flags truncation.
@@ -940,6 +909,18 @@ export class VelociraptorClient {
         ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
         : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
     return this.cap(await this.runRaw(program, this.collectCap()));
+  }
+
+  // Read one hunt artifact's rows, recovering the multi-source case — artifactRefs.ts explains what
+  // that is and how a whole THOR scan went missing through it.
+  async huntArtifactRows(
+    huntId: string,
+    artifact: string,
+    sources: string[] = [],
+    where?: string,
+  ): Promise<VelociraptorRunResult> {
+    const read = (name: string, srcs: string[]) => this.huntResults(huntId, name, srcs, where);
+    return readHuntArtifactRows(read, () => this.listClientArtifacts(), artifact, sources);
   }
 
   // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or
@@ -984,7 +965,7 @@ export class VelociraptorClient {
   // that from the server's own parameter metadata.
   private async fetchClientArtifacts(wanted: string): Promise<VeloArtifactInfo[]> {
     const rows = await this.runRaw(
-      "SELECT name, description, type, parameters, tools FROM artifact_definitions() ORDER BY name",
+      "SELECT name, description, type, parameters, tools, sources FROM artifact_definitions() ORDER BY name",
       this.collectCap(),
     );
     const out: VeloArtifactInfo[] = [];
@@ -998,6 +979,7 @@ export class VelociraptorClient {
         .replace(/[\s-]+/g, "_");
       if (t !== wanted) continue;
       const tools = parseArtifactTools(r.tools);
+      const sources = parseArtifactSources(r.sources);
       out.push({
         name,
         description: String(r.description ?? "")
@@ -1006,6 +988,7 @@ export class VelociraptorClient {
           .slice(0, 300),
         parameters: parseArtifactParams(r.parameters),
         ...(tools.length ? { tools } : {}), // absent, not [], so a server with no tool metadata reads the same
+        ...(sources.length ? { sources } : {}), // same: absent when every source is unnamed
       });
     }
     return out;
@@ -1176,15 +1159,23 @@ export class VelociraptorClient {
     const skipped: SkippedArtifact[] = [];
     for (const artifact of artifacts ?? []) {
       const name = String(artifact ?? "").trim();
-      if (!ARTIFACT_RE.test(name)) {
+      // isArtifactRef, not ARTIFACT_RE: a caller may pass an already source-qualified name, and this
+      // pre-check must agree with the reader below or it rejects a ref the reader would have run.
+      if (!isArtifactRef(name)) {
         skipped.push({ name: name || artifact, error: "invalid artifact name" });
         continue;
       }
       try {
-        // Named sources are addressed as `artifact/source`. Bundle artifacts use a default source (empty
-        // sources is correct); a Companion-launched fleet-hunt artifact stores its rows under named sources
-        // (Pivot0…), so its results are 0 unless we pass them (the cause of false "no evidence", #157).
-        const res = await this.huntResults(huntId, name, sourcesByArtifact?.[name] ?? [], filters?.[name]);
+        // Named sources are addressed as `artifact/source`. A Companion-launched fleet-hunt artifact
+        // stores its rows under named sources (Pivot0…), so its results are 0 unless we pass them (the
+        // cause of false "no evidence", #157). A BUNDLE artifact was assumed to always use a default
+        // source — untrue for a multi-source one, which read as 0 rows the same silent way.
+        const res = await this.huntArtifactRows(
+          huntId,
+          name,
+          sourcesByArtifact?.[name] ?? [],
+          filters?.[name],
+        );
         if (res.rows.length) results[name] = res.rows;
       } catch (e) {
         // oversized / slow / failed — keep going so the rest of the bundle still imports; the caller

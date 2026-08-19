@@ -361,7 +361,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         const name = String(artifact ?? "").trim();
         let rows: unknown[];
         try {
-          const res = await client.huntResults(
+          // huntArtifactRows, not huntResults: a multi-source bundle artifact (Generic.Scanner.ThorZIP)
+          // has nothing under its bare name, and that empty read is silent — it lands in `emptyArtifacts`
+          // below and the analyst is told the artifact found nothing on every host.
+          const res = await client.huntArtifactRows(
             job.huntId,
             name,
             sourcesByArtifact?.[name] ?? [],
