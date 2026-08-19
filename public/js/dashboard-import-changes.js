@@ -432,9 +432,11 @@
     if (removed)
       counts.push(`<span class="sm-removed">⊖ ${removed} merged</span>`);
     const summary = counts.length ? counts.join(" · ") : "no new events";
-    const src = m.lastImportFile
-      ? ` from <strong>${esc(m.lastImportFile)}</strong>`
-      : "";
+    // Prefer the SOURCE label (the hunt/bundle the analyst launched) over the evidence filename. A
+    // Velociraptor hunt writes one file per artifact, so the filename names only the last artifact
+    // the import finished on — a whole super-timeline triage read as a lone EVTX import.
+    const srcLabel = m.lastImportSource || m.lastImportFile;
+    const src = srcLabel ? ` from <strong>${esc(srcLabel)}</strong>` : "";
     const kind = m.lastImportKind
       ? ` <span data-safe-style="color:var(--accent)">(${esc(m.lastImportKind)})</span>`
       : "";

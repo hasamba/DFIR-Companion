@@ -589,6 +589,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         timeoutSeconds,
         expirySeconds,
         filters: bundle.filters,
+        superTimelineOnly: bundle.superTimelineOnly === true,
         dwellWindowId,
         ...(timeScopeProvenance ? { timeScope: timeScopeProvenance } : {}),
       };
