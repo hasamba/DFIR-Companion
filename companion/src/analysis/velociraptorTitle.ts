@@ -18,10 +18,28 @@ export function titleSafe(name: string): string {
 }
 
 // A desktop.ini [.ShellClassInfo] entry's Details is raw UTF-16, NUL bytes rendered as "."
-// (".S.h.e.l.l.C.l.a.s.s.I.n.f.o......."). Registry noise, not an attacker command — drop it
-// rather than show it garbled.
-export function isMangledUtf16(s: string): boolean {
-  if (s.length < 12) return false;
+// (".S.h.e.l.l.C.l.a.s.s.I.n.f.o......."). Registry noise, not an attacker command.
+//
+// NEVER just drop a value that LOOKS mangled — a heuristic guess is not grounds to silently
+// discard evidence in a forensics tool, and any dot-heavy heuristic (version string, IP, a
+// deliberately char-separated LOLBIN evasion attempt) risks a false positive on something real.
+// Decode instead: split on ".", where a run of empty segments (a double/triple NUL) marks a
+// word boundary and becomes a space, and single-dot gaps between one-character segments just
+// collapse. Every original character survives — this only removes the mangling's own noise.
+export function demangleUtf16Noise(s: string): string {
+  if (s.length < 12 || /[^.]{2,}/.test(s)) return s; // has a real word (2+ chars run) → untouched
   const dots = (s.match(/\./g) || []).length;
-  return dots / s.length > 0.3;
+  if (dots / s.length <= 0.3) return s;
+  let out = "";
+  let boundary = false;
+  for (const part of s.split(".")) {
+    if (part === "") {
+      boundary = true;
+      continue;
+    }
+    if (boundary && out) out += " ";
+    boundary = false;
+    out += part;
+  }
+  return out.trim() || s;
 }
