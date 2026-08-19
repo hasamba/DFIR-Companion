@@ -32,8 +32,9 @@ import {
   isHuntStoppedEarly,
   type HuntPollDeps,
 } from "../integrations/velociraptor/huntStatusPoller.js";
-import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
+import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
+import { maxEventsDefault } from "../analysis/siemImport.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
@@ -45,15 +46,20 @@ import {
 } from "../analysis/huntOutcomes.js";
 import {
   buildHuntRunSnapshot,
+  mergeHuntRunSnapshots,
   diffHuntRuns,
   findHuntRunRecord,
   upsertHuntRunRecord,
   type HuntRunDiff,
+  type HuntRunSnapshot,
 } from "../analysis/huntRunDiff.js";
 import type { InvestigationState, ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import { logLine } from "../logging/serverLogger.js";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 export interface VeloHuntsDeps {
   store: CaseStore;
@@ -285,6 +291,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     // `finally`. Acquire order is slot-then-lock everywhere, so the two can never deadlock.
     let importSlot: RegisteredJob | null = null;
     let releaseImportLock: (() => void) | null = null;
+    // Scratch dir for streaming each artifact's rows to disk as they're fetched, instead of holding
+    // every artifact of a hunt in memory at once (see the streaming note at step 1 below). Removed in
+    // the `finally` regardless of where this pass stops.
+    let scratchDir: string | null = null;
     try {
       // A last live check right before collecting: was this hunt stopped/deleted in Velociraptor well
       // before its own scheduled expiry? Checked HERE (not just in the status poller) so every entry
@@ -330,24 +340,62 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // its uploaded JSON (if any) is still picked up in step 2.
       // For a suggested fleet hunt the single Custom.Hunt artifact stores rows under named sources
       // (Pivot0…); map them so collect reads `artifact/source` (else 0 rows → false "no evidence", #157).
+      //
+      // STREAMED, not buffered: a bundle can carry dozens of artifacts, and this used to fetch every one
+      // into a single in-memory map, then JSON.stringify the whole thing at once before importing — on a
+      // large bundle that held the entire hunt's rows (plus a second, stringified copy) in the process's
+      // heap simultaneously, and took the whole server down with it (no crash trace, since V8 exiting on
+      // heap exhaustion happens before any of our own logging can run). So this loops `huntResults()`
+      // directly (not the client's huntResultsByArtifact() convenience wrapper, which returns everything
+      // as one map) and writes each artifact's rows to a scratch file the moment they arrive, dropping
+      // them from memory right after — at most one artifact's rows are ever live at once, both here and
+      // again in step 3 on the way back in.
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
-      const { results: map, skipped } = await client.huntResultsByArtifact(
-        job.huntId,
-        job.artifacts,
-        job.filters,
-        sourcesByArtifact,
-      );
+      scratchDir = await mkdtemp(path.join(tmpdir(), "dfir-velo-hunt-"));
+      const artifactFiles: { name: string; file: string }[] = [];
+      const snapshotFragments: HuntRunSnapshot[] = [];
+      const skipped: SkippedArtifact[] = [];
+      let totalRows = 0;
+      for (const artifact of job.artifacts) {
+        const name = String(artifact ?? "").trim();
+        let rows: unknown[];
+        try {
+          const res = await client.huntResults(
+            job.huntId,
+            name,
+            sourcesByArtifact?.[name] ?? [],
+            job.filters?.[name],
+          );
+          rows = res.rows;
+        } catch (e) {
+          // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
+          // imports; logged + persisted below so a silent per-artifact failure doesn't read as "only
+          // one artifact collected" with no way to tell why.
+          skipped.push({ name: name || artifact, error: (e as Error).message });
+          continue;
+        }
+        if (!rows.length) continue;
+        // NOT wrapped in the try/catch above: a Velociraptor fetch failure is resilient-by-design, but a
+        // failure writing the scratch file (e.g. a full disk) is a local persistence bug, a different
+        // class of problem — let it fail the whole collect pass instead of silently reporting success on
+        // rows that were never actually persisted anywhere.
+        totalRows += rows.length;
+        snapshotFragments.push(buildHuntRunSnapshot({ [name]: rows })); // small capped key/host strings only — the rows themselves are never retained
+        const file = path.join(scratchDir, `${artifactFiles.length}_${name}.json`);
+        await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
+        artifactFiles.push({ name, file });
+      }
       if (skipped.length)
         logLine(
           `[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} artifact(s) — ${skipped.map((s) => `${s.name} (${s.error})`).join("; ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS if these are oversized`,
         );
-      const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
       // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
       const skippedNames = new Set(skipped.map((s) => s.name));
-      const emptyArtifacts = job.artifacts.filter((a) => !map[a] && !skippedNames.has(a));
+      const producedNames = new Set(artifactFiles.map((a) => a.name));
+      const emptyArtifacts = job.artifacts.filter((a) => !producedNames.has(a) && !skippedNames.has(a));
 
       // 2) Uploaded JSON reports (e.g. THOR/Hayabusa). READ here, IMPORTED further down: every read
       // this collect needs must finish before it takes the import slot, so the slot covers only the
@@ -379,12 +427,32 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         }
       }
 
-      // 3) Result ROWS → the importer.
-      if (totalRows > 0) {
-        const json = JSON.stringify(map);
+      // 3) Result ROWS → the importer, one artifact at a time — mirrors step 4's uploads loop below,
+      // and keeps the same at-most-one-artifact-in-memory bound on the way back in: each artifact is
+      // read from its scratch file, imported, and released before the next is read.
+      // Deep-link back to the hunt in the Velociraptor GUI: reuse the URL saved on the job when
+      // present, else build it from the hunt id. Shared by every event from this hunt.
+      const jobHuntId = job.huntId; // hoisted so later closures don't re-narrow the reassignable `job`
+      const veloUrl = job.guiUrl || client.huntGuiUrlFor(jobHuntId);
+      // The importer's per-call event cap (DFIR_MAX_EVENTS, default 2000) used to bound the WHOLE hunt,
+      // because the whole hunt was one importVelociraptor call. Now that each artifact imports
+      // separately, a fresh per-call cap would let a 45-artifact bundle through 45x the intended
+      // ceiling — so one budget is carried across the loop and shrunk by however many forensic events
+      // each artifact actually added, the same way step 5 below measures "added" for the combined
+      // import-meta diff (before/after forensicTimeline length).
+      let eventBudgetRemaining = maxEventsDefault();
+      let budgetBaseline = options.stateStore ? stateBefore : null;
+      let budgetExhaustedLogged = false;
+      // Same problem, same fix, for a super-only bundle: the super-timeline's own (much larger)
+      // cap used to bound the whole hunt in one parse; per-artifact now, so one budget is carried
+      // across the loop instead of each artifact getting a fresh DFIR_SUPERTIMELINE_MAX.
+      let superEventBudgetRemaining = Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000;
+      let superBudgetExhaustedLogged = false;
+      for (const { name, file } of artifactFiles) {
+        const json = await readFile(file, "utf8");
         const { storedName, importedAt, seq } = await persistEvidence(
           caseId,
-          `velo-hunt_${job.huntId}.json`,
+          `velo-hunt_${job.huntId}_${name}.json`,
           json,
         );
         lastFile = storedName;
@@ -392,34 +460,37 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           status: "analyzing",
           phase: "extracting",
           at: importedAt,
-          detail: `importing Velociraptor hunt ${job.huntId} rows (${Object.keys(map).length} artifact(s), ${totalRows} row(s))`,
+          detail: `importing Velociraptor hunt ${job.huntId} artifact ${name}`,
         });
-        // Deep-link back to the hunt in the Velociraptor GUI: reuse the URL saved on the job when
-        // present, else build it from the hunt id. Shared by every event from this hunt, on EITHER
-        // path — previously only the super-only branch stamped it, so a normal (forensic-timeline-
-        // bound) bundle/hunt collection never carried a veloUrl and the FT's "↗ Velociraptor" link
-        // never rendered for its events.
-        const jobHuntId = job.huntId; // hoisted so the .map closure below doesn't re-narrow the reassignable `job`
-        const veloUrl = job.guiUrl || client.huntGuiUrlFor(jobHuntId);
-        if (superOnly) {
+        if (superOnly && superEventBudgetRemaining <= 0) {
+          // Hunt-wide super-timeline cap already spent by earlier artifacts. Rows are still persisted
+          // as evidence above (chain of custody intact) — only the super-timeline append is skipped.
+          if (!superBudgetExhaustedLogged) {
+            superBudgetExhaustedLogged = true;
+            logLine(
+              `[velociraptor] hunt ${job.huntId}: super-timeline event cap (${Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000}) reached — remaining artifacts' rows are persisted as evidence but not further appended to the super-timeline (raise DFIR_SUPERTIMELINE_MAX to lift it)`,
+            );
+          }
+        } else if (superOnly) {
           // Parse WITHOUT merging into forensic; append the mapped events to the super-timeline only.
-          // The artifact-map carries each row's _Source, so `artifact` is just a filename fallback.
-          const artifact = storedName.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
-          // Complete record: don't aggregate rows, lift the 2000-event cap to the super store's cap.
+          // The artifact-map carries the row's _Source, so `artifact` is just a filename fallback.
+          // Complete record: don't aggregate rows, lift the 2000-event cap to the (remaining) super
+          // store budget — shared across the whole hunt, not reset for each artifact (see above).
           const parsed = parseVelociraptorJson(json, {
-            artifact,
+            artifact: name,
             aggregate: false,
-            maxEvents: Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000,
+            maxEvents: superEventBudgetRemaining,
           });
           const floored = applySeverityFloor(parsed.events, minSeverity); // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
-          // Id by the HUNT id, not the import `seq` (which increments each collect): re-collecting the
-          // same hunt (Collect now / auto-collect after a manual collect) re-parses the SAME rows, and
-          // the super-timeline's id-based dedup (dedupeAppend) only drops repeats when the ids are
-          // stable. Same rows in the same order → same ids → deduped; a straggler that checks in later
-          // gets a higher index and appends. (Forensic imports get this from correlation dedup; the
-          // super-only path has no such guard, so the ids must be stable across re-collects.)
+          // Id by the HUNT id + ARTIFACT NAME, not a running index across the whole hunt: each artifact
+          // is now imported in its own pass, so a purely sequential counter would collide across
+          // artifacts (two artifacts' first row would both land on `-e1`, and the super-timeline's
+          // id-based dedup would silently drop the second). Namespacing by artifact name keeps ids
+          // unique across artifacts and STABLE across re-collects the same way the old scheme was — same
+          // rows in the same order (for that artifact) → same ids → deduped; a straggler that checks in
+          // later gets a higher index and appends.
           const events: ForensicEvent[] = floored.map((e, i) => ({
-            id: `${jobHuntId}-e${i + 1}`,
+            id: `${jobHuntId}-${name}-e${i + 1}`,
             timestamp: e.timestamp,
             description: e.description,
             severity: e.severity,
@@ -435,10 +506,21 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             ...(e.sha256 ? { sha256: e.sha256 } : {}),
             ...(e.md5 ? { md5: e.md5 } : {}),
           }));
-          superTimelineAddedCount += await options.superTimelineStore!.append(caseId, events);
+          const added = await options.superTimelineStore!.append(caseId, events);
+          superTimelineAddedCount += added;
+          superEventBudgetRemaining -= added;
           options.onSuperTimeline?.(caseId); // live dashboards refresh as super-only events stream in
           await autoTagImported(caseId, events);
           importedAny = true; // report success even though nothing hit the forensic timeline
+        } else if (eventBudgetRemaining <= 0) {
+          // Hunt-wide cap already spent by earlier artifacts. The rows are still persisted as evidence
+          // above (chain of custody intact) — only the derived forensic-timeline import is skipped.
+          if (!budgetExhaustedLogged) {
+            budgetExhaustedLogged = true;
+            logLine(
+              `[velociraptor] hunt ${job.huntId}: hunt-wide event cap (${maxEventsDefault()}) reached — remaining artifacts' rows are persisted as evidence but not further imported into the forensic timeline (raise DFIR_MAX_EVENTS to lift it)`,
+            );
+          }
         } else {
           await pipeline.importVelociraptor(caseId, json, {
             label: storedName,
@@ -446,8 +528,20 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             importedAt,
             minSeverity,
             veloUrl,
+            velociraptor: { maxEvents: eventBudgetRemaining },
           });
           importedAny = true;
+          if (options.stateStore && budgetBaseline) {
+            try {
+              const afterState = await options.stateStore.load(caseId);
+              const added = diffTimeline(budgetBaseline.forensicTimeline, afterState.forensicTimeline).added
+                .length;
+              eventBudgetRemaining -= added;
+              budgetBaseline = afterState;
+            } catch {
+              /* best-effort budget tracking; a read failure here must not fail the collect */
+            }
+          }
         }
       }
 
@@ -556,7 +650,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             try {
               const records = await options.huntRunSnapshotStore.load(caseId);
               const prevRecord = findHuntRunRecord(records, fp);
-              const snapshot = buildHuntRunSnapshot(map);
+              const snapshot = mergeHuntRunSnapshots(snapshotFragments);
               // A run-diff is only SURFACED for a genuinely new run — no prior snapshot, or a different
               // huntId (a real re-deploy). A same-huntId re-collect is just stragglers checking into the
               // SAME running hunt, so it produces no diff of its own.
@@ -628,6 +722,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       releaseImportLock?.();
       releaseImportLock = null;
       await releaseImportSlot(importSlot);
+      // Best-effort: the scratch dir is process-scoped temp storage, not evidence — its rows are already
+      // durably persisted (or the pass failed before anything used them), so a cleanup failure here must
+      // never mask the actual outcome of the collect.
+      if (scratchDir) await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 
