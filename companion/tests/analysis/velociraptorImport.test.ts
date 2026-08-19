@@ -1026,7 +1026,7 @@ describe("parseVelociraptorJson — startup rows (Windows.Sys.StartupItems)", ()
     expect(r.events[0].description).toContain("enabled");
   });
 
-  it("drops a mangled UTF-16-noise Details value (desktop.ini [.ShellClassInfo]) instead of showing it garbled", () => {
+  it("decodes a mangled UTF-16-noise Details value (desktop.ini [.ShellClassInfo]) instead of showing it garbled OR silently discarding it", () => {
     const mangled =
       "..........S.h.e.l.l.C.l.a.s.s.I.n.f.o.......L.o.c.a.l.i.z.e.d.R.e.s.o.u.r.c.e.N.a.m.e" +
       ".......S.y.s.t.e.m.R.o.o.t.....s.y.s.t.e.m.3.2.....s.h.e.l.l.3.2...d.l.l...2.1.7.8.7....";
@@ -1042,7 +1042,31 @@ describe("parseVelociraptorJson — startup rows (Windows.Sys.StartupItems)", ()
     const desc = r.events[0].description;
     expect(desc).not.toContain("S.h.e.l.l");
     expect(desc).not.toContain(".....");
+    // Decoded and readable, not just suppressed — no evidence silently vanishes.
+    expect(desc).toContain("ShellClassInfo");
+    expect(desc).toContain("LocalizedResourceName");
+    expect(desc).toContain("shell32");
     expect(desc).toContain("desktop.ini");
+  });
+
+  it("does NOT drop a legitimate dot-heavy command line — a bare dot-ratio check would false-positive on this", () => {
+    // "svc.1.2.3.4.exe" crosses the exact same >30% dot-ratio threshold the mangled desktop.ini
+    // value does (a bare ratio check WOULD have wrongly nulled it out), but it has real word runs
+    // ("svc", "exe") the UTF-16 mangling never has — there, every character sits alone between
+    // dots. Losing this would silently erase real startup evidence, not noise.
+    const legit = "svc.1.2.3.4.exe";
+    const r = parseVelociraptorJson(JSON.stringify([startupRow({ Details: legit })]));
+    expect(r.events[0].description).toContain("svc.1.2.3.4.exe");
+  });
+
+  it("never comes back empty for a value that DOES trip the mangled-shape check — every character is decoded, none discarded", () => {
+    // A short, single-digit-only sequence trips the same structural check the real desktop.ini
+    // noise does (no run of 2+ ordinary characters). Whether or not the guess is right, the fix is
+    // to decode — concatenating the digits back together — never to null the field out.
+    const ambiguous = "1.2.3.4.5.6.7.8.9.0.1.2.3.4";
+    const r = parseVelociraptorJson(JSON.stringify([startupRow({ Details: ambiguous })]));
+    const desc = r.events[0].description;
+    expect(desc).toContain("1234567890");
   });
 
   it("never puts the host inside the title — it falls in [details], behind the host's own chip", () => {

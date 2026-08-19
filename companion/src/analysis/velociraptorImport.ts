@@ -55,7 +55,7 @@ import {
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
-import { withHostSuffix, titleSafe, isMangledUtf16 } from "./velociraptorTitle.js";
+import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
 
@@ -1529,8 +1529,7 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
 function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const name = str(getCI(row, "Name")).trim();
   const ospath = str(getCI(row, "OSPath")).trim();
-  const detailsRaw = str(getCI(row, "Details")).trim();
-  const details = isMangledUtf16(detailsRaw) ? "" : detailsRaw; // desktop.ini's [.ShellClassInfo] noise
+  const details = demangleUtf16Noise(str(getCI(row, "Details")).trim());
   const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
   const enabled =
     enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
