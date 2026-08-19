@@ -42,6 +42,16 @@
       .then((ov) => {
         assetOverridesData = ov;
         renderAssetList();
+        // js/dashboard-facet-filters.js's hostFacets() reads assetOverrideMerges() to collapse a
+        // merged host's near-duplicate spellings into one Hosts-filter entry — but that grouping is
+        // only rebuilt when the timeline itself repaints. Without this, a merge made in the
+        // duplicate-hosts panel (or one already saved when the case loads, if this fetch lands
+        // after the timeline's own render) leaves the Hosts menu and filter stale until some
+        // unrelated action re-renders the timeline. If the timeline hasn't rendered yet this is a
+        // no-op — its own first render already reads the now-current overrides.
+        if (DfirState.lastFt() && typeof renderTimelineEvents === "function") {
+          renderTimelineEvents(DfirState.lastFt());
+        }
       })
       .catch(() => {});
   }
@@ -337,9 +347,15 @@
   function assetGraphAssets() {
     return (assetGraphData && assetGraphData.assets) || [];
   }
+  // js/dashboard-facet-filters.js reads the merge map to collapse a merged host's near-duplicate
+  // spellings (e.g. "HOST" / "HOST.domain") into one Hosts-filter entry.
+  function assetOverrideMerges() {
+    return (assetOverridesData && assetOverridesData.merges) || {};
+  }
 
   window.hasAssetGraph = hasAssetGraph;
   window.assetGraphAssets = assetGraphAssets;
+  window.assetOverrideMerges = assetOverrideMerges;
   window.loadAssetGraph = loadAssetGraph;
   window.loadAssetOverrides = loadAssetOverrides;
   window.scheduleAssetGraphReload = scheduleAssetGraphReload;

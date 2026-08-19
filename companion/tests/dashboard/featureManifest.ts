@@ -951,6 +951,7 @@ export const FEATURES: Feature[] = [
       "iocTypeFacets",
       "sourceFacets",
       "hostFacets",
+      "hostFacetValue",
     ],
     // The two facet sentinels stayed in the page: renderTimelineEvents reads them too.
     private: ["IOC_TYPE_ORDER"],
@@ -1142,6 +1143,7 @@ export const FEATURES: Feature[] = [
       "renderAssetList",
       "hasAssetGraph",
       "assetGraphAssets",
+      "assetOverrideMerges",
       "loadAssetGraph",
       "loadAssetOverrides",
       "scheduleAssetGraphReload",

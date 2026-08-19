@@ -4475,7 +4475,7 @@
       });
       const originFiltering = originHidden > 0;
       if (originFiltering) visible = visible.filter(e => !DfirFacets.origins.has(ftOriginOf(e)));
-      if (hostHidden > 0) visible = visible.filter(e => !DfirFacets.hosts.has(e.asset || NO_HOST_FACET));
+      if (hostHidden > 0) visible = visible.filter(e => !DfirFacets.hosts.has((typeof hostFacetValue === "function" ? hostFacetValue(e.asset) : e.asset) || NO_HOST_FACET));
       // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
       // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
       // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
