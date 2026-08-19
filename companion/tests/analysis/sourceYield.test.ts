@@ -17,6 +17,7 @@ function meta(p: Partial<ImportMeta>): ImportMeta {
     lastImportedAt: "2026-05-20T00:00:00Z",
     lastImportKind: p.lastImportKind ?? "log",
     lastImportFile: p.lastImportFile ?? "proxy_access.log",
+    lastImportSource: p.lastImportSource ?? "",
     addedCount: p.addedCount ?? 0,
     superTimelineAddedCount: p.superTimelineAddedCount ?? 0,
     removedCount: 0,

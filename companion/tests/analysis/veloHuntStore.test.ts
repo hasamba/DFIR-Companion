@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
+import { superOnlyHunt, VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 
 const JOB: VeloHuntJob = {
   bundleId: "fast-triage",
@@ -17,6 +17,24 @@ const JOB: VeloHuntJob = {
   status: "running",
   target: { os: "windows", excludeLabels: ["servers"] },
 };
+
+describe("superOnlyHunt", () => {
+  it("uses the flag the job was LAUNCHED with, ignoring the bundle's current value", () => {
+    // The bundle is editable while its hunt runs. Re-reading it at collect time is what let a
+    // mid-flight edit re-route raw MFT/USN rows into the forensic timeline.
+    expect(superOnlyHunt({ ...JOB, superTimelineOnly: true }, false)).toBe(true);
+    expect(superOnlyHunt({ ...JOB, superTimelineOnly: true }, undefined)).toBe(true);
+    expect(superOnlyHunt({ ...JOB, superTimelineOnly: false }, true)).toBe(false);
+  });
+
+  it("falls back to the bundle for a job launched before the field existed", () => {
+    // Without this, the first collect after an upgrade would flood the forensic timeline for every
+    // super-only hunt already in flight.
+    expect(superOnlyHunt(JOB, true)).toBe(true);
+    expect(superOnlyHunt(JOB, false)).toBe(false);
+    expect(superOnlyHunt(JOB, undefined)).toBe(false);
+  });
+});
 
 describe("VeloHuntStore", () => {
   let store: VeloHuntStore;

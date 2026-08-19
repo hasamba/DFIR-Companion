@@ -155,16 +155,18 @@ async function makeSuperBundleApp() {
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
+  const importMetaStore = new ImportMetaStore(store);
   const app = createApp(store, {
     pipeline,
     stateStore,
+    importMetaStore,
     velociraptorClient: new VelociraptorClient(superVeloCfg, superBundleRunner),
     artifactBundleStore: new ArtifactBundleStore(pathJoin(dirname(root), "bundles")),
     veloHuntStore: new VeloHuntStore(store),
     superTimelineStore: new SuperTimelineStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore };
+  return { app, stateStore, importMetaStore };
 }
 
 // A super-only runner that ALSO returns an uploaded JSON report (THOR/Hayabusa put their triage data in
@@ -534,6 +536,164 @@ describe("superTimelineOnly bundle routing", () => {
     },
     POLL_TIMEOUT_MS * 2,
   ); // one poll budget, doubled to leave room for setup + assertions
+
+  it(
+    "stamps the import with the BUNDLE that produced it, not the last artifact file it wrote",
+    async () => {
+      // A super-only bundle writes ONE evidence file per artifact, and import-meta used to be stamped
+      // with whichever of them the loop happened to finish on. The cockpit's "Import added …" card
+      // renders that name, so a 39-artifact "Super-Timeline Triage" collection read as a lone
+      // Windows.EventLogs.Evtx import — and was mistaken on sight for a different hunt entirely.
+      const { app, importMetaStore } = await makeSuperBundleApp();
+
+      const run = await request(app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "super-timeline-triage" });
+      expect(run.status).toBe(202);
+      expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
+
+      const meta = await pollFor("the import summary to be recorded", async () => {
+        const current = await importMetaStore.load("c1");
+        return current.lastImportedAt ? current : undefined;
+      });
+
+      expect(meta.lastImportSource).toContain("Super-Timeline Triage");
+      expect(meta.lastImportSource).toContain("H.SUPER1");
+      // The evidence filename is still recorded — the label is added beside it, not instead of it.
+      expect(meta.lastImportFile).toContain("velo-hunt_H.SUPER1");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "counts the artifacts the hunt LAUNCHED, not only the ones that returned rows",
+    async () => {
+      // An artifact that collects successfully but has nothing to report never reaches `artifactFiles`
+      // (`if (!rows.length) continue`), and in a real host sweep most artifacts are quiet. Counting the
+      // files instead of the launched set labelled this 40-artifact triage "1 artifact" — putting
+      // back the very "small single-artifact import" impression the label exists to dispel.
+      const { app, importMetaStore } = await makeSuperBundleApp();
+      expect(
+        (
+          await request(app)
+            .post("/cases/c1/velociraptor/run-bundle")
+            .send({ bundleId: "super-timeline-triage" })
+        ).status,
+      ).toBe(202);
+
+      const launched = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0]
+        .artifacts as string[];
+      expect(launched.length).toBeGreaterThan(1); // the fixture returns rows for exactly ONE of them
+
+      expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
+      const meta = await pollFor("the import summary to be recorded", async () => {
+        const current = await importMetaStore.load("c1");
+        return current.lastImportedAt ? current : undefined;
+      });
+
+      expect(meta.lastImportSource).toContain(`${launched.length} artifacts`);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "labels the import with the name the hunt was LAUNCHED under, not the bundle's name at collect time",
+    async () => {
+      // A bundle is editable while its hunt is still running, and a fleet hunt (/deploy-hunt) has no
+      // bundle-store entry at all. Re-reading the store at collect time therefore drops or
+      // misattributes exactly the collection the label is meant to identify. VeloHuntJob.bundleName
+      // snapshots the title at launch, which is the one the analyst chose.
+      const { app, importMetaStore } = await makeSuperBundleApp();
+      expect(
+        (
+          await request(app)
+            .post("/cases/c1/velociraptor/run-bundle")
+            .send({ bundleId: "super-timeline-triage" })
+        ).status,
+      ).toBe(202);
+
+      // Rename the built-in AFTER launch (superTimelineOnly re-sent, or the route would clear it).
+      const rename = await request(app)
+        .post("/bundles")
+        .send({
+          id: "super-timeline-triage",
+          name: "Renamed After Launch",
+          artifacts: ["Windows.NTFS.MFT"],
+          superTimelineOnly: true,
+        });
+      expect(rename.status).toBe(201);
+
+      try {
+        expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
+        const meta = await pollFor("the import summary to be recorded", async () => {
+          const current = await importMetaStore.load("c1");
+          return current.lastImportedAt ? current : undefined;
+        });
+
+        expect(meta.lastImportSource).toContain("Super-Timeline Triage");
+        expect(meta.lastImportSource).not.toContain("Renamed After Launch");
+      } finally {
+        // The bundle store is shared across this file's harnesses — put the built-in back.
+        await request(app).delete("/bundles/super-timeline-triage");
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "keeps super-only ROUTING when the bundle is edited mid-flight, not just the label",
+    async () => {
+      // The routing flag was read back off the bundle store at collect time, so anything that changed
+      // the bundle between launch and collect silently re-routed the hunt. Editing a bundle clears
+      // superTimelineOnly unless it is re-sent, and a bundle stays editable while its hunt runs — so
+      // an analyst trimming the artifact list mid-flight would dump raw MFT/USN into the FORENSIC
+      // timeline, the exact flood the flag exists to prevent. The job snapshots the flag at launch.
+      const { app, stateStore } = await makeSuperBundleApp();
+      const forensicBefore = (await stateStore.load("c1")).forensicTimeline.length;
+
+      expect(
+        (
+          await request(app)
+            .post("/cases/c1/velociraptor/run-bundle")
+            .send({ bundleId: "super-timeline-triage" })
+        ).status,
+      ).toBe(202);
+
+      // A mid-flight edit that does NOT re-send superTimelineOnly — the route clears it.
+      const edit = await request(app)
+        .post("/bundles")
+        .send({
+          id: "super-timeline-triage",
+          name: "Super-Timeline Triage",
+          artifacts: ["Windows.NTFS.MFT"],
+        });
+      expect(edit.status).toBe(201);
+      expect(edit.body.superTimelineOnly).toBeFalsy(); // the flag really is gone from the store
+
+      try {
+        expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
+
+        let lastStatus = "no job at all";
+        await pollFor(
+          () => `the hunt job to reach "imported", last saw "${lastStatus}"`,
+          async () => {
+            const jobs = await request(app).get("/cases/c1/velociraptor/hunt-jobs");
+            const status = (jobs.body as Array<{ status?: string }>)[0]?.status;
+            if (status === "error") throw new Error("velo hunt collect errored");
+            lastStatus = status ?? "no job at all";
+            return status === "imported" ? status : undefined;
+          },
+        );
+
+        expect((await request(app).get("/cases/c1/super-timeline")).body.total).toBeGreaterThan(0);
+        const forensicAfter = (await stateStore.load("c1")).forensicTimeline.length;
+        expect(forensicAfter).toBe(forensicBefore); // raw host rows did NOT leak into forensic
+      } finally {
+        await request(app).delete("/bundles/super-timeline-triage");
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 
   it(
     "a super-only bundle does NOT ingest uploaded reports into the forensic timeline",

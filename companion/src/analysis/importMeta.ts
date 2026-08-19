@@ -27,6 +27,12 @@ export const importMetaSchema = z.object({
   lastImportedAt: z.string().catch(""),
   lastImportKind: z.string().catch(""),
   lastImportFile: z.string().catch(""),
+  // What the analyst actually launched, when that is not the same thing as one file: a Velociraptor
+  // hunt writes one evidence file per artifact, so `lastImportFile` names only whichever artifact the
+  // import loop finished on. Labelling a 39-artifact "Super-Timeline Triage" with its last EVTX file
+  // made it unrecognisable — read as an unrelated event-log import. Empty for single-file imports,
+  // where the filename IS the honest answer.
+  lastImportSource: z.string().catch(""),
   // Forensic-timeline diff (events the import added / correlation absorbed).
   addedCount: z.number().catch(0), // true total added (the detail list may be capped)
   // Actual rows appended to the super-timeline after its own id/content deduplication.
@@ -92,6 +98,7 @@ const EMPTY: ImportMeta = {
   lastImportedAt: "",
   lastImportKind: "",
   lastImportFile: "",
+  lastImportSource: "",
   addedCount: 0,
   superTimelineAddedCount: 0,
   removedCount: 0,
@@ -113,6 +120,7 @@ const MAX_LISTED = 500;
 export interface ImportRecord {
   kind: string; // detected import kind: "thor" | "siem" | "chainsaw" | ...
   file: string; // stored filename of the imported evidence
+  source?: string; // human label for what produced the import (hunt/bundle) when it spans many files
   diff: TimelineDiff; // forensic-timeline diff
   superTimelineAddedCount?: number; // rows actually appended to the super-timeline
   iocsDiff: IocsDiff; // IOC diff
@@ -120,6 +128,39 @@ export interface ImportRecord {
   path?: "deterministic" | "ai"; // which extraction path ran (#10)
   fpPropagation?: ImportMeta["fpPropagation"]; // FP-pattern propagation suggestions (#15b)
   truncation?: ImportMeta["truncation"]; // cap-hit template truncation (#10 trigger b)
+}
+
+/**
+ * Human label for an import that spans MANY evidence files — a Velociraptor hunt writes one file per
+ * artifact, so the filename records only whichever artifact the import loop finished on. A
+ * 39-artifact "Super-Timeline Triage" stamped with its last Windows.EventLogs.Evtx file reads as an
+ * ordinary event-log import, and gets attributed to whichever hunt collects event logs.
+ *
+ * Returns "" when nothing identifies the import better than its filename already does — callers pass
+ * that straight through, and every consumer falls back to the filename.
+ *
+ * Callers must source both halves from the JOB, snapshotted when the hunt was launched:
+ *   • the bundle NAME as launched, not the bundle store read back at collect time. A bundle stays
+ *     editable while its hunt runs, and a fleet hunt (/deploy-hunt) has no bundle-store entry at
+ *     all — so re-reading renames or unnames the very collection this label exists to identify.
+ *   • the artifacts LAUNCHED, not the files the collect wrote. An artifact that collects fine but
+ *     reports nothing produces no file, and in a host sweep most artifacts are quiet; counting
+ *     files labelled a 40-artifact triage "1 artifact", which is the impression this label is
+ *     meant to prevent.
+ */
+export function describeImportSource(parts: {
+  bundleName?: string;
+  huntId?: string;
+  artifactCount?: number;
+}): string {
+  const count = Math.max(0, Math.floor(parts.artifactCount ?? 0));
+  return [
+    parts.bundleName?.trim(),
+    parts.huntId ? `hunt ${parts.huntId}` : "",
+    count > 0 ? `${count} artifact${count === 1 ? "" : "s"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export class ImportMetaStore {
@@ -148,6 +189,7 @@ export class ImportMetaStore {
       lastImportedAt: at,
       lastImportKind: rec.kind,
       lastImportFile: rec.file,
+      lastImportSource: rec.source ?? "",
       addedCount: rec.diff.added.length,
       superTimelineAddedCount: Math.max(0, Math.floor(rec.superTimelineAddedCount ?? 0)),
       removedCount: rec.diff.removed.length,

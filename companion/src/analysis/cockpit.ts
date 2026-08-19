@@ -396,7 +396,10 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
       id: `change:import:${meta.lastImportedAt}`,
       kind: "change",
       title: `Import added ${importCountTitle}`,
-      summary: `${meta.lastImportKind || "Evidence"} · ${meta.lastImportFile || "latest import"}`,
+      // Name the SOURCE first — the hunt or bundle the analyst launched. `lastImportFile` is one
+      // evidence file, and a Velociraptor hunt writes dozens; showing the last of them made a full
+      // super-timeline triage read as a lone EVTX import and get attributed to the wrong hunt.
+      summary: `${meta.lastImportKind || "Evidence"} · ${meta.lastImportSource || meta.lastImportFile || "latest import"}`,
       severity: forensicCount > 0 || superTimelineCount > 0 ? "Medium" : "Low",
       occurredAt: meta.lastImportedAt,
       evidenceIds: [],
