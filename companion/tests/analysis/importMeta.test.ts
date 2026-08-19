@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { importMetaSchema, ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { describeImportSource, importMetaSchema, ImportMetaStore } from "../../src/analysis/importMeta.js";
 import type { TimelineDiff } from "../../src/analysis/timelineDiff.js";
 import type { IocsDiff } from "../../src/analysis/iocsDiff.js";
 
@@ -24,6 +24,27 @@ const IOCS: IocsDiff = {
 };
 const NO_IOCS: IocsDiff = { added: [], removed: [] };
 
+describe("describeImportSource", () => {
+  it("names the bundle, the hunt and how many artifacts came back", () => {
+    expect(
+      describeImportSource({ bundleName: "Super-Timeline Triage", huntId: "H.ABC", artifactCount: 21 }),
+    ).toBe("Super-Timeline Triage · hunt H.ABC · 21 artifacts");
+  });
+
+  it("says 'artifact' for exactly one", () => {
+    expect(describeImportSource({ huntId: "H.ABC", artifactCount: 1 })).toBe("hunt H.ABC · 1 artifact");
+  });
+
+  it("drops the parts it does not have — a fleet hunt has no bundle", () => {
+    expect(describeImportSource({ huntId: "H.ABC", artifactCount: 0 })).toBe("hunt H.ABC");
+  });
+
+  it("returns empty when nothing identifies the import better than its filename", () => {
+    // Callers pass this straight through; every consumer falls back to lastImportFile.
+    expect(describeImportSource({})).toBe("");
+  });
+});
+
 describe("ImportMetaStore", () => {
   let store: ImportMetaStore;
   beforeEach(async () => {
@@ -38,6 +59,7 @@ describe("ImportMetaStore", () => {
       lastImportedAt: "",
       lastImportKind: "",
       lastImportFile: "",
+      lastImportSource: "",
       addedCount: 0,
       superTimelineAddedCount: 0,
       removedCount: 0,
@@ -56,6 +78,34 @@ describe("ImportMetaStore", () => {
     expect(
       importMetaSchema.parse({ lastImportedAt: "2026-06-01T00:00:00.000Z" }).superTimelineAddedCount,
     ).toBeUndefined();
+  });
+
+  it("records the SOURCE that produced an import, for imports that span many files", async () => {
+    // A Velociraptor hunt writes one evidence file per artifact, so `file` alone names whichever
+    // artifact the import loop finished on — useless for telling one hunt from another. `source`
+    // carries the thing the analyst actually launched.
+    await store.record("c1", {
+      kind: "velociraptor",
+      file: "0042_velo-hunt_H.DA2M66KBG5OHC_Windows.EventLogs.Evtx.json",
+      source: "Super-Timeline Triage — hunt H.DA2M66KBG5OHC · 21 artifacts",
+      diff: { added: [], removed: [] },
+      iocsDiff: NO_IOCS,
+      superTimelineAddedCount: 5559,
+    });
+
+    const meta = await store.load("c1");
+    expect(meta.lastImportSource).toBe("Super-Timeline Triage — hunt H.DA2M66KBG5OHC · 21 artifacts");
+    expect(meta.lastImportFile).toBe("0042_velo-hunt_H.DA2M66KBG5OHC_Windows.EventLogs.Evtx.json");
+  });
+
+  it("leaves the source empty for a single-file import that has none", async () => {
+    await store.record("c1", {
+      kind: "thor",
+      file: "0003_thor.json",
+      diff: DIFF,
+      iocsDiff: NO_IOCS,
+    });
+    expect((await store.load("c1")).lastImportSource).toBe("");
   });
 
   it("records an import (time + kind/file + timeline & IOC diff) and loads it back", async () => {
@@ -116,6 +166,7 @@ describe("ImportMetaStore", () => {
       lastImportedAt: "",
       lastImportKind: "",
       lastImportFile: "",
+      lastImportSource: "",
       addedCount: 0,
       superTimelineAddedCount: 0,
       removedCount: 0,

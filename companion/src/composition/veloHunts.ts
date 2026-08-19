@@ -26,7 +26,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
-import { type VeloHuntJob } from "../analysis/veloHuntStore.js";
+import { superOnlyHunt, type VeloHuntJob } from "../analysis/veloHuntStore.js";
 import {
   pollHuntStatusOnce,
   isHuntStoppedEarly,
@@ -38,6 +38,7 @@ import { maxEventsDefault } from "../analysis/siemImport.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
+import { describeImportSource } from "../analysis/importMeta.js";
 import {
   recordDeploy,
   fillOutcome,
@@ -333,7 +334,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         job.bundleId && options.artifactBundleStore
           ? await options.artifactBundleStore.get(job.bundleId)
           : null;
-      const superOnly = bundle?.superTimelineOnly === true && !!options.superTimelineStore;
+      const superOnly = superOnlyHunt(job, bundle?.superTimelineOnly) && !!options.superTimelineStore;
 
       // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact
       // whose output is too large to fetch is skipped (logged), not fatal — the rest still import, and
@@ -616,6 +617,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             await options.importMetaStore.record(caseId, {
               kind: "velociraptor",
               file: lastFile ?? `velo-hunt_${job.huntId}.json`,
+              // Name the COLLECTION, not the last file it wrote. Both halves come from the JOB, which
+              // snapshotted them at launch — describeImportSource records why any other source is wrong.
+              source: describeImportSource({
+                bundleName: job.bundleName,
+                huntId: jobHuntId,
+                artifactCount: job.artifacts.length,
+              }),
               diff,
               superTimelineAddedCount,
               iocsDiff,

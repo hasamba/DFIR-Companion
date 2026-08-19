@@ -9,6 +9,7 @@ const RECENT_IMPORT = {
   lastImportedAt: "2026-07-30T11:45:00.000Z",
   lastImportKind: "velociraptor",
   lastImportFile: "Windows.Forensics.CertUtil.json",
+  lastImportSource: "",
   addedCount: 0,
   removedCount: 0,
   lastDiff: { added: [], removed: [] },
@@ -321,6 +322,38 @@ describe("deriveCockpit — review and card decisions", () => {
     expect(legacy.sections.changes[0].title).toBe(
       "Import added 0 forensic events · super-timeline count unavailable",
     );
+  });
+
+  it("names what produced a multi-artifact import instead of one artifact filename", () => {
+    // A Velociraptor hunt collects DOZENS of artifacts under a single hunt id, and the card used to
+    // be labelled with `lastImportFile` — whichever artifact the import loop happened to finish on.
+    // A 39-artifact "Super-Timeline Triage" therefore read as a lone EVTX import, and an analyst
+    // attributed it to a different hunt entirely. When the import knows what produced it, say that.
+    const result = deriveCockpit({
+      state: state(),
+      importMeta: {
+        ...RECENT_IMPORT,
+        superTimelineAddedCount: 5559,
+        lastImportSource: "Super-Timeline Triage — hunt H.DA2M66KBG5OHC · 21 artifacts",
+      },
+      investigator: "Alice",
+      now: NOW,
+    });
+
+    expect(result.sections.changes[0].summary).toBe(
+      "velociraptor · Super-Timeline Triage — hunt H.DA2M66KBG5OHC · 21 artifacts",
+    );
+  });
+
+  it("falls back to the imported filename when an import carries no source label", () => {
+    const result = deriveCockpit({
+      state: state(),
+      importMeta: RECENT_IMPORT,
+      investigator: "Alice",
+      now: NOW,
+    });
+
+    expect(result.sections.changes[0].summary).toBe("velociraptor · Windows.Forensics.CertUtil.json");
   });
 
   it("normalizes an unknown synthesis severity instead of destabilizing card ranking", () => {

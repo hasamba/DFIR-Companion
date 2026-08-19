@@ -34,6 +34,7 @@ export interface VeloHuntJob {
   timeoutSeconds?: number; // optional per-collection timeout used for this hunt (Velociraptor default 600s)
   expirySeconds?: number; // relative hunt expiry used at launch (seconds); default one hour
   filters?: Record<string, string>; // per-artifact VQL WHERE filters snapshotted from the bundle (applied at collect)
+  superTimelineOnly?: boolean; // super-timeline-only routing, snapshotted from the bundle at launch
   // The COLLECTION window this hunt was launched with, when the analyst scoped it. Forensically load-
   // bearing: it tells a later reader that silence outside these bounds is a collection boundary, not an
   // absence of activity. `end` is absent for a relative preset (the hunt keeps collecting forward).
@@ -63,6 +64,22 @@ export interface VeloHuntJob {
   // as "only one artifact collected" when the rest simply had nothing to report vs. actually failed.
   skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
+}
+
+/**
+ * Does this hunt's results route into the super-timeline ONLY, never the forensic timeline?
+ *
+ * Read from the JOB, because a bundle stays editable while its hunt is still running. The flag used
+ * to be read back off the bundle store at collect time, so any mid-flight change to the bundle —
+ * an edit that did not re-send superTimelineOnly, or deleting a custom bundle outright — silently
+ * re-routed the collect and dumped raw MFT/USN/Prefetch rows into the forensic timeline and the IOC
+ * list, which is the exact flood the flag exists to prevent.
+ *
+ * `bundleFlag` is the fallback for jobs launched before the job carried the field: without it, an
+ * in-flight super-only hunt would flood on the first collect after an upgrade.
+ */
+export function superOnlyHunt(job: VeloHuntJob, bundleFlag: boolean | undefined): boolean {
+  return (job.superTimelineOnly ?? bundleFlag) === true;
 }
 
 // Cap retained jobs per case (newest first) so the side file stays small — old terminal jobs drop off.
