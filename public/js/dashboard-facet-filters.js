@@ -216,17 +216,78 @@
     return hiddenInView;
   }
 
+  // Mirrors the server's canonicalHostName (companion/src/analysis/hostAlias.ts): lowercase, trim,
+  // drop a trailing FQDN dot. Never strips the domain — "ws-042" and "ws-042.corp.local" stay
+  // distinct until an analyst merge (or fleet-inventory alias) links them.
+  function _canonicalHostKey(raw) {
+    return raw.trim().toLowerCase().replace(/\.+$/, "");
+  }
+  // Host-duplicate merges (companion/src/routes/hostDuplicates.ts, "Same host — merge") are stored
+  // as a chain of override ids keyed "host:<canonical name>" — not applied to the raw event data.
+  // Resolve one id through that chain to its final canonical id. Cycle-guarded, same as the server's
+  // resolveCanonical, so a bad merge can never hang the filter.
+  function _resolveHostMergeChain(id, merges) {
+    let cur = id;
+    const seen = new Set([cur]);
+    while (merges[cur] !== undefined) {
+      cur = merges[cur];
+      if (seen.has(cur)) return id;
+      seen.add(cur);
+    }
+    return cur;
+  }
+
+  // Raw asset string -> the Hosts-filter facet value it collapses into. Rebuilt by hostFacets() on
+  // every call; read by the caller (js/dashboard.html's renderTimelineEvents) applying the filter
+  // right after, so it is always fresh for the ft it was just built from.
+  let _hostFacetValueOf = new Map();
+  function hostFacetValue(raw) {
+    if (!raw) return null;
+    return _hostFacetValueOf.get(raw) || raw;
+  }
+
   // Forensic host filter (mirrors the source filter): the distinct affected hosts across the in-scope
   // timeline, plus a trailing "(no host)" pseudo-facet for events with no asset (so those are
-  // controllable and "None" truly empties the timeline).
+  // controllable and "None" truly empties the timeline). Hosts an analyst has merged in the
+  // near-duplicate-host panel (e.g. "DESKTOP-OPE297N" + "DESKTOP-OPE297N.localdomain") collapse into
+  // one entry here, same as they already do in host ranking and AI synthesis — the raw timeline
+  // events themselves are untouched, only this filter's grouping changes.
   function hostFacets(ft) {
-    const set = new Set();
+    const merges =
+      typeof assetOverrideMerges === "function" ? assetOverrideMerges() : {};
+    const rawAssets = new Set();
     let hasNone = false;
     for (const e of ft || []) {
-      if (e.asset) set.add(e.asset);
+      if (e.asset) rawAssets.add(e.asset);
       else hasNone = true;
     }
-    const list = [...set].sort((a, b) => a.localeCompare(b));
+    // Group raw spellings by their resolved merge target.
+    const groups = new Map(); // resolved key -> [raw, raw, ...]
+    for (const raw of rawAssets) {
+      const key = _resolveHostMergeChain(
+        "host:" + _canonicalHostKey(raw),
+        merges,
+      );
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(raw);
+    }
+    const valueOf = new Map();
+    const display = [];
+    for (const raws of groups.values()) {
+      // The merge target's own spelling (the one nothing in the group redirects further) is the
+      // clearest label; when it isn't present among this ft's events, the longest spelling (usually
+      // the FQDN) is the more informative fallback.
+      const canonicalRaw =
+        raws.find(
+          (r) =>
+            _resolveHostMergeChain("host:" + _canonicalHostKey(r), merges) ===
+            "host:" + _canonicalHostKey(r),
+        ) || raws.reduce((a, b) => (b.length > a.length ? b : a));
+      for (const r of raws) valueOf.set(r, canonicalRaw);
+      display.push(canonicalRaw);
+    }
+    _hostFacetValueOf = valueOf;
+    const list = display.sort((a, b) => a.localeCompare(b));
     if (hasNone) list.push(NO_HOST_FACET);
     return list;
   }
@@ -277,4 +338,5 @@
   window.iocTypeFacets = iocTypeFacets;
   window.sourceFacets = sourceFacets;
   window.hostFacets = hostFacets;
+  window.hostFacetValue = hostFacetValue;
 })();

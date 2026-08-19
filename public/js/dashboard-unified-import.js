@@ -237,6 +237,11 @@
       if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
       statusEl.textContent = parts.join(" · ") || "nothing imported";
       e.target.value = ""; // allow re-selecting the same files
+      // Near-duplicate hosts (e.g. "HOST" vs "HOST.domain") are refreshed off the "idle" AI-status
+      // event (js/dashboard-ai-status.js), not here: /import and /import-file both answer 202 before
+      // the background import job actually lands the new events in the timeline, so a refresh at
+      // this point would read pre-import state. "idle" is emitted once that background run finishes,
+      // for every import kind — including with AI off, which is what this deterministic check needs.
     };
   }
 

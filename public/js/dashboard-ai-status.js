@@ -57,13 +57,23 @@
       // run just finished and that run knows nothing about a gate still holding the next one. Verify
       // it against the case rather than let a stale "up to date" sit over an unresolved decision.
       refreshAiState(activeCaseId);
+      // Every import path answers 202 before its background job lands the new events in the
+      // timeline (see js/dashboard-unified-import.js), so this "run just finished" event — not the
+      // fetch resolving — is the earliest safe point to re-check for a near-duplicate host (e.g.
+      // "HOST" vs "HOST.domain") the import just introduced. Runs on every idle, not only imports,
+      // but loadHostDuplicates is a cheap GET and this is the only reliable "import settled" signal
+      // available client-side, including when AI is off.
+      loadHostDuplicates(activeCaseId);
     } else if (evt.status === "blocked") {
       // A GATE, not a failure: the pipeline stopped on purpose and is waiting for a decision (a
       // Presidio approval, a duplicate-host merge). Both used to arrive as "error", which painted
       // a red "AI: error" over a question — analysts read it as a broken provider and never went
       // looking for the buttons that would release the run. Amber, and it says "on hold".
       hideImportProgress();
-      setAi("blocked", "on hold — " + (evt.detail || "waiting on your decision"));
+      setAi(
+        "blocked",
+        "on hold — " + (evt.detail || "waiting on your decision"),
+      );
       clearTransientStatus();
       // Refresh BOTH pending lists rather than parse the detail text: the two gates share this
       // status, each list is a cheap request, and whichever one is empty simply hides its chip.
@@ -123,9 +133,12 @@
     // so the pill names the work and appends the hold rather than hiding either one.
     const heldNote = s.holds && s.holds.length ? " (analysis on hold)" : "";
     if (s.state === "off") setAi("off", s.detail || "off");
-    else if (s.state === "blocked") setAi("blocked", "on hold — " + (s.detail || "waiting on your decision"));
-    else if (s.state === "error") setAi("error", "error — " + (s.detail || "see server log"));
-    else if (s.state === "analyzing") setAi("analyzing", (s.detail || "working…") + heldNote);
+    else if (s.state === "blocked")
+      setAi("blocked", "on hold — " + (s.detail || "waiting on your decision"));
+    else if (s.state === "error")
+      setAi("error", "error — " + (s.detail || "see server log"));
+    else if (s.state === "analyzing")
+      setAi("analyzing", (s.detail || "working…") + heldNote);
     else setAi("idle", s.detail || "up to date");
   }
 
