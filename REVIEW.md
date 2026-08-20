@@ -66,7 +66,7 @@ backfill() (run on every AI off-to-on transition) reads captures.jsonl and JSON.
 
 **Fix:** Restrict the readFile catch to ENOENT (log a warnLine and still fall back to catchUpSynthesis for other read errors), and parse lines individually with a per-line try/catch that skips a malformed line - mirroring the importLog loop in routes/caseLifecycle.ts:419-429 - so a single truncated tail line cannot suppress the whole backfill. Log how many lines were skipped.
 
-**Status:** Open
+**Status:** Fixed in e83eaf69.
 
 ### EH-2 — Host-clearance decision failures are silently swallowed - the void'ed decideHostScope has no rejection or !ok handling  `MEDIUM`
 
@@ -90,7 +90,7 @@ onPanelClick fires the clearance/out-of-scope decision with `void decideHostScop
 
 **Fix:** Consume the outcome and surface failures: read the error body in decideHostScope (`const e = await r.json().catch(() => ({})); throw new Error(e.error || "HTTP " + r.status)` instead of `return false`), and in onPanelClick replace the bare void with `decideHostScope(...).catch((err) => alert("Could not record decision for " + host + ": " + err.message))` (or write into a panel message element, matching dashboard-velo-triage.js).
 
-**Status:** Open
+**Status:** Fixed in e83eaf69.
 
 ### EH-3 — loadAssetGraph misses the r.ok check its sibling has, caching an error body as graph data and wedging the panel silently  `LOW`
 
@@ -111,7 +111,7 @@ loadAssetGraph does `.then((r) => r.json())` with no r.ok guard - unlike loadAss
 
 **Fix:** Mirror loadAssetOverrides: `.then((r) => (r.ok ? r.json() : null)).then((g) => { if (!g || !Array.isArray(g.assets)) return; assetGraphData = g; renderAssetGraph(); })` - so a failed read leaves the last good data in place instead of poisoning the module state.
 
-**Status:** Open
+**Status:** Fixed in e83eaf69.
 
 ### EH-4 — Service-worker message handlers pass sendResponse to .then() with no rejection arm, leaving the popup with no answer on failure  `LOW`
 
@@ -127,7 +127,7 @@ The capture_once handler (and its activate_site/push_artifact siblings at lines 
 
 **Fix:** Give each of the three handlers a rejection arm that still answers the channel, e.g. `void captureActiveTab("manual", true).then(sendResponse, (e) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));` (activate_site can respond `false`, push_artifact `{ ok: false, error }`). Optionally also wrap popup.ts's captureOnce sendMessage in try/catch to write the failure into statusEl.
 
-**Status:** Open
+**Status:** Fixed in e83eaf69.
 
 
 ## 3. Code Duplication and Dead Code
@@ -157,7 +157,7 @@ function isPrivateIp(ip: string): boolean {
 
 **Fix:** Share one classifier as proposed (siemImport.ts export, full range set), delete the five importer-local copies — but do NOT replace siemImport's private isPublicIpv4 with a plain negation. Its comment and callers require non-IPv4 / blank input ('-', '::1', '', IPv6) to count as internal, whereas !isInternalIpv4(x) returns true (public) for non-IPv4 strings; a naive negation would make logonRisk grade e.g. a blank-source type-3 logon as internet-facing (T1078 Medium). Keep isPublicIpv4 as a thin wrapper: IPv4-shaped AND !isInternalIpv4(ip). The five importer call sites (`ip && !isPrivateIp(ip)`) can use the negated shared function directly since their inputs are regex-extracted IPv4 strings.
 
-**Status:** Open
+**Status:** Fixed in b6af24c7.
 
 ### DUP-2 — Severity-rank table { Critical: 0 … Info: 4 } duplicated 21+ times despite canonical SEVERITY_RANK export  `MEDIUM`
 
@@ -172,7 +172,7 @@ const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Lo
 
 **Fix:** As proposed (hoist to stateTypes.ts or keep in severityFloor.ts — either is cycle-free since stateTypes has only type imports), but explicitly exclude forensicGate.ts, notifications.ts, and slashCommand.ts from the replacement (they use inverted encodings with their own tests), and handle synthSelect.ts's Record<string, number> indexing when swapping its copy.
 
-**Status:** Open
+**Status:** Fixed in b6af24c7 — SEVERITY_RANK hoisted to `stateTypes.ts` (the Fix's sanctioned alternative: severityFloor.ts sits in a layer its consumers may not import), all listed sites plus two the list missed (burstDetect.ts, findingGrounding.ts) now import it; the three dead rank exports are deleted.
 
 ### DUP-3 — MONTHS lookup table copied in 4 importers and byte-identical year-less timestamp parser in syslog and Cisco ASA importers  `LOW`
 
@@ -195,7 +195,7 @@ function parseAsaTime(ts: string, year: number): string {
 
 **Fix:** Export `MONTHS` and a shared `parseBsdTime(ts: string, year: number): string` from siemImport.ts (the module these importers already import aggregateEvents/addIoc/cleanIp from). Replace parseAsaTime and parse3164Time with calls to it and delete the three duplicate MONTHS tables (KIBANA_MONTHS in siemImport becomes the exported one).
 
-**Status:** Open
+**Status:** Fixed in b6af24c7.
 
 ### DUP-4 — Dead exports in reportTemplate.ts: SECTION_LABELS and emptyReportTemplate have zero references repo-wide  `LOW`
 
@@ -212,7 +212,7 @@ export const SECTION_LABELS: Record<ReportSectionKey, string> = Object.fromEntri
 
 **Fix:** Delete SECTION_LABELS (lines 46-48) and emptyReportTemplate (lines 177-179). REPORT_SECTION_DEFS, ALL_SECTION_KEYS, and normalizeReportTemplate — which the two dead symbols wrap — remain exported and used.
 
-**Status:** Open
+**Status:** Fixed in b6af24c7.
 
 ### DUP-5 — Four exported _reset*Cache test hooks are referenced by no test or source file  `LOW`
 
@@ -231,7 +231,7 @@ export function _resetD3fendCache(): void {
 
 **Fix:** Either delete the four unused hooks, or (preferred, matching the countryCentroids pattern) add a `beforeEach(() => _reset…Cache())` to the corresponding loader tests so the hooks earn their keep; pick one option and apply it to all four files consistently.
 
-**Status:** Open
+**Status:** Fixed in b6af24c7.
 
 ### DUP-6 — resolveIocAlias is dead — stateMerge re-implements the alias lookup inline, dropping the trim normalization  `LOW`
 
@@ -249,7 +249,7 @@ export function resolveIocAlias(value: string, map: IocAliasMap): string | undef
 
 **Fix:** Delete resolveIocAlias, or swap stateMerge.ts:101 to call it purely as single-source-of-truth hygiene — but frame it as consistency, not a bug fix: the read side is already effectively trim().toLowerCase() because repairIocValue trims two lines above, and the only test touching the alias path (tests/analysis/stateMerge.test.ts:353, `iocAliases: { "evil.com": "i002" }`) passes either way.
 
-**Status:** Open
+**Status:** Fixed in b6af24c7 — dead `resolveIocAlias` deleted (the Fix's first option; the swap variant was implemented and rejected by `check:boundaries` as a new analysis/timeline → analysis/findings violation, and the read side is already trim-normalized via repairIocValue).
 
 
 ## 4. Test Coverage Gaps
@@ -271,7 +271,7 @@ if (algorithm === "none" || !/^(?:RS|PS|ES)(?:256|384|512)$|^EdDSA$/.test(algori
 
 **Fix:** Extend companion/tests/http/oidcClient.test.ts, reusing its existing mock-IdP fetchFn and generateKeyPairSync helper: (1) token endpoint returns an id_token signed with a DIFFERENT RSA key — expect client.complete() to reject with /signature/; (2) header {alg:'none', kid:'key-1'} with empty signature — expect /unsupported/; (3) alg HS256 — expect /unsupported/; (4) correctly signed token whose nonce claim is 'wrong-nonce' — expect /nonce/; (5) aud 'other-client' — expect /audience/; (6) exp = now - 3600 — expect /expired/. Each case is ~10 lines using the existing encode() helper.
 
-**Status:** Open
+**Status:** Fixed in d566a138.
 
 ### TC-2 — POST /auth/bootstrap refusal branches (wrong token 403, already-bootstrapped 409, loopback fallback) are untested  `HIGH`
 
@@ -289,7 +289,7 @@ const bootstrapAllowed = auth.bootstrapToken
 
 **Fix:** Add to companion/tests/http/teamAuth.test.ts (the app fixture already exists): (1) POST /auth/bootstrap with bootstrapToken:'wrong-token' → expect 403 and authStore.countIdentities() === 0; (2) same with no bootstrapToken field → 403; (3) after a successful bootstrap, a second POST with the CORRECT token → 409 and still exactly one identity. For the loopback fallback, unit-test TeamAuth.isLoopbackRequest directly (it only reads req.socket.remoteAddress): fake requests with remoteAddress '10.0.0.5' → false, '127.0.0.1'/'::1'/'::ffff:127.0.0.1' → true, undefined → false.
 
-**Status:** Open
+**Status:** Fixed in d566a138.
 
 ### TC-3 — writerGuard's corrupt-guard branches and release-must-not-delete-another-writer's-guard property are untested  `MEDIUM`
 
@@ -307,7 +307,7 @@ if (!existing && Date.now() - statSync(path).mtimeMs < 30_000) {
 
 **Fix:** Extend companion/tests/http/teamAuthRuntime.test.ts: (1) writeFile(path, 'not-json'); expect acquireWriterGuard(path) to throw /incomplete/; (2) utimes(path, ...) to set mtime 60s in the past; expect acquireWriterGuard to succeed and overwrite; (3) guard = acquireWriterGuard(path); writeFile(path, JSON.stringify({pid: process.pid, token: 'other-writer', startedAt: '...'})); guard.release(); expect readFile(path) to still return the replacement contents (file not deleted).
 
-**Status:** Open
+**Status:** Fixed in d566a138.
 
 ### TC-4 — checkRegexSafety's case-fold range branch is untested — its own suite never passes flags at all  `MEDIUM`
 
@@ -325,7 +325,7 @@ const ranges: [number, number][] = [...s.ranges];
 
 **Fix:** Add a 'checkRegexSafety — i-flag folding' describe block to companion/tests/analysis/regexSafety.test.ts: expect(checkRegexSafety('^(a|A)+b$', 'i').ok).toBe(false) and .toBe(true) without the flag; expect(checkRegexSafety('^([a-z]|[A-Z])+!$', 'i').ok).toBe(false) (range branch) and true without the flag; expect(checkRegexSafety('^[a-z]*[A-Z]*$', 'i').ok).toBe(false) (adjacent-loop overlap under folding) and true without.
 
-**Status:** Open
+**Status:** Fixed in d566a138.
 
 ### TC-5 — archiveIsEncrypted crashes with a raw RangeError on a crafted central-directory offset — no corrupt-EOCD test exists  `LOW`
 
@@ -342,7 +342,7 @@ let ptr = archive.readUInt32LE(eocd + 16);
 
 **Fix:** Keep the proposed test in companion/tests/analysis/zipExtract.test.ts, but guard BOTH functions: in archiveIsEncrypted (zipExtract.ts:71), add `if (ptr + 46 > archive.length) return false;` at the top of the loop body; and in readZip (zipArchive.ts:178-179), add `if (ptr + 46 > archive.length) throw new Error("corrupt ZIP: central directory out of bounds");` before the SIG_CENTRAL read (and ideally the same bound on localOffset + 30 before the local-header reads at lines 193-194). Only with the readZip guard does the analyst get the actionable 'corrupt ZIP' wording instead of Node's internal RangeError message.
 
-**Status:** Open
+**Status:** Fixed in d566a138.
 
 
 ## 5. Performance Concerns in VQL/Parsing Logic
@@ -369,7 +369,7 @@ for (const raw of text.split(/\r?\n/)) {
 
 **Fix:** Split the fix in two: (1) inside the existing sync parseSyslog, replace text.split() with an indexOf('\n') cursor loop and feed non-sshd-auth events straight into createEventAggregator(), buffering only the events parseSshAuth matches in a side array keyed by buffer index; after the loop run markSshBruteForce over that buffer, agg.add() the buffered events, then agg.finish() — this delivers the full memory win without touching the signature (finish() re-sorts severity/count/timestamp, so ordering only shifts on exact three-way ties where stable-sort insertion order decides). (2) For the event-loop yield, add an async parseSyslogProgress variant (mirroring the parseWinEventXml / parseWinEventXmlProgress pair in evtxXmlImport.ts) that yields via setImmediate every ~5000 lines, and switch the import route/logImports path to it, leaving the sync export intact for tests and other callers.
 
-**Status:** Open
+**Status:** Fixed in 236d1642.
 
 ### PF-2 — Hunt-query tokenizer is O(n²): location() re-slices and re-splits the whole prefix for every token  `MEDIUM`
 
@@ -385,7 +385,7 @@ const push = (kind: TokenKind, value: string, start: number, end: number, flags?
 
 **Fix:** Prefer the finding's second variant: precompute the newline-offset array once per tokenize()/parse and binary-search it in location(). The incremental line/lineStart variant is also viable but must additionally count newlines inside spans the main loop jumps over (quoted strings admit literal newlines via decodeQuoted, and regex/parameter scans also advance index in bulk), so it is easier to get subtly wrong; the offset-array approach has no such hazard and keeps error-path syntaxError() positions identical.
 
-**Status:** Open
+**Status:** Fixed in f27c41d9.
 
 ### PF-3 — evtxXmlImport compiles ~8 dynamic RegExps per event block across millions of events  `MEDIUM`
 
@@ -401,7 +401,7 @@ function elText(block: string, tag: string): string {
 
 **Fix:** Memoize the patterns: a module-level `Map<string, RegExp>` keyed by tag (for elText) and `${element}|${attrName}` (for attr), populated on first use — or simply hoist the 8 concrete patterns as named constants since the call sites are a closed set. While in the file, also replace `(text.match(/<Event\b/gi) ?? []).length` at line 149 with a counting exec/matchAll loop so counting events in a multi-hundred-MB export stops allocating a throwaway array with one string per event.
 
-**Status:** Open
+**Status:** Fixed in f27c41d9.
 
 ### PF-4 — fieldFromMessage rebuilds an escaped RegExp for each of ~15 fixed labels on every Velociraptor row  `LOW`
 
@@ -417,7 +417,7 @@ function fieldFromMessage(msg: string, label: string): string {
 
 **Fix:** Precompile once at module level: `const MSG_FIELD_RES = new Map(LABELS.map((l) => [l, new RegExp(escaped(l) + pattern, "i")]))` covering MSG_FIELD_LABELS plus "New Process Name" and "Image"; fieldFromMessage() then does a Map lookup with a lazy-compile fallback for any future dynamic label. No behavior change.
 
-**Status:** Open
+**Status:** Fixed in f27c41d9.
 
 ### PF-5 — getFlowInfo enumerates the entire fleet (up to 100k clients via subprocess) to resolve one hostname  `LOW`
 
@@ -432,7 +432,7 @@ const rec = (await this.listClients()).find((c) => c.clientId === clientId);
 
 **Fix:** Fetch just the one client: `SELECT os_info FROM clients(search='id:${clientId}') LIMIT 1` (or `client_info(client_id='${clientId}')`) — clientId is already CLIENT_RE-validated at the top of getFlowInfo, so interpolation stays injection-safe, and the dot-tokenization concern that motivated inventory matching applies to hostname search, not id lookup. Alternatively reuse the persisted client inventory the collect route already prefers before falling back to the live read.
 
-**Status:** Open
+**Status:** Fixed in f27c41d9.
 
 
 ## 6. Docker and Dependency Risks
@@ -454,7 +454,7 @@ ENTRYPOINT ["dfir-entrypoint"]
 
 **Fix:** In the runtime stage, change the existing RUN to `RUN chmod +x /usr/local/bin/dfir-entrypoint && mkdir -p /data/cases /out && chown -R node:node /data /out` (leave /app root-owned and read-only so a compromised server cannot rewrite its own code), then add `USER node` before ENTRYPOINT. In docker-compose.yml, document pre-creating ./cases and ./addon on Linux so the bind mounts are writable by uid 1000 (or add user: "1000:1000"); the entrypoint's `cp ... || true` already tolerates a non-writable /out.
 
-**Status:** Open
+**Status:** Fixed in f1a45b61.
 
 ### DD-2 — Lockfile pins undici 8.3.0 and nanoid 5.1.11, each carrying HIGH npm advisories with in-range fixes  `HIGH`
 
@@ -470,7 +470,7 @@ ENTRYPOINT ["dfir-entrypoint"]
 
 **Fix:** Run `npm update undici nanoid` (or `npm audit fix`) in companion/ and commit the refreshed package-lock.json — this brings undici to 8.10.0 and nanoid to >=5.1.16 with no package.json change needed. Optionally raise the floor in package.json to "undici": "^8.10.0" so future installs cannot resolve below the patched version.
 
-**Status:** Open
+**Status:** Fixed in f1a45b61.
 
 ### DD-3 — No HEALTHCHECK baked into the image; only compose users get liveness checks  `LOW`
 
@@ -487,7 +487,7 @@ ENTRYPOINT ["dfir-entrypoint"]
 
 **Fix:** Add before ENTRYPOINT: HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=5 CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" — checking PORT before DFIR_PORT because the entrypoint's remap is not visible to the healthcheck's environment.
 
-**Status:** Open
+**Status:** Fixed in f1a45b61.
 
 ### DD-4 — Base images use floating tags without digest pinning; compose pulls :latest  `LOW`
 
@@ -503,7 +503,7 @@ FROM node:22-slim AS companion-build
 
 **Fix:** Pin one digest once (e.g. `FROM node:22-slim@sha256:<current digest> AS ...`, obtained via `docker buildx imagetools inspect node:22-slim`) and reuse it in all three stages with a comment noting the Node version it corresponds to; refresh it deliberately (Dependabot/Renovate handles this automatically). In docker-compose.yml, tag the GHCR image with the release version (e.g. `ghcr.io/hasamba/dfir-companion:0.34.0`) instead of `latest`.
 
-**Status:** Open
+**Status:** Fixed in f1a45b61.
 
 
 ## Finding Index
