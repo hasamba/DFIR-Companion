@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/test.js";
 
-// Covers: US-040, US-131
+// Covers: US-040, US-131, US-354
 // (feature-user-stories.csv) — POST /cases/:id/synthesize being reachable, and the async job list backing the status panel.
 //
 
@@ -30,6 +30,28 @@ test("synthesis is reachable and reports a job", async ({ page, demoCase }) => {
   // route answered 500. A range assertion here would have gone green the moment the status changed
   // for any reason, which is the opposite of what this spec is for.
   expect(res.status(), await res.text()).toBe(200);
+});
+
+test("US-354: a reload derives the case's AI state instead of showing a stale push event", async ({
+  page,
+  demoCase,
+}) => {
+  await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+
+  const response = await page.request.get(`/cases/${demoCase}/ai-state`);
+  expect(response.status(), await response.text()).toBe(200);
+  const state = (await response.json()) as { state: string; detail: string; holds: unknown[] };
+  expect(["off", "blocked", "analyzing", "idle", "error"]).toContain(state.state);
+  expect(typeof state.detail).toBe("string");
+  expect(Array.isArray(state.holds)).toBe(true);
+
+  // Re-entering the case forces the header pill through the derived endpoint. The fixed harness
+  // has live analysis paused, so the visible state must say so even though no ai_status event was
+  // pushed to this newly loaded page.
+  await page.reload();
+  await expect(page.locator("#aiStatus")).toContainText(/live analysis paused/i, {
+    timeout: 30_000,
+  });
 });
 
 test("the AI state is announced, not only shown", async ({ page, demoCase }) => {

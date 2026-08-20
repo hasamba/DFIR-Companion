@@ -1,8 +1,9 @@
 import { test, expect } from "../fixtures/test.js";
 
-// Covers: US-112, US-113, US-114, US-115, US-132, US-133, US-159, US-191
+// Covers: US-112, US-113, US-114, US-115, US-132, US-133, US-159, US-191, US-357, US-358, US-359
 // (feature-user-stories.csv) — the settings surfaces: the env editor, log level, update check,
-// custom importers, setup status, live AI/env reload, the forensic gate and per-source trust.
+// custom importers, setup status, live AI/env reload, the forensic gate, per-source trust,
+// notification defaults and the Velociraptor binary/config acquisition controls.
 //
 // US-168 (extension connection settings) is NOT claimed here: normalizeCompanionUrl() lives in the
 // add-on, and extension/tests/settings.test.ts already covers it. See captures.spec.ts for the
@@ -160,6 +161,49 @@ test("US-191: per-source trust exposes defaults and accepts an override", async 
     overrides?: Record<string, number>;
   };
   expect(after.overrides?.crowdstrike).toBe(0.5);
+});
+
+test("US-357: a new notification channel visibly opts into milestones by default", async ({ page }) => {
+  await page.goto("/dashboard");
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator("#settingsOverlay")).toHaveClass(/\bopen\b/);
+  await page.locator('.stab[data-stab="notifications"]').click();
+
+  // The form POSTs every checkbox explicitly. If this starts unchecked it overrides the server's
+  // milestone=true default with false, so "default on" would only exist for API-created channels.
+  const milestone = page.locator("#ntfEvtMilestone");
+  await expect(milestone).toBeVisible();
+  await expect(milestone).toBeChecked();
+
+  // It remains a genuine opt-out: the analyst can untick it before adding the channel.
+  await milestone.uncheck();
+  await expect(milestone).not.toBeChecked();
+});
+
+test("US-358, US-359: Velociraptor paths can be browsed and the manual download action is disclosed", async ({
+  page,
+}) => {
+  await page.goto("/dashboard");
+  await page.locator("#settingsBtn").click();
+  await page.locator('.stab[data-stab="integrations"]').click();
+
+  // The in-page picker lists the SERVER filesystem, because that is where the configured binary
+  // runs. Opening and cancelling proves the safe user path without selecting or reading any file.
+  await page.locator("#veloBrowseBinaryBtn").click();
+  const picker = page.locator("#fsBrowseOverlay");
+  await expect(picker).toHaveClass(/\bopen\b/);
+  await expect(page.locator("#fsBrowseTitle")).toHaveText("Select Velociraptor binary");
+  await expect(page.locator("#fsBrowsePath")).not.toHaveText("");
+  await expect(page.locator("#fsBrowseEntries .merge-candidate-row").first()).toBeVisible();
+  await page.locator("#fsBrowseCancelBtn").click();
+  await expect(picker).not.toHaveClass(/\bopen\b/);
+
+  // Do not click: the action intentionally reaches GitHub and writes an executable. Its selector,
+  // extraction and persistence paths are covered with mocked release data in unit tests.
+  const download = page.locator("#veloDownloadLatestBtn");
+  await expect(download).toBeVisible();
+  await expect(download).toHaveText(/Download latest/i);
+  await expect(download).toHaveAttribute("title", /Runs only when you click it/i);
 });
 
 // applySecOrder() is the only thing that puts the <section> elements into the analyst's configured
