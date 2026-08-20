@@ -200,6 +200,94 @@ describe("consolidateVeloScriptBlocks", () => {
     expect(text).toContain(CHUNKS[0] + CHUNKS[1]);
   });
 
+  // A THIRD row shape, seen on a real Windows.Hayabusa.Rules collection (case INC-2026-016): the raw
+  // event rides under `_Event`, not `EventData` or `Event.EventData`. The row still reaches THIS
+  // importer rather than the Hayabusa one, because it carries `_Source` and the Velociraptor
+  // detector claims any `_Source`. rowMessage() already reads `_Event`; the fragment reader did not,
+  // so a split block in this shape stayed one alert per fragment.
+  function underscoreEventRow(part: number, chunk: string): Record<string, unknown> {
+    return {
+      Timestamp: `2025-03-14T21:14:4${part}.000000000Z`,
+      Computer: "WIN11.windomain.local",
+      Channel: "Microsoft-Windows-PowerShell/Operational",
+      EID: 4104,
+      Level: "medium",
+      Title: "Potentially Malicious PwSh",
+      RecordID: 1400 + part,
+      Details: `ScriptBlock: ${chunk}`,
+      _Source: "Windows.Hayabusa.Rules",
+      _Event: {
+        System: {
+          EventID: { Value: 4104 },
+          Computer: "WIN11.windomain.local",
+          Channel: "Microsoft-Windows-PowerShell/Operational",
+        },
+        EventData: {
+          MessageNumber: String(part),
+          MessageTotal: "2",
+          ScriptBlockText: chunk,
+          ScriptBlockId: SBID,
+          Path: "C:\\TrigonaSim\\tools\\uac-bypass.ps1",
+        },
+      },
+    };
+  }
+
+  it("reads a block whose raw event sits under `_Event` (Windows.Hayabusa.Rules shape)", () => {
+    const rows = consolidate([underscoreEventRow(1, CHUNKS[0]), underscoreEventRow(2, CHUNKS[1])]);
+    for (const row of rows) {
+      const ed = (row._Event as Record<string, unknown>).EventData as Record<string, unknown>;
+      expect(String(ed.ScriptBlockText)).toContain(CHUNKS[0] + CHUNKS[1]);
+    }
+  });
+
+  it("leaves a single-part `_Event` block alone (the real INC-2026-016 rows are all 1 of 1)", () => {
+    const one = underscoreEventRow(1, "whoami");
+    ((one._Event as Record<string, unknown>).EventData as Record<string, unknown>).MessageTotal = "1";
+    const [out] = consolidate([one]);
+    const ed = (out._Event as Record<string, unknown>).EventData as Record<string, unknown>;
+    expect(String(ed.ScriptBlockText)).toBe("whoami");
+  });
+
+  // A `_Event` row's verdict lives in a top-level `Title` that classify() does not treat as a
+  // verdict, so mapGeneric puts it in neither the description nor the aggregation key. Before
+  // consolidation the differing fragment text kept two rules apart by accident. Handing both rows
+  // identical text removed that accident and one rule's verdict disappeared from the case entirely.
+  // Reassembly is therefore scoped PER RULE: each alert joins the parts its own rule matched.
+  it("keeps two rules over one `_Event` block apart instead of dropping a verdict", () => {
+    const a = underscoreEventRow(1, CHUNKS[0]);
+    const b = underscoreEventRow(2, CHUNKS[1]);
+    b.Title = "UAC Bypass Attempt";
+    const rows = consolidate([a, b]);
+    const text = (r: Record<string, unknown>): string =>
+      String(((r._Event as Record<string, unknown>).EventData as Record<string, unknown>).ScriptBlockText);
+    // Neither row is given the other rule's slice, so neither verdict can collapse into the other.
+    expect(text(rows[0])).not.toContain(CHUNKS[1]);
+    expect(text(rows[1])).not.toContain(CHUNKS[0]);
+  });
+
+  it("still joins every fragment when ONE rule matched them all", () => {
+    const rows = consolidate([underscoreEventRow(1, CHUNKS[0]), underscoreEventRow(2, CHUNKS[1])]);
+    const ed = (rows[0]._Event as Record<string, unknown>).EventData as Record<string, unknown>;
+    expect(String(ed.ScriptBlockText)).toContain(CHUNKS[0] + CHUNKS[1]);
+  });
+
+  // rowMessage() falls back to `_Event.Message`, so a stale nested message both blocks consolidation
+  // and leaves the analyst reading one slice above the full reassembled text.
+  it("rewrites `_Event.Message` too, not just the nested event data", () => {
+    const mk = (part: number, chunk: string): Record<string, unknown> => {
+      const r = underscoreEventRow(part, chunk);
+      delete r.Details;
+      (r._Event as Record<string, unknown>).Message = `Creating Scriptblock text (${part} of 2):\n${chunk}`;
+      return r;
+    };
+    const rows = consolidate([mk(1, CHUNKS[0]), mk(2, CHUNKS[1])]);
+    for (const r of rows) {
+      const msg = String((r._Event as Record<string, unknown>).Message);
+      expect(msg).toContain(CHUNKS[0] + CHUNKS[1]);
+    }
+  });
+
   it("never joins the same ScriptBlockId across two hosts", () => {
     const rows = consolidate([drRow(1, CHUNKS[0]), drRow(2, CHUNKS[1], { Computer: "WS-02" })]);
     const text = (i: number): string =>
