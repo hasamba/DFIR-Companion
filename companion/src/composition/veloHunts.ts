@@ -26,7 +26,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
-import { superOnlyHunt, type VeloHuntJob } from "../analysis/veloHuntStore.js";
+import { collectWarnings, superOnlyHunt, type VeloHuntJob } from "../analysis/veloHuntStore.js";
 import {
   pollHuntStatusOnce,
   isHuntStoppedEarly,
@@ -357,6 +357,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const artifactFiles: { name: string; file: string }[] = [];
       const snapshotFragments: HuntRunSnapshot[] = [];
       const skipped: SkippedArtifact[] = [];
+      const cutShort: { name: string; kept: number; total: number }[] = []; // TruncatedArtifact
       let totalRows = 0;
       for (const artifact of job.artifacts) {
         const name = String(artifact ?? "").trim();
@@ -365,8 +366,9 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           // huntArtifactRows, not huntResults: a multi-source artifact's bare-name read is empty and
           // SILENT (see artifactRefs.ts), landing in `emptyArtifacts` as "found nothing on every host".
           const srcs = sourcesByArtifact?.[name] ?? [];
-          const res = await client.huntArtifactRows(job.huntId, name, srcs, job.filters?.[name]);
+          const res = await client.huntArtifactRows(job.huntId, name, srcs, job.filters?.[name], true);
           rows = res.rows;
+          if (res.truncated) cutShort.push({ name, kept: rows.length, total: res.total });
         } catch (e) {
           // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
           // imports; logged + persisted below so a silent per-artifact failure doesn't read as "only
@@ -385,10 +387,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
         artifactFiles.push({ name, file });
       }
-      if (skipped.length)
-        logLine(
-          `[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} artifact(s) — ${skipped.map((s) => `${s.name} (${s.error})`).join("; ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS if these are oversized`,
-        );
+      for (const w of collectWarnings(job.huntId, skipped, cutShort)) logLine(w);
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
       // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
@@ -703,6 +702,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         addedIocs,
         error: undefined,
         skippedArtifacts: skipped.length ? skipped : undefined,
+        truncatedArtifacts: cutShort.length ? cutShort : undefined,
         emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
       };
       await huntStore.upsert(caseId, job);

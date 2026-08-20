@@ -95,6 +95,7 @@ export async function readHuntArtifactRows(
   catalog: () => Promise<{ name: string; sources?: string[] }[]>,
   artifact: string,
   sources: string[] = [],
+  max?: number, // row ceiling for the MERGED result — see capRun below
 ): Promise<VelociraptorRunResult> {
   if (sources.length || artifact.includes("/")) return read(artifact, sources);
   const base = await read(artifact, []);
@@ -104,7 +105,20 @@ export async function readHuntArtifactRows(
   } catch {
     return base; // catalog unreachable — report the bare read, don't fail the collect
   }
-  return named.length ? mergeRuns(base, await read(artifact, named)) : base;
+  return named.length ? capRun(mergeRuns(base, await read(artifact, named)), max) : base;
+}
+
+/**
+ * Hold a MERGED read to the row cap.
+ *
+ * Each constituent query is capped on its own, which bounds neither their sum nor the memory it costs:
+ * two reads of 75,000 rows under a 100,000 cap concatenated to 150,000 and still reported
+ * `truncated: false` — over the ceiling, and with the incomplete-collection warning suppressed exactly
+ * when it was most deserved.
+ */
+function capRun(run: VelociraptorRunResult, max?: number): VelociraptorRunResult {
+  if (max === undefined || run.rows.length <= max) return run;
+  return { rows: run.rows.slice(0, max), total: run.total, truncated: true };
 }
 
 /** Concatenate two reads of the same artifact, dropping rows the second repeats from the first. */

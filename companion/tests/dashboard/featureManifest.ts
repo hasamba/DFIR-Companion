@@ -1599,6 +1599,7 @@ export { duplicateBindings };
  */
 export const NON_FEATURES = new Set([
   "dashboard-state.js",
+  "dashboard-velo-coverage.js", // pure helper: builds a hunt's per-artifact accounting line, holds nothing
   "dashboard-escape.js",
   "dashboard-time.js",
   "dashboard-text.js",

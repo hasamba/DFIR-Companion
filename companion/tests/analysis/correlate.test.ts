@@ -638,3 +638,36 @@ describe("artifact correlation is scoped to a host (#345)", () => {
     expect(out).toHaveLength(1);
   });
 });
+
+// `count` is OCCURRENCES of the activity, not the number of rows that reported it, so a merge must not
+// add them up: two tools describing one event would read "×2", and a re-import of a file already in the
+// case would double every count — the idempotence step 0 exists to provide. A count CAN still be lost
+// when two aggregated groups merge; the fix for that is upstream (stop distinct findings colliding on a
+// clipped description), not arithmetic here.
+describe("correlateEvents — merging does not invent occurrences", () => {
+  const HASH = "aa13e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef";
+  const at = (id: string, over: Partial<ForensicEvent> = {}) =>
+    ev({ id, description: "Malicious process found", sha256: HASH, asset: "HOST1", ...over });
+
+  it("does not turn two tools reporting one event into two occurrences", () => {
+    const out = correlateEvents([at("a", { sources: ["THOR"] }), at("b", { sources: ["Velociraptor"] })]);
+    expect(out).toHaveLength(1);
+    expect(out[0].count).toBeUndefined();
+  });
+
+  it("does not let a re-import double the count", () => {
+    const once = correlateEvents([at("a", { count: 8 })]);
+    const twice = correlateEvents([at("a", { count: 8 }), at("b", { count: 8 })]);
+    expect(twice).toHaveLength(1);
+    expect(twice[0].count).toBe(once[0].count);
+  });
+
+  it("does not let lower-severity corroboration inflate the count", () => {
+    const out = correlateEvents([
+      at("a", { severity: "Critical" }),
+      at("b", { severity: "Info", description: "process started" }),
+    ]);
+    expect(out[0].severity).toBe("Critical");
+    expect(out[0].count).toBeUndefined();
+  });
+});

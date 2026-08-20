@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -50,6 +50,8 @@ interface MockVeloClient {
     huntId: string,
     artifacts: string[],
   ): Promise<{ results: Record<string, unknown[]>; skipped: string[] }>;
+  // The import path reads ONE artifact at a time so a large hunt is never resident in full.
+  huntArtifactRows(huntId: string, artifact: string): Promise<VelociraptorRunResult>;
   getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }>;
   collectionResults(clientId: string, flowId: string, artifact: string): Promise<VelociraptorRunResult>;
   huntGuiUrlFor(huntId: string): string | undefined;
@@ -85,6 +87,11 @@ async function makeApp(
     async huntResultsByArtifact() {
       rowsFetchCalls++;
       return { results: huntResults, skipped: [] };
+    },
+    async huntArtifactRows(_huntId: string, artifact: string) {
+      rowsFetchCalls++;
+      const rows = huntResults[artifact] ?? [];
+      return { rows, total: rows.length, truncated: false };
     },
     async getFlowInfo() {
       return { artifacts: ["Windows.NTFS.MFT"], hostname: "DESKTOP-01" };
@@ -223,10 +230,16 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
   });
 
   it("applies the min-severity floor on the super-only path (drops the below-floor event)", async () => {
-    // Mixed graded import: a High YARA detection + an Info MFT telemetry row. With minSeverity:high
-    // the super-only path must keep ONLY the High event — the floor the forensic path applies via
-    // importVelociraptor must hold here too (regression: super-only ignored the floor silently).
-    const { app } = await makeApp({ "Windows.Detection.Yara": [YARA_ROW], "Windows.NTFS.MFT": [MFT_ROW] });
+    // Mixed graded import: a High YARA detection + an Info telemetry row IN THE SAME ARTIFACT. With
+    // minSeverity:high the super-only path must keep ONLY the High event — the floor the forensic path
+    // applies via importVelociraptor must hold here too (regression: super-only ignored it silently).
+    //
+    // Both rows sit in one artifact deliberately. The floor is gate-aware (severityFloor.ts): an
+    // all-Info batch imports whole, because a feed with no verdicts has nothing to discriminate on. The
+    // import now streams ONE ARTIFACT AT A TIME, so "the batch" is an artifact rather than the whole
+    // hunt — the same granularity the bundle collector has always used. Splitting these two rows across
+    // two artifacts would therefore test the gate, not the floor.
+    const { app } = await makeApp({ "Windows.Detection.Yara": [YARA_ROW, MFT_ROW] });
     const res = await request(app)
       .post("/cases/c1/velociraptor/import-external")
       .send({ ref: "H.ABC", superTimelineOnly: true, minSeverity: "high" });
@@ -502,5 +515,91 @@ describe("POST /cases/:id/velociraptor/import-external — multi-source artifact
     expect(thor?.sha256).toBe("4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef");
     // …and the scanned path is extracted as evidence rather than left inside an opaque string.
     expect(state.iocs.some((i) => i.value === "C:\\Tools\\mimikatz.exe")).toBe(true);
+  });
+});
+
+// Codex review, P1. The hunt and flow branches read EVERY artifact into one object and then stringified
+// a second full copy of it. Under the 1,000-row dashboard cap that was survivable; at the 100,000-row
+// collection cap a multi-artifact hunt can hold millions of rows and take the process down — the same
+// heap exhaustion the bundle collector was rewritten to avoid, reintroduced by raising the cap.
+//
+// Streaming per artifact is not directly observable from a response, but its consequence is: each
+// artifact is read, ingested and released on its own, so one artifact that fails to read no longer
+// takes the rest of the collection with it.
+describe("POST /cases/:id/velociraptor/import-external — one artifact at a time", () => {
+  it("persists and ingests each artifact on its own, never the whole hunt at once", async () => {
+    const { app, stateStore, root } = await makeStreamingApp();
+    const res = await request(app)
+      .post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "https://velo.example/app/index.html#/hunts/H.STREAM1" });
+    expect(res.status).toBe(200);
+
+    // One evidence file per artifact — the proof that only one artifact's rows were ever held at once.
+    // A single combined `velo-hunt_H.STREAM1.json` means the route buffered the entire hunt.
+    const files = await readdir(join(root, "c1", "imports"));
+    const named = files.filter((f) => f.includes("A.alpha") || f.includes("A.gamma"));
+    expect(named).toHaveLength(2);
+    expect(files.some((f) => /velo-hunt_H\.STREAM1\.json$/.test(f))).toBe(false);
+
+    // ...and the readable artifacts still landed, with the failed one not taking them down.
+    const descs = (await stateStore.load("c1")).forensicTimeline.map((e) => e.description).join(" | ");
+    expect(descs).toContain("alpha");
+    expect(descs).toContain("gamma");
+  });
+});
+
+async function makeStreamingApp() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-velo-stream-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const pipeline = buildRuntimePipeline({
+    provider: undefined,
+    synthesisProvider: undefined,
+    stateStore,
+    store,
+    imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+  });
+  const cfg: VelociraptorApiConfig = {
+    apiConfigPath: "/tmp/api.config.yaml",
+    binary: "velociraptor",
+    timeoutMs: 5000,
+    maxRows: 100,
+    maxOutputBytes: 1 << 20,
+  };
+  const runner: VqlRunner = async (statements) => {
+    const p = statements[0];
+    if (p.includes("FROM hunts("))
+      return { rows: [{ artifacts: ["A.alpha", "A.beta", "A.gamma"] }], raw: "" };
+    if (p.includes("FROM artifact_definitions(")) return { rows: [], raw: "" };
+    if (p.includes("hunt_results(")) {
+      if (p.includes("A.beta")) throw new Error("output exceeded 1048576 bytes");
+      const name = p.includes("A.alpha") ? "alpha" : "gamma";
+      return { rows: [{ Message: `finding ${name}`, Timestamp: "2026-06-01T10:00:00Z" }], raw: "" };
+    }
+    return { rows: [], raw: "" };
+  };
+  const app = createApp(store, {
+    pipeline,
+    stateStore,
+    velociraptorClient: new VelociraptorClient(cfg, runner),
+  });
+  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  return { app, stateStore, root };
+}
+
+// The gate at its new granularity, pinned deliberately rather than left to be rediscovered. Streaming
+// per artifact means an UNGRADED artifact (all-Info telemetry: MFT, USN, Prefetch) is judged on its own
+// and imports whole even under a floor, instead of being filtered because some other artifact in the
+// same hunt happened to carry a verdict. This matches how the bundle collector has always behaved; the
+// floor itself is still enforced inside a graded artifact (see the super-only floor test above).
+describe("POST /cases/:id/velociraptor/import-external — the severity gate is per artifact", () => {
+  it("keeps an all-Info artifact under a High floor — it has no verdicts to discriminate on", async () => {
+    const { app } = await makeApp({ "Windows.NTFS.MFT": [MFT_ROW] });
+    const res = await request(app)
+      .post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "H.ABC", superTimelineOnly: true, minSeverity: "high" });
+    expect(res.status).toBe(200);
+    const st = (await request(app).get("/cases/c1/super-timeline")).body;
+    expect((st.events as unknown[]).length).toBe(1);
   });
 });

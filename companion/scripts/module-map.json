@@ -443,6 +443,7 @@
     "velociraptorClientStore.ts": "analysis/case",
     "velociraptorDownload.ts": "analysis/case",
     "veloRowNormalize.ts": "analysis/ingest",
+    "thorRowMap.ts": "analysis/ingest",
     "velociraptorImport.ts": "analysis/ingest",
     "velociraptorRelease.ts": "analysis/case",
     "velociraptorTitle.ts": "analysis/ingest",

@@ -64,6 +64,48 @@ export interface VeloHuntJob {
   // as "only one artifact collected" when the rest simply had nothing to report vs. actually failed.
   skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
+  truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
+}
+
+/**
+ * An artifact whose read hit the collection row cap. The third collect outcome beside skipped (the
+ * fetch failed) and empty (nothing to report), and the one that used to be invisible: the read
+ * succeeded, its rows imported, and nothing told the analyst the artifact had more to say.
+ *
+ * THOR is why this exists. Its log opens with ~1000 lines of module init and per-file progress and
+ * only then reports what it found, so the old 1000-row dashboard cap ended a real scan mid-run — the
+ * 40 warnings it had counted never left the server, and the collect reported success.
+ */
+export interface TruncatedArtifact {
+  name: string;
+  kept: number; // rows imported
+  total: number; // rows the read returned before the cap (kept + 1 once the cap bit)
+}
+
+/**
+ * The operator-facing warnings for one collect: the artifacts that FAILED to fetch, and the ones that
+ * fetched only PARTIALLY. Both name the knob that lifts them, and the truncation half is the one worth
+ * having — a failed fetch is loud, a truncated one looks exactly like a clean success.
+ */
+export function collectWarnings(
+  huntId: string,
+  skipped: readonly SkippedArtifact[],
+  cut: readonly TruncatedArtifact[],
+): string[] {
+  const out: string[] = [];
+  if (skipped.length)
+    out.push(
+      `[velociraptor] hunt ${huntId}: skipped ${skipped.length} artifact(s) — ` +
+        `${skipped.map((s) => `${s.name} (${s.error})`).join("; ")} — raise ` +
+        `DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS if these are oversized`,
+    );
+  if (cut.length)
+    out.push(
+      `[velociraptor] hunt ${huntId}: ${cut.length} artifact(s) hit the collection row cap — ` +
+        `${cut.map((t) => `${t.name} (kept ${t.kept})`).join("; ")}. Findings BEYOND the cap were never ` +
+        `read; raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again.`,
+    );
+  return out;
 }
 
 /**
