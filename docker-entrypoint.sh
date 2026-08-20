@@ -47,11 +47,25 @@ if [ "$(id -u)" = "0" ]; then
   # planted symlink. (Operators with a truly enormous store can skip this by setting a compose
   # `user:` so the container never starts as root.)
   cases_root="${DFIR_CASES_ROOT:-/data/cases}"
-  data_root="$(dirname "$cases_root")"
+  # Resolve to the ABSOLUTE path the server will use — it resolves a relative DFIR_CASES_ROOT
+  # against this same working directory (/app/companion) — so dirname yields the real parent
+  # rather than ".", and an /app-rooted misconfig is detected rather than silently skipped.
+  case "$cases_root" in
+    /*) abs_cases_root="$cases_root" ;;
+    *) abs_cases_root="$(realpath -m "$cases_root" 2>/dev/null || echo "$(pwd)/$cases_root")" ;;
+  esac
+  data_root="$(dirname "$abs_cases_root")"
   case "$data_root" in
     /|.|"")
-      echo "dfir-entrypoint: DFIR_CASES_ROOT=$cases_root has no dedicated parent directory; global stores would land in '$data_root' and may be unwritable — point DFIR_CASES_ROOT at a subdirectory of a mounted volume" >&2
-      data_root="$cases_root"
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=$cases_root has no dedicated parent directory; global stores would land in '$data_root' and may be unwritable — point DFIR_CASES_ROOT at a subdirectory of a mounted volume (e.g. /data/cases)" >&2
+      data_root="$abs_cases_root"
+      ;;
+    /app | /app/*)
+      # A relative or /app-rooted case root places the mutable data tree under the root-owned
+      # /app code tree, which must NOT be chowned to node. Hand over only the case directory
+      # itself and tell the operator to use an absolute path on a mounted volume.
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=$cases_root resolves under the root-owned /app code tree ($abs_cases_root); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
+      data_root="$abs_cases_root"
       ;;
   esac
   for store in "$data_root" "${DFIR_OCR_CACHE:-/data/ocr-cache}" "${DFIR_LOG_DIR:-}"; do
