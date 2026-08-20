@@ -28,7 +28,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import {
-  aggregateEvents,
+  createEventAggregator,
   addIoc,
   cleanIp,
   isInternalIpv4,
@@ -40,6 +40,7 @@ import {
   type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
+import { throwIfImportAborted } from "./siemBuildProgress.js";
 import { parseSshAuth, markSshBruteForce, type SshAuthEvent } from "./sshBruteForce.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 
@@ -198,61 +199,133 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
   };
 }
 
-// Parse a plain syslog export into the shared SIEM result shape (aggregated + capped). Pure, no AI.
-export function parseSyslog(text: string, opts: SyslogImportOptions = {}): SyslogParseResult {
+// Streaming accumulator behind parseSyslog / parseSyslogProgress: each line is parsed, mapped, and
+// fed straight into the shared event aggregator, so memory is bounded by the distinct-key set — not
+// the row count. The ONE exception is an sshd auth outcome (login success/failure), which must be
+// buffered until the whole log has been seen: the brute-force-success correlation is a post-pass
+// that rewrites specific mapped events. finish() runs that correlation, folds the buffer into the
+// aggregator, and assembles the result. finish() re-sorts by severity/count/timestamp, so relative
+// to the pre-streaming line-order feed, ordering only shifts on exact three-way ties.
+function createSyslogAccumulator(opts: SyslogImportOptions): {
+  line(raw: string): void;
+  finish(): SyslogParseResult;
+} {
   const year = opts.assumeYear ?? new Date().getUTCFullYear();
   const maxIocs = opts.maxIocs ?? 5000;
   const sink = new Map<string, SiemIoc>();
-  const mapped: MappedEvent[] = [];
-  const sshAuth: SshAuthEvent<number>[] = []; // sshd auth outcomes, keyed by their index in `mapped`
-  let total = 0;
-
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const p = parseSyslogLine(line, year);
-    if (!p) continue;
-    const m = mapParsedSyslog(p, sink);
-    total++;
-    const idx = mapped.push(m) - 1;
-    // Collect sshd login successes/failures for the brute-force-success correlation below.
-    if (/^sshd\b/i.test(p.app)) {
-      const auth = parseSshAuth(p.message);
-      if (auth)
-        sshAuth.push({ key: idx, ms: Date.parse(p.timestamp) || 0, ip: auth.ip, result: auth.result });
-    }
-  }
-
-  // A successful SSH login preceded by a burst of failures from the same IP = brute force that landed
-  // (T1110.001). Escalate that accepted event to Medium and keep it a DISTINCT aggregation group (its
-  // digit-masked key would otherwise fold it in with benign accepted logins).
-  for (const hit of markSshBruteForce(sshAuth)) {
-    const e = mapped[hit.key];
-    e.severity = worst(e.severity, "Medium");
-    if (!e.mitre.includes("T1110.001")) e.mitre.push("T1110.001");
-    e.description =
-      `${e.description} — SSH login succeeded after ${hit.failures} failed attempts from ${hit.ip} (possible brute-force success)`.slice(
-        0,
-        600,
-      );
-    e.aggKey = `${e.aggKey}|bruteforce|${hit.ip}`.slice(0, 400);
-  }
-
-  const { events, groups } = aggregateEvents(mapped, {
+  const agg = createEventAggregator({
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const sshEvents: MappedEvent[] = []; // ONLY the sshd auth outcomes — everything else streams into agg
+  const sshAuth: SshAuthEvent<number>[] = []; // keyed by their index in `sshEvents`
+  let total = 0;
 
   return {
-    events,
-    iocs: [...sink.values()].slice(0, maxIocs),
-    total,
-    kept: events.length,
-    dropped: Math.max(0, total - represented),
-    groups,
-    format: "syslog",
-    hostname: "",
+    line(raw: string): void {
+      const line = raw.trim();
+      if (!line) return;
+      const p = parseSyslogLine(line, year);
+      if (!p) return;
+      const m = mapParsedSyslog(p, sink);
+      total++;
+      // Hold back sshd login successes/failures for the brute-force-success correlation in finish().
+      if (/^sshd\b/i.test(p.app)) {
+        const auth = parseSshAuth(p.message);
+        if (auth) {
+          sshAuth.push({
+            key: sshEvents.push(m) - 1,
+            ms: Date.parse(p.timestamp) || 0,
+            ip: auth.ip,
+            result: auth.result,
+          });
+          return;
+        }
+      }
+      agg.add(m);
+    },
+    finish(): SyslogParseResult {
+      // A successful SSH login preceded by a burst of failures from the same IP = brute force that
+      // landed (T1110.001). Escalate that accepted event to Medium and keep it a DISTINCT aggregation
+      // group (its digit-masked key would otherwise fold it in with benign accepted logins).
+      for (const hit of markSshBruteForce(sshAuth)) {
+        const e = sshEvents[hit.key];
+        e.severity = worst(e.severity, "Medium");
+        if (!e.mitre.includes("T1110.001")) e.mitre.push("T1110.001");
+        e.description =
+          `${e.description} — SSH login succeeded after ${hit.failures} failed attempts from ${hit.ip} (possible brute-force success)`.slice(
+            0,
+            600,
+          );
+        e.aggKey = `${e.aggKey}|bruteforce|${hit.ip}`.slice(0, 400);
+      }
+      for (const m of sshEvents) agg.add(m);
+
+      const { events, groups } = agg.finish();
+      const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+
+      return {
+        events,
+        iocs: [...sink.values()].slice(0, maxIocs),
+        total,
+        kept: events.length,
+        dropped: Math.max(0, total - represented),
+        groups,
+        format: "syslog",
+        hostname: "",
+      };
+    },
   };
+}
+
+// Parse a plain syslog export into the shared SIEM result shape (aggregated + capped). Pure, no AI.
+// Lines are walked with an indexOf cursor — never split into an all-lines array — so peak retention
+// beyond the input text is the aggregator's distinct-key set plus the sshd auth buffer.
+export function parseSyslog(text: string, opts: SyslogImportOptions = {}): SyslogParseResult {
+  const acc = createSyslogAccumulator(opts);
+  let cursor = 0;
+  while (cursor <= text.length) {
+    const nl = text.indexOf("\n", cursor);
+    const end = nl === -1 ? text.length : nl;
+    acc.line(text.slice(cursor, end));
+    cursor = end + 1;
+  }
+  return acc.finish();
+}
+
+const SYSLOG_CHUNK_LINES = 5000;
+
+// parseSyslog for the import route: identical result, but yields to the event loop (reporting
+// done/total lines) every SYSLOG_CHUNK_LINES and honors the job's AbortSignal — a multi-million-line
+// export must not stall every other request for the whole parse. Mirrors parseWinEventXmlProgress.
+// The sync parseSyslog stays for tests and non-route callers.
+export async function parseSyslogProgress(
+  text: string,
+  opts: SyslogImportOptions = {},
+  onProgress?: (done: number, total: number) => void | Promise<void>,
+  signal?: AbortSignal,
+): Promise<SyslogParseResult> {
+  throwIfImportAborted(signal);
+  let total = 1; // the cursor loop visits every newline-separated segment, trailing empty one included
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) total++;
+
+  const acc = createSyslogAccumulator(opts);
+  let scanned = 0;
+  let cursor = 0;
+  while (cursor <= text.length) {
+    const nl = text.indexOf("\n", cursor);
+    const end = nl === -1 ? text.length : nl;
+    acc.line(text.slice(cursor, end));
+    cursor = end + 1;
+    scanned++;
+    if (scanned % SYSLOG_CHUNK_LINES === 0) {
+      await onProgress?.(scanned, total);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      throwIfImportAborted(signal);
+    }
+  }
+  if (scanned % SYSLOG_CHUNK_LINES !== 0) await onProgress?.(scanned, total);
+  throwIfImportAborted(signal);
+  return acc.finish();
 }
