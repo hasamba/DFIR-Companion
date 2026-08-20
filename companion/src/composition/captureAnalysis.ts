@@ -396,8 +396,9 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   // detection runs here too. Fully guarded: notifications are a side channel and must never break
   // an import.
   //
-  // NOTE the per-channel `milestone` toggle defaults to FALSE, so on a default configuration this
-  // reaches nobody. The dashboard badge is the reliable surface; this is opt-in escalation.
+  // The per-channel `milestone` toggle defaults to TRUE because this may be the only push a blocked
+  // case produces. An analyst can still opt a channel out; the dashboard badge remains the local
+  // source of truth even when notifications are disabled or delivery fails.
   async function notifyHostDuplicates(caseId: string): Promise<void> {
     try {
       const dismissalStore = options.hostDuplicateDismissalStore;
