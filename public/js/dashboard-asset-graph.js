@@ -29,8 +29,12 @@
     const gv = assetEnsureGV();
     if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style/positions)
     fetch(`/cases/${caseId}/asset-graph${DfirTimelineView.timeQuery()}`)
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : null))
       .then((g) => {
+        // Mirrors loadAssetOverrides below: a non-2xx error body must never be cached as graph
+        // data — a failed read leaves the last good graph in place instead of poisoning
+        // assetGraphData (which hasAssetGraph() and renderAssetGraph() both trust).
+        if (!g || !Array.isArray(g.assets)) return;
         assetGraphData = g;
         renderAssetGraph();
       })

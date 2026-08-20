@@ -384,7 +384,9 @@ browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse(false);
       return;
     }
-    void activateSite(tabId).then(sendResponse);
+    // The rejection arm still answers the kept-open channel — an unanswered sendResponse leaves
+    // the popup rejecting with "message port closed" instead of a real result.
+    void activateSite(tabId).then(sendResponse, () => sendResponse(false));
     return true;
   }
   if (msg?.kind === "capture_once") {
@@ -392,12 +394,16 @@ browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "one-off capture requires an extension action" });
       return;
     }
-    void captureActiveTab("manual", true).then(sendResponse);
+    void captureActiveTab("manual", true).then(sendResponse, (e: unknown) =>
+      sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+    );
     return true;
   }
   if (msg?.kind === "push_artifact") {
     // Async — return true to keep the message channel open until pushArtifact resolves.
-    void pushArtifact(msg as PushArtifactMessage, sender.tab).then(sendResponse);
+    void pushArtifact(msg as PushArtifactMessage, sender.tab).then(sendResponse, (e: unknown) =>
+      sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+    );
     return true;
   }
 });

@@ -242,7 +242,13 @@
         body: JSON.stringify({ to, reason }),
       },
     );
-    if (!r.ok) return false;
+    if (!r.ok) {
+      // Throw rather than return false: the ledger is append-only and quoted in the report, so a
+      // decision that never landed must be SAID — the caller surfaces this, no caller consumed
+      // the boolean, and a silent false left the analyst believing their clearance was recorded.
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.error || "HTTP " + r.status);
+    }
     hostScopeLedger = await r.json();
     paintHostScope();
     return true;
@@ -288,7 +294,13 @@
       if (asked === null || !asked.trim()) return;
       reason = asked.trim();
     }
-    void decideHostScope(caseId.trim(), host, to, reason);
+    // Failures are surfaced, not swallowed (same convention as hunt-workbench's
+    // `void deleteHunt().catch(reportActionError)`): a rejected fetch or a server rejection means
+    // the decision never reached the ledger, and the panel is not repainted, so the UI cannot
+    // pretend it succeeded.
+    void decideHostScope(caseId.trim(), host, to, reason).catch((err) => {
+      alert("Could not record decision for " + host + ": " + err.message);
+    });
   }
 
   globalThis.renderHostScope = renderHostScope;
