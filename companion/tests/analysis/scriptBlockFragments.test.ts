@@ -200,6 +200,55 @@ describe("consolidateVeloScriptBlocks", () => {
     expect(text).toContain(CHUNKS[0] + CHUNKS[1]);
   });
 
+  // A THIRD row shape, seen on a real Windows.Hayabusa.Rules collection (case INC-2026-016): the raw
+  // event rides under `_Event`, not `EventData` or `Event.EventData`. The row still reaches THIS
+  // importer rather than the Hayabusa one, because it carries `_Source` and the Velociraptor
+  // detector claims any `_Source`. rowMessage() already reads `_Event`; the fragment reader did not,
+  // so a split block in this shape stayed one alert per fragment.
+  function underscoreEventRow(part: number, chunk: string): Record<string, unknown> {
+    return {
+      Timestamp: `2025-03-14T21:14:4${part}.000000000Z`,
+      Computer: "WIN11.windomain.local",
+      Channel: "Microsoft-Windows-PowerShell/Operational",
+      EID: 4104,
+      Level: "medium",
+      Title: "Potentially Malicious PwSh",
+      RecordID: 1400 + part,
+      Details: `ScriptBlock: ${chunk}`,
+      _Source: "Windows.Hayabusa.Rules",
+      _Event: {
+        System: {
+          EventID: { Value: 4104 },
+          Computer: "WIN11.windomain.local",
+          Channel: "Microsoft-Windows-PowerShell/Operational",
+        },
+        EventData: {
+          MessageNumber: String(part),
+          MessageTotal: "2",
+          ScriptBlockText: chunk,
+          ScriptBlockId: SBID,
+          Path: "C:\\TrigonaSim\\tools\\uac-bypass.ps1",
+        },
+      },
+    };
+  }
+
+  it("reads a block whose raw event sits under `_Event` (Windows.Hayabusa.Rules shape)", () => {
+    const rows = consolidate([underscoreEventRow(1, CHUNKS[0]), underscoreEventRow(2, CHUNKS[1])]);
+    for (const row of rows) {
+      const ed = (row._Event as Record<string, unknown>).EventData as Record<string, unknown>;
+      expect(String(ed.ScriptBlockText)).toContain(CHUNKS[0] + CHUNKS[1]);
+    }
+  });
+
+  it("leaves a single-part `_Event` block alone (the real INC-2026-016 rows are all 1 of 1)", () => {
+    const one = underscoreEventRow(1, "whoami");
+    ((one._Event as Record<string, unknown>).EventData as Record<string, unknown>).MessageTotal = "1";
+    const [out] = consolidate([one]);
+    const ed = (out._Event as Record<string, unknown>).EventData as Record<string, unknown>;
+    expect(String(ed.ScriptBlockText)).toBe("whoami");
+  });
+
   it("never joins the same ScriptBlockId across two hosts", () => {
     const rows = consolidate([drRow(1, CHUNKS[0]), drRow(2, CHUNKS[1], { Computer: "WS-02" })]);
     const text = (i: number): string =>

@@ -171,12 +171,28 @@ function reassembleByBlock(
 
 // ───────────────────────────── Velociraptor / DetectRaptor rows ─────────────────────────────
 
-// A 4104 row reaches the importer either as a native parsed-evtx row (`System` + `EventData`,
-// sometimes wrapped in `Event`) or — after an Elasticsearch round-trip — as dotted keys that
-// veloRowNormalize has already un-flattened back to that nested shape. Both are read here; a row
-// in neither shape simply yields no fragment and is left alone.
+// A 4104 row reaches this importer in one of THREE shapes, all of which must be read:
+//
+//   1. native parsed evtx      — top-level `System` + `EventData`
+//   2. wrapped                 — the same under `Event`
+//   3. Velociraptor-decorated  — the same under `_Event`, alongside rendered `Details`/`Title`
+//      columns. `Windows.Hayabusa.Rules` emits this, and the row reaches HERE rather than the
+//      Hayabusa importer because it carries `_Source`, which the Velociraptor detector claims.
+//
+// An Elasticsearch round-trip arrives as dotted keys that veloRowNormalize has already un-flattened
+// back into shape 1. A row in none of these yields no fragment and is left untouched.
+//
+// Shape 3 was missed at first and is why this list is spelled out: rowMessage() in velociraptorImport
+// already read `_Event`, so the shape was known to the codebase but not to this reader, and a split
+// block collected that way stayed one alert per fragment with nothing to signal the miss.
+const EVENT_WRAPPERS = ["Event", "_Event"] as const;
+
 function veloEventData(row: Row): Row | null {
-  const ed = getCI(row, "EventData") ?? getPath(row, "Event.EventData");
+  let ed = getCI(row, "EventData");
+  for (const w of EVENT_WRAPPERS) {
+    if (isObject(ed)) break;
+    ed = getPath(row, `${w}.EventData`);
+  }
   return isObject(ed) ? ed : null;
 }
 
@@ -184,6 +200,7 @@ function veloEventId(row: Row): number {
   const raw =
     getPath(row, "System.EventID.Value") ??
     getPath(row, "Event.System.EventID.Value") ??
+    getPath(row, "_Event.System.EventID.Value") ??
     getPath(row, "System.EventID") ??
     getCI(row, "EventID") ??
     getCI(row, "EID");
@@ -197,6 +214,7 @@ function veloHost(row: Row): string {
       getCI(row, "Computer") ??
         getPath(row, "System.Computer") ??
         getPath(row, "Event.System.Computer") ??
+        getPath(row, "_Event.System.Computer") ??
         getCI(row, "Hostname") ??
         getCI(row, "Fqdn"),
     )
@@ -267,9 +285,13 @@ export function consolidateVeloScriptBlocks(rows: readonly Row[]): Row[] {
     const text = `${block.full}${block.note}`;
     const nextEd: Row = { ...ed, ScriptBlockText: text };
     const next: Row = { ...row };
-    // Write back into whichever container the row carries EventData in.
+    // Write back into whichever container the row actually carries EventData in — top level, or one
+    // of the wrappers. Guessing wrong would leave the real EventData untouched AND invent a sibling
+    // key that was never in the row, so the container is resolved rather than assumed.
+    const wrapper = EVENT_WRAPPERS.find((w) => isObject(getPath(row, `${w}.EventData`)));
     if (isObject(getCI(row, "EventData"))) next.EventData = nextEd;
-    else next.Event = { ...(getCI(row, "Event") as Row), EventData: nextEd };
+    else if (wrapper) next[wrapper] = { ...(getCI(row, wrapper) as Row), EventData: nextEd };
+    else next.EventData = nextEd;
     const message = str(getCI(row, "Message") ?? getCI(row, "Details"));
     if (message) {
       const rewritten = rewriteMessage(message, r.frag.text, block.full, block.note, block.phrase);
