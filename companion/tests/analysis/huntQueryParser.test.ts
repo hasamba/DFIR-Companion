@@ -3,6 +3,7 @@ import {
   HuntQuerySyntaxError,
   explainHuntQuery,
   parseHuntQuery,
+  validateHuntRegex,
 } from "../../src/analysis/huntQueryParser.js";
 
 describe("hunt query parser", () => {
@@ -98,5 +99,31 @@ describe("hunt query parser", () => {
         expect(error).toBeInstanceOf(HuntQuerySyntaxError);
       }
     }
+  });
+});
+
+describe("hunt query regex safety", () => {
+  // validateHuntRegex had hand-rolled heuristics for nested quantifiers and repeated wildcards.
+  // They do not model alternation overlap, so `^(a|aa)+b$` — the textbook ReDoS — passed straight
+  // through to run against event text. The central checker in regexSafety.ts already names this
+  // exact shape; the parser now defers to it instead of keeping a second, weaker set of rules.
+  it("rejects a regex that can backtrack catastrophically", () => {
+    expect(() => validateHuntRegex("^(a|aa)+b$")).toThrow(HuntQuerySyntaxError);
+  });
+
+  it("rejects a pattern that is only ambiguous under a requested i flag", () => {
+    expect(() => validateHuntRegex("^(a|A)+b$", "i")).toThrow(HuntQuerySyntaxError);
+    expect(() => validateHuntRegex("^(a|A)+b$")).not.toThrow(); // distinct alternatives without it
+  });
+
+  it("still accepts an ordinary regex", () => {
+    expect(() => validateHuntRegex("^powershell\\.exe$")).not.toThrow();
+  });
+
+  it("keeps rejecting the shapes it already refused", () => {
+    expect(() => validateHuntRegex("(?=secret)")).toThrow(HuntQuerySyntaxError); // lookaround
+    expect(() => validateHuntRegex("(a)\\1")).toThrow(HuntQuerySyntaxError); // backreference
+    expect(() => validateHuntRegex("a", "gg")).toThrow(HuntQuerySyntaxError); // duplicate flag
+    expect(() => validateHuntRegex("a", "g")).toThrow(HuntQuerySyntaxError); // disallowed flag
   });
 });

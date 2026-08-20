@@ -143,3 +143,38 @@ describe("matchEvent — any/all/none semantics", () => {
     expect(matchEvent(ev({ id: "e", processName: "cmd.exe" }), r)).toBe(false);
   });
 });
+
+describe("compileRuleset regex safety", () => {
+  // Tagger rules run against every imported event's text, which is adversary-controlled. Compiling
+  // is not the same as being cheap to run: `^(a|aa)+b$` compiles fine and takes exponential time.
+  it("rejects a condition regex that can backtrack catastrophically", () => {
+    expect(() =>
+      compileRuleset({ r: { all: [{ field: "description", regex: "^(a|aa)+b$" }], tags: ["x"] } }),
+    ).toThrow(/backtracking|ReDoS/i);
+  });
+
+  it("rejects a condition that is only ambiguous under its own i flag", () => {
+    expect(() =>
+      compileRuleset({
+        r: { all: [{ field: "description", regex: "^(a|A)+b$", flags: "i" }], tags: ["x"] },
+      }),
+    ).toThrow(/backtracking|ReDoS/i);
+  });
+
+  it("accepts that same pattern when it does NOT run case-insensitively", () => {
+    // Without the flag the two alternatives really are distinct, so this is not ambiguous and
+    // rejecting it would be a false alarm.
+    const compiled = compileRuleset({
+      r: { all: [{ field: "description", regex: "^(a|A)+b$" }], tags: ["x"] },
+    });
+    expect(compiled.rules).toHaveLength(1);
+  });
+
+  it("still compiles an ordinary condition regex", () => {
+    const compiled = compileRuleset({
+      r: { all: [{ field: "description", regex: "powershell\\s+-enc" }], tags: ["x"] },
+    });
+
+    expect(compiled.rules).toHaveLength(1);
+  });
+});

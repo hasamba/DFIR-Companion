@@ -94,3 +94,22 @@ describe("sanitizeExcludeRuleInput", () => {
     });
   });
 });
+
+describe("sanitizeExcludeRuleInput regex safety", () => {
+  // Same reasoning as the whitelist: the pattern runs against adversary-controlled IOC values.
+  it("drops a regex rule that can backtrack catastrophically", () => {
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "^(a|aa)+b$" })).toBeNull();
+  });
+
+  // Exclude rules are matched with "i" too — same hazard as the whitelist.
+  it("drops a regex that only backtracks once the i flag folds its alternatives", () => {
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "^(a|A)+b$" })).toBeNull();
+  });
+
+  it("still accepts an ordinary regex rule", () => {
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "^host-[0-9]+$" })).toMatchObject({
+      match: "regex",
+      pattern: "^host-[0-9]+$",
+    });
+  });
+});

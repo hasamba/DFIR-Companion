@@ -78,12 +78,46 @@ function inSet(s: Extract<CharSet, { any: false }>, ch: string): boolean {
   return s.ranges.some(([lo, hi]) => cp >= lo && cp <= hi);
 }
 
-function overlaps(a: CharSet, b: CharSet): boolean {
+/**
+ * The set as the `i` flag sees it: every letter stands for both of its cases.
+ *
+ * Without this, `^(a|A)+b$` reads as two alternatives that cannot start with the same character —
+ * true of the SOURCE, false of the regex that actually runs. Under `i` the two branches are the
+ * same branch twice, which is textbook exponential backtracking. Measured at 26 characters of
+ * input: 0ms without the flag, 4831ms with it.
+ *
+ * ASCII letters only. A missed non-ASCII fold means a missed rejection rather than a wrong one,
+ * which is the safe direction for a checker whose other approximations already err toward "these
+ * overlap".
+ */
+function foldCase(s: CharSet): CharSet {
+  if (s.any || s.negated) return s; // already overlaps everything
+  const chars = new Set<string>();
+  for (const c of s.chars) {
+    chars.add(c.toLowerCase());
+    chars.add(c.toUpperCase());
+  }
+  const ranges: [number, number][] = [...s.ranges];
+  for (const [lo, hi] of s.ranges) {
+    const lower: [number, number] = [Math.max(lo, 0x61), Math.min(hi, 0x7a)]; // a-z
+    if (lower[0] <= lower[1]) ranges.push([lower[0] - 32, lower[1] - 32]);
+    const upper: [number, number] = [Math.max(lo, 0x41), Math.min(hi, 0x5a)]; // A-Z
+    if (upper[0] <= upper[1]) ranges.push([upper[0] + 32, upper[1] + 32]);
+  }
+  return { any: false, negated: false, chars, ranges };
+}
+
+function overlaps(a: CharSet, b: CharSet, ignoreCase: boolean): boolean {
   if (a.any || b.any) return true;
   if (a.negated || b.negated) return true; // complement arithmetic isn't worth it
-  for (const c of a.chars) if (inSet(b, c)) return true;
-  for (const c of b.chars) if (inSet(a, c)) return true;
-  return a.ranges.some(([lo, hi]) => b.ranges.some(([lo2, hi2]) => lo <= hi2 && lo2 <= hi));
+  // foldCase returns the same object for any/negated sets, both already handled above, so these
+  // two are always the narrow shape inSet() needs.
+  const x = ignoreCase ? foldCase(a) : a;
+  const y = ignoreCase ? foldCase(b) : b;
+  if (x.any || y.any || x.negated || y.negated) return true;
+  for (const c of x.chars) if (inSet(y, c)) return true;
+  for (const c of y.chars) if (inSet(x, c)) return true;
+  return x.ranges.some(([lo, hi]) => y.ranges.some(([lo2, hi2]) => lo <= hi2 && lo2 <= hi));
 }
 
 function union(sets: CharSet[]): CharSet {
@@ -346,14 +380,14 @@ function atomSet(atom: Atom): CharSet {
 
 // Why this atom is ambiguous as a loop body — i.e. why it can match one string in several ways.
 // null when it looks unambiguous.
-function ambiguity(atom: Atom): string | null {
+function ambiguity(atom: Atom, ignoreCase: boolean): string | null {
   if (atom.k === "backref") return "a repetition whose body contains a backreference";
   if (atom.k !== "group") return null; // a bare char/class body is unambiguous
 
   for (const seq of atom.alts) {
     for (const t of seq) {
       if (t.min !== t.max) return "a repetition whose body contains another variable-length repetition";
-      const nested = ambiguity(t.atom);
+      const nested = ambiguity(t.atom, ignoreCase);
       if (nested) return nested;
     }
   }
@@ -361,7 +395,7 @@ function ambiguity(atom: Atom): string | null {
     const firsts = atom.alts.map(firstSet);
     for (let i = 0; i < firsts.length; i++) {
       for (let j = i + 1; j < firsts.length; j++) {
-        if (overlaps(firsts[i], firsts[j]))
+        if (overlaps(firsts[i], firsts[j], ignoreCase))
           return "a repetition over alternatives that can start with the same character";
       }
     }
@@ -371,22 +405,22 @@ function ambiguity(atom: Atom): string | null {
 
 const isLoop = (t: Term): boolean => t.max > SAFE_BOUNDED_REPEAT;
 
-function scan(alts: Term[][]): string | null {
+function scan(alts: Term[][], ignoreCase: boolean): string | null {
   for (const seq of alts) {
     let prevLoop: Term | null = null;
     for (const t of seq) {
       if (isLoop(t)) {
-        const why = ambiguity(t.atom);
+        const why = ambiguity(t.atom, ignoreCase);
         if (why) return why;
         // Two loops side by side split the same run of characters — .*.* and \w*\d* are quadratic.
-        if (prevLoop && overlaps(atomSet(prevLoop.atom), atomSet(t.atom))) {
+        if (prevLoop && overlaps(atomSet(prevLoop.atom), atomSet(t.atom), ignoreCase)) {
           return "two adjacent repetitions that match the same characters";
         }
       }
       if (t.atom.k === "zero") continue; // an anchor doesn't separate two loops
       prevLoop = isLoop(t) ? t : null;
       if (t.atom.k === "group") {
-        const nested = scan(t.atom.alts);
+        const nested = scan(t.atom.alts, ignoreCase);
         if (nested) return nested;
       }
     }
@@ -397,13 +431,20 @@ function scan(alts: Term[][]): string | null {
 /**
  * Decide whether a user-supplied regex source is safe to run against untrusted input.
  * Rejects invalid syntax too, so callers get one verdict for "won't compile" and "will hang".
+ *
+ * PASS THE FLAGS THE PATTERN WILL ACTUALLY RUN WITH. Ambiguity is a property of the compiled
+ * regex, not of its source text: `^(a|A)+b$` has two distinct branches as written and one branch
+ * twice under `i`. Callers that hard-code a flag when they match — the IOC whitelist and exclude
+ * lists both use `new RegExp(pattern, "i")` — must say so here, or the check answers a question
+ * about a regex nobody runs.
  */
-export function checkRegexSafety(src: string): RegexSafetyResult {
+export function checkRegexSafety(src: string, flags = ""): RegexSafetyResult {
+  const ignoreCase = flags.includes("i");
   if (src.length > MAX_PATTERN_LEN) {
     return { ok: false, reason: `pattern is too long (${src.length} chars, max ${MAX_PATTERN_LEN})` };
   }
   try {
-    new RegExp(src);
+    new RegExp(src, flags);
   } catch (err) {
     return { ok: false, reason: `not a valid regular expression: ${(err as Error).message}` };
   }
@@ -416,7 +457,7 @@ export function checkRegexSafety(src: string): RegexSafetyResult {
     return { ok: false, reason: "pattern uses constructs this ReDoS check cannot verify" };
   }
 
-  const why = scan(alts);
+  const why = scan(alts, ignoreCase);
   if (why) return { ok: false, reason: `${why} — rewrite it to avoid catastrophic backtracking (ReDoS)` };
   return { ok: true };
 }

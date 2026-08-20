@@ -1,3 +1,4 @@
+import { checkRegexSafety } from "./regexSafety.js";
 import { canonicalHuntFieldName, resolveHuntField, suggestHuntFields } from "./huntQueryFields.js";
 import type {
   HuntExpression,
@@ -275,12 +276,15 @@ export function validateHuntRegex(
   if (/\\[1-9]/.test(pattern)) {
     reject("Regular-expression backreferences are not allowed");
   }
-  if (/\([^)]*(?:\+|\*|\{\d+(?:,\d*)?\})[^)]*\)(?:\+|\*|\{)/.test(pattern)) {
-    reject("Nested quantified groups are not allowed");
-  }
-  if (/(\.\*){2,}|(\.\+){2,}/.test(pattern)) {
-    reject("Repeated wildcard quantifiers are not allowed");
-  }
+  // The two hand-rolled shape checks that used to sit here — "nested quantified groups" and
+  // "repeated wildcard quantifiers" — did not model ALTERNATION OVERLAP, so the textbook ReDoS
+  // `^(a|aa)+b$` walked straight through them and ran against event text. regexSafety.ts already
+  // analyses this properly and names that exact case, so defer to it rather than keeping a second,
+  // weaker set of rules that has to be taught every shape one at a time. The two checks above stay:
+  // they ban CONSTRUCTS this query language does not offer, which is a language decision, not a
+  // cost one.
+  const safety = checkRegexSafety(pattern, flags);
+  if (!safety.ok) reject(safety.reason ?? "unsafe regular expression");
   try {
     new RegExp(pattern, flags);
   } catch (error) {
