@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import sharp from "sharp";
 import {
   ocrRedactImage,
   DEFAULT_CONFIDENCE_THRESHOLD,
   TesseractOcrRunner,
+  tesseractDataOptions,
   type OcrRunner,
   type OcrWord,
 } from "../../src/analysis/ocrRedact.js";
@@ -219,5 +223,38 @@ describe("TesseractOcrRunner", () => {
       vi.doUnmock("tesseract.js");
       vi.resetModules();
     }
+  });
+});
+
+// Where tesseract.js sources/caches eng.traineddata (issue: the container's cwd is root-owned,
+// so the library's cache-into-cwd default silently failed after the privilege drop). The three
+// branches: explicit env override, bundled model read in place with caching off, temp-dir fallback.
+describe("tesseractDataOptions", () => {
+  it("prefers an explicit DFIR_OCR_CACHE and creates it", async () => {
+    const dir = join(tmpdir(), `dfir-ocr-test-${process.pid}-env`);
+    rmSync(dir, { recursive: true, force: true });
+    expect(tesseractDataOptions({ DFIR_OCR_CACHE: dir }, tmpdir())).toEqual({ cachePath: dir });
+    expect(existsSync(dir)).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads a bundled eng.traineddata in place, with caching and gzip off", async () => {
+    const dir = join(tmpdir(), `dfir-ocr-test-${process.pid}-bundled`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "eng.traineddata"), "stub");
+    expect(tesseractDataOptions({}, dir)).toEqual({
+      langPath: dir,
+      gzip: false,
+      cacheMethod: "none",
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("falls back to a temp-dir cache — never the working directory", async () => {
+    const dir = join(tmpdir(), `dfir-ocr-test-${process.pid}-empty`);
+    mkdirSync(dir, { recursive: true });
+    const options = tesseractDataOptions({}, dir);
+    expect(options).toEqual({ cachePath: join(tmpdir(), "dfir-companion-ocr") });
+    rmSync(dir, { recursive: true, force: true });
   });
 });

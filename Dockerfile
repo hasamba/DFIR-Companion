@@ -67,13 +67,18 @@ COPY --from=extension-build /app/extension/dist /opt/dfir-extension/dist
 COPY --from=extension-build /app/extension/dfir-companion-extension.zip /opt/dfir-extension/dfir-companion-extension.zip
 
 COPY docker-entrypoint.sh /usr/local/bin/dfir-entrypoint
-# The server parses hostile forensic evidence, so it must not run as root: hand the writable
-# dirs to the base image's unprivileged `node` user, but leave /app root-owned on purpose — a
-# compromised server must not be able to rewrite its own code.
+# The server parses hostile forensic evidence, so it must not run as root — but bind mounts
+# the Docker daemon auto-creates on the host arrive root-owned, so a bare USER directive would
+# leave a clean-checkout `docker compose up` unable to write case data at all. Instead the
+# entrypoint STARTS as root, hands the writable mounts to `node` once, and drops privileges
+# with setpriv before exec'ing the server (see docker-entrypoint.sh). /app stays root-owned
+# on purpose: a compromised server must not be able to rewrite its own code.
 RUN chmod +x /usr/local/bin/dfir-entrypoint \
-  && mkdir -p /data/cases /out \
+  && mkdir -p /data/cases /data/ocr-cache /out \
   && chown -R node:node /data /out
-USER node
+# tesseract.js would otherwise cache its OCR language model into the root-owned working
+# directory; point it at a node-writable location instead (ocrRedact.ts honors this).
+ENV DFIR_OCR_CACHE=/data/ocr-cache
 
 EXPOSE 4773
 # Bake liveness into the image so plain `docker run` / Portainer / Watchtower users get health

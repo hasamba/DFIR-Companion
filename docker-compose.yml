@@ -49,9 +49,9 @@ services:
     # Linux only (no Docker Desktop): make host.docker.internal resolve to the host gateway.
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
-    # Linux only: pre-create ./cases and ./addon (`mkdir -p cases addon`) before first start —
-    # otherwise Docker creates them root-owned, and the container's unprivileged `node` user
-    # (uid 1000) cannot write to either bind mount.
+    # No pre-creation needed: the entrypoint starts as root, hands both mounts to the
+    # container's unprivileged `node` user (once, marker-gated for ./cases), then drops
+    # privileges before the server runs — so a clean checkout works on any host UID.
     volumes:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist

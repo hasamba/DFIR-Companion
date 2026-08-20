@@ -26,5 +26,24 @@ if [ -n "$RAILWAY_PUBLIC_DOMAIN" ]; then
   fi
 fi
 
-# Hand off to the Node server as PID 1 so signals (docker stop / Ctrl-C) stop it cleanly.
+# The server must not parse hostile evidence as root, but the Docker daemon auto-creates
+# missing bind-mount directories root-owned — and case stores written by the older root
+# image are root-owned throughout. So this entrypoint starts as root purely to hand the
+# writable mounts to `node`, then drops privileges for the server itself. The marker file
+# keeps a multi-gigabyte evidence store from being re-walked on every boot; /out (the
+# pre-built add-on just copied above) is small enough to fix up unconditionally.
+if [ "$(id -u)" = "0" ]; then
+  chown -R node:node /out 2>/dev/null || true
+  if [ ! -e /data/.dfir-owned-by-node ]; then
+    chown -R node:node /data 2>/dev/null || true
+    touch /data/.dfir-owned-by-node 2>/dev/null || true
+    chown node:node /data/.dfir-owned-by-node 2>/dev/null || true
+  fi
+  # setpriv execs in place, so Node is still PID 1 and docker stop signals it directly;
+  # --init-groups sheds root's supplementary groups along with uid/gid.
+  exec setpriv --reuid=node --regid=node --init-groups node dist/server.js
+fi
+
+# Already unprivileged (e.g. a compose `user:` override): the operator owns mount
+# permissions; hand off to the Node server as PID 1 so signals stop it cleanly.
 exec node dist/server.js
