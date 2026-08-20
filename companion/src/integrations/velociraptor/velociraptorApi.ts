@@ -819,10 +819,13 @@ export class VelociraptorClient {
           ? r.req_artifacts
           : [];
     const artifacts = src.map((a) => String(a).trim()).filter(Boolean);
+    // client_info() is a VQL FUNCTION, not a row plugin, so it is projected via `FROM scope()`
+    // (the same `SELECT fn(...) AS X FROM scope()` idiom this file uses for hunt()/collect_client())
+    // rather than placed after FROM. It is the exact by-id lookup, so no fleet enumeration.
     const clientRows = await this.runRaw(
-      `SELECT client_id, os_info FROM client_info(client_id='${clientId}') LIMIT 1`,
+      `SELECT client_info(client_id='${clientId}') AS Info FROM scope() LIMIT 1`,
     );
-    const rec = normalizeClientRow(clientRows[0]);
+    const rec = normalizeClientRow((clientRows[0] as { Info?: unknown } | undefined)?.Info);
     const hostname = (rec && rec.clientId === clientId && (rec.hostname || rec.fqdn)) || "";
     return { artifacts, hostname };
   }

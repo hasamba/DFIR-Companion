@@ -512,21 +512,22 @@ describe("VelociraptorClient.getHuntArtifacts", () => {
 });
 
 describe("VelociraptorClient.getFlowInfo", () => {
-  // A runner branching on the flows() query vs the EXACT client_info(client_id=) lookup. It also
-  // captures the statements so a test can assert the emitted VQL rather than trusting a loose match:
-  // the hostname query must be client_info(client_id='…'), because clients(search=) has no `id:`
-  // term and would silently return no row for a valid C.<id>.
+  // A runner branching on the flows() query vs the EXACT client_info(client_id=) lookup. The client
+  // record is projected as `client_info(...) AS Info FROM scope()` (client_info is a VQL function,
+  // not a row plugin), so the runner wraps the provided client row under `Info` exactly as the real
+  // subprocess would. It also captures the statements so a test can assert the emitted VQL rather
+  // than trusting a loose match.
   function flowRunner(flowRow: Record<string, unknown>, clientRows: unknown[], seen?: string[]): VqlRunner {
     return async (statements) => {
       const p = statements[0];
       seen?.push(p);
       if (p.includes("FROM flows(")) return { rows: [flowRow], raw: "" };
-      if (p.includes("FROM client_info(")) return { rows: clientRows, raw: "" };
+      if (p.includes("client_info(")) return { rows: clientRows.map((r) => ({ Info: r })), raw: "" };
       return { rows: [], raw: "" };
     };
   }
 
-  it("resolves the host with an exact client_info(client_id=) query, not a clients() search", async () => {
+  it("resolves the host with client_info() projected via FROM scope(), not a clients() search", async () => {
     const seen: string[] = [];
     const runner = flowRunner(
       { artifacts_with_results: ["Windows.NTFS.MFT"] },
@@ -536,7 +537,9 @@ describe("VelociraptorClient.getFlowInfo", () => {
     const info = await new VelociraptorClient(cfg, runner).getFlowInfo("C.dead", "F.001");
     expect(info.hostname).toBe("DESKTOP-01");
     const clientQuery = seen.find((q) => q.includes("client_info(") || q.includes("clients("));
-    expect(clientQuery).toContain("FROM client_info(client_id='C.dead')");
+    expect(clientQuery).toContain("client_info(client_id='C.dead')");
+    expect(clientQuery).toContain("FROM scope()");
+    expect(clientQuery).not.toContain("FROM client_info(");
     expect(clientQuery).not.toContain("clients(search=");
   });
 

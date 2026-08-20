@@ -79,6 +79,10 @@ RUN chmod +x /usr/local/bin/dfir-entrypoint \
 # tesseract.js would otherwise cache its OCR language model into the root-owned working
 # directory; point it at a node-writable location instead (ocrRedact.ts honors this).
 ENV DFIR_OCR_CACHE=/data/ocr-cache
+# The Settings/setup `.env` (POST /settings/env writes it atomically) defaults to the
+# working directory — root-owned /app/companion here — so the node-run server could not
+# save it. Put it on the node-writable data tree instead (persisted if /data is mounted).
+ENV DFIR_ENV_FILE=/data/companion.env
 
 EXPOSE 4773
 # Bake liveness into the image so plain `docker run` / Portainer / Watchtower users get health
