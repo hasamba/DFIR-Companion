@@ -41,6 +41,11 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import {
+  consolidateHayabusaScriptBlocks,
+  isScriptBlockTextKey,
+  type HayabusaRecord,
+} from "./scriptBlockFragments.js";
 
 type Row = Record<string, unknown>;
 
@@ -113,14 +118,24 @@ function hayaTime(s: string): string {
 // lines (e.g. `echo hello | grep foo`), so a detail value containing a pipe was over-split: the
 // tail became an orphan fragment with no `Key:` prefix and was silently dropped, truncating the
 // captured command line and any IOCs embedded in the lost tail (#27).
+// Hayabusa renders the cell as "Key: value ¦ Key: value", so exactly one space of padding sits on
+// each side of the separator and one after each colon. Splitting on /\s*¦\s*/ and trimming removed
+// that padding TOGETHER WITH any whitespace the value itself ended in — harmless for `Proc` or
+// `DstIP`, but destructive for a script-block slice: a block Windows cut right after "Write-Output "
+// came back joined as "Write-Outputvalue", a script that never ran. So split on the bare separator
+// and strip only the padding, keeping ordinary fields trimmed exactly as before.
+function stripPadding(v: string): string {
+  return v.replace(/^ /, "").replace(/ $/, "");
+}
 function parseDetailCell(cell: string): Row {
   const out: Row = {};
-  for (const part of cell.split(/\s*¦\s*/)) {
+  for (const part of cell.split("¦")) {
     const idx = part.indexOf(":");
     if (idx <= 0) continue;
     const k = part.slice(0, idx).trim();
-    const v = part.slice(idx + 1).trim();
-    if (k) out[k] = v;
+    if (!k) continue;
+    const raw = part.slice(idx + 1);
+    out[k] = isScriptBlockTextKey(k) ? stripPadding(raw) : raw.trim();
   }
   return out;
 }
@@ -150,6 +165,7 @@ function mapRecord(
   rec: Row,
   details: Row,
   iocSink: Map<string, SiemIoc>,
+  fullMessage?: string,
 ): { mapped: MappedEvent; host: string } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
@@ -215,6 +231,10 @@ function mapRecord(
       mitre,
       aggKey,
       sources: ["Hayabusa"],
+      // The `subject` above cuts every detail field at 120 characters, so a reassembled script block
+      // would otherwise reach the analyst truncated to its first line. Carry the whole joined script
+      // as the expandable full detail. Only consolidated fragments set this.
+      ...(fullMessage ? { message: fullMessage } : {}),
       ...(sha256 ? { sha256 } : {}),
       ...(md5 && !sha256 ? { md5 } : {}),
       ...(pathRaw ? { path: pathRaw } : {}),
@@ -228,7 +248,7 @@ function mapRecord(
 // ───────────────────────────── record extraction ─────────────────────────────
 
 // JSON/JSONL → records (Details already an object). CSV → records (Details a parsed map).
-function extractHayabusaRecords(text: string): { records: { rec: Row; details: Row }[]; format: string } {
+function extractHayabusaRecords(text: string): { records: HayabusaRecord[]; format: string } {
   const trimmed = text.trim();
   if (!trimmed) return { records: [], format: "empty" };
 
@@ -242,7 +262,9 @@ function extractHayabusaRecords(text: string): { records: { rec: Row; details: R
       };
       return { rec, details };
     });
-    return { records: out, format: "json" };
+    // Rejoin any PowerShell 4104 script block Windows split across several events, so one script
+    // yields one alert carrying the whole text instead of one alert per fragment.
+    return { records: consolidateHayabusaScriptBlocks(out), format: "json" };
   }
 
   // CSV timeline.
@@ -258,7 +280,7 @@ function extractHayabusaRecords(text: string): { records: { rec: Row; details: R
     const details: Row = { ...parseDetailCell(detailsCell), ...parseDetailCell(extraCell) };
     return { rec, details };
   });
-  return { records: out, format: "csv" };
+  return { records: consolidateHayabusaScriptBlocks(out), format: "csv" };
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────
@@ -275,8 +297,8 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
 
-  for (const { rec, details } of records) {
-    const r = mapRecord(rec, details, iocSink);
+  for (const { rec, details, fullMessage } of records) {
+    const r = mapRecord(rec, details, iocSink, fullMessage);
     if (!r) continue;
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
     mapped.push(r.mapped);

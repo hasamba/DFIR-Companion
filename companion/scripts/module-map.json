@@ -371,6 +371,7 @@
     "savedHuntStore.ts": "analysis/hunt",
     "scope.ts": "analysis/workflow",
     "scopeProject.ts": "analysis/workflow",
+    "scriptBlockFragments.ts": "analysis/ingest",
     "searchFilter.ts": "analysis/timeline",
     "secondLook.ts": "analysis/ai",
     "secondOpinion.ts": "analysis/ai",
