@@ -230,13 +230,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       await reloadEnvPrefix("DFIR_VELOCIRAPTOR_");
       options.velociraptorClient = rebuildVelo();
       if (!options.velociraptorClient) {
-        return res
-          .status(200)
-          .json({
-            configured: false,
-            ok: false,
-            error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)",
-          });
+        return res.status(200).json({
+          configured: false,
+          ok: false,
+          error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)",
+        });
       }
       try {
         const count = await ctx.refreshVeloClients();
@@ -616,18 +614,16 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       ctx.veloHuntTimers().set(launch.huntId, timer);
       ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
 
-      return res
-        .status(202)
-        .json({
-          huntId: launch.huntId,
-          guiUrl: launch.guiUrl,
-          collectAt,
-          waitMinutes,
-          artifacts: launch.artifacts,
-          unknownArtifacts,
-          unavailableArtifacts,
-          timeScope: job.timeScope,
-        });
+      return res.status(202).json({
+        huntId: launch.huntId,
+        guiUrl: launch.guiUrl,
+        collectAt,
+        waitMinutes,
+        artifacts: launch.artifacts,
+        unknownArtifacts,
+        unavailableArtifacts,
+        timeScope: job.timeScope,
+      });
     } catch (err) {
       logLine(`[velociraptor] run bundle ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
@@ -662,12 +658,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     // them to the super-timeline-only path would leak into the forensic timeline and break its
     // invariant (mirrors the same guard on the bundle-collect uploads step).
     if (ref.isUploadsUrl && superOnly) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "uploaded-file import doesn't support super-timeline-only mode — collect upload-based artifacts via a normal (forensic-timeline) import instead",
-        });
+      return res.status(400).json({
+        error:
+          "uploaded-file import doesn't support super-timeline-only mode — collect upload-based artifacts via a normal (forensic-timeline) import instead",
+      });
     }
     const client = options.velociraptorClient;
     try {
@@ -675,16 +669,14 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         if (ref.isUploadsUrl) {
           const uploads = await client.huntUploads(ref.huntId);
           if (!uploads.length) {
-            return res
-              .status(200)
-              .json({
-                kind: "hunt",
-                huntId: ref.huntId,
-                addedEvents: 0,
-                addedIocs: 0,
-                uploadsOnly: true,
-                note: "no uploaded report files found for this hunt yet (or none matched a supported format)",
-              });
+            return res.status(200).json({
+              kind: "hunt",
+              huntId: ref.huntId,
+              addedEvents: 0,
+              addedIocs: 0,
+              uploadsOnly: true,
+              note: "no uploaded report files found for this hunt yet (or none matched a supported format)",
+            });
           }
           const out = await ctx.ingestVeloUploads(caseId, uploads, {
             minSeverity,
@@ -711,52 +703,72 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           return res
             .status(404)
             .json({ error: `hunt ${ref.huntId} not found on the server, or it collected no artifacts` });
-        const { results } = await client.huntResultsByArtifact(ref.huntId, arts);
-        if (!Object.keys(results).length)
-          return res
-            .status(200)
-            .json({
-              kind: "hunt",
-              huntId: ref.huntId,
-              artifacts: arts,
-              addedEvents: 0,
-              addedIocs: 0,
-              superTimelineOnly: superOnly,
-              note: "the hunt returned no rows yet",
-            });
-        const out = await ctx.ingestVeloArtifactMap(caseId, JSON.stringify(results), {
-          label: `velo-hunt_${ref.huntId}.json`,
-          idBase: ref.huntId,
-          superOnly,
-          minSeverity,
-          veloUrl: client.huntGuiUrlFor(ref.huntId),
-        });
-        options.onVeloHunt?.(caseId);
-        return res
-          .status(200)
-          .json({
+        // STREAMED, not buffered. This read is ingestion, so it uses the 100,000-row collection cap —
+        // and `huntResultsByArtifact` would hold every artifact's rows in one object while this route
+        // stringified a second full copy of it, which on a large multi-artifact hunt is millions of rows
+        // live at once and the heap exhaustion the bundle collector was rewritten to avoid. So each
+        // artifact is read, ingested and released before the next is touched; at most one artifact's
+        // rows are ever resident. A read that fails is logged and skipped, exactly as before.
+        const imported: string[] = [];
+        let addedEvents = 0;
+        let addedIocs = 0;
+        for (const art of arts) {
+          let rows: unknown[];
+          try {
+            rows = (await client.huntArtifactRows(ref.huntId, art, [], undefined, true)).rows;
+          } catch (e) {
+            logLine(
+              `[velociraptor] external hunt ${ref.huntId}: artifact ${art} read failed: ${(e as Error).message}`,
+            );
+            continue;
+          }
+          if (!rows.length) continue;
+          const one = await ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
+            label: `velo-hunt_${ref.huntId}_${art}.json`,
+            // Namespaced per artifact: a running index across the whole hunt would collide now that
+            // each artifact imports in its own pass.
+            idBase: `${ref.huntId}-${art}`,
+            superOnly,
+            minSeverity,
+            veloUrl: client.huntGuiUrlFor(ref.huntId),
+          });
+          rows = []; // release before the next artifact is read
+          imported.push(art);
+          addedEvents += one.addedEvents;
+          addedIocs += one.addedIocs;
+        }
+        if (!imported.length)
+          return res.status(200).json({
             kind: "hunt",
             huntId: ref.huntId,
-            artifacts: Object.keys(results),
-            addedEvents: out.addedEvents,
-            addedIocs: out.addedIocs,
+            artifacts: arts,
+            addedEvents: 0,
+            addedIocs: 0,
             superTimelineOnly: superOnly,
+            note: "the hunt returned no rows yet",
           });
+        options.onVeloHunt?.(caseId);
+        return res.status(200).json({
+          kind: "hunt",
+          huntId: ref.huntId,
+          artifacts: imported,
+          addedEvents,
+          addedIocs,
+          superTimelineOnly: superOnly,
+        });
       }
       if (ref.isUploadsUrl) {
         const uploads = await client.flowUploads(ref.clientId, ref.flowId);
         if (!uploads.length) {
-          return res
-            .status(200)
-            .json({
-              kind: "flow",
-              clientId: ref.clientId,
-              flowId: ref.flowId,
-              addedEvents: 0,
-              addedIocs: 0,
-              uploadsOnly: true,
-              note: "no uploaded report files found for this flow yet (or none matched a supported format)",
-            });
+          return res.status(200).json({
+            kind: "flow",
+            clientId: ref.clientId,
+            flowId: ref.flowId,
+            addedEvents: 0,
+            addedIocs: 0,
+            uploadsOnly: true,
+            note: "no uploaded report files found for this flow yet (or none matched a supported format)",
+          });
         }
         const out = await ctx.ingestVeloUploads(caseId, uploads, {
           minSeverity,
@@ -784,52 +796,59 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         return res
           .status(404)
           .json({ error: `flow ${ref.flowId} on ${ref.clientId} not found, or it collected no artifacts` });
-      const map: Record<string, unknown[]> = {};
+      // Streamed for the same reason as the hunt branch above: this loop used to accumulate every
+      // artifact into one map and then stringify a second copy of it, which at the collection row cap
+      // is millions of rows resident at once. Ingest and release each artifact before reading the next.
+      const importedArts: string[] = [];
+      let flowEvents = 0;
+      let flowIocs = 0;
       for (const art of info.artifacts) {
+        let rows: unknown[] = [];
         try {
-          const r = await client.collectionResults(ref.clientId, ref.flowId, art);
-          if (r.rows.length) map[art] = r.rows;
+          rows = (await client.collectionResults(ref.clientId, ref.flowId, art, [], undefined, true)).rows;
         } catch (e) {
           logLine(
             `[velociraptor] external flow ${ref.flowId}: artifact ${art} read failed: ${(e as Error).message}`,
           );
+          continue;
         }
+        if (!rows.length) continue;
+        const one = await ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
+          label: `velo-flow_${ref.flowId}_${art}.json`,
+          idBase: `${ref.flowId}-${art}`,
+          superOnly,
+          minSeverity,
+          hostFallback: info.hostname,
+          veloUrl: client.flowGuiUrlFor(ref.clientId, ref.flowId),
+        });
+        rows = [];
+        importedArts.push(art);
+        flowEvents += one.addedEvents;
+        flowIocs += one.addedIocs;
       }
-      if (!Object.keys(map).length)
-        return res
-          .status(200)
-          .json({
-            kind: "flow",
-            clientId: ref.clientId,
-            flowId: ref.flowId,
-            hostname: info.hostname,
-            artifacts: info.artifacts,
-            addedEvents: 0,
-            addedIocs: 0,
-            superTimelineOnly: superOnly,
-            note: "the flow returned no rows",
-          });
-      const out = await ctx.ingestVeloArtifactMap(caseId, JSON.stringify(map), {
-        label: `velo-flow_${ref.flowId}.json`,
-        idBase: ref.flowId,
-        superOnly,
-        minSeverity,
-        hostFallback: info.hostname,
-        veloUrl: client.flowGuiUrlFor(ref.clientId, ref.flowId),
-      });
-      options.onVeloHunt?.(caseId);
-      return res
-        .status(200)
-        .json({
+      if (!importedArts.length)
+        return res.status(200).json({
           kind: "flow",
           clientId: ref.clientId,
           flowId: ref.flowId,
           hostname: info.hostname,
-          artifacts: Object.keys(map),
-          addedEvents: out.addedEvents,
-          addedIocs: out.addedIocs,
+          artifacts: info.artifacts,
+          addedEvents: 0,
+          addedIocs: 0,
           superTimelineOnly: superOnly,
+          note: "the flow returned no rows",
         });
+      options.onVeloHunt?.(caseId);
+      return res.status(200).json({
+        kind: "flow",
+        clientId: ref.clientId,
+        flowId: ref.flowId,
+        hostname: info.hostname,
+        artifacts: importedArts,
+        addedEvents: flowEvents,
+        addedIocs: flowIocs,
+        superTimelineOnly: superOnly,
+      });
     } catch (err) {
       logLine(`[velociraptor] import-external ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
@@ -863,13 +882,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const jobs = await options.veloHuntStore.list(caseId);
     const job = wantedHuntId ? jobs.find((j) => j.huntId === wantedHuntId) : jobs[0];
     if (!job)
-      return res
-        .status(404)
-        .json({
-          error: wantedHuntId
-            ? `no Velociraptor hunt ${wantedHuntId} for this case`
-            : "no Velociraptor hunt to collect for this case",
-        });
+      return res.status(404).json({
+        error: wantedHuntId
+          ? `no Velociraptor hunt ${wantedHuntId} for this case`
+          : "no Velociraptor hunt to collect for this case",
+      });
     const disposition = ctx.startVeloHuntCollect(caseId, job.huntId);
     return res.status(202).json({ accepted: true, huntId: job.huntId, queued: disposition === "queued" });
   });
@@ -1031,11 +1048,9 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       logSource: logSource || undefined,
     });
     if (!resolved) {
-      return res
-        .status(400)
-        .json({
-          error: `could not map "${artifact || logSource}" to a Velociraptor artifact — collect it manually`,
-        });
+      return res.status(400).json({
+        error: `could not map "${artifact || logSource}" to a Velociraptor artifact — collect it manually`,
+      });
     }
     const title = `Collect ${resolved.artifact} on ${hostname}`;
     try {
@@ -1075,11 +1090,9 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     try {
       const job = await options.veloHuntStore.get(req.params.id, huntId);
       if (!job)
-        return res
-          .status(404)
-          .json({
-            error: "this hunt is no longer tracked (it aged out of the job list) — re-run it to see results",
-          });
+        return res.status(404).json({
+          error: "this hunt is no longer tracked (it aged out of the job list) — re-run it to see results",
+        });
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
       const { results, skipped } = await options.velociraptorClient.huntResultsByArtifact(

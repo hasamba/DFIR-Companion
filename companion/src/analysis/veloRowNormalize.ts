@@ -24,9 +24,17 @@ export function normalizeRow(row: Row): Row {
   return normalizeElasticRow(unwrapLineRow(row));
 }
 
-// Columns a source-qualified read adds AROUND the payload. They are kept when a row is unwrapped —
+// Columns a source-qualified read adds AROUND the payload: Velociraptor's own decoration of every
+// result row with the identity of the collection it came from. They are kept when a row is unwrapped —
 // `_Source` is what names the artifact for classification, and losing it would strip that context.
-const WRAPPER_META = /^(_|Client(Id)?$|Fqdn$|Hostname$)/i;
+//
+// They must also not COUNT as payload, and that is the sharper edge. `hunt_results()` stamps each row
+// with `FlowId` as well as `ClientId`/`Fqdn`/`_OrgId`, so a real hunt read of
+// `Generic.Scanner.ThorZIP/ThorResultsJson` presented TWO non-metadata columns (`Line` + `FlowId`),
+// the un-wrap below bailed out, and every finding in the scan stayed an opaque string: 1000 rows
+// mapped generic/Info and the default Low forensic floor demoted the lot to the super-timeline. The
+// scan imported, reported success, and put nothing in the forensic timeline.
+const WRAPPER_META = /^(_|Client(Id|Name)?$|Flow(Id)?$|SessionId$|OrgId$|Fqdn$|Hostname$)/i;
 
 /**
  * Replace a `{ Line: "<json object>" }` wrapper with the object it carries, keeping any collection

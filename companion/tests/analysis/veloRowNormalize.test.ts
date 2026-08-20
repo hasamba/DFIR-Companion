@@ -28,6 +28,32 @@ describe("normalizeRow — Line payload", () => {
     expect(out._Source).toBe("from-payload");
   });
 
+  // The shape a REAL hunt read returns. Velociraptor's own `hunt_results()` decorates every result
+  // row with the collection's identity, and `FlowId` is part of that decoration — so a THOR finding
+  // never arrives as a bare `{ Line }`. FlowId was missing from the metadata set below, which made
+  // the row count TWO payload columns and skipped the un-wrap entirely: all 1000 rows of a real scan
+  // mapped generic/Info and the forensic floor sent every one of them to the super-timeline.
+  it("un-wraps a row a real hunt read decorated with the collection identity", () => {
+    const out = normalizeRow({
+      Line: JSON.stringify(thor),
+      FlowId: "F.DA2A4A9E0J2PK.H",
+      ClientId: "C.14f7b543888d1fbe",
+      _OrgId: "root",
+      Fqdn: "WIN-UK1GV882OK6.localdomain",
+    });
+    expect(out.level).toBe("Alert"); // what the forensic floor needs to keep the event
+    expect(out.time).toBe(thor.time);
+    expect(out.FlowId).toBe("F.DA2A4A9E0J2PK.H"); // collection identity kept alongside the payload
+  });
+
+  // The other shape that puts columns next to `Line`: a source reading a TEXT file that emits its own
+  // per-line context (Custom.Windows.System.Powershell.PSReadline.QuickWins). Those are real artifact
+  // data, not collection metadata, so the row stays exactly as it came.
+  it("leaves a text-file source's own per-line columns alone", () => {
+    const row = { Line: JSON.stringify(thor), OSPath: "C:\\h.txt", LineNum: 3, Username: "jsmith" };
+    expect(normalizeRow(row)).toEqual(row);
+  });
+
   it("leaves a plain-text Line alone", () => {
     const row = { Line: "2025-12-05 scan started, 0 findings" };
     expect(normalizeRow(row)).toEqual(row);

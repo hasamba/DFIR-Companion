@@ -60,7 +60,7 @@ const runner: VqlRunner = async (statements) => {
   return { rows: [], raw: "" };
 };
 
-async function makeApp(runnerOverride: VqlRunner = runner) {
+async function makeApp(runnerOverride: VqlRunner = runner, cfg: Partial<VelociraptorApiConfig> = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -78,7 +78,7 @@ async function makeApp(runnerOverride: VqlRunner = runner) {
     pipeline,
     stateStore,
     importMetaStore,
-    velociraptorClient: new VelociraptorClient(veloCfg, runnerOverride),
+    velociraptorClient: new VelociraptorClient({ ...veloCfg, ...cfg }, runnerOverride),
     artifactBundleStore,
     veloHuntStore,
   });
@@ -394,6 +394,52 @@ describe("Velociraptor triage bundles — routes", () => {
         { name: "DetectRaptor.Windows.Detection.Amcache", error: "output exceeded 1048576 bytes" },
       ]);
       expect(job.emptyArtifacts).toEqual(["Windows.System.Pslist"]);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  // The THIRD collect outcome. A read that hits the row cap imports real rows and reports success, so
+  // it is indistinguishable from a complete collect — which is how a THOR scan's 40 warnings went
+  // missing while the case showed a green import. Recorded on the job beside skipped/empty.
+  it(
+    "collect records an artifact whose read hit the row cap, so a PARTIAL collect isn't reported as a complete one",
+    async () => {
+      const cappedRunner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("artifact_definitions()"))
+          return {
+            rows: [{ name: "Generic.System.Pstree", description: "Process tree", type: "CLIENT" }],
+            raw: "",
+          };
+        if (p.includes("hunt(") && p.includes("artifacts="))
+          return { rows: [{ Hunt: { HuntId: "H.CAP1", state: "RUNNING" } }], raw: "" };
+        if (p.includes("hunt_results(") && p.includes("Pstree")) {
+          // One row MORE than the configured cap — exactly what a real over-cap read returns, since the
+          // VQL asks for cap+1 so the client can tell "full" from "there was more".
+          const rows = Array.from({ length: 3 }, (_, i) => ({
+            Name: `p${i}.exe`,
+            Timestamp: "2026-06-01T10:00:00Z",
+          }));
+          return { rows, raw: "" };
+        }
+        return { rows: [], raw: "" };
+      };
+      // collectMaxRows 2, so the 3 rows above trip the cap and 2 survive.
+      const made = await makeApp(cappedRunner, { collectMaxRows: 2 });
+      await request(made.app)
+        .post("/bundles")
+        .send({ id: "best-practice", name: "Best Practice", artifacts: ["Generic.System.Pstree"] });
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+      const job = await pollHuntJob<{
+        status: string;
+        truncatedArtifacts?: { name: string; kept: number; total: number }[];
+      }>(made.app);
+      expect(job.status).toBe("imported");
+      expect(job.truncatedArtifacts).toEqual([{ name: "Generic.System.Pstree", kept: 2, total: 3 }]);
     },
     POLL_TIMEOUT_MS * 2,
   );

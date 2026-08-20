@@ -226,6 +226,15 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   };
   const lastEnd = ends[ends.length - 1];
   if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;
+  // `count` is OCCURRENCES of the underlying activity (see ForensicEvent.count), not how many rows
+  // reported it — so merging deliberately does NOT sum it. Two tools describing one event, and a
+  // re-import of a file already in the case, both arrive here as separate members; summing would show
+  // the first as "×2" and would make every re-import inflate the timeline, which is the exact
+  // idempotence step 0 exists to guarantee. The primary's count is carried through by the spread above.
+  //
+  // A count genuinely CAN be lost here — two aggregated groups that merge keep only one group's total —
+  // but the answer is to stop distinct findings from merging at all (they collide when a clipped
+  // description makes two different rows look identical), not to add their occurrences together.
   return merged;
 }
 

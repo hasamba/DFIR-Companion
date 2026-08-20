@@ -723,6 +723,54 @@ describe("VelociraptorClient.huntResults", () => {
     await expect(c.huntResults("H.x' OR 1=1--", "Custom.x", [])).rejects.toThrow(/invalid hunt id/);
     await expect(c.huntResults("H.ABC", "bad name", [])).rejects.toThrow(/invalid artifact/);
   });
+
+  // `maxRows` is the DASHBOARD's cap — how many rows a result table renders. Applying it to a
+  // COLLECTION read truncates evidence: a real THOR scan streams ~1000 lines of startup chatter before
+  // its findings, so the default 1000 cut the scan off mid-run and the 40 warnings it reported never
+  // reached the case. Collection reads get their own, much larger cap — the same split the stdout byte
+  // cap already makes (collectMaxOutputBytes vs maxOutputBytes).
+  it("reads a hunt with the COLLECTION row cap, not the dashboard's", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: Array.from({ length: 10 }, (_, i) => ({ i })), raw: "" };
+    };
+    const res = await new VelociraptorClient({ ...cfg, collectMaxRows: 10 }, runner).huntResults(
+      "H.ABC123",
+      "Generic.Scanner.ThorZIP",
+      [],
+      undefined,
+      true,
+    );
+    expect(program).toContain("LIMIT 11"); // collectMaxRows + 1, not maxRows (3) + 1
+    expect(res.rows).toHaveLength(10); // and the result is not sliced back down to 3
+    expect(res.truncated).toBe(false);
+  });
+
+  // Codex review, P1: `huntResults`/`collectionResults` are ALSO the auto-polled dashboard endpoints
+  // (/velociraptor/hunt-results, /velociraptor/collect-results). Defaulting them to the 100k collection
+  // cap would make every poll read and ship up to 100x more rows, defeating DFIR_VELOCIRAPTOR_MAX_ROWS.
+  // The big cap is opt-in, and only the ingestion readers opt in.
+  it("keeps the dashboard's view cap on a plain read — the collection cap is opt-in", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: Array.from({ length: 10 }, (_, i) => ({ i })), raw: "" };
+    };
+    const res = await new VelociraptorClient({ ...cfg, collectMaxRows: 10 }, runner).huntResults(
+      "H.ABC123",
+      "Generic.Scanner.ThorZIP",
+    );
+    expect(program).toContain("LIMIT 4"); // maxRows (3) + 1, NOT collectMaxRows
+    expect(res.rows).toHaveLength(3);
+    expect(res.truncated).toBe(true);
+  });
+
+  it("falls back to maxRows for a collection read when no collection cap is configured", () => {
+    expect(
+      loadVelociraptorConfig({ DFIR_VELOCIRAPTOR_API_CONFIG: "/x/api.yaml" })!.collectMaxRows,
+    ).toBeGreaterThan(1000);
+  });
 });
 
 describe("VelociraptorClient.listClientArtifacts", () => {
@@ -1554,6 +1602,26 @@ describe("VelociraptorClient.flowUploads", () => {
   });
 });
 
+describe("VelociraptorClient.collectionResults — collection row cap", () => {
+  it("reads a collection flow with the COLLECTION row cap, not the dashboard's", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: Array.from({ length: 10 }, (_, i) => ({ i })), raw: "" };
+    };
+    const res = await new VelociraptorClient({ ...cfg, collectMaxRows: 10 }, runner).collectionResults(
+      "C.abc",
+      "F.flow1",
+      "Generic.Scanner.ThorZIP",
+      [],
+      undefined,
+      true,
+    );
+    expect(program).toContain("LIMIT 11");
+    expect(res.rows).toHaveLength(10);
+  });
+});
+
 describe("loadVelociraptorConfig / buildVelociraptorClient", () => {
   it("returns null/undefined when DFIR_VELOCIRAPTOR_API_CONFIG is unset", () => {
     expect(loadVelociraptorConfig({})).toBeNull();
@@ -1954,6 +2022,32 @@ describe("VelociraptorClient.huntArtifactRows", () => {
       return { rows: [], raw: "" }; // bare-name read: empty, no error
     };
   }
+
+  // Codex review, P2. An artifact with BOTH an unnamed source and named ones is read twice and the two
+  // results are concatenated. Each read is capped on its own, so two 75k reads under a 100k cap merged
+  // to 150k rows reporting `truncated: false` — over the ceiling, and with the new incomplete-collection
+  // warning suppressed precisely when it was most warranted. The MERGED result has to obey the cap too.
+  it("caps the MERGED result of a two-read artifact, and says it truncated", async () => {
+    const rows = (tag: string, n: number) => Array.from({ length: n }, (_, i) => ({ tag, i }));
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("FROM artifact_definitions("))
+        return {
+          rows: [{ name: "Both.Sources", type: "CLIENT", sources: [{ name: "Named" }] }],
+          raw: "",
+        };
+      return { rows: p.includes("/Named") ? rows("named", 3) : rows("bare", 3), raw: "" };
+    };
+    const res = await new VelociraptorClient({ ...cfg, collectMaxRows: 4 }, runner).huntArtifactRows(
+      "H.ABC123",
+      "Both.Sources",
+      [],
+      undefined,
+      true,
+    );
+    expect(res.rows).toHaveLength(4); // 3 + 3 merged, then held to the collection cap
+    expect(res.truncated).toBe(true); // and SAID so, so the collect reports an incomplete artifact
+  });
 
   it("reads a named-sources-only artifact (THOR) whose bare name returns nothing", async () => {
     const programs: string[] = [];

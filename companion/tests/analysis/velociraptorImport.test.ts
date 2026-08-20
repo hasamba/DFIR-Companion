@@ -3,6 +3,7 @@ import {
   parseVelociraptorJson,
   parseVelociraptorJsonProgress,
 } from "../../src/analysis/velociraptorImport.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
 
 // Mirrors public/js/dashboard-text.js's splitEventTitle: the row's displayed TITLE is everything
 // before the first " - "; the rest collapses into the [details] panel. Tests below use this to
@@ -1688,5 +1689,155 @@ describe("parseVelociraptorJsonProgress — streaming parse for large imports", 
       if (timerFired) firedDuringParse = true;
     });
     expect(firedDuringParse).toBe(true);
+  });
+});
+
+// ───────────────────────────── THOR findings collected by Velociraptor ─────────────────────────────
+//
+// `Generic.Scanner.ThorZIP/ThorResultsJson` streams THOR's JSON-Lines log back one row per line, so a
+// finding reaches this importer as a `Line` payload rather than as a THOR file. It must still be graded
+// the way the native THOR importer grades it (analysis/thorImport.ts LEVEL_SEVERITY): a scan collected
+// by a hunt and the same scan dropped on the import button are the same evidence and must not disagree.
+//
+// The grading is what splits the two timelines. Info is THOR's scan chatter — module init, "Thor
+// Version", per-file progress — and belongs in the super-timeline; Alert/Warning/Notice are findings and
+// must clear the default Low forensic floor into the forensic timeline.
+describe("parseVelociraptorJson — THOR rows collected by a hunt", () => {
+  const thorRows = (levels: string[]) =>
+    JSON.stringify({
+      "Generic.Scanner.ThorZIP": levels.map((level) => ({
+        Line: JSON.stringify({
+          time: "2026-08-18T18:21:23Z",
+          hostname: "DESKTOP-OPE297N",
+          level,
+          module: "Filescan",
+          message: `finding-${level}`,
+        }),
+        FlowId: "F.DA2A4A9E0J2PK.H",
+        ClientId: "C.14f7b543888d1fbe",
+        _OrgId: "root",
+        Fqdn: "DESKTOP-OPE297N.localdomain",
+      })),
+    });
+
+  const byLevel = (text: string): Record<string, string> => {
+    const parsed = parseVelociraptorJson(text, { artifact: "Generic.Scanner.ThorZIP", aggregate: false });
+    return Object.fromEntries(
+      parsed.events.map((e) => [/finding-(\w+)/.exec(e.description)?.[1] ?? "?", e.severity]),
+    );
+  };
+
+  it("grades a THOR row by THOR's own level, not the generic severity words", () => {
+    expect(byLevel(thorRows(["Alert", "Warning", "Notice", "Info"]))).toEqual({
+      Alert: "Critical",
+      Warning: "High",
+      Notice: "Medium",
+      Info: "Info",
+    });
+  });
+
+  // THOR opens every scan with module init, licence banners and version lines, some at Notice level.
+  // They are graded exactly as THOR graded them: the analyst reconciles the case against the scanner's
+  // own summary (1 Alert / 40 Warnings / 2 Notices), and a timeline that quietly re-grades two of those
+  // to Info reports 0 Medium and breaks the reconciliation. Tidiness is not worth a wrong total.
+  it("keeps THOR's own grade for a scan-lifecycle module", () => {
+    const rows = JSON.stringify({
+      "Generic.Scanner.ThorZIP": [
+        { module: "Startup", message: "THOR Lite license permits non-commercial use", level: "Notice" },
+        { module: "Filescan", message: "finding-Notice", level: "Notice" },
+      ].map((payload) => ({
+        Line: JSON.stringify({ time: "2026-08-18T18:21:23Z", hostname: "H1", scanid: "S-1", ...payload }),
+        FlowId: "F.1",
+        ClientId: "C.1",
+        _OrgId: "root",
+        Fqdn: "H1",
+      })),
+    });
+    const parsed = parseVelociraptorJson(rows, {
+      artifact: "Generic.Scanner.ThorZIP",
+      aggregate: false,
+    });
+    expect(parsed.events.map((e) => e.severity)).toEqual(["Medium", "Medium"]);
+  });
+
+  it("returns findings most-severe first, so a cap keeps alerts over scan chatter", () => {
+    const parsed = parseVelociraptorJson(thorRows(["Info", "Notice", "Alert", "Warning"]), {
+      artifact: "Generic.Scanner.ThorZIP",
+      aggregate: false,
+    });
+    expect(parsed.events.map((e) => e.severity)).toEqual(["Critical", "High", "Medium", "Info"]);
+  });
+});
+
+// The unit tests above check what one row MAPS to; this checks what a set of them SURVIVES as. Mapping
+// was right and the timeline still showed 2 THOR events out of 20, because correlate merges on hash
+// (step 1) and path (step 2) — and every LogScan hit in one log file shares that log's path, plus the
+// hash of whatever file the line happens to name. Identity now describes the finding's own subject, so
+// distinct detections stay distinct.
+describe("THOR log-entry findings survive correlation as separate events", () => {
+  const row = (entry: string) => ({
+    Line: JSON.stringify({
+      scanid: "S-1",
+      time: "2026-08-18T16:14:39Z",
+      hostname: "DESKTOP-OPE297N",
+      level: "Warning",
+      module: "LogScan",
+      message: "Suspicious Log Entry found",
+      entry,
+      file: "C:\\ProgramData\\Microsoft\\Windows Defender\\Support\\MPLog.log",
+      sha256_1: "9695cf4566ddf878a69c3d419e0da4eea87b0f24261ad8e79a3a9c4a9885429c",
+    }),
+    FlowId: "F.1",
+    ClientId: "C.1",
+    Fqdn: "DESKTOP-OPE297N",
+  });
+
+  it("keeps three distinct log entries distinct, though they share a log file and a named hash", () => {
+    const text = JSON.stringify({
+      "Generic.Scanner.ThorZIP": [
+        row("entry one: threat A"),
+        row("entry two: threat B"),
+        row("entry three: threat C"),
+      ],
+    });
+    const parsed = parseVelociraptorJson(text, { artifact: "Generic.Scanner.ThorZIP" });
+    expect(parsed.events).toHaveLength(3);
+    const merged = correlateEvents(
+      parsed.events.map((e, i) => ({ ...e, id: `e${i}`, relatedFindingIds: [], sourceScreenshots: [] })),
+    );
+    expect(merged).toHaveLength(3);
+  });
+});
+
+// Codex review, P2. thorRowMap deliberately gives a LogScan finding no hash and no path — they describe
+// the surrounding log and a file merely named in the line, and correlate merges on both. mapGeneric then
+// handed them straight back through its own fallbacks (`sha256 || thor?.sha256`, and the OSPath/FilePath
+// lookup), so the collapse returned by the back door. A recognised THOR row uses THOR's identity or none.
+describe("a recognised THOR row does not get generic identity fields bolted back on", () => {
+  it("leaves a log-entry finding without the hash and path it deliberately omitted", () => {
+    const rows = JSON.stringify({
+      "Generic.Scanner.ThorZIP": [
+        {
+          Line: JSON.stringify({
+            scanid: "S-1",
+            time: "2026-08-18T16:14:39Z",
+            hostname: "H1",
+            level: "Warning",
+            module: "LogScan",
+            message: "Suspicious Log Entry found",
+            entry: "Engine:command line reported as threat",
+            // Both of these describe context, not the entry — and both are keys mapGeneric reads.
+            sha256: "9695cf4566ddf878a69c3d419e0da4eea87b0f24261ad8e79a3a9c4a9885429c",
+            FilePath: "C:\\ProgramData\\Microsoft\\Windows Defender\\Support\\MPLog.log",
+          }),
+          FlowId: "F.1",
+          ClientId: "C.1",
+        },
+      ],
+    });
+    const e = parseVelociraptorJson(rows, { artifact: "Generic.Scanner.ThorZIP", aggregate: false })
+      .events[0];
+    expect(e.sha256).toBeUndefined();
+    expect(e.path).toBeUndefined();
   });
 });

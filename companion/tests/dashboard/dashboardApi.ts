@@ -421,3 +421,14 @@ export interface ScopeApi {
     confirm(start: unknown, end: unknown): void;
   };
 }
+
+// public/js/dashboard-velo-coverage.js — the per-artifact accounting line under a hunt job.
+export interface VeloCoverageApi {
+  veloCoverageHtml(job: {
+    status?: string;
+    artifacts?: string[];
+    skippedArtifacts?: { name: string; error: string }[];
+    emptyArtifacts?: string[];
+    truncatedArtifacts?: { name: string; kept: number; total: number }[];
+  }): string;
+}

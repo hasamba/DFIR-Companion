@@ -32,6 +32,7 @@ export interface VelociraptorApiConfig {
   maxRows: number; // cap rows returned to the caller
   maxOutputBytes: number; // hard cap on captured stdout for interactive queries (kill the child if exceeded)
   collectMaxOutputBytes?: number; // larger cap for bundle-hunt collection (rows + uploaded JSON); forensic data is big
+  collectMaxRows?: number; // larger ROW cap for the same collection reads; falls back to maxRows when unset
   guiUrl?: string; // optional Velociraptor GUI base URL, for deep-linking to a launched hunt
   guiOrg?: string; // Velociraptor org for the deep link (?org_id=…); default "root" (the GUI requires it)
   uploadVql?: string; // optional override for the hunt-uploads VQL (DFIR_VELOCIRAPTOR_UPLOAD_VQL); __HUNT_ID__ placeholder
@@ -608,12 +609,8 @@ export class VelociraptorClient {
     private readonly runner: VqlRunner = spawnVqlRunner(config),
   ) {}
 
-  private cap(rows: unknown[]): VelociraptorRunResult {
-    return {
-      rows: rows.slice(0, this.config.maxRows),
-      total: rows.length,
-      truncated: rows.length > this.config.maxRows,
-    };
+  private cap(rows: unknown[], max: number = this.config.maxRows): VelociraptorRunResult {
+    return { rows: rows.slice(0, max), total: rows.length, truncated: rows.length > max };
   }
 
   // Deep link to a hunt in the Velociraptor GUI. The `?org_id=…` MUST come before the `#` fragment
@@ -667,6 +664,11 @@ export class VelociraptorClient {
   // interactive cap when unset.
   private collectCap(): number {
     return this.config.collectMaxOutputBytes || this.config.maxOutputBytes;
+  }
+
+  // The big cap is for INGESTION only: these methods also serve the auto-polled dashboard tables.
+  private rowCap(collect: boolean): number {
+    return (collect && this.config.collectMaxRows) || this.config.maxRows;
   }
 
   // Run analyst pivot VQL server-side (split into statements). Kept for ad-hoc/server-scoped queries;
@@ -780,18 +782,19 @@ export class VelociraptorClient {
     artifact: string,
     sources: string[] = [],
     where?: string,
+    collect = false, // ingestion read: use the collection row cap, not the dashboard's view cap
   ): Promise<VelociraptorRunResult> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
     const refs = artifactRefs(artifact, sources);
     const w = sanitizeWhere(where);
     const whereClause = w ? ` WHERE (${w})` : "";
-    const limit = this.config.maxRows + 1; // +1 so cap() flags truncation
+    const limit = this.rowCap(collect) + 1; // +1 so cap() flags truncation
     const program =
       refs.length > 1
         ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
         : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
-    return this.cap(await this.runRaw(program, this.collectCap()));
+    return this.cap(await this.runRaw(program, this.collectCap()), limit - 1);
   }
 
   // The terminal STATE + error of a collection flow (issue #70). A flow can launch fine (a flow id is
@@ -894,6 +897,7 @@ export class VelociraptorClient {
     artifact: string,
     sources: string[] = [],
     where?: string,
+    collect = false, // ingestion read: use the collection row cap, not the dashboard's view cap
   ): Promise<VelociraptorRunResult> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     // Named sources are addressed as `artifact/source` (the `source=` param does NOT match them).
@@ -903,12 +907,12 @@ export class VelociraptorClient {
     // result set (e.g. Hayabusa across a fleet) can't blow the stdout cap; maxRows+1 so cap() flags truncation.
     const w = sanitizeWhere(where);
     const whereClause = w ? ` WHERE (${w})` : "";
-    const limit = this.config.maxRows + 1;
+    const limit = this.rowCap(collect) + 1;
     const program =
       refs.length > 1
         ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
         : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
-    return this.cap(await this.runRaw(program, this.collectCap()));
+    return this.cap(await this.runRaw(program, this.collectCap()), limit - 1);
   }
 
   // Read one hunt artifact's rows, recovering the multi-source case — artifactRefs.ts explains what
@@ -918,9 +922,11 @@ export class VelociraptorClient {
     artifact: string,
     sources: string[] = [],
     where?: string,
+    collect = false,
   ): Promise<VelociraptorRunResult> {
-    const read = (name: string, srcs: string[]) => this.huntResults(huntId, name, srcs, where);
-    return readHuntArtifactRows(read, () => this.listClientArtifacts(), artifact, sources);
+    const read = (name: string, srcs: string[]) => this.huntResults(huntId, name, srcs, where, collect);
+    const cat = () => this.listClientArtifacts(); // the MERGED two-read result obeys the cap too
+    return readHuntArtifactRows(read, cat, artifact, sources, this.rowCap(collect));
   }
 
   // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or
@@ -1153,6 +1159,7 @@ export class VelociraptorClient {
     artifacts: string[],
     filters?: Record<string, string>,
     sourcesByArtifact?: Record<string, string[]>,
+    collect = false, // ingestion read (import-external); the dashboard's own view keeps maxRows
   ): Promise<{ results: Record<string, unknown[]>; skipped: SkippedArtifact[] }> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const results: Record<string, unknown[]> = {};
@@ -1175,6 +1182,7 @@ export class VelociraptorClient {
           name,
           sourcesByArtifact?.[name] ?? [],
           filters?.[name],
+          collect,
         );
         if (res.rows.length) results[name] = res.rows;
       } catch (e) {
@@ -1262,6 +1270,7 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     maxRows: Number(env.DFIR_VELOCIRAPTOR_MAX_ROWS) || 1000,
     maxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_MAX_OUTPUT) || 50 * 1024 * 1024,
     collectMaxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT) || 256 * 1024 * 1024,
+    collectMaxRows: Number(env.DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS) || 100_000,
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
     guiOrg: env.DFIR_VELOCIRAPTOR_ORG?.trim() || "root",
     uploadVql: env.DFIR_VELOCIRAPTOR_UPLOAD_VQL?.trim() || undefined,
