@@ -16,7 +16,19 @@
 // used to run.
 (function () {
   // ── Push ingest token (#84) ───────────────────────────────────────────────────────────────
-  let _pushTokenInfo = null; // last-loaded { configured, token, globalConfigured, pushUrl, … }
+  let _pushTokenInfo = null; // last-loaded { configured, createdAt, globalConfigured, pushUrl, … }
+  // The SERVER never sends the token back on a GET (it is a standing credential for the case; see
+  // routes/pushNotify.ts). It is returned exactly once, in the 201 from /generate, so the curl
+  // example can only show the real key for the rest of that page's life — a reload falls back to
+  // the "<your-token>" placeholder. Held in a closure variable rather than on _pushTokenInfo so a
+  // later loadPushToken() refresh does not silently drop it.
+  //
+  // IT CARRIES ITS OWN IDENTITY, and both halves are load-bearing. As a bare string it survived a
+  // switch to another case, so opening case B's settings rendered B's push URL beside A's token —
+  // a working credential for A, shown under another case's name and ready to be copied. `createdAt`
+  // catches the other way it goes stale: if a second session rotates the token, the GET comes back
+  // with a different timestamp and the key we are holding is dead.
+  let _justGenerated = null; // { caseId, token, createdAt }
   function loadPushToken(caseId) {
     if (!caseId) {
       renderPushToken(null);
@@ -24,10 +36,10 @@
     }
     fetch(`/cases/${encodeURIComponent(caseId)}/push-token`)
       .then((r) => (r.ok ? r.json() : null))
-      .then(renderPushToken)
+      .then((info) => renderPushToken(info, caseId))
       .catch(() => renderPushToken(null));
   }
-  function renderPushToken(info) {
+  function renderPushToken(info, caseId) {
     _pushTokenInfo = info;
     const elInfo = document.getElementById("pushTokenInfo");
     const curl = document.getElementById("pushCurl");
@@ -50,10 +62,18 @@
     if (!info.globalConfigured && !info.configured)
       parts.push("⚠ push is <strong>disabled</strong> until you set one");
     elInfo.innerHTML = parts.join(" · ");
-    // Prefer the per-case token in the example; else show the global placeholder.
+    // Prefer the key we just generated — but only if it belongs to THIS case and is still the one
+    // the server holds. Otherwise show a placeholder: `configured` with no secret in hand means a
+    // token exists but was generated earlier or elsewhere, and the operator has to re-generate to
+    // see one, which is the intended trade (see routes/pushNotify.ts).
+    const mine =
+      _justGenerated &&
+      _justGenerated.caseId === caseId &&
+      _justGenerated.createdAt === info.createdAt
+        ? _justGenerated.token
+        : "";
     const token =
-      info.token ||
-      (info.globalConfigured ? "$DFIR_PUSH_TOKEN" : "<your-token>");
+      mine || (info.globalConfigured ? "$DFIR_PUSH_TOKEN" : "<your-token>");
     const url = info.pushUrl || "";
     curl.textContent = `curl -X POST ${url} \\\n  -H "X-DFIR-Key: ${token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"source":"my-tool","events":[ { /* a SIEM alert, Velociraptor rows, etc. */ } ]}'`;
   }
@@ -75,7 +95,13 @@
           if (msg) msg.textContent = "error: " + (j.error || "failed");
           return;
         }
-        if (msg) msg.textContent = "token generated";
+        if (msg)
+          msg.textContent =
+            "token generated — copy it now, it is not shown again";
+        _justGenerated =
+          typeof j.token === "string"
+            ? { caseId, token: j.token, createdAt: j.createdAt }
+            : null;
         loadPushToken(caseId);
       })
       .catch((e) => {
@@ -96,6 +122,7 @@
     })
       .then(() => {
         if (msg) msg.textContent = "cleared";
+        _justGenerated = null; // the key is revoked; stop offering it in the curl example
         loadPushToken(caseId);
       })
       .catch((e) => {
