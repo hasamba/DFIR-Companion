@@ -57,7 +57,7 @@ export type CustodyRecordInput = Omit<CustodyRecord, "seq" | "prevHash" | "event
 /**
  * How a record is written to custody.jsonl. An absolute path is only valid for as long as the case
  * folder stays put, and it does not: archiving moves it to <root>/_archived/<caseId>, and the whole
- * cases root moves on a DFIR_CASES_DIR change, a container remount or a restore from backup. Every
+ * cases root moves on a DFIR_CASES_ROOT change, a container remount or a restore from backup. Every
  * artifact recorded before such a move would then verify as "missing" — the integrity check would
  * cry tampering over evidence sitting intact one directory across.
  *
@@ -85,7 +85,7 @@ export interface CustodyChainBreak {
   /** 1-indexed position in custody.jsonl, so the break is findable even if seq itself was forged. */
   line: number;
   seq: number | null;
-  reason: "prev-hash-mismatch" | "seq-out-of-order";
+  reason: "prev-hash-mismatch" | "seq-out-of-order" | "unparseable";
 }
 
 /** Where the custody chain currently ends. Signed into the manifest to pin the log's length. */
@@ -359,7 +359,13 @@ export class CustodyStore {
       try {
         stored = JSON.parse(lines[i]) as StoredCustodyRecord;
       } catch {
-        continue; // matches load()'s tolerance of a malformed line
+        // NOT load()'s tolerance. load() skips a bad line because a reader wants the records it can
+        // still show; this walk exists to answer "was the log altered", and a line that is present
+        // and unreadable is exactly that. Skipping it let a corrupted tail report "chain intact".
+        // Recorded and then skipped, so one bad line does not blind the walk to breaks after it —
+        // lastSeq is left alone so the next record still compares against the last GOOD seq.
+        breaks.push({ line: i + 1, seq: null, reason: "unparseable" });
+        continue;
       }
       const seq = typeof stored.seq === "number" ? stored.seq : null;
 

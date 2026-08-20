@@ -154,6 +154,32 @@ describe("CustodyStore.verifyChain", () => {
     expect(await store.verifyChain("c1")).toEqual([]);
   });
 
+  it("flags a line that will not parse instead of skipping it", async () => {
+    // A custody log is a tamper-EVIDENCE record. Skipping a line the parser cannot read means a
+    // corrupted or overwritten entry verifies as an intact chain, and the route logs "chain intact"
+    // over it. Truncating the tail is still undetectable here by design (see the doc comment on
+    // verifyChain — that is the signed manifest's job), but a line that is PRESENT and unreadable
+    // is a break this walk can see.
+    await store.record("c1", input());
+    await appendFile(logPath, "not json\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 2, seq: null, reason: "unparseable" }]);
+  });
+
+  it("keeps walking the chain past an unparseable line", async () => {
+    // One bad line must not blind the walk to what follows, or corrupting line 2 of a 500-line log
+    // would hide every break after it.
+    await store.record("c1", input());
+    await appendFile(logPath, "not json\n", "utf8");
+    const forged = { ...input(), seq: 9, prevHash: "0".repeat(64) };
+    await appendFile(logPath, JSON.stringify(forged) + "\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([
+      { line: 2, seq: null, reason: "unparseable" },
+      { line: 3, seq: 9, reason: "prev-hash-mismatch" },
+    ]);
+  });
+
   it("does not flag legacy records that predate the chain", async () => {
     const legacy = { ...input(), artifactPath: "/tmp/legacy.dd" };
     await mkdir(join(casesRoot, "c1", "metadata"), { recursive: true });
