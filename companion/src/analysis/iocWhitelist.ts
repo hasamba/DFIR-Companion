@@ -10,6 +10,7 @@
 // hide lateral movement, so the analyst chooses every rule. "Missing a real threat is worse than
 // leaving noise" (see CLAUDE.md): the whitelist starts empty.
 
+import { checkRegexSafety } from "./regexSafety.js";
 import type { IOC } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 
@@ -129,11 +130,13 @@ export function sanitizeRuleInput(raw: unknown): WhitelistRuleInput | null {
   if (!pattern || pattern.length > 500) return null;
   if (match === "cidr" && !isValidCidr(pattern)) return null;
   if (match === "regex") {
-    try {
-      new RegExp(pattern);
-    } catch {
-      return null;
-    }
+    // Compiling is not the same as being AFFORDABLE to run. This pattern is matched against IOC
+    // values that came out of adversary-controlled evidence, and `^(a|aa)+b$` compiles fine while
+    // taking exponential time — enough to block the event loop for the whole server. checkRegexSafety
+    // is the same fail-closed vetting the declarative importers use; it also rejects patterns that
+    // will not compile, so it replaces the try/new RegExp rather than sitting next to it.
+    // "i" because ruleMatchesIoc matches with it — see checkRegexSafety on why that matters.
+    if (!checkRegexSafety(pattern, "i").ok) return null;
   }
   const rawType = String(r.iocType ?? "")
     .trim()

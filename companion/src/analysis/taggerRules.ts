@@ -9,6 +9,7 @@
 // against one event. I/O (reading the YAML file) lives in taggerStore.ts; the runner that applies
 // matches to a case lives in tagger.ts.
 
+import { checkRegexSafety } from "./regexSafety.js";
 import { z } from "zod";
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 
@@ -82,10 +83,13 @@ const rawConditionSchema = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"flags" is only valid with "regex"` });
     }
     if (c.regex !== undefined) {
-      try {
-        new RegExp(c.regex, c.flags);
-      } catch (err) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid regex: ${(err as Error).message}` });
+      // COST, not just syntax. A tagger condition runs against every imported event's text, which
+      // is adversary-controlled; `^(a|aa)+b$` compiles fine and backtracks exponentially. The flags
+      // are checked separately because checkRegexSafety only models the pattern.
+      // The rule's OWN flags: a condition that asks for "i" is analysed as running with it.
+      const safety = checkRegexSafety(c.regex, c.flags ?? "");
+      if (!safety.ok) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid regex: ${safety.reason}` });
       }
     }
   });

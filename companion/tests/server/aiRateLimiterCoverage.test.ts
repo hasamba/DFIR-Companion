@@ -68,6 +68,50 @@ describe("AI rate limiter coverage", () => {
     expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
   });
 
+  // Express routes case-insensitively, so /SYNTHESIZE reaches the same handler as /synthesize. The
+  // gate compared against a case-sensitive Set, so the uppercase spelling missed every entry, fell
+  // through to next(), and ran the AI call unthrottled. The whole cap was one shift key from off.
+  it("throttles POST /cases/:id/SYNTHESIZE — Express folds case, so the gate must too", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/SYNTHESIZE", 25);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+  });
+
+  it("throttles POST /cases/:id/Events/:eid/Explain (the dynamic pattern folds case too)", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/Events/ev1/Explain", 25);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+  });
+
+  // The routes the set had drifted past. Each issues an LLM call and each was unthrottled, so the
+  // per-case cap could be walked around simply by using a different AI feature.
+  const MISSING = [
+    "/timeline-gaps/hypothesize",
+    "/translate-query",
+    "/false-positive/suggest",
+    "/playbook/suggest-hunts",
+    "/tagger/suggest-rule",
+    "/velociraptor/suggest-hunts",
+    "/adversary-hints/hunt-technique",
+    "/anon-control",
+  ];
+  for (const path of MISSING) {
+    it(`throttles POST /cases/:id${path}`, async () => {
+      const statuses = await fireManyPost(`/cases/nosuch${path}`, 25);
+      expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    });
+  }
+
+  it("throttles POST /cases/:id/sessions/:sid/summary (dynamic segment)", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/sessions/s1/summary", 25);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+  });
+
+  // Same non-strict-routing hazard as the case-folding one above, and the same consequence: the
+  // handler runs, the Set lookup misses, the AI call goes out uncapped.
+  it("throttles POST /cases/:id/synthesize/ (trailing slash)", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/synthesize/", 25);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+  });
+
   it("does NOT throttle GET /cases/:id/import/undo-stack (non-AI read — prefix-mount bug #23)", async () => {
     // 30 rapid GETs to the undo-stack read; none should be 429 (it costs zero AI tokens).
     const statuses = await fireManyGet("/cases/nosuch/import/undo-stack", 30);

@@ -13,6 +13,18 @@
  * GETs (synth-meta, ai-cost, hypotheses, ai-control, confidence-control, adversary-hints,
  * starred-report) are NOT limited: they cost zero AI tokens.
  *
+ * That claim is now ASSERTED, not just written down. It had drifted: eight AI routes added after
+ * this file was written were never added to the set, so the per-case cap could be walked around by
+ * simply using a different AI feature. tests/architecture/aiRouteCoverage.test.ts scans the route
+ * files for AI-gated POSTs and fails on any that is neither listed here nor explicitly excluded
+ * below, so the next one cannot be forgotten silently.
+ *
+ * ONE DELIBERATE EXCLUSION: POST /cases/:id/push. It triggers an import and therefore synthesis, so
+ * it does bear AI cost — but it is the external collector's ingest endpoint, authenticated by a
+ * per-case push token rather than a session. The threat this gate answers is "an attacker who knows
+ * a caseId", and knowing a caseId is not enough to reach /push. Capping it at 20/min would throttle
+ * a legitimate bulk collector instead, so it keeps its own credential as its control.
+ *
  * REGISTRATION ORDER IS PART OF THE CONTRACT. This gate must be mounted after the route families
  * that need no limit and before registerImportRoutes; tests/architecture/routeInventory.test.ts
  * records the whole interleaved layer list, and the middleware's NAME and arity are what it
@@ -21,8 +33,8 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { getAiLimiter } from "../http/rateLimiter.js";
 
-/** Static AI-cost POST routes, relative to /cases/:id. */
-const AI_LIMIT_PATHS = new Set([
+/** Static AI-cost POST routes, relative to /cases/:id. Exported for the coverage test. */
+export const AI_LIMIT_PATHS = new Set([
   "/import",
   "/import-file",
   "/import-csv",
@@ -40,17 +52,37 @@ const AI_LIMIT_PATHS = new Set([
   "/hypothesis-review",
   "/narrative", // narrative + hypothesis AI
   "/memory/next-steps", // memory-forensics next-step AI
+  "/timeline-gaps/hypothesize", // gap hypotheses
+  "/translate-query", // natural-language → query translation
+  "/false-positive/suggest", // FP suggestions
+  "/playbook/suggest-hunts",
+  "/tagger/suggest-rule",
+  "/velociraptor/suggest-hunts",
+  "/adversary-hints/hunt-technique", // per-technique hunt suggestions
+  "/anon-control", // flipping the toggle forces a re-synthesis
 ]);
+
+/** AI-cost POST routes carrying a dynamic segment, so the static set cannot express them. */
+export const AI_LIMIT_PATTERNS = [/^\/events\/[^/]+\/explain$/, /^\/sessions\/[^/]+\/summary$/];
 
 export function mountAiRateLimit(app: Express): void {
   const aiLimited = getAiLimiter().middleware((req) => req.params.id);
   app.use("/cases/:id", function aiRateLimitGate(req: Request, res: Response, next: NextFunction) {
     if (req.method !== "POST") return next();
-    // Strip the /cases/:id/ prefix to compare against the static set.
-    const rel = req.path.replace(/^\/cases\/[^/]+\//, "/");
-    // /events/:eid/explain has a dynamic segment — match it explicitly.
-    const isExplain = /^\/events\/[^/]+\/explain$/.test(rel);
-    if (AI_LIMIT_PATHS.has(rel) || isExplain) {
+    // Strip the /cases/:id/ prefix to compare against the static set, and FOLD CASE. Express routes
+    // case-insensitively, so POST /cases/c1/SYNTHESIZE reaches the same handler as the lowercase
+    // spelling; a case-sensitive Set lookup missed it, fell through to next(), and ran the AI call
+    // with no cap at all. Only the route suffix is folded — the caseId is already stripped, so the
+    // limiter key is untouched.
+    // The optional trailing slash goes too. Express is not in "strict routing" mode, so
+    // /cases/c1/synthesize/ reaches the same handler as /cases/c1/synthesize, while an exact Set lookup
+    // does not — one keystroke past the gate.
+    const rel =
+      req.path
+        .replace(/^\/cases\/[^/]+\//, "/")
+        .replace(/\/+$/, "")
+        .toLowerCase() || "/";
+    if (AI_LIMIT_PATHS.has(rel) || AI_LIMIT_PATTERNS.some((re) => re.test(rel))) {
       return aiLimited(req, res, next);
     }
     next();

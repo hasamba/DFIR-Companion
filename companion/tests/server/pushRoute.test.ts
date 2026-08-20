@@ -185,6 +185,21 @@ describe("POST /cases/:id/push — generic push ingest", () => {
     expect(info.body.configured).toBe(false);
   });
 
+  it("GET /cases/:id/push-token never returns the token itself", async () => {
+    // The secret is shown ONCE, in the 201 from /generate. A GET that hands it back turns every
+    // read of the settings panel into a chance to lift a standing credential for the case — a
+    // dashboard XSS or a rogue extension can poll it silently, where re-generating would at least
+    // be visible (it invalidates the collector's current key).
+    const { app } = await makeApp({});
+    const gen = await request(app).post("/cases/c1/push-token/generate");
+    const secret = gen.body.token as string;
+    expect(secret).toMatch(/^[0-9a-f]{32}$/);
+
+    const info = await request(app).get("/cases/c1/push-token");
+    expect(info.body.configured).toBe(true); // the panel still knows a token EXISTS
+    expect(JSON.stringify(info.body)).not.toContain(secret);
+  });
+
   it("404s an unknown case (even with a valid token)", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
     const res = await request(app)

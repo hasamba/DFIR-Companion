@@ -175,3 +175,29 @@ describe("toWhitelistCsv", () => {
     expect(csv).not.toMatch(/(^|,)=cmd/m); // no bare formula survives
   });
 });
+
+describe("sanitizeRuleInput regex safety", () => {
+  // A whitelist rule is matched against IOC values that came out of adversary-controlled evidence.
+  // A pattern that only has to COMPILE can still take exponential time on the right input and block
+  // the event loop for the whole server, so the rule has to be vetted for cost, not just syntax.
+  // sanitizeRuleInput runs on write (POST) AND on load (IocWhitelistStore.load), so an unsafe rule
+  // already on disk is dropped rather than being run.
+  it("drops a regex rule that can backtrack catastrophically", () => {
+    expect(sanitizeRuleInput({ match: "regex", pattern: "^(a|aa)+b$" })).toBeNull();
+  });
+
+  // The rule is MATCHED with the "i" flag (ruleMatchesIoc). Vetting the pattern source alone misses
+  // the overlap that case folding creates: `^(a|A)+b$` is two distinct alternatives on paper and one
+  // alternative twice at runtime. Measured on this machine at 26 characters of input: 0ms without
+  // the flag, 4831ms with it. The checker has to be told the flags the pattern will run under.
+  it("drops a regex that only backtracks once the i flag folds its alternatives", () => {
+    expect(sanitizeRuleInput({ match: "regex", pattern: "^(a|A)+b$" })).toBeNull();
+  });
+
+  it("still accepts an ordinary regex rule", () => {
+    expect(sanitizeRuleInput({ match: "regex", pattern: "^evil-[0-9]+\\.exe$" })).toMatchObject({
+      match: "regex",
+      pattern: "^evil-[0-9]+\\.exe$",
+    });
+  });
+});

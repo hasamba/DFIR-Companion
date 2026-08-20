@@ -10,6 +10,7 @@
 // purge-on-add wiring lives in the /cases/:id/ioc-exclude route, and the going-forward filter
 // lives in stateMerge.ts's mergeDelta.
 
+import { checkRegexSafety } from "./regexSafety.js";
 import type { IOC } from "./stateTypes.js";
 
 export const EXCLUDE_MATCH_MODES = ["exact", "suffix", "regex"] as const;
@@ -93,11 +94,10 @@ export function sanitizeExcludeRuleInput(raw: unknown): ExcludeRuleInput | null 
   if (!pattern || pattern.length > 500) return null;
   if (match === "suffix") pattern = normalizeSuffixPattern(pattern);
   if (match === "regex") {
-    try {
-      new RegExp(pattern);
-    } catch {
-      return null;
-    }
+    // Same reasoning as the whitelist's sanitizeRuleInput: vet the pattern's COST, not just its
+    // syntax, because it runs against adversary-controlled IOC values.
+    // "i" because ruleMatchesIoc matches with it — see checkRegexSafety on why that matters.
+    if (!checkRegexSafety(pattern, "i").ok) return null;
   }
   const rawType = String(r.iocType ?? "")
     .trim()

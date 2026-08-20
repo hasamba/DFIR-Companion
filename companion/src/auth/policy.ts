@@ -74,21 +74,46 @@ function collectionPath(path: string): string {
   return (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
 }
 const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
-const CASE_REVIEW_SEGMENTS = [
-  "/review",
-  "/presidio-pending/approve",
-  "/presidio-pending/suppress",
-  "/second-opinion/apply",
+/**
+ * A BUCKET IS CHOSEN BY THE ROUTE, NEVER BY A VALUE THE ROUTE CARRIES.
+ *
+ * These were an unanchored substring scan over the whole suffix — `suffix.includes("/review")`,
+ * `/\/report(?:\.docx|\/|$)/`. The suffix contains user-named segments (an MCP server id, a
+ * hostname read out of evidence), so the value picked the permission: an MCP server named "report"
+ * put POST /cases/:id/mcp/report/run in the EXPORT bucket, which a reader holds, and one named
+ * "review" put it in the reviewer's. The scan was also case-sensitive while Express routing is not,
+ * so POST /cases/c1/SECOND-OPINION/APPLY matched nothing and fell through to the "write" default —
+ * an investigator performing a reviewer-only action by holding down shift.
+ *
+ * Anchored patterns fix both at once. Every dynamic segment is written out as `[^/]+`, so a
+ * user-named value can only ever fill the slot the route actually has, and folding case is then
+ * safe because a folded value still cannot reach past its own segment. Matched against the
+ * LOWERCASED suffix.
+ *
+ * Adding a route to either bucket means adding its pattern here. tests/http/teamAuthPolicy.test.ts
+ * pins every route that is meant to be in one, and pins that an adversarial segment value stays out.
+ */
+const CASE_REVIEW_PATTERNS = [
+  /^\/cockpit\/review$/,
+  /^\/presidio-pending\/(?:approve|suppress)$/,
+  /^\/second-opinion\/apply(?:-all)?$/,
+  // The whole report-version review workflow, not just approve: /review/annotations and
+  // /review/request-changes are the reviewer's day job, and a reviewer holds "review" but NOT
+  // "write" — so naming only approve here locks the assigned reviewer out of the other two with a
+  // 403. Matching the rest of the segment keeps a later addition covered; the versionId can still
+  // only fill its own slot, which is what anchoring buys.
+  /^\/report-versions\/[^/]+\/review(?:\/[^/]+)?$/,
 ];
 const CASE_EXPORT_PATTERNS = [
-  /\/export(?:\/|$)/,
-  /\/report(?:\.docx|\/|$)/,
-  /\/incident-timeline\.csv$/,
-  /\/timeline\.jsonl$/,
-  /\/super-timeline\.jsonl$/,
-  /\/attack-layer\.json$/,
-  /\/geo-map\.csv$/,
-  /\/custody\/manifest$/,
+  /^\/export(?:\/|$)/,
+  /^\/report(?:\.docx|\/|$)/,
+  /^\/present\/export$/,
+  /^\/incident-timeline\.csv$/,
+  /^\/timeline\.jsonl$/,
+  /^\/super-timeline\.jsonl$/,
+  /^\/attack-layer\.json$/,
+  /^\/geo-map\.csv$/,
+  /^\/custody\/manifest$/,
 ];
 
 const ROLE_PERMISSIONS: Record<CaseRole, ReadonlySet<CasePermission>> = {
@@ -110,11 +135,19 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   const suffix = path.slice(`/cases/${caseId}`.length);
   // Express routing is case-insensitive by default, so /PassWord and /IMPORT-FILE reach the same
   // handlers as their lowercase spellings; an unfolded compare would leave an elevated route one
-  // shift key from the permissive "write" default. Fold case ONLY for the checks anchored at a
-  // literal route segment. The review and export checks below scan the whole suffix, which carries
-  // user-named values (an MCP server id, a report version) — folding those would let a server named
-  // "Report" pull POST /mcp/:id/run into the export bucket that a reader holds.
+  // shift key from the permissive "write" default. EVERY check below folds case — including review
+  // and export, which used not to. The reason they could not was that they scanned the whole suffix
+  // for a substring, so folding would have let an MCP server named "Report" pull POST /mcp/:id/run
+  // into the reader's export bucket. Those two are anchored patterns now (see above), which closes
+  // that hole at the source and makes folding safe for them too.
   const lowerSuffix = suffix.toLowerCase();
+  // Express is not in "strict routing" mode, so /cockpit/review/ reaches the same handler as
+  // /cockpit/review. The anchored patterns below end in `$`, so the trailing-slash spelling would
+  // miss every one of them and fall through to the permissive "write" default — the same bypass
+  // anchoring was added to close, wearing a different hat. Strip it once, here. The pathStarts
+  // checks above do not need it (a prefix match already tolerates a trailing segment separator),
+  // and collectionPath() does the same job for NON_CASE_PATHS.
+  const matchSuffix = lowerSuffix.replace(/\/+$/, "") || "/";
   if (CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "global", permission: "admin" };
   }
@@ -124,10 +157,10 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "admin", caseId };
   }
-  if (CASE_REVIEW_SEGMENTS.some((segment) => suffix.includes(segment))) {
+  if (CASE_REVIEW_PATTERNS.some((pattern) => pattern.test(matchSuffix))) {
     return { kind: "case", permission: "review", caseId };
   }
-  if (CASE_EXPORT_PATTERNS.some((pattern) => pattern.test(suffix))) {
+  if (CASE_EXPORT_PATTERNS.some((pattern) => pattern.test(matchSuffix))) {
     return { kind: "case", permission: "export", caseId };
   }
   return {

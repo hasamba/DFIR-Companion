@@ -344,7 +344,7 @@ export const FEATURES: Feature[] = [
     // Only the binding. renderPushToken/pushTokenGenerate/pushTokenClear are function
     // declarations, which cannot become implicit globals, and this list is checked against
     // let/const/var.
-    private: ["_pushTokenInfo"],
+    private: ["_pushTokenInfo", "_justGenerated"],
   },
   {
     // Reproducible analysis runs (#377). No state of its own — the modal reads what it needs on

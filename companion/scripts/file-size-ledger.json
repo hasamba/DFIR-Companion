@@ -5,17 +5,16 @@
   "analysis/memoryImport.ts": 1577,
   "analysis/seedDemoCase.ts": 2700,
   "analysis/siemImport.ts": 1778,
-  "analysis/velociraptorImport.ts": 1901,
+  "analysis/velociraptorImport.ts": 1869,
   "integrations/velociraptor/velociraptorApi.ts": 1291,
   "public/dashboard.html#inline-js": 1964,
-  "public/js/dashboard-velo-triage.js": 815,
   "reports/markdown.ts": 1597,
-  "reports/reportWriter.ts": 862,
-  "routes/aiSynthesis.ts": 879,
-  "routes/caseLifecycle.ts": 924,
+  "reports/reportWriter.ts": 837,
+  "routes/aiSynthesis.ts": 863,
+  "routes/caseLifecycle.ts": 904,
   "routes/findings.ts": 835,
-  "routes/import.ts": 3209,
+  "routes/import.ts": 3203,
   "routes/mcp.ts": 913,
   "routes/threatIntel.ts": 952,
-  "routes/velociraptor.ts": 1127
+  "routes/velociraptor.ts": 1114
 }

@@ -88,9 +88,16 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     );
   });
 
-  // Per-case push token management (#84). GET returns the case token's existence (NOT the secret on a
-  // plain GET — it's shown once on generate) plus whether a global token covers every case and the
-  // push URL. POST generates/rotates one; DELETE clears it.
+  // Per-case push token management (#84). GET returns the case token's EXISTENCE (never the secret —
+  // that is shown once, in the 201 from /generate, and the dashboard pastes it into the curl example
+  // from there) plus whether a global token covers every case, and the push URL. POST generates or
+  // rotates one; DELETE clears it.
+  //
+  // The GET used to include the secret so a page reload could re-fill the curl example. That made
+  // every read of the settings panel a chance to lift a standing credential for the case: a
+  // dashboard XSS or a rogue extension could poll this endpoint silently and push arbitrary
+  // evidence in. Re-generating is the recovery path, and it is loud — it invalidates the key the
+  // collector is using, so the operator finds out.
   app.get("/cases/:id/push-token", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     const globalConfigured = !!(options.pushToken && options.pushToken.trim());
@@ -105,7 +112,6 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     const base = (options.dashboardBaseUrl || "").replace(/\/+$/, "");
     return res.status(200).json({
       configured: !!rec,
-      token: rec?.token ?? "", // shown so Settings can display the active token + curl example
       createdAt: rec?.createdAt ?? "",
       globalConfigured,
       storeAvailable: !!options.pushTokenStore,

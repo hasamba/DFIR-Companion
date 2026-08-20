@@ -14,6 +14,7 @@
 import type { Express } from "express";
 import type { RouteContext } from "../routes/context.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
+import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { registerSystemRoutes } from "../routes/system.js";
 import { registerCaptureRoutes } from "../routes/captures.js";
 import { registerPushNotifyRoutes } from "../routes/pushNotify.js";
@@ -81,6 +82,12 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // registerImportRoutes — because the gate only covers layers registered after it, and
   // tests/architecture/routeInventory.test.ts records that interleaving. See composition/aiRateLimit.ts.
   mountAiRateLimit(app);
+
+  // Freeze the MANUAL evidence routes on a closed or archived case, the way every automated
+  // ingest path already freezes itself. Same placement reasoning as the gate above — it only
+  // covers what follows it, and both routes it guards are registered below. See
+  // composition/caseWriteGuard.ts.
+  mountCaseWriteGuard(app, store);
 
   registerImportRoutes(app, ctx);
   registerVelociraptorRoutes(app, ctx);
