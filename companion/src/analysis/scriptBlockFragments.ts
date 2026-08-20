@@ -223,6 +223,25 @@ function veloHost(row: Row): string {
   );
 }
 
+// The rule whose verdict this row carries. Reassembly is scoped by it, because a row is only safe to
+// give another row's text if the two cannot then collapse into one alert — and whether they collapse
+// depends on a downstream aggregation key this module does not own. A DetectRaptor row keeps its
+// title in that key; a `_Event` Hayabusa row does NOT (classify() reads it as generic, so the title
+// reaches neither the description nor the key), and there the differing fragment text was the ONLY
+// thing holding two rules apart. Handing both rows the same text dropped a verdict out of the case.
+// Scoping the group by rule costs a little text — an alert joins the parts ITS rule matched, and the
+// "N of M" note discloses the rest — and it cannot lose a verdict, which is the trade forensic
+// reporting requires.
+function veloRuleIdentity(row: Row): string {
+  const det = getCI(row, "Detection");
+  const fromDetection = isObject(det) ? str(getCI(det, "Name")) : str(det);
+  const title =
+    fromDetection ||
+    str(getCI(row, "Title") ?? getCI(row, "RuleTitle") ?? getCI(row, "RuleName")) ||
+    (isObject(getCI(row, "Rule")) ? str(getCI(getCI(row, "Rule") as Row, "Title")) : "");
+  return title.trim().toLowerCase();
+}
+
 // Only a genuine multi-part script block qualifies. The event id must be 4104 or unreadable — an
 // unreadable id is allowed because ScriptBlockId + MessageTotal > 1 is already specific to 4104,
 // and refusing to act on an unfamiliar row shape would silently leave the alerts split.
@@ -239,7 +258,7 @@ function veloFragment(row: Row): { key: string; frag: ScriptBlockFragment } | nu
   const total = num(getCI(ed, "MessageTotal")) || num(header?.[2]);
   if (total < 2) return null; // a whole block in one event — nothing to reassemble
   return {
-    key: `${veloHost(row)}|${id}`,
+    key: `${veloHost(row)}|${id}|${veloRuleIdentity(row)}`,
     frag: { id, number, total, text: str(getCI(ed, "ScriptBlockText")) },
   };
 }
@@ -261,7 +280,13 @@ function rewriteMessage(message: string, chunk: string, full: string, note: stri
     const header = m[1].replace(PART_OF_RE, `(${phrase} parts, reassembled)`);
     return `${header}${full}${m[3]}`;
   }
-  if (chunk && message.includes(chunk)) return message.split(chunk).join(`${full}${note}`);
+  if (chunk && message.includes(chunk)) {
+    // Correct the header on the PREFIX only — the part before the fragment's text begins. A blanket
+    // replace could rewrite a "(1 of 2)" that occurs inside the script itself, editing evidence.
+    const at = message.indexOf(chunk);
+    const head = message.slice(0, at).replace(PART_OF_RE, `(${phrase} parts, reassembled)`);
+    return `${head}${message.slice(at).split(chunk).join(`${full}${note}`)}`;
+  }
   return `${message}\n${full}${note}`;
 }
 
@@ -288,15 +313,24 @@ export function consolidateVeloScriptBlocks(rows: readonly Row[]): Row[] {
     // Write back into whichever container the row actually carries EventData in — top level, or one
     // of the wrappers. Guessing wrong would leave the real EventData untouched AND invent a sibling
     // key that was never in the row, so the container is resolved rather than assumed.
+    const rewrite = (m: string): string =>
+      rewriteMessage(m, r.frag.text, block.full, block.note, block.phrase);
     const wrapper = EVENT_WRAPPERS.find((w) => isObject(getPath(row, `${w}.EventData`)));
     if (isObject(getCI(row, "EventData"))) next.EventData = nextEd;
-    else if (wrapper) next[wrapper] = { ...(getCI(row, wrapper) as Row), EventData: nextEd };
-    else next.EventData = nextEd;
-    const message = str(getCI(row, "Message") ?? getCI(row, "Details"));
-    if (message) {
-      const rewritten = rewriteMessage(message, r.frag.text, block.full, block.note, block.phrase);
-      if (getCI(row, "Message") !== undefined) next.Message = rewritten;
-      else next.Details = rewritten;
+    else if (wrapper) {
+      // The wrapper may also carry its OWN rendered message. rowMessage() falls back to it, so
+      // leaving it stale keeps the fragment's fingerprint distinct (blocking the very consolidation
+      // this performs) and shows the analyst one slice above the full reassembled text.
+      const wrapped: Row = { ...(getCI(row, wrapper) as Row), EventData: nextEd };
+      const nested = str(getCI(wrapped, "Message"));
+      if (nested) wrapped.Message = rewrite(nested);
+      next[wrapper] = wrapped;
+    } else next.EventData = nextEd;
+    // Rewrite EVERY rendered copy the row carries, not just the first one found: `Message` and
+    // `Details` can both be present, and a copy left holding one slice contradicts the others.
+    for (const key of ["Message", "Details"] as const) {
+      const m = str(getCI(row, key));
+      if (m) next[key] = rewrite(m);
     }
     return next;
   });
@@ -360,7 +394,10 @@ function hayabusaFragment(item: HayabusaRecord): { key: string; frag: ScriptBloc
   const host = str(getCI(item.rec, "Computer") ?? getCI(item.rec, "Hostname"))
     .trim()
     .toLowerCase();
-  return { key: `${host || "?"}|${id}`, frag: { id, number, total, text: text.value } };
+  const title = str(getCI(item.rec, "RuleTitle") ?? getCI(item.rec, "Title") ?? getCI(item.rec, "RuleName"))
+    .trim()
+    .toLowerCase();
+  return { key: `${host || "?"}|${id}|${title}`, frag: { id, number, total, text: text.value } };
 }
 
 /**

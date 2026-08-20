@@ -1878,14 +1878,19 @@ describe("parseVelociraptorJson — PowerShell 4104 script-block fragments", () 
     expect(e.timestamp).toContain("16:31:01"); // earliest fragment anchors the event
   });
 
-  it("keeps two DIFFERENT rules over the same block as two alerts, each with the whole script", () => {
+  // Reassembly is scoped PER RULE, so an alert carries the parts ITS rule matched — not the whole
+  // block. The earlier contract ("both alerts carry the whole script") was withdrawn: giving two
+  // rules identical text made them collapse into one alert on row shapes whose verdict never reaches
+  // the aggregation key, and a lost verdict is worse than a shorter excerpt. The "N of M" note on a
+  // partial join is what tells the analyst the block had more parts than this rule matched.
+  it("keeps two DIFFERENT rules over the same block as two alerts, each with its own parts", () => {
     const rows = [frag(1, CHUNKS[0]), frag(2, CHUNKS[1], "PowerShell - AMSI Bypass")];
     const r = parseVelociraptorJson(JSON.stringify(rows));
     expect(r.events).toHaveLength(2); // two distinct verdicts stay two distinct alerts
-    for (const e of r.events) {
-      const full = `${e.description} ${e.message ?? ""}`;
-      for (const c of CHUNKS) expect(full).toContain(c);
-    }
+    const mimikatz = r.events.find((e) => /Mimikatz/.test(e.description))!;
+    const amsi = r.events.find((e) => /AMSI Bypass/.test(e.description))!;
+    expect(`${mimikatz.description} ${mimikatz.message ?? ""}`).toContain(CHUNKS[0]);
+    expect(`${amsi.description} ${amsi.message ?? ""}`).toContain(CHUNKS[1]);
   });
 
   it("leaves a single-part block as one alert with its text unchanged", () => {
