@@ -512,15 +512,33 @@ describe("VelociraptorClient.getHuntArtifacts", () => {
 });
 
 describe("VelociraptorClient.getFlowInfo", () => {
-  // A runner branching on the flows() query vs the clients() inventory query listClients() issues.
-  function flowRunner(flowRow: Record<string, unknown>, clientRows: unknown[]): VqlRunner {
+  // A runner branching on the flows() query vs the EXACT client_info(client_id=) lookup. It also
+  // captures the statements so a test can assert the emitted VQL rather than trusting a loose match:
+  // the hostname query must be client_info(client_id='…'), because clients(search=) has no `id:`
+  // term and would silently return no row for a valid C.<id>.
+  function flowRunner(flowRow: Record<string, unknown>, clientRows: unknown[], seen?: string[]): VqlRunner {
     return async (statements) => {
       const p = statements[0];
+      seen?.push(p);
       if (p.includes("FROM flows(")) return { rows: [flowRow], raw: "" };
-      if (p.includes("FROM clients(")) return { rows: clientRows, raw: "" };
+      if (p.includes("FROM client_info(")) return { rows: clientRows, raw: "" };
       return { rows: [], raw: "" };
     };
   }
+
+  it("resolves the host with an exact client_info(client_id=) query, not a clients() search", async () => {
+    const seen: string[] = [];
+    const runner = flowRunner(
+      { artifacts_with_results: ["Windows.NTFS.MFT"] },
+      [{ client_id: "C.dead", os_info: { hostname: "DESKTOP-01" } }],
+      seen,
+    );
+    const info = await new VelociraptorClient(cfg, runner).getFlowInfo("C.dead", "F.001");
+    expect(info.hostname).toBe("DESKTOP-01");
+    const clientQuery = seen.find((q) => q.includes("client_info(") || q.includes("clients("));
+    expect(clientQuery).toContain("FROM client_info(client_id='C.dead')");
+    expect(clientQuery).not.toContain("clients(search=");
+  });
 
   it("returns the flow's artifacts (preferring artifacts_with_results) and resolves the host", async () => {
     const runner = flowRunner(

@@ -238,7 +238,7 @@ describe("tesseractDataOptions", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("reads a bundled eng.traineddata in place, with caching and gzip off", async () => {
+  it("reads a bundled eng.traineddata from the package root, with caching and gzip off", async () => {
     const dir = join(tmpdir(), `dfir-ocr-test-${process.pid}-bundled`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "eng.traineddata"), "stub");
@@ -250,11 +250,26 @@ describe("tesseractDataOptions", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("finds the model one level up (repo root) when the package root lacks it", async () => {
+    const root = join(tmpdir(), `dfir-ocr-test-${process.pid}-reporoot`);
+    const pkg = join(root, "companion");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(root, "eng.traineddata"), "stub"); // repo root, not the package dir
+    expect(tesseractDataOptions({}, pkg)).toEqual({
+      langPath: root,
+      gzip: false,
+      cacheMethod: "none",
+    });
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("falls back to a temp-dir cache — never the working directory", async () => {
-    const dir = join(tmpdir(), `dfir-ocr-test-${process.pid}-empty`);
+    // Both the package dir and its parent are empty, so neither candidate resolves.
+    const parent = join(tmpdir(), `dfir-ocr-test-${process.pid}-empty`);
+    const dir = join(parent, "companion");
     mkdirSync(dir, { recursive: true });
     const options = tesseractDataOptions({}, dir);
     expect(options).toEqual({ cachePath: join(tmpdir(), "dfir-companion-ocr") });
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
   });
 });

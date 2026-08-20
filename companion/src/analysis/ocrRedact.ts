@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAnonymizer } from "./anonymize.js";
 import type { AnonPolicy, KnownEntities, CustomEntity } from "./anonymize.js";
@@ -94,9 +94,10 @@ export async function ocrRedactImage(
  * caches into the WORKING DIRECTORY — which in the container is the deliberately
  * root-owned /app/companion (see Dockerfile), so every worker would silently fail to
  * cache and re-download the model. Resolution order: an explicit DFIR_OCR_CACHE wins;
- * else a model already sitting next to the companion root (../../eng.traineddata from
- * this module, the same convention data/ uses) is read directly with caching off —
- * no network, no writes; else downloads cache under the OS temp dir, never the cwd.
+ * else a checked-in model is read directly with caching off (no network, no writes) from
+ * the first candidate that has it — the package root (`companion/`) or the repo root one
+ * level up, since a source clone may keep it at either; else downloads cache under the OS
+ * temp dir, never the cwd. `bundledDir` is the package root; its parent is the repo root.
  */
 export function tesseractDataOptions(
   env: Record<string, string | undefined> = process.env,
@@ -107,8 +108,10 @@ export function tesseractDataOptions(
     mkdirSync(explicit, { recursive: true });
     return { cachePath: explicit };
   }
-  if (existsSync(join(bundledDir, "eng.traineddata"))) {
-    return { langPath: bundledDir, gzip: false, cacheMethod: "none" };
+  for (const dir of [bundledDir, dirname(bundledDir)]) {
+    if (existsSync(join(dir, "eng.traineddata"))) {
+      return { langPath: dir, gzip: false, cacheMethod: "none" };
+    }
   }
   const fallback = join(tmpdir(), "dfir-companion-ocr");
   mkdirSync(fallback, { recursive: true });

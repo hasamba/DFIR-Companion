@@ -800,11 +800,11 @@ export class VelociraptorClient {
   // An external FLOW's collected artifacts + the HOST it ran on, so a GUI-launched collection can be
   // imported without having launched it. Reads flows(client_id=) for the artifact list (prefer
   // `artifacts_with_results` — the ones that actually produced output — else the requested
-  // `request.artifacts`), and resolves the hostname with a TARGETED clients(search='id:…') lookup
+  // `request.artifacts`), and resolves the hostname with a TARGETED client_info(client_id=) lookup
   // (empty when the client isn't found) — the id is already known, so enumerating the whole fleet
-  // via listClients() would parse a full inventory per import; the dot-tokenization caveat that
-  // forces inventory matching (see listClients) applies to hostname search, not id lookup.
-  // CLIENT_RE/FLOW_RE-validated so both ids are safe in the literals.
+  // via listClients() would parse a full inventory per import. client_info() is Velociraptor's
+  // EXACT client-id lookup; clients(search=) has no `id:` term and would miss, so it is not used
+  // here. CLIENT_RE/FLOW_RE-validated so both ids are safe in the literals.
   async getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
@@ -820,7 +820,7 @@ export class VelociraptorClient {
           : [];
     const artifacts = src.map((a) => String(a).trim()).filter(Boolean);
     const clientRows = await this.runRaw(
-      `SELECT client_id, os_info FROM clients(search='id:${clientId}') LIMIT 1`,
+      `SELECT client_id, os_info FROM client_info(client_id='${clientId}') LIMIT 1`,
     );
     const rec = normalizeClientRow(clientRows[0]);
     const hostname = (rec && rec.clientId === clientId && (rec.hostname || rec.fqdn)) || "";

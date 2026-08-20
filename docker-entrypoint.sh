@@ -34,16 +34,27 @@ fi
 if [ "$(id -u)" = "0" ]; then
   node_uid="$(id -u node)"
   chown -R node:node /out 2>/dev/null || true
-  # Hand every CONFIGURED writable store to node so the unprivileged server can create and
-  # UPDATE case data — including stores outside /data (a custom DFIR_CASES_ROOT bind mount)
-  # and stores left by the older root-running image, whose bind-mount root may already be
-  # host-uid-1000 while the case directories inside it are still root-owned. `find` walks
-  # each root and chowns only the inodes NOT already owned by node, so a correctly-owned
-  # tree costs a stat-walk rather than a full re-chown on every boot; `-h` plus find's
-  # default no-follow-symlink traversal means a compromised node cannot redirect a chown
-  # through a planted symlink. (Operators with a truly enormous store can skip this entirely
-  # by setting a compose `user:` so the container never starts as root.)
-  for store in "${DFIR_CASES_ROOT:-/data/cases}" "${DFIR_OCR_CACHE:-/data/ocr-cache}" "${DFIR_LOG_DIR:-}"; do
+  # Hand the writable data tree to node so the unprivileged server can create and UPDATE it —
+  # including stores left by the older root-running image, whose bind-mount root may already be
+  # host-uid-1000 while the case directories inside it are still root-owned. The global stores
+  # (logs, templates, team-auth, diagnostics, …) are created as subdirectories of the cases
+  # root's PARENT (see runtimeStores.ts), so that parent — not just cases/ — is the tree to
+  # hand over. A cases root placed directly at a filesystem root (parent "/") is a misconfig
+  # whose siblings would land in /, so warn and chown only the case root rather than recursing
+  # the whole filesystem. `find` chowns just the inodes NOT already node-owned, so a
+  # correctly-owned tree costs a stat-walk not a full re-chown; `-h` plus find's default
+  # no-follow-symlink traversal keep a compromised node from redirecting a chown through a
+  # planted symlink. (Operators with a truly enormous store can skip this by setting a compose
+  # `user:` so the container never starts as root.)
+  cases_root="${DFIR_CASES_ROOT:-/data/cases}"
+  data_root="$(dirname "$cases_root")"
+  case "$data_root" in
+    /|.|"")
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=$cases_root has no dedicated parent directory; global stores would land in '$data_root' and may be unwritable — point DFIR_CASES_ROOT at a subdirectory of a mounted volume" >&2
+      data_root="$cases_root"
+      ;;
+  esac
+  for store in "$data_root" "${DFIR_OCR_CACHE:-/data/ocr-cache}" "${DFIR_LOG_DIR:-}"; do
     [ -n "$store" ] || continue
     mkdir -p "$store" 2>/dev/null || true
     find "$store" ! -uid "$node_uid" -exec chown -h node:node {} + 2>/dev/null || true

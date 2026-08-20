@@ -20,6 +20,7 @@
   // every read — the fifth time in this PR an extraction stopped at the code and left the state.
   // --- Compromised assets + asset↔IoC graph -------------------------------------
   let assetGraphData = null; // { assets, iocs, edges }
+  let assetGraphCaseId = null; // which case assetGraphData belongs to (guards cross-case staleness)
   let assetOverridesData = null; // { renames, added, removed, addedLinks, removedLinks }
   let assetGraphTimer = null;
   // The active time-window query string for the graph reads (#83). Mirrors the global timeline
@@ -31,11 +32,22 @@
     fetch(`/cases/${caseId}/asset-graph${DfirTimelineView.timeQuery()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((g) => {
-        // Mirrors loadAssetOverrides below: a non-2xx error body must never be cached as graph
-        // data — a failed read leaves the last good graph in place instead of poisoning
-        // assetGraphData (which hasAssetGraph() and renderAssetGraph() both trust).
-        if (!g || !Array.isArray(g.assets)) return;
+        // A non-2xx error body must never be cached as graph data (which hasAssetGraph() and
+        // renderAssetGraph() both trust). But a failed load must ALSO not leave a DIFFERENT
+        // case's graph on screen: when this load is for a newly-selected case, clear the stale
+        // payload and repaint so the panel shows empty rather than the previous case's assets.
+        // A transient error re-reading the SAME case keeps the last good graph in place.
+        if (!g || !Array.isArray(g.assets)) {
+          if (assetGraphCaseId !== caseId) {
+            assetGraphData = null;
+            assetGraphCaseId = caseId;
+            renderAssetGraph();
+            renderAssetList();
+          }
+          return;
+        }
         assetGraphData = g;
+        assetGraphCaseId = caseId;
         renderAssetGraph();
       })
       .catch(() => {});
