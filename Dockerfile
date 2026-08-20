@@ -8,7 +8,10 @@
 # endpoint (a model you host, a remote provider, or an Ollama/LiteLLM you run separately).
 
 # ---- Stage 1: build the companion server (TypeScript -> dist) + prune to prod deps ----
-FROM node:22-slim AS companion-build
+# All three stages build from the same digest-pinned base (node:22-slim = Node 22.23.2 on Debian
+# bookworm at the time of pinning) so builds are reproducible and a re-tagged or compromised
+# upstream tag cannot slip in silently. Refresh the digest deliberately when bumping Node.
+FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS companion-build
 WORKDIR /app/companion
 # Install with the lockfile first (better layer caching). npm ci inside the image fetches the
 # correct linux-native binaries (e.g. sharp's libvips) — never copy host node_modules in.
@@ -25,7 +28,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ---- Stage 2: build the browser add-on (extension) ----
-FROM node:22-slim AS extension-build
+FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS extension-build
 RUN apt-get update \
   && apt-get install -y --no-install-recommends zip \
   && rm -rf /var/lib/apt/lists/*
@@ -37,7 +40,7 @@ RUN npm run build \
   && (cd dist && zip -r ../dfir-companion-extension.zip .)
 
 # ---- Stage 3: runtime ----
-FROM node:22-slim AS runtime
+FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime
 LABEL org.opencontainers.image.title="DFIR Companion" \
       org.opencontainers.image.description="Post-detection DFIR analysis companion (server + dashboard + browser add-on)" \
       org.opencontainers.image.source="https://github.com/hasamba/DFIR-Companion" \
@@ -64,8 +67,19 @@ COPY --from=extension-build /app/extension/dist /opt/dfir-extension/dist
 COPY --from=extension-build /app/extension/dfir-companion-extension.zip /opt/dfir-extension/dfir-companion-extension.zip
 
 COPY docker-entrypoint.sh /usr/local/bin/dfir-entrypoint
+# The server parses hostile forensic evidence, so it must not run as root: hand the writable
+# dirs to the base image's unprivileged `node` user, but leave /app root-owned on purpose — a
+# compromised server must not be able to rewrite its own code.
 RUN chmod +x /usr/local/bin/dfir-entrypoint \
-  && mkdir -p /data/cases /out
+  && mkdir -p /data/cases /out \
+  && chown -R node:node /data /out
+USER node
 
 EXPOSE 4773
+# Bake liveness into the image so plain `docker run` / Portainer / Watchtower users get health
+# status too, not just compose users. PORT is consulted before DFIR_PORT because the entrypoint's
+# PORT->DFIR_PORT remap is an export inside the entrypoint's own process — healthcheck processes
+# start from the container's configured environment and never see it.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 ENTRYPOINT ["dfir-entrypoint"]
