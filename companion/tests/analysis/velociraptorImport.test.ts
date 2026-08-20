@@ -1690,3 +1690,84 @@ describe("parseVelociraptorJsonProgress — streaming parse for large imports", 
     expect(firedDuringParse).toBe(true);
   });
 });
+
+// ── PowerShell EID 4104 splits one script block across several events when the text exceeds the
+// event message size limit. Every fragment shares one ScriptBlockId and carries "(N of M)". They
+// are ONE compiled script, so a rule matching several fragments must produce ONE alert holding the
+// whole script — not N alerts each showing a slice of it.
+describe("parseVelociraptorJson — PowerShell 4104 script-block fragments", () => {
+  const SBID = "9c440b78-a34f-40b3-99d6-dca98173b1ce";
+  const CHUNKS = ["function Invoke-Mimi { $x = 'AAA", "BBB'; Write-Output $x }"];
+
+  const frag = (part: number, chunk: string, rule = "PowerShell - Mimikatz"): object => ({
+    _index: "artifact_detectraptor_windows_detection_evtx",
+    "@timestamp": `2026-05-07T16:31:0${part}.000Z`,
+    "Detection.Name": rule,
+    Computer: "WS-01",
+    "System.EventID.Value": 4104,
+    "System.Channel": "Microsoft-Windows-PowerShell/Operational",
+    "EventData.MessageNumber": part,
+    "EventData.MessageTotal": CHUNKS.length,
+    "EventData.ScriptBlockId": SBID,
+    "EventData.ScriptBlockText": chunk,
+    Message: `Creating Scriptblock text (${part} of ${CHUNKS.length}):\n${chunk}\n\nScriptBlock ID: ${SBID}`,
+    "Artifact.keyword": "DetectRaptor.Windows.Detection.Evtx",
+  });
+
+  it("collapses fragments of one block into ONE alert carrying the whole script", () => {
+    const rows = CHUNKS.map((c, i) => frag(i + 1, c));
+    const r = parseVelociraptorJson(JSON.stringify(rows));
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.count).toBe(2); // both source records are represented, none dropped
+    expect(r.dropped).toBe(0);
+    // The reassembled script is readable in full, not truncated to fragment 1.
+    const full = `${e.description} ${e.message ?? ""}`;
+    for (const c of CHUNKS) expect(full).toContain(c);
+    expect(e.timestamp).toContain("16:31:01"); // earliest fragment anchors the event
+  });
+
+  it("keeps two DIFFERENT rules over the same block as two alerts, each with the whole script", () => {
+    const rows = [frag(1, CHUNKS[0]), frag(2, CHUNKS[1], "PowerShell - AMSI Bypass")];
+    const r = parseVelociraptorJson(JSON.stringify(rows));
+    expect(r.events).toHaveLength(2); // two distinct verdicts stay two distinct alerts
+    for (const e of r.events) {
+      const full = `${e.description} ${e.message ?? ""}`;
+      for (const c of CHUNKS) expect(full).toContain(c);
+    }
+  });
+
+  it("leaves a single-part block as one alert with its text unchanged", () => {
+    const row = { ...frag(1, "whoami"), "EventData.MessageTotal": 1 };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    expect(`${r.events[0].description} ${r.events[0].message ?? ""}`).not.toContain("reassembled");
+  });
+
+  // Row normalization moved OUT of the per-row dispatch and into the shared preparation pass, so a
+  // real Velociraptor JSONL export — whose payload rides inside a `{ "Line": "<json>" }` wrapper —
+  // must still be unwrapped exactly once on the way through.
+  it("still unwraps a { Line: <json> } Velociraptor export after normalization moved", () => {
+    const payload = JSON.stringify({
+      Computer: "WS-01",
+      "Detection.Name": "PowerShell - Mimikatz",
+      "System.EventID.Value": 4104,
+      "EventData.ScriptBlockId": SBID,
+      "EventData.MessageNumber": 1,
+      "EventData.MessageTotal": 1,
+      "EventData.ScriptBlockText": "Invoke-Mimikatz -DumpCreds",
+    });
+    const r = parseVelociraptorJson(JSON.stringify([{ Line: payload }]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain("Mimikatz");
+    expect(r.events[0].asset).toBe("WS-01");
+  });
+
+  it("produces the same result through the chunked async driver", async () => {
+    const rows = CHUNKS.map((c, i) => frag(i + 1, c));
+    const sync = parseVelociraptorJson(JSON.stringify(rows));
+    const async_ = await parseVelociraptorJsonProgress(JSON.stringify(rows));
+    expect(async_.events).toHaveLength(sync.events.length);
+    expect(async_.events[0].description).toBe(sync.events[0].description);
+  });
+});

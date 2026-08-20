@@ -23,6 +23,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { normalizeRow } from "./veloRowNormalize.js";
+import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
 import { parseCsv } from "./csvImport.js";
 import {
   extractRecords,
@@ -1594,8 +1595,11 @@ interface VrParseCtx {
 // Map ONE raw row to its forensic event(s). Most rows yield a single event; an MFT row yields one per
 // distinct MACB timestamp. Returns the events plus how many detections it produced (so the driver can
 // tally). Pure w.r.t. control flow — no yielding — so both parse drivers share this exact logic.
-function mapRowToEvents(rawRow: Row, ctx: VrParseCtx): { events: MappedEvent[]; detections: number } {
-  const row = normalizeRow(rawRow); // `Line` payload unwrap + ES-indexed push reshape (both gated)
+function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; detections: number } {
+  // `row` is ALREADY normalized (`Line` payload unwrap + ES-indexed push reshape) — see prepareRows,
+  // which both drivers run first. Normalizing again here is not free: an Elastic row keeps its
+  // `artifact_` index, so the gate re-opens and the whole collapse/un-flatten walk runs a second
+  // time on every row of the import.
   const artifact = artifactName(row) || ctx.fallbackArtifact;
   const host = pickHost(row) || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
@@ -1764,13 +1768,39 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
   };
 }
 
+// Normalize every row, then rejoin any PowerShell 4104 script block that Windows split across
+// several events. Shared by both parse drivers so they stay byte-for-byte identical. Normalizing
+// here (rather than only per-row inside mapRowToEvents) is what lets the fragment reader see the
+// native nested `EventData`; mapRowToEvents still normalizes, which is a no-op on these rows.
+function prepareRows(rows: Row[]): Row[] {
+  return consolidateVeloScriptBlocks(rows.map(normalizeRow));
+}
+
+// Rows per event-loop turn — big enough that the per-chunk yield overhead is negligible.
+const CHUNK = 5000;
+
+// The async twin of prepareRows. Normalization is the expensive half and is per-row, so it is
+// chunked and yields between chunks; consolidation needs the whole file at once (fragments of one
+// block can sit anywhere in it) but only scans rows, which is cheap next to normalizing them.
+// Without this the "streams progress instead of freezing" contract broke on the FIRST call: every
+// row was normalized up front with no yield and no progress report.
+async function prepareRowsAsync(rows: Row[]): Promise<Row[]> {
+  const normalized: Row[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    normalized.push(normalizeRow(rows[i]));
+    if ((i + 1) % CHUNK === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return consolidateVeloScriptBlocks(normalized);
+}
+
 // Synchronous parse (unchanged behaviour) — used by the many callers that need a result inline (import
 // preview, detection routing, tests). For a large import prefer parseVelociraptorJsonProgress.
 export function parseVelociraptorJson(
   text: string,
   opts: VelociraptorImportOptions = {},
 ): VelociraptorParseResult {
-  const { rows, format } = extractRows(text);
+  const { rows: rawRows, format } = extractRows(text);
+  const rows = prepareRows(rawRows);
   if (rows.length === 0) return emptyVrResult();
   const ctx = newVrCtx(opts);
   const mapped: MappedEvent[] = [];
@@ -1791,16 +1821,16 @@ export async function parseVelociraptorJsonProgress(
   opts: VelociraptorImportOptions = {},
   onProgress?: (done: number, total: number) => void,
 ): Promise<VelociraptorParseResult> {
-  const { rows, format } = extractRows(text);
-  const total = rows.length;
-  if (total === 0) {
+  const { rows: rawRows, format } = extractRows(text);
+  if (rawRows.length === 0) {
     onProgress?.(0, 0);
     return emptyVrResult();
   }
+  const rows = await prepareRowsAsync(rawRows);
+  const total = rows.length;
   const ctx = newVrCtx(opts);
   const mapped: MappedEvent[] = [];
   let detections = 0;
-  const CHUNK = 5000; // rows per event-loop turn — big enough that the per-chunk yield overhead is negligible
   for (let i = 0; i < total; i++) {
     const r = mapRowToEvents(rows[i], ctx);
     for (const m of r.events) mapped.push(m);

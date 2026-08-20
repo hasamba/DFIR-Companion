@@ -225,3 +225,89 @@ describe("parseHayabusaTimeline — levels, floor & edges", () => {
     expect(r.events).toHaveLength(0);
   });
 });
+
+// Hayabusa reports each PowerShell 4104 fragment as its own detection row. Fragments sharing a
+// ScriptBlockId are one compiled script — see the matching Velociraptor suite.
+describe("parseHayabusaTimeline — PowerShell 4104 script-block fragments", () => {
+  const SBID = "9c440b78-a34f-40b3-99d6-dca98173b1ce";
+  const CHUNKS = ["function Invoke-Mimi { $x = 'AAA", "BBB'; Write-Output $x }"];
+
+  const frag = (part: number, chunk: string, title = "Malicious PowerShell Keywords"): string =>
+    JSON.stringify({
+      Timestamp: `2026-05-07T16:31:0${part}.000000000Z`,
+      Computer: "WS-01",
+      Channel: "Microsoft-Windows-PowerShell/Operational",
+      EID: 4104,
+      Level: "high",
+      Title: title,
+      RecordID: 900 + part,
+      Details: `ScriptBlock: ${chunk} ¦ ScriptBlockID: ${SBID} ¦ MessageNumber: ${part} ¦ MessageTotal: ${CHUNKS.length}`,
+    });
+
+  it("collapses fragments of one block into ONE alert carrying the whole script", () => {
+    const r = parseHayabusaTimeline(CHUNKS.map((c, i) => frag(i + 1, c)).join("\n"));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+    expect(r.dropped).toBe(0);
+    expect(r.events[0].severity).toBe("High");
+  });
+
+  it("keeps two DIFFERENT rules over the same block as two alerts", () => {
+    const text = [frag(1, CHUNKS[0]), frag(2, CHUNKS[1], "AMSI Bypass")].join("\n");
+    expect(parseHayabusaTimeline(text).events).toHaveLength(2);
+  });
+
+  // Hayabusa renders only the first 120 characters of each detail field into the description, and
+  // sets no full-detail message of its own. Collapsing the fragments without persisting the joined
+  // script would therefore SHOW LESS than the split rows did — the merged alert would hold 120
+  // characters of the script where three rows previously held 120 each.
+  it("persists the whole joined script, not just the 120 chars the description shows", () => {
+    const long = ["A".repeat(200), "B".repeat(200)];
+    const r = parseHayabusaTimeline(long.map((c, i) => frag(i + 1, c)).join("\n"));
+    expect(r.events).toHaveLength(1);
+    const message = r.events[0].message ?? "";
+    expect(message).toContain(long[0]); // fragment 1 survives in full
+    expect(message).toContain(long[1]); // and so does fragment 2, past the description cut-off
+  });
+
+  // Hayabusa joins detail fields with " ¦ ". Trimming each value discarded the script's OWN edge
+  // whitespace along with that padding, so a block Windows split right after "Write-Output " came
+  // back glued as "Write-Outputvalue" — a script that never ran.
+  it("keeps the whitespace at a fragment boundary instead of gluing the halves together", () => {
+    const text = ["Write-Output ", "value"].map((c, i) => frag(i + 1, c)).join("\n");
+    const message = parseHayabusaTimeline(text).events[0].message ?? "";
+    expect(message).toContain("Write-Output value");
+    expect(message).not.toContain("Write-Outputvalue");
+  });
+
+  it("still trims the padding around ordinary detail fields", () => {
+    const r = parseHayabusaTimeline(
+      JSON.stringify({
+        Timestamp: "2026-06-03T08:27:33.000000000Z",
+        Computer: "WS-01",
+        Channel: "Microsoft-Windows-Sysmon/Operational",
+        EID: 3,
+        Level: "medium",
+        Title: "Net Conn",
+        Details: "Proc: C:\\Windows\\System32\\cmd.exe ¦ DstIP: 45.77.12.34",
+      }),
+    );
+    expect(r.events[0].processName).toBe("cmd.exe"); // no stray spaces in the parsed value
+    expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("45.77.12.34");
+  });
+
+  it("adds no message to an ordinary single-part Hayabusa row", () => {
+    const r = parseHayabusaTimeline(
+      JSON.stringify({
+        Timestamp: "2026-06-03T08:27:33.000000000Z",
+        Computer: "WS-01",
+        Channel: "Microsoft-Windows-Sysmon/Operational",
+        EID: 3,
+        Level: "medium",
+        Title: "Net Conn",
+        Details: "Proc: cmd.exe ¦ DstIP: 45.77.12.34",
+      }),
+    );
+    expect(r.events[0].message).toBeUndefined();
+  });
+});
