@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError } from "../storage/caseStore.js";
+import { validateCaseCreateBody } from "./caseCreateBody.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
@@ -122,12 +123,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.post("/cases", async (req: Request, res: Response) => {
     try {
       const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
-      if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
-      if (typeof caseId !== "string" || !isValidCaseId(caseId))
-        return res.status(400).json({
-          error:
-            "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal",
-        });
+      const invalid = validateCaseCreateBody({ caseId, name, investigator, aiProvider });
+      if (invalid) return res.status(400).json({ error: invalid });
       if (await store.caseExists(caseId))
         return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({

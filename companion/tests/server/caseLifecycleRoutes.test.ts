@@ -197,6 +197,131 @@ describe("Archived-case write guards on other evidence routes", () => {
     const res = await request(app).post("/cases/INC-10/synthesize").send({});
     expect(res.status).toBe(423);
   });
+
+  // The MANUAL evidence routes. Import, capture, custody, push, MCP, deep-pass and synthesize all
+  // carry this guard; /events and /iocs did not, so closing a case froze the automated ways in and
+  // left the two hand-authored ones open. A closed case that still accepts evidence is not closed.
+  it("POST /cases/:id/events returns 423 for a closed case, and writes nothing", async () => {
+    const { app } = await harness();
+    await seedCase(app, "INC-11", "Case Eleven");
+    await request(app).patch("/cases/INC-11/status").send({ status: "closed" });
+
+    const res = await request(app).post("/cases/INC-11/events").send({
+      timestamp: "2026-07-28T10:00:00.000Z",
+      description: "manual event after close",
+      severity: "High",
+    });
+
+    expect(res.status).toBe(423);
+    const state = await request(app).get("/cases/INC-11/state");
+    expect(state.body.forensicTimeline ?? []).toHaveLength(0);
+  });
+
+  it("POST /cases/:id/iocs returns 423 for a closed case, and writes nothing", async () => {
+    const { app } = await harness();
+    await seedCase(app, "INC-12", "Case Twelve");
+    await request(app).patch("/cases/INC-12/status").send({ status: "closed" });
+
+    const res = await request(app)
+      .post("/cases/INC-12/iocs")
+      .send({ type: "ip", value: "192.0.2.5", context: "manual ioc after close" });
+
+    expect(res.status).toBe(423);
+    const state = await request(app).get("/cases/INC-12/state");
+    expect(state.body.iocs ?? []).toHaveLength(0);
+  });
+
+  // Express is not in strict-routing mode, so /events/ reaches the same handler. A gate that
+  // compares against an exact Set has to strip the optional slash or it is bypassed by typing one.
+  it("POST /cases/:id/events/ (trailing slash) is frozen too", async () => {
+    const { app } = await harness();
+    await seedCase(app, "INC-14", "Case Fourteen");
+    await request(app).patch("/cases/INC-14/status").send({ status: "closed" });
+
+    const res = await request(app).post("/cases/INC-14/events/").send({
+      timestamp: "2026-07-28T10:00:00.000Z",
+      description: "manual event via trailing slash",
+      severity: "High",
+    });
+
+    expect(res.status).toBe(423);
+  });
+
+  it("POST /cases/:id/iocs/ (trailing slash) is frozen too", async () => {
+    const { app } = await harness();
+    await seedCase(app, "INC-15", "Case Fifteen");
+    await request(app).patch("/cases/INC-15/status").send({ status: "closed" });
+
+    const res = await request(app)
+      .post("/cases/INC-15/iocs/")
+      .send({ type: "ip", value: "192.0.2.9", context: "via trailing slash" });
+
+    expect(res.status).toBe(423);
+  });
+
+  it("POST /cases/:id/events returns 423 for an archived case", async () => {
+    const { app } = await harness();
+    await seedCase(app, "INC-13", "Case Thirteen");
+    await request(app).post("/cases/INC-13/archive").send({ removeFromList: true });
+
+    const res = await request(app).post("/cases/INC-13/events").send({
+      timestamp: "2026-07-28T10:00:00.000Z",
+      description: "manual event after archive",
+      severity: "High",
+    });
+
+    expect(res.status).toBe(423);
+  });
+});
+
+describe("POST /cases — body types", () => {
+  // caseId was the only field type-checked. A non-string `name` persisted happily and then broke a
+  // later operation instead: zipArchiveFilename does `(name ?? "").trim()`, so archiving the case
+  // threw and returned a 500 with no hint of where the bad value came from. Reject it at the door.
+  it("400s a non-string name instead of persisting it", async () => {
+    const { app, store } = await harness();
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: "TYPE-1", name: 42, investigator: "alice", aiProvider: null });
+
+    expect(res.status).toBe(400);
+    expect(await store.caseExists("TYPE-1")).toBe(false);
+  });
+
+  it("400s a non-string investigator", async () => {
+    const { app } = await harness();
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: "TYPE-2", name: "Case", investigator: { name: "alice" } });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("400s a non-string aiProvider", async () => {
+    const { app } = await harness();
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: "TYPE-3", name: "Case", investigator: "alice", aiProvider: ["anthropic"] });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("still accepts a well-formed body, and an omitted aiProvider", async () => {
+    const { app, store } = await harness();
+    const res = await request(app).post("/cases").send({ caseId: "TYPE-4", name: "Case Four" });
+
+    expect(res.status).toBe(201);
+    expect(await store.caseExists("TYPE-4")).toBe(true);
+  });
+
+  it("archives a case created through the route without a 500", async () => {
+    // The end of the chain the bad `name` used to break.
+    const { app } = await harness();
+    await seedCase(app, "TYPE-5", "Case Five");
+    const res = await request(app).post("/cases/TYPE-5/archive").send({});
+
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("POST /cases/:id/delete", () => {
