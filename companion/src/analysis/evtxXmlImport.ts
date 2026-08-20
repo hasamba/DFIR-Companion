@@ -52,14 +52,32 @@ export function looksLikeWinEventXml(text: string): boolean {
   return /<Event\b/i.test(head) && /<System\b/i.test(head) && /<EventID\b/i.test(head);
 }
 
+// The elText/attr patterns are memoized: parseEventBlock calls them ~8 times per event over a
+// CLOSED set of tag/attribute names, and constructing the RegExp per call doubled per-event field
+// extraction across million-event exports. i-flagged without g, so a cached instance carries no
+// lastIndex state between calls.
+const EL_TEXT_RES = new Map<string, RegExp>();
+const ATTR_RES = new Map<string, RegExp>();
+
 // Pull the text content of a simple leaf element `<Tag …>value</Tag>` (first occurrence).
 function elText(block: string, tag: string): string {
-  const m = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "i").exec(block);
+  let re = EL_TEXT_RES.get(tag);
+  if (!re) {
+    re = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "i");
+    EL_TEXT_RES.set(tag, re);
+  }
+  const m = re.exec(block);
   return m ? decodeXmlEntities(m[1]).trim() : "";
 }
 // Pull an attribute value `attr="value"` from the (first) opening tag of `element`.
 function attr(block: string, element: string, attrName: string): string {
-  const m = new RegExp(`<${element}\\b[^>]*\\b${attrName}="([^"]*)"`, "i").exec(block);
+  const key = `${element}|${attrName}`;
+  let re = ATTR_RES.get(key);
+  if (!re) {
+    re = new RegExp(`<${element}\\b[^>]*\\b${attrName}="([^"]*)"`, "i");
+    ATTR_RES.set(key, re);
+  }
+  const m = re.exec(block);
   return m ? decodeXmlEntities(m[1]).trim() : "";
 }
 
@@ -146,7 +164,11 @@ export async function parseWinEventXmlProgress(
   signal?: AbortSignal,
 ): Promise<Row[]> {
   throwIfImportAborted(signal);
-  const total = (text.match(/<Event\b/gi) ?? []).length;
+  // Counting exec loop, not text.match(): match() would materialize a throwaway array with one
+  // string per event across a multi-hundred-MB export just to take its length.
+  let total = 0;
+  const countRe = /<Event\b/gi;
+  while (countRe.exec(text) !== null) total++;
   if (total === 0) {
     await onProgress?.(0, 0);
     return [];

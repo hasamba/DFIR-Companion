@@ -8,6 +8,9 @@ export {
   type VeloArtifactInfo,
   type VeloArtifactParam,
 } from "./artifactCatalog.js";
+import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
+// Re-exported so the inventory record/normalizer/matcher keep their long-standing import path.
+export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
@@ -446,62 +449,6 @@ export const ARTIFACT_CATALOG_TTL_MS = 45_000;
 export const ALL_CLIENTS = "*"; // sentinel client id meaning "every enrolled client"
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/; // valid hunt id
 const FLOW_RE = /^F\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$/; // flow id; hunt-launched flows carry a ".H" suffix (F.<base>.H)
-const CLIENT_RE = /^C\.[A-Za-z0-9]+$/; // valid Velociraptor client id
-
-// One enrolled endpoint as the Companion records it in the persisted client INVENTORY (issue #70).
-export interface VeloClientRecord {
-  clientId: string;
-  hostname: string;
-  fqdn: string;
-  lastSeen?: string;
-}
-
-// Normalize one `clients()` row → a record (or null if it has no usable client id). Casing-tolerant:
-// `client_id`/`ClientId`, and `os_info.hostname`/`os_info.Hostname` (+ `fqdn`/`Fqdn`) differ across
-// Velociraptor versions and depending on whether the VQL aliases the columns.
-export function normalizeClientRow(row: unknown): VeloClientRecord | null {
-  const r = (row ?? {}) as {
-    client_id?: unknown;
-    ClientId?: unknown;
-    os_info?: Record<string, unknown>;
-    OsInfo?: Record<string, unknown>;
-    last_seen_at?: unknown;
-    LastSeen?: unknown;
-  };
-  const clientId = String(r.client_id ?? r.ClientId ?? "");
-  if (!CLIENT_RE.test(clientId)) return null;
-  const os = r.os_info ?? r.OsInfo ?? {};
-  const hostname = String(os.hostname ?? os.Hostname ?? "").trim();
-  const fqdn = String(os.fqdn ?? os.Fqdn ?? "").trim();
-  const last = r.last_seen_at ?? r.LastSeen;
-  return { clientId, hostname, fqdn, ...(last != null && last !== "" ? { lastSeen: String(last) } : {}) };
-}
-
-// Pure: the best client record for a target host, from the inventory. Robust to the two real-world
-// mismatches that make a naive `clients(search='host:<fqdn>')` miss: the client enrolled with its
-// SHORT name while the case asset is an FQDN (or vice-versa). Exact full match (hostname or FQDN) wins
-// over a first-label match; case-insensitive. Returns undefined when nothing matches.
-export function matchClient(
-  records: readonly VeloClientRecord[],
-  host: string,
-): VeloClientRecord | undefined {
-  const target = String(host || "")
-    .trim()
-    .toLowerCase();
-  if (!target) return undefined;
-  const targetShort = target.split(".")[0];
-  const valid = (records ?? []).filter((r) => r && CLIENT_RE.test(r.clientId));
-  // Pass 1: exact full match on hostname or FQDN (the safest disambiguation).
-  for (const r of valid) if (r.hostname.toLowerCase() === target || r.fqdn.toLowerCase() === target) return r;
-  // Pass 2: first-label match either way ("WIN11" ↔ "WIN11.windomain.local").
-  for (const r of valid) {
-    const hn = r.hostname.toLowerCase(),
-      fq = r.fqdn.toLowerCase();
-    if (hn && (hn === targetShort || hn.split(".")[0] === targetShort)) return r;
-    if (fq && (fq === targetShort || fq.split(".")[0] === targetShort)) return r;
-  }
-  return undefined;
-}
 
 // Slug for a generated artifact name: alphanumerics from the description, capped.
 function slugify(s: string): string {
@@ -853,8 +800,11 @@ export class VelociraptorClient {
   // An external FLOW's collected artifacts + the HOST it ran on, so a GUI-launched collection can be
   // imported without having launched it. Reads flows(client_id=) for the artifact list (prefer
   // `artifacts_with_results` — the ones that actually produced output — else the requested
-  // `request.artifacts`), and resolves the hostname from the client id via the enrolled-client inventory
-  // (empty when the client isn't found). CLIENT_RE/FLOW_RE-validated so both ids are safe in the literals.
+  // `request.artifacts`), and resolves the hostname with a TARGETED clients(search='id:…') lookup
+  // (empty when the client isn't found) — the id is already known, so enumerating the whole fleet
+  // via listClients() would parse a full inventory per import; the dot-tokenization caveat that
+  // forces inventory matching (see listClients) applies to hostname search, not id lookup.
+  // CLIENT_RE/FLOW_RE-validated so both ids are safe in the literals.
   async getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
@@ -869,8 +819,11 @@ export class VelociraptorClient {
           ? r.req_artifacts
           : [];
     const artifacts = src.map((a) => String(a).trim()).filter(Boolean);
-    const rec = (await this.listClients()).find((c) => c.clientId === clientId);
-    const hostname = rec?.hostname || rec?.fqdn || "";
+    const clientRows = await this.runRaw(
+      `SELECT client_id, os_info FROM clients(search='id:${clientId}') LIMIT 1`,
+    );
+    const rec = normalizeClientRow(clientRows[0]);
+    const hostname = (rec && rec.clientId === clientId && (rec.hostname || rec.fqdn)) || "";
     return { artifacts, hostname };
   }
 
