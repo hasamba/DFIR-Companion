@@ -34,17 +34,20 @@ fi
 if [ "$(id -u)" = "0" ]; then
   node_uid="$(id -u node)"
   chown -R node:node /out 2>/dev/null || true
-  # The evidence store can be multi-gigabyte, so deep-chown it only when its mount root is
-  # not already node-owned. `stat` reads the mount-point DIRECTORY itself — which node can
-  # neither replace, re-own, nor turn into a symlink — so this gate cannot be spoofed into
-  # skipping, and there is no node-writable marker for a root operation to follow into an
-  # arbitrary path. `chown -R` does not dereference symlinks met during recursion, so a
-  # compromised node cannot use one to redirect the chown either.
-  cases_root="${DFIR_CASES_ROOT:-/data/cases}"
-  mkdir -p "$cases_root" 2>/dev/null || true
-  if [ "$(stat -c %u "$cases_root" 2>/dev/null || echo -1)" != "$node_uid" ]; then
-    chown -R node:node /data 2>/dev/null || true
-  fi
+  # Hand every CONFIGURED writable store to node so the unprivileged server can create and
+  # UPDATE case data — including stores outside /data (a custom DFIR_CASES_ROOT bind mount)
+  # and stores left by the older root-running image, whose bind-mount root may already be
+  # host-uid-1000 while the case directories inside it are still root-owned. `find` walks
+  # each root and chowns only the inodes NOT already owned by node, so a correctly-owned
+  # tree costs a stat-walk rather than a full re-chown on every boot; `-h` plus find's
+  # default no-follow-symlink traversal means a compromised node cannot redirect a chown
+  # through a planted symlink. (Operators with a truly enormous store can skip this entirely
+  # by setting a compose `user:` so the container never starts as root.)
+  for store in "${DFIR_CASES_ROOT:-/data/cases}" "${DFIR_OCR_CACHE:-/data/ocr-cache}" "${DFIR_LOG_DIR:-}"; do
+    [ -n "$store" ] || continue
+    mkdir -p "$store" 2>/dev/null || true
+    find "$store" ! -uid "$node_uid" -exec chown -h node:node {} + 2>/dev/null || true
+  done
   # setpriv execs in place, so Node stays PID 1 and docker stop signals it directly;
   # --init-groups sheds root's supplementary groups. setpriv changes credentials but NOT
   # HOME/USER/LOGNAME, so set node's home explicitly (env, preserving DFIR_* config) —
