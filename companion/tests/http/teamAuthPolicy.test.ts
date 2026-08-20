@@ -183,3 +183,105 @@ describe("team-auth configuration and policy", () => {
     });
   });
 });
+
+/**
+ * A permission bucket must be chosen by the ROUTE, never by a value the route carries.
+ *
+ * The review and export checks used to scan the whole path suffix for a substring, and that suffix
+ * contains user-named segments: an MCP server id, a hostname read out of evidence. So naming an MCP
+ * server "report" moved POST /cases/:id/mcp/report/run into the export bucket — which a READER
+ * holds — and naming one "review" moved it into the reviewer's. The scan was also case-sensitive
+ * while Express routing is not, so POST /cases/c1/SECOND-OPINION/APPLY reached the reviewer-only
+ * handler holding only investigator "write".
+ */
+describe("case permission buckets are chosen by route, not by path content", () => {
+  const permission = (method: string, path: string): string => {
+    const policy = resolveRequestPolicy(method, path) as { kind: string; permission?: string };
+    return policy.permission ?? policy.kind;
+  };
+
+  it("classifies the real review routes as review, in any casing", () => {
+    for (const path of [
+      "/cases/c1/cockpit/review",
+      "/cases/c1/presidio-pending/approve",
+      "/cases/c1/presidio-pending/suppress",
+      "/cases/c1/second-opinion/apply",
+      "/cases/c1/second-opinion/apply-all",
+      "/cases/c1/report-versions/v3/review/approve",
+    ]) {
+      expect(permission("POST", path), path).toBe("review");
+      expect(permission("POST", path.toUpperCase().replace("/CASES/C1", "/cases/c1")), path).toBe("review");
+    }
+  });
+
+  it("classifies the real export routes as export, in any casing", () => {
+    for (const path of [
+      "/cases/c1/attack-layer.json",
+      "/cases/c1/custody/manifest",
+      "/cases/c1/export/stix",
+      "/cases/c1/geo-map.csv",
+      "/cases/c1/incident-timeline.csv",
+      "/cases/c1/present/export",
+      "/cases/c1/report.docx",
+      "/cases/c1/report/interactive",
+      "/cases/c1/super-timeline.jsonl",
+      "/cases/c1/timeline.jsonl",
+    ]) {
+      expect(permission("GET", path), path).toBe("export");
+      expect(permission("GET", path.toUpperCase().replace("/CASES/C1", "/cases/c1")), path).toBe("export");
+    }
+    expect(permission("POST", "/cases/c1/export/encrypted")).toBe("export");
+    expect(permission("POST", "/cases/c1/report")).toBe("export");
+  });
+
+  it("does not let a user-named path segment buy a weaker permission", () => {
+    // Running an MCP server is a write, whatever the operator called the server. "report" and
+    // "export" are the dangerous names: export is held by a READER, the lowest role there is.
+    for (const name of ["report", "export", "review", "Report", "EXPORT", "second-opinion"]) {
+      expect(permission("POST", `/cases/c1/mcp/${name}/run`), name).toBe("write");
+    }
+    // A hostname comes out of evidence, so an adversary has a say in it.
+    for (const host of ["report", "export", "review"]) {
+      expect(permission("POST", `/cases/c1/host-scope/${host}`), host).toBe("write");
+    }
+  });
+
+  // Express is not in "strict routing" mode, so /cockpit/review/ reaches the same handler as
+  // /cockpit/review. Anchoring the patterns with $ made the trailing-slash spelling miss every one
+  // of them and fall through to the "write" default — reintroducing, in a new spelling, the exact
+  // bypass the anchoring was added to close. policy.ts already had collectionPath() for this on
+  // NON_CASE_PATHS; the suffix needs the same treatment.
+  it("classifies a trailing-slash spelling the same as the bare route", () => {
+    for (const path of [
+      "/cases/c1/cockpit/review",
+      "/cases/c1/presidio-pending/approve",
+      "/cases/c1/second-opinion/apply",
+      "/cases/c1/report-versions/v3/review/approve",
+    ]) {
+      expect(permission("POST", `${path}/`), path).toBe("review");
+    }
+    for (const path of ["/cases/c1/attack-layer.json", "/cases/c1/custody/manifest"]) {
+      expect(permission("GET", `${path}/`), path).toBe("export");
+    }
+  });
+
+  // The review bucket has to cover the whole report-review workflow, not just approve. These two
+  // were caught by the old substring check and are the reviewer's actual day job: a reviewer holds
+  // "review" but NOT "write", so classifying them as write locks the assigned reviewer out with a
+  // 403 rather than letting anyone through.
+  it("covers every report-version review mutation, not only approve", () => {
+    for (const action of ["approve", "annotations", "request-changes"]) {
+      expect(permission("POST", `/cases/c1/report-versions/v3/review/${action}`), action).toBe("review");
+      expect(caseRoleAllows("reviewer", "review")).toBe(true);
+      expect(caseRoleAllows("reviewer", "write")).toBe(false);
+    }
+  });
+
+  it("keeps export out of a reader's reach on anything that is not an export route", () => {
+    // The concrete escalation: reader holds "export", so any route that lands in that bucket by
+    // accident is reachable by the least-privileged role in the case.
+    expect(caseRoleAllows("reader", "export")).toBe(true);
+    expect(caseRoleAllows("reader", "write")).toBe(false);
+    expect(permission("POST", "/cases/c1/mcp/report/run")).not.toBe("export");
+  });
+});
