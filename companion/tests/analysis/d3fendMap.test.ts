@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   d3fendTechniqueUrl,
   buildD3fendResult,
@@ -9,13 +9,18 @@ import {
   type D3fendDatasetView,
   type D3fendCountermeasure,
 } from "../../src/analysis/d3fendMap.js";
-import { loadD3fendDataset } from "../../src/analysis/d3fendData.js";
+import { loadD3fendDataset, _resetD3fendCache } from "../../src/analysis/d3fendData.js";
 import {
   emptyState,
   type InvestigationState,
   type Finding,
   type ForensicEvent,
 } from "../../src/analysis/stateTypes.js";
+
+beforeEach(() => {
+  // Ensure each test gets a fresh load (avoids cross-test cache contamination).
+  _resetD3fendCache();
+});
 
 const finding = (id: string, mitreTechniques: string[]): Finding => ({
   id,

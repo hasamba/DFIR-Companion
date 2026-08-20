@@ -1,17 +1,22 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   buildMitigationsResult,
   type MitigationsDatasetView,
   type AttackMitigation,
   type MitigationMapLink,
 } from "../../src/analysis/attackMitigations.js";
-import { loadMitigationsDataset } from "../../src/analysis/attackMitigationsData.js";
+import { loadMitigationsDataset, _resetMitigationsCache } from "../../src/analysis/attackMitigationsData.js";
 import {
   emptyState,
   type InvestigationState,
   type Finding,
   type ForensicEvent,
 } from "../../src/analysis/stateTypes.js";
+
+beforeEach(() => {
+  // Ensure each test gets a fresh load (avoids cross-test cache contamination).
+  _resetMitigationsCache();
+});
 
 const finding = (id: string, mitreTechniques: string[]): Finding => ({
   id,

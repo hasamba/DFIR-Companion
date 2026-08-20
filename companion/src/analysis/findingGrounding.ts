@@ -11,7 +11,17 @@
 //   CAPS       — a single-tool, single-host, uncorroborated finding can't keep a high confidence.
 // It only ever LOWERS confidence (never invents grounding, never raises a score) and is pure + idempotent.
 
-import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity, NextStep } from "./stateTypes.js";
+// Aliased: this file also imports forensicGate's SEVERITY_RANK, whose encoding is INVERTED
+// (higher = more severe) — SEV_ORDER is the canonical lower-is-worse table under a distinct name.
+import {
+  SEVERITY_RANK as SEV_ORDER,
+  type Finding,
+  type ForensicEvent,
+  type IOC,
+  type FindingCorroboration,
+  type Severity,
+  type NextStep,
+} from "./stateTypes.js";
 import { classifyVerdict, iocHasBehavioralEvent, shortHost } from "./iocAnchors.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
@@ -342,7 +352,6 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
 // a stale OpenCTI verdict on the org's own db-01 became a Critical "C2" finding on a benign connection.
 export const INTEL_ONLY_SEVERITY_FLOOR: Severity = "Medium";
 export const INTEL_ONLY_CONFIDENCE_CAP = 60;
-const SEV_ORDER: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 export interface IntelCapInput {
   findings: readonly Finding[];

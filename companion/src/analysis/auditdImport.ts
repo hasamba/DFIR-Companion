@@ -20,7 +20,7 @@
 // A line-oriented `aureport` numbered table (no `type=`/`msg=audit`) is handled as Info evidence
 // rows so a summary report still lands on the timeline rather than being dropped.
 
-import type { Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   aggregateEvents,
@@ -293,11 +293,10 @@ function execveArgv(f: Fields): string[] {
 function primaryType(types: string[]): string {
   let best: string | undefined;
   let bestRank = Infinity;
-  const rank: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
   for (const t of types) {
     if (CONTEXT_TYPES.has(t)) continue;
     const def = AUDIT_TYPES[t];
-    const r = def ? rank[def.severity] : 3.5; // an unknown non-context type ranks just below Low
+    const r = def ? SEVERITY_RANK[def.severity] : 3.5; // an unknown non-context type ranks just below Low
     if (r < bestRank) {
       bestRank = r;
       best = t;

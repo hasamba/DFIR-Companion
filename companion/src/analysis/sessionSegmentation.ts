@@ -1,4 +1,4 @@
-import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { parseLoginEvent } from "./loginGraph.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
@@ -66,8 +66,6 @@ export function sessionEnvOptions(): Required<SessionOptions> {
     iocGraceFactor: Number(process.env.DFIR_SESSION_IOC_GRACE) || DEFAULT_IOC_GRACE_FACTOR,
   };
 }
-
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a session reads as the stage it leads with).
@@ -161,7 +159,7 @@ function summarizeSession(index: number, host: string, events: ForensicEvent[]):
     // two different accounts, so there is no "last one wins" ambiguity to resolve here.
     account ??= accountEstablishedBy(e);
   }
-  const severityRange = [...sevSet].sort((a, b) => SEV_RANK[a] - SEV_RANK[b]);
+  const severityRange = [...sevSet].sort((a, b) => SEVERITY_RANK[a] - SEVERITY_RANK[b]);
   const start = events[0].timestamp;
   // The account, when known, goes in the label right after the host — "who on which box" is the
   // question the label exists to answer, and it is the part an analyst scans for.

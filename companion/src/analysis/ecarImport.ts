@@ -34,6 +34,7 @@ import {
   aggregateEvents,
   addIoc,
   cleanIp,
+  isInternalIpv4,
   isSuspiciousCmd,
   baseName,
   oneLine,
@@ -76,26 +77,11 @@ function prop(p: Row, key: string): string {
   return v === "-" ? "" : v;
 }
 
-// Is this an RFC1918 / loopback / link-local / CGNAT address? Such IPs are internal infrastructure, not
-// indicators — only PUBLIC IPs become IOCs (mirrors the network importer's signal-first stance and keeps
-// the IOC list from exploding with every internal flow). Non-IPv4 strings are treated as non-private.
-function isPrivateIp(ip: string): boolean {
-  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 169 && b === 254) return true; // link-local
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-  return false;
-}
-
 // Record any PUBLIC IP among the given raw values as an `ip` IOC (cleaned of IPv4-mapped IPv6 / loopback).
 function iocPublicIps(sink: Map<string, SiemIoc>, ...raw: string[]): void {
   for (const r of raw) {
     const ip = cleanIp(r);
-    if (ip && !isPrivateIp(ip)) addIoc(sink, "ip", ip);
+    if (ip && !isInternalIpv4(ip)) addIoc(sink, "ip", ip);
   }
 }
 
@@ -235,7 +221,7 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const dstPort = prop(p, "dst_port");
       const proto = prop(p, "protocol").toLowerCase();
       const direction = prop(p, "direction").toLowerCase();
-      const external = (srcIp && !isPrivateIp(srcIp)) || (dstIp && !isPrivateIp(dstIp));
+      const external = (srcIp && !isInternalIpv4(srcIp)) || (dstIp && !isInternalIpv4(dstIp));
       iocPublicIps(sink, srcIp, dstIp);
       const desc =
         `${direction || "network"} ${proto || "tcp"} ${srcIp || "?"}` +

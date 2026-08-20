@@ -21,7 +21,9 @@
 // everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
 // with a conservative bump for LOLBin / suspicious command lines and LSASS access.
 
-import type { Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
+import { MONTHS, parseBsdTime } from "./bsdTime.js";
+import { isInternalIpv4 } from "./internalIp.js";
 import {
   createCanonicalEvent,
   stampSourceArtifactHash,
@@ -31,6 +33,10 @@ import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+
+// Re-exported for the sibling importers, which already source their shared helpers
+// (aggregateEvents / addIoc / cleanIp) from this module.
+export { MONTHS, parseBsdTime, isInternalIpv4 };
 
 export interface SiemImportOptions {
   // Collapse repetitive identical events into one counted row. Default true.
@@ -100,8 +106,6 @@ export interface SiemParseResult {
 }
 
 type Row = Record<string, unknown>;
-
-const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 // Safety cap on emitted events, shared by every importer. Overridable via DFIR_MAX_EVENTS
 // (must be a positive integer to take effect; unset/invalid/non-positive values keep the
@@ -535,24 +539,10 @@ export function normalizeTime(s: string): string {
 // timezone, so — consistent with this codebase's naive-time convention — we read it as UTC. (Kibana
 // renders in the browser TZ unless `dateFormat:tz` is UTC; without offset info that's unrecoverable.)
 const KIBANA_DATE = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) @ (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/;
-const KIBANA_MONTHS: Record<string, string> = {
-  Jan: "01",
-  Feb: "02",
-  Mar: "03",
-  Apr: "04",
-  May: "05",
-  Jun: "06",
-  Jul: "07",
-  Aug: "08",
-  Sep: "09",
-  Oct: "10",
-  Nov: "11",
-  Dec: "12",
-};
 function parseKibanaDate(t: string): string {
   const m = KIBANA_DATE.exec(t);
   if (!m) return "";
-  const mon = KIBANA_MONTHS[m[1]];
+  const mon = MONTHS[m[1]];
   if (!mon) return "";
   const ms = (m[7] ?? "").padEnd(3, "0");
   return `${m[3]}-${mon}-${m[2].padStart(2, "0")}T${m[4]}:${m[5]}:${m[6]}.${ms || "000"}Z`;
@@ -818,17 +808,11 @@ export const LOGON_TYPES: Record<number, string> = {
 };
 
 // A routable (public) IPv4 source? RFC1918 / loopback / link-local / CGNAT are internal → not a
-// remote-access signal on their own. Non-IPv4 / blank ("-", "::1", "127.0.0.1") count as internal.
+// remote-access signal on their own. Non-IPv4 / blank ("-", "::1", "127.0.0.1") count as internal —
+// so this must stay "IPv4-shaped AND not internal", never a plain !isInternalIpv4 (which would call
+// a blank/IPv6 source public and make logonRisk grade e.g. a blank-source type-3 logon external).
 function isPublicIpv4(ip: string): boolean {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip.trim());
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127 || a === 0) return false;
-  if (a === 192 && b === 168) return false;
-  if (a === 172 && b >= 16 && b <= 31) return false;
-  if (a === 169 && b === 254) return false;
-  if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
-  return true;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip.trim()) && !isInternalIpv4(ip);
 }
 
 // Risk overlay for a successful logon (4624). Decodes the logon type and grades the ones that carry

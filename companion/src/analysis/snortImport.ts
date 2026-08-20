@@ -17,6 +17,7 @@ import {
   aggregateEvents,
   addIoc,
   cleanIp,
+  isInternalIpv4,
   oneLine,
   type MappedEvent,
   type SiemIoc,
@@ -51,18 +52,6 @@ export function looksLikeSnort(text: string): boolean {
   if (!lines.length) return false;
   const hits = lines.filter((l) => ALERT_LINE.test(l)).length;
   return hits >= 1 && hits >= lines.length * 0.5;
-}
-
-function isPrivateIp(ip: string): boolean {
-  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
 }
 
 function severityForPriority(p: number): Severity {
@@ -104,7 +93,7 @@ export function mapSnortLine(line: string, year: number, sink: Map<string, SiemI
   const dstIp = flow ? cleanIp(flow[3]) : "";
   const dstPort = flow?.[4];
 
-  for (const ip of [srcIp, dstIp]) if (ip && !isPrivateIp(ip)) addIoc(sink, "ip", ip);
+  for (const ip of [srcIp, dstIp]) if (ip && !isInternalIpv4(ip)) addIoc(sink, "ip", ip);
 
   const flowStr = flow
     ? ` ${srcIp}${srcPort ? `:${srcPort}` : ""} → ${dstIp}${dstPort ? `:${dstPort}` : ""}`

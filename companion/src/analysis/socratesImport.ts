@@ -7,7 +7,7 @@
 // No AI. Per the Companion's post-detection principle we ingest the tool's verdicts, never re-run
 // detection. Events are tagged "SO-CRATES" (+ the underlying engine) for cross-source correlation.
 
-import type { Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -50,7 +50,6 @@ export interface SocratesParseResult {
 }
 
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 // Scan free text / arrays / comma-strings for ATT&CK technique ids (Txxxx[.nnn]).
 function mitreFrom(...vals: unknown[]): string[] {
@@ -315,7 +314,7 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
   const combined = [...netEvents, ...fileEvents]
     .sort(
       (a, b) =>
-        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
         (b.count ?? 1) - (a.count ?? 1) ||
         (a.timestamp || "~").localeCompare(b.timestamp || "~"),
     )

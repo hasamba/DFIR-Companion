@@ -31,7 +31,9 @@ import {
   aggregateEvents,
   addIoc,
   cleanIp,
+  isInternalIpv4,
   oneLine,
+  parseBsdTime,
   worst,
   type MappedEvent,
   type SiemIoc,
@@ -53,21 +55,6 @@ export type SyslogParseResult = SiemParseResult;
 
 export const SYSLOG_SOURCE = "Syslog";
 
-const MONTHS: Record<string, string> = {
-  Jan: "01",
-  Feb: "02",
-  Mar: "03",
-  Apr: "04",
-  May: "05",
-  Jun: "06",
-  Jul: "07",
-  Aug: "08",
-  Sep: "09",
-  Oct: "10",
-  Nov: "11",
-  Dec: "12",
-};
-
 // RFC 5424: "<PRI>VER TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MSG". The timestamp
 // is RFC 3339 (starts with a 4-digit year), which anchors the line unambiguously.
 const RFC5424_RE = /^<(\d{1,3})>\d{1,2}\s+(\d{4}-\d{2}-\d{2}T\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/;
@@ -83,18 +70,6 @@ const AUTH_FAIL =
 
 const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>()]+/gi;
-
-function isPrivateIp(ip: string): boolean {
-  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
-}
 
 // Strip the RFC 5424 STRUCTURED-DATA field ("-" or one-or-more "[…]" elements) off the front of the
 // message remainder, leaving the free-text MSG.
@@ -112,17 +87,6 @@ function stripStructuredData(rest: string): string {
     return s.slice(i).replace(/^\s+/, "");
   }
   return s;
-}
-
-// Parse the RFC 3164 year-less "MMM DD HH:MM:SS" timestamp into ISO at `year`. "" if unparseable.
-function parse3164Time(ts: string, year: number): string {
-  const m = ts.trim().match(/^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})$/);
-  if (!m) return "";
-  const [, mon, dd, hh, mi, ss] = m;
-  const month = MONTHS[mon];
-  if (!month) return "";
-  const t = Date.parse(`${year}-${month}-${dd.padStart(2, "0")}T${hh}:${mi}:${ss}Z`);
-  return Number.isNaN(t) ? "" : new Date(t).toISOString();
 }
 
 // Parse the RFC 5424 RFC-3339 timestamp (year + tz present) to a normalized ISO string. "" if bad.
@@ -158,7 +122,7 @@ export function parseSyslogLine(line: string, year: number): ParsedSyslog | null
     const [, priRaw, tsRaw, host, tag, , msg] = m3;
     return {
       pri: priRaw != null ? Number(priRaw) : null,
-      timestamp: parse3164Time(tsRaw, year),
+      timestamp: parseBsdTime(tsRaw, year),
       host: host === "-" ? "" : host,
       app: tag,
       message: msg ?? "",
@@ -194,7 +158,7 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
   // IOCs from the free-text message: public IPs + http(s) URLs (and each URL's host as a domain).
   for (const ip of p.message.match(IPV4_RE) ?? []) {
     const clean = cleanIp(ip);
-    if (clean && !isPrivateIp(clean)) addIoc(sink, "ip", clean);
+    if (clean && !isInternalIpv4(clean)) addIoc(sink, "ip", clean);
   }
   for (const url of p.message.match(URL_RE) ?? []) {
     addIoc(sink, "url", url);

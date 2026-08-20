@@ -1,4 +1,10 @@
-import type { InvestigationState, IOC, ForensicEvent, Severity } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type InvestigationState,
+  type IOC,
+  type ForensicEvent,
+  type Severity,
+} from "./stateTypes.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // Derives the asset ↔ IoC graph from the investigation state. An "asset" is a victim
@@ -75,9 +81,8 @@ export function filterTimeline(events: readonly ForensicEvent[], w?: TimeWindow)
   return events.filter((e) => eventInWindow(e, w));
 }
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worse(a: Severity, b: Severity): Severity {
-  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 
 // Dotted-quad shape (loose — any 4 dot-separated 1-3 digit groups). Used only to decide whether an
@@ -296,7 +301,7 @@ export function buildAssetGraph(
   const assets = [...assetMap.values()].sort(
     (a, b) =>
       Number(b.compromised) - Number(a.compromised) ||
-      SEV_RANK[a.maxSeverity] - SEV_RANK[b.maxSeverity] ||
+      SEVERITY_RANK[a.maxSeverity] - SEVERITY_RANK[b.maxSeverity] ||
       a.name.localeCompare(b.name),
   );
   graphIocs.sort((a, b) => a.value.localeCompare(b.value));

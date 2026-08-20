@@ -1,4 +1,10 @@
-import type { InvestigationState, IOC, ForensicEvent, Severity } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type InvestigationState,
+  type IOC,
+  type ForensicEvent,
+  type Severity,
+} from "./stateTypes.js";
 import { isInternalIp } from "./anonymize.js";
 import { countryCentroid } from "./countryCentroids.js";
 
@@ -73,13 +79,11 @@ export interface GeoMapOptions {
   topCountries?: number;
 }
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function worse(a: Severity, b: Severity): Severity {
-  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 
 const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
@@ -241,7 +245,9 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   }
   all.sort(
     (x, y) =>
-      SEV_RANK[x.severity] - SEV_RANK[y.severity] || y.eventCount - x.eventCount || x.ip.localeCompare(y.ip),
+      SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity] ||
+      y.eventCount - x.eventCount ||
+      x.ip.localeCompare(y.ip),
   );
   const resolved = all.length;
   const markers = all.slice(0, maxMarkers);
@@ -283,7 +289,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
     })
     .sort(
       (a, b) =>
-        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
         b.count - a.count ||
         a.srcIp.localeCompare(b.srcIp) ||
         a.dstIp.localeCompare(b.dstIp),
@@ -307,7 +313,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
     .sort(
       (a, b) =>
         b.count - a.count ||
-        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
         a.country.localeCompare(b.country),
     )
     .slice(0, topN);

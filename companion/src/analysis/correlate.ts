@@ -11,7 +11,7 @@
 // structured fields first, then extracted from the description text as a fallback so a
 // hash-bearing AI-extracted event still matches a structured THOR event.
 
-import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature } from "./chainSignature.js";
 
@@ -34,8 +34,6 @@ export interface CorrelateOptions {
   // those machines is collapsed into a single event (#345).
   crossHostArtifacts?: boolean;
 }
-
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 const SHA256_RE = /\b[a-f0-9]{64}\b/i;
 const MD5_RE = /\b[a-f0-9]{32}\b/i;
@@ -99,7 +97,7 @@ class DSU {
 }
 
 function worse(a: Severity, b: Severity): Severity {
-  return SEV_RANK[a] <= SEV_RANK[b] ? a : b;
+  return SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b;
 }
 
 // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
@@ -174,7 +172,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   // tool's phrasing over a noisy artifact row), then the longest description as the final tie-break.
   const primary = [...events].sort(
     (a, b) =>
-      SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+      SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
       trustForSources(b.sources, trustMap) - trustForSources(a.sources, trustMap) ||
       b.description.length - a.description.length,
   )[0];

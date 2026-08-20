@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ForensicEvent, InvestigationState, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type InvestigationState } from "./stateTypes.js";
 
 // Memory-forensics "Next-Step" agent (issue #101). The Companion already INGESTS Volatility 3 /
 // Rekall output deterministically (`memoryImport.ts`) — process tree, network connections, malfind
@@ -88,12 +88,12 @@ export function memoryPluginsPresent(events: readonly ForensicEvent[]): string[]
 // severity first then by the order given, each as "[sev] description". Capped for the token budget.
 // The descriptions already carry the process tree (name/PID/PPID/parent), connections, malfind hits,
 // and command lines, so the model has the structured signal without a second pass.
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-
 export function renderMemoryEvidence(events: readonly ForensicEvent[], limit = 300): string {
   const mem = (events ?? []).filter(isMemoryEvent);
   if (!mem.length) return "(no memory evidence)";
-  const ordered = [...mem].sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
+  const ordered = [...mem].sort(
+    (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9),
+  );
   return ordered
     .slice(0, limit)
     .map((e) => `[${e.severity}] ${(e.description ?? "").replace(/\s+/g, " ").trim().slice(0, 300)}`)
@@ -140,7 +140,3 @@ export function sanitizeMemoryNextSteps(
 function dedupeStrings(arr: string[]): string[] {
   return [...new Set(arr)];
 }
-
-// Severity rank for display ordering (Critical first). Exposed so the dashboard stays consistent
-// with the rest of the app's severity ordering.
-export const MEMORY_NEXTSTEP_SEVERITY_RANK = SEV_RANK;

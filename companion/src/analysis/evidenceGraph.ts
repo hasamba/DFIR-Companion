@@ -1,4 +1,4 @@
-import type { InvestigationState, ForensicEvent, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type InvestigationState, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { filterTimeline, type TimeWindow } from "./assetGraph.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import {
@@ -69,9 +69,8 @@ export interface EvidenceGraph {
   edges: EvidenceEdge[];
 }
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worse(a: Severity, b: Severity): Severity {
-  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the

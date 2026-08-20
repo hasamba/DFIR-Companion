@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { AssetType, AssetGraph, GraphAsset, GraphIoc, AssetGraphEdge } from "./assetGraph.js";
-import type { Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 
 // Manual analyst edits to the asset ↔ IoC graph: renames, additions, suppressions, and link
 // overrides. Kept in `state/asset-overrides.json` — NOT in InvestigationState, so synthesis
@@ -52,9 +52,8 @@ function resolveCanonical(id: string, merges: Record<string, string>): string {
   return cur;
 }
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worseSeverity(a: Severity, b: Severity): Severity {
-  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 function uniqStrings(values: string[]): string[] {
   return [...new Set(values)];
@@ -158,7 +157,7 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
   assets.sort(
     (a, b) =>
       Number(b.compromised) - Number(a.compromised) ||
-      SEV_RANK[a.maxSeverity] - SEV_RANK[b.maxSeverity] ||
+      SEVERITY_RANK[a.maxSeverity] - SEVERITY_RANK[b.maxSeverity] ||
       a.name.localeCompare(b.name),
   );
   iocs.sort((a, b) => a.value.localeCompare(b.value));

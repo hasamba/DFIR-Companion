@@ -13,11 +13,10 @@
 // the marker is appended once, and severity uses a worst() floor — so re-running over an
 // already-merged timeline is a no-op. No AI, no network.
 
-import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worst(a: Severity, b: Severity): Severity {
-  return SEV_RANK[b] < SEV_RANK[a] ? b : a;
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 
 const MARKER = "[confirmed exfiltration:";

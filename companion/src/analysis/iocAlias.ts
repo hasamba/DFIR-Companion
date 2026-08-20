@@ -23,11 +23,6 @@ export function emptyIocAliasMap(): IocAliasMap {
   return { aliases: {} };
 }
 
-// Canonical IOC id for a value the analyst previously merged away, or undefined if none.
-export function resolveIocAlias(value: string, map: IocAliasMap): string | undefined {
-  return map.aliases[value.trim().toLowerCase()];
-}
-
 export class IocAliasStore {
   constructor(private readonly cases: CaseStore) {}
 
