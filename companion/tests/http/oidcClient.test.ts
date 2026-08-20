@@ -1,4 +1,4 @@
-import { createSign, generateKeyPairSync } from "node:crypto";
+import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { OidcClient } from "../../src/auth/oidcClient.js";
 
@@ -119,6 +119,118 @@ describe("OIDC authorization-code client", () => {
         code: "code",
       }),
     ).rejects.toThrow(/state/i);
+  });
+});
+
+// Every token below is REFUSED. The happy path above proves a correct token verifies; these prove
+// each individual check still fires, because any one of them regressing — a loosened algorithm
+// allowlist, a dropped signature check, a skipped nonce comparison — makes OIDC login forgeable
+// while the happy-path test stays green.
+describe("OIDC ID-token verification refuses forged and invalid tokens", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = publicKey.export({ format: "jwk" });
+
+  function baseClaims(nonce: string): Record<string, unknown> {
+    const now = Math.floor(Date.now() / 1_000);
+    return { iss: ISSUER, sub: "stable-subject", aud: CLIENT_ID, exp: now + 300, iat: now, nonce };
+  }
+
+  function sign(
+    header: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    key: KeyObject = privateKey,
+  ): string {
+    const signingInput = `${encode(header)}.${encode(payload)}`;
+    const signature = createSign("RSA-SHA256").update(signingInput).sign(key, "base64url");
+    return `${signingInput}.${signature}`;
+  }
+
+  // Runs a full begin()/complete() round trip against a mock IdP whose token endpoint returns
+  // whatever `makeToken` builds for the flow's real nonce. Discovery advertises RS256 only.
+  async function completeWith(makeToken: (nonce: string) => string): Promise<unknown> {
+    let nonce = "";
+    const fetchFn: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) {
+        return Response.json({
+          issuer: ISSUER,
+          authorization_endpoint: `${ISSUER}/authorize`,
+          token_endpoint: `${ISSUER}/token`,
+          jwks_uri: `${ISSUER}/jwks`,
+          code_challenge_methods_supported: ["S256"],
+          id_token_signing_alg_values_supported: ["RS256"],
+        });
+      }
+      if (url === `${ISSUER}/jwks`) {
+        return Response.json({ keys: [{ ...jwk, kid: "key-1", use: "sig", alg: "RS256" }] });
+      }
+      if (url === `${ISSUER}/token`) {
+        return Response.json({ id_token: makeToken(nonce), access_token: "unused" });
+      }
+      return new Response("not found", { status: 404 });
+    };
+    const client = new OidcClient(
+      { issuer: ISSUER, clientId: CLIENT_ID, redirectUri: REDIRECT_URI, scopes: ["openid"] },
+      fetchFn,
+    );
+    const started = await client.begin("/dashboard");
+    nonce = new URL(started.authorizationUrl).searchParams.get("nonce") ?? "";
+    return client.complete({ state: started.state, browserState: started.state, code: "authorization-code" });
+  }
+
+  const HEADER = { alg: "RS256", kid: "key-1", typ: "JWT" };
+
+  it("rejects a token signed by a different key", async () => {
+    const rogue = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    await expect(completeWith((nonce) => sign(HEADER, baseClaims(nonce), rogue.privateKey))).rejects.toThrow(
+      /signature/i,
+    );
+  });
+
+  it("rejects alg none even with a known kid and an empty signature", async () => {
+    await expect(
+      completeWith(
+        (nonce) => `${encode({ alg: "none", kid: "key-1", typ: "JWT" })}.${encode(baseClaims(nonce))}.`,
+      ),
+    ).rejects.toThrow(/unsupported/i);
+  });
+
+  it("rejects the symmetric algorithm confusion (HS256)", async () => {
+    // The allowlist fires before any signature check, so the signature bytes are irrelevant here —
+    // the danger being pinned is HS256 verified against the PUBLIC key as its shared secret.
+    await expect(
+      completeWith((nonce) => sign({ alg: "HS256", kid: "key-1", typ: "JWT" }, baseClaims(nonce))),
+    ).rejects.toThrow(/unsupported/i);
+  });
+
+  it("rejects an allowlisted algorithm the provider never advertised", async () => {
+    // RS384 passes the static allowlist regex; discovery above only advertises RS256.
+    await expect(
+      completeWith((nonce) => sign({ alg: "RS384", kid: "key-1", typ: "JWT" }, baseClaims(nonce))),
+    ).rejects.toThrow(/advertised/i);
+  });
+
+  it("rejects a correctly signed token from the wrong issuer", async () => {
+    await expect(
+      completeWith((nonce) => sign(HEADER, { ...baseClaims(nonce), iss: "https://rogue.example.test" })),
+    ).rejects.toThrow(/issuer/i);
+  });
+
+  it("rejects a correctly signed token for a different audience", async () => {
+    await expect(
+      completeWith((nonce) => sign(HEADER, { ...baseClaims(nonce), aud: "other-client" })),
+    ).rejects.toThrow(/audience/i);
+  });
+
+  it("rejects a correctly signed but expired token", async () => {
+    const expired = Math.floor(Date.now() / 1_000) - 3_600;
+    await expect(
+      completeWith((nonce) => sign(HEADER, { ...baseClaims(nonce), exp: expired })),
+    ).rejects.toThrow(/expired/i);
+  });
+
+  it("rejects a correctly signed token whose nonce is not this flow's", async () => {
+    await expect(completeWith(() => sign(HEADER, baseClaims("wrong-nonce")))).rejects.toThrow(/nonce/i);
   });
 });
 

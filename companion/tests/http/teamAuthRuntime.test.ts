@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -48,6 +48,46 @@ describe("team-auth runtime", () => {
     );
     const replacement = acquireWriterGuard(path);
     replacement.release();
+  });
+
+  it("refuses to recover an unparseable guard whose write may still be in flight", async () => {
+    // A racing starter writes the guard in two steps (open, then write). A file that does not
+    // parse but is fresh must be treated as mid-write and retried, not deleted out from under
+    // the writer that is completing it.
+    const root = await mkdtemp(join(tmpdir(), "dfir-writer-guard-"));
+    const path = join(root, "writer.lock");
+    await writeFile(path, "not-json", "utf8");
+    expect(() => acquireWriterGuard(path)).toThrow(/incomplete/i);
+    // Still there — a refusal must not have deleted the other writer's half-written guard.
+    expect(await readFile(path, "utf8")).toBe("not-json");
+  });
+
+  it("recovers an unparseable guard once it is old enough to be abandoned", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-writer-guard-"));
+    const path = join(root, "writer.lock");
+    await writeFile(path, "not-json", "utf8");
+    const past = new Date(Date.now() - 60_000);
+    await utimes(path, past, past);
+    const guard = acquireWriterGuard(path);
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ pid: process.pid });
+    guard.release();
+  });
+
+  it("does not delete a guard another writer has replaced when a stale handle releases", async () => {
+    // The unlock-safety property: release() may only remove the exact contents it wrote. If it
+    // ever becomes a bare unlink, a released stale handle deletes the ACTIVE writer's guard and a
+    // third process can acquire — two concurrent writers on one cases root.
+    const root = await mkdtemp(join(tmpdir(), "dfir-writer-guard-"));
+    const path = join(root, "writer.lock");
+    const guard = acquireWriterGuard(path);
+    const replacement = JSON.stringify({
+      pid: process.pid,
+      token: "other-writer",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await writeFile(path, replacement, "utf8");
+    guard.release();
+    expect(await readFile(path, "utf8")).toBe(replacement);
   });
 
   it("derives only loopback HTTP callbacks and requires an explicit public URL remotely", async () => {

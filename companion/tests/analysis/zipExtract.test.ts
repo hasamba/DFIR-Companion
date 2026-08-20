@@ -136,4 +136,37 @@ describe("extractZipEntries", () => {
     expect(() => extractZipEntries(archive, "aes.zip")).toThrow(ZipAuthenticationError);
     expect(() => extractZipEntries(archive, "aes.zip")).toThrow(/modified/i);
   });
+
+  // The EOCD's central-directory offset is attacker-controlled: a crafted value past the end of
+  // the buffer used to surface as Node's raw ERR_OUT_OF_RANGE ("The value of \"offset\" is out of
+  // range...") instead of the actionable corrupt-archive wording every other malformed path gives
+  // the analyst.
+  it("reports a crafted out-of-bounds central-directory offset as a corrupt ZIP, not a RangeError", () => {
+    const archive = createZip([{ path: "sample.bin", data: Buffer.from("payload") }]);
+    let eocd = -1;
+    for (let i = archive.length - 22; i >= 0; i--) {
+      if (archive.readUInt32LE(i) === 0x06054b50) {
+        eocd = i;
+        break;
+      }
+    }
+    archive.writeUInt32LE(0xffffff00, eocd + 16); // central directory "starts" ~4 GB into a tiny file
+
+    expect(() => extractZipEntries(archive, "crafted.zip")).toThrow(/corrupt ZIP: central directory/i);
+  });
+
+  it("reports a central directory truncated mid-walk as a corrupt ZIP too", () => {
+    const archive = createZip([{ path: "sample.bin", data: Buffer.from("payload") }]);
+    let eocd = -1;
+    for (let i = archive.length - 22; i >= 0; i--) {
+      if (archive.readUInt32LE(i) === 0x06054b50) {
+        eocd = i;
+        break;
+      }
+    }
+    // Claim one more entry than the directory holds, so the walk steps past the last real header.
+    archive.writeUInt16LE(2, eocd + 10);
+
+    expect(() => extractZipEntries(archive, "crafted.zip")).toThrow(/corrupt ZIP: central directory/i);
+  });
 });

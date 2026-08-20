@@ -70,6 +70,37 @@ describe("checkRegexSafety — ordinary importer patterns still pass", () => {
   });
 });
 
+// Ambiguity is a property of the COMPILED regex: the IOC whitelist and exclude lists hard-code the
+// `i` flag when they match, so a pattern that is only ambiguous under folding must be judged with
+// the flag it will run with. foldCase's docblock records a measured 4831ms blow-up for exactly the
+// first shape below.
+describe("checkRegexSafety — i-flag case folding", () => {
+  const rejectWith = (src: string, flags: string) =>
+    expect(checkRegexSafety(src, flags).ok, `expected REJECT: /${src}/${flags}`).toBe(false);
+  const acceptWith = (src: string, flags: string) =>
+    expect(checkRegexSafety(src, flags).ok, `expected ACCEPT: /${src}/${flags}`).toBe(true);
+
+  it("rejects alternatives that only collide once literals are folded", () => {
+    rejectWith("^(a|A)+b$", "i");
+    acceptWith("^(a|A)+b$", ""); // distinct branches without the flag
+  });
+
+  it("rejects alternatives that only collide once RANGES are folded", () => {
+    // [a-z] and [A-Z] are disjoint as written; under `i` each stands for both cases.
+    rejectWith("^([a-z]|[A-Z])+!$", "i");
+    acceptWith("^([a-z]|[A-Z])+!$", "");
+  });
+
+  it("rejects adjacent loops that only overlap once ranges are folded", () => {
+    rejectWith("^[a-z]*[A-Z]*$", "i");
+    acceptWith("^[a-z]*[A-Z]*$", "");
+  });
+
+  it("still explains the rejection under the flag", () => {
+    expect(checkRegexSafety("^(a|A)+b$", "i").reason).toMatch(/same character.*ReDoS/);
+  });
+});
+
 describe("checkRegexSafety — the rejected patterns really are dangerous", () => {
   // Shows the conservative rejections above are earning their keep: each of these compiles fine and
   // blows up on a 20-char input, while the real bound is a 1024-char filename. n stays small so the
