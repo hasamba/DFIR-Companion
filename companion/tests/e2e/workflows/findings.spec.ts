@@ -2,8 +2,9 @@ import { test, expect } from "../fixtures/test.js";
 import type { Page } from "@playwright/test";
 import { revealSections } from "../fixtures/sections.js";
 
-// Covers: US-075
-// (feature-user-stories.csv) — the Findings panel listing real findings and responding to the filter.
+// Covers: US-075, US-353
+// (feature-user-stories.csv) — the Findings panel listing real findings, responding to the global
+// filter, and independently hiding deterministic auto-flagged and coverage-gap findings.
 //
 
 // seedDemoCase writes findings f001-f010 plus the f004b/f007b near-duplicates (12 from AI
