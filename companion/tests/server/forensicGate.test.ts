@@ -27,6 +27,8 @@ interface MockVeloClient {
     huntId: string,
     artifacts: string[],
   ): Promise<{ results: Record<string, unknown[]>; skipped: string[] }>;
+  // The import path streams ONE artifact at a time so a large hunt is never resident in full.
+  huntArtifactRows(huntId: string, artifact: string): Promise<VelociraptorRunResult>;
   getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }>;
   collectionResults(clientId: string, flowId: string, artifact: string): Promise<VelociraptorRunResult>;
   huntGuiUrlFor(huntId: string): string | undefined;
@@ -58,6 +60,10 @@ async function makeApp(
     },
     async huntResultsByArtifact() {
       return { results: huntResults, skipped: [] };
+    },
+    async huntArtifactRows(_huntId: string, artifact: string) {
+      const rows = huntResults[artifact] ?? [];
+      return { rows, total: rows.length, truncated: false };
     },
     async getFlowInfo() {
       return { artifacts: ["Windows.NTFS.MFT"], hostname: "DESKTOP-01" };

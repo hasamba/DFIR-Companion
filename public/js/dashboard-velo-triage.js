@@ -687,26 +687,9 @@
           job.status === "running" && job.collectAt
             ? `<span class="velo-countdown" data-collect-at="${escAttr(job.collectAt)}"></span> `
             : "";
-        // Per-artifact accounting for a multi-artifact bundle hunt — without this, "+3 events" next to
-        // a 40-artifact bundle reads as "only one artifact worked" with no way to tell why the rest
-        // are missing (nothing to report vs. actually failed to collect).
-        let coverage = "";
-        if (job.status === "imported" && (job.artifacts || []).length > 1) {
-          const total = job.artifacts.length;
-          const failed = job.skippedArtifacts || [];
-          const empty = job.emptyArtifacts || [];
-          const hit = total - failed.length - empty.length;
-          coverage =
-            `<div data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px">${hit}/${total} artifact(s) returned results` +
-            (empty.length ? ` · ${empty.length} had no findings` : "") +
-            (failed.length
-              ? ` · <span data-safe-style="color:#ff9f43">${failed.length} failed to collect</span>`
-              : "") +
-            `</div>`;
-          if (failed.length) {
-            coverage += `<div data-safe-style="font-size:12px;color:#ff9f43;margin-top:2px">${failed.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>")}</div>`;
-          }
-        }
+        // Per-artifact accounting (failed / nothing-found / cut short at the row cap) —
+        // public/js/dashboard-velo-coverage.js.
+        const coverage = veloCoverageHtml(job);
         // The COLLECTION window this hunt ran with, when it was scoped. Part of the evidence record:
         // it tells a later reader that silence outside these bounds is a collection boundary, not a
         // quiet endpoint. `degraded` means we could not verify the split — don't let it read as "0".

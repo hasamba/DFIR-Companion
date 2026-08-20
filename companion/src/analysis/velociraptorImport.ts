@@ -23,6 +23,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { normalizeRow } from "./veloRowNormalize.js";
+import { thorFields } from "./thorRowMap.js";
 import { parseCsv } from "./csvImport.js";
 import {
   extractRecords,
@@ -949,6 +950,9 @@ function applyTimestomp(row: Row, m: MappedEvent): void {
 }
 
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  // A THOR finding streamed through an artifact — read it the THOR way. Artifact + host are what let
+  // it prove it is really THOR's, and keep one endpoint's findings apart from another's.
+  const thor = thorFields(row, { artifact, host });
   const { sha256, md5 } = collectRowIocs(row, sink);
   scrapeEvidence(row, sink); // URLs/IPs/hashes embedded in Message/Line/Content (key-driven extractors miss these)
   const msg = firstStr(row, GENERIC_MSG_KEYS);
@@ -963,19 +967,27 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
         .join(" - ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
-  const severity: Severity = SEV_WORDS[sevWord] ?? "Info";
+  const severity: Severity = thor?.severity ?? SEV_WORDS[sevWord] ?? "Info";
 
-  const procName = firstStr(row, ["Exe", "Image", "ProcessName"]);
-  const parentName = firstStr(row, ["ParentName", "ParentImage", "ParentExe", "ParentProcessName"]);
-  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
+  const procName = thor?.processName || firstStr(row, ["Exe", "Image", "ProcessName"]);
+  const parentName =
+    thor?.parentName || firstStr(row, ["ParentName", "ParentImage", "ParentExe", "ParentProcessName"]);
+  // A recognised THOR row uses THOR's identity or NONE. thorRowMap withholds the hash and path of a
+  // log-entry finding on purpose (they name the surrounding log and a file merely mentioned in the
+  // line, and correlate merges on both); letting the generic lookups below supply them anyway hands
+  // the collapse straight back.
+  const path = thor ? (thor.path ?? "") : firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
 
-  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`.slice(0, 600);
-  description = withHostSuffix(description, host).slice(0, 600);
+  // A THOR row names its own finding; the generic form would name the artifact plumbing instead.
+  let description = thor?.description ?? `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`;
+  description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
-  const aggKey = `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey =
+    thor?.aggKey ??
+    `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
 
   const m: MappedEvent = {
     timestamp: pickTime(row),
@@ -984,13 +996,19 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
     mitre: [],
     aggKey,
     sources: ["Velociraptor"],
-    ...(sha256 ? { sha256 } : {}),
-    ...(md5 && !sha256 ? { md5 } : {}),
+    ...(() => {
+      // Same rule for the hashes: THOR's own, or none at all for a THOR row.
+      const sha = thor ? thor.sha256 : sha256;
+      const m5 = thor ? thor.md5 : md5;
+      return { ...(sha ? { sha256: sha } : {}), ...(m5 && !sha ? { md5: m5 } : {}) };
+    })(),
     ...(path ? { path } : {}),
     ...(host ? { asset: host } : {}),
     ...(procName ? { processName: baseName(procName) } : {}),
     ...(parentName ? { parentName: baseName(parentName) } : {}),
+    ...(thor?.detail ? { message: thor.detail } : {}), // the dashboard's [details] panel body
   };
+  if (thor?.mitre.length) m.mitre = [...thor.mitre];
   applyTimestomp(row, m); // MFT rows: flag $SI/$FN timestomping (T1070.006, → Medium)
   return m;
 }
@@ -1685,10 +1703,15 @@ function mapRowToEvents(rawRow: Row, ctx: VrParseCtx): { events: MappedEvent[]; 
       // end. Only a REAL artifact name (from _Source) is shown — never the filename fallback.
       // Skip when mapDetection already led with a DetectRaptor-specific label (detectionLabel()) —
       // that already names the rule pack, so bracketing the full dotted artifact too is redundant.
+      // A THOR row is exempt for the same reason: thorRowMap.ts already leads with "THOR <level>
+      // [<module>]", which names the tool AND the scanner module that fired. Bracketing
+      // "Generic.Scanner.ThorZIP/ThorResultsJson" in front of that names the plumbing twice and pushes
+      // the finding off the visible title. The artifact stays on `artifactName` for the origin facet.
       if (
         realArtifact &&
         !m.description.includes(realArtifact) &&
-        !m.description.startsWith("DetectRaptor ")
+        !m.description.startsWith("DetectRaptor ") &&
+        !m.description.startsWith("THOR ")
       ) {
         m.description = (
           m.description.startsWith("Velociraptor")
