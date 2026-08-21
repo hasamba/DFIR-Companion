@@ -58,7 +58,10 @@ services:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4773/dashboard').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Probe /health, not /dashboard: /health is auth- and host-check-exempt, so the probe stays
+      # green in team mode too (an unauthenticated /dashboard fetch gets a 401 there, and this
+      # compose healthcheck OVERRIDES the image's baked /health probe).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4773/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
