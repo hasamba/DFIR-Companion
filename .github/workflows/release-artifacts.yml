@@ -448,6 +448,37 @@ jobs:
           draft: false
           prerelease: false
 
+      # "Decide what to publish" governs what we ATTEMPT to upload. It cannot govern what actually
+      # lands: assets upload one at a time, so an API or network failure partway can attach the
+      # Chrome zip and not the Firefox one — the very state the pairing rule exists to prevent,
+      # reached from the other direction. A re-run against an existing tag can leave the same
+      # residue. So the invariant is enforced against what the release REALLY holds.
+      #
+      # `always()` because this matters most when the upload step failed.
+      - name: Enforce the extension pair on the published release
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          ext=$(printf '%s\n' "$assets" | grep '^dfir-capture-extension-' || true)
+          # The Firefox zip also starts with that prefix, so "-firefox-" is what separates them.
+          firefox=$(printf '%s\n' "$ext" | grep -- '-firefox-' || true)
+          chrome=$(printf '%s\n' "$ext" | grep -v -- '-firefox-' || true)
+          nf=$(printf '%s' "$firefox" | grep -c . || true)
+          nc=$(printf '%s' "$chrome" | grep -c . || true)
+          if { [ "$nc" -gt 0 ] && [ "$nf" -eq 0 ]; } || { [ "$nf" -gt 0 ] && [ "$nc" -eq 0 ]; }; then
+            echo "::error::release $TAG carries one extension packaging but not the other (chrome=$nc firefox=$nf) — removing the orphan so nobody installs half an update"
+            printf '%s\n%s\n' "$chrome" "$firefox" | grep . | while read -r a; do
+              echo "deleting orphaned asset: $a"
+              gh release delete-asset "$TAG" "$a" --yes || echo "::warning::could not delete $a — delete it by hand"
+            done
+            exit 1
+          fi
+          echo "extension pair consistent (chrome=$nc firefox=$nf)"
+
   chocolatey:
     name: Publish Chocolatey package
     # Runs after the release assets exist (so first-install moderation can fetch them) and reads
