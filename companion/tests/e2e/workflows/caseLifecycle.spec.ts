@@ -8,6 +8,7 @@ import { test, expect } from "../fixtures/test.js";
 // only because tests/e2e/isolation.ts refuses to start the server unless the cases root is under
 // the OS temp dir — this file is the reason that guard is a hard precondition rather than a
 // convention. Nothing here may ever run against a configured DFIR_CASES_ROOT.
+// The closed-case evidence freeze is mounted by companion/src/composition/caseWriteGuard.ts.
 //
 // US-170 (the cancelable loading overlay) is NOT claimed. Dismissal is a click handler that
 // showCaseLoadingOverlay attaches only while a load is genuinely in flight, and this harness
@@ -39,6 +40,45 @@ test("US-004: a case can be closed and reopened", async ({ page, demoCase }) => 
   });
   expect(reopened.status(), await reopened.text()).toBe(200);
   expect(((await reopened.json()) as { status: string }).status).toBe("open");
+});
+
+test("US-004: closing a case freezes both manual evidence paths", async ({ page, demoCase }) => {
+  await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+
+  const before = await page.request.get(`/cases/${demoCase}/state`);
+  const beforeText = await before.text();
+  const beforeState = JSON.parse(beforeText) as { forensicTimeline?: unknown[]; iocs?: unknown[] };
+
+  const closed = await page.request.patch(`/cases/${demoCase}/status`, {
+    data: { status: "closed" },
+  });
+  expect(((await closed.json()) as { status: string }).status).toBe("closed");
+
+  const marker = `manual-after-close-${demoCase}`;
+  const event = await page.request.post(`/cases/${demoCase}/events`, {
+    data: {
+      timestamp: "2026-08-21T10:00:00.000Z",
+      description: marker,
+      severity: "High",
+    },
+  });
+  expect(event.status(), await event.text()).toBe(423);
+  expect(await event.text()).toMatch(/reopen it before adding evidence/);
+
+  const iocValue = `closed-${demoCase}.example`;
+  const ioc = await page.request.post(`/cases/${demoCase}/iocs`, {
+    data: { type: "domain", value: iocValue, context: marker },
+  });
+  expect(ioc.status(), await ioc.text()).toBe(423);
+  expect(await ioc.text()).toMatch(/reopen it before adding evidence/);
+
+  const after = await page.request.get(`/cases/${demoCase}/state`);
+  const afterText = await after.text();
+  const afterState = JSON.parse(afterText) as { forensicTimeline?: unknown[]; iocs?: unknown[] };
+  expect(afterState.forensicTimeline?.length).toBe(beforeState.forensicTimeline?.length);
+  expect(afterState.iocs?.length).toBe(beforeState.iocs?.length);
+  expect(afterText).not.toContain(marker);
+  expect(afterText).not.toContain(iocValue);
 });
 
 test("US-127: deletion refuses an open case and demands an explicit archive choice", async ({
