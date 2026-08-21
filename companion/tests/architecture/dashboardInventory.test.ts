@@ -15,9 +15,12 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runScript, runScriptExpectingFailure } from "../helpers/runScript.js";
 
-const SCRIPT = new URL("../../scripts/dashboard-inventory.mjs", import.meta.url).pathname;
+// fileURLToPath, NOT `.pathname`: on Windows `.pathname` yields "/D:/a/..." and Node
+// resolves that against the drive as "D:\\D:\\a\\...", so the script is never found.
+const SCRIPT = fileURLToPath(new URL("../../scripts/dashboard-inventory.mjs", import.meta.url));
 
 const run = (): {
   inlineScript: { lines: number };
