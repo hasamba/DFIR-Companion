@@ -38,6 +38,29 @@ describe("dashboardViews — seed integrity", () => {
     }
   });
 
+  it("every registered section is visible in at least one built-in view", () => {
+    // `applyViewLayout` treats "absent from the active view" as "hide it", so a section that is in
+    // the registry but in NO built-in view is invisible in every profile — reachable only if the
+    // analyst builds a custom view. Four panels shipped that way (Geo Map, Hunting Profile,
+    // Suggested Fleet Hunts, MCP Analysis) before this test existed.
+    //
+    // The exception is a DATA-GATED panel: `applyViewLayout` skips any section carrying
+    // `data-gate-open` and lets its own evidence gate decide, so those are correctly absent from
+    // every curated list. The gate list is read from the markup rather than hardcoded, so adding a
+    // gate to a panel does not silently widen the exemption.
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const gated = new Set(
+      [...html.matchAll(/<section[^>]*\bdata-gate-open\b[^>]*>/g)]
+        .map((m) => /id="(sec-[\w-]+)"/.exec(m[0])?.[1])
+        .filter((id): id is string => !!id),
+    );
+    expect(gated.size, "the markup still gates at least one panel").toBeGreaterThan(0);
+
+    const covered = new Set(BUILT_IN_DASHBOARD_VIEWS.flatMap((v) => v.sections));
+    const orphans = DASHBOARD_SECTION_IDS.filter((id) => !covered.has(id) && !gated.has(id));
+    expect(orphans, `sections in no built-in view: ${orphans.join(", ")}`).toEqual([]);
+  });
+
   it("every view maps onto a built-in report template", () => {
     for (const view of BUILT_IN_DASHBOARD_VIEWS) {
       if (view.reportTemplateId !== undefined) {
@@ -71,6 +94,8 @@ describe("dashboardViews — seed integrity", () => {
       "sec-sessions",
       "sec-timeline",
       "sec-hunt-workbench",
+      "sec-huntprofile",
+      "sec-velohunts",
       "sec-super-timeline",
       "sec-iocs",
       "sec-playbook",
@@ -86,6 +111,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-swimlane",
       "sec-assets",
       "sec-login-graph",
+      "sec-geomap",
       "sec-evidence",
       "sec-beacons",
       "sec-anomalies",
@@ -101,6 +127,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-source-trust",
       "sec-hypotheses",
       "sec-notebook",
+      "sec-mcp",
       "sec-custody",
       "sec-case-details",
     ]);
