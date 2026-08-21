@@ -54,6 +54,24 @@ if [ "$(id -u)" = "0" ]; then
   # Like abspath but WITHOUT ~ expansion, for the vars the server reads raw (DFIR_OCR_CACHE,
   # DFIR_OCR_DEBUG_DIR, DFIR_ENV_FILE) — still normalized so `..` cannot escape.
   abspath_raw() { realpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
+  # LEXICALLY normalize an absolute path exactly like Node's path.resolve — collapse '.', '..' and
+  # repeated slashes WITHOUT dereferencing symlinks. authFactory hashes path.resolve(casesRoot)
+  # (not realpath), so the team-auth dir name must be derived from this, never from the symlink-
+  # dereferenced realpath used for chown targets, or the two would diverge on a symlinked root.
+  lexical_norm() {
+    _out=""
+    _oldifs="$IFS"
+    IFS=/
+    for _seg in $1; do
+      case "$_seg" in
+        "" | .) ;;
+        ..) _out="${_out%/*}" ;;
+        *) _out="$_out/$_seg" ;;
+      esac
+    done
+    IFS="$_oldifs"
+    printf '%s' "${_out:-/}"
+  }
 
   # Confinement: several handoff paths come from DASHBOARD-writable settings (DFIR_OCR_*, log,
   # importer, auth) persisted to the node-writable dotenv file. Without this, a compromised node
@@ -104,9 +122,11 @@ if [ "$(id -u)" = "0" ]; then
   env_file="$(abspath_raw "${DFIR_ENV_FILE:-/data/companion.env}")"
   env_file_get() {
     [ -f "$env_file" ] || return 0
-    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1=" "$env_file" 2>/dev/null | tail -1)"
+    # dotenv grammar: optional leading spaces, optional `export `, KEY, optional spaces around `=`,
+    # optional spaces before the value.
+    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$env_file" 2>/dev/null | tail -1)"
     [ -n "$line" ] || return 0
-    v="$(printf '%s' "$line" | sed -E "s/^[[:space:]]*(export[[:space:]]+)?$1=//")"
+    v="$(printf '%s' "$line" | sed -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=[[:space:]]*//")"
     case "$v" in
       \"*) v="${v#\"}"; v="${v%%\"*}" ;;
       \'*) v="${v#\'}"; v="${v%%\'*}" ;;
@@ -146,8 +166,18 @@ if [ "$(id -u)" = "0" ]; then
     *)
       for name in $KNOWN_STORES; do handoff_dir "${data_root%/}/$name"; done
       if [ -z "${DFIR_AUTH_DATA_DIR:-}" ]; then
-        auth_hash="$(printf '%s' "$cases_root" | sha256sum 2>/dev/null | cut -c1-12)"
-        [ -n "$auth_hash" ] && handoff_dir "${data_root%/}/.dfir-auth-$auth_hash"
+        # authFactory: .dfir-auth-<sha256(path.resolve(casesRoot))[:12]> beside the (lexically
+        # resolved) cases root. Derive the hash from the LEXICAL path — matching path.resolve, which
+        # does not dereference symlinks — so a symlinked cases root still hits the right dir name.
+        cases_raw="${DFIR_CASES_ROOT:-/data/cases}"
+        case "$cases_raw" in
+          "~") cases_raw="$node_home" ;;
+          "~/"*) cases_raw="$node_home/${cases_raw#\~/}" ;;
+        esac
+        case "$cases_raw" in /*) : ;; *) cases_raw="/app/companion/$cases_raw" ;; esac
+        cases_lexical="$(lexical_norm "$cases_raw")"
+        auth_hash="$(printf '%s' "$cases_lexical" | sha256sum 2>/dev/null | cut -c1-12)"
+        [ -n "$auth_hash" ] && handoff_dir "$(dirname "$cases_lexical")/.dfir-auth-$auth_hash"
       fi
       case "$data_root" in
         / | . | "")
