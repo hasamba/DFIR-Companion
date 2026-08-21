@@ -1,4 +1,5 @@
 import { homedir, tmpdir } from "node:os";
+import { escapeRegExp } from "./regexEscape.js";
 
 /**
  * Strip absolute filesystem paths out of strings bound for an HTTP client (#250).
@@ -61,10 +62,6 @@ const POSIX_FS_PATH_RE = new RegExp(String.raw`/(?:${FS_TOP_LEVEL.join("|")})(?:
 /** `C:\dir\file` and UNC `\\host\share\file`. Both require at least one segment, so a bare "C:" in
  * prose is left alone. */
 const WINDOWS_FS_PATH_RE = new RegExp(String.raw`(?:[A-Za-z]:\\|\\\\)${SEG}(?:\\${SEG})*\\?`, "g");
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /** Known roots on THIS machine, longest first so a nested root wins over its parent. Relative and
  * single-character roots are dropped — replacing "/" globally would shred every message. */

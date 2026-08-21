@@ -176,6 +176,11 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
   let totalInflated = 0;
 
   for (let i = 0; i < total; i++) {
+    // The offset and entry count come straight from the EOCD, which the uploader controls. Without
+    // this bound a crafted value past the end of the buffer surfaces as Node's internal
+    // ERR_OUT_OF_RANGE from readUInt32LE (mirrors zipExtract's archiveIsEncrypted guard — and this
+    // walk is also reached by caseExportArchive, which never runs that scan first).
+    if (ptr + 46 > archive.length) throw new Error("corrupt ZIP: central directory out of bounds");
     if (archive.readUInt32LE(ptr) !== SIG_CENTRAL) throw new Error("corrupt ZIP: bad central header");
     const method = archive.readUInt16LE(ptr + 10);
     const flag = archive.readUInt16LE(ptr + 8);
@@ -190,6 +195,9 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
     const extra = archive.subarray(ptr + 46 + nameLen, ptr + 46 + nameLen + extraLen);
 
     // Jump to the local header to find the actual data start (its name/extra lengths may differ).
+    // The central record's relative-offset field is equally attacker-controlled — bound it the
+    // same way before the reads below walk off the end of the buffer.
+    if (localOffset + 30 > archive.length) throw new Error("corrupt ZIP: local header out of bounds");
     const localNameLen = archive.readUInt16LE(localOffset + 26);
     const localExtraLen = archive.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;

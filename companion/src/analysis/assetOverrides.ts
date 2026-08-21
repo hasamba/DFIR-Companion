@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { AssetType, AssetGraph, GraphAsset, GraphIoc, AssetGraphEdge } from "./assetGraph.js";
-import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, worstSeverity } from "./stateTypes.js";
 
 // Manual analyst edits to the asset ↔ IoC graph: renames, additions, suppressions, and link
 // overrides. Kept in `state/asset-overrides.json` — NOT in InvestigationState, so synthesis
@@ -52,9 +52,6 @@ function resolveCanonical(id: string, merges: Record<string, string>): string {
   return cur;
 }
 
-function worseSeverity(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
-}
 function uniqStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -99,7 +96,7 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
     if (!canonical) continue;
     canonical.findingIds = uniqStrings([...canonical.findingIds, ...dup.findingIds]);
     canonical.eventCount += dup.eventCount;
-    canonical.maxSeverity = worseSeverity(canonical.maxSeverity, dup.maxSeverity);
+    canonical.maxSeverity = worstSeverity(canonical.maxSeverity, dup.maxSeverity);
     assetMap.delete(dupId);
   }
   const redirect = (assetId: string): string => {

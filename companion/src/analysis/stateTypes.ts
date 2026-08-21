@@ -7,6 +7,12 @@ export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 // Severity must use (severityFloor, correlate, assetGraph, reports…). forensicGate.ts, notifications.ts
 // and slashCommand.ts deliberately keep their own INVERTED (higher = more severe) encodings.
 export const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+// Worst-wins comparator over the canonical table (ties keep `a`). The single copy every
+// severity floor/rollup must use — siemImport re-exports it as `worst` for the importer tier.
+export function worstSeverity(a: Severity, b: Severity): Severity {
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
+}
 export type FindingStatus = "open" | "confirmed" | "dismissed";
 export type ThreadStatus = "open" | "closed";
 

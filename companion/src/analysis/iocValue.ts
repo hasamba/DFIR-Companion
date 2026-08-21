@@ -56,7 +56,10 @@ const IPV6_RE =
   /^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,7}:$|^(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}$|^(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}$|^(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}$|^(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}$|^[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})$|^:(?:(?::[0-9a-f]{1,4}){1,7}|:)$/;
 
 // Private / internal / link-local IPv4 ranges that must NEVER be sent to enrichment providers.
-// 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 0.0.0.0/8, 169.254.0.0/16 (link-local / cloud metadata).
+// 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 0.0.0.0/8, 169.254.0.0/16 (link-local /
+// cloud metadata), 100.64.0.0/10 (CGNAT). Kept local on purpose — this module sits below the
+// ingest tier that owns internalIp.ts — so the range table must stay in lockstep with it (same
+// as urlValidation.ts and anonymize.ts, each pinned by a CGNAT test).
 function isPrivateIpv4(ip: string): boolean {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
@@ -67,6 +70,7 @@ function isPrivateIpv4(ip: string): boolean {
   if (a === 127) return true;
   if (a === 0) return true;
   if (a === 169 && b === 254) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
   return false;
 }
 

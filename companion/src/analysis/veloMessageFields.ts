@@ -1,3 +1,5 @@
+import { escapeRegExp } from "./regexEscape.js";
+
 // High-signal labels in a RENDERED Windows event message (4688 process creation, Sysmon, service
 // install, etc.). When an artifact ships the event as free text — no structured EventData to map —
 // these carry the actual evidence (the LOLBIN binary + its command line), which the boilerplate
@@ -27,7 +29,7 @@ function cleanFieldValue(v: string): string {
 // RegExp per call cost ~1.7M throwaway compiles per capped ingest. The lazy fallback keeps any
 // future dynamic label working (compiled on first use, then cached).
 function labelPattern(label: string): RegExp {
-  return new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
+  return new RegExp(`${escapeRegExp(label)}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
 }
 const MSG_FIELD_RES = new Map<string, RegExp>(MSG_FIELD_LABELS.map((l) => [l, labelPattern(l)]));
 function fieldFromMessage(msg: string, label: string): string {

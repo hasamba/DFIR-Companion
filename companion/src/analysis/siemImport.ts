@@ -21,7 +21,7 @@
 // everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
 // with a conservative bump for LOLBin / suspicious command lines and LSASS access.
 
-import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, worstSeverity as worst, type Severity } from "./stateTypes.js";
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import {
@@ -1198,9 +1198,9 @@ export function mapWindows(
   };
 }
 
-export function worst(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
-}
+// The worst-wins comparator lives beside SEVERITY_RANK in stateTypes.ts (worstSeverity);
+// re-exported under its historical name for the sibling importers, like isInternalIpv4 above.
+export { worst };
 
 // ───────────────────────────── generic record → event ─────────────────────────────
 

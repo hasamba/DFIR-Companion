@@ -47,6 +47,7 @@ import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportCaseGuard } from "./importCaseGuard.js";
+import { hasParseProgress, isAiDependent } from "./importKinds.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 
@@ -309,13 +310,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: Buffer.byteLength(text, "utf8"),
       });
 
-      // CSV/log imports are themselves an LLM call (free-form data the model must interpret), so
-      // they respect the per-case AI toggle exactly like screenshot analysis + synthesis: with AI
-      // OFF, the evidence is saved (above) but NOT sent to the model. Deterministic imports have no
-      // LLM call, so they proceed and populate the timeline + IOCs regardless (synthesis still waits
-      // for AI — see resynthesizeInBackground). This keeps "AI off" meaning no LLM call / nothing
-      // leaves for the model, and stops the dashboard from claiming the AI is analyzing while off.
-      const aiDependent = kind === "csv" || kind === "log";
+      // AI-dependent imports respect the per-case AI toggle — rationale on isAiDependent().
+      const aiDependent = isAiDependent(kind);
       if (aiDependent && !(await getControl(caseId)).enabled) {
         options.onAiStatus?.(caseId, {
           status: "idle",
@@ -332,7 +328,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         kind: "import",
         label: `${kind}: ${storedName}`,
         detail: IMPORT_JOB_PENDING_DETAIL,
-        cancellable: aiDependent || kind === "evtxxml" || kind === "syslog",
+        cancellable: aiDependent || hasParseProgress(kind),
         resumable: true,
         maxRetries: 2,
         parameters: {
@@ -359,7 +355,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         idPrefix: `${seq}`,
         importedAt,
         onProgress: tracking.onProgress,
-        ...(kind === "evtxxml" || kind === "syslog" ? { onParseProgress: tracking.onParseProgress } : {}),
+        ...(hasParseProgress(kind) ? { onParseProgress: tracking.onParseProgress } : {}),
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
       };
@@ -624,7 +620,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         bytes: size,
       });
 
-      const aiDependent = kind === "csv" || kind === "log";
+      // Same AI-off gate as /import above — rationale on isAiDependent().
+      const aiDependent = isAiDependent(kind);
       if (aiDependent && !(await getControl(caseId)).enabled) {
         options.onAiStatus?.(caseId, {
           status: "idle",
@@ -642,7 +639,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         kind: "import",
         label: `${kind}: ${storedName}`,
         detail: IMPORT_JOB_PENDING_DETAIL,
-        cancellable: aiDependent || kind === "evtxxml" || kind === "syslog",
+        cancellable: aiDependent || hasParseProgress(kind),
         resumable: true,
         maxRetries: 2,
         parameters: {
@@ -669,7 +666,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         idPrefix: `${seq}`,
         importedAt,
         onProgress: tracking.onProgress,
-        ...(kind === "evtxxml" || kind === "syslog" ? { onParseProgress: tracking.onParseProgress } : {}),
+        ...(hasParseProgress(kind) ? { onParseProgress: tracking.onParseProgress } : {}),
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
       };

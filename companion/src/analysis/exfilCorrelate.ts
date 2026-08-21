@@ -10,14 +10,10 @@
 // synthesis model to notice the pairing on its own.
 //
 // Conservative + idempotent: only a same-host, staging-then-upload pair within the window matches,
-// the marker is appended once, and severity uses a worst() floor — so re-running over an
+// the marker is appended once, and severity uses a worstSeverity() floor — so re-running over an
 // already-merged timeline is a no-op. No AI, no network.
 
-import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
-
-function worst(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
-}
+import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 
 const MARKER = "[confirmed exfiltration:";
 // Ransomware crews typically upload within minutes to a few hours of staging (the Meridian ground
@@ -55,7 +51,7 @@ export function linkArchiveToExfil(
     if (!Number.isFinite(t) || t < staged || t - staged > windowMs) return e;
     return {
       ...e,
-      severity: worst(e.severity, "High"),
+      severity: worstSeverity(e.severity, "High"),
       description: `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}]`.slice(
         0,
         600,

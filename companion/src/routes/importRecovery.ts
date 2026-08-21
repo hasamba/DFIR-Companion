@@ -7,6 +7,7 @@ import { lastCommittedImportBatch } from "../analysis/importResume.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { addedForensicEvents, diffTimeline } from "../analysis/timelineDiff.js";
 import type { ImportBase, RouteContext } from "./context.js";
+import { hasParseProgress } from "./importKinds.js";
 import { recordImportRun } from "./importRunRecorder.js";
 
 const importParametersSchema = z.object({
@@ -182,7 +183,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       }
     },
     {
-      cancellable: (job) => job.parameters?.kind === "evtxxml" || job.parameters?.kind === "syslog",
+      cancellable: (job) => hasParseProgress(job.parameters?.kind),
     },
   );
 }

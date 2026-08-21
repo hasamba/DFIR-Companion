@@ -1,10 +1,12 @@
 import {
   SEVERITY_RANK,
+  worstSeverity,
   type InvestigationState,
   type IOC,
   type ForensicEvent,
   type Severity,
 } from "./stateTypes.js";
+import { escapeRegExp } from "./regexEscape.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // Derives the asset ↔ IoC graph from the investigation state. An "asset" is a victim
@@ -81,16 +83,9 @@ export function filterTimeline(events: readonly ForensicEvent[], w?: TimeWindow)
   return events.filter((e) => eventInWindow(e, w));
 }
 
-function worse(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
-}
-
 // Dotted-quad shape (loose — any 4 dot-separated 1-3 digit groups). Used only to decide whether an
 // IOC value needs boundary-aware description matching, not to validate octet ranges.
 const IPV4_SHAPE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 // Per-IOC predicate for "does this IOC value appear in an event description". For IP-shaped values
 // a raw substring match over-links — IOC `1.1.1.1` matches inside `11.1.1.10` and `192.168.1.1`
@@ -276,7 +271,7 @@ export function buildAssetGraph(
     const refIocs = referencedIocs(e);
     for (const a of assetsForEvent) {
       a.eventCount++;
-      a.maxSeverity = worse(a.maxSeverity, e.severity);
+      a.maxSeverity = worstSeverity(a.maxSeverity, e.severity);
       for (const fid of e.relatedFindingIds) if (!a.findingIds.includes(fid)) a.findingIds.push(fid);
       for (const ioc of refIocs) link(a, ioc);
     }

@@ -18,6 +18,7 @@
 // Exact brand matches and their own subdomains are never flagged. Pure, offline, unit-tested.
 
 import { domainToUnicode } from "node:url";
+import { escapeRegExp } from "./regexEscape.js";
 
 // Commonly-impersonated registrable domains (eTLD+1). Curated, not exhaustive — the analyst can add
 // their own org/customer domains via DFIR_LOOKALIKE_EXTRA_DOMAINS (comma-separated). Kept in
@@ -332,9 +333,7 @@ export function detectLookalike(host: string, opts: LookalikeOptions = {}): Look
     // 3. Impersonation — the brand label appears as a token in a different registrable domain.
     // Requires a boundary (separator or subdomain) so "amazon.com" doesn't match inside "amazonia".
     if (brandLabel.length >= 5) {
-      const tokenRe = new RegExp(
-        `(^|[.\\-_])${brandLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([.\\-_]|$)`,
-      );
+      const tokenRe = new RegExp(`(^|[.\\-_])${escapeRegExp(brandLabel)}([.\\-_]|$)`);
       if (tokenRe.test(cleaned)) {
         consider({
           brand,

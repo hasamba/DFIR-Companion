@@ -1,4 +1,5 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { escapeRegExp } from "../analysis/regexEscape.js";
 import type { GlossaryEntry } from "./reportMeta.js";
 
 // A curated dictionary of DFIR / security terms and acronyms. The report's glossary (2.4)
@@ -54,10 +55,6 @@ export const GLOSSARY_DICTIONARY: Record<string, string> = {
   THOR: "Nextron's APT/IOC scanner.",
   Velociraptor: "An open-source endpoint-visibility and DFIR collection tool.",
 };
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 // All free-text in the investigation a term could plausibly appear in. IOC values (hashes,
 // IPs) are excluded — they're not prose and would only cause false matches.

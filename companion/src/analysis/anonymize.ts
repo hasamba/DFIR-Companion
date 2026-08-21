@@ -1,6 +1,7 @@
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
+import { escapeRegExp } from "./regexEscape.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
 // wire is tokenized. Typed numbered tokens keep the model's semantic understanding (it still
@@ -93,10 +94,6 @@ export interface Anonymizer {
 
 export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 // Exact-match tokenizing of a KNOWN value (hostname, internal domain, analyst-added or
 // Presidio-approved custom entity) needs a word boundary so "DC01" doesn't fire inside "DC01X"
 // and "Jane" doesn't fire inside "Janes". JS `\b` CANNOT be used for that here: it is defined
@@ -124,9 +121,9 @@ function escapeRegExp(s: string): string {
 // or rely on known.internalDomains, which already handles the parent-domain case.
 //
 // The `u` flag
-// is required for \p{…} and is safe with escapeRegExp above: every character it escapes
-// (. * + ? ^ $ { } ( ) | [ ] \) is a SyntaxCharacter, i.e. a legal identity escape in Unicode
-// mode, so no escaped value can turn into an "Invalid regular expression" under `u`.
+// is required for \p{…} and is safe with escapeRegExp — see regexEscape.ts: every character it
+// escapes is a legal identity escape in Unicode mode, so no escaped value can turn into an
+// "Invalid regular expression" under `u`.
 const UNICODE_WORD = "\\p{L}\\p{N}_";
 function exactValueRegExp(value: string): RegExp {
   return new RegExp(`(?<![${UNICODE_WORD}])${escapeRegExp(value)}(?![${UNICODE_WORD}])`, "giu");
@@ -195,8 +192,9 @@ function nat64EmbeddedIpv4(groups: number[]): string | null {
 // embeddedIpv4() rather than re-deriving it here: a naive dotted-decimal-only regex misses the
 // hex-canonical spelling (e.g. "::ffff:127.0.0.1" as "::ffff:7f00:1") — a check that only
 // recognizes the dotted form would let a victim's internal IPv6 address in that spelling reach
-// the external AI provider unredacted. Classification still uses isInternalIp() (not
-// iocValue.ts's isPrivateIpv4) so the CGNAT range stays covered here.
+// the external AI provider unredacted. Classification uses the local isInternalIp() —
+// iocValue.ts's isPrivateIpv4 now agrees on CGNAT too, but the two tables serve different
+// callers and each is pinned by its own tests.
 export function isInternalIpv6(ip: string): boolean {
   const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
   if (lower === "::1" || lower === "::") return true;

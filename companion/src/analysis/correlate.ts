@@ -11,7 +11,7 @@
 // structured fields first, then extracted from the description text as a fallback so a
 // hash-bearing AI-extracted event still matches a structured THOR event.
 
-import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature } from "./chainSignature.js";
 
@@ -94,10 +94,6 @@ class DSU {
       rb = this.find(b);
     if (ra !== rb) this.parent[Math.max(ra, rb)] = Math.min(ra, rb);
   }
-}
-
-function worse(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b;
 }
 
 // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
@@ -190,7 +186,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   const merged: ForensicEvent = {
     ...primary,
     description: cleanDescription(primary.description),
-    severity: events.reduce<Severity>((acc, e) => worse(acc, e.severity), "Info"),
+    severity: events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
     timestamp: times[0] ?? primary.timestamp,
     mitreTechniques: uniq(events.flatMap((e) => e.mitreTechniques)),
     relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),
