@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.34.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.35.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.34.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.35.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -840,6 +840,18 @@
           <h3>Chain of Custody</h3>
           <p>Every screenshot and import is recorded automatically — who collected it, when, from where, and its SHA-256 — as a hash-chained log where editing or deleting an entry is detectable. A signed manifest ships in the report and the encrypted archive; evidence is re-verified in the background whenever you open a case.</p>
           <span class="tag">v0.34 — court-ready evidence record</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon cyan">🔎</div>
+          <h3>Hunt Workbench</h3>
+          <p>A typed query language over the timeline you choose — Boolean conditions, ranges, safe regex, relative time windows, grouping, statistics and rare-value detection, all indexed and cursor-paged. Save a parameterised hunt, pivot into it from any event, IOC, finding or asset, then export the result, attach it to a finding, or send it to the notebook.</p>
+          <span class="tag">v0.35.0 — search your evidence, not a second database</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon purple">👥</div>
+          <h3>Team Investigations</h3>
+          <p>Turn on sign-in when more than one analyst works the case: OIDC or an audited local account, per-case reader/investigator/reviewer/administrator roles, scoped service identities, and analyst attribution signed into the record. Two people can no longer overwrite each other. Localhost stays zero-config — none of it is required to run alone.</p>
+          <span class="tag">v0.35.0 — roles, attribution, no lost writes</span>
         </div>
       </div>
     </div>

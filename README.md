@@ -273,6 +273,11 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **SO-CRATES** | Suricata alerts + YARA file matches (`/api/events`) and Sigma detections (`/api/sigma-alerts`); pushed by the extension or a raw export | Suricata priority / Sigma level / YARA match |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
 | **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel |
+| **Okta** | System Log export | IdP tradecraft table (MFA disabled, admin grant, API token minted, session impersonated) — not the vendor's operational grade |
+| **Google Workspace** | Admin + login audit | IdP tradecraft table (2SV disabled, role granted, OAuth consented, mail monitor added) |
+| **Hindsight (browser)** | Chrome/Edge/Brave history, downloads, interpretations (JSON or CSV) | — (Info events: browser artifacts are evidence, not verdicts) |
+| **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance | Quarantine rows carry the data URL **and** the referring origin |
+| **iLEAPP / ALEAPP** | iOS + Android extraction artifacts from LEAPP TSV exports | — (Info events; generic parser keyed on the timestamp column) |
 | **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets) |
 | **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
 | **Kubernetes audit** | API-server audit log (`audit.k8s.io` JSON-lines / EventList) | (verb, resource) table — pod exec/attach T1609, secret access T1552.007, RBAC change T1098, privileged-pod T1610/T1611, anonymous access T1078 |
@@ -320,6 +325,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Per-source noise/trust scores** — weights sources by reliability for correlation wording and confidence capping; overridable per case
 
 ### Investigation workflow
+- **Host scope & clearance ledger** — evidence-derived per-host status, analyst clearance behind an eligibility checklist that names the missing evidence class, append-only attributed decisions, flag-don't-revert staleness, and a ranked list of hosts named in the evidence but never collected
+- **Reproducible analysis-run ledger** — imports, tagging, enrichment, synthesis and reports leave immutable hash-chained manifests pinning their evidence; runs can be inspected, replayed and compared
+- **Controlled report review & immutable release** — draft → peer review → approval, evidence and integrity release gates, identity-bound sign-off, explicit supersession, version diffs, and frozen executive/technical/legal/IOC packs
 - **Optional authenticated team mode** — OIDC plus an audited local emergency account, secure sessions/CSRF, reader/investigator/reviewer/administrator case roles, case-scoped service identities, immutable analyst attribution, and HTTP/WebSocket/capture/export enforcement; the zero-config loopback-only single-user mode remains the default ([setup guide](mkdocs-docs/reference/team-authentication.md))
 - **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay

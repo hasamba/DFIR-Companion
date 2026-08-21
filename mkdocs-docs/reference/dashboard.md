@@ -255,6 +255,22 @@ Click a ranked row to expand it inline and see the events and IOCs behind that s
 
 ---
 
+## Host Scope & Clearance
+
+Per-host status derived from the evidence, with analyst-owned clearance on top. Before a host can be
+cleared, an eligibility checklist names the evidence class that is still missing, so "cleared" means
+"cleared against stated evidence" rather than "nobody looked".
+
+Decisions are append-only and attributed. If new evidence lands on a host that was already cleared,
+the panel **flags the host as stale rather than reverting the decision** — the analyst's call stays
+on the record and the disagreement becomes visible.
+
+The panel also ranks hosts that are **named in the evidence but never collected**, which is the list
+that usually decides where collection goes next. Reports carry an evidence-bounded scoping statement
+built from the same data.
+
+---
+
 ## Attack Phases
 
 Groups the forensic timeline into temporal **bursts** — clusters of activity separated by periods of silence. Each burst is labeled with the dominant MITRE tactic (Initial Access, Execution, Persistence, etc.).
@@ -530,6 +546,23 @@ finding-evidence actions stay disabled until the analyst promotes the individual
 
 See [Hunt Workbench and Query Language](hunt-workbench.md) for the full grammar, typed field
 catalogue, error codes, safety limits, and examples.
+
+---
+
+## Hunting Profile
+
+What has already been hunted in this case, and whether each hunt found anything. Use it to avoid
+re-running a sweep that came back empty, and to show what ground has been covered.
+
+---
+
+## Suggested Fleet Hunts
+
+Turns the case's findings into proposed Velociraptor VQL hunts that sweep every enrolled endpoint
+for the same tradecraft. Press **✨ Suggest hunts** to generate them.
+
+!!! warning "Review the VQL before deploying"
+    These are AI-proposed queries. Read each one before running it against the fleet.
 
 ---
 
