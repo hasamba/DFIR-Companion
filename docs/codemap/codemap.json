@@ -6,8 +6,8 @@
     "extension/src",
     "public/dashboard.html"
   ],
-  "moduleCount": 800,
-  "routeCount": 476,
+  "moduleCount": 803,
+  "routeCount": 477,
   "modules": [
     {
       "path": "companion/src/analysis/activityLog.ts",
@@ -3597,6 +3597,7 @@
         "companion/tests/analysis/reconsiderHypotheses.test.ts",
         "companion/tests/analysis/secondLook.test.ts",
         "companion/tests/eval/scorer.ts",
+        "companion/tests/reports/markdownStructureInjection.test.ts",
         "companion/tests/server/hypothesisReview.test.ts"
       ]
     },
@@ -5036,7 +5037,8 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/collabStoreConcurrency.test.ts",
-        "companion/tests/analysis/notebook.test.ts"
+        "companion/tests/analysis/notebook.test.ts",
+        "companion/tests/reports/markdownStructureInjection.test.ts"
       ]
     },
     {
@@ -7314,6 +7316,7 @@
         "companion/tests/reports/interactiveHtml.test.ts",
         "companion/tests/reports/iocBlocklist.test.ts",
         "companion/tests/reports/markdown.test.ts",
+        "companion/tests/reports/markdownStructureInjection.test.ts",
         "companion/tests/reports/redactedExportBuilder.test.ts",
         "companion/tests/reports/reportGeneration.test.ts",
         "companion/tests/reports/reportReleaseStore.test.ts",
@@ -8629,13 +8632,14 @@
     {
       "path": "companion/src/auth/writerGuard.ts",
       "kind": "module",
-      "lines": 97,
+      "lines": 167,
       "imports": [],
       "importedBy": [
         "companion/src/auth/authFactory.ts"
       ],
       "routes": [],
       "tests": [
+        "companion/tests/auth/writerGuardRace.test.ts",
         "companion/tests/http/teamAuthRuntime.test.ts"
       ]
     },
@@ -8999,9 +9003,7 @@
         "companion/src/composition/routeRegistry.ts"
       ],
       "routes": [],
-      "tests": [
-        "companion/tests/e2e/workflows/caseLifecycle.spec.ts"
-      ]
+      "tests": []
     },
     {
       "path": "companion/src/composition/diagnosticsRings.ts",
@@ -9268,10 +9270,11 @@
     {
       "path": "companion/src/composition/routeRegistry.ts",
       "kind": "module",
-      "lines": 153,
+      "lines": 155,
       "imports": [
         "companion/src/composition/aiRateLimit.ts",
         "companion/src/composition/caseWriteGuard.ts",
+        "companion/src/routes/aiModels.ts",
         "companion/src/routes/aiState.ts",
         "companion/src/routes/aiSynthesis.ts",
         "companion/src/routes/analysisGraph.ts",
@@ -9538,6 +9541,7 @@
         "companion/src/analysis/diagnostics.ts",
         "companion/src/composition/aiProviders.ts",
         "companion/src/composition/aiRuntime.ts",
+        "companion/src/routes/aiModels.ts",
         "companion/src/routes/anonymization.ts",
         "companion/src/settings/envManager.ts"
       ],
@@ -11472,13 +11476,15 @@
       "imports": [],
       "importedBy": [
         "companion/src/providers/codex.ts",
-        "companion/src/providers/codexStatus.ts"
+        "companion/src/providers/codexStatus.ts",
+        "companion/src/providers/modelCatalog.ts"
       ],
       "routes": [],
       "tests": [
         "companion/tests/providers/codex.test.ts",
         "companion/tests/providers/codexRunner.test.ts",
-        "companion/tests/providers/codexStatus.test.ts"
+        "companion/tests/providers/codexStatus.test.ts",
+        "companion/tests/providers/modelCatalog.test.ts"
       ]
     },
     {
@@ -11525,6 +11531,22 @@
       "routes": [],
       "tests": [
         "companion/tests/providers/litellm.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/providers/modelCatalog.ts",
+      "kind": "module",
+      "lines": 302,
+      "imports": [
+        "companion/src/providers/codexRunner.ts",
+        "companion/src/providers/urlValidation.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/aiModels.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/providers/modelCatalog.test.ts"
       ]
     },
     {
@@ -11686,6 +11708,7 @@
         "companion/src/enrichment/tlsFetch.ts",
         "companion/src/providers/anthropic.ts",
         "companion/src/providers/gemini.ts",
+        "companion/src/providers/modelCatalog.ts",
         "companion/src/providers/openai.ts"
       ],
       "routes": [],
@@ -11872,7 +11895,7 @@
     {
       "path": "companion/src/reports/markdown.ts",
       "kind": "module",
-      "lines": 1592,
+      "lines": 1586,
       "imports": [
         "companion/src/analysis/adversaryEmulation.ts",
         "companion/src/analysis/adversaryGroupsData.ts",
@@ -11910,6 +11933,7 @@
         "companion/src/analysis/synthMeta.ts",
         "companion/src/analysis/timelineAnomalies.ts",
         "companion/src/reports/glossary.ts",
+        "companion/src/reports/mdText.ts",
         "companion/src/reports/reportMeta.ts",
         "companion/src/reports/reportTemplate.ts"
       ],
@@ -11925,8 +11949,22 @@
         "companion/tests/reports/clockSkewSection.test.ts",
         "companion/tests/reports/complianceSection.test.ts",
         "companion/tests/reports/markdown.test.ts",
+        "companion/tests/reports/markdownStructureInjection.test.ts",
         "companion/tests/reports/reportSecondLookLeads.test.ts",
         "companion/tests/reports/sessionsSection.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/reports/mdText.ts",
+      "kind": "module",
+      "lines": 50,
+      "imports": [],
+      "importedBy": [
+        "companion/src/reports/markdown.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/reports/mdText.test.ts"
       ]
     },
     {
@@ -12373,6 +12411,25 @@
       ]
     },
     {
+      "path": "companion/src/routes/aiModels.ts",
+      "kind": "module",
+      "lines": 113,
+      "imports": [
+        "companion/src/config/aiEnv.ts",
+        "companion/src/providers/modelCatalog.ts",
+        "companion/src/routes/context.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/routeRegistry.ts"
+      ],
+      "routes": [
+        "POST /settings/ai-models"
+      ],
+      "tests": [
+        "companion/tests/server/aiModelsRoute.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/routes/aiState.ts",
       "kind": "module",
       "lines": 93,
@@ -12632,9 +12689,7 @@
         "companion/src/routes/caseLifecycle.ts"
       ],
       "routes": [],
-      "tests": [
-        "companion/tests/e2e/workflows/caseCreate.spec.ts"
-      ]
+      "tests": []
     },
     {
       "path": "companion/src/routes/caseIdentity.ts",
@@ -12948,6 +13003,7 @@
         "companion/src/composition/routeRegistry.ts",
         "companion/src/composition/veloExternalIngest.ts",
         "companion/src/composition/veloHunts.ts",
+        "companion/src/routes/aiModels.ts",
         "companion/src/routes/aiState.ts",
         "companion/src/routes/aiSynthesis.ts",
         "companion/src/routes/analysisGraph.ts",
@@ -13683,8 +13739,7 @@
         "POST /notifications/test"
       ],
       "tests": [
-        "companion/tests/analysis/caseIdGate.test.ts",
-        "companion/tests/e2e/workflows/integrations.spec.ts"
+        "companion/tests/analysis/caseIdGate.test.ts"
       ]
     },
     {
@@ -14258,6 +14313,7 @@
         "companion/tests/server.test.ts",
         "companion/tests/server/activityLogReadAfterWrite.test.ts",
         "companion/tests/server/aiCostRoute.test.ts",
+        "companion/tests/server/aiModelsRoute.test.ts",
         "companion/tests/server/aiRateLimiterCoverage.test.ts",
         "companion/tests/server/aiReload.test.ts",
         "companion/tests/server/aiStateRoute.test.ts",
@@ -14771,6 +14827,7 @@
         "companion/tests/server.test.ts",
         "companion/tests/server/activityLogReadAfterWrite.test.ts",
         "companion/tests/server/aiCostRoute.test.ts",
+        "companion/tests/server/aiModelsRoute.test.ts",
         "companion/tests/server/aiRateLimiterCoverage.test.ts",
         "companion/tests/server/aiReload.test.ts",
         "companion/tests/server/aiStateRoute.test.ts",
@@ -15737,6 +15794,7 @@
         "companion/tests/server/dashboardAnonPresidio.test.ts",
         "companion/tests/server/dashboardCustodySection.test.ts",
         "companion/tests/server/dashboardTicketPush.test.ts",
+        "companion/tests/settings/aiModelPicker.test.ts",
         "companion/tests/settings/settingsEnvFields.test.ts",
         "companion/tests/settings/settingsEssentialAll.test.ts",
         "companion/tests/settings/settingsSearch.test.ts",
@@ -16427,7 +16485,7 @@
     {
       "path": "public/js/dashboard-env-settings.js",
       "kind": "browser",
-      "lines": 290,
+      "lines": 482,
       "imports": [],
       "importedBy": [
         "public/dashboard.html"
@@ -16435,6 +16493,7 @@
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
+        "companion/tests/settings/aiModelPicker.test.ts",
         "companion/tests/settings/settingsEnvFields.test.ts"
       ]
     },
@@ -17189,8 +17248,7 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/dashboard/featureManifest.ts",
-        "companion/tests/e2e/workflows/integrations.spec.ts"
+        "companion/tests/dashboard/featureManifest.ts"
       ]
     },
     {

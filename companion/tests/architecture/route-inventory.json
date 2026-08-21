@@ -32,6 +32,7 @@
     "ROUTE POST /diagnostics/preflight",
     "ROUTE GET /diagnostics/preflight/control",
     "ROUTE POST /diagnostics/preflight/control",
+    "ROUTE POST /settings/ai-models",
     "ROUTE GET /cases/:id/captures/count",
     "ROUTE GET /captures/recent",
     "ROUTE POST /captures",
