@@ -32,60 +32,92 @@ fi
 # writable data to `node`, then drops privileges for the server itself.
 if [ "$(id -u)" = "0" ]; then
   node_uid="$(id -u node)"
+  node_home=/home/node
+
   # Hand a tree to node, chowning ONLY the inodes not already node-owned (so a correctly-owned
   # tree costs a stat-walk, not a full re-chown, on every boot). `-h` plus find's default
   # no-follow-symlink traversal mean a compromised node cannot plant a symlink that a later root
   # chown would dereference into a protected target (e.g. the /app code tree).
   chown_tree() { find "$1" ! -uid "$node_uid" -exec chown -h node:node {} + 2>/dev/null || true; }
+  # Expand a leading ~ to node's POST-DROP home, matching the server's expandHome(), so the
+  # entrypoint hands over the same path the server will use; then resolve a relative path against
+  # /app/companion (the working directory the server anchors relative roots to).
+  abspath() {
+    case "$1" in
+      "~") printf '%s' "$node_home" ;;
+      "~/"*) printf '%s/%s' "$node_home" "${1#\~/}" ;;
+      /*) printf '%s' "$1" ;;
+      *) realpath -m "$1" 2>/dev/null || printf '%s/%s' "$(pwd)" "$1" ;;
+    esac
+  }
 
   # /out holds the pre-built add-on the root cp above wrote; the server never writes it, but the
   # HOST user manages ./addon, so hand it over — via chown_tree, never `chown -R`, so a symlink
   # planted here can never redirect the chown into /app.
-  [ -d /out ] && chown_tree /out
+  if [ -d /out ]; then chown_tree /out; fi
 
-  cases_root="${DFIR_CASES_ROOT:-/data/cases}"
-  # Resolve to the ABSOLUTE path the server will use — it resolves a relative DFIR_CASES_ROOT
-  # against this same working directory (/app/companion) — so dirname yields the real parent
-  # rather than ".", and an /app-rooted misconfig is detected rather than silently skipped.
-  case "$cases_root" in
-    /*) abs_cases_root="$cases_root" ;;
-    *) abs_cases_root="$(realpath -m "$cases_root" 2>/dev/null || echo "$(pwd)/$cases_root")" ;;
-  esac
-  mkdir -p "$abs_cases_root" 2>/dev/null || true
+  cases_root="$(abspath "${DFIR_CASES_ROOT:-/data/cases}")"
+  mkdir -p "$cases_root" 2>/dev/null || true
   # Always hand over the evidence/case store itself (recursively — a legacy root-written tree and
   # large evidence dirs both need it).
-  chown_tree "$abs_cases_root"
-  # The server also creates GLOBAL stores (logs, templates, team-auth, diagnostics, …) as
-  # subdirectories of the cases root's PARENT (see runtimeStores.ts). Make that parent writable
-  # so the server can create them — but NEVER recursively rewrite ownership across a shared
-  # mount's unrelated files. Only /data, the image's dedicated data dir, is recursed (to migrate
-  # a legacy root-owned /data on upgrade). For any other custom parent, hand over just the
-  # directory entry so new stores land node-owned while its existing contents keep their owners.
-  # A parent of / or /app (a root placed at the filesystem root or under the code tree) is a
-  # misconfig that is refused with a warning — only the case dir chowned above is handed over.
-  data_root="$(dirname "$abs_cases_root")"
+  chown_tree "$cases_root"
+  # The server also creates GLOBAL stores as subdirectories of the cases root's PARENT (see
+  # runtimeStores.ts / authFactory.ts). Make that parent usable — but NEVER recursively rewrite
+  # ownership across a shared mount's UNRELATED files. Only /data, the image's dedicated data
+  # dir, is recursed wholesale (to migrate a legacy root-owned /data on upgrade). For any other
+  # custom parent, hand over the directory entry (so new stores land node-owned) plus only the
+  # KNOWN application store subdirectories and any .dfir-auth-* the prior root image left. A
+  # parent of / or /app is a misconfig, refused with a warning.
+  data_root="$(dirname "$cases_root")"
   case "$data_root" in
     /data | /data/*)
       chown_tree "$data_root"
       ;;
     /|.|"")
-      echo "dfir-entrypoint: DFIR_CASES_ROOT=$cases_root has no dedicated parent directory; global stores would land in '$data_root' and may be unwritable — set DFIR_CASES_ROOT to a subdirectory of a mounted volume (e.g. /data/cases)" >&2
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} has no dedicated parent directory; global stores would land in '$data_root' and may be unwritable — set DFIR_CASES_ROOT to a subdirectory of a mounted volume (e.g. /data/cases)" >&2
       ;;
     /app | /app/*)
-      echo "dfir-entrypoint: DFIR_CASES_ROOT=$cases_root resolves under the root-owned /app code tree ($abs_cases_root); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} resolves under the root-owned /app code tree ($cases_root); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
       ;;
     *)
-      # Custom data dir on a mount: hand over the directory ENTRY only (not its unrelated
-      # contents) so the server can create its stores there.
       chown -h node:node "$data_root" 2>/dev/null || true
+      for name in bundles dashboard-views diagnostics importers incident-types kev logs \
+        notifications nsrl report-templates tagger templates tools updates velociraptor whitelist; do
+        if [ -e "$data_root/$name" ]; then chown_tree "$data_root/$name"; fi
+      done
+      for auth in "$data_root"/.dfir-auth-*; do
+        if [ -e "$auth" ]; then chown_tree "$auth"; fi
+      done
       ;;
   esac
-  # Explicit out-of-tree stores, if configured, get the full (node-owned-skipping) tree.
-  for store in "${DFIR_OCR_CACHE:-/data/ocr-cache}" "${DFIR_LOG_DIR:-}"; do
-    [ -n "$store" ] || continue
-    mkdir -p "$store" 2>/dev/null || true
-    chown_tree "$store"
-  done
+
+  # Team-auth data dir, when relocated to its own (possibly dedicated, possibly root-owned) mount:
+  # authFactory uses it absolute-as-is or relative to the cases parent (no ~ expansion), and it is
+  # app-dedicated, so recurse it.
+  if [ -n "${DFIR_AUTH_DATA_DIR:-}" ]; then
+    case "$DFIR_AUTH_DATA_DIR" in
+      /*) auth_dir="$DFIR_AUTH_DATA_DIR" ;;
+      *) auth_dir="$data_root/$DFIR_AUTH_DATA_DIR" ;;
+    esac
+    mkdir -p "$auth_dir" 2>/dev/null || true
+    chown_tree "$auth_dir"
+  fi
+
+  # OCR cache (app-dedicated; default /data/ocr-cache is already covered by /data above): recurse.
+  # No ~ expansion — ocrRedact.ts reads DFIR_OCR_CACHE raw, so the server would not expand it either.
+  ocr_cache="${DFIR_OCR_CACHE:-/data/ocr-cache}"
+  case "$ocr_cache" in /*) : ;; *) ocr_cache="$(realpath -m "$ocr_cache" 2>/dev/null || echo "$(pwd)/$ocr_cache")" ;; esac
+  mkdir -p "$ocr_cache" 2>/dev/null || true
+  chown_tree "$ocr_cache"
+
+  # An explicit DFIR_LOG_DIR may point at a SHARED host log directory: the logger only needs to
+  # CREATE its session file there, so hand over the directory entry only — never its (possibly
+  # unrelated) contents. (Unset → logs/ beside the cases root, already handed over above.)
+  if [ -n "${DFIR_LOG_DIR:-}" ]; then
+    log_dir="$(abspath "$DFIR_LOG_DIR")"
+    mkdir -p "$log_dir" 2>/dev/null || true
+    chown -h node:node "$log_dir" 2>/dev/null || true
+  fi
   # setpriv execs in place, so Node stays PID 1 and docker stop signals it directly;
   # --init-groups sheds root's supplementary groups. setpriv changes credentials but NOT
   # HOME/USER/LOGNAME, so set node's home explicitly (env, preserving DFIR_* config) —
