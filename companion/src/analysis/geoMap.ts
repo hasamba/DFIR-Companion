@@ -1,10 +1,12 @@
 import {
   SEVERITY_RANK,
+  worstSeverity,
   type InvestigationState,
   type IOC,
   type ForensicEvent,
   type Severity,
 } from "./stateTypes.js";
+import { escapeRegExp } from "./regexEscape.js";
 import { isInternalIp } from "./anonymize.js";
 import { countryCentroid } from "./countryCentroids.js";
 
@@ -77,13 +79,6 @@ export interface GeoMapOptions {
   maxMarkers?: number;
   maxFlows?: number;
   topCountries?: number;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function worse(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 
 const VERDICT_ORDER = ["malicious", "suspicious", "harmless", "unknown"];
@@ -198,7 +193,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   for (const e of state.forensicTimeline) {
     for (const i of iocsForEvent(e)) {
       const a = ensure(i.id);
-      a.sev = worse(a.sev, e.severity);
+      a.sev = worstSeverity(a.sev, e.severity);
       a.count++;
       for (const s of e.sources ?? []) a.sources.add(s);
       if (!a.first || e.timestamp < a.first) a.first = e.timestamp;
@@ -209,7 +204,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
   const ipById = new Map(ipIocs.map((i) => [i.id, i] as const));
   for (const f of state.findings) {
     for (const id of f.relatedIocs) {
-      if (ipById.has(id)) ensure(id).sev = worse(ensure(id).sev, f.severity);
+      if (ipById.has(id)) ensure(id).sev = worstSeverity(ensure(id).sev, f.severity);
     }
   }
 
@@ -265,7 +260,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       flowAgg.set(key, fa);
     }
     fa.count += e.count ?? 1;
-    fa.sev = worse(fa.sev, e.severity);
+    fa.sev = worstSeverity(fa.sev, e.severity);
   }
   const allFlows: GeoFlow[] = [...flowAgg.entries()]
     .map(([key, fa]) => {
@@ -306,7 +301,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       cAgg.set(m.country, c);
     }
     c.count++;
-    c.sev = worse(c.sev, m.severity);
+    c.sev = worstSeverity(c.sev, m.severity);
   }
   const countries: GeoCountry[] = [...cAgg.entries()]
     .map(([country, v]) => ({ country, count: v.count, severity: v.sev }))

@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { InvestigationState, IOC, IocEnrichment, Severity } from "../analysis/stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type InvestigationState,
+  type IOC,
+  type IocEnrichment,
+  type Severity,
+} from "../analysis/stateTypes.js";
 import { iocToStixPattern } from "./stix.js";
 import type { StixBundle, StixObject } from "./stix.js";
 
@@ -20,14 +26,6 @@ export interface IocBlocklistOptions {
 }
 
 // ── Severity helpers ──────────────────────────────────────────────────────────
-
-const SEVERITY_RANK: Record<Severity, number> = {
-  Critical: 4,
-  High: 3,
-  Medium: 2,
-  Low: 1,
-  Info: 0,
-};
 
 const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
   malicious: 3,
@@ -90,7 +88,8 @@ export function filterBlocklistIocs(
   for (const ioc of iocs) {
     const eff = effectiveType(ioc);
     if (!eff || !types.includes(eff)) continue;
-    if (SEVERITY_RANK[iocSeverity(ioc)] < SEVERITY_RANK[minSev]) continue;
+    // Canonical SEVERITY_RANK: lower = more severe, so "below the floor" is a GREATER rank.
+    if (SEVERITY_RANK[iocSeverity(ioc)] > SEVERITY_RANK[minSev]) continue;
     if (verdictOnly) {
       const v = worstVerdict(ioc);
       if (v !== "malicious" && v !== "suspicious") continue;

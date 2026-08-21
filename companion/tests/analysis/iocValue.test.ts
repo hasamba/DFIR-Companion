@@ -159,6 +159,19 @@ describe("isInternalTarget (SSRF guard)", () => {
     expect(isInternalTarget("2001:4860:4860::8888", "ip")).toBe(false);
   });
 
+  // CGNAT 100.64/10 is a victim-side range like RFC1918 — every importer refuses to mint it as an
+  // IOC and anonymize.ts classifies it internal, so the enrichment gate must refuse it too. The
+  // range was the one branch iocValue's local table had drifted on (DUP2-1).
+  it("blocks CGNAT 100.64/10 as internal — bare, URL-host, and IPv4-mapped forms", () => {
+    expect(isInternalTarget("100.64.0.5", "ip")).toBe(true);
+    expect(isInternalTarget("100.127.255.254", "ip")).toBe(true);
+    expect(isInternalTarget("http://100.64.0.5/", "url")).toBe(true);
+    expect(isInternalTarget("::ffff:100.64.0.5", "ip")).toBe(true);
+    // Boundary neighbours stay public: 100.63/10 below, 100.128 above.
+    expect(isInternalTarget("100.63.255.255", "ip")).toBe(false);
+    expect(isInternalTarget("100.128.0.1", "ip")).toBe(false);
+  });
+
   it("blocks URLs pointing at internal hosts", () => {
     expect(isInternalTarget("http://169.254.169.254/latest/meta-data/", "url")).toBe(true);
     expect(isInternalTarget("http://10.0.0.1/admin", "url")).toBe(true);

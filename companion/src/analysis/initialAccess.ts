@@ -7,13 +7,10 @@
 //
 // Conservative + idempotent: only email-sourced LINK domains are used (never the sender/recipient
 // domains), only same-or-later host events match, the marker is appended once, and severity uses a
-// worst() floor — so re-running over an already-merged timeline is a no-op. No AI, no network.
+// worstSeverity() floor — so re-running over an already-merged timeline is a no-op. No AI, no network.
 
-import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
-
-function worst(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
-}
+import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
+import { escapeRegExp } from "./regexEscape.js";
 
 const DOMAIN_RE = /\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]+)+\b/gi;
 const MARKER = "[initial access:";
@@ -35,7 +32,7 @@ export function emailLinkDomains(e: ForensicEvent): string[] {
 
 // Boundary-aware containment so "evil.com" doesn't match "notevil.com" / "evil.com.au".
 function mentions(hay: string, domain: string): boolean {
-  const esc = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const esc = escapeRegExp(domain);
   // The lookahead must exclude dots the same way the lookbehind does, so "evil.com" does NOT match
   // inside "evil.com.au" (the .au TLD continues the domain). Previously the lookahead was
   // [^a-z0-9-] which does NOT exclude dots — a dot matched, so "evil.com" matched inside
@@ -66,7 +63,7 @@ export function linkEmailDelivery(events: ForensicEvent[]): ForensicEvent[] {
         const mitre = [...new Set([...(e.mitreTechniques ?? []), "T1566.002", "T1204.002"])];
         return {
           ...e,
-          severity: worst(e.severity, "Medium"),
+          severity: worstSeverity(e.severity, "Medium"),
           mitreTechniques: mitre,
           description:
             `${e.description ?? ""} ${MARKER} host contacted email-delivered domain ${domain}]`.slice(0, 600),

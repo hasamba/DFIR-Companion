@@ -1,4 +1,4 @@
-import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
+import { worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 
@@ -30,10 +30,6 @@ export interface BurstOptions {
 }
 
 export const DEFAULT_GAP_SECONDS = 300;
-
-function worse(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
-}
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a phase reads as the stage it leads with).
@@ -99,7 +95,7 @@ function summarizePhase(index: number, events: ForensicEvent[]): AttackPhase {
   for (const e of events) {
     for (const t of e.mitreTechniques) techniques.add(t);
     count += e.count && e.count > 1 ? e.count : 1;
-    maxSeverity = worse(maxSeverity, e.severity);
+    maxSeverity = worstSeverity(maxSeverity, e.severity);
     const ms = eventEndMs(e);
     if (ms > endMs) {
       endMs = ms;

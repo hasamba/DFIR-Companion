@@ -11,6 +11,7 @@
 // since that path IS the authoritative recompute, not an interim.
 
 import type { InvestigationQuestion, NextStep } from "./stateTypes.js";
+import { escapeRegExp } from "./regexEscape.js";
 
 // Pointer text shown on a question whose supporting finding was rejected. Identical wording the
 // synthesize() backstop has always used, so the two paths read the same.
@@ -23,7 +24,7 @@ export const FP_RESET_POINTER =
 // Escapes regex metacharacters since ids can contain them (e.g. "f-auto-e1").
 export function textMentionsFindingId(text: string | undefined, findingId: string): boolean {
   if (!text) return false;
-  const escaped = findingId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeRegExp(findingId);
   return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "i").test(text);
 }
 

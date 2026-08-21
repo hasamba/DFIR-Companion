@@ -367,6 +367,7 @@
     "reconTechniques.ts": "analysis/intel",
     "redactPaths.ts": "analysis/privacy",
     "redactedExport.ts": "analysis/privacy",
+    "regexEscape.ts": "shared",
     "regexSafety.ts": "analysis/privacy",
     "responseSchema.ts": "shared",
     "sandboxImport.ts": "analysis/ingest",

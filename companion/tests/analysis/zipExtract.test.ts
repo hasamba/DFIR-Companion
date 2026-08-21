@@ -169,4 +169,23 @@ describe("extractZipEntries", () => {
 
     expect(() => extractZipEntries(archive, "crafted.zip")).toThrow(/corrupt ZIP: central directory/i);
   });
+
+  // The central record's relative-offset-of-local-header field is just as attacker-controlled as
+  // the EOCD pointer above, and it passes the archiveIsEncrypted guard (the central record itself
+  // is in bounds, signature and flags valid) — readZip's local-header reads used to surface Node's
+  // raw ERR_OUT_OF_RANGE from that field (TC2-3).
+  it("reports a crafted out-of-bounds local-header offset as a corrupt ZIP, not a RangeError", () => {
+    const archive = createZip([{ path: "sample.bin", data: Buffer.from("payload") }]);
+    let eocd = -1;
+    for (let i = archive.length - 22; i >= 0; i--) {
+      if (archive.readUInt32LE(i) === 0x06054b50) {
+        eocd = i;
+        break;
+      }
+    }
+    const ptr = archive.readUInt32LE(eocd + 16); // central directory start
+    archive.writeUInt32LE(0xffffff00, ptr + 42); // local header "sits" ~4 GB into a tiny file
+
+    expect(() => extractZipEntries(archive, "crafted.zip")).toThrow(/corrupt ZIP: local header/i);
+  });
 });

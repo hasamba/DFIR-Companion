@@ -1,4 +1,9 @@
-import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
+import {
+  SEVERITY_RANK,
+  worstSeverity,
+  type InvestigationState,
+  type Severity,
+} from "../analysis/stateTypes.js";
 
 // Build a MITRE ATT&CK Navigator layer (https://mitre-attack.github.io/attack-navigator/) from
 // the case state — a deterministic transform, no AI. The layer JSON drops straight into the
@@ -56,15 +61,6 @@ const SEVERITY_SCORE: Record<Severity, number> = {
   Info: 10,
 };
 
-// Worst-wins ordering (higher = worse) when several findings/events touch the same technique.
-const SEVERITY_RANK: Record<Severity, number> = {
-  Critical: 5,
-  High: 4,
-  Medium: 3,
-  Low: 2,
-  Info: 1,
-};
-
 const SEVERITIES: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
 
 // A technique ("T1059") or sub-technique ("T1059.001") id, anchored so a tactic id (TA0001) or
@@ -74,10 +70,6 @@ const TECHNIQUE_RE = /^T\d{4}(?:\.\d{3})?$/;
 function normalizeTechnique(id: string): string | null {
   const t = id.trim().toUpperCase();
   return TECHNIQUE_RE.test(t) ? t : null;
-}
-
-function worse(a: Severity, b: Severity): Severity {
-  return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
 }
 
 // Parent technique id of a sub-technique ("T1059.001" → "T1059"), or null for a base technique.
@@ -127,7 +119,7 @@ export function buildAttackLayer(state: InvestigationState, opts: AttackLayerOpt
     const id = normalizeTechnique(rawId);
     if (!id) return;
     const cur = acc.get(id) ?? { worst: "Info" as Severity, findingTitles: [], eventCount: 0 };
-    cur.worst = worse(cur.worst, severity);
+    cur.worst = worstSeverity(cur.worst, severity);
     if (findingTitle) {
       const title = findingTitle.trim();
       if (title && !cur.findingTitles.includes(title)) cur.findingTitles.push(title);
@@ -152,9 +144,10 @@ export function buildAttackLayer(state: InvestigationState, opts: AttackLayerOpt
   }
 
   const techniques: NavigatorTechnique[] = [];
-  // Scored entries first, sorted worst→least-severe then by id, for a stable, readable layer.
+  // Scored entries first, sorted worst→least-severe then by id, for a stable, readable layer
+  // (canonical SEVERITY_RANK: lower = more severe, so ascending rank is worst-first).
   const scored = [...acc.entries()].sort((a, b) => {
-    const rank = SEVERITY_RANK[b[1].worst] - SEVERITY_RANK[a[1].worst];
+    const rank = SEVERITY_RANK[a[1].worst] - SEVERITY_RANK[b[1].worst];
     return rank !== 0 ? rank : a[0].localeCompare(b[0]);
   });
   for (const [id, info] of scored) {

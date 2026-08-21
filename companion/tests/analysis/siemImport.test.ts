@@ -110,6 +110,24 @@ describe("logonRisk — logon-type grading", () => {
     expect(logonRisk(8, "")).toMatchObject({ severity: "Medium", mitre: ["T1078"] });
     expect(logonRisk(9, "")).toMatchObject({ severity: "Medium", mitre: ["T1550.002"] });
   });
+
+  // Pins isPublicIpv4's IPv4-shape requirement (TC2-1): "public" must mean "IPv4-shaped AND not
+  // internal", never a plain !isInternalIpv4 — that "simplification" would grade every blank-source
+  // 4624 (IpAddress "-" is routine for local/service logons; cleanIp maps it to "") and every
+  // routable-IPv6 source as an internet-facing logon, flooding the forensic timeline with false
+  // Medium/T1078 external-access findings.
+  it("keeps a blank source internal — a type-3 logon with no IP is not external", () => {
+    expect(logonRisk(3, "").severity).toBeUndefined();
+    expect(logonRisk(3, "").mitre).toEqual([]);
+  });
+
+  it("keeps a routable IPv6 source internal — non-IPv4-shaped never counts as public", () => {
+    expect(logonRisk(3, "2001:db8::5").severity).toBeUndefined();
+    expect(logonRisk(3, "2001:db8::5").mitre).toEqual([]);
+    const rdp = logonRisk(10, "2001:db8::5");
+    expect(rdp.typeName).toBe("RemoteInteractive/RDP");
+    expect(rdp.severity).toBeUndefined();
+  });
 });
 
 describe("mapWindows — 4624 logon-type overlay end to end", () => {
@@ -127,6 +145,13 @@ describe("mapWindows — 4624 logon-type overlay end to end", () => {
     expect(e.severity).toBe("Low");
     expect(e.mitreTechniques).toEqual([]);
     expect(e.description).toMatch(/Network from 10\.10\.200\.11/);
+  });
+
+  it("keeps a blank-source ('-') network 4624 at Low with no technique (TC2-1)", () => {
+    const r = parseSiemExport(elastic(logon4624("3", "-")));
+    const e = r.events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.mitreTechniques).toEqual([]);
   });
 });
 

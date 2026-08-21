@@ -201,11 +201,15 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
 
 // Streaming accumulator behind parseSyslog / parseSyslogProgress: each line is parsed, mapped, and
 // fed straight into the shared event aggregator, so memory is bounded by the distinct-key set — not
-// the row count. The ONE exception is an sshd auth outcome (login success/failure), which must be
-// buffered until the whole log has been seen: the brute-force-success correlation is a post-pass
-// that rewrites specific mapped events. finish() runs that correlation, folds the buffer into the
-// aggregator, and assembles the result. finish() re-sorts by severity/count/timestamp, so relative
-// to the pre-streaming line-order feed, ordering only shifts on exact three-way ties.
+// the row count. The ONE exception is an sshd login SUCCESS, which must be buffered until the whole
+// log has been seen: the brute-force-success correlation is a post-pass that rewrites specific
+// mapped events — and ONLY accepted ones, so successes are the only events held back (bounded by
+// real logins, which are rare). A login FAILURE streams into the aggregator like any other line and
+// contributes just a compact {ms, ip} tuple to the correlation — an auth.log flood of failed
+// passwords (exactly the input this correlation targets) must not re-materialize the mapped events
+// the streaming rework exists to avoid. finish() runs the correlation, folds the success buffer
+// into the aggregator, and assembles the result. finish() re-sorts by severity/count/timestamp, so
+// relative to the pre-streaming line-order feed, ordering only shifts on exact three-way ties.
 function createSyslogAccumulator(opts: SyslogImportOptions): {
   line(raw: string): void;
   finish(): SyslogParseResult;
@@ -218,8 +222,8 @@ function createSyslogAccumulator(opts: SyslogImportOptions): {
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-  const sshEvents: MappedEvent[] = []; // ONLY the sshd auth outcomes — everything else streams into agg
-  const sshAuth: SshAuthEvent<number>[] = []; // keyed by their index in `sshEvents`
+  const sshEvents: MappedEvent[] = []; // ONLY accepted sshd logins — everything else streams into agg
+  const sshAuth: SshAuthEvent<number>[] = []; // accepted keyed by index in `sshEvents`; failed carry key -1
   let total = 0;
 
   return {
@@ -230,17 +234,23 @@ function createSyslogAccumulator(opts: SyslogImportOptions): {
       if (!p) return;
       const m = mapParsedSyslog(p, sink);
       total++;
-      // Hold back sshd login successes/failures for the brute-force-success correlation in finish().
+      // Hold back sshd login SUCCESSES for the brute-force-success correlation in finish() — the
+      // only events markSshBruteForce ever rewrites. A FAILURE contributes just its {ms, ip} to the
+      // correlation (its key is never read; -1 marks "not buffered") and streams into the
+      // aggregator like any other line, so a failed-password flood cannot re-materialize the log.
       if (/^sshd\b/i.test(p.app)) {
         const auth = parseSshAuth(p.message);
-        if (auth) {
+        if (auth?.result === "accepted") {
           sshAuth.push({
             key: sshEvents.push(m) - 1,
             ms: Date.parse(p.timestamp) || 0,
             ip: auth.ip,
-            result: auth.result,
+            result: "accepted",
           });
           return;
+        }
+        if (auth) {
+          sshAuth.push({ key: -1, ms: Date.parse(p.timestamp) || 0, ip: auth.ip, result: "failed" });
         }
       }
       agg.add(m);
@@ -281,7 +291,7 @@ function createSyslogAccumulator(opts: SyslogImportOptions): {
 
 // Parse a plain syslog export into the shared SIEM result shape (aggregated + capped). Pure, no AI.
 // Lines are walked with an indexOf cursor — never split into an all-lines array — so peak retention
-// beyond the input text is the aggregator's distinct-key set plus the sshd auth buffer.
+// beyond the input text is the aggregator's distinct-key set plus the accepted-sshd-login buffer.
 export function parseSyslog(text: string, opts: SyslogImportOptions = {}): SyslogParseResult {
   const acc = createSyslogAccumulator(opts);
   let cursor = 0;

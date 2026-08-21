@@ -16,6 +16,8 @@
 // published names below by bare name.
 (function () {
   let hostScopeLedger = null;
+  let hostScopeLoadSeq = 0; // generation token: only the latest load may mutate the ledger
+  let hostScopeLoadCase = null; // which case the latest load belongs to (decides decision reconciliation)
   let hostScopeFilter = "all";
 
   const STATUS_LABEL = {
@@ -223,17 +225,61 @@
 
   async function loadHostScope(caseId) {
     if (!caseId) return;
+    // A generation token, bumped per load, guards the ledger against out-of-order responses — the
+    // same pattern as loadAssetGraph: when the analyst switches cases fast, an older request's
+    // late response (success OR failure) must not overwrite or erase the newer case's ledger.
+    // And for the LATEST load a failure must CLEAR the ledger and repaint: the per-case resets in
+    // js/dashboard-case-connect.js never touch this module's state, so a swallowed failure here
+    // kept the PREVIOUS case's clearance board on screen — "Cleared"/"Confirmed" for the wrong
+    // case, on the surface analysts use for scoping calls. A transient same-case failure stays
+    // harmless: the panel shows the failure until the next successful reload repaints it.
+    const seq = ++hostScopeLoadSeq;
+    hostScopeLoadCase = caseId;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-scope`);
-      if (!r.ok) return;
-      hostScopeLedger = await r.json();
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        if (seq !== hostScopeLoadSeq) return; // superseded by a newer load — ignore entirely
+        hostScopeLedger = null;
+        // 501 means the store is not configured — the default "No scope data." empty state is the
+        // honest rendering, not an error. Everything else surfaces: routes/hostScope.ts
+        // deliberately 500s with the error message when the ledger file is corrupt (fail-loud),
+        // and swallowing that here silenced the design at its last hop.
+        if (r.status === 501) {
+          paintHostScope();
+          return;
+        }
+        // Null-guarded like paintHostScope: the unit-test harness stubs getElementById to null.
+        const el = document.getElementById("hostScopeBody");
+        if (el) {
+          el.innerHTML = `<p class="hs-empty">Host scope unavailable: ${esc(e.error || "HTTP " + r.status)}</p>`;
+        }
+        return;
+      }
+      const ledger = await r.json();
+      if (seq !== hostScopeLoadSeq) return; // a stale success must not overwrite the newer case
+      hostScopeLedger = ledger;
       paintHostScope();
     } catch {
-      // A panel that cannot load must not take the dashboard down with it.
+      // A panel that cannot load must not take the dashboard down with it — but the LATEST load's
+      // network failure still clears and repaints, so a case switch while the companion restarts
+      // cannot leave the previous case's clearance decisions on screen.
+      if (seq !== hostScopeLoadSeq) return; // superseded by a newer load — ignore entirely
+      hostScopeLedger = null;
+      const el = document.getElementById("hostScopeBody");
+      if (el) {
+        el.innerHTML = `<p class="hs-empty">Host scope could not be loaded.</p>`;
+      }
     }
   }
 
   async function decideHostScope(caseId, host, to, reason) {
+    // Capture the generation token: if a newer ledger load starts while this decision is in
+    // flight (a case switch, or a reload), the response's ledger belongs to the superseded state
+    // and must not overwrite the newer one — the same rule loadHostScope enforces. The decision
+    // itself still landed server-side, so the caller's success flow is unaffected; only the
+    // local cache and pane are protected from being repainted with the old case's board.
+    const seq = hostScopeLoadSeq;
     const r = await fetch(
       `/cases/${encodeURIComponent(caseId)}/host-scope/${encodeURIComponent(host)}`,
       {
@@ -249,8 +295,18 @@
       const e = await r.json().catch(() => ({}));
       throw new Error(e.error || "HTTP " + r.status);
     }
-    hostScopeLedger = await r.json();
-    paintHostScope();
+    const ledger = await r.json();
+    if (seq === hostScopeLoadSeq) {
+      hostScopeLedger = ledger;
+      paintHostScope();
+    } else if (hostScopeLoadCase === caseId) {
+      // A SAME-case reload superseded this response — but that reload's read may predate the
+      // append this decision just made, so dropping silently could leave a recorded decision
+      // invisible on the board. Reconcile with a fresh load: it takes the latest token, reads
+      // post-append state, and wins or loses the token race correctly. A DIFFERENT-case
+      // supersession stays dropped — reloading the old case would clobber the new one.
+      void loadHostScope(caseId);
+    }
     return true;
   }
 

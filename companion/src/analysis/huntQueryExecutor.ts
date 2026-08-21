@@ -87,6 +87,12 @@ interface EvaluationContext {
   regexEvaluations: number;
   limits: HuntExecutionLimits;
   anchorTime: Date;
+  // Per-execution caches: a `matches` pattern/flags pair and a `during` window string are query
+  // constants, so compile/resolve them once instead of per scanned row. Hunt regex flags are
+  // restricted to [imsu] (no g/y), so a cached instance carries no lastIndex state between .test()
+  // calls. Both caches die with the request.
+  regexCache: Map<string, RegExp>;
+  duringCache: Map<string, { fromMs: number; toMs: number }>;
 }
 
 const DEFAULT_LIMITS: HuntExecutionLimits = {
@@ -231,22 +237,36 @@ function compareScalar(
   }
   if (predicate.operator === "during") {
     if (actual == null || typeof expected !== "string") return false;
-    const range = duringRange(expected, context.anchorTime);
-    if (!range) {
-      throw new HuntQueryExecutionError(
-        "invalid_time_window",
-        `Invalid time window ${JSON.stringify(expected)}`,
-      );
+    let window = context.duringCache.get(expected);
+    if (!window) {
+      const range = duringRange(expected, context.anchorTime);
+      if (!range) {
+        throw new HuntQueryExecutionError(
+          "invalid_time_window",
+          `Invalid time window ${JSON.stringify(expected)}`,
+        );
+      }
+      window = { fromMs: Date.parse(range.from), toMs: Date.parse(range.to) };
+      context.duringCache.set(expected, window);
     }
     const time = Date.parse(String(actual));
-    return Number.isFinite(time) && time >= Date.parse(range.from) && time <= Date.parse(range.to);
+    return Number.isFinite(time) && time >= window.fromMs && time <= window.toMs;
   }
   if (predicate.operator === "matches") {
     context.regexEvaluations++;
     if (context.regexEvaluations > context.limits.maxRegexEvaluations) {
       throw new HuntQueryLimitError("regex evaluations", context.limits.maxRegexEvaluations);
     }
-    return new RegExp(String(expected ?? ""), predicate.regexFlags).test(String(actual ?? ""));
+    const pattern = String(expected ?? "");
+    // NUL-joined so a pattern that itself ends in a flag letter can never collide with another
+    // pattern+flags pair (a regex pattern cannot contain a raw NUL).
+    const cacheKey = `${pattern}\u0000${predicate.regexFlags ?? ""}`;
+    let regex = context.regexCache.get(cacheKey);
+    if (!regex) {
+      regex = new RegExp(pattern, predicate.regexFlags);
+      context.regexCache.set(cacheKey, regex);
+    }
+    return regex.test(String(actual ?? ""));
   }
   if (predicate.operator === "contains") {
     return String(actual ?? "")
@@ -625,7 +645,13 @@ export async function executeHuntQuery(input: HuntExecutionOptions): Promise<Hun
     outputLimit,
     startedAt,
     signal: input.signal,
-    evaluation: { regexEvaluations: 0, limits, anchorTime },
+    evaluation: {
+      regexEvaluations: 0,
+      limits,
+      anchorTime,
+      regexCache: new Map(),
+      duringCache: new Map(),
+    },
   };
   const result = isAnalytical(input.parsed.pipeline)
     ? {

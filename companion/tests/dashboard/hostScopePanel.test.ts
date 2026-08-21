@@ -198,3 +198,180 @@ describe("recording a host-scope decision", () => {
     await expect(p.decideHostScope("c1", "ws-099", "cleared", "covered")).resolves.toBe(true);
   });
 });
+
+// The ledger read is raced by case switches, and the per-case resets in dashboard-case-connect.js
+// never touch this module's state — so a stale response must not overwrite the newer case's
+// ledger, and the LATEST load's failure must clear and repaint rather than leave the PREVIOUS
+// case's clearance board ("Cleared"/"Confirmed" for the wrong case) on a surface analysts use for
+// scoping calls. Same generation-token contract as loadAssetGraph, pinned the same way.
+interface HostScopeLoadApi {
+  loadHostScope(caseId: string): Promise<void>;
+  decideHostScope(caseId: string, host: string, to: string, reason: string): Promise<boolean>;
+}
+
+interface PendingFetch {
+  url: string;
+  resolve(response: unknown): void;
+  reject(reason: unknown): void;
+}
+
+// A fetch stub whose responses are settled BY THE TEST, in the order the test chooses — the whole
+// point is answering request A after request B.
+function deferredFetch() {
+  const pending: PendingFetch[] = [];
+  const fetch = (url: string) =>
+    new Promise((resolve, reject) => {
+      pending.push({ url, resolve, reject });
+    });
+  return { pending, fetch };
+}
+
+// One macrotask turn, so every already-settled promise chain runs to completion.
+const drain = () => new Promise((r) => setImmediate(r));
+
+// The panel body the module paints into: enough element for paintHostScope (innerHTML, the
+// bind-once dataset flag, the delegated listener) and for the failure writes.
+function panelWithBody(fetchStub: unknown) {
+  const body = { innerHTML: "", dataset: {} as Record<string, string>, addEventListener: () => {} };
+  const p = loadDashboardModule<HostScopeLoadApi>("dashboard-host-scope.js", ["dashboard-escape.js"], {
+    fetch: fetchStub,
+    document: { getElementById: (id: string) => (id === "hostScopeBody" ? body : null) },
+  });
+  return { p, body };
+}
+
+function okLedger(name: string) {
+  return { ok: true, status: 200, json: async () => ledger({ hosts: [host({ name })] }) };
+}
+
+describe("loading the host-scope ledger under case switches", () => {
+  it("ignores a stale load's late success — the newer case's board survives", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    void p.loadHostScope("case-b");
+    pending[1].resolve(okLedger("host-b"));
+    await drain();
+    expect(body.innerHTML).toContain("host-b");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    expect(body.innerHTML).toContain("host-b");
+    expect(body.innerHTML).not.toContain("host-a");
+  });
+
+  it("ignores a stale load's late failure — the newer case's board survives", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    void p.loadHostScope("case-b");
+    pending[1].resolve(okLedger("host-b"));
+    await drain();
+    pending[0].resolve({ ok: false, status: 500, json: async () => ({ error: "boom" }) });
+    await drain();
+    expect(body.innerHTML).toContain("host-b");
+    expect(body.innerHTML).not.toContain("unavailable");
+  });
+
+  it("clears the previous case's board when the new case's read fails, and says why", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a");
+    void p.loadHostScope("case-b");
+    // The 500 routes/hostScope.ts produces on a corrupt ledger file carries the error message —
+    // fail-loud by design, and the panel must not silence it at the last hop.
+    pending[1].resolve({ ok: false, status: 500, json: async () => ({ error: "scope ledger corrupt" }) });
+    await drain();
+    expect(body.innerHTML).toContain("Host scope unavailable: scope ledger corrupt");
+    expect(body.innerHTML).not.toContain("host-a");
+  });
+
+  it("falls back to the HTTP status when the failure body is unreadable", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    await drain();
+    expect(body.innerHTML).toContain("Host scope unavailable: HTTP 502");
+  });
+
+  it("clears the previous case's board on a network-level rejection too", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    void p.loadHostScope("case-b");
+    pending[1].reject(new Error("ECONNREFUSED"));
+    await drain();
+    expect(body.innerHTML).toContain("Host scope could not be loaded.");
+    expect(body.innerHTML).not.toContain("host-a");
+  });
+
+  it("renders the default empty state when the store is not configured (501)", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve({ ok: false, status: 501, json: async () => ({ error: "not configured" }) });
+    await drain();
+    expect(body.innerHTML).toContain("No scope data.");
+    expect(body.innerHTML).not.toContain("unavailable");
+  });
+
+  it("a decision's late response does not resurrect the previous case's board after a switch", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a");
+    // A clearance decision for case A is still in flight when the analyst switches to case B.
+    const decided = p.decideHostScope("case-a", "host-a", "cleared", "covered");
+    void p.loadHostScope("case-b");
+    pending[2].resolve(okLedger("host-b"));
+    await drain();
+    expect(body.innerHTML).toContain("host-b");
+    // The decision's response carries case A's ledger — it landed server-side (resolves true),
+    // but must not repaint case B's board with the superseded case's clearance state.
+    pending[1].resolve(okLedger("host-a"));
+    await drain();
+    await expect(decided).resolves.toBe(true);
+    expect(body.innerHTML).toContain("host-b");
+    expect(body.innerHTML).not.toContain("host-a");
+    // A DIFFERENT-case supersession must not reconcile — reloading case A would clobber case B.
+    expect(pending.length).toBe(3);
+  });
+
+  it("reconciles with a fresh load when a same-case reload supersedes a decision", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    // A decision and a SAME-case reload race; the reload's read predates the append, so its
+    // ledger is the pre-decision state.
+    const decided = p.decideHostScope("case-a", "host-a", "cleared", "covered");
+    void p.loadHostScope("case-a");
+    pending[2].resolve(okLedger("host-a"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a");
+    // The decision's post-append ledger arrives superseded: it must not paint directly, but a
+    // recorded decision must not stay invisible either — a reconciling load is issued and its
+    // (post-append) response is what paints.
+    pending[1].resolve(okLedger("host-a-cleared"));
+    await drain();
+    await expect(decided).resolves.toBe(true);
+    expect(pending.length).toBe(4);
+    pending[3].resolve(okLedger("host-a-cleared"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a-cleared");
+  });
+});
