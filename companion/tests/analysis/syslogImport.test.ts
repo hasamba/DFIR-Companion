@@ -179,4 +179,32 @@ describe("parseSyslogProgress", () => {
 
     expect(progress).toEqual([5000, 10_000, 12_000]);
   });
+
+  // Failed sshd auth lines stream straight into the aggregator (only accepted logins are buffered
+  // for the brute-force post-pass), so the correlation must still see every failure — including a
+  // flood larger than a progress chunk — and the flood itself must aggregate, not multiply events.
+  it("correlates a brute-force success across a failure flood longer than a progress chunk", async () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 6000; i++) {
+      const at = i * 10; // 10 ms apart — the whole flood fits inside the 1-hour lookback window
+      const ss = String(Math.floor(at / 1000)).padStart(2, "0");
+      const ms = String(at % 1000).padStart(3, "0");
+      lines.push(
+        `<86>1 2024-05-16T13:00:${ss}.${ms}Z web01 sshd 9000 - - Failed password for invalid user admin from 203.0.113.9 port 41022 ssh2`,
+      );
+    }
+    lines.push(
+      "<86>1 2024-05-16T13:02:00.000000Z web01 sshd 9100 - - Accepted password for admin from 203.0.113.9 port 41099 ssh2",
+    );
+    const text = lines.join("\n");
+
+    const r = await parseSyslogProgress(text, { assumeYear: 2024 });
+    const success = r.events.find((e) => e.mitreTechniques.includes("T1110.001"));
+    expect(success, "expected a brute-force-success event").toBeTruthy();
+    expect(success?.severity).toBe("Medium");
+    expect(success?.description).toContain("succeeded after 6000 failed attempts from 203.0.113.9");
+    // The 6000 identical failures collapse into one counted aggregation row.
+    expect(r.events.find((e) => e.count === 6000)?.description).toContain("Failed password");
+    expect(r).toEqual(parseSyslog(text, { assumeYear: 2024 }));
+  });
 });

@@ -74,6 +74,70 @@ describe("hunt query parser", () => {
     }
   });
 
+  // location() binary-searches a precomputed newline-offset array; line 1 / column 1 is the one
+  // position almost any wrong formula still gets right, so the cases below pin the arithmetic
+  // (comparison direction, lineStart derivation) at hand-derived multi-line and mid-line offsets.
+  it("locates an error on the second line of a multi-line query", () => {
+    try {
+      // Line 2 is "| group by sorce.ip": "| group by " spans columns 1-11, the bad field starts at 12.
+      parseHuntQuery("source.ip=192.0.2.1\n| group by sorce.ip");
+      throw new Error("expected parsing to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HuntQuerySyntaxError);
+      expect(error).toMatchObject({ code: "unknown_field", line: 2, column: 12, length: 8 });
+    }
+  });
+
+  it("locates an error mid-way through the first line", () => {
+    try {
+      // "source.ip=192.0.2.1" is columns 1-19, " and " ends at 24, the bad field starts at 25.
+      parseHuntQuery("source.ip=192.0.2.1 and sorce.ip=10.0.0.1");
+      throw new Error("expected parsing to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HuntQuerySyntaxError);
+      expect(error).toMatchObject({ code: "unknown_field", line: 1, column: 25, length: 8 });
+    }
+  });
+
+  it("locates an error at a non-1 column on the third line", () => {
+    try {
+      // Line 3 is "and sorce.ip=10.0.0.1": "and " spans columns 1-4, the bad field starts at 5.
+      parseHuntQuery("source.ip=192.0.2.1\nand host.name=DC01\nand sorce.ip=10.0.0.1");
+      throw new Error("expected parsing to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HuntQuerySyntaxError);
+      expect(error).toMatchObject({ code: "unknown_field", line: 3, column: 5, length: 8 });
+    }
+  });
+
+  it("locates an error when the query's first line is empty", () => {
+    try {
+      // The leading newline sits at offset 0, so the token at offset 1 must be line 2, column 1.
+      parseHuntQuery("\nsorce.ip=192.0.2.1");
+      throw new Error("expected parsing to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HuntQuerySyntaxError);
+      expect(error).toMatchObject({ code: "unknown_field", line: 2, column: 1, length: 8 });
+    }
+  });
+
+  it("re-keys the newline memo across consecutive parses of different texts", () => {
+    // Same error token under two different newline layouts, parsed back to back: a stale one-slot
+    // memo from the first text would misplace the second text's positions.
+    try {
+      parseHuntQuery("host.name=a\nand sorce.ip=1");
+      throw new Error("expected parsing to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "unknown_field", line: 2, column: 5 });
+    }
+    try {
+      parseHuntQuery("host.name=a and\nsorce.ip=1");
+      throw new Error("expected parsing to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "unknown_field", line: 2, column: 1 });
+    }
+  });
+
   it.each([
     "description matches /(a+)+$/",
     "description matches /(?=evil)/",

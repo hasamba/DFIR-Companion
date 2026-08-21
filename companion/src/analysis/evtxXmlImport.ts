@@ -158,6 +158,12 @@ export function parseWinEventXml(text: string): Row[] {
   return records;
 }
 
+// Counting matches is far cheaper per iteration than parsing (each hit spans a whole event block),
+// so it yields on a coarser budget — but it MUST yield, or a multi-hundred-MB export would block
+// the event loop (and any pending cancellation) for the whole count before the parse loop's first
+// await. Mirrors syslogImport's SYSLOG_COUNT_CHUNK.
+const XML_COUNT_CHUNK = 100_000;
+
 export async function parseWinEventXmlProgress(
   text: string,
   onProgress?: (done: number, total: number) => void | Promise<void>,
@@ -168,7 +174,13 @@ export async function parseWinEventXmlProgress(
   // string per event across a multi-hundred-MB export just to take its length.
   let total = 0;
   const countRe = /<Event\b/gi;
-  while (countRe.exec(text) !== null) total++;
+  while (countRe.exec(text) !== null) {
+    total++;
+    if (total % XML_COUNT_CHUNK === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      throwIfImportAborted(signal);
+    }
+  }
   if (total === 0) {
     await onProgress?.(0, 0);
     return [];
