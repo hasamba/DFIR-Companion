@@ -3,6 +3,8 @@ import type { Locator, Page } from "@playwright/test";
 
 // Covers: US-002
 // (feature-user-stories.csv) — POST /cases through the real dialog, including the id-validation and duplicate refusals.
+// The request-boundary checks in companion/src/routes/caseCreateBody.ts are exercised directly too:
+// browser form fields are strings, but integrations can call the same route with malformed JSON.
 //
 
 // The ONE spec that creates its case by clicking. Every other spec seeds through the API, so
@@ -103,6 +105,34 @@ test("refuses a duplicate case id", async ({ page, demoCase }) => {
   // silently — it would destroy evidence.
   await expect(dialog).toHaveClass(/\bopen\b/);
   await expect(dialog.locator("#ncMsg")).not.toBeEmpty();
+});
+
+test("refuses malformed case metadata without creating a case", async ({ page }, testInfo) => {
+  const malformed: ReadonlyArray<{ field: string; value: unknown; message: RegExp }> = [
+    { field: "name", value: 42, message: /name must be a string/ },
+    { field: "investigator", value: { name: "e2e" }, message: /investigator must be a string/ },
+    { field: "aiProvider", value: ["openai"], message: /aiProvider must be a string or null/ },
+  ];
+
+  for (const [index, entry] of malformed.entries()) {
+    const caseId = freshCaseId(`e2e-type-${index}`, testInfo.testId);
+    const data: Record<string, unknown> = {
+      caseId,
+      name: "E2E boundary case",
+      investigator: "e2e",
+      aiProvider: null,
+      [entry.field]: entry.value,
+    };
+
+    const refused = await page.request.post("/cases", { data });
+    expect(refused.status(), await refused.text()).toBe(400);
+    expect(await refused.text(), `${entry.field} refusal`).toMatch(entry.message);
+
+    // The important half of boundary validation: the bad value must not be persisted and fail a
+    // later archive or report operation far away from the request that introduced it.
+    const listed = await page.request.get("/cases");
+    expect(await listed.text(), `${entry.field} payload created ${caseId}`).not.toContain(caseId);
+  }
 });
 
 test("Cancel closes the dialog and restores focus to the button that opened it", async ({ page }) => {

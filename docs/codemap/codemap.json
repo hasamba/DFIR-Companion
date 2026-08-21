@@ -8999,7 +8999,9 @@
         "companion/src/composition/routeRegistry.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/e2e/workflows/caseLifecycle.spec.ts"
+      ]
     },
     {
       "path": "companion/src/composition/diagnosticsRings.ts",
@@ -12630,7 +12632,9 @@
         "companion/src/routes/caseLifecycle.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/e2e/workflows/caseCreate.spec.ts"
+      ]
     },
     {
       "path": "companion/src/routes/caseIdentity.ts",
@@ -13679,7 +13683,8 @@
         "POST /notifications/test"
       ],
       "tests": [
-        "companion/tests/analysis/caseIdGate.test.ts"
+        "companion/tests/analysis/caseIdGate.test.ts",
+        "companion/tests/e2e/workflows/integrations.spec.ts"
       ]
     },
     {
@@ -17184,7 +17189,8 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/dashboard/featureManifest.ts"
+        "companion/tests/dashboard/featureManifest.ts",
+        "companion/tests/e2e/workflows/integrations.spec.ts"
       ]
     },
     {
