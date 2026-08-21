@@ -295,6 +295,10 @@ export function parseSyslog(text: string, opts: SyslogImportOptions = {}): Syslo
 }
 
 const SYSLOG_CHUNK_LINES = 5000;
+// Counting newlines is far cheaper per iteration than parsing, so it yields on a coarser budget —
+// but it MUST yield, or a multi-million-line input would block the event loop (and any pending
+// cancellation) for the whole count before the parse loop's first await.
+const SYSLOG_COUNT_CHUNK = 1_000_000;
 
 // parseSyslog for the import route: identical result, but yields to the event loop (reporting
 // done/total lines) every SYSLOG_CHUNK_LINES and honors the job's AbortSignal — a multi-million-line
@@ -307,8 +311,17 @@ export async function parseSyslogProgress(
   signal?: AbortSignal,
 ): Promise<SyslogParseResult> {
   throwIfImportAborted(signal);
-  let total = 1; // the cursor loop visits every newline-separated segment, trailing empty one included
-  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) total++;
+  // Count newline-separated segments in yieldable chunks (the trailing empty segment after the last
+  // newline is included, matching the cursor loop below) so the count itself cannot stall the event
+  // loop or a pending cancellation on a huge input.
+  let total = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
+    total++;
+    if (total % SYSLOG_COUNT_CHUNK === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      throwIfImportAborted(signal);
+    }
+  }
 
   const acc = createSyslogAccumulator(opts);
   let scanned = 0;

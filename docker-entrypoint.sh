@@ -84,7 +84,10 @@ if [ "$(id -u)" = "0" ]; then
   deny_chown() {
     case "$1" in
       "" | /) return 0 ;;
-      /app | /app/*) return 0 ;;
+      # /app is the server code; /opt holds the bundled extension the root cp copies to /out —
+      # both are code the server must never be able to rewrite. chown_tree recurses, so denying an
+      # ancestor (e.g. /opt) also protects everything under it (/opt/dfir-extension).
+      /app | /app/* | /opt | /opt/*) return 0 ;;
       /bin | /bin/* | /boot | /boot/* | /dev | /dev/* | /etc | /etc/* | /lib | /lib/* | /lib64 | /lib64/* | /proc | /proc/* | /root | /root/* | /run | /run/* | /sbin | /sbin/* | /sys | /sys/* | /usr | /usr/* | /var | /var/*) return 0 ;;
       *) return 1 ;;
     esac
