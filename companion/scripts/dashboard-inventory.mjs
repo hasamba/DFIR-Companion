@@ -28,15 +28,22 @@
 import ts from "typescript";
 import prettier from "prettier";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // `--html <path>` exists so the coverage guard below can be tested against a deliberately broken
 // dashboard. A guard nobody has watched fail is not a guard.
+//
+// Native paths, not URLs. An absolute Windows argument ("C:\\…") fed to `new URL()` parses "C:" as
+// the scheme and throws ERR_INVALID_URL_SCHEME, and `file://${process.cwd()}/` is malformed there
+// anyway — the drive letter lands in the host position. resolve()/fileURLToPath() are correct on
+// both platforms, and fs takes a plain path happily.
 const htmlArg = process.argv.indexOf("--html");
 const HTML_PATH =
   htmlArg !== -1 && process.argv[htmlArg + 1]
-    ? new URL(process.argv[htmlArg + 1], `file://${process.cwd()}/`)
-    : new URL("../../public/dashboard.html", import.meta.url);
-const JSON_PATH = new URL("./dashboard-inventory.json", import.meta.url);
+    ? resolve(process.argv[htmlArg + 1])
+    : fileURLToPath(new URL("../../public/dashboard.html", import.meta.url));
+const JSON_PATH = fileURLToPath(new URL("./dashboard-inventory.json", import.meta.url));
 
 const lines = readFileSync(HTML_PATH, "utf8").split("\n");
 
@@ -160,7 +167,7 @@ const siblingRefs = new Map(); // name -> count of references from public/js/*.j
   // and resolving from the script's own path lands outside the repo whenever --html is used. The
   // first version did exactly that, found nothing anywhere, and looked correct because the headline
   // count did not move.
-  const JS_DIR = new URL("./js/", HTML_PATH);
+  const JS_DIR = join(dirname(HTML_PATH), "js");
   let files = [];
   try {
     files = readdirSync(JS_DIR).filter((f) => f.endsWith(".js"));
@@ -168,7 +175,7 @@ const siblingRefs = new Map(); // name -> count of references from public/js/*.j
     files = []; // --html pointed somewhere without a sibling js/ dir; only the tests do that
   }
   for (const f of files) {
-    const src = readFileSync(new URL(f, JS_DIR), "utf8");
+    const src = readFileSync(join(JS_DIR, f), "utf8");
     const mod = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     // Names the module declares ITSELF, at any depth. Without this the scan is scope-blind: three
     // modules declare their own `const sections`, and every use of it counted as a reference to the
@@ -224,7 +231,7 @@ const siblingRefs = new Map(); // name -> count of references from public/js/*.j
 const publishedByModules = new Set();
 for (const [name] of siblingRefs) publishedByModules.add(name);
 {
-  const JS_DIR = new URL("./js/", HTML_PATH);
+  const JS_DIR = join(dirname(HTML_PATH), "js");
   let files = [];
   try {
     files = readdirSync(JS_DIR).filter((f) => f.endsWith(".js"));
@@ -232,7 +239,7 @@ for (const [name] of siblingRefs) publishedByModules.add(name);
     files = [];
   }
   for (const f of files) {
-    for (const m of readFileSync(new URL(f, JS_DIR), "utf8").matchAll(/window\.(\w+)\s*=/g)) {
+    for (const m of readFileSync(join(JS_DIR, f), "utf8").matchAll(/window\.(\w+)\s*=/g)) {
       publishedByModules.add(m[1]);
     }
   }
@@ -484,10 +491,10 @@ if (process.argv.includes("--update")) {
   // raw dump lands the branch a red CI, and running `npm run format` to fix it leaves a file that
   // goes red again the next time anyone regenerates. Formatting here makes the two agree forever.
   const raw = JSON.stringify(report, null, 2) + "\n";
-  const options = (await prettier.resolveConfig(JSON_PATH.pathname)) ?? {};
+  const options = (await prettier.resolveConfig(JSON_PATH)) ?? {};
   writeFileSync(
     JSON_PATH,
-    await prettier.format(raw, { ...options, parser: "json", filepath: JSON_PATH.pathname }),
+    await prettier.format(raw, { ...options, parser: "json", filepath: JSON_PATH }),
   );
   console.log(`[inventory] wrote ${rows.length} sections to scripts/dashboard-inventory.json`);
 } else if (process.argv.includes("--json")) {
