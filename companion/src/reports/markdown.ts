@@ -8,6 +8,7 @@ import type { CustodyRecord } from "../analysis/custody.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
+import { blockMd, cellMd, oneLineMd } from "./mdText.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -64,16 +65,6 @@ import {
 // auto-filled from the investigation state; human-authored sections come from ReportMeta
 // (edited in the dashboard) and override/supplement the derived content. Where neither a
 // human value nor derivable data exists, a clearly marked placeholder shows what to fill.
-
-function cellMd(value: string): string {
-  // Escape the pipe (GFM table cell separator) AND neutralize newlines. A \n or \r inside a GFM
-  // table cell ends the row; the text after the newline becomes spurious rows with empty trailing
-  // cells, corrupting the table structure. The corrupted Markdown flows to the HTML export (marked
-  // parses the broken table) and the DOCX export, producing broken tables in all three deliverables.
-  // Newlines reach here from report-meta free-text fields (revisions[].comments, distribution[].name,
-  // glossary entries) and from AI-generated descriptions that contain a literal newline (#12).
-  return value.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ");
-}
 
 const TODO = "> _To be completed by the investigator — edit in the dashboard → **Case details**._";
 
@@ -768,7 +759,7 @@ function investigation(
     const eventById = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
     for (const f of sorted) {
       const confLabel = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
-      lines.push(`#### [${f.severity}]${confLabel} ${f.title} (${f.id})`);
+      lines.push(`#### [${f.severity}]${confLabel} ${oneLineMd(f.title)} (${f.id})`);
       // Corroboration/grounding badge (investigation-guidance #6): "2 tools / 3 hosts / intel ✓" or a
       // prominent "⚠️ no cited evidence" for an ungrounded finding, so a hypothesis never reads as fact.
       if (f.ungrounded) {
@@ -784,7 +775,7 @@ function investigation(
       } else if (f.corroboration) {
         lines.push(`- Corroboration: ${corroborationLabel(f)}`);
       }
-      lines.push(f.description || "_no description_");
+      lines.push(blockMd(f.description) || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length)
         lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
@@ -1266,7 +1257,7 @@ function complianceSection(state: InvestigationState, control: ComplianceControl
     for (const [framework, rows] of byFramework) {
       lines.push(`**${framework}**`, "");
       for (const row of rows) {
-        lines.push(`- **${row.control}** — ${row.title}`);
+        lines.push(`- **${row.control}** — ${oneLineMd(row.title)}`);
         lines.push(`  - ${row.obligation}`);
         if (row.notification) {
           const unit = row.notification.unit === "business" ? "business days" : "calendar time";
@@ -1409,7 +1400,7 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
     for (const h of negative) {
       const tag = h.status === "refuted" ? "Refuted" : "Exhausted";
       const reason = h.status === "refuted" ? h.notes : h.exhaustedReason;
-      lines.push(`- **[${tag}]** ${h.title}${reason ? ` — ${reason}` : ""}`);
+      lines.push(`- **[${tag}]** ${oneLineMd(h.title)}${reason ? ` — ${oneLineMd(reason)}` : ""}`);
     }
     lines.push("");
   }
@@ -1418,11 +1409,14 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
   const sorted = [...hypotheses].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
   for (const h of sorted) {
     const exhaustedTag = h.exhausted ? " ⊘ Exhausted" : "";
-    lines.push(`### ${h.title} — ${STATUS_LABEL[h.status] ?? h.status}${exhaustedTag}`, "");
-    if (h.description) lines.push(h.description, "");
+    lines.push(`### ${oneLineMd(h.title)} — ${STATUS_LABEL[h.status] ?? h.status}${exhaustedTag}`, "");
+    if (h.description) lines.push(blockMd(h.description), "");
     if (h.expectedOutcome)
-      lines.push(`**Expected outcome (what would prove or disprove this):** ${h.expectedOutcome}`, "");
-    if (h.exhausted && h.exhaustedReason) lines.push(`**Exhausted:** ${h.exhaustedReason}`, "");
+      lines.push(
+        `**Expected outcome (what would prove or disprove this):** ${oneLineMd(h.expectedOutcome)}`,
+        "",
+      );
+    if (h.exhausted && h.exhaustedReason) lines.push(`**Exhausted:** ${oneLineMd(h.exhaustedReason)}`, "");
     const bits: string[] = [];
     if (h.relatedTechniques.length) bits.push(`ATT&CK: ${h.relatedTechniques.join(", ")}`);
     if (h.relatedEventIds.length)
@@ -1430,7 +1424,7 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
     if (h.relatedIocIds.length)
       bits.push(`${h.relatedIocIds.length} related IOC${h.relatedIocIds.length === 1 ? "" : "s"}`);
     if (bits.length) lines.push(`_${bits.join(" · ")}._`, "");
-    if (h.notes) lines.push(`**Analyst notes:** ${h.notes}`, "");
+    if (h.notes) lines.push(`**Analyst notes:** ${oneLineMd(h.notes)}`, "");
     // Status-change audit trail (issue #95): a dated open → … chain, skipped when there's only the
     // initial entry (nothing has changed since the hypothesis was created).
     const history = h.statusHistory ?? [];
@@ -1459,10 +1453,10 @@ function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   };
   for (const e of entries) {
     const label = TYPE_LABEL[e.type] ?? e.type;
-    const who = e.author ? ` — ${e.author}` : "";
+    const who = e.author ? ` — ${oneLineMd(e.author)}` : "";
     const ts = e.timestamp ? ` _(${e.timestamp.slice(0, 16).replace("T", " ")} UTC)_` : "";
     lines.push(`**[${label}]**${who}${ts}`, "");
-    lines.push(e.text, "");
+    lines.push(blockMd(e.text), "");
   }
 }
 
