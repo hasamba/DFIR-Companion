@@ -10,6 +10,196 @@
   // is how we tell which groups the analyst actually TOUCHED and therefore which to apply live —
   // without it, one save would rebuild every integration client on the server (#178).
   let loadedEnvValues = {};
+  const CUSTOM_MODEL_VALUE = "__custom__";
+  const MANUAL_MODEL_LABEL = "Enter model ID manually…";
+  const modelRequestVersions = new Map();
+  const AI_MODEL_PICKERS = [
+    {
+      role: "vision",
+      providerId: "env-DFIR_VISION_PROVIDER",
+      modelId: "env-DFIR_VISION_MODEL",
+      keyId: "env-DFIR_VISION_KEY",
+      baseUrlId: "env-DFIR_VISION_BASE_URL",
+    },
+    {
+      role: "synthesis",
+      providerId: "env-DFIR_AI_SYNTH_PROVIDER",
+      modelId: "env-DFIR_AI_SYNTH_MODEL",
+      keyId: "env-DFIR_AI_SYNTH_KEY",
+      baseUrlId: "env-DFIR_AI_SYNTH_BASE_URL",
+    },
+    {
+      role: "velociraptor",
+      providerId: "env-DFIR_AI_VELO_PROVIDER",
+      modelId: "env-DFIR_AI_VELO_MODEL",
+      keyId: "env-DFIR_AI_VELO_KEY",
+      baseUrlId: "env-DFIR_AI_VELO_BASE_URL",
+    },
+    {
+      role: "second-opinion",
+      providerId: "env-DFIR_AI_SECOND_OPINION_PROVIDER",
+      modelId: "env-DFIR_AI_SECOND_OPINION_MODEL",
+      keyId: "env-DFIR_AI_SECOND_OPINION_KEY",
+      baseUrlId: "env-DFIR_AI_SECOND_OPINION_BASE_URL",
+    },
+  ];
+
+  function fieldValue(id) {
+    return (document.getElementById(id)?.value || "").trim();
+  }
+
+  function resolvedModelProvider(picker) {
+    const selected = fieldValue(picker.providerId);
+    if (selected) return selected;
+    if (picker.role === "velociraptor") return "openrouter";
+    return fieldValue("env-DFIR_VISION_PROVIDER");
+  }
+
+  function requestBaseUrl(picker) {
+    const value = fieldValue(picker.baseUrlId);
+    if (value) return value;
+    const key = picker.baseUrlId.replace(/^env-/, "");
+    if (loadedEnvValues[key]) return "";
+    return picker.role === "vision"
+      ? undefined
+      : fieldValue("env-DFIR_VISION_BASE_URL") || undefined;
+  }
+
+  function modelOption(value, label, disabled = false) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.disabled = disabled;
+    return option;
+  }
+
+  function showCustomModelInput(picker, visible, focus = false) {
+    const input = document.getElementById(picker.modelId);
+    if (!input) return;
+    const select = document.getElementById("ai-model-picker-" + picker.role);
+    const hasModels = select?.dataset.hasModels === "1";
+    input.style.display = visible ? "" : "none";
+    input.style.order = hasModels ? "2" : "0";
+    input.style.flexBasis = hasModels ? "100%" : "0";
+    if (visible && focus) input.focus();
+  }
+
+  function replaceModelOptions(picker, models) {
+    const select = document.getElementById("ai-model-picker-" + picker.role);
+    if (!select) return;
+    const current = fieldValue(picker.modelId);
+    select.replaceChildren(
+      modelOption("", models.length ? "Choose a model…" : "No listed models", true),
+      ...models.map((model) => modelOption(model, model)),
+      modelOption(CUSTOM_MODEL_VALUE, MANUAL_MODEL_LABEL),
+    );
+    select.dataset.hasModels = models.length ? "1" : "0";
+    select.style.display = models.length ? "" : "none";
+    select.disabled = !models.length;
+    if (current && models.includes(current)) {
+      select.value = current;
+      showCustomModelInput(picker, false);
+    } else if (current || !models.length) {
+      select.value = CUSTOM_MODEL_VALUE;
+      showCustomModelInput(picker, true);
+    } else {
+      select.value = "";
+      showCustomModelInput(picker, false);
+    }
+  }
+
+  function showModelPickerLoading(picker) {
+    const select = document.getElementById("ai-model-picker-" + picker.role);
+    if (!select) return;
+    const current = fieldValue(picker.modelId);
+    select.replaceChildren(modelOption("", "Loading available models…", true));
+    select.dataset.hasModels = "0";
+    select.style.display = "";
+    select.disabled = true;
+    select.value = "";
+    showCustomModelInput(picker, false);
+  }
+
+  function applySelectedModel(picker) {
+    const select = document.getElementById("ai-model-picker-" + picker.role);
+    const input = document.getElementById(picker.modelId);
+    if (!select || !input) return;
+    if (select.value === CUSTOM_MODEL_VALUE) {
+      showCustomModelInput(picker, true, true);
+      return;
+    }
+    if (!select.value) return;
+    input.value = select.value;
+    showCustomModelInput(picker, false);
+  }
+
+  async function refreshAiModels(picker) {
+    const provider = resolvedModelProvider(picker);
+    const status = document.getElementById("ai-model-status-" + picker.role);
+    if (!provider) {
+      replaceModelOptions(picker, []);
+      if (status) status.textContent = "Choose a provider first.";
+      return;
+    }
+    const version = (modelRequestVersions.get(picker.role) || 0) + 1;
+    modelRequestVersions.set(picker.role, version);
+    showModelPickerLoading(picker);
+    if (status) status.textContent = "Loading available models…";
+    const roleKey = fieldValue(picker.keyId);
+    const mainKey = picker.role === "vision" ? "" : fieldValue("env-DFIR_VISION_KEY");
+    const body = { provider, role: picker.role, apiKey: roleKey || mainKey };
+    const baseUrl = requestBaseUrl(picker);
+    if (baseUrl !== undefined) body.baseUrl = baseUrl;
+    try {
+      const response = await fetch("/settings/ai-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (modelRequestVersions.get(picker.role) !== version) return;
+      if (!response.ok) throw new Error(result.error || "model list request failed");
+      const models = Array.isArray(result.models)
+        ? result.models.filter((model) => typeof model === "string")
+        : [];
+      replaceModelOptions(picker, models);
+      if (status)
+        status.textContent =
+          result.note ||
+          (models.length
+            ? `${models.length} available models — choose one or enter a model ID manually.`
+            : "No models were returned; enter a model ID manually.");
+    } catch (error) {
+      if (modelRequestVersions.get(picker.role) !== version) return;
+      replaceModelOptions(picker, []);
+      if (status)
+        status.textContent =
+          "Could not load models: " + error.message + " You can still type a custom ID.";
+    }
+  }
+
+  function wireAiModelPickers() {
+    AI_MODEL_PICKERS.forEach((picker) => {
+      const button = document.getElementById("load-ai-models-" + picker.role);
+      const select = document.getElementById("ai-model-picker-" + picker.role);
+      if (!button || !select || button.dataset.aiModelsWired) return;
+      button.dataset.aiModelsWired = "1";
+      button.addEventListener("click", () => refreshAiModels(picker));
+      select.addEventListener("change", () => applySelectedModel(picker));
+      document
+        .getElementById(picker.providerId)
+        ?.addEventListener("change", () => refreshAiModels(picker));
+      document
+        .getElementById(picker.keyId)
+        ?.addEventListener("change", () => refreshAiModels(picker));
+      document
+        .getElementById(picker.baseUrlId)
+        ?.addEventListener("change", () => refreshAiModels(picker));
+      document.getElementById(picker.modelId)?.addEventListener("input", () => {
+        select.value = CUSTOM_MODEL_VALUE;
+      });
+    });
+  }
 
   async function fetchEnvSettings() {
     try {
@@ -33,6 +223,7 @@
         loadedEnvValues[key] = el.value;
       }
       renderPresidioLocalWarning();
+      await Promise.all(AI_MODEL_PICKERS.map((picker) => refreshAiModels(picker)));
     } catch {}
   }
 
@@ -275,6 +466,7 @@
 
   // The statements the inline block ran at module scope, in order.
   function initEnvSettings() {
+    wireAiModelPickers();
     document
       .getElementById("env-DFIR_PRESIDIO_URL")
       ?.addEventListener("input", renderPresidioLocalWarning);

@@ -1352,7 +1352,7 @@
               <option value="claude-code">claude code (subscription, no key)</option>
             </select>
           </div>
-          <div class="sfield" data-essential><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><input id="env-DFIR_VISION_MODEL" placeholder="gpt-4o-mini" /></div>
+          <div class="sfield" data-essential><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-vision" aria-label="Available screenshot models" aria-describedby="ai-model-status-vision" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_VISION_MODEL" aria-label="Manually entered screenshot model ID" aria-describedby="ai-model-status-vision" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o-mini" /><button type="button" id="load-ai-models-vision" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-vision" class="sfield-hint" role="status"></span></div>
         </div>
         <div id="claude-code-status" class="sfield" data-essential data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1455,7 +1455,7 @@
               <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
-          <div class="sfield" data-essential><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
+          <div class="sfield" data-essential><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-synthesis" aria-label="Available synthesis models" aria-describedby="ai-model-status-synthesis" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SYNTH_MODEL" aria-label="Manually entered synthesis model ID" aria-describedby="ai-model-status-synthesis" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o" /><button type="button" id="load-ai-models-synthesis" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-synthesis" class="sfield-hint" role="status"></span></div>
         </div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
@@ -1530,7 +1530,7 @@
               <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
-          <div class="sfield"><label>Velo model<span class="sfield-hint">DFIR_AI_VELO_MODEL</span></label><input id="env-DFIR_AI_VELO_MODEL" placeholder="anthropic/claude-haiku-4.5" /></div>
+          <div class="sfield"><label>Velo model<span class="sfield-hint">DFIR_AI_VELO_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-velociraptor" aria-label="Available Velociraptor models" aria-describedby="ai-model-status-velociraptor" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_VELO_MODEL" aria-label="Manually entered Velociraptor model ID" aria-describedby="ai-model-status-velociraptor" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. anthropic/claude-haiku-4.5" /><button type="button" id="load-ai-models-velociraptor" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-velociraptor" class="sfield-hint" role="status"></span></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Velo API key<span class="sfield-hint">DFIR_AI_VELO_KEY</span></label><input id="env-DFIR_AI_VELO_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
@@ -1553,7 +1553,7 @@
               <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
-          <div class="sfield" data-essential><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><input id="env-DFIR_AI_SECOND_OPINION_MODEL" placeholder="e.g. gpt-4o — set this to enable the feature" /></div>
+          <div class="sfield" data-essential><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-second-opinion" aria-label="Available second-opinion models" aria-describedby="ai-model-status-second-opinion" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SECOND_OPINION_MODEL" aria-label="Manually entered second-opinion model ID" aria-describedby="ai-model-status-second-opinion" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o" /><button type="button" id="load-ai-models-second-opinion" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-second-opinion" class="sfield-hint" role="status"></span></div>
         </div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>

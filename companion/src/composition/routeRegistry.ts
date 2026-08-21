@@ -16,6 +16,7 @@ import type { RouteContext } from "../routes/context.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { registerSystemRoutes } from "../routes/system.js";
+import { registerAiModelRoutes } from "../routes/aiModels.js";
 import { registerCaptureRoutes } from "../routes/captures.js";
 import { registerPushNotifyRoutes } from "../routes/pushNotify.js";
 import { registerTemplatesViewsRoutes } from "../routes/templatesViews.js";
@@ -71,6 +72,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   const { store, options } = ctx;
   const transports: OutboundTransports = {};
   registerSystemRoutes(app, ctx);
+  registerAiModelRoutes(app, ctx);
   registerCaptureRoutes(app, ctx);
   registerPushNotifyRoutes(app, ctx);
   registerTemplatesViewsRoutes(app, ctx);
