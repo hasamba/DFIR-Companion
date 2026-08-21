@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-08-21
+
+### Fixed
+- **The release build produces binaries again** — two architecture suites resolved their script path with `.pathname`, which on Windows yields `/D:/a/…` and resolves as `D:\D:\a\…`. Every case failed, taking the Windows EXE job down; because the release-attach step is gated on it, v0.35.0 published with no downloads even though the AppImage and extension zips had built.
+
 ### Changed
 - **Query Translator and Investigation Log join the Analyst view** — v0.35.0 made them reachable via Deep-Dive only; they now also sit in the analyst's densest workspace, where the rest of the panels are.
 
@@ -794,7 +799,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.1...HEAD
+[0.35.1]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.0...v0.35.1
 [0.35.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.32.0...v0.33.0
