@@ -164,7 +164,7 @@ loadHostScope (the sibling of the EH-2-fixed decideHostScope) still swallows eve
 
 **Fix:** Add `let hostScopeLoadSeq = 0;` and in loadHostScope take `const seq = ++hostScopeLoadSeq;` before the fetch; in both the !r.ok path and the catch, bail if `seq !== hostScopeLoadSeq`. On !r.ok: `const e = await r.json().catch(() => ({})); hostScopeLedger = null;` then, for 501 (store not configured), just `paintHostScope()` (renders the default 'No scope data.' empty state); otherwise write the failure into the panel via `const el = document.getElementById("hostScopeBody"); if (el) el.innerHTML = `<p class="hs-empty">Host scope unavailable: ${esc(e.error || "HTTP " + r.status)}</p>`;` (null-guard required — paintHostScope guards the same lookup, and the unit-test harness stubs getElementById to return null). In the catch (after the seq check): `hostScopeLedger = null;` and the same guarded write with a generic 'Host scope could not be loaded.' message. Also guard the success assignment with the seq check so a late stale success cannot overwrite the newer case's ledger.
 
-**Status:** Open
+**Status:** Fixed in cc5fc0a3.
 
 #### EH2-2 — loadAssetGraph's rejection arm bypasses the new generation-token clearing, leaving the stale cross-case graph the fix claims to prevent  `LOW`
 
@@ -188,7 +188,7 @@ The EH-3 fix added a generation token and an explicit invariant, stated in its o
 
 **Fix:** Give the catch the same latest-load semantics as the null branch: `.catch(() => { if (seq !== assetGraphLoadSeq) return; assetGraphData = null; renderAssetGraph(); renderAssetList(); });` — or extract the four-line failure block into a local `failed(seq)` helper called from both the `!g` branch and the catch, so a rejected fetch and an HTTP error degrade identically and a superseded load's late rejection still cannot touch state.
 
-**Status:** Open
+**Status:** Fixed in cc5fc0a3.
 
 
 ## 3. Code Duplication and Dead Code
@@ -341,7 +341,7 @@ function isPrivateIpv4(ip: string): boolean {
 
 **Fix:** Do NOT import ./internalIp.js (analysis/findings tier 2 importing analysis/ingest tier 3 fails check:boundaries, and the ledger only shrinks). Instead add the missing branch to isPrivateIpv4 — `if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10` — extend the range comment at iocValue.ts:58-59, and pin it: isInternalTarget("100.64.0.5", "ip") === true plus a mapped/URL variant (e.g. "http://100.64.0.5/" and "::ffff:100.64.0.5"). This mirrors how urlValidation.ts and anonymize.ts, also below the ingest tier, each keep the range locally with a CGNAT-pinned test. Optionally soften the now-outdated parenthetical in anonymize.ts:199. Full consolidation would require first re-homing internalIp.ts to the shared domain in module-map.json's flatAnalysisFiles (it imports nothing, so it qualifies) — a separate architectural edit.
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 #### DUP2-2 — DUP-2's sweep missed two more local severity-rank tables: inverted encodings in reports/attackLayer.ts and reports/iocBlocklist.ts  `LOW`
 
@@ -363,7 +363,7 @@ const SEVERITY_RANK: Record<Severity, number> = {
 
 **Fix:** In attackLayer.ts delete the local table, import SEVERITY_RANK from ../analysis/stateTypes.js (the file already imports Severity from there) and flip the two comparisons (worse(): `SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b`; the sort at :157: `SEVERITY_RANK[a[1].worst] - SEVERITY_RANK[b[1].worst]`). In iocBlocklist.ts delete its local table and flip the single comparison at :93 to `SEVERITY_RANK[iocSeverity(ioc)] > SEVERITY_RANK[minSev]`. Both swaps are behavior-preserving (SEVERITY_SCORE/SEVERITY_COLOR are untouched); existing report tests pin the output either way.
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 #### DUP2-3 — escapeRegExp is hand-rolled nine times across companion/src, including a fresh copy the branch carried into veloMessageFields.ts  `LOW`
 
@@ -380,7 +380,7 @@ function labelPattern(label: string): RegExp {
 
 **Fix:** Create companion/src/analysis/regexEscape.ts exporting escapeRegExp with anonymize.ts's Unicode-mode safety comment, AND add "regexEscape.ts": "shared" to module-map.json's flatAnalysisFiles (the shared layer, rank 0, is importable from all nine sites including reports/glossary.ts — same classification stateTypes.ts already has; without the entry check:boundaries hard-errors on the unclassified file). Then swap the nine sites and run check:boundaries plus tests/architecture/moduleMap.test.ts.
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 #### DUP2-4 — The streaming-import kind predicate (evtxxml || syslog) is copied five times across the import routes and the resume handler  `LOW`
 
@@ -400,7 +400,7 @@ The branch's cancellable-syslog fix widened `kind === "evtxxml"` into the two-ki
 
 **Fix:** Hoist `export const PARSE_PROGRESS_KINDS = new Set(["evtxxml", "syslog"])` with a hasParseProgress(kind) helper into a new routes/importKinds.ts (auto-classified by the routes/** glob; avoid the name "streaming", which import.ts:587 already uses for plaso file-streaming), replace the five literals, and add a test asserting importRecovery's kind-driven cancellable component matches the registration's per kind (the registrations additionally OR in aiDependent, which the resume predicate intentionally lacks — assert only the kind part).
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 #### DUP2-5 — The worst-severity comparator is still declared in nine files although siemImport.ts already exports it as worst()  `LOW`
 
@@ -422,7 +422,7 @@ export function worst(a: Severity, b: Severity): Severity {
 
 **Fix:** Apply the branch's own pattern one more time: add `export function worstSeverity(a: Severity, b: Severity): Severity` to stateTypes.ts beside SEVERITY_RANK (cycle-free — stateTypes has only type imports), delete the eight local copies in favor of it, and keep siemImport's `worst` as a one-line re-export (exactly how isInternalIpv4 is surfaced there) so the many existing importer call sites are untouched. attackLayer.ts picks it up as part of DUP2-2's swap.
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 
 ## 4. Test Coverage Gaps
@@ -539,7 +539,7 @@ function isPublicIpv4(ip: string): boolean {
 
 **Fix:** Two small additions. (1) In companion/tests/analysis/siemImport.test.ts's "logonRisk — logon-type grading" describe, pin the shape requirement through the public surface: `expect(logonRisk(3, "").severity).toBeUndefined()` and `expect(logonRisk(3, "").mitre).toEqual([])`; same for logonRisk(3, "2001:db8::5") and logonRisk(10, "2001:db8::5") (typeName decoded, severity undefined); plus one mapWindows end-to-end case `parseSiemExport(elastic(logon4624("3", "-")))` asserting severity "Low" and mitreTechniques []. (2) Add companion/tests/analysis/internalIp.test.ts unit-speccing isInternalIpv4's full table: true for 10.0.0.1, 127.0.0.1, 0.1.2.3, 192.168.1.1, 172.16.0.1, 172.31.255.255, 169.254.10.10, 100.64.0.1, 100.127.255.255; false for the boundary neighbours 172.15.255.255, 172.32.0.1, 100.63.255.255, 100.128.0.1, 192.169.0.1, and for non-IPv4 inputs "", "-", "::1", "2001:db8::5", "10.0.0" (documenting that false means "not internal IPv4", not "public").
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 #### TC2-2 — The asset-graph generation-token race guard (commit 8f10ebd3) has no test — the harness can pin the out-of-order-response behavior but no test loads dashboard-asset-graph.js at all  `MEDIUM`
 
@@ -565,7 +565,7 @@ Commit 8f10ebd3 added assetGraphLoadSeq to loadAssetGraph so that when an analys
 
 **Fix:** Add companion/tests/dashboard/assetGraphPanel.test.ts following hostScopePanel.test.ts's pattern: `loadDashboardModule<{loadAssetGraph(id: string): void; hasAssetGraph(): boolean; assetGraphAssets(): Array<{name: string}>}>("dashboard-asset-graph.js", ["dashboard-escape.js"], { fetch: fetchStub, document: { getElementById: () => ({ innerHTML: "", textContent: "", style: {} }), querySelectorAll: () => [] }, DfirTimelineView: { timeQuery: () => "" } })` where fetchStub records a manually-resolvable deferred per call. Three tests: (1) out-of-order success — call loadAssetGraph("case-a") then loadAssetGraph("case-b"); resolve B's deferred with `{ok: true, json: async () => ({assets: [{name: "b-host", type: "host", compromised: false}], iocs: [], edges: []})}`, flush microtasks, then resolve A with an a-host graph; assert assetGraphAssets() still returns b-host and hasAssetGraph() is true. (2) stale failure ignored — resolve the OLD load with `{ok: false}` after the new one succeeded; assert the graph survives. (3) latest failure clears — a single loadAssetGraph whose response is `{ok: false, json: async () => ({error: "boom"})}`; assert hasAssetGraph() returns false and assetGraphAssets() is empty (the error body must never be cached as graph data).
 
-**Status:** Open
+**Status:** Fixed in cc5fc0a3.
 
 #### TC2-3 — readZip's local-header offset is unguarded and untested — a crafted zip passes the new TC-5 EOCD guard and still surfaces Node's raw ERR_OUT_OF_RANGE (demonstrated)  `LOW`
 
@@ -583,7 +583,7 @@ The TC-5 fix bounded the central-directory pointer in archiveIsEncrypted (zipExt
 
 **Fix:** In readZip, add two bounds inside the walk loop: `if (ptr + 46 > archive.length) throw new Error("corrupt ZIP: central directory out of bounds");` before the SIG_CENTRAL check at line 179 (covers the caseExportArchive.ts caller that skips archiveIsEncrypted), and `if (localOffset + 30 > archive.length) throw new Error("corrupt ZIP: local header out of bounds");` before line 193. Then add the test that demonstrated the defect to companion/tests/analysis/zipExtract.test.ts, mirroring the two existing crafted-EOCD tests: build createZip([{path: "sample.bin", data: Buffer.from("payload")}]), locate the EOCD (0x06054b50 scan), read the central-directory start from eocd+16, overwrite the localOffset field with `archive.writeUInt32LE(0xffffff00, ptr + 42)`, and expect extractZipEntries to throw /corrupt ZIP: local header/i — currently it throws the raw RangeError, so the test fails until the guard lands.
 
-**Status:** Open
+**Status:** Fixed in e1d3c0d7.
 
 #### TC2-4 — location()'s binary-search rewrite (PF-2 fix) is only pinned at line 1, column 1 — no test asserts a multi-line or mid-line error position that could catch an off-by-one  `LOW`
 
@@ -606,7 +606,7 @@ The PF-2 fix replaced location()'s trivially-correct slice/split with a precompu
 
 **Fix:** Extend companion/tests/analysis/huntQueryParser.test.ts with three verified cases (I probed each against the actual parser — two of the originally proposed inputs do not behave as described): (1) multi-line: parseHuntQuery("source.ip=192.0.2.1\n| group by sorce.ip") throws code "unknown_field" at { line: 2, column: 12 } — note the grammar is `| group by <field>`; the originally proposed "| group_by sorce.ip" instead throws unknown_stage at line 2, column 3 (usable as a second pin if wanted, but not for the field column). (2) first-line non-1 column: parseHuntQuery("source.ip=192.0.2.1 and sorce.ip=10.0.0.1") throws "unknown_field" at { line: 1, column: 25 } — the originally proposed "severity=Zigh" parses successfully (severity values are not validated at parse time) and must not be used. (3) memo staleness: in one test, parseHuntQuery("host.name=a\nand sorce.ip=1") throws at { line: 2, column: 5 }, then parseHuntQuery("host.name=a and\nsorce.ip=1") throws at { line: 2, column: 1 } — same error token, different newline layouts, pinning that newlineOffsets' one-slot memo re-keys on the second text. Each follows the existing try/catch + toMatchObject pattern at huntQueryParser.test.ts:62-75.
 
-**Status:** Open
+**Status:** Fixed in fe7d205c.
 
 
 ## 5. Performance Concerns in VQL/Parsing Logic
@@ -728,7 +728,7 @@ if (/^sshd\b/i.test(p.app)) {
 
 **Fix:** In line(), split by auth.result: for "failed", call agg.add(m) immediately (nothing ever rewrites a failed event) and push only the compact tuple { key: -1, ms, ip, result: "failed" } into sshAuth (markSshBruteForce never reads a failed event's key); keep buffering only "accepted" MappedEvents in sshEvents — bounded by real logins, which are rare. finish() is unchanged: markSshBruteForce hits still reference only accepted keys, so the rewrite/add of the accepted buffer works as today, and ordering stays within the already-documented three-way-tie tolerance of agg.finish()'s re-sort. Optionally go further and fold failures straight into a Map<ip, number[]> of timestamps as lines stream (markSshBruteForce builds exactly that internally), shrinking the flood's residual to raw numbers per IP; but eliminating the per-failure MappedEvent (description + aggKey strings dominate the 526 MB) is the essential, small diff.
 
-**Status:** Open
+**Status:** Fixed in fe7d205c.
 
 #### PF2-2 — Hunt executor compiles the matches-predicate RegExp per row per evaluation — the one per-row compile the PF-3/PF-4 sweep missed  `LOW`
 
@@ -743,7 +743,7 @@ return new RegExp(String(expected ?? ""), predicate.regexFlags).test(String(actu
 
 **Fix:** Cache per execution in the existing EvaluationContext: add `regexCache: Map<string, RegExp>` (key `${pattern} ${flags}`) created once in executeHuntQuery's state, and in compareScalar look up/compile-once before .test(). Give `during` the same treatment by caching the resolved {fromMs, toMs} per expected-string in the context (the anchorTime is fixed for the whole execution), replacing the per-row duringRange + double Date.parse. No behavior change; both caches die with the request.
 
-**Status:** Open
+**Status:** Fixed in fe7d205c.
 
 #### PF2-3 — parseWinEventXmlProgress's event-count loop blocks the event loop ~0.4-0.7 s with no yield or abort check — the exact gap the branch fixed for syslog's count loop  `LOW`
 
@@ -760,7 +760,7 @@ let total = 0;
 
 **Fix:** Mirror the syslog count fix: every N matches (e.g. a COUNT_CHUNK of 100_000 — each iteration scans a whole event block, so a coarser budget than syslog's per-line 1M is appropriate) do `await new Promise<void>((resolve) => setImmediate(resolve)); throwIfImportAborted(signal);` inside the counting loop. ~5 lines, identical in shape to syslogImport.ts's SYSLOG_COUNT_CHUNK block.
 
-**Status:** Open
+**Status:** Fixed in fe7d205c.
 
 
 ## 6. Docker and Dependency Risks
@@ -852,7 +852,7 @@ The DD-3 fix deliberately baked a Dockerfile HEALTHCHECK against /health because
 
 **Fix:** In docker-compose.yml:61 change the probe URL from /dashboard to /health: test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4773/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]. If also de-hardcoding the port, read it from the environment inside the Node one-liner exactly as the Dockerfile HEALTHCHECK does ('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health') — compose's CMD exec form performs no shell expansion, so $DFIR_PORT in the URL string would not work.
 
-**Status:** Open
+**Status:** Fixed in 196dc738.
 
 
 ## Finding Index
