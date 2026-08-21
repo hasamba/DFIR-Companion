@@ -349,7 +349,17 @@ jobs:
     # Only publish a Release for a real tag push, or a manual run that explicitly names a tag.
     # A tagless workflow_dispatch (e.g. a branch build to test artifacts) builds + uploads them
     # but does NOT create a junk release named after the branch.
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    #
+    # `!cancelled()` is load-bearing. With a bare `needs`, ONE failed build job skips this one and
+    # every artifact that DID build is thrown away. That is precisely how v0.35.0 and the first
+    # v0.35.1 both published with no downloads: the Windows job failed, and the Linux AppImage and
+    # both extension zips — already built and uploaded — went with it.
+    #
+    # Publish whatever was produced. The check below names anything missing, and still fails the
+    # job if NOTHING built, so a silently empty release is not possible.
+    if: >-
+      !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -363,6 +373,23 @@ jobs:
 
       - name: List artifacts
         run: find artifacts -type f -exec ls -lh {} \;
+
+      # A partial release must be loud. Publishing three of four downloads and saying nothing reads
+      # as success to everyone downstream.
+      - name: Report missing artifacts
+        shell: bash
+        run: |
+          missing=()
+          for a in windows-exe linux-appimage extension-zip extension-firefox-zip; do
+            compgen -G "artifacts/$a/*" > /dev/null || missing+=("$a")
+          done
+          if [ ${#missing[@]} -eq 4 ]; then
+            echo "::error::no artifacts were built — refusing to publish an empty release"
+            exit 1
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::warning::publishing WITHOUT: ${missing[*]} — check the build job(s) for that platform"
+          fi
 
       - name: Extract changelog section
         id: changelog
@@ -394,7 +421,10 @@ jobs:
             artifacts/linux-appimage/*
             artifacts/extension-zip/*
             artifacts/extension-firefox-zip/*
-          fail_on_unmatched_files: true
+          # false, because a missing platform must not abort the upload of the platforms that DID
+          # build. The "Report missing artifacts" step above is what makes the gap visible, and it
+          # already fails the job if nothing built at all.
+          fail_on_unmatched_files: false
           # Don't auto-create; the release is published manually per CLAUDE.md.
           draft: false
           prerelease: false
