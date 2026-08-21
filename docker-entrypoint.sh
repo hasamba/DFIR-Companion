@@ -39,17 +39,21 @@ if [ "$(id -u)" = "0" ]; then
   # no-follow-symlink traversal mean a compromised node cannot plant a symlink that a later root
   # chown would dereference into a protected target (e.g. the /app code tree).
   chown_tree() { find "$1" ! -uid "$node_uid" -exec chown -h node:node {} + 2>/dev/null || true; }
-  # Expand a leading ~ to node's POST-DROP home, matching the server's expandHome(), so the
-  # entrypoint hands over the same path the server will use; then resolve a relative path against
-  # /app/companion (the working directory the server anchors relative roots to).
+  # Expand a leading ~ to node's POST-DROP home (matching the server's expandHome()), then
+  # NORMALIZE via realpath -m: a relative path resolves against /app/companion (the working dir the
+  # server anchors relative roots to) and, crucially, `..` segments are collapsed so an absolute
+  # path like /data/../cases can never make dirname yield /data/.. and chown '/'.
   abspath() {
-    case "$1" in
-      "~") printf '%s' "$node_home" ;;
-      "~/"*) printf '%s/%s' "$node_home" "${1#\~/}" ;;
-      /*) printf '%s' "$1" ;;
-      *) realpath -m "$1" 2>/dev/null || printf '%s/%s' "$(pwd)" "$1" ;;
+    _p="$1"
+    case "$_p" in
+      "~") _p="$node_home" ;;
+      "~/"*) _p="$node_home/${_p#\~/}" ;;
     esac
+    realpath -m "$_p" 2>/dev/null || printf '%s' "$_p"
   }
+  # Like abspath but WITHOUT ~ expansion, for the vars the server reads raw (DFIR_OCR_CACHE,
+  # DFIR_OCR_DEBUG_DIR, DFIR_ENV_FILE) — still normalized so `..` cannot escape.
+  abspath_raw() { realpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
   # mkdir + recursively hand a whole app-dedicated tree to node (creating it if missing, migrating
   # a legacy root-owned one). Safe to recurse: these are the app's own directories, never a mount's
@@ -58,6 +62,27 @@ if [ "$(id -u)" = "0" ]; then
   # The GLOBAL store subdirectories the server creates beside the cases root (runtimeStores.ts);
   # team-auth lives at DFIR_AUTH_DATA_DIR or a sibling .dfir-auth-<hash>.
   KNOWN_STORES="bundles dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates tagger templates tools updates velociraptor whitelist"
+
+  # Writable-path overrides may be saved through Settings into the dotenv file that the server
+  # loads only AFTER the privilege drop, so they are absent from THIS process's environment. Read
+  # them from that file here too, so a Settings-configured (possibly root-owned) auth/importer/log/
+  # OCR path is still handed to node. Process env wins (matches dotenv's no-override default).
+  env_file="$(abspath_raw "${DFIR_ENV_FILE:-/data/companion.env}")"
+  env_file_get() {
+    [ -f "$env_file" ] || return 0
+    v="$(grep -E "^[[:space:]]*$1=" "$env_file" 2>/dev/null | tail -1 | sed -E "s/^[[:space:]]*$1=//")"
+    case "$v" in
+      \"*\") v="${v#\"}"; v="${v%\"}" ;;
+      \'*\') v="${v#\'}"; v="${v%\'}" ;;
+    esac
+    printf '%s' "$v"
+  }
+  : "${DFIR_CASES_ROOT:=$(env_file_get DFIR_CASES_ROOT)}"
+  : "${DFIR_AUTH_DATA_DIR:=$(env_file_get DFIR_AUTH_DATA_DIR)}"
+  : "${DFIR_IMPORTERS_DIR:=$(env_file_get DFIR_IMPORTERS_DIR)}"
+  : "${DFIR_LOG_DIR:=$(env_file_get DFIR_LOG_DIR)}"
+  : "${DFIR_OCR_CACHE:=$(env_file_get DFIR_OCR_CACHE)}"
+  : "${DFIR_OCR_DEBUG_DIR:=$(env_file_get DFIR_OCR_DEBUG_DIR)}"
 
   # /out holds the pre-built add-on the root cp above wrote; the server never writes it, but the
   # HOST user manages ./addon, so hand it over — via chown_tree, never `chown -R`, so a symlink
@@ -109,21 +134,19 @@ if [ "$(id -u)" = "0" ]; then
   # matching authFactory/runtimeStores) and handed over as an app-dedicated tree.
   if [ -n "${DFIR_AUTH_DATA_DIR:-}" ]; then
     case "$DFIR_AUTH_DATA_DIR" in /*) d="$DFIR_AUTH_DATA_DIR" ;; *) d="$data_root/$DFIR_AUTH_DATA_DIR" ;; esac
-    handoff_dir "$d"
+    handoff_dir "$(abspath_raw "$d")"
   fi
   if [ -n "${DFIR_IMPORTERS_DIR:-}" ]; then
     case "$DFIR_IMPORTERS_DIR" in /*) d="$DFIR_IMPORTERS_DIR" ;; *) d="$data_root/$DFIR_IMPORTERS_DIR" ;; esac
-    handoff_dir "$d"
+    handoff_dir "$(abspath_raw "$d")"
   fi
 
-  # OCR cache (app-dedicated; default /data/ocr-cache). No ~ expansion — ocrRedact.ts reads it raw.
-  ocr_cache="${DFIR_OCR_CACHE:-/data/ocr-cache}"
-  case "$ocr_cache" in /*) : ;; *) ocr_cache="$(realpath -m "$ocr_cache" 2>/dev/null || echo "$(pwd)/$ocr_cache")" ;; esac
-  handoff_dir "$ocr_cache"
+  # OCR cache (app-dedicated; default /data/ocr-cache) and the optional OCR debug-dump dir — both
+  # read raw by the server, so normalize without ~ expansion.
+  handoff_dir "$(abspath_raw "${DFIR_OCR_CACHE:-/data/ocr-cache}")"
+  if [ -n "${DFIR_OCR_DEBUG_DIR:-}" ]; then handoff_dir "$(abspath_raw "$DFIR_OCR_DEBUG_DIR")"; fi
 
   # The Settings/setup .env dir must be writable so POST /settings/env's atomic write succeeds.
-  env_file="${DFIR_ENV_FILE:-/data/companion.env}"
-  case "$env_file" in /*) : ;; *) env_file="$(realpath -m "$env_file" 2>/dev/null || echo "$(pwd)/$env_file")" ;; esac
   env_dir="$(dirname "$env_file")"
   mkdir -p "$env_dir" 2>/dev/null || true
   chown -h node:node "$env_dir" 2>/dev/null || true
