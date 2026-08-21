@@ -92,9 +92,10 @@ if [ "$(id -u)" = "0" ]; then
       *) return 1 ;;
     esac
   }
-  # mkdir + recursively hand an app-dedicated tree to node (creating it if missing, migrating a
-  # legacy root-owned one). Normalizes and confines first, so it is safe even for a dashboard-
-  # supplied path. Recursing is safe: after confinement these are the app's OWN directories.
+  # mkdir + recursively hand an app-dedicated tree over (creating it if missing, migrating a
+  # legacy root-owned one). Normalizes and confines first. TRUSTED variant: only for paths the
+  # OPERATOR configured in the real container environment (or the image defaults) — never for a
+  # value read from the dashboard-writable dotenv file.
   handoff_dir() {
     _d="$(abspath_raw "$1")"
     if deny_chown "$_d"; then
@@ -105,7 +106,8 @@ if [ "$(id -u)" = "0" ]; then
     chown_tree "$_d"
   }
   # Hand over just a directory ENTRY (not its contents) — for a possibly-shared dir the server only
-  # needs to create a file in (an explicit log dir, the .env dir). Same confinement.
+  # needs to create a file in (an explicit log dir, the .env dir). Same confinement; trusted-source
+  # values only.
   handoff_entry() {
     _d="$(abspath_raw "$1")"
     if deny_chown "$_d"; then
@@ -115,6 +117,35 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p "$_d" 2>/dev/null || true
     chown -h "$run_uid:$run_gid" "$_d" 2>/dev/null || true
   }
+  # UNTRUSTED variants, for paths whose value came from the dotenv file the unprivileged server can
+  # WRITE (Settings). Root must never transfer ownership of pre-existing data on the say-so of that
+  # file — a compromised server could name another bind mount (/mnt, /evidence) and wait for a
+  # restart, a confused deputy the deny-list alone cannot close. Rules: inside /data (the image's
+  # dedicated data tree) recursion stays enabled — there is nothing there but the app's own data;
+  # elsewhere, CREATE the directory when absent (a fresh empty dir disowns nothing) and hand over
+  # only that entry, but leave an EXISTING dir not already owned by the run user untouched, telling
+  # the operator to set the variable in the real container environment for an actual migration.
+  handoff_dir_untrusted() {
+    _d="$(abspath_raw "$1")"
+    if deny_chown "$_d"; then
+      echo "dfir-entrypoint: refusing to hand off '$1' -> '$_d' (filesystem root, /app code tree, or a system directory); ignoring" >&2
+      return 0
+    fi
+    case "$_d" in
+      /data | /data/*)
+        mkdir -p "$_d" 2>/dev/null || true
+        chown_tree "$_d"
+        return 0
+        ;;
+    esac
+    if [ ! -e "$_d" ]; then
+      mkdir -p "$_d" 2>/dev/null || true
+      chown -h "$run_uid:$run_gid" "$_d" 2>/dev/null || true
+    elif [ "$(stat -c %u "$_d" 2>/dev/null)" != "$run_uid" ]; then
+      echo "dfir-entrypoint: not changing ownership of existing '$_d' — its location comes from the dashboard-writable settings file; set the variable in the container environment (compose/docker -e) to hand it off" >&2
+    fi
+  }
+  handoff_entry_untrusted() { handoff_dir_untrusted "$1"; }
   # The GLOBAL store subdirectories the server creates beside the cases root (runtimeStores.ts);
   # team-auth lives at DFIR_AUTH_DATA_DIR or a sibling .dfir-auth-<hash>.
   KNOWN_STORES="bundles dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates tagger templates tools updates velociraptor whitelist"
@@ -139,12 +170,23 @@ if [ "$(id -u)" = "0" ]; then
     esac
     printf '%s' "$v"
   }
-  : "${DFIR_CASES_ROOT:=$(env_file_get DFIR_CASES_ROOT)}"
-  : "${DFIR_AUTH_DATA_DIR:=$(env_file_get DFIR_AUTH_DATA_DIR)}"
-  : "${DFIR_IMPORTERS_DIR:=$(env_file_get DFIR_IMPORTERS_DIR)}"
-  : "${DFIR_LOG_DIR:=$(env_file_get DFIR_LOG_DIR)}"
-  : "${DFIR_OCR_CACHE:=$(env_file_get DFIR_OCR_CACHE)}"
-  : "${DFIR_OCR_DEBUG_DIR:=$(env_file_get DFIR_OCR_DEBUG_DIR)}"
+  # Track PROVENANCE while merging: a value already present in the real environment (operator- or
+  # image-set) is trusted; one that only exists in the dotenv file is dashboard-writable and gets
+  # the untrusted handoff rules above. In the shipped image DFIR_CASES_ROOT / DFIR_OCR_CACHE /
+  # DFIR_ENV_FILE are Dockerfile ENVs, so they are always trusted unless an operator strips them.
+  from_env_file=""
+  load_env_file_var() {
+    eval "_cur=\${$1:-}"
+    [ -n "$_cur" ] && return 0
+    _v="$(env_file_get "$1")"
+    [ -n "$_v" ] || return 0
+    eval "$1=\$_v"
+    from_env_file="$from_env_file $1"
+  }
+  is_from_env_file() { case " $from_env_file " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+  for _var in DFIR_CASES_ROOT DFIR_AUTH_DATA_DIR DFIR_IMPORTERS_DIR DFIR_LOG_DIR DFIR_OCR_CACHE DFIR_OCR_DEBUG_DIR; do
+    load_env_file_var "$_var"
+  done
 
   # Resolve the cases root two ways: the DEREFERENCED real dir (for chowning — following symlinks to
   # the actual inode), and a LEXICAL path (for deriving parent/sibling/auth locations — the server
@@ -181,7 +223,10 @@ if [ "$(id -u)" = "0" ]; then
 
   # Hand over the evidence/case store itself ONCE (a legacy root-written tree and large evidence
   # dirs both need the recursive walk). The parent handling below never re-walks this subtree.
-  handoff_dir "$cases_root"
+  # Trust follows the value's provenance: a dotenv-sourced cases root (possible only when the
+  # operator stripped the image's DFIR_CASES_ROOT ENV) gets the no-disown untrusted rules.
+  if is_from_env_file DFIR_CASES_ROOT; then cases_handoff=handoff_dir_untrusted; else cases_handoff=handoff_dir; fi
+  "$cases_handoff" "$cases_root"
 
   # The server also creates the global stores as subdirectories of the cases root's PARENT. NEVER
   # chown the parent itself: on a shared bind mount that would let the server rename or delete
@@ -195,12 +240,12 @@ if [ "$(id -u)" = "0" ]; then
       echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} resolves under the root-owned /app code tree ($cases_lexical); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
       ;;
     *)
-      for name in $KNOWN_STORES; do handoff_dir "${data_root%/}/$name"; done
+      for name in $KNOWN_STORES; do "$cases_handoff" "${data_root%/}/$name"; done
       if [ -z "${DFIR_AUTH_DATA_DIR:-}" ]; then
         # authFactory: .dfir-auth-<sha256(path.resolve(casesRoot))[:12]> beside the lexically
         # resolved cases root — path.resolve does not dereference symlinks, so use cases_lexical.
         auth_hash="$(printf '%s' "$cases_lexical" | sha256sum 2>/dev/null | cut -c1-12)"
-        [ -n "$auth_hash" ] && handoff_dir "${data_root%/}/.dfir-auth-$auth_hash"
+        [ -n "$auth_hash" ] && "$cases_handoff" "${data_root%/}/.dfir-auth-$auth_hash"
       fi
       case "$data_root" in
         / | . | "")
@@ -215,25 +260,30 @@ if [ "$(id -u)" = "0" ]; then
   # matching authFactory/runtimeStores). handoff_dir confines each before chowning.
   if [ -n "${DFIR_AUTH_DATA_DIR:-}" ]; then
     case "$DFIR_AUTH_DATA_DIR" in /*) d="$DFIR_AUTH_DATA_DIR" ;; *) d="${data_root%/}/$DFIR_AUTH_DATA_DIR" ;; esac
-    handoff_dir "$d"
+    if is_from_env_file DFIR_AUTH_DATA_DIR; then handoff_dir_untrusted "$d"; else handoff_dir "$d"; fi
   fi
   if [ -n "${DFIR_IMPORTERS_DIR:-}" ]; then
     case "$DFIR_IMPORTERS_DIR" in /*) d="$DFIR_IMPORTERS_DIR" ;; *) d="${data_root%/}/$DFIR_IMPORTERS_DIR" ;; esac
-    handoff_dir "$d"
+    if is_from_env_file DFIR_IMPORTERS_DIR; then handoff_dir_untrusted "$d"; else handoff_dir "$d"; fi
   fi
 
   # OCR cache (app-dedicated; default /data/ocr-cache) and the optional OCR debug-dump dir — both
-  # read raw by the server (no ~ expansion). handoff_dir confines each.
-  handoff_dir "${DFIR_OCR_CACHE:-/data/ocr-cache}"
-  if [ -n "${DFIR_OCR_DEBUG_DIR:-}" ]; then handoff_dir "$DFIR_OCR_DEBUG_DIR"; fi
+  # read raw by the server (no ~ expansion), each confined by trust-appropriate handoff.
+  if is_from_env_file DFIR_OCR_CACHE; then handoff_dir_untrusted "${DFIR_OCR_CACHE:-/data/ocr-cache}"; else handoff_dir "${DFIR_OCR_CACHE:-/data/ocr-cache}"; fi
+  if [ -n "${DFIR_OCR_DEBUG_DIR:-}" ]; then
+    if is_from_env_file DFIR_OCR_DEBUG_DIR; then handoff_dir_untrusted "$DFIR_OCR_DEBUG_DIR"; else handoff_dir "$DFIR_OCR_DEBUG_DIR"; fi
+  fi
 
   # The Settings/setup .env dir must be writable so POST /settings/env's atomic write succeeds.
+  # (DFIR_ENV_FILE cannot come from the dotenv file it locates, so it is always trusted.)
   handoff_entry "$(dirname "$env_file")"
 
   # An explicit DFIR_LOG_DIR may point at a SHARED host log directory: the logger only needs to
   # CREATE its session file there, so hand over the directory entry only — never its (possibly
   # unrelated) contents. (Unset → logs/ beside the cases root, already handed over above.)
-  if [ -n "${DFIR_LOG_DIR:-}" ]; then handoff_entry "$(abspath "$DFIR_LOG_DIR")"; fi
+  if [ -n "${DFIR_LOG_DIR:-}" ]; then
+    if is_from_env_file DFIR_LOG_DIR; then handoff_entry_untrusted "$(abspath "$DFIR_LOG_DIR")"; else handoff_entry "$(abspath "$DFIR_LOG_DIR")"; fi
+  fi
   # setpriv execs in place, so Node stays PID 1 and docker stop signals it directly. --clear-groups
   # sheds root's supplementary groups (and works for an arbitrary numeric run_uid that has no passwd
   # entry, unlike --init-groups). setpriv changes credentials but NOT HOME/USER/LOGNAME, so set HOME
