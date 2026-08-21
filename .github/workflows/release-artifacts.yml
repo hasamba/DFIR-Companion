@@ -462,13 +462,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)
+
+          # An unreadable release must NOT read as a clean pair. Swallowing the query failure left
+          # `assets` empty, which scored chrome=0 firefox=0 and reported "consistent" — a guard that
+          # passes loudest exactly when it has learned nothing.
+          #
+          # "Release not found" is different, and legitimate: the tag build runs before the release
+          # is created by hand, so there is genuinely nothing published to reconcile.
+          err=$(mktemp)
+          if assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>"$err"); then
+            :
+          elif grep -qi 'release not found' "$err"; then
+            echo "::notice::release $TAG does not exist yet — nothing published, nothing to reconcile"
+            rm -f "$err"; exit 0
+          else
+            echo "::error::could not read release $TAG — cannot verify the extension pair: $(cat "$err")"
+            rm -f "$err"; exit 1
+          fi
+          rm -f "$err"
+
           ext=$(printf '%s\n' "$assets" | grep '^dfir-capture-extension-' || true)
           # The Firefox zip also starts with that prefix, so "-firefox-" is what separates them.
           firefox=$(printf '%s\n' "$ext" | grep -- '-firefox-' || true)
           chrome=$(printf '%s\n' "$ext" | grep -v -- '-firefox-' || true)
-          nf=$(printf '%s' "$firefox" | grep -c . || true)
-          nc=$(printf '%s' "$chrome" | grep -c . || true)
+          nf=$(printf '%s' "$firefox" | grep -c . || true); nf=${nf:-0}
+          nc=$(printf '%s' "$chrome" | grep -c . || true); nc=${nc:-0}
           if { [ "$nc" -gt 0 ] && [ "$nf" -eq 0 ]; } || { [ "$nf" -gt 0 ] && [ "$nc" -eq 0 ]; }; then
             echo "::error::release $TAG carries one extension packaging but not the other (chrome=$nc firefox=$nf) — removing the orphan so nobody installs half an update"
             printf '%s\n%s\n' "$chrome" "$firefox" | grep . | while read -r a; do
