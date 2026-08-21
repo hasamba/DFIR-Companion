@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createAnonymizer } from "./anonymize.js";
 import type { AnonPolicy, KnownEntities, CustomEntity } from "./anonymize.js";
 import sharp from "sharp";
@@ -86,6 +90,35 @@ export async function ocrRedactImage(
 }
 
 /**
+ * Where tesseract.js sources (and caches) `eng.traineddata`. Left unset, the library
+ * caches into the WORKING DIRECTORY — which in the container is the deliberately
+ * root-owned /app/companion (see Dockerfile), so every worker would silently fail to
+ * cache and re-download the model. Resolution order: an explicit DFIR_OCR_CACHE wins;
+ * else a checked-in model is read directly with caching off (no network, no writes) from
+ * the first candidate that has it — the package root (`companion/`) or the repo root one
+ * level up, since a source clone may keep it at either; else downloads cache under the OS
+ * temp dir, never the cwd. `bundledDir` is the package root; its parent is the repo root.
+ */
+export function tesseractDataOptions(
+  env: Record<string, string | undefined> = process.env,
+  bundledDir: string = fileURLToPath(new URL("../..", import.meta.url)),
+): { langPath: string; gzip: false; cacheMethod: "none" } | { cachePath: string } {
+  const explicit = env.DFIR_OCR_CACHE?.trim();
+  if (explicit) {
+    mkdirSync(explicit, { recursive: true });
+    return { cachePath: explicit };
+  }
+  for (const dir of [bundledDir, dirname(bundledDir)]) {
+    if (existsSync(join(dir, "eng.traineddata"))) {
+      return { langPath: dir, gzip: false, cacheMethod: "none" };
+    }
+  }
+  const fallback = join(tmpdir(), "dfir-companion-ocr");
+  mkdirSync(fallback, { recursive: true });
+  return { cachePath: fallback };
+}
+
+/**
  * Tesseract.js-backed OCR runner. The module is loaded via a dynamic import so the
  * heavy WASM payload is not pulled in at startup and tests can inject their own runner
  * without touching Tesseract at all.
@@ -107,6 +140,7 @@ export class TesseractOcrRunner implements OcrRunner {
     // image's `recognize()` promise rejects, `pumpOcrQueue`'s try/catch contains it
     // (skip + log), the `finally` terminates the worker, and the server keeps serving.
     const worker = await createWorker("eng", 1, {
+      ...tesseractDataOptions(),
       // Swallow the library's own throw; the recognize() call below rejects so the
       // caller's try/catch handles it as a normal failed promise.
       errorHandler: (_err: unknown) => {

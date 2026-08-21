@@ -1,9 +1,10 @@
-import type {
-  InvestigationState,
-  ForensicEvent,
-  Finding,
-  FindingStatus,
-  Severity,
+import {
+  SEVERITY_RANK,
+  type InvestigationState,
+  type ForensicEvent,
+  type Finding,
+  type FindingStatus,
+  type Severity,
 } from "../analysis/stateTypes.js";
 import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
@@ -39,8 +40,6 @@ import { escapeHtml } from "./escapeHtml.js";
 
 const SIZE_LIMIT = 2000;
 const MAX_TIMELINE_BYTES = 4 * 1024 * 1024;
-
-const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 /** One forensic-timeline row: exactly the six columns the table shows, plus the search-key fields. */
 export interface TimelineRow {

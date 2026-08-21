@@ -26,7 +26,9 @@ import {
   aggregateEvents,
   addIoc,
   cleanIp,
+  isInternalIpv4,
   oneLine,
+  parseBsdTime,
   type MappedEvent,
   type SiemIoc,
   type SiemParseResult,
@@ -61,44 +63,6 @@ export function looksLikeCiscoAsa(text: string): boolean {
   if (!lines.length) return false;
   const hits = lines.filter((l) => ASA_LINE.test(l)).length;
   return hits >= 1 && hits >= lines.length * 0.5;
-}
-
-function isPrivateIp(ip: string): boolean {
-  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
-}
-
-const MONTHS: Record<string, string> = {
-  Jan: "01",
-  Feb: "02",
-  Mar: "03",
-  Apr: "04",
-  May: "05",
-  Jun: "06",
-  Jul: "07",
-  Aug: "08",
-  Sep: "09",
-  Oct: "10",
-  Nov: "11",
-  Dec: "12",
-};
-
-// Parse the year-less "MMM DD HH:MM:SS" timestamp into an ISO string at `year`. "" if unparseable.
-function parseAsaTime(ts: string, year: number): string {
-  const m = ts.trim().match(/^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})$/);
-  if (!m) return "";
-  const [, mon, dd, hh, mi, ss] = m;
-  const month = MONTHS[mon];
-  if (!month) return "";
-  const t = Date.parse(`${year}-${month}-${dd.padStart(2, "0")}T${hh}:${mi}:${ss}Z`);
-  return Number.isNaN(t) ? "" : new Date(t).toISOString();
 }
 
 // Full line shape: optional `<PRI>` framing, the year-less timestamp, hostname, then the ASA tag
@@ -161,7 +125,7 @@ export function mapCiscoAsaLine(line: string, year: number, sink: Map<string, Si
   const proto = PROTO_RE.exec(body)?.[1]?.toUpperCase() ?? "";
   const durMatch = DURATION_BYTES.exec(body);
 
-  if (flow?.dstIp && !isPrivateIp(flow.dstIp)) addIoc(sink, "ip", flow.dstIp);
+  if (flow?.dstIp && !isInternalIpv4(flow.dstIp)) addIoc(sink, "ip", flow.dstIp);
 
   const flowStr = flow
     ? ` ${flow.srcIp}${flow.srcPort ? `:${flow.srcPort}` : ""} → ${flow.dstIp}${flow.dstPort ? `:${flow.dstPort}` : ""}`
@@ -180,7 +144,7 @@ export function mapCiscoAsaLine(line: string, year: number, sink: Map<string, Si
     600,
   );
 
-  const timestamp = parseAsaTime(tsRaw, year);
+  const timestamp = parseBsdTime(tsRaw, year);
   const port = flow?.dstPort && flow.dstPort > 0 && flow.dstPort <= 65535 ? flow.dstPort : undefined;
 
   return {

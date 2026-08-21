@@ -1,4 +1,4 @@
-import type { ForensicEvent, InvestigationState, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type InvestigationState, type Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
@@ -14,7 +14,8 @@ import {
 import { scoreIocs, RISK_TIER_RANK } from "./iocRiskScore.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
-const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+// Widened to string keys: severity values reaching the selectors are not all statically Severity.
+const SEV_RANK: Record<string, number> = SEVERITY_RANK;
 
 // How many of the earliest events to always keep (initial-access context).
 const EARLIEST_KEEP = 15;

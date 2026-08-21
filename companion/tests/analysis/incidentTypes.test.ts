@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   applyIncidentTypeToState,
   renderIncidentTypeBlock,
@@ -7,8 +7,17 @@ import {
   TYPE_SEED_PREFIX,
   type IncidentType,
 } from "../../src/analysis/incidentTypes.js";
-import { loadBuiltInIncidentTypes, getBuiltInIncidentType } from "../../src/analysis/incidentTypesData.js";
+import {
+  loadBuiltInIncidentTypes,
+  getBuiltInIncidentType,
+  _resetIncidentTypesCache,
+} from "../../src/analysis/incidentTypesData.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+
+beforeEach(() => {
+  // Ensure each test gets a fresh load (avoids cross-test cache contamination).
+  _resetIncidentTypesCache();
+});
 
 const ransomware = getBuiltInIncidentType("ransomware")!;
 

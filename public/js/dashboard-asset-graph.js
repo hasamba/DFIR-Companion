@@ -20,6 +20,7 @@
   // every read — the fifth time in this PR an extraction stopped at the code and left the state.
   // --- Compromised assets + asset↔IoC graph -------------------------------------
   let assetGraphData = null; // { assets, iocs, edges }
+  let assetGraphLoadSeq = 0; // generation token: only the latest load may mutate cached state
   let assetOverridesData = null; // { renames, added, removed, addedLinks, removedLinks }
   let assetGraphTimer = null;
   // The active time-window query string for the graph reads (#83). Mirrors the global timeline
@@ -28,9 +29,24 @@
   function loadAssetGraph(caseId) {
     const gv = assetEnsureGV();
     if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style/positions)
+    // A generation token, bumped per load, guards cached state against out-of-order responses:
+    // when the user switches cases fast, an older request's late response (success OR failure)
+    // must not overwrite or erase the newer case's graph. Only the latest load may mutate state.
+    const seq = ++assetGraphLoadSeq;
     fetch(`/cases/${caseId}/asset-graph${DfirTimelineView.timeQuery()}`)
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : null))
       .then((g) => {
+        if (seq !== assetGraphLoadSeq) return; // superseded by a newer load — ignore entirely
+        // A non-2xx error body must never be cached as graph data (which hasAssetGraph() and
+        // renderAssetGraph() both trust). For the LATEST load, a failure clears the graph and
+        // repaints empty, so a case switch whose graph fails cannot leave the previous case's
+        // assets on screen.
+        if (!g || !Array.isArray(g.assets)) {
+          assetGraphData = null;
+          renderAssetGraph();
+          renderAssetList();
+          return;
+        }
         assetGraphData = g;
         renderAssetGraph();
       })

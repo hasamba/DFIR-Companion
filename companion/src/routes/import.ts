@@ -332,7 +332,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         kind: "import",
         label: `${kind}: ${storedName}`,
         detail: IMPORT_JOB_PENDING_DETAIL,
-        cancellable: aiDependent || kind === "evtxxml",
+        cancellable: aiDependent || kind === "evtxxml" || kind === "syslog",
         resumable: true,
         maxRetries: 2,
         parameters: {
@@ -359,7 +359,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         idPrefix: `${seq}`,
         importedAt,
         onProgress: tracking.onProgress,
-        ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}),
+        ...(kind === "evtxxml" || kind === "syslog" ? { onParseProgress: tracking.onParseProgress } : {}),
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
       };
@@ -642,7 +642,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         kind: "import",
         label: `${kind}: ${storedName}`,
         detail: IMPORT_JOB_PENDING_DETAIL,
-        cancellable: aiDependent || kind === "evtxxml",
+        cancellable: aiDependent || kind === "evtxxml" || kind === "syslog",
         resumable: true,
         maxRetries: 2,
         parameters: {
@@ -669,7 +669,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         idPrefix: `${seq}`,
         importedAt,
         onProgress: tracking.onProgress,
-        ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}),
+        ...(kind === "evtxxml" || kind === "syslog" ? { onParseProgress: tracking.onParseProgress } : {}),
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
       };

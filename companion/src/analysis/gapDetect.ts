@@ -1,4 +1,10 @@
-import type { ForensicEvent, Finding, InvestigationState, Severity } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type ForensicEvent,
+  type Finding,
+  type InvestigationState,
+  type Severity,
+} from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 
 // Log gap analysis (issue #83).
@@ -87,7 +93,6 @@ const OUTLIER_CORE_HI_Q = 0.975;
 export const GAP_CAVEAT =
   "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where EVERY source went silent is the classic signature of cleared logs or a stopped collector; confirm against the collection scope and host clocks before concluding.";
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 const MS_PER_HOUR = 3_600_000;
 
 // Start time of an event in epoch ms (NaN when undated — filtered out before use).
@@ -340,7 +345,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
   // start, then by bounding event id for a deterministic, stable order.
   gaps.sort(
     (x, y) =>
-      SEV_RANK[x.severity] - SEV_RANK[y.severity] ||
+      SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity] ||
       y.durationSeconds - x.durationSeconds ||
       Date.parse(x.startTimestamp) - Date.parse(y.startTimestamp) ||
       x.beforeEventId.localeCompare(y.beforeEventId),

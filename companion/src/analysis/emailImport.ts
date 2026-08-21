@@ -24,7 +24,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
-import { addIoc, cleanIp, type SiemEvent, type SiemIoc } from "./siemImport.js";
+import { addIoc, cleanIp, isInternalIpv4, type SiemEvent, type SiemIoc } from "./siemImport.js";
 
 export interface EmailImportOptions {
   minSeverity?: Severity;
@@ -481,22 +481,10 @@ function pickOriginatingIp(headers: Map<string, string[]>): string {
   for (let i = received.length - 1; i >= 0; i--) {
     for (const m of received[i].matchAll(IPV4_G)) {
       const ip = cleanIp(m[0]);
-      if (ip && !isPrivateIp(ip)) return ip;
+      if (ip && !isInternalIpv4(ip)) return ip;
     }
   }
   return "";
-}
-
-function isPrivateIp(ip: string): boolean {
-  const o = ip.split(".").map(Number);
-  if (o.length !== 4) return false;
-  return (
-    o[0] === 10 ||
-    (o[0] === 172 && o[1] >= 16 && o[1] <= 31) ||
-    (o[0] === 192 && o[1] === 168) ||
-    o[0] === 127 ||
-    (o[0] === 169 && o[1] === 254)
-  );
 }
 
 // ───────────────────────────── event + IOC building ─────────────────────────────

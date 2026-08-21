@@ -1,4 +1,4 @@
-import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 
 // Timeline anomaly detection: flags per-asset event-rate spikes in a time bucket. A large
@@ -200,9 +200,8 @@ export function detectTimelineAnomalies(
   for (const a of anomalies) a.methods.sort((x, y) => (x === "peer" ? -1 : 1) - (y === "peer" ? -1 : 1));
 
   // Sort by severity then ratio descending.
-  const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
   anomalies.sort((a, b) => {
-    const sev = SEV_RANK[a.severity] - SEV_RANK[b.severity];
+    const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
     return sev !== 0 ? sev : b.ratio - a.ratio;
   });
 

@@ -4,6 +4,7 @@ import {
   parseSyslogLine,
   mapSyslogLine,
   parseSyslog,
+  parseSyslogProgress,
 } from "../../src/analysis/syslogImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
@@ -137,5 +138,45 @@ describe("parseSyslog", () => {
   it("does NOT flag an ordinary accepted login with no preceding failures", () => {
     const r = parseSyslog(ACCEPT, { assumeYear: 2024 });
     expect(r.events.every((e) => !e.mitreTechniques.includes("T1110.001"))).toBe(true);
+  });
+});
+
+// Mirrors the parseWinEventXml / parseWinEventXmlProgress contract: identical result, progress
+// reported per line chunk, AbortError on cancel.
+describe("parseSyslogProgress", () => {
+  const repeatedLines = (n: number): string =>
+    Array.from({ length: n }, (_, i) => (i % 3 === 0 ? FAIL3164 : NOISE)).join("\n");
+
+  it("produces the same result as the sync parseSyslog and reports final progress", async () => {
+    const progress: Array<[number, number]> = [];
+    const text = [SLACK, PASSWD, ACCEPT, NOISE, NOISE].join("\n");
+    const r = await parseSyslogProgress(text, { assumeYear: 2024 }, (done, total) => {
+      progress.push([done, total]);
+    });
+    expect(r).toEqual(parseSyslog(text, { assumeYear: 2024 }));
+    expect(progress.at(-1)).toEqual([5, 5]);
+    expect(progress.every(([done, total]) => done <= total)).toBe(true);
+  });
+
+  it("stops parsing promptly when the analyst cancels", async () => {
+    const controller = new AbortController();
+    setImmediate(() => controller.abort());
+    const work = parseSyslogProgress(
+      repeatedLines(12_000),
+      { assumeYear: 2024 },
+      undefined,
+      controller.signal,
+    );
+
+    await expect(work).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("coalesces live progress into line chunks", async () => {
+    const progress: number[] = [];
+    await parseSyslogProgress(repeatedLines(12_000), { assumeYear: 2024 }, (done) => {
+      progress.push(done);
+    });
+
+    expect(progress).toEqual([5000, 10_000, 12_000]);
   });
 });

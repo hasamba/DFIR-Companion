@@ -13,7 +13,7 @@ import { resolveExtractedFrom } from "../siemImport.js";
 
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseSysdig, type SysdigImportOptions } from "../sysdigImport.js";
-import { SYSLOG_SOURCE, parseSyslog, type SyslogImportOptions } from "../syslogImport.js";
+import { SYSLOG_SOURCE, parseSyslogProgress, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -215,6 +215,8 @@ export async function importSyslog(
     syslog?: SyslogImportOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>;
+    signal?: AbortSignal;
   },
 ): Promise<InvestigationState> {
   // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
@@ -222,10 +224,12 @@ export async function importSyslog(
   // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
   const priorState = await ctx.opts.stateStore.load(caseId).catch(() => null);
   const assumeYear = opts.syslog?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-  const parsedRaw = parseSyslog(text, {
-    ...opts.syslog,
-    ...(assumeYear !== undefined ? { assumeYear } : {}),
-  });
+  const parsedRaw = await parseSyslogProgress(
+    text,
+    { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}) },
+    (done, total) => opts.onParseProgress?.(done, total, "reading syslog lines"),
+    opts.signal,
+  );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Syslog", parsed.total);
 

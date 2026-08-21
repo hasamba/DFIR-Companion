@@ -52,6 +52,7 @@ import {
   aggregateEvents,
   addIoc,
   mergeRowIocs,
+  MONTHS,
   oneLine,
   worst,
   type MappedEvent,
@@ -94,21 +95,6 @@ export function looksLikeCombinedLog(filename: string, text: string): boolean {
   const hits = lines.filter((l) => LINE_RE.test(l)).length;
   return hits >= 2 && hits >= lines.length * 0.5;
 }
-
-const MONTHS: Record<string, string> = {
-  Jan: "01",
-  Feb: "02",
-  Mar: "03",
-  Apr: "04",
-  May: "05",
-  Jun: "06",
-  Jul: "07",
-  Aug: "08",
-  Sep: "09",
-  Oct: "10",
-  Nov: "11",
-  Dec: "12",
-};
 
 // "14/May/2024:19:00:00 +0000" → ISO. Returns "" when unparseable.
 export function parseApacheDate(raw: string): string {

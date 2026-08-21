@@ -2,6 +2,11 @@ import type { IocExcludeRule } from "./iocExclude.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
+
+// Canonical severity ranking — lower number = more severe. The single table every sort/compare on
+// Severity must use (severityFloor, correlate, assetGraph, reports…). forensicGate.ts, notifications.ts
+// and slashCommand.ts deliberately keep their own INVERTED (higher = more severe) encodings.
+export const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 export type FindingStatus = "open" | "confirmed" | "dismissed";
 export type ThreadStatus = "open" | "closed";
 

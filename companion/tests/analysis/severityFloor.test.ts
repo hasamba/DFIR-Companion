@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  applySeverityFloor,
-  hasGradedSeverity,
-  parseMinSeverity,
-  SEVERITY_RANK,
-} from "../../src/analysis/severityFloor.js";
-import type { Severity } from "../../src/analysis/stateTypes.js";
+import { applySeverityFloor, hasGradedSeverity, parseMinSeverity } from "../../src/analysis/severityFloor.js";
+import { SEVERITY_RANK, type Severity } from "../../src/analysis/stateTypes.js";
 
 // Build a list of events carrying just a severity (all the floor needs).
 const ev = (...sevs: Severity[]): { severity: Severity; id: string }[] =>

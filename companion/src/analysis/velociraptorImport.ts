@@ -23,6 +23,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { normalizeRow } from "./veloRowNormalize.js";
+import { parsedNewProcess, salientFromMessage } from "./veloMessageFields.js";
 import { thorFields } from "./thorRowMap.js";
 import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
 import { parseCsv } from "./csvImport.js";
@@ -154,54 +155,6 @@ function fullMessage(row: Row, description: string): string {
   // If the description already contains (nearly) the whole message there's no extra detail to reveal.
   if (description.includes(raw) || raw.length <= 80) return "";
   return capped;
-}
-
-// High-signal labels in a RENDERED Windows event message (4688 process creation, Sysmon, service
-// install, etc.). When an artifact ships the event as free text — no structured EventData to map —
-// these carry the actual evidence (the LOLBIN binary + its command line), which the boilerplate
-// header ("Creator Subject… Target Subject…") buries past the description cut-off. Surfacing them
-// makes e.g. "Use of 32-bit LOLBINs" name the binary that ran, not just the rule. (#102)
-const MSG_FIELD_LABELS = [
-  "New Process Name",
-  "Process Command Line",
-  "CommandLine",
-  "Command Line",
-  "Image",
-  "Application Name",
-  "TargetFilename",
-  "Service File Name",
-  "ServiceFileName",
-  "ScriptBlockText",
-];
-// Velociraptor renders some fields with a trailing "!S!" sentinel — strip it for readability.
-function cleanFieldValue(v: string): string {
-  return v
-    .trim()
-    .replace(/!S!\s*$/, "")
-    .trim();
-}
-function fieldFromMessage(msg: string, label: string): string {
-  const re = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
-  const m = re.exec(msg);
-  return m ? cleanFieldValue(m[1]) : "";
-}
-function salientFromMessage(msg: string): string {
-  if (!msg || !msg.includes(":")) return "";
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const label of MSG_FIELD_LABELS) {
-    const v = fieldFromMessage(msg, label);
-    if (v && v !== "-" && !seen.has(v)) {
-      seen.add(v);
-      out.push(`${label}: ${v}`);
-    }
-  }
-  return out.join(" - ").slice(0, 400);
-}
-// The created/executed process named in a rendered event message (the LOLBIN), for the structured
-// processName field + IOC when the row carries no structured process column.
-function parsedNewProcess(msg: string): string {
-  return fieldFromMessage(msg, "New Process Name") || fieldFromMessage(msg, "Image");
 }
 
 // A stable djb2 hash → base36, for folding message content into an aggregation key compactly.

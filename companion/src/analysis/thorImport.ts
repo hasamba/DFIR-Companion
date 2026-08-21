@@ -8,7 +8,7 @@
 // init/startup). By default we drop those: `level: "Info"` and the lifecycle modules
 // below. Only scored findings (Alert/Warning/Notice from real scan modules) survive.
 
-import type { Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { maxEventsDefault } from "./siemImport.js";
 
 // Modules that report scan lifecycle / app status, not host findings — dropped by default.
@@ -162,8 +162,6 @@ function collectIocs(row: Row, sink: Map<string, ThorIoc>): void {
     if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(v)) add("ip", v);
   }
 }
-
-const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
 // Parse a THOR JSON-Lines report into forensic events + IOCs, dropping scan noise.
 export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}): ThorParseResult {

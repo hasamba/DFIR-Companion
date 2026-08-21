@@ -1,4 +1,9 @@
-import type { InvestigationState, Severity, ForensicEvent, Uncertainty } from "../analysis/stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type InvestigationState,
+  type ForensicEvent,
+  type Uncertainty,
+} from "../analysis/stateTypes.js";
 import type { CustodyRecord } from "../analysis/custody.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
@@ -69,14 +74,6 @@ function cellMd(value: string): string {
   // glossary entries) and from AI-generated descriptions that contain a literal newline (#12).
   return value.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ");
 }
-
-const SEVERITY_ORDER: Record<Severity, number> = {
-  Critical: 0,
-  High: 1,
-  Medium: 2,
-  Low: 3,
-  Info: 4,
-};
 
 const TODO = "> _To be completed by the investigator — edit in the dashboard → **Case details**._";
 
@@ -756,9 +753,7 @@ function investigation(
   if (state.findings.length === 0) {
     lines.push("_No findings yet._", "");
   } else {
-    const sorted = [...state.findings].sort(
-      (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
-    );
+    const sorted = [...state.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
     // Citations (#222): which events each finding cites as its supporting evidence. Prefer the
     // finding's own relatedEventIds (set by synthesis); fall back to the reverse relatedFindingIds
     // link on the events themselves for findings persisted before that field existed.

@@ -70,6 +70,23 @@ export class HuntQuerySyntaxError extends Error implements HuntQueryErrorShape {
   }
 }
 
+// location() runs for EVERY token (and on error paths), so re-slicing and re-splitting the whole
+// prefix per call made tokenize O(n²) in the newline count — a full-length multi-line query cost
+// ~1s of synchronous CPU. The newline offsets are computed once per query text (a one-slot memo:
+// tokenize and the error paths all pass the same string) and binary-searched per lookup.
+let newlineMemoText = "";
+let newlineMemoOffsets: readonly number[] = [];
+
+function newlineOffsets(text: string): readonly number[] {
+  if (text !== newlineMemoText) {
+    const offsets: number[] = [];
+    for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) offsets.push(at);
+    newlineMemoText = text;
+    newlineMemoOffsets = offsets;
+  }
+  return newlineMemoOffsets;
+}
+
 function location(
   text: string,
   offset: number,
@@ -77,9 +94,18 @@ function location(
   line: number;
   column: number;
 } {
-  const prefix = text.slice(0, offset);
-  const lines = prefix.split("\n");
-  return { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
+  const newlines = newlineOffsets(text);
+  // Count of newlines strictly before `offset` — found by binary search. The line is that count
+  // plus one; the column counts from the character after the last such newline (or from 0).
+  let low = 0;
+  let high = newlines.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (newlines[mid] < offset) low = mid + 1;
+    else high = mid;
+  }
+  const lineStart = low === 0 ? 0 : newlines[low - 1] + 1;
+  return { line: low + 1, column: offset - lineStart + 1 };
 }
 
 function syntaxError(

@@ -1,4 +1,4 @@
-import type { InvestigationState, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type InvestigationState } from "./stateTypes.js";
 import { buildEvidenceGraph, type EvidenceEdge, type EvidenceEdgeType } from "./evidenceGraph.js";
 
 // GraphRAG context for the "Ask the case" feature (issue #98). Serializes the deterministic
@@ -20,8 +20,6 @@ export interface GraphContextOptions {
 
 export const DEFAULT_MAX_GRAPH_EDGES = 120;
 
-const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
-
 // Render order — causal edges first (what the model needs to reconstruct a path), the structural
 // host anchor last. Each maps to a human-readable section header.
 const TYPE_ORDER: EvidenceEdgeType[] = ["spawned", "file_lineage", "lateral_move", "network_flow", "ran_on"];
@@ -42,11 +40,11 @@ export function buildGraphContext(state: InvestigationState, opts: GraphContextO
   const maxEdges = Math.max(0, opts.maxEdges ?? DEFAULT_MAX_GRAPH_EDGES);
   if (maxEdges === 0) return "";
 
-  const sevRank = new Map(graph.nodes.map((n) => [n.id, SEV_RANK[n.maxSeverity]] as const));
+  const sevRank = new Map(graph.nodes.map((n) => [n.id, SEVERITY_RANK[n.maxSeverity]] as const));
   // An edge's severity = the worst (lowest rank) of its two endpoints. Used to decide which edges
   // survive the cap so the highest-signal relationships are always shown.
   const edgeRank = (e: EvidenceEdge): number =>
-    Math.min(sevRank.get(e.source) ?? SEV_RANK.Info, sevRank.get(e.target) ?? SEV_RANK.Info);
+    Math.min(sevRank.get(e.source) ?? SEVERITY_RANK.Info, sevRank.get(e.target) ?? SEVERITY_RANK.Info);
 
   const ranked = [...graph.edges].sort(
     (a, b) =>

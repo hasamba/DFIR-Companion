@@ -9,7 +9,7 @@
 // with the desktop view.
 
 import type { Finding, ForensicEvent, IOC, InvestigationState, Severity } from "./stateTypes.js";
-import { SEVERITY_RANK } from "./severityFloor.js";
+import { SEVERITY_RANK } from "./stateTypes.js";
 
 export type IocVerdict = "malicious" | "suspicious" | "harmless" | "unknown";
 

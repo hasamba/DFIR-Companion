@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Finding, IOC, InvestigationState, Severity } from "./stateTypes.js";
+import type { Finding, IOC, InvestigationState } from "./stateTypes.js";
 
 // AI-generated Velociraptor VQL fleet-hunts from the case findings (issue #57). The Companion
 // already lets the analyst COLLECT artifacts and run per-entity hunt templates; this is the
@@ -133,13 +133,3 @@ export function hasHuntMaterial(state: InvestigationState): boolean {
   const liveFindings = (state.findings ?? []).some((f) => f.status !== "dismissed");
   return liveFindings || (state.forensicTimeline ?? []).length > 0;
 }
-
-// Severity rank for display ordering (Critical first). Exposed so the dashboard and any report
-// stay consistent with the rest of the app's severity ordering.
-export const HUNT_SEVERITY_RANK: Record<Severity, number> = {
-  Critical: 0,
-  High: 1,
-  Medium: 2,
-  Low: 3,
-  Info: 4,
-};

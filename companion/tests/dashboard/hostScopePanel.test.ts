@@ -154,3 +154,47 @@ describe("host scope panel", () => {
     expect(html.toLowerCase()).not.toContain("clean");
   });
 });
+
+// The decision write is append-only and quoted in the report, so a decision that never landed must
+// surface as an error the click handler can show — not a silent `false` nobody consumed.
+interface HostScopeDecisionApi {
+  decideHostScope(caseId: string, host: string, to: string, reason: string): Promise<boolean>;
+}
+
+function panelWithFetch(fetchStub: unknown) {
+  return loadDashboardModule<HostScopeDecisionApi>("dashboard-host-scope.js", ["dashboard-escape.js"], {
+    fetch: fetchStub,
+    document: { getElementById: () => null }, // paintHostScope no-ops without the panel element
+  });
+}
+
+describe("recording a host-scope decision", () => {
+  it("throws the server's own error when the decision is rejected", async () => {
+    const p = panelWithFetch(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "a reason is required" }),
+    }));
+    await expect(p.decideHostScope("c1", "ws-099", "cleared", "")).rejects.toThrow("a reason is required");
+  });
+
+  it("falls back to the HTTP status when the error body is unreadable", async () => {
+    const p = panelWithFetch(async () => ({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error("not json");
+      },
+    }));
+    await expect(p.decideHostScope("c1", "ws-099", "out-of-scope", "why")).rejects.toThrow("HTTP 502");
+  });
+
+  it("resolves true when the decision lands", async () => {
+    const p = panelWithFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ledger(),
+    }));
+    await expect(p.decideHostScope("c1", "ws-099", "cleared", "covered")).resolves.toBe(true);
+  });
+});

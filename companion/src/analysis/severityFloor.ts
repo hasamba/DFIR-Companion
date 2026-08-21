@@ -18,10 +18,7 @@
 // unscored) is correctly treated as graded and floored. The gate is computed at runtime from the
 // produced events, so it stays correct for mixed importers and any importer added later.
 
-import type { Severity } from "./stateTypes.js";
-
-// Lower number = more severe. Matches the ranking used across the codebase (correlate, assetGraph…).
-export const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 
 // True when at least one event carries a real (above-Info) severity verdict — i.e. the import
 // grades severity and a floor is meaningful. All-Info / empty → false (nothing to discriminate on).

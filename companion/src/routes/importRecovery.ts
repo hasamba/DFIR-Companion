@@ -182,7 +182,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       }
     },
     {
-      cancellable: (job) => job.parameters?.kind === "evtxxml",
+      cancellable: (job) => job.parameters?.kind === "evtxxml" || job.parameters?.kind === "syslog",
     },
   );
 }

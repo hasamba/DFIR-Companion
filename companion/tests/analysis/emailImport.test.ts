@@ -63,6 +63,24 @@ describe("parseMimeEmail — .eml structure", () => {
     expect(p.urls).toContain("http://phish.evil.example/login");
     expect(p.attachments.map((a) => a.filename)).toEqual(["invoice.pdf"]);
   });
+
+  it("skips CGNAT (100.64/10) and 0/8 Received hops when picking the originating IP", () => {
+    // No X-Originating-IP: the origin must come from the bottom-up Received walk. The origin hop
+    // carries only internal-range addresses (CGNAT + a 0.x artifact), so the first PUBLIC IPv4 is
+    // in the relay hop above it — the same ranges every other importer already discards.
+    const eml = [
+      "Received: from relay.example (relay.example [203.0.113.50]) by mx.victim.com; Tue, 01 Dec 2017 08:00:02 +0000",
+      "Received: from client.lan (client.lan [100.64.12.34]) by relay.example (0.12.1.9); Tue, 01 Dec 2017 08:00:00 +0000",
+      "From: someone@example.com",
+      "To: victim@victim.com",
+      "Subject: hop test",
+      "Date: Tue, 01 Dec 2017 08:00:00 +0000",
+      "",
+      "body",
+    ].join("\r\n");
+    const p = parseMimeEmail(eml);
+    expect(p.originatingIp).toBe("203.0.113.50");
+  });
 });
 
 describe("parseEmail — event + IOCs + severity", () => {

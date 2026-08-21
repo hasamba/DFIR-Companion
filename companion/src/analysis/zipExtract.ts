@@ -69,6 +69,11 @@ function archiveIsEncrypted(archive: Buffer): boolean {
   const total = archive.readUInt16LE(eocd + 10);
   let ptr = archive.readUInt32LE(eocd + 16);
   for (let i = 0; i < total; i++) {
+    // The offset comes straight from the EOCD, which the uploader controls. Without this bound a
+    // crafted value past the end of the buffer surfaces as Node's internal ERR_OUT_OF_RANGE from
+    // readUInt32LE; the analyst should get the same corrupt-archive wording every other malformed
+    // path produces.
+    if (ptr + 46 > archive.length) throw new Error("corrupt ZIP: central directory out of bounds");
     if (archive.readUInt32LE(ptr) !== 0x02014b50) return false;
     if ((archive.readUInt16LE(ptr + 8) & 0x0001) !== 0) return true;
     ptr +=

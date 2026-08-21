@@ -94,6 +94,62 @@ describe("optional team authentication", () => {
     return { agent, ...(await sessionCsrf(agent)) };
   }
 
+  // The bootstrap route hands out the FIRST global administrator on an empty identity store, so
+  // its refusal branches are the trust boundary: a regression that weakens any of them lets a
+  // remote unauthenticated caller seize the deployment.
+  it("refuses bootstrap with a wrong or missing token and creates no identity", async () => {
+    const wrong = await request(app).post("/auth/bootstrap").send({
+      bootstrapToken: "wrong-token",
+      username: "admin",
+      password: "correct horse battery staple",
+      displayName: "Intruder",
+    });
+    expect(wrong.status).toBe(403);
+    const missing = await request(app).post("/auth/bootstrap").send({
+      username: "admin",
+      password: "correct horse battery staple",
+      displayName: "Intruder",
+    });
+    expect(missing.status).toBe(403);
+    expect(authStore.countIdentities()).toBe(0);
+  });
+
+  it("refuses a second bootstrap once an identity exists, even with the correct token", async () => {
+    await bootstrap();
+    const again = await request(app).post("/auth/bootstrap").send({
+      bootstrapToken: BOOTSTRAP_TOKEN,
+      username: "admin2",
+      password: "another sufficiently long password",
+      displayName: "Second Admin",
+    });
+    expect(again.status).toBe(409);
+    expect(authStore.countIdentities()).toBe(1);
+  });
+
+  it("falls back to loopback-only bootstrap when no token is configured", async () => {
+    // authFactory refuses to build this configuration on a non-loopback bind, so the fallback only
+    // ever gates local requests — but the route-level branch still has to hold on its own.
+    const open = new TeamAuth({ store: authStore, cookieSecure: false, sessionTtlMs: 60 * 60_000 });
+    const openApp = createApp(cases, { teamAuth: open });
+    const res = await request(openApp).post("/auth/bootstrap").send({
+      username: "admin",
+      password: "correct horse battery staple",
+      displayName: "Local Admin",
+    });
+    expect(res.status).toBe(201); // supertest connects over loopback
+    expect(authStore.countIdentities()).toBe(1);
+  });
+
+  it("treats only loopback socket addresses as loopback requests", () => {
+    const fakeReq = (remoteAddress?: string) =>
+      ({ socket: { remoteAddress } }) as unknown as Parameters<TeamAuth["isLoopbackRequest"]>[0];
+    expect(auth.isLoopbackRequest(fakeReq("127.0.0.1"))).toBe(true);
+    expect(auth.isLoopbackRequest(fakeReq("::1"))).toBe(true);
+    expect(auth.isLoopbackRequest(fakeReq("::ffff:127.0.0.1"))).toBe(true);
+    expect(auth.isLoopbackRequest(fakeReq("10.0.0.5"))).toBe(false);
+    expect(auth.isLoopbackRequest(fakeReq(undefined))).toBe(false);
+  });
+
   it("leaves the existing single-user app unchanged when team auth is not configured", async () => {
     const localApp = createApp(cases, {});
     expect((await request(localApp).get("/cases")).status).toBe(200);

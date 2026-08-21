@@ -1,6 +1,14 @@
-import { describe, it, expect } from "vitest";
-import { loadAdversaryGroupsDataset } from "../../src/analysis/adversaryGroupsData.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  loadAdversaryGroupsDataset,
+  _resetAdversaryGroupsCache,
+} from "../../src/analysis/adversaryGroupsData.js";
 import { normalizeTechniqueId } from "../../src/analysis/adversaryHints.js";
+
+beforeEach(() => {
+  // Ensure each test gets a fresh load (avoids cross-test cache contamination).
+  _resetAdversaryGroupsCache();
+});
 
 // Validates that the COMMITTED companion/data/attack-groups.json is present, resolves from the
 // module, and is well-formed — so a corrupt regeneration is caught in CI rather than at runtime.
@@ -34,6 +42,8 @@ describe("loadAdversaryGroupsDataset (bundled file)", () => {
   });
 
   it("caches — repeated calls return the same instance", () => {
-    expect(loadAdversaryGroupsDataset()).toBe(ds);
+    // Compared within one test: the beforeEach reset gives every test a fresh cache, so identity
+    // with the collection-time `ds` no longer holds.
+    expect(loadAdversaryGroupsDataset()).toBe(loadAdversaryGroupsDataset());
   });
 });

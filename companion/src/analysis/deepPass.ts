@@ -15,7 +15,8 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { z } from "zod";
-import { SEVERITY_RANK, applySeverityFloor } from "./severityFloor.js";
+import { SEVERITY_RANK } from "./stateTypes.js";
+import { applySeverityFloor } from "./severityFloor.js";
 import { collapseForPrompt, groupEnvOptions, promptCandidates } from "./synthGroup.js";
 import { estimateTokens } from "./promptBudget.js";
 import { byEventTime } from "./forensicSort.js";

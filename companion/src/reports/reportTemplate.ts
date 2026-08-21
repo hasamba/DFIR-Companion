@@ -43,9 +43,6 @@ export type ReportSectionKey = (typeof REPORT_SECTION_DEFS)[number]["key"];
 
 export const ALL_SECTION_KEYS: readonly ReportSectionKey[] = REPORT_SECTION_DEFS.map((s) => s.key);
 const SECTION_KEY_SET = new Set<string>(ALL_SECTION_KEYS);
-export const SECTION_LABELS: Record<ReportSectionKey, string> = Object.fromEntries(
-  REPORT_SECTION_DEFS.map((s) => [s.key, s.label]),
-) as Record<ReportSectionKey, string>;
 
 export interface ReportTemplateSection {
   key: ReportSectionKey;
@@ -172,10 +169,6 @@ export function normalizeReportTemplate(input: unknown): ReportTemplate {
       ),
     },
   };
-}
-
-export function emptyReportTemplate(): ReportTemplate {
-  return normalizeReportTemplate({});
 }
 
 // The built-in shipped templates. The first ("standard") reproduces the historical fixed-format

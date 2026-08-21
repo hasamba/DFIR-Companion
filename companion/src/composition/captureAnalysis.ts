@@ -21,6 +21,7 @@
  */
 import { join } from "node:path";
 import { writeFile, readFile, rm } from "node:fs/promises";
+import { warnLine } from "../logging/serverLogger.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
@@ -349,16 +350,35 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       return;
     }
     let control = await getControl(caseId);
-    let captures: CaptureMetadata[];
+    let log: string;
     try {
-      const log = await readFile(store.capturesLogPath(caseId), "utf8");
-      captures = log
-        .split("\n")
-        .filter((l) => l.trim().length > 0)
-        .map((l) => JSON.parse(l) as CaptureMetadata);
-    } catch {
+      log = await readFile(store.capturesLogPath(caseId), "utf8");
+    } catch (err) {
+      // ENOENT alone means "no capture log" (an import-only case). Any other read failure
+      // (EACCES, EIO, …) degrades the same way — synthesis still runs — but must be SAID:
+      // silently equating the two is how a whole screenshot backlog went missing without a trace.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        warnLine(`[backfill] ${caseId}: cannot read captures.jsonl: ${(err as Error).message}`);
+      }
       await catchUpSynthesis(); // no capture log (import-only case) → still synthesize imported evidence
       return;
+    }
+    // Parse per line, skipping only a malformed line — the importLog loops in routes/caseLifecycle.ts
+    // and routes/system.ts are the house pattern. captures.jsonl is appendFile-written, so a crash or
+    // ENOSPC mid-append can truncate exactly one line, and that line must not sink the whole backlog.
+    const captures: CaptureMetadata[] = [];
+    let skipped = 0;
+    for (const line of log.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        captures.push(JSON.parse(trimmed) as CaptureMetadata);
+      } catch {
+        skipped += 1; // skip a malformed capture line
+      }
+    }
+    if (skipped > 0) {
+      warnLine(`[backfill] ${caseId}: skipped ${skipped} malformed captures.jsonl line(s)`);
     }
     const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
     if (pending.length === 0) {

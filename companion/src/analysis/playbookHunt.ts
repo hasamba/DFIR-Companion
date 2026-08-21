@@ -269,16 +269,6 @@ export function hasPlaybookHuntMaterial(state: InvestigationState, tasks: readon
   return liveFindings || (state.forensicTimeline ?? []).length > 0;
 }
 
-// Severity rank for display ordering (Critical first) — exposed for the dashboard so playbook-hunt
-// ordering stays consistent with the rest of the app.
-export const PLAYBOOK_HUNT_SEVERITY_RANK: Record<Severity, number> = {
-  Critical: 0,
-  High: 1,
-  Medium: 2,
-  Low: 3,
-  Info: 4,
-};
-
 // ── Persistence + staleness (suggestions survive a page refresh) ─────────────────────────────
 // Suggestions are generated on demand but PERSISTED per case so they don't vanish on reload. A
 // suggestion stays valid only while its TASK is unchanged: we fingerprint the task's text at

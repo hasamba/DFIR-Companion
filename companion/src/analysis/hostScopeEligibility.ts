@@ -1,6 +1,6 @@
 import type { IrisTactic } from "./mitreTactics.js";
 import { COLLECTION_STEPS } from "./collectionPlan.js";
-import { SEVERITY_RANK } from "./severityFloor.js";
+import { SEVERITY_RANK } from "./stateTypes.js";
 import type { HostEvidence } from "./hostScopeAggregate.js";
 
 // Clearance eligibility for one host. This decides whether the tool is allowed to OFFER clearance —

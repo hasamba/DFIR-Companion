@@ -1,5 +1,5 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
-import { SEVERITY_RANK } from "./severityFloor.js";
+import { SEVERITY_RANK } from "./stateTypes.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // Per-host evidence for the scope ledger, folded in ONE streaming pass over the super-timeline so a
