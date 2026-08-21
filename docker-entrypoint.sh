@@ -1,11 +1,20 @@
 #!/bin/sh
 set -e
 
-# The browser add-on (extension) runs INSIDE your browser, not in this container. Copy the
-# pre-built, unpacked add-on (and a zip) to /out so you can load it via your browser's
-# Extensions page -> "Load unpacked" -> ./addon/dist on the host (mapped to /out here).
-if [ -d /opt/dfir-extension ]; then
-  cp -R /opt/dfir-extension/. /out/ 2>/dev/null || true
+# The browser add-on (extension) runs INSIDE your browser, not in this container. It is copied
+# to /out so you can load it via your browser's Extensions page -> "Load unpacked" ->
+# ./addon/dist on the host (mapped to /out here). The copy always runs UNPRIVILEGED — /out is
+# writable by the (potentially compromised) server, and a root cp would follow a destination
+# symlink planted there (e.g. dfir-companion-extension.zip -> /app/companion/dist/server.js)
+# into the root-owned code tree on the next boot. So: the root path below does it via setpriv
+# AFTER deciding the run user; the already-unprivileged path copies here.
+copy_addon() {
+  if [ -d /opt/dfir-extension ] && [ -d /out ]; then
+    cp -R /opt/dfir-extension/. /out/ 2>/dev/null || true
+  fi
+}
+if [ "$(id -u)" != "0" ]; then
+  copy_addon
 fi
 
 # Railway (and similar PaaS) inject PORT; map it to DFIR_PORT so our server binds there.
@@ -84,7 +93,7 @@ if [ "$(id -u)" = "0" ]; then
   deny_chown() {
     case "$1" in
       "" | /) return 0 ;;
-      # /app is the server code; /opt holds the bundled extension the root cp copies to /out —
+      # /app is the server code; /opt holds the bundled extension the entrypoint copies to /out —
       # both are code the server must never be able to rewrite. chown_tree recurses, so denying an
       # ancestor (e.g. /opt) also protects everything under it (/opt/dfir-extension).
       /app | /app/* | /opt | /opt/*) return 0 ;;
@@ -208,18 +217,26 @@ if [ "$(id -u)" = "0" ]; then
   # Only a ROOT-owned root (a fresh Docker-created mount, or the legacy root image's data) falls
   # back to `node`, where chowning is safe because there is no host-owned data to disown.
   mkdir -p "$cases_root" 2>/dev/null || true
-  owner="$(stat -c '%u:%g' "$cases_root" 2>/dev/null || printf '0:0')"
-  run_uid="${owner%:*}"
-  run_gid="${owner#*:}"
+  run_uid="$(stat -c '%u' "$cases_root" 2>/dev/null || printf '0')"
   if [ -z "$run_uid" ] || [ "$run_uid" = "0" ]; then
     run_uid="$node_uid"
-    run_gid="$node_gid"
   fi
+  # NEVER adopt the mount's GID: a numeric host GID has unrelated, possibly privileged semantics
+  # inside this image (42 is shadow, 0 is root), so a mount owned by 1001:42 would hand the
+  # evidence parser group-readable /etc/shadow. The run group is always the image's unprivileged
+  # `node` group; the mount owner still has full access through the preserved UID.
+  run_gid="$node_gid"
 
-  # /out holds the pre-built add-on the root cp above wrote; the server never writes it, but the
-  # HOST user manages ./addon, so hand it over — via chown_tree, never `chown -R`, so a symlink
-  # planted here can never redirect the chown into /app.
-  if [ -d /out ]; then chown_tree /out; fi
+  # /out holds the pre-built add-on; the server never writes it, but the HOST user manages
+  # ./addon, so hand it over — via chown_tree, never `chown -R`, so a symlink planted here can
+  # never redirect the chown into /app — and only THEN copy the add-on in, as the run user, so
+  # the copy cannot be deputized through a planted destination symlink either (an unprivileged
+  # cp that follows one just gets EACCES on the root-owned target).
+  if [ -d /out ]; then
+    chown_tree /out
+    setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups \
+      sh -c 'if [ -d /opt/dfir-extension ]; then cp -R /opt/dfir-extension/. /out/ 2>/dev/null || true; fi' || true
+  fi
 
   # Hand over the evidence/case store itself ONCE (a legacy root-written tree and large evidence
   # dirs both need the recursive walk). The parent handling below never re-walks this subtree.
