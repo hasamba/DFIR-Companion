@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Query Translator and Investigation Log join the Analyst view** — v0.35.0 made them reachable via Deep-Dive only; they now also sit in the analyst's densest workspace, where the rest of the panels are.
+
 ## [0.35.0] - 2026-08-21
 
 ### Added

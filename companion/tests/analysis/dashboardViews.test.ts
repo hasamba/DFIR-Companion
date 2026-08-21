@@ -78,15 +78,21 @@ describe("dashboardViews — seed integrity", () => {
     const analyst = getDashboardView("analyst");
     expect(analyst).toBeDefined();
     // Curated to match the default onboarding layout — excludes the handful of sections that are
-    // opt-in/secondary (Query Translator, Recommended Next Steps, Investigation Log, Activity
-    // Log). Everything else is shown, in the app's canonical reading order.
-    const excluded = ["sec-nlquery", "sec-next-steps", "sec-inv-log", "sec-activity"];
+    // opt-in/secondary. Everything else is shown, in the app's canonical reading order.
+    //
+    // Query Translator and Investigation Log used to be excluded here too, on the same
+    // opt-in/secondary reasoning. That was reversed by an explicit product decision: both were
+    // reachable from NO built-in view at all, and the fix was to put them in the analyst's densest
+    // workspace rather than only in Deep-Dive. Recommended Next Steps and Activity Log stay out
+    // because they are already carried by other profiles (Lead/Triage/Hunt-Prep and Deep-Dive).
+    const excluded = ["sec-next-steps", "sec-activity"];
     for (const id of excluded) {
       expect(analyst!.sections.includes(id), `analyst excludes ${id}`).toBe(false);
     }
     expect(analyst!.sections).toEqual([
       "sec-now",
       "sec-ask",
+      "sec-nlquery",
       "sec-exec",
       "sec-narrative",
       "sec-findings",
@@ -128,6 +134,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-hypotheses",
       "sec-notebook",
       "sec-mcp",
+      "sec-inv-log",
       "sec-custody",
       "sec-case-details",
     ]);
