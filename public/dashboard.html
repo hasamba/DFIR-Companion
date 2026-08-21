@@ -1856,9 +1856,10 @@
         <div class="sfield-row3">
           <div class="sfield"><label>Hunt auto-collect wait (min)<span class="sfield-hint">DFIR_VELO_HUNT_WAIT_MIN — default 10 (clamped 1–1440)</span></label><input id="env-DFIR_VELO_HUNT_WAIT_MIN" placeholder="10" /></div>
           <div class="sfield"><label>Collection timeout (ms)<span class="sfield-hint">DFIR_VELOCIRAPTOR_TIMEOUT_MS</span></label><input id="env-DFIR_VELOCIRAPTOR_TIMEOUT_MS" placeholder="(optional)" /></div>
-          <div class="sfield"><label>Max rows<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_ROWS</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_ROWS" placeholder="(optional)" /></div>
+          <div class="sfield"><label>Max rows — view<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_ROWS — caps what a result table renders</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_ROWS" placeholder="(optional)" /></div>
         </div>
-        <div class="sfield-row">
+        <div class="sfield-row3">
+          <div class="sfield"><label>Max rows — collect<span class="sfield-hint">DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS — caps what a collection INGESTS as evidence (default 100000)</span></label><input id="env-DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS" placeholder="100000" /></div>
           <div class="sfield"><label>Hunt-state poll interval (s)<span class="sfield-hint">DFIR_VELO_HUNT_POLL_S — how often a bundle hunt's live state is polled (default 30; clamped 5–300)</span></label><input id="env-DFIR_VELO_HUNT_POLL_S" placeholder="30" /></div>
           <div class="sfield"><label>Super-timeline event cap<span class="sfield-hint">DFIR_SUPERTIMELINE_MAX — cap for bulk MFT/USN/registry super-timeline imports (default 100000)</span></label><input id="env-DFIR_SUPERTIMELINE_MAX" placeholder="100000" /></div>
         </div>
