@@ -21,14 +21,44 @@ interface EnvField {
   readOnly: boolean;
 }
 
+async function dashboardHtml(): Promise<string> {
+  return readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+}
+
+function settingsPane(html: string, id: string): string {
+  const start = html.indexOf(`id="stab-${id}"`);
+  const end = html.indexOf('<div class="stab-pane"', start + 1);
+  return html.slice(start, end < 0 ? undefined : end);
+}
+
 async function envFields(): Promise<EnvField[]> {
-  const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const html = await dashboardHtml();
   const out: EnvField[] = [];
   for (const m of html.matchAll(FIELD_TAG)) {
     out.push({ key: m[2], readOnly: /\breadonly\b/i.test(m[0]) || /\bdisabled\b/i.test(m[0]) });
   }
   return out;
 }
+
+describe("Settings modal group placement", () => {
+  it("labels the vision model and places synthesis grouping after every model", async () => {
+    const ai = settingsPane(await dashboardHtml(), "ai");
+    const visionHeading = ai.indexOf('<div class="settings-group-head" data-essential>Vision model');
+    const visionProvider = ai.indexOf('id="env-DFIR_VISION_PROVIDER"');
+    const secondOpinion = ai.indexOf('id="env-DFIR_AI_SECOND_OPINION_BASE_URL"');
+    const synthesisGrouping = ai.indexOf("Synthesis detection-burst grouping");
+
+    expect(visionHeading).toBeGreaterThan(-1);
+    expect(visionProvider).toBeGreaterThan(visionHeading);
+    expect(synthesisGrouping).toBeGreaterThan(secondOpinion);
+  });
+
+  it("places the Presidio integration outside the AI pane", async () => {
+    const html = await dashboardHtml();
+    expect(settingsPane(html, "ai")).not.toContain('id="env-DFIR_PRESIDIO_URL"');
+    expect(settingsPane(html, "integrations")).toContain('id="env-DFIR_PRESIDIO_URL"');
+  });
+});
 
 describe("Settings modal ⇄ POST /settings/env allowlist", () => {
   it("renders every env-* field the modal reads", async () => {

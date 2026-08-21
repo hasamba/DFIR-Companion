@@ -1648,6 +1648,21 @@
       ]
     },
     {
+      "path": "companion/src/analysis/chainSignature.ts",
+      "kind": "module",
+      "lines": 72,
+      "imports": [
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/correlate.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/chainSignature.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/chainsawImport.ts",
       "kind": "module",
       "lines": 374,
@@ -1663,21 +1678,6 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/chainsawImport.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/chainSignature.ts",
-      "kind": "module",
-      "lines": 72,
-      "imports": [
-        "companion/src/analysis/stateTypes.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/correlate.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/chainSignature.test.ts"
       ]
     },
     {
@@ -1851,6 +1851,23 @@
       ]
     },
     {
+      "path": "companion/src/analysis/collectSatisfaction.ts",
+      "kind": "module",
+      "lines": 135,
+      "imports": [
+        "companion/src/analysis/collectDirective.ts",
+        "companion/src/analysis/iocAnchors.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/synthesisPromptBlocks.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/collectSatisfaction.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/collectionPlan.ts",
       "kind": "module",
       "lines": 186,
@@ -1887,23 +1904,6 @@
       "tests": [
         "companion/tests/analysis/collectionPlanStore.test.ts",
         "companion/tests/server/collectionPlanRoutes.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/collectSatisfaction.ts",
-      "kind": "module",
-      "lines": 135,
-      "imports": [
-        "companion/src/analysis/collectDirective.ts",
-        "companion/src/analysis/iocAnchors.ts",
-        "companion/src/analysis/stateTypes.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/synthesisPromptBlocks.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/collectSatisfaction.test.ts"
       ]
     },
     {
@@ -2079,8 +2079,7 @@
         "companion/src/analysis/ai/synthesis.ts",
         "companion/src/composition/aiProviders.ts",
         "companion/src/composition/appOptions.ts",
-        "companion/src/composition/runtimeStores.ts",
-        "companion/src/routes/findings.ts"
+        "companion/src/composition/runtimeStores.ts"
       ],
       "routes": [],
       "tests": [
@@ -2319,24 +2318,6 @@
       ]
     },
     {
-      "path": "companion/src/analysis/dashboardViews.ts",
-      "kind": "module",
-      "lines": 416,
-      "imports": [
-        "companion/src/reports/reportTemplate.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/dashboardViewStore.ts",
-        "companion/src/integrations/misp/mispPush.ts",
-        "companion/src/routes/templatesViews.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/dashboardViewStore.test.ts",
-        "companion/tests/analysis/dashboardViews.test.ts"
-      ]
-    },
-    {
       "path": "companion/src/analysis/dashboardViewStore.ts",
       "kind": "module",
       "lines": 124,
@@ -2354,6 +2335,24 @@
         "companion/tests/analysis/dashboardViewStore.test.ts",
         "companion/tests/server/storeIdTraversalRoutes.test.ts",
         "companion/tests/storage/storeIdTraversal.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/dashboardViews.ts",
+      "kind": "module",
+      "lines": 416,
+      "imports": [
+        "companion/src/reports/reportTemplate.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/dashboardViewStore.ts",
+        "companion/src/integrations/misp/mispPush.ts",
+        "companion/src/routes/templatesViews.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/dashboardViewStore.test.ts",
+        "companion/tests/analysis/dashboardViews.test.ts"
       ]
     },
     {
@@ -2795,6 +2794,27 @@
       ]
     },
     {
+      "path": "companion/src/analysis/findingWorkflow.ts",
+      "kind": "module",
+      "lines": 114,
+      "imports": [
+        "companion/src/storage/atomicWrite.ts",
+        "companion/src/storage/caseStore.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/cockpit.ts",
+        "companion/src/composition/appOptions.ts",
+        "companion/src/composition/runtimeStores.ts",
+        "companion/src/routes/findings.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/findingWorkflow.test.ts",
+        "companion/tests/server/cockpitRoutes.test.ts",
+        "companion/tests/server/findingWorkflow.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/findingsDiff.ts",
       "kind": "module",
       "lines": 57,
@@ -2814,27 +2834,6 @@
         "companion/tests/analysis/findingsDiff.test.ts",
         "companion/tests/analysis/notifications.test.ts",
         "companion/tests/analysis/synthMeta.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/findingWorkflow.ts",
-      "kind": "module",
-      "lines": 114,
-      "imports": [
-        "companion/src/storage/atomicWrite.ts",
-        "companion/src/storage/caseStore.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/cockpit.ts",
-        "companion/src/composition/appOptions.ts",
-        "companion/src/composition/runtimeStores.ts",
-        "companion/src/routes/findings.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/findingWorkflow.test.ts",
-        "companion/tests/server/cockpitRoutes.test.ts",
-        "companion/tests/server/findingWorkflow.test.ts"
       ]
     },
     {
@@ -3340,28 +3339,6 @@
       ]
     },
     {
-      "path": "companion/src/analysis/huntOutcomes.ts",
-      "kind": "module",
-      "lines": 329,
-      "imports": [
-        "companion/src/analysis/huntRunDiff.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/hunts.ts",
-        "companion/src/analysis/ai/synthesisInputs.ts",
-        "companion/src/analysis/huntOutcomeStore.ts",
-        "companion/src/composition/veloHunts.ts",
-        "companion/src/routes/context.ts",
-        "companion/src/routes/playbookHunts.ts",
-        "companion/src/routes/velociraptor.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/huntOutcomes.test.ts",
-        "companion/tests/server/huntOutcomes.test.ts"
-      ]
-    },
-    {
       "path": "companion/src/analysis/huntOutcomeStore.ts",
       "kind": "module",
       "lines": 41,
@@ -3381,6 +3358,28 @@
       "tests": [
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/server/collectDirective.test.ts",
+        "companion/tests/server/huntOutcomes.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/huntOutcomes.ts",
+      "kind": "module",
+      "lines": 329,
+      "imports": [
+        "companion/src/analysis/huntRunDiff.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/hunts.ts",
+        "companion/src/analysis/ai/synthesisInputs.ts",
+        "companion/src/analysis/huntOutcomeStore.ts",
+        "companion/src/composition/veloHunts.ts",
+        "companion/src/routes/context.ts",
+        "companion/src/routes/playbookHunts.ts",
+        "companion/src/routes/velociraptor.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/huntOutcomes.test.ts",
         "companion/tests/server/huntOutcomes.test.ts"
       ]
     },
@@ -3710,56 +3709,6 @@
       "tests": []
     },
     {
-      "path": "companion/src/analysis/importerSpec.ts",
-      "kind": "module",
-      "lines": 215,
-      "imports": [
-        "companion/src/analysis/regexSafety.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/prompts/extraction.ts",
-        "companion/src/analysis/declarativeImporter.ts",
-        "companion/src/analysis/importerStore.ts",
-        "companion/src/routes/caseLifecycle.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/declarativeImporter.test.ts",
-        "companion/tests/analysis/importDetect.test.ts",
-        "companion/tests/analysis/importerSpec.test.ts",
-        "companion/tests/analysis/importerStore.test.ts",
-        "companion/tests/analysis/prompts.test.ts",
-        "companion/tests/server/analysisRunImport.test.ts",
-        "companion/tests/server/importerRoutes.test.ts",
-        "companion/tests/server/superTimeline.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/importerStore.ts",
-      "kind": "module",
-      "lines": 110,
-      "imports": [
-        "companion/src/analysis/declarativeImporter.ts",
-        "companion/src/analysis/importerSpec.ts",
-        "companion/src/analysis/redactPaths.ts",
-        "companion/src/storage/atomicWrite.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/diagnostics.ts",
-        "companion/src/composition/appOptions.ts",
-        "companion/src/composition/importIngest.ts",
-        "companion/src/composition/runtimeStores.ts",
-        "companion/src/routes/context.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/importerStore.test.ts",
-        "companion/tests/server/analysisRunImport.test.ts",
-        "companion/tests/server/importerRoutes.test.ts",
-        "companion/tests/server/superTimeline.test.ts"
-      ]
-    },
-    {
       "path": "companion/src/analysis/importLock.ts",
       "kind": "module",
       "lines": 47,
@@ -3864,6 +3813,82 @@
       ]
     },
     {
+      "path": "companion/src/analysis/importerSpec.ts",
+      "kind": "module",
+      "lines": 215,
+      "imports": [
+        "companion/src/analysis/regexSafety.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/prompts/extraction.ts",
+        "companion/src/analysis/declarativeImporter.ts",
+        "companion/src/analysis/importerStore.ts",
+        "companion/src/routes/caseLifecycle.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/declarativeImporter.test.ts",
+        "companion/tests/analysis/importDetect.test.ts",
+        "companion/tests/analysis/importerSpec.test.ts",
+        "companion/tests/analysis/importerStore.test.ts",
+        "companion/tests/analysis/prompts.test.ts",
+        "companion/tests/server/analysisRunImport.test.ts",
+        "companion/tests/server/importerRoutes.test.ts",
+        "companion/tests/server/superTimeline.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/importerStore.ts",
+      "kind": "module",
+      "lines": 110,
+      "imports": [
+        "companion/src/analysis/declarativeImporter.ts",
+        "companion/src/analysis/importerSpec.ts",
+        "companion/src/analysis/redactPaths.ts",
+        "companion/src/storage/atomicWrite.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/diagnostics.ts",
+        "companion/src/composition/appOptions.ts",
+        "companion/src/composition/importIngest.ts",
+        "companion/src/composition/runtimeStores.ts",
+        "companion/src/routes/context.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/importerStore.test.ts",
+        "companion/tests/server/analysisRunImport.test.ts",
+        "companion/tests/server/importerRoutes.test.ts",
+        "companion/tests/server/superTimeline.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/incidentTypeStore.ts",
+      "kind": "module",
+      "lines": 107,
+      "imports": [
+        "companion/src/analysis/incidentTypes.ts",
+        "companion/src/analysis/incidentTypesData.ts",
+        "companion/src/storage/atomicWrite.ts",
+        "companion/src/storage/caseStore.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/pipelineOptions.ts",
+        "companion/src/analysis/ai/synthesisInputs.ts",
+        "companion/src/composition/aiProviders.ts",
+        "companion/src/composition/aiRuntime.ts",
+        "companion/src/composition/appOptions.ts",
+        "companion/src/composition/runtimeStores.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/incidentTypeSynthesis.test.ts",
+        "companion/tests/analysis/synthesizeCharacterisation.test.ts",
+        "companion/tests/server/collectionPlanRoutes.test.ts",
+        "companion/tests/server/incidentTypeRoutes.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/incidentTypes.ts",
       "kind": "module",
       "lines": 190,
@@ -3899,32 +3924,6 @@
       "tests": [
         "companion/tests/analysis/incidentTypePlans.test.ts",
         "companion/tests/analysis/incidentTypes.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/incidentTypeStore.ts",
-      "kind": "module",
-      "lines": 107,
-      "imports": [
-        "companion/src/analysis/incidentTypes.ts",
-        "companion/src/analysis/incidentTypesData.ts",
-        "companion/src/storage/atomicWrite.ts",
-        "companion/src/storage/caseStore.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/pipelineOptions.ts",
-        "companion/src/analysis/ai/synthesisInputs.ts",
-        "companion/src/composition/aiProviders.ts",
-        "companion/src/composition/aiRuntime.ts",
-        "companion/src/composition/appOptions.ts",
-        "companion/src/composition/runtimeStores.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/incidentTypeSynthesis.test.ts",
-        "companion/tests/analysis/synthesizeCharacterisation.test.ts",
-        "companion/tests/server/collectionPlanRoutes.test.ts",
-        "companion/tests/server/incidentTypeRoutes.test.ts"
       ]
     },
     {
@@ -4382,28 +4381,6 @@
       ]
     },
     {
-      "path": "companion/src/analysis/iocsDiff.ts",
-      "kind": "module",
-      "lines": 44,
-      "imports": [
-        "companion/src/analysis/stateTypes.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/importMeta.ts",
-        "companion/src/composition/importIngest.ts",
-        "companion/src/composition/veloExternalIngest.ts",
-        "companion/src/composition/veloHunts.ts",
-        "companion/src/routes/import.ts",
-        "companion/src/routes/importRecovery.ts",
-        "companion/src/routes/reportVersions.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/importMeta.test.ts",
-        "companion/tests/analysis/iocsDiff.test.ts"
-      ]
-    },
-    {
       "path": "companion/src/analysis/iocValue.ts",
       "kind": "module",
       "lines": 267,
@@ -4459,6 +4436,28 @@
         "companion/tests/server.test.ts",
         "companion/tests/server/iocRisk.test.ts",
         "companion/tests/server/iocWhitelistRoutes.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/iocsDiff.ts",
+      "kind": "module",
+      "lines": 44,
+      "imports": [
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/importMeta.ts",
+        "companion/src/composition/importIngest.ts",
+        "companion/src/composition/veloExternalIngest.ts",
+        "companion/src/composition/veloHunts.ts",
+        "companion/src/routes/import.ts",
+        "companion/src/routes/importRecovery.ts",
+        "companion/src/routes/reportVersions.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/importMeta.test.ts",
+        "companion/tests/analysis/iocsDiff.test.ts"
       ]
     },
     {
@@ -4742,24 +4741,6 @@
       ]
     },
     {
-      "path": "companion/src/analysis/learnedPatterns.ts",
-      "kind": "module",
-      "lines": 155,
-      "imports": [
-        "companion/src/analysis/falsePositive.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/synthesisPromptBlocks.ts",
-        "companion/src/analysis/learnedPatternStore.ts",
-        "companion/src/routes/findings.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/learnedPatterns.test.ts",
-        "companion/tests/server/learnedPatterns.test.ts"
-      ]
-    },
-    {
       "path": "companion/src/analysis/learnedPatternStore.ts",
       "kind": "module",
       "lines": 44,
@@ -4777,6 +4758,24 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/server/learnedPatterns.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/learnedPatterns.ts",
+      "kind": "module",
+      "lines": 155,
+      "imports": [
+        "companion/src/analysis/falsePositive.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/synthesisPromptBlocks.ts",
+        "companion/src/analysis/learnedPatternStore.ts",
+        "companion/src/routes/findings.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/learnedPatterns.test.ts",
         "companion/tests/server/learnedPatterns.test.ts"
       ]
     },
@@ -5041,6 +5040,27 @@
       ]
     },
     {
+      "path": "companion/src/analysis/notificationStore.ts",
+      "kind": "module",
+      "lines": 144,
+      "imports": [
+        "companion/src/analysis/notifications.ts",
+        "companion/src/storage/atomicWrite.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/appOptions.ts",
+        "companion/src/composition/runtimeStores.ts",
+        "companion/src/integrations/notify/notifyDispatch.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/notifications.test.ts",
+        "companion/tests/integrations/notify.test.ts",
+        "companion/tests/server.test.ts",
+        "companion/tests/server/notificationRoutes.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/notifications.ts",
       "kind": "module",
       "lines": 531,
@@ -5075,27 +5095,6 @@
       "tests": [
         "companion/tests/analysis/notifications.test.ts",
         "companion/tests/integrations/notify.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/notificationStore.ts",
-      "kind": "module",
-      "lines": 144,
-      "imports": [
-        "companion/src/analysis/notifications.ts",
-        "companion/src/storage/atomicWrite.ts"
-      ],
-      "importedBy": [
-        "companion/src/composition/appOptions.ts",
-        "companion/src/composition/runtimeStores.ts",
-        "companion/src/integrations/notify/notifyDispatch.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/notifications.test.ts",
-        "companion/tests/integrations/notify.test.ts",
-        "companion/tests/server.test.ts",
-        "companion/tests/server/notificationRoutes.test.ts"
       ]
     },
     {
@@ -5903,6 +5902,24 @@
       ]
     },
     {
+      "path": "companion/src/analysis/redactPaths.ts",
+      "kind": "module",
+      "lines": 108,
+      "imports": [
+        "companion/src/analysis/regexEscape.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/importerStore.ts",
+        "companion/src/composition/diagnosticsRings.ts",
+        "companion/src/composition/httpStack.ts",
+        "companion/src/routes/slashCommand.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/redactPaths.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/redactedExport.ts",
       "kind": "module",
       "lines": 344,
@@ -5922,24 +5939,6 @@
         "companion/tests/analysis/redactedExport.test.ts",
         "companion/tests/reports/chainOfCustodyWriter.test.ts",
         "companion/tests/reports/redactedExportBuilder.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/redactPaths.ts",
-      "kind": "module",
-      "lines": 108,
-      "imports": [
-        "companion/src/analysis/regexEscape.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/importerStore.ts",
-        "companion/src/composition/diagnosticsRings.ts",
-        "companion/src/composition/httpStack.ts",
-        "companion/src/routes/slashCommand.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/redactPaths.test.ts"
       ]
     },
     {
@@ -7707,6 +7706,23 @@
       ]
     },
     {
+      "path": "companion/src/analysis/taggerRuleSuggest.ts",
+      "kind": "module",
+      "lines": 75,
+      "imports": [
+        "companion/src/analysis/taggerRules.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/nextSteps.ts",
+        "companion/src/analysis/pipeline.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/taggerRuleSuggest.test.ts",
+        "companion/tests/server/taggerRoutes.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/taggerRules.ts",
       "kind": "module",
       "lines": 260,
@@ -7726,23 +7742,6 @@
         "companion/tests/analysis/tagger.test.ts",
         "companion/tests/analysis/taggerRuleSuggest.test.ts",
         "companion/tests/analysis/taggerRules.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/taggerRuleSuggest.ts",
-      "kind": "module",
-      "lines": 75,
-      "imports": [
-        "companion/src/analysis/taggerRules.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/nextSteps.ts",
-        "companion/src/analysis/pipeline.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/taggerRuleSuggest.test.ts",
-        "companion/tests/server/taggerRoutes.test.ts"
       ]
     },
     {
@@ -7904,6 +7903,38 @@
       ]
     },
     {
+      "path": "companion/src/analysis/timeUtc.ts",
+      "kind": "module",
+      "lines": 31,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/manualEntry.ts",
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateMerge.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/timeUtc.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/timeYearClamp.ts",
+      "kind": "module",
+      "lines": 124,
+      "imports": [
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ingest/logImports.ts",
+        "companion/src/analysis/ingest/networkImports.ts",
+        "companion/src/analysis/stateMerge.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/timeYearClamp.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/timelineAnomalies.ts",
       "kind": "module",
       "lines": 225,
@@ -7954,38 +7985,6 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/timestompDetect.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/timeUtc.ts",
-      "kind": "module",
-      "lines": 31,
-      "imports": [],
-      "importedBy": [
-        "companion/src/analysis/manualEntry.ts",
-        "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/stateMerge.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/timeUtc.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/timeYearClamp.ts",
-      "kind": "module",
-      "lines": 124,
-      "imports": [
-        "companion/src/analysis/stateTypes.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ingest/logImports.ts",
-        "companion/src/analysis/ingest/networkImports.ts",
-        "companion/src/analysis/stateMerge.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/timeYearClamp.test.ts"
       ]
     },
     {
@@ -8091,100 +8090,6 @@
         "companion/tests/analysis/updateCheckStore.test.ts",
         "companion/tests/server/updateCheckRoutes.test.ts"
       ]
-    },
-    {
-      "path": "companion/src/analysis/velociraptorClientStore.ts",
-      "kind": "module",
-      "lines": 45,
-      "imports": [
-        "companion/src/integrations/velociraptor/velociraptorApi.ts",
-        "companion/src/storage/atomicWrite.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ai/aiContext.ts",
-        "companion/src/analysis/ai/analystQueries.ts",
-        "companion/src/analysis/ai/caseReports.ts",
-        "companion/src/analysis/ai/hunts.ts",
-        "companion/src/analysis/ai/pipelineOptions.ts",
-        "companion/src/analysis/ai/synthesis.ts",
-        "companion/src/analysis/hostScopeLoad.ts",
-        "companion/src/composition/aiRuntime.ts",
-        "companion/src/composition/appOptions.ts",
-        "companion/src/composition/maintenanceTasks.ts",
-        "companion/src/composition/runtimeStores.ts",
-        "companion/src/reports/reportWriter.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/velociraptorClientStore.test.ts",
-        "companion/tests/server/playbookHunts.test.ts",
-        "companion/tests/server/veloReconnect.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/velociraptorDownload.ts",
-      "kind": "module",
-      "lines": 68,
-      "imports": [
-        "companion/src/analysis/updateCheck.ts",
-        "companion/src/analysis/velociraptorRelease.ts"
-      ],
-      "importedBy": [
-        "companion/src/routes/velociraptorSettings.ts"
-      ],
-      "routes": [],
-      "tests": []
-    },
-    {
-      "path": "companion/src/analysis/velociraptorImport.ts",
-      "kind": "module",
-      "lines": 1822,
-      "imports": [
-        "companion/src/analysis/chainsawImport.ts",
-        "companion/src/analysis/csvImport.ts",
-        "companion/src/analysis/scriptBlockFragments.ts",
-        "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/stateTypes.ts",
-        "companion/src/analysis/thorRowMap.ts",
-        "companion/src/analysis/timestompDetect.ts",
-        "companion/src/analysis/veloMessageFields.ts",
-        "companion/src/analysis/veloRowNormalize.ts",
-        "companion/src/analysis/velociraptorTitle.ts"
-      ],
-      "importedBy": [
-        "companion/src/analysis/ingest/endpointImports.ts",
-        "companion/src/composition/veloExternalIngest.ts",
-        "companion/src/composition/veloHunts.ts",
-        "companion/src/routes/import.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/velociraptorImport.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/velociraptorRelease.ts",
-      "kind": "module",
-      "lines": 55,
-      "imports": [],
-      "importedBy": [
-        "companion/src/analysis/velociraptorDownload.ts"
-      ],
-      "routes": [],
-      "tests": [
-        "companion/tests/analysis/velociraptorRelease.test.ts"
-      ]
-    },
-    {
-      "path": "companion/src/analysis/velociraptorTitle.ts",
-      "kind": "module",
-      "lines": 46,
-      "imports": [],
-      "importedBy": [
-        "companion/src/analysis/velociraptorImport.ts"
-      ],
-      "routes": [],
-      "tests": []
     },
     {
       "path": "companion/src/analysis/veloHuntStore.ts",
@@ -8297,6 +8202,100 @@
         "companion/tests/analysis/veloTimeScope.test.ts",
         "companion/tests/server/veloTimeScope.test.ts"
       ]
+    },
+    {
+      "path": "companion/src/analysis/velociraptorClientStore.ts",
+      "kind": "module",
+      "lines": 45,
+      "imports": [
+        "companion/src/integrations/velociraptor/velociraptorApi.ts",
+        "companion/src/storage/atomicWrite.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/aiContext.ts",
+        "companion/src/analysis/ai/analystQueries.ts",
+        "companion/src/analysis/ai/caseReports.ts",
+        "companion/src/analysis/ai/hunts.ts",
+        "companion/src/analysis/ai/pipelineOptions.ts",
+        "companion/src/analysis/ai/synthesis.ts",
+        "companion/src/analysis/hostScopeLoad.ts",
+        "companion/src/composition/aiRuntime.ts",
+        "companion/src/composition/appOptions.ts",
+        "companion/src/composition/maintenanceTasks.ts",
+        "companion/src/composition/runtimeStores.ts",
+        "companion/src/reports/reportWriter.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/velociraptorClientStore.test.ts",
+        "companion/tests/server/playbookHunts.test.ts",
+        "companion/tests/server/veloReconnect.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/velociraptorDownload.ts",
+      "kind": "module",
+      "lines": 68,
+      "imports": [
+        "companion/src/analysis/updateCheck.ts",
+        "companion/src/analysis/velociraptorRelease.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/velociraptorSettings.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
+      "path": "companion/src/analysis/velociraptorImport.ts",
+      "kind": "module",
+      "lines": 1822,
+      "imports": [
+        "companion/src/analysis/chainsawImport.ts",
+        "companion/src/analysis/csvImport.ts",
+        "companion/src/analysis/scriptBlockFragments.ts",
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/thorRowMap.ts",
+        "companion/src/analysis/timestompDetect.ts",
+        "companion/src/analysis/veloMessageFields.ts",
+        "companion/src/analysis/veloRowNormalize.ts",
+        "companion/src/analysis/velociraptorTitle.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ingest/endpointImports.ts",
+        "companion/src/composition/veloExternalIngest.ts",
+        "companion/src/composition/veloHunts.ts",
+        "companion/src/routes/import.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/velociraptorImport.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/velociraptorRelease.ts",
+      "kind": "module",
+      "lines": 55,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/velociraptorDownload.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/velociraptorRelease.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/velociraptorTitle.ts",
+      "kind": "module",
+      "lines": 46,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
     },
     {
       "path": "companion/src/analysis/wazuhImport.ts",
@@ -13098,7 +13097,6 @@
       "lines": 835,
       "imports": [
         "companion/src/analysis/activityLog.ts",
-        "companion/src/analysis/correlationProfile.ts",
         "companion/src/analysis/falsePositive.ts",
         "companion/src/analysis/falsePositiveSimilarity.ts",
         "companion/src/analysis/findingWorkflow.ts",
@@ -13690,6 +13688,44 @@
       ]
     },
     {
+      "path": "companion/src/routes/reportVersions.ts",
+      "kind": "module",
+      "lines": 484,
+      "imports": [
+        "companion/src/analysis/activityLog.ts",
+        "companion/src/analysis/findingsDiff.ts",
+        "companion/src/analysis/iocsDiff.ts",
+        "companion/src/analysis/timelineDiff.ts",
+        "companion/src/auth/types.ts",
+        "companion/src/reports/reportReleaseStore.ts",
+        "companion/src/reports/reportWorkflowTypes.ts",
+        "companion/src/routes/context.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/routeRegistry.ts"
+      ],
+      "routes": [
+        "GET /cases/:id/report-versions",
+        "GET /cases/:id/report-versions/diff",
+        "POST /cases/:id/report-versions/:versionId/restore",
+        "GET /cases/:id/report-reviewers",
+        "GET /cases/:id/report-versions/:versionId/workflow",
+        "POST /cases/:id/report-versions/:versionId/workflow/submit",
+        "POST /cases/:id/report-versions/:versionId/review/annotations",
+        "POST /cases/:id/report-versions/:versionId/workflow/annotations/:annotationId/resolve",
+        "POST /cases/:id/report-versions/:versionId/review/request-changes",
+        "POST /cases/:id/report-versions/:versionId/review/approve",
+        "POST /cases/:id/report-versions/:versionId/workflow/self-approve",
+        "POST /cases/:id/report-versions/:versionId/workflow/release",
+        "GET /cases/:id/report-releases",
+        "GET /cases/:id/report-releases/integrity",
+        "GET /cases/:id/report-releases/diff",
+        "GET /cases/:id/report-releases/:releaseId",
+        "GET /cases/:id/report-releases/:releaseId/packs/:pack"
+      ],
+      "tests": []
+    },
+    {
       "path": "companion/src/routes/reportsExport.ts",
       "kind": "module",
       "lines": 393,
@@ -13727,44 +13763,6 @@
         "companion/tests/e2e/workflows/reports.spec.ts",
         "companion/tests/server/interactiveReportRoute.test.ts"
       ]
-    },
-    {
-      "path": "companion/src/routes/reportVersions.ts",
-      "kind": "module",
-      "lines": 484,
-      "imports": [
-        "companion/src/analysis/activityLog.ts",
-        "companion/src/analysis/findingsDiff.ts",
-        "companion/src/analysis/iocsDiff.ts",
-        "companion/src/analysis/timelineDiff.ts",
-        "companion/src/auth/types.ts",
-        "companion/src/reports/reportReleaseStore.ts",
-        "companion/src/reports/reportWorkflowTypes.ts",
-        "companion/src/routes/context.ts"
-      ],
-      "importedBy": [
-        "companion/src/composition/routeRegistry.ts"
-      ],
-      "routes": [
-        "GET /cases/:id/report-versions",
-        "GET /cases/:id/report-versions/diff",
-        "POST /cases/:id/report-versions/:versionId/restore",
-        "GET /cases/:id/report-reviewers",
-        "GET /cases/:id/report-versions/:versionId/workflow",
-        "POST /cases/:id/report-versions/:versionId/workflow/submit",
-        "POST /cases/:id/report-versions/:versionId/review/annotations",
-        "POST /cases/:id/report-versions/:versionId/workflow/annotations/:annotationId/resolve",
-        "POST /cases/:id/report-versions/:versionId/review/request-changes",
-        "POST /cases/:id/report-versions/:versionId/review/approve",
-        "POST /cases/:id/report-versions/:versionId/workflow/self-approve",
-        "POST /cases/:id/report-versions/:versionId/workflow/release",
-        "GET /cases/:id/report-releases",
-        "GET /cases/:id/report-releases/integrity",
-        "GET /cases/:id/report-releases/diff",
-        "GET /cases/:id/report-releases/:releaseId",
-        "GET /cases/:id/report-releases/:releaseId/packs/:pack"
-      ],
-      "tests": []
     },
     {
       "path": "companion/src/routes/seedDemo.ts",
@@ -15488,8 +15486,7 @@
       "importedBy": [],
       "routes": [],
       "tests": [
-        "extension/tests/firefox.test.ts",
-        "extension/tests/serviceWorkerMessages.test.ts"
+        "extension/tests/firefox.test.ts"
       ]
     },
     {
@@ -15547,7 +15544,7 @@
     {
       "path": "public/dashboard.html",
       "kind": "page",
-      "lines": 5391,
+      "lines": 5392,
       "imports": [
         "public/js/a11y/announcer.js",
         "public/js/a11y/describe-as-table.js",

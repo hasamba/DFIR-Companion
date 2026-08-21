@@ -1324,20 +1324,7 @@
       <div class="stab-pane" id="stab-ai">
         <div class="srestart-note" data-essential>⚠ All AI settings require a server restart to take effect</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" data-safe-style="color:var(--accent-solid)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
-        <div class="settings-group-head">Presidio (optional external PII detector)</div>
-        <div class="sfield-row">
-          <div class="sfield">
-            <label>Presidio analyzer URL<span class="sfield-hint">DFIR_PRESIDIO_URL — Optional. A Presidio Analyzer container you run yourself. It scans text that has ALREADY been masked, to catch names and IDs the built-in patterns cannot. Leave blank to disable.</span></label>
-            <input id="env-DFIR_PRESIDIO_URL" placeholder="http://localhost:5002" />
-          </div>
-          <div class="sfield"><label>Presidio confidence floor<span class="sfield-hint">DFIR_PRESIDIO_MIN_SCORE</span></label><input id="env-DFIR_PRESIDIO_MIN_SCORE" placeholder="0.6" /></div>
-          <div class="sfield"><label>Presidio request timeout (ms)<span class="sfield-hint">DFIR_PRESIDIO_TIMEOUT_MS — Budget for ONE scan request; a scan is split into 50,000-character chunks and each chunk gets the full budget. It has to cover queueing, not just analysis: the stock container runs a single worker, so a chunk that takes ~2s alone can take ~10s with other scans in flight. Raise this on a slow or shared analyzer. Needs a restart.</span></label><input id="env-DFIR_PRESIDIO_TIMEOUT_MS" placeholder="60000" /></div>
-        </div>
-        <div id="presidioLocalWarning" data-safe-style="display:none;margin:2px 0 8px;padding:8px;border-radius:6px;background:var(--warning-bg);color:var(--tag-orange-text);font-size:12px"></div>
-        <div class="sfield" data-safe-style="margin:0 0 8px">
-          <button type="button" id="presidioTestBtn">Test connection</button>
-          <span id="presidioTestResult" data-safe-style="margin-left:8px;font-size:12px;color:var(--text-muted)"></span>
-        </div>
+        <div class="settings-group-head" data-essential>Vision model (screenshots)</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential>
             <label>Provider (screenshots)<span class="sfield-hint">DFIR_VISION_PROVIDER</span></label>
@@ -1428,12 +1415,6 @@
               <option value="auto">auto</option>
             </select>
           </div>
-        </div>
-        <div class="settings-group-head">Synthesis detection-burst grouping</div>
-        <div class="sfield-row3">
-          <div class="sfield"><label>Enable grouping<span class="sfield-hint">DFIR_SYNTH_GROUP — collapse repeated hits of the SAME detection/severity into ONE prompt row (hit count, host spread, time span); set 0 to send one row per occurrence (default on)</span></label><input id="env-DFIR_SYNTH_GROUP" placeholder="1" /></div>
-          <div class="sfield"><label>Grouping gap (s)<span class="sfield-hint">DFIR_SYNTH_GROUP_GAP_SECONDS — max gap between consecutive hits before a NEW burst starts (default 3600)</span></label><input id="env-DFIR_SYNTH_GROUP_GAP_SECONDS" placeholder="3600" /></div>
-          <div class="sfield"><label>Grouping min repeats<span class="sfield-hint">DFIR_SYNTH_GROUP_MIN_REPEATS — minimum hits before a burst is collapsed (default 4)</span></label><input id="env-DFIR_SYNTH_GROUP_MIN_REPEATS" placeholder="4" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Include Info events in synthesis<span class="sfield-hint">DFIR_SYNTH_INCLUDE_INFO — send Info-severity events prompt seats too (default off; they'd otherwise crowd out graded detections). Info events always remain in the case/timeline/coverage report either way</span></label><input id="env-DFIR_SYNTH_INCLUDE_INFO" placeholder="0" /></div>
@@ -1558,6 +1539,12 @@
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
           <div class="sfield" data-essential><label>2nd-opinion base URL<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
+        </div>
+        <div class="settings-group-head">Synthesis detection-burst grouping</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Enable grouping<span class="sfield-hint">DFIR_SYNTH_GROUP — collapse repeated hits of the SAME detection/severity into ONE prompt row (hit count, host spread, time span); set 0 to send one row per occurrence (default on)</span></label><input id="env-DFIR_SYNTH_GROUP" placeholder="1" /></div>
+          <div class="sfield"><label>Grouping gap (s)<span class="sfield-hint">DFIR_SYNTH_GROUP_GAP_SECONDS — max gap between consecutive hits before a NEW burst starts (default 3600)</span></label><input id="env-DFIR_SYNTH_GROUP_GAP_SECONDS" placeholder="3600" /></div>
+          <div class="sfield"><label>Grouping min repeats<span class="sfield-hint">DFIR_SYNTH_GROUP_MIN_REPEATS — minimum hits before a burst is collapsed (default 4)</span></label><input id="env-DFIR_SYNTH_GROUP_MIN_REPEATS" placeholder="4" /></div>
         </div>
         <div class="settings-group-head">Debugging & custom prompts</div>
         <div class="sfield-row">
@@ -1777,6 +1764,20 @@
       <!-- Integrations -->
       <div class="stab-pane" id="stab-integrations">
         <div class="srestart-note" data-essential>⚠ All integration settings require a server restart to take effect</div>
+        <div class="settings-group-head">Presidio (optional external PII detector)</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Presidio analyzer URL<span class="sfield-hint">DFIR_PRESIDIO_URL — Optional. A Presidio Analyzer container you run yourself. It scans text that has ALREADY been masked, to catch names and IDs the built-in patterns cannot. Leave blank to disable.</span></label>
+            <input id="env-DFIR_PRESIDIO_URL" placeholder="http://localhost:5002" />
+          </div>
+          <div class="sfield"><label>Presidio confidence floor<span class="sfield-hint">DFIR_PRESIDIO_MIN_SCORE</span></label><input id="env-DFIR_PRESIDIO_MIN_SCORE" placeholder="0.6" /></div>
+          <div class="sfield"><label>Presidio request timeout (ms)<span class="sfield-hint">DFIR_PRESIDIO_TIMEOUT_MS — Budget for ONE scan request; a scan is split into 50,000-character chunks and each chunk gets the full budget. It has to cover queueing, not just analysis: the stock container runs a single worker, so a chunk that takes ~2s alone can take ~10s with other scans in flight. Raise this on a slow or shared analyzer. Needs a restart.</span></label><input id="env-DFIR_PRESIDIO_TIMEOUT_MS" placeholder="60000" /></div>
+        </div>
+        <div id="presidioLocalWarning" data-safe-style="display:none;margin:2px 0 8px;padding:8px;border-radius:6px;background:var(--warning-bg);color:var(--tag-orange-text);font-size:12px"></div>
+        <div class="sfield" data-safe-style="margin:0 0 8px">
+          <button type="button" id="presidioTestBtn">Test connection</button>
+          <span id="presidioTestResult" data-safe-style="margin-left:8px;font-size:12px;color:var(--text-muted)"></span>
+        </div>
         <div class="settings-group-head" data-essential>DFIR-IRIS</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
