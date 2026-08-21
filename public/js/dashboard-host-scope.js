@@ -272,6 +272,12 @@
   }
 
   async function decideHostScope(caseId, host, to, reason) {
+    // Capture the generation token: if a newer ledger load starts while this decision is in
+    // flight (a case switch, or a reload), the response's ledger belongs to the superseded state
+    // and must not overwrite the newer one — the same rule loadHostScope enforces. The decision
+    // itself still landed server-side, so the caller's success flow is unaffected; only the
+    // local cache and pane are protected from being repainted with the old case's board.
+    const seq = hostScopeLoadSeq;
     const r = await fetch(
       `/cases/${encodeURIComponent(caseId)}/host-scope/${encodeURIComponent(host)}`,
       {
@@ -287,8 +293,11 @@
       const e = await r.json().catch(() => ({}));
       throw new Error(e.error || "HTTP " + r.status);
     }
-    hostScopeLedger = await r.json();
-    paintHostScope();
+    const ledger = await r.json();
+    if (seq === hostScopeLoadSeq) {
+      hostScopeLedger = ledger;
+      paintHostScope();
+    }
     return true;
   }
 

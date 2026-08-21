@@ -206,6 +206,7 @@ describe("recording a host-scope decision", () => {
 // scoping calls. Same generation-token contract as loadAssetGraph, pinned the same way.
 interface HostScopeLoadApi {
   loadHostScope(caseId: string): Promise<void>;
+  decideHostScope(caseId: string, host: string, to: string, reason: string): Promise<boolean>;
 }
 
 interface PendingFetch {
@@ -323,5 +324,27 @@ describe("loading the host-scope ledger under case switches", () => {
     await drain();
     expect(body.innerHTML).toContain("No scope data.");
     expect(body.innerHTML).not.toContain("unavailable");
+  });
+
+  it("a decision's late response does not resurrect the previous case's board after a switch", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a");
+    // A clearance decision for case A is still in flight when the analyst switches to case B.
+    const decided = p.decideHostScope("case-a", "host-a", "cleared", "covered");
+    void p.loadHostScope("case-b");
+    pending[2].resolve(okLedger("host-b"));
+    await drain();
+    expect(body.innerHTML).toContain("host-b");
+    // The decision's response carries case A's ledger — it landed server-side (resolves true),
+    // but must not repaint case B's board with the superseded case's clearance state.
+    pending[1].resolve(okLedger("host-a"));
+    await drain();
+    await expect(decided).resolves.toBe(true);
+    expect(body.innerHTML).toContain("host-b");
+    expect(body.innerHTML).not.toContain("host-a");
   });
 });
