@@ -17,6 +17,7 @@
 (function () {
   let hostScopeLedger = null;
   let hostScopeLoadSeq = 0; // generation token: only the latest load may mutate the ledger
+  let hostScopeLoadCase = null; // which case the latest load belongs to (decides decision reconciliation)
   let hostScopeFilter = "all";
 
   const STATUS_LABEL = {
@@ -233,6 +234,7 @@
     // case, on the surface analysts use for scoping calls. A transient same-case failure stays
     // harmless: the panel shows the failure until the next successful reload repaints it.
     const seq = ++hostScopeLoadSeq;
+    hostScopeLoadCase = caseId;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-scope`);
       if (!r.ok) {
@@ -297,6 +299,13 @@
     if (seq === hostScopeLoadSeq) {
       hostScopeLedger = ledger;
       paintHostScope();
+    } else if (hostScopeLoadCase === caseId) {
+      // A SAME-case reload superseded this response — but that reload's read may predate the
+      // append this decision just made, so dropping silently could leave a recorded decision
+      // invisible on the board. Reconcile with a fresh load: it takes the latest token, reads
+      // post-append state, and wins or loses the token race correctly. A DIFFERENT-case
+      // supersession stays dropped — reloading the old case would clobber the new one.
+      void loadHostScope(caseId);
     }
     return true;
   }

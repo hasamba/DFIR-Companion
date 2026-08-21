@@ -346,5 +346,32 @@ describe("loading the host-scope ledger under case switches", () => {
     await expect(decided).resolves.toBe(true);
     expect(body.innerHTML).toContain("host-b");
     expect(body.innerHTML).not.toContain("host-a");
+    // A DIFFERENT-case supersession must not reconcile — reloading case A would clobber case B.
+    expect(pending.length).toBe(3);
+  });
+
+  it("reconciles with a fresh load when a same-case reload supersedes a decision", async () => {
+    const { pending, fetch } = deferredFetch();
+    const { p, body } = panelWithBody(fetch);
+    void p.loadHostScope("case-a");
+    pending[0].resolve(okLedger("host-a"));
+    await drain();
+    // A decision and a SAME-case reload race; the reload's read predates the append, so its
+    // ledger is the pre-decision state.
+    const decided = p.decideHostScope("case-a", "host-a", "cleared", "covered");
+    void p.loadHostScope("case-a");
+    pending[2].resolve(okLedger("host-a"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a");
+    // The decision's post-append ledger arrives superseded: it must not paint directly, but a
+    // recorded decision must not stay invisible either — a reconciling load is issued and its
+    // (post-append) response is what paints.
+    pending[1].resolve(okLedger("host-a-cleared"));
+    await drain();
+    await expect(decided).resolves.toBe(true);
+    expect(pending.length).toBe(4);
+    pending[3].resolve(okLedger("host-a-cleared"));
+    await drain();
+    expect(body.innerHTML).toContain("host-a-cleared");
   });
 });
