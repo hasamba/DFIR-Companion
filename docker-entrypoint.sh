@@ -51,38 +51,51 @@ if [ "$(id -u)" = "0" ]; then
     esac
   }
 
+  # mkdir + recursively hand a whole app-dedicated tree to node (creating it if missing, migrating
+  # a legacy root-owned one). Safe to recurse: these are the app's own directories, never a mount's
+  # unrelated content.
+  handoff_dir() { mkdir -p "$1" 2>/dev/null || true; chown_tree "$1"; }
+  # The GLOBAL store subdirectories the server creates beside the cases root (runtimeStores.ts);
+  # team-auth lives at DFIR_AUTH_DATA_DIR or a sibling .dfir-auth-<hash>.
+  KNOWN_STORES="bundles dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates tagger templates tools updates velociraptor whitelist"
+
   # /out holds the pre-built add-on the root cp above wrote; the server never writes it, but the
   # HOST user manages ./addon, so hand it over — via chown_tree, never `chown -R`, so a symlink
   # planted here can never redirect the chown into /app.
   if [ -d /out ]; then chown_tree /out; fi
 
+  # Hand over the evidence/case store itself ONCE (a legacy root-written tree and large evidence
+  # dirs both need the recursive walk). The parent handling below never re-walks this subtree.
   cases_root="$(abspath "${DFIR_CASES_ROOT:-/data/cases}")"
-  mkdir -p "$cases_root" 2>/dev/null || true
-  # Always hand over the evidence/case store itself (recursively — a legacy root-written tree and
-  # large evidence dirs both need it).
-  chown_tree "$cases_root"
-  # The server also creates GLOBAL stores as subdirectories of the cases root's PARENT (see
-  # runtimeStores.ts / authFactory.ts). Make that parent usable — but NEVER recursively rewrite
-  # ownership across a shared mount's UNRELATED files. Only /data, the image's dedicated data
-  # dir, is recursed wholesale (to migrate a legacy root-owned /data on upgrade). For any other
-  # custom parent, hand over the directory entry (so new stores land node-owned) plus only the
-  # KNOWN application store subdirectories and any .dfir-auth-* the prior root image left. A
-  # parent of / or /app is a misconfig, refused with a warning.
+  handoff_dir "$cases_root"
+
+  # The server also creates the global stores as subdirectories of the cases root's PARENT. Rather
+  # than chown the whole parent (which on a shared mount would rewrite unrelated files, and would
+  # re-walk the cases subtree), hand over each KNOWN store dir individually — never the parent's
+  # other contents, and never the cases subtree twice.
   data_root="$(dirname "$cases_root")"
   case "$data_root" in
-    /data | /data/*)
-      chown_tree "$data_root"
-      ;;
-    /|.|"")
-      echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} has no dedicated parent directory; global stores would land in '$data_root' and may be unwritable — set DFIR_CASES_ROOT to a subdirectory of a mounted volume (e.g. /data/cases)" >&2
-      ;;
     /app | /app/*)
       echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} resolves under the root-owned /app code tree ($cases_root); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
       ;;
+    / | . | "")
+      # No dedicated parent (e.g. DFIR_CASES_ROOT=/cases): the server scatters stores into '/',
+      # which must not be chowned. PRE-CREATE each known store (and the team-auth dir, whose name
+      # hashes the resolved cases root) as node-owned so the server never needs to write '/'.
+      for name in $KNOWN_STORES; do handoff_dir "/$name"; done
+      if [ -z "${DFIR_AUTH_DATA_DIR:-}" ]; then
+        auth_hash="$(printf '%s' "$cases_root" | sha256sum 2>/dev/null | cut -c1-12)"
+        [ -n "$auth_hash" ] && handoff_dir "/.dfir-auth-$auth_hash"
+      fi
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} has no dedicated parent; global stores are placed directly in '/' (non-persistent) — prefer a subdirectory of a mounted volume (e.g. /data/cases)" >&2
+      ;;
     *)
+      # A writable parent (the dedicated /data, or a custom mount): hand over the directory ENTRY
+      # so the server can create NEW stores, then migrate any EXISTING known store or legacy
+      # .dfir-auth-* to node — never recursing the parent's unrelated content, never re-walking
+      # the cases subtree.
       chown -h node:node "$data_root" 2>/dev/null || true
-      for name in bundles dashboard-views diagnostics importers incident-types kev logs \
-        notifications nsrl report-templates tagger templates tools updates velociraptor whitelist; do
+      for name in $KNOWN_STORES; do
         if [ -e "$data_root/$name" ]; then chown_tree "$data_root/$name"; fi
       done
       for auth in "$data_root"/.dfir-auth-*; do
@@ -91,24 +104,29 @@ if [ "$(id -u)" = "0" ]; then
       ;;
   esac
 
-  # Team-auth data dir, when relocated to its own (possibly dedicated, possibly root-owned) mount:
-  # authFactory uses it absolute-as-is or relative to the cases parent (no ~ expansion), and it is
-  # app-dedicated, so recurse it.
+  # Configured writable-store OVERRIDES that may live OUTSIDE data_root. Each is resolved the way
+  # the server resolves it (absolute as-is, else relative to the cases parent — no ~ expansion,
+  # matching authFactory/runtimeStores) and handed over as an app-dedicated tree.
   if [ -n "${DFIR_AUTH_DATA_DIR:-}" ]; then
-    case "$DFIR_AUTH_DATA_DIR" in
-      /*) auth_dir="$DFIR_AUTH_DATA_DIR" ;;
-      *) auth_dir="$data_root/$DFIR_AUTH_DATA_DIR" ;;
-    esac
-    mkdir -p "$auth_dir" 2>/dev/null || true
-    chown_tree "$auth_dir"
+    case "$DFIR_AUTH_DATA_DIR" in /*) d="$DFIR_AUTH_DATA_DIR" ;; *) d="$data_root/$DFIR_AUTH_DATA_DIR" ;; esac
+    handoff_dir "$d"
+  fi
+  if [ -n "${DFIR_IMPORTERS_DIR:-}" ]; then
+    case "$DFIR_IMPORTERS_DIR" in /*) d="$DFIR_IMPORTERS_DIR" ;; *) d="$data_root/$DFIR_IMPORTERS_DIR" ;; esac
+    handoff_dir "$d"
   fi
 
-  # OCR cache (app-dedicated; default /data/ocr-cache is already covered by /data above): recurse.
-  # No ~ expansion — ocrRedact.ts reads DFIR_OCR_CACHE raw, so the server would not expand it either.
+  # OCR cache (app-dedicated; default /data/ocr-cache). No ~ expansion — ocrRedact.ts reads it raw.
   ocr_cache="${DFIR_OCR_CACHE:-/data/ocr-cache}"
   case "$ocr_cache" in /*) : ;; *) ocr_cache="$(realpath -m "$ocr_cache" 2>/dev/null || echo "$(pwd)/$ocr_cache")" ;; esac
-  mkdir -p "$ocr_cache" 2>/dev/null || true
-  chown_tree "$ocr_cache"
+  handoff_dir "$ocr_cache"
+
+  # The Settings/setup .env dir must be writable so POST /settings/env's atomic write succeeds.
+  env_file="${DFIR_ENV_FILE:-/data/companion.env}"
+  case "$env_file" in /*) : ;; *) env_file="$(realpath -m "$env_file" 2>/dev/null || echo "$(pwd)/$env_file")" ;; esac
+  env_dir="$(dirname "$env_file")"
+  mkdir -p "$env_dir" 2>/dev/null || true
+  chown -h node:node "$env_dir" 2>/dev/null || true
 
   # An explicit DFIR_LOG_DIR may point at a SHARED host log directory: the logger only needs to
   # CREATE its session file there, so hand over the directory entry only — never its (possibly
