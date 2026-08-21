@@ -4,6 +4,8 @@ import { test, expect } from "../fixtures/test.js";
 // (feature-user-stories.csv) — the outbound integrations (IRIS, Timesketch, MISP, Notion,
 // ClickUp), push tokens, the local IRIS export, external tool running and custom tool definitions,
 // and the inbound generic push endpoint.
+// Push-token disclosure is owned by companion/src/routes/pushNotify.ts and the one-time dashboard
+// rendering by public/js/dashboard-push-token.js.
 //
 // THE HARNESS HAS NO EXTERNAL SYSTEMS, AND THAT IS THE POINT. Nothing here configures a real IRIS
 // or MISP, and no test may cause an outbound call — a suite that pushes case data to a live
@@ -55,7 +57,10 @@ test("US-135: the local IRIS export builds a payload without contacting IRIS", a
   expect(body.defaultCaseName, "the export names the case it came from").toContain(demoCase);
 });
 
-test("US-095: a push token can be generated, read back and revoked", async ({ page, demoCase }) => {
+test("US-095: a push token is generated once, never read back, and can be revoked", async ({
+  page,
+  demoCase,
+}) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
   const before = await page.request.get(`/cases/${demoCase}/push-token`);
@@ -63,11 +68,18 @@ test("US-095: a push token can be generated, read back and revoked", async ({ pa
 
   const gen = await page.request.post(`/cases/${demoCase}/push-token/generate`, { data: {} });
   expect(gen.status(), await gen.text()).toBe(201);
-  const token = ((await gen.json()) as { token: string }).token;
+  const generated = (await gen.json()) as { token: string; createdAt: string };
+  const token = generated.token;
   expect(token, "a generated token must be non-empty").toBeTruthy();
+  expect(generated.createdAt, "the UI uses the creation time to detect a rotated token").toBeTruthy();
 
   const after = await page.request.get(`/cases/${demoCase}/push-token`);
-  expect(((await after.json()) as { configured: boolean }).configured).toBe(true);
+  const afterText = await after.text();
+  const afterBody = JSON.parse(afterText) as { configured: boolean; createdAt: string; token?: unknown };
+  expect(afterBody.configured).toBe(true);
+  expect(afterBody.createdAt).toBe(generated.createdAt);
+  expect(afterBody).not.toHaveProperty("token");
+  expect(afterText, "a plain GET exposed the standing credential").not.toContain(token);
 
   // Revocation has to actually revoke: a token that outlives its delete is a standing credential
   // into the case.
@@ -75,6 +87,41 @@ test("US-095: a push token can be generated, read back and revoked", async ({ pa
   expect([200, 204], await del.text()).toContain(del.status());
   const revoked = await page.request.get(`/cases/${demoCase}/push-token`);
   expect(((await revoked.json()) as { configured: boolean }).configured).toBe(false);
+});
+
+test("US-095: the dashboard shows a generated token only until the page reloads", async ({
+  page,
+  demoCase,
+}) => {
+  await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+  await page.waitForLoadState("networkidle");
+  await page.locator("#settingsBtn").click();
+  await page.locator('.stab[data-stab="integrations"]').click();
+
+  const curl = page.locator("#pushCurl");
+  await expect(curl).toContainText("<your-token>");
+
+  await page.locator("#pushTokenGenBtn").click();
+  await expect(page.locator("#pushTokenMsg")).toContainText("copy it now");
+  await expect(curl).not.toContainText("<your-token>");
+  const generatedCurl = await curl.innerText();
+  const match = generatedCurl.match(/X-DFIR-Key:\s*([^"\s]+)/);
+  expect(match?.[1], "the generated curl example needs the one-time token").toBeTruthy();
+  const generatedToken = match?.[1] ?? "";
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  await page.locator("#settingsBtn").click();
+  await page.locator('.stab[data-stab="integrations"]').click();
+  await expect(curl).toContainText("<your-token>");
+  expect(await curl.innerText(), "the previous secret survived a reload").not.toContain(generatedToken);
+
+  // The token exists after reload even though its secret is hidden; clear it so this isolated case
+  // leaves no credential behind for the rest of the run.
+  await page.locator("#pushTokenClearBtn").click();
+  await expect(page.locator("#pushTokenMsg")).toContainText("cleared");
+  const cleared = await page.request.get(`/cases/${demoCase}/push-token`);
+  expect(((await cleared.json()) as { configured: boolean }).configured).toBe(false);
 });
 
 test("US-161: the generic push endpoint distinguishes disabled from unauthenticated", async ({
