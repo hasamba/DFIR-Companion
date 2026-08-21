@@ -134,6 +134,44 @@ jobs:
         working-directory: companion
         run: npm test
 
+  # Windows is a first-class target — the release ships a Windows EXE — but until now the suite ran
+  # on Windows ONLY in the tag-triggered release workflow. It rotted across the 423 commits between
+  # v0.34.0 and v0.35.0 (8 files / 30 tests, all Windows-only: `.pathname` yielding "/D:/a/…",
+  # `new URL()` reading "C:" as a scheme, CRLF-sensitive source assertions, reparse points read as
+  # symlinks, and file-locking timeouts) and surfaced at the worst possible moment, blocking the
+  # binaries for two releases running.
+  #
+  # `continue-on-error` because the known failures above are not fixed yet: this job exists to make
+  # Windows health VISIBLE per-PR rather than once per release. Drop the flag once the suite is
+  # green on Windows, and it becomes a real gate.
+  companion-windows:
+    name: Companion test (Windows, advisory)
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Build (tsc type-check)
+        working-directory: companion
+        run: npm run build
+
+      - name: Test (vitest)
+        working-directory: companion
+        run: npm test
+
   extension:
     name: Extension build + test
     runs-on: ubuntu-latest
