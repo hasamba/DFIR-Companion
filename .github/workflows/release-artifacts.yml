@@ -374,22 +374,43 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f -exec ls -lh {} \;
 
-      # A partial release must be loud. Publishing three of four downloads and saying nothing reads
-      # as success to everyone downstream.
-      - name: Report missing artifacts
+      # Decide what is coherent to publish. A partial release must be loud, and some partials are
+      # not releasable at all.
+      - name: Decide what to publish
+        id: pick
         shell: bash
         run: |
-          missing=()
-          for a in windows-exe linux-appimage extension-zip extension-firefox-zip; do
-            compgen -G "artifacts/$a/*" > /dev/null || missing+=("$a")
+          have() { compgen -G "artifacts/$1/*" > /dev/null; }
+          missing=(); files=()
+
+          # The server binaries are independent deliverables: a Linux-only release is coherent, and
+          # so is a Windows-only one. Publish whichever built.
+          for a in windows-exe linux-appimage; do
+            if have "$a"; then files+=("artifacts/$a/*"); else missing+=("$a"); fi
           done
-          if [ ${#missing[@]} -eq 4 ]; then
-            echo "::error::no artifacts were built — refusing to publish an empty release"
+
+          # The two extension zips are ONE deliverable in two packagings, and the job that builds
+          # them uploads Chrome BEFORE it builds Firefox. So a Firefox build failure leaves Chrome
+          # uploaded and Firefox absent — and shipping that gives Chrome users an update that does
+          # not exist for Firefox users, off one release tag. All or neither.
+          if have extension-zip && have extension-firefox-zip; then
+            files+=("artifacts/extension-zip/*" "artifacts/extension-firefox-zip/*")
+          else
+            have extension-zip || missing+=("extension-zip")
+            have extension-firefox-zip || missing+=("extension-firefox-zip")
+            if have extension-zip || have extension-firefox-zip; then
+              echo "::warning::only one extension packaging built — publishing NEITHER, because half an extension is worse than none"
+            fi
+          fi
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::nothing publishable was built — refusing to publish an empty release"
             exit 1
           fi
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "::warning::publishing WITHOUT: ${missing[*]} — check the build job(s) for that platform"
+            echo "::warning::publishing WITHOUT: ${missing[*]} — check the build job(s) for those"
           fi
+          printf 'files<<PICK_EOF\n%s\nPICK_EOF\n' "$(printf '%s\n' "${files[@]}")" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog section
         id: changelog
@@ -416,13 +437,11 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body_path: release-notes.md
-          files: |
-            artifacts/windows-exe/*
-            artifacts/linux-appimage/*
-            artifacts/extension-zip/*
-            artifacts/extension-firefox-zip/*
+          # Exactly what the "Decide what to publish" step judged coherent — never a fixed list,
+          # so a half-built extension cannot reach the release by being globbed in.
+          files: ${{ steps.pick.outputs.files }}
           # false, because a missing platform must not abort the upload of the platforms that DID
-          # build. The "Report missing artifacts" step above is what makes the gap visible, and it
+          # build. The "Decide what to publish" step above is what makes the gap visible, and it
           # already fails the job if nothing built at all.
           fail_on_unmatched_files: false
           # Don't auto-create; the release is published manually per CLAUDE.md.
