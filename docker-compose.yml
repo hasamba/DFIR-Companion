@@ -49,9 +49,11 @@ services:
     # Linux only (no Docker Desktop): make host.docker.internal resolve to the host gateway.
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
-    # No pre-creation needed: the entrypoint starts as root, hands both mounts to the
-    # container's unprivileged `node` user (once, marker-gated for ./cases), then drops
-    # privileges before the server runs — so a clean checkout works on any host UID.
+    # The entrypoint starts as root only to hand the data to an unprivileged user, then drops
+    # privileges before the server runs. It runs the server AS THE OWNER of ./cases: if you
+    # pre-create ./cases (and ./addon) as your own user, the container uses your UID and your
+    # files stay yours; a fresh, Docker-created (root-owned) mount instead falls back to the
+    # image's `node` user. Either way the server never parses evidence as root.
     volumes:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist

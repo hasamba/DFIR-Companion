@@ -32,13 +32,15 @@ fi
 # writable data to `node`, then drops privileges for the server itself.
 if [ "$(id -u)" = "0" ]; then
   node_uid="$(id -u node)"
+  node_gid="$(id -g node)"
   node_home=/home/node
 
-  # Hand a tree to node, chowning ONLY the inodes not already node-owned (so a correctly-owned
-  # tree costs a stat-walk, not a full re-chown, on every boot). `-h` plus find's default
-  # no-follow-symlink traversal mean a compromised node cannot plant a symlink that a later root
+  # Hand a tree to the RUN user (see run_uid below), chowning ONLY the inodes not already owned by
+  # it — so a correctly-owned tree costs a stat-walk, not a full re-chown, and (crucially) a host
+  # operator's own files are skipped entirely when we run AS that operator. `-h` plus find's default
+  # no-follow-symlink traversal mean a compromised server cannot plant a symlink that a later root
   # chown would dereference into a protected target (e.g. the /app code tree).
-  chown_tree() { find "$1" ! -uid "$node_uid" -exec chown -h node:node {} + 2>/dev/null || true; }
+  chown_tree() { find "$1" ! -uid "$run_uid" -exec chown -h "$run_uid:$run_gid" {} + 2>/dev/null || true; }
   # Expand a leading ~ to node's POST-DROP home (matching the server's expandHome()), then
   # NORMALIZE via realpath -m: a relative path resolves against /app/companion (the working dir the
   # server anchors relative roots to) and, crucially, `..` segments are collapsed so an absolute
@@ -108,7 +110,7 @@ if [ "$(id -u)" = "0" ]; then
       return 0
     fi
     mkdir -p "$_d" 2>/dev/null || true
-    chown -h node:node "$_d" 2>/dev/null || true
+    chown -h "$run_uid:$run_gid" "$_d" 2>/dev/null || true
   }
   # The GLOBAL store subdirectories the server creates beside the cases root (runtimeStores.ts);
   # team-auth lives at DFIR_AUTH_DATA_DIR or a sibling .dfir-auth-<hash>.
@@ -141,6 +143,34 @@ if [ "$(id -u)" = "0" ]; then
   : "${DFIR_OCR_CACHE:=$(env_file_get DFIR_OCR_CACHE)}"
   : "${DFIR_OCR_DEBUG_DIR:=$(env_file_get DFIR_OCR_DEBUG_DIR)}"
 
+  # Resolve the cases root two ways: the DEREFERENCED real dir (for chowning — following symlinks to
+  # the actual inode), and a LEXICAL path (for deriving parent/sibling/auth locations — the server
+  # uses path.resolve/dirname without dereferencing, so its global stores sit beside the lexical
+  # path). They differ only when the cases root itself is a symlink.
+  cases_root="$(abspath "${DFIR_CASES_ROOT:-/data/cases}")"
+  cases_raw="${DFIR_CASES_ROOT:-/data/cases}"
+  case "$cases_raw" in
+    "~") cases_raw="$node_home" ;;
+    "~/"*) cases_raw="$node_home/${cases_raw#\~/}" ;;
+  esac
+  case "$cases_raw" in /*) : ;; *) cases_raw="/app/companion/$cases_raw" ;; esac
+  cases_lexical="$(lexical_norm "$cases_raw")"
+  data_root="$(dirname "$cases_lexical")"
+
+  # Run the server AS THE OWNER of the case data. A host operator whose uid differs from the image's
+  # `node` (1000) then keeps ownership of their bind-mounted ./cases and ./addon: chown_tree targets
+  # run_uid and skips inodes already owned by it, so none of the operator's own files are touched.
+  # Only a ROOT-owned root (a fresh Docker-created mount, or the legacy root image's data) falls
+  # back to `node`, where chowning is safe because there is no host-owned data to disown.
+  mkdir -p "$cases_root" 2>/dev/null || true
+  owner="$(stat -c '%u:%g' "$cases_root" 2>/dev/null || printf '0:0')"
+  run_uid="${owner%:*}"
+  run_gid="${owner#*:}"
+  if [ -z "$run_uid" ] || [ "$run_uid" = "0" ]; then
+    run_uid="$node_uid"
+    run_gid="$node_gid"
+  fi
+
   # /out holds the pre-built add-on the root cp above wrote; the server never writes it, but the
   # HOST user manages ./addon, so hand it over — via chown_tree, never `chown -R`, so a symlink
   # planted here can never redirect the chown into /app.
@@ -148,36 +178,26 @@ if [ "$(id -u)" = "0" ]; then
 
   # Hand over the evidence/case store itself ONCE (a legacy root-written tree and large evidence
   # dirs both need the recursive walk). The parent handling below never re-walks this subtree.
-  cases_root="$(abspath "${DFIR_CASES_ROOT:-/data/cases}")"
   handoff_dir "$cases_root"
 
   # The server also creates the global stores as subdirectories of the cases root's PARENT. NEVER
-  # chown the parent itself: on a shared bind mount that would let node rename or delete unrelated
-  # sibling entries. Instead PRE-CREATE and hand off each KNOWN store (and the team-auth dir, whose
-  # name hashes the resolved cases root) individually — so the server writes only into its own
-  # node-owned directories and never needs the parent writable. (A future store type not in this
+  # chown the parent itself: on a shared bind mount that would let the server rename or delete
+  # unrelated sibling entries. Instead PRE-CREATE and hand off each KNOWN store (and the team-auth
+  # dir, whose name hashes the resolved cases root) individually — so the server writes only into
+  # its own owned directories and never needs the parent writable. (A future store type not in this
   # list would need the parent writable; the default /data parent is node-owned from the image
   # build, so it still works there.)
-  data_root="$(dirname "$cases_root")"
   case "$data_root" in
     /app | /app/*)
-      echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} resolves under the root-owned /app code tree ($cases_root); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
+      echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} resolves under the root-owned /app code tree ($cases_lexical); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
       ;;
     *)
       for name in $KNOWN_STORES; do handoff_dir "${data_root%/}/$name"; done
       if [ -z "${DFIR_AUTH_DATA_DIR:-}" ]; then
-        # authFactory: .dfir-auth-<sha256(path.resolve(casesRoot))[:12]> beside the (lexically
-        # resolved) cases root. Derive the hash from the LEXICAL path — matching path.resolve, which
-        # does not dereference symlinks — so a symlinked cases root still hits the right dir name.
-        cases_raw="${DFIR_CASES_ROOT:-/data/cases}"
-        case "$cases_raw" in
-          "~") cases_raw="$node_home" ;;
-          "~/"*) cases_raw="$node_home/${cases_raw#\~/}" ;;
-        esac
-        case "$cases_raw" in /*) : ;; *) cases_raw="/app/companion/$cases_raw" ;; esac
-        cases_lexical="$(lexical_norm "$cases_raw")"
+        # authFactory: .dfir-auth-<sha256(path.resolve(casesRoot))[:12]> beside the lexically
+        # resolved cases root — path.resolve does not dereference symlinks, so use cases_lexical.
         auth_hash="$(printf '%s' "$cases_lexical" | sha256sum 2>/dev/null | cut -c1-12)"
-        [ -n "$auth_hash" ] && handoff_dir "$(dirname "$cases_lexical")/.dfir-auth-$auth_hash"
+        [ -n "$auth_hash" ] && handoff_dir "${data_root%/}/.dfir-auth-$auth_hash"
       fi
       case "$data_root" in
         / | . | "")
@@ -211,12 +231,13 @@ if [ "$(id -u)" = "0" ]; then
   # CREATE its session file there, so hand over the directory entry only — never its (possibly
   # unrelated) contents. (Unset → logs/ beside the cases root, already handed over above.)
   if [ -n "${DFIR_LOG_DIR:-}" ]; then handoff_entry "$(abspath "$DFIR_LOG_DIR")"; fi
-  # setpriv execs in place, so Node stays PID 1 and docker stop signals it directly;
-  # --init-groups sheds root's supplementary groups. setpriv changes credentials but NOT
-  # HOME/USER/LOGNAME, so set node's home explicitly (env, preserving DFIR_* config) —
-  # otherwise `~/…` paths like DFIR_CASES_ROOT / DFIR_LOG_DIR would resolve under the
-  # now-inaccessible /root.
-  exec setpriv --reuid=node --regid=node --init-groups \
+  # setpriv execs in place, so Node stays PID 1 and docker stop signals it directly. --clear-groups
+  # sheds root's supplementary groups (and works for an arbitrary numeric run_uid that has no passwd
+  # entry, unlike --init-groups). setpriv changes credentials but NOT HOME/USER/LOGNAME, so set HOME
+  # explicitly (env, preserving DFIR_* config) — otherwise `~/…` paths would resolve under the
+  # now-inaccessible /root. HOME stays /home/node so ~ expansion matches this entrypoint's; it is
+  # only READ for path resolution (never written), so it is valid even when run_uid is not node.
+  exec setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups \
     env HOME=/home/node USER=node LOGNAME=node node dist/server.js
 fi
 
