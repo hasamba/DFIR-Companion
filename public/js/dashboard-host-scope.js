@@ -16,6 +16,7 @@
 // published names below by bare name.
 (function () {
   let hostScopeLedger = null;
+  let hostScopeLoadSeq = 0; // generation token: only the latest load may mutate the ledger
   let hostScopeFilter = "all";
 
   const STATUS_LABEL = {
@@ -223,13 +224,50 @@
 
   async function loadHostScope(caseId) {
     if (!caseId) return;
+    // A generation token, bumped per load, guards the ledger against out-of-order responses — the
+    // same pattern as loadAssetGraph: when the analyst switches cases fast, an older request's
+    // late response (success OR failure) must not overwrite or erase the newer case's ledger.
+    // And for the LATEST load a failure must CLEAR the ledger and repaint: the per-case resets in
+    // js/dashboard-case-connect.js never touch this module's state, so a swallowed failure here
+    // kept the PREVIOUS case's clearance board on screen — "Cleared"/"Confirmed" for the wrong
+    // case, on the surface analysts use for scoping calls. A transient same-case failure stays
+    // harmless: the panel shows the failure until the next successful reload repaints it.
+    const seq = ++hostScopeLoadSeq;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-scope`);
-      if (!r.ok) return;
-      hostScopeLedger = await r.json();
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        if (seq !== hostScopeLoadSeq) return; // superseded by a newer load — ignore entirely
+        hostScopeLedger = null;
+        // 501 means the store is not configured — the default "No scope data." empty state is the
+        // honest rendering, not an error. Everything else surfaces: routes/hostScope.ts
+        // deliberately 500s with the error message when the ledger file is corrupt (fail-loud),
+        // and swallowing that here silenced the design at its last hop.
+        if (r.status === 501) {
+          paintHostScope();
+          return;
+        }
+        // Null-guarded like paintHostScope: the unit-test harness stubs getElementById to null.
+        const el = document.getElementById("hostScopeBody");
+        if (el) {
+          el.innerHTML = `<p class="hs-empty">Host scope unavailable: ${esc(e.error || "HTTP " + r.status)}</p>`;
+        }
+        return;
+      }
+      const ledger = await r.json();
+      if (seq !== hostScopeLoadSeq) return; // a stale success must not overwrite the newer case
+      hostScopeLedger = ledger;
       paintHostScope();
     } catch {
-      // A panel that cannot load must not take the dashboard down with it.
+      // A panel that cannot load must not take the dashboard down with it — but the LATEST load's
+      // network failure still clears and repaints, so a case switch while the companion restarts
+      // cannot leave the previous case's clearance decisions on screen.
+      if (seq !== hostScopeLoadSeq) return; // superseded by a newer load — ignore entirely
+      hostScopeLedger = null;
+      const el = document.getElementById("hostScopeBody");
+      if (el) {
+        el.innerHTML = `<p class="hs-empty">Host scope could not be loaded.</p>`;
+      }
     }
   }
 

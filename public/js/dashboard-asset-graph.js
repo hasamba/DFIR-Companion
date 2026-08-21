@@ -33,24 +33,31 @@
     // when the user switches cases fast, an older request's late response (success OR failure)
     // must not overwrite or erase the newer case's graph. Only the latest load may mutate state.
     const seq = ++assetGraphLoadSeq;
+    // A non-2xx error body must never be cached as graph data (which hasAssetGraph() and
+    // renderAssetGraph() both trust). For the LATEST load, a failure clears the graph and repaints
+    // empty, so a case switch whose graph fails cannot leave the previous case's assets on screen.
+    // ONE helper for both failure arms: the HTTP-error branch and the rejection handler must
+    // degrade identically, because a network-level failure (the companion restarting mid-case-
+    // switch) or a malformed 2xx body REJECTS — it never reaches the fulfilled arm, and a bare
+    // `.catch(() => {})` there left exactly the stale cross-case graph this token exists to prevent.
+    const failed = () => {
+      if (seq !== assetGraphLoadSeq) return; // superseded by a newer load — ignore entirely
+      assetGraphData = null;
+      renderAssetGraph();
+      renderAssetList();
+    };
     fetch(`/cases/${caseId}/asset-graph${DfirTimelineView.timeQuery()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((g) => {
         if (seq !== assetGraphLoadSeq) return; // superseded by a newer load — ignore entirely
-        // A non-2xx error body must never be cached as graph data (which hasAssetGraph() and
-        // renderAssetGraph() both trust). For the LATEST load, a failure clears the graph and
-        // repaints empty, so a case switch whose graph fails cannot leave the previous case's
-        // assets on screen.
         if (!g || !Array.isArray(g.assets)) {
-          assetGraphData = null;
-          renderAssetGraph();
-          renderAssetList();
+          failed();
           return;
         }
         assetGraphData = g;
         renderAssetGraph();
       })
-      .catch(() => {});
+      .catch(failed);
   }
   function loadAssetOverrides(caseId) {
     fetch(`/cases/${caseId}/asset-overrides`)
