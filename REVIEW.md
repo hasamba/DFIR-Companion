@@ -4,7 +4,9 @@
 (architecture, error handling, duplication/dead code, test coverage, VQL/parsing performance,
 Docker/dependencies), every finding independently re-verified against the code before inclusion.
 Only confirmed findings appear below; each will receive a corresponding fix commit on
-`chore/codebase-review`, after which its Status line is updated with the commit.*
+`chore/codebase-review`, after which its Status line is updated with the commit.
+A SECOND full review pass ran on 2026-08-21 over the post-fix tree (same method); its findings
+appear in per-section "Second pass" subsections and the Finding Index.*
 
 There is no Python source in this repository (the only `.py` files are vendored inside
 `node_modules`), so the "VQL/Python parsing" scope resolves to the hunt-query language parser
@@ -14,30 +16,35 @@ There is no Python source in this repository (the only `.py` files are vendored 
 
 ## 1. Architecture Overview
 
+*Refreshed in the second review pass (2026-08-21) to reflect this branch's container-hardening and module extractions.*
+
 ### What the system is
 
 DFIR Companion is a localhost-first, AI-assisted **post-detection triage layer** for incident response. It does not detect; it ingests verdicts and artifacts from tools that do (Velociraptor, Chainsaw, Hayabusa, EDR/SIEM exports, screenshots of investigation consoles) and correlates them into a per-case forensic timeline, findings, IOCs, an asset graph, and exportable reports. The OPSEC posture is explicit in code: the server binds `127.0.0.1` by default (`companion/src/server.ts`), evidence stays on disk, and the AI provider is pluggable (`companion/src/providers/` covers OpenAI, Anthropic, Gemini, Ollama, LiteLLM, OpenRouter, plus Claude Code/Codex CLI runners) — with deterministic detectors (`analysis/beaconDetect.ts` etc.) guaranteed to work when no provider is configured.
 
 ### Runtime topology
 
-Four pieces. (1) A Node 22 **TypeScript ESM Express server** (~135k lines, entry `companion/src/server.ts`, now a 642-line composition root after the #384/#416 decomposition). (2) A **no-bundler browser dashboard**: `public/dashboard.html` plus ~150 files in `public/js/` (~35k lines) served statically through a whitelist (`companion/src/http/staticAssets.ts`), updated live over WebSocket (`companion/src/live/hub.ts`, `wsGate.ts`); `public/sw.js` is a deliberately minimal PWA shell scoped to `/mobile` only. (3) An **MV3 browser extension** (`extension/manifest.json`) that captures screenshots and pushes detections into the local server. (4) **Upstream/downstream integrations**: Velociraptor inbound (`companion/src/integrations/velociraptor/velociraptorApi.ts` shells out to the `velociraptor` binary with `--api_config` rather than reimplementing gRPC+mTLS; the VQL runner is injectable for tests), outbound push clients (IRIS, MISP, Timesketch, Jira, ServiceNow, Notion, ClickUp), and an agentic MCP mode that spawns `claude -p` (`integrations/mcp/mcpAgentRunner.ts`). A 3-stage `Dockerfile` (node:22-slim) builds server, extension zip, and a slim runtime; compose maps the container port back to host loopback to preserve the localhost posture.
+Four pieces. (1) A Node 22 **TypeScript ESM Express server** (~135k lines, entry `companion/src/server.ts`, now a 642-line composition root after the #384/#416 decomposition). (2) A **no-bundler browser dashboard**: `public/dashboard.html` plus ~150 files in `public/js/` (~35k lines) served statically through a whitelist (`companion/src/http/staticAssets.ts`), updated live over WebSocket (`companion/src/live/hub.ts`, `wsGate.ts`); `public/sw.js` is a deliberately minimal PWA shell scoped to `/mobile` only. (3) An **MV3 browser extension** (`extension/manifest.json`) that captures screenshots and pushes detections into the local server. (4) **Upstream/downstream integrations**: Velociraptor inbound (`companion/src/integrations/velociraptor/velociraptorApi.ts` shells out to the `velociraptor` binary with `--api_config` rather than reimplementing gRPC+mTLS; the VQL runner is injectable for tests, and the pure enrolled-client primitives — client-id shape, record normalization, host→record matching — now live in a dependency-free sibling, `integrations/velociraptor/clientInventory.ts`), outbound push clients (IRIS, MISP, Timesketch, Jira, ServiceNow, Notion, ClickUp), and an agentic MCP mode that spawns `claude -p` (`integrations/mcp/mcpAgentRunner.ts`).
+
+The container stack was hardened materially on this branch. The 3-stage `Dockerfile` (server build, extension zip, slim runtime) now builds every stage from the **same digest-pinned** `node:22-slim` base, bakes an image-level `HEALTHCHECK` (probing `/health` on `PORT`/`DFIR_PORT` so plain `docker run`/Portainer users get liveness, not just compose), and no longer runs the server as root. Because Docker auto-creates missing bind mounts root-owned, a bare `USER` directive would break a clean-checkout `docker compose up`; instead `docker-entrypoint.sh` starts as root solely to hand writable mounts over, then `setpriv`-drops before `exec node dist/server.js` — running **as the owner of the cases-root mount** (falling back to the image's `node` uid only when the mount is root-owned), so a host operator's own files are never disowned. The chown handoffs are deliberately confined: `deny_chown` refuses `/`, the `/app` code tree, `/opt` (the bundled extension), and every OS directory; `chown_tree` uses a no-follow `find … -exec chown -h` so a compromised server cannot plant a symlink that a later root chown dereferences into protected targets; and the cases root's *parent* is never chowned — each known global store plus the `.dfir-auth-<hash>` dir is pre-created and handed off individually, with the hash derived from a lexical (non-dereferencing) normalization to match `authFactory`'s `path.resolve`. Dashboard-writable path overrides persisted to the settings dotenv are re-read by the entrypoint with a dotenv-mirroring parser, so they too pass confinement before any chown. `/app` stays root-owned on purpose (the server must not be able to rewrite its own code); all mutable state is steered onto the `/data` tree via `DFIR_OCR_CACHE=/data/ocr-cache` (tesseract.js model cache, honored by `analysis/ocrRedact.ts`) and `DFIR_ENV_FILE=/data/companion.env` (the Settings `.env` written atomically by `POST /settings/env`, `settings/envManager.ts`). `docker-compose.yml` still maps the port to host loopback only (`127.0.0.1:4773:4773`) and marks that exact posture with `DFIR_ALLOW_UNAUTHENTICATED_REMOTE: "container-loopback-proxy"`; an operator-supplied `user:` override skips the root handoff path entirely.
 
 ### Layering and data flow
 
-`ARCHITECTURE.md` describes a five-layer model (Composition → Delivery → Domain → Platform → Shared) and — unusually — it is *enforced*: `npm run check:boundaries` checks every file against `companion/scripts/module-map.json`, with a shrink-only ledger of 39 grandfathered violations, alongside `check:size` and `check:imports` ratchets. A test asserts the document matches the JSON. The doc is accurate to the code, with minor staleness (it says `src/analysis/` is 296 flat files; it is now ~326 entries, with only `analysis/ai/` and `analysis/ingest/` physically carved out so far).
+`ARCHITECTURE.md` describes a five-layer model (Composition → Delivery → Domain → Platform → Shared) and — unusually — it is *enforced*: `npm run check:boundaries` checks every file against `companion/scripts/module-map.json`, with a shrink-only ledger of 39 grandfathered violations (`companion/scripts/boundary-violations.json`), alongside `check:size` and `check:imports` ratchets. A test asserts the document matches the JSON, and the branch kept the asserted compliance figure current (now 1,830 of 1,869 cross-domain dependencies complying). The doc is accurate to the code, with minor staleness (it still says `src/analysis/` is 296 flat files; it is now ~327 flat files plus the `analysis/ai/` and `analysis/ingest/` directories — the only domains physically carved out so far).
 
-Data flows: capture/ingest (extension `POST /captures`, a drop-folder watcher, Velociraptor hunt/monitor pulls, ~40 `*Import.ts` parsers dispatched via `importDetect`) → serialized per-case by `analysis/importLock.ts` → canonical `ForensicEvent`s (`analysis/stateTypes.ts`, imported by 189 files) → `analysis/forensicGate.ts` partitions severity ≥ Low into the **forensic timeline** and Info telemetry into the **super-timeline** → deterministic detectors and optional AI synthesis (`analysis/pipeline.ts` is now a 758-line facade delegating to `analysis/ai/`) → per-case storage → ~60 route modules registered in a load-bearing order by `composition/routeRegistry.ts` → dashboard via REST + WS broadcast. The governing forensic rule — *the model reads the forensic timeline; nothing automatic reads the raw record* — is documented, tested (`tests/analysis/forensicBoundary.test.ts`), and honest about its one capped exception (`viewSummary`).
+Data flows: capture/ingest (extension `POST /captures`, a drop-folder watcher, Velociraptor hunt/monitor pulls, ~40 `*Import.ts` parsers dispatched via `importDetect`) → serialized per-case by `analysis/importLock.ts` → canonical `ForensicEvent`s (`analysis/stateTypes.ts`, imported by ~190 files) → `analysis/forensicGate.ts` partitions severity ≥ Low into the **forensic timeline** and Info telemetry into the **super-timeline** → deterministic detectors and optional AI synthesis (`analysis/pipeline.ts` is now a 758-line facade delegating to `analysis/ai/`) → per-case storage → ~60 route modules registered in a load-bearing order by `composition/routeRegistry.ts` → dashboard via REST + WS broadcast. The parsers themselves now share single-source utilities extracted on this branch: `analysis/bsdTime.ts` (the `MONTHS` table and RFC 3164 timestamp parser once copied byte-identically into the syslog and Cisco ASA importers), `analysis/internalIp.ts` (one `isInternalIpv4` range table replacing six drifted copies, re-exported through `siemImport.ts`), and `analysis/veloMessageFields.ts` (precompiled rendered-message field extraction for `velociraptorImport.ts`). The governing forensic rule — *the model reads the forensic timeline; nothing automatic reads the raw record* — is documented, tested (`tests/analysis/forensicBoundary.test.ts`), and honest about its one capped exception (`viewSummary`).
 
 ### Key decisions in evidence
 
-Per-case storage is a directory per case under `casesRoot` (`storage/caseStore.ts`): `case.json`, hash-chained evidence with custody listeners, `state/*.json` files enumerated in `analysis/investigationStateFiles.ts`, and `investigation.sqlite` as the primary indexed backend. SQLite uses Node's built-in `node:sqlite` (Node ≥ 22.5 floor, `analysis/sqliteRuntime.ts`) run inside a **worker thread** (`analysis/caseSqliteWorker.ts`) that opens the DB per transaction, keeping synchronous SQLite off the event loop. The frontend's classic-scripts-on-`window` pattern is a deliberate resilience choice — a feature module that 404s becomes a no-op, not a blank page (`public/js/dashboard-facade.js` documents and implements the stub layer) — with load order enforced by `tests/dashboard/dashboardLoadOrder.test.ts` instead of an import graph. Wiring is explicit dependency injection: `createApp` composes ~28 named factories from `companion/src/composition/` into a `RouteContext`, and `startServer` builds the ~120-member `AppOptions` bag (`composition/appWiring.ts`).
+Per-case storage is a directory per case under `casesRoot` (`storage/caseStore.ts`): `case.json`, hash-chained evidence with custody listeners, `state/*.json` files enumerated in `analysis/investigationStateFiles.ts`, and `investigation.sqlite` as the primary indexed backend. SQLite uses Node's built-in `node:sqlite` (Node ≥ 22.5 floor, `analysis/sqliteRuntime.ts`) run inside a **worker thread** (`analysis/caseSqliteWorker.ts`) that opens the DB per transaction, keeping synchronous SQLite off the event loop. The global stores (logs, templates, team-auth, etc.) sit beside the cases root as siblings (`runtimeStores.ts`) — a layout the container entrypoint now mirrors exactly, pre-creating each named store rather than chowning the shared parent. The frontend's classic-scripts-on-`window` pattern is a deliberate resilience choice — a feature module that 404s becomes a no-op, not a blank page (`public/js/dashboard-facade.js` documents and implements the stub layer) — with load order enforced by `tests/dashboard/dashboardLoadOrder.test.ts` instead of an import graph. Wiring is explicit dependency injection: `createApp` composes ~28 named factories from `companion/src/composition/` into a `RouteContext`, and `startServer` builds the ~120-member `AppOptions` bag (`composition/appWiring.ts`).
 
 ### Architectural tensions
 
 - **Everything meets at one seam.** `AppOptions` (~120 members) and `RouteContext` are very wide injection bags; construction order inside `createApp` is explicitly load-bearing, with thunks papering over genuine cycles. Tests pin it, but the whole system is coupled through two literals.
 - **The frontend's module graph is invisible to tooling.** 150-ish classic scripts resolve every cross-module name through `window` at call time; `check:imports` sees 138 nodes and 0 edges, and 32 runtime cycles exist by design. Correctness rests on bespoke tests (load order, feature manifest, stub coverage) rather than anything a bundler or type-checker can verify.
-- **The map is enforced; the geography lags it.** Eleven `analysis/` domains exist in `module-map.json` but ~320 files still sit flat, with a 39-entry violation ledger and `integrations/` straddling two layers (`velociraptorApi.ts` is Platform-shaped code filed under Delivery, as the doc itself concedes).
+- **The map is enforced; the geography lags it.** Eleven `analysis/` domains exist in `module-map.json` but ~327 files still sit flat, with a 39-entry violation ledger and `integrations/` straddling two layers (`velociraptorApi.ts` is Platform-shaped code filed under Delivery, as the doc itself concedes — though the branch's `clientInventory.ts` extraction shows the remedy pattern: peel the pure primitives out of the subprocess-owning module).
 - **A core capability rides an external binary.** Velociraptor hunting depends on spawning the `velociraptor` executable and parsing its stdout/stderr under output caps (`vqlDiagnostics.ts`) — pragmatic, injectable, and off by default, but a process-management and parsing surface where a native client would be a typed one.
+- **The privilege drop moved policy into shell.** `docker-entrypoint.sh` is now 249 lines of POSIX sh that must faithfully mirror server-side path semantics — `authFactory`'s lexical `path.resolve` hashing, `runtimeStores.ts`'s sibling layout, dotenv's parsing grammar, `expandHome()` — and each is annotated with why. The confinement logic is sound and was iteratively hardened, but it is a second implementation of the server's path model, in a language with no test harness of its own, that silently diverges if a new store type or env var lands on the TypeScript side alone (the entrypoint's `KNOWN_STORES` list is the canary).
 
 ## 2. Error Handling Gaps
 
@@ -128,6 +135,60 @@ The capture_once handler (and its activate_site/push_artifact siblings at lines 
 **Fix:** Give each of the three handlers a rejection arm that still answers the channel, e.g. `void captureActiveTab("manual", true).then(sendResponse, (e) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));` (activate_site can respond `false`, push_artifact `{ ok: false, error }`). Optionally also wrap popup.ts's captureOnce sendMessage in try/catch to write the failure into statusEl.
 
 **Status:** Fixed in e83eaf69.
+
+
+### Second pass (2026-08-21)
+
+The four first-pass defects (EH-1..EH-4) are genuinely fixed and pinned by new tests: `companion/src/composition/captureAnalysis.ts` now separates ENOENT from other read failures and skips malformed capture lines individually, `public/js/dashboard-host-scope.js` throws and alerts when a clearance decision fails to land, `public/js/dashboard-asset-graph.js` gained an `r.ok` guard plus a generation token, and `extension/src/serviceWorker.ts` answers every kept-open message channel on rejection. The branch's server-side rework (the `syslogImport.ts` streaming accumulator, `ocrRedact.ts` tesseractDataOptions, `velociraptorApi.ts` getFlowInfo, and the new bsdTime/internalIp/clientInventory/veloMessageFields modules) is clean from an error-handling standpoint — abort signals, per-line skips, and degrade-with-log conventions are all carried through. What remains sits exactly where the first pass said the weakness lives, the browser-side edges: the host-scope panel's *load* path still swallows failures its *decide* path now surfaces, and the asset-graph fix's own clearing logic does not run on the rejection arm it left as `.catch(() => {})`.
+
+#### EH2-1 — loadHostScope silently ignores a failed ledger read and keeps the previous case's clearance ledger on screen  `MEDIUM`
+
+**Location:** `public/js/dashboard-host-scope.js:228`
+
+loadHostScope (the sibling of the EH-2-fixed decideHostScope) still swallows every failure: `if (!r.ok) return;` drops server rejections without reading the error body, and the catch below contains network failures without repainting. Neither path clears `hostScopeLedger` or touches the DOM, and the per-case resets in dashboard-case-connect.js (lines ~291-330) do not reset this module's state. Consequence: (1) on a case switch where the new case's GET /cases/:id/host-scope fails, the panel keeps rendering the PREVIOUS case's clearance board — "Cleared"/"Confirmed" statuses for the wrong case on a surface analysts use for scoping calls, with no indication anything failed; (2) the 500 produced when HostScopeStore deliberately throws on a corrupt ledger file (routes/hostScope.ts:66-68 returns the error message) never reaches the analyst — the fail-loud corruption design is silenced at the last hop, and the analyst only discovers it if they happen to POST a new decision (whose EH-2 fix alerts).
+
+**Evidence:**
+```
+  async function loadHostScope(caseId) {
+    if (!caseId) return;
+    try {
+      const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-scope`);
+      if (!r.ok) return;
+      hostScopeLedger = await r.json();
+      paintHostScope();
+    } catch {
+      // A panel that cannot load must not take the dashboard down with it.
+    }
+  }
+```
+
+**Fix:** Add `let hostScopeLoadSeq = 0;` and in loadHostScope take `const seq = ++hostScopeLoadSeq;` before the fetch; in both the !r.ok path and the catch, bail if `seq !== hostScopeLoadSeq`. On !r.ok: `const e = await r.json().catch(() => ({})); hostScopeLedger = null;` then, for 501 (store not configured), just `paintHostScope()` (renders the default 'No scope data.' empty state); otherwise write the failure into the panel via `const el = document.getElementById("hostScopeBody"); if (el) el.innerHTML = `<p class="hs-empty">Host scope unavailable: ${esc(e.error || "HTTP " + r.status)}</p>`;` (null-guard required — paintHostScope guards the same lookup, and the unit-test harness stubs getElementById to return null). In the catch (after the seq check): `hostScopeLedger = null;` and the same guarded write with a generic 'Host scope could not be loaded.' message. Also guard the success assignment with the seq check so a late stale success cannot overwrite the newer case's ledger.
+
+**Status:** Open
+
+#### EH2-2 — loadAssetGraph's rejection arm bypasses the new generation-token clearing, leaving the stale cross-case graph the fix claims to prevent  `LOW`
+
+**Location:** `public/js/dashboard-asset-graph.js:53`
+
+The EH-3 fix added a generation token and an explicit invariant, stated in its own comment: for the LATEST load "a failure clears the graph and repaints empty, so a case switch whose graph fails cannot leave the previous case's assets on screen." But that logic lives only in the fulfilled arm; the chain still ends in a bare `.catch(() => {})`. A network-level failure (companion restarting mid-case-switch — the exact scenario EH-2's fix cites) or a 2xx response with a malformed body makes `fetch`/`r.json()` REJECT, skipping both `.then`s entirely: the seq token is never consulted, `assetGraphData` is never cleared, and no repaint happens. The previous case's graph stays rendered under the new case, and `hasAssetGraph()`/`assetGraphAssets()` keep serving the stale cross-case data to the refresh fan-out and to dashboard-asset-overrides' rename-candidate matching — precisely the outcome the fix's comment says cannot happen, restored through the one arm the fix did not cover.
+
+**Evidence:**
+```
+        if (!g || !Array.isArray(g.assets)) {
+          assetGraphData = null;
+          renderAssetGraph();
+          renderAssetList();
+          return;
+        }
+        assetGraphData = g;
+        renderAssetGraph();
+      })
+      .catch(() => {});
+```
+
+**Fix:** Give the catch the same latest-load semantics as the null branch: `.catch(() => { if (seq !== assetGraphLoadSeq) return; assetGraphData = null; renderAssetGraph(); renderAssetList(); });` — or extract the four-line failure block into a local `failed(seq)` helper called from both the `!g` branch and the catch, so a rejected fetch and an HTTP error degrade identically and a superseded load's late rejection still cannot touch state.
+
+**Status:** Open
 
 
 ## 3. Code Duplication and Dead Code
@@ -252,6 +313,118 @@ export function resolveIocAlias(value: string, map: IocAliasMap): string | undef
 **Status:** Fixed in b6af24c7 — dead `resolveIocAlias` deleted (the Fix's first option; the swap variant was implemented and rejected by `check:boundaries` as a new analysis/timeline → analysis/findings violation, and the read side is already trim-normalized via repairIocValue).
 
 
+### Second pass (2026-08-21)
+
+The first pass's consolidations landed cleanly: `SEVERITY_RANK` lives once in `stateTypes.ts`, all six importer IP-classifier copies now route through `internalIp.ts` via `siemImport.ts`'s re-export, `bsdTime.ts` owns the shared `MONTHS`/`parseBsdTime` pair, and every dead symbol named in DUP-4..6 is gone with the four `_reset*Cache` hooks wired into their loader tests. The branch's own extractions (`veloMessageFields.ts`, `clientInventory.ts`) are fully referenced, nothing was orphaned by the streaming-syslog or Docker-entrypoint rework, and the deliberate exclusions (inverted ranks in forensicGate/notifications/slashCommand, the dashboard `esc()` byte-identity pair) hold. What remains is residue at the edges of those sweeps: the internal-IPv4 canon stops short of `iocValue.ts`'s enrichment gate, two reports-layer files (`attackLayer.ts`, `iocBlocklist.ts`) still keep private inverted severity tables outside the sanctioned trio, and three tiny helpers — `escapeRegExp`, the worst-severity comparator, and the routes' streaming-import kind predicate — are still declared per-file.
+
+#### DUP2-1 — The internal-IPv4 consolidation stopped short of iocValue.ts — the enrichment SSRF gate still treats CGNAT 100.64/10 as public  `MEDIUM`
+
+**Location:** `companion/src/analysis/iocValue.ts:60`
+
+DUP-1's fix made internalIp.ts the one range table (RFC1918 + loopback + 0/8 + link-local + CGNAT) precisely because per-module copies had drifted on CGNAT, but iocValue.ts's isPrivateIpv4 — which backs the exported isInternalTarget() SSRF guard that enrichService.ts uses to decide what may be enriched — still lacks the 100.64/10 branch. So isInternalTarget("100.64.0.5", "ip") returns false and a CGNAT address (or a URL/IPv6-mapped host embedding one) is treated as a routable public target, while every importer now refuses to mint CGNAT IOCs, anonymize.ts classifies CGNAT as internal/victim, and providers/urlValidation.ts blocks CGNAT with a pinned test. anonymize.ts:199 even carries a comment explicitly working around this gap ("Classification still uses isInternalIp() (not iocValue.ts's isPrivateIpv4) so the CGNAT range stays covered here") — documentation of known drift, not intent. No test pins CGNAT as enrichable (iocValue.test.ts's public cases are 8.8.8.8/1.1.1.1 only).
+
+**Evidence:**
+```
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+```
+
+**Fix:** Do NOT import ./internalIp.js (analysis/findings tier 2 importing analysis/ingest tier 3 fails check:boundaries, and the ledger only shrinks). Instead add the missing branch to isPrivateIpv4 — `if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10` — extend the range comment at iocValue.ts:58-59, and pin it: isInternalTarget("100.64.0.5", "ip") === true plus a mapped/URL variant (e.g. "http://100.64.0.5/" and "::ffff:100.64.0.5"). This mirrors how urlValidation.ts and anonymize.ts, also below the ingest tier, each keep the range locally with a CGNAT-pinned test. Optionally soften the now-outdated parenthetical in anonymize.ts:199. Full consolidation would require first re-homing internalIp.ts to the shared domain in module-map.json's flatAnalysisFiles (it imports nothing, so it qualifies) — a separate architectural edit.
+
+**Status:** Open
+
+#### DUP2-2 — DUP-2's sweep missed two more local severity-rank tables: inverted encodings in reports/attackLayer.ts and reports/iocBlocklist.ts  `LOW`
+
+**Location:** `companion/src/reports/attackLayer.ts:60`
+
+The new canonical-table comment in stateTypes.ts:6-8 states that only forensicGate.ts, notifications.ts and slashCommand.ts "deliberately keep their own INVERTED encodings", but two more files re-declare a private SEVERITY_RANK with inverted (higher = worse) semantics: reports/attackLayer.ts:60 (Critical: 5 … Info: 1, used by its worse() at :80 and the sort at :157) and reports/iocBlocklist.ts:24 (Critical: 4 … Info: 0, used once at :93). Both escaped DUP-2's grep because they are multi-line and not the { Critical: 0 … } literal; neither is exported, tested against its numeric values, or named in the sanctioned exclusion set — unlike forensicGate's, which is a cross-module contract consumed by findingGrounding. Consequence: a future severity-tier change to the canonical table silently misses these two report generators, and the stateTypes comment's inventory of exceptions is already wrong.
+
+**Evidence:**
+```
+// Worst-wins ordering (higher = worse) when several findings/events touch the same technique.
+const SEVERITY_RANK: Record<Severity, number> = {
+  Critical: 5,
+  High: 4,
+  Medium: 3,
+  Low: 2,
+  Info: 1,
+};
+```
+
+**Fix:** In attackLayer.ts delete the local table, import SEVERITY_RANK from ../analysis/stateTypes.js (the file already imports Severity from there) and flip the two comparisons (worse(): `SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b`; the sort at :157: `SEVERITY_RANK[a[1].worst] - SEVERITY_RANK[b[1].worst]`). In iocBlocklist.ts delete its local table and flip the single comparison at :93 to `SEVERITY_RANK[iocSeverity(ioc)] > SEVERITY_RANK[minSev]`. Both swaps are behavior-preserving (SEVERITY_SCORE/SEVERITY_COLOR are untouched); existing report tests pin the output either way.
+
+**Status:** Open
+
+#### DUP2-3 — escapeRegExp is hand-rolled nine times across companion/src, including a fresh copy the branch carried into veloMessageFields.ts  `LOW`
+
+**Location:** `companion/src/analysis/veloMessageFields.ts:30`
+
+The byte-identical MDN regex-escape idiom `.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")` exists as five named function copies (analysis/anonymize.ts:96, analysis/assetGraph.ts:91, analysis/geoMap.ts:82, analysis/redactPaths.ts:65, reports/glossary.ts:58) and four inline uses (analysis/veloMessageFields.ts:30 — placed in this new module by the branch's extraction, analysis/fpCascade.ts:26, analysis/initialAccess.ts:38, analysis/lookalikeDomains.ts:336). This is exactly the small-helper duplication class DUP-1/DUP-3 consolidated for IP ranges and month tables, and it guards security-relevant surfaces (anonymize's tokenizer, redactPaths): a future correction — e.g. escaping `/` for a literal-embedded pattern, or the `u`-flag identity-escape caveat anonymize.ts:127 documents only locally — must be found and repeated in nine files, and any copy silently drifting weakens the guarantee where it drifts.
+
+**Evidence:**
+```
+function labelPattern(label: string): RegExp {
+  return new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:[ \\t]*([^\\r\\n]+)`, "i");
+}
+```
+
+**Fix:** Create companion/src/analysis/regexEscape.ts exporting escapeRegExp with anonymize.ts's Unicode-mode safety comment, AND add "regexEscape.ts": "shared" to module-map.json's flatAnalysisFiles (the shared layer, rank 0, is importable from all nine sites including reports/glossary.ts — same classification stateTypes.ts already has; without the entry check:boundaries hard-errors on the unclassified file). Then swap the nine sites and run check:boundaries plus tests/architecture/moduleMap.test.ts.
+
+**Status:** Open
+
+#### DUP2-4 — The streaming-import kind predicate (evtxxml || syslog) is copied five times across the import routes and the resume handler  `LOW`
+
+**Location:** `companion/src/routes/import.ts:335`
+
+The branch's cancellable-syslog fix widened `kind === "evtxxml"` into the two-kind list `kind === "evtxxml" || kind === "syslog"` in five places: routes/import.ts:335 and :645 (cancellable in the twin /import and /import-file job registrations), :362 and :672 (the onParseProgress spread in the same twin blocks), and routes/importRecovery.ts:185 (cancellable for RESUMED jobs). These five literals must stay in lockstep — the next streaming importer (the same fix pattern is queued for other large formats per REVIEW.md's PERF notes) requires editing all five, and missing only importRecovery.ts:185 would produce a job that is cancellable on first run but silently uncancellable after a server restart resumes it, with no test tying the two files together.
+
+**Evidence:**
+```
+        cancellable: aiDependent || kind === "evtxxml" || kind === "syslog",
+...
+        ...(kind === "evtxxml" || kind === "syslog" ? { onParseProgress: tracking.onParseProgress } : {}),
+...
+// importRecovery.ts:185
+      cancellable: (job) => job.parameters?.kind === "evtxxml" || job.parameters?.kind === "syslog",
+```
+
+**Fix:** Hoist `export const PARSE_PROGRESS_KINDS = new Set(["evtxxml", "syslog"])` with a hasParseProgress(kind) helper into a new routes/importKinds.ts (auto-classified by the routes/** glob; avoid the name "streaming", which import.ts:587 already uses for plaso file-streaming), replace the five literals, and add a test asserting importRecovery's kind-driven cancellable component matches the registration's per kind (the registrations additionally OR in aiDependent, which the resume predicate intentionally lacks — assert only the kind part).
+
+**Status:** Open
+
+#### DUP2-5 — The worst-severity comparator is still declared in nine files although siemImport.ts already exports it as worst()  `LOW`
+
+**Location:** `companion/src/analysis/siemImport.ts:1201`
+
+DUP-2's fix consolidated the SEVERITY_RANK table but left its 2-line worst-wins comparator duplicated: siemImport.ts:1201 exports the canonical `worst` (imported by the syslog/combined-log importers), yet eight more files declare a byte-equivalent private copy over the now-shared table — assetGraph.ts:84, assetOverrides.ts:55, burstDetect.ts:34, correlate.ts:99 (the `<=` variant, same semantics), evidenceGraph.ts:72, exfilCorrelate.ts:18, geoMap.ts:85, initialAccess.ts:14 — plus attackLayer.ts:79's inverted-table variant (finding DUP2-2). This is the identical shape DUP-2 removed one level down: a canonical export exists while consumers re-declare it, because the graph/correlation modules may not import the importer-layer siemImport. Direction is easy to get backwards when copying (an inverted `<` silently returns the LESS severe value), and the drift can only be caught by eye since each copy compiles fine.
+
+**Evidence:**
+```
+// assetGraph.ts:84 (same two lines in 7 more files)
+function worse(a: Severity, b: Severity): Severity {
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
+}
+// siemImport.ts:1201 — the already-exported canonical
+export function worst(a: Severity, b: Severity): Severity {
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
+}
+```
+
+**Fix:** Apply the branch's own pattern one more time: add `export function worstSeverity(a: Severity, b: Severity): Severity` to stateTypes.ts beside SEVERITY_RANK (cycle-free — stateTypes has only type imports), delete the eight local copies in favor of it, and keep siemImport's `worst` as a one-line re-export (exactly how isInternalIpv4 is surfaced there) so the many existing importer call sites are untouched. attackLayer.ts picks it up as part of DUP2-2's swap.
+
+**Status:** Open
+
+
 ## 4. Test Coverage Gaps
 
 Test coverage in this repository is unusually strong for its riskiest surfaces: `companion/tests/analysis/zipExtract.test.ts` and `zipArchive.test.ts` exercise zip-slip, zip-bomb caps, and even AES-tamper-vs-wrong-password discrimination with real fixtures; `caseEncryption.test.ts` pins a frozen v1 container as a regression vector; and `http/originGuard.test.ts` covers DNS-rebinding from every angle. The remaining gaps cluster at the team-authentication trust boundary: the OIDC ID-token verifier (`companion/src/auth/oidcClient.ts`) has only a happy-path test and no forged/alg-none/wrong-nonce rejections, the `/auth/bootstrap` first-admin route (`companion/src/auth/authRoutes.ts`) has no refusal-branch tests, and the single-writer guard's corruption/release-safety branches are unexercised. One demonstrated crash branch in `zipExtract.ts`'s central-directory scan also lacks a corrupt-archive test.
@@ -345,6 +518,97 @@ let ptr = archive.readUInt32LE(eocd + 16);
 **Status:** Fixed in d566a138.
 
 
+### Second pass (2026-08-21)
+
+The first pass's five gaps (TC-1..TC-5) are genuinely closed, and most of this branch's fix commits arrived with their behavior pinned: `parseSyslogProgress`'s abort/progress contract (`companion/tests/analysis/syslogImport.test.ts`), all three `tesseractDataOptions` resolution branches (`ocrRedact.test.ts`), the `client_info() FROM scope()` projection in `getFlowInfo` (`tests/integrations/velociraptor.test.ts`), the backfill per-line skip (`tests/composition/backfillCaptureLog.test.ts`), the host-scope decision throw (`tests/dashboard/hostScopePanel.test.ts`), and the extracted `clientInventory.ts`/`veloMessageFields.ts`/`bsdTime.ts` modules all keep their pre-move coverage through re-exports. What remains untested clusters where a fix introduced a NEW invariant without a test to guard it — the consolidated IP classifier's IPv4-shape requirement in `siemImport.ts`, the asset-graph generation token in `public/js/dashboard-asset-graph.js`, and `huntQueryParser.ts`'s rewritten position arithmetic — plus one residual crash branch (`zipArchive.ts`'s local-header offset) that the TC-5 guard demonstrably does not reach. `docker-entrypoint.sh`'s run-as-mount-owner and confined-chown logic is POSIX shell and outside vitest's reach; its ~25 external-review fixes remain manually verified only.
+
+#### TC2-1 — isPublicIpv4's IPv4-shape requirement (blank/IPv6 logon sources count as internal) is pinned by zero tests — the naive-negation regression the code's own comment forbids passes the whole suite  `MEDIUM`
+
+**Location:** `companion/src/analysis/siemImport.ts:815`
+
+The DUP-1 consolidation rewrote isPublicIpv4 as a thin wrapper over the new shared isInternalIpv4, and both its comment (siemImport.ts:812-813) and internalIp.ts:6-8 warn that it must stay "IPv4-shaped AND not internal", never a plain !isInternalIpv4 — because isInternalIpv4 returns false (not-internal) for non-IPv4 strings. But no test anywhere exercises that property: the logonRisk suite (companion/tests/analysis/siemImport.test.ts:84-112) feeds only IPv4-shaped sources for types 3/10 (the empty-string calls are types 8/9, which are Medium unconditionally), the mapWindows end-to-end tests use "203.0.113.9" and "::ffff:10.10.200.11" (which cleanIp normalizes to IPv4 before logonRisk sees it), loginGraph.test.ts uses only IPv4s, and no test references isInternalIpv4 at all. If someone "simplifies" line 815 to `!isInternalIpv4(ip)` — the exact cleanup the comment forbids, natural now that the shared classifier sits one import away — every one of the 9,962 tests stays green while logonRisk grades every blank-source 4624 type-3 logon (IpAddress "-" is routine for local/service logons; cleanIp maps it to "") and every routable-IPv6 source (which cleanIp deliberately keeps, siemImport.ts:629) as an internet-facing logon: Medium + T1078, silently flooding the forensic timeline that AI synthesis reads with false external-access findings. The shared classifier's own range boundaries (172.15 vs 172.16, 100.63 vs 100.64, 0/8, 169.254) also have no direct unit spec — only CGNAT/0-8 are pinned indirectly via one emailImport Received-walk test.
+
+**Evidence:**
+```
+// so this must stay "IPv4-shaped AND not internal", never a plain !isInternalIpv4 (which would call
+// a blank/IPv6 source public and make logonRisk grade e.g. a blank-source type-3 logon external).
+function isPublicIpv4(ip: string): boolean {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip.trim()) && !isInternalIpv4(ip);
+}
+```
+
+**Fix:** Two small additions. (1) In companion/tests/analysis/siemImport.test.ts's "logonRisk — logon-type grading" describe, pin the shape requirement through the public surface: `expect(logonRisk(3, "").severity).toBeUndefined()` and `expect(logonRisk(3, "").mitre).toEqual([])`; same for logonRisk(3, "2001:db8::5") and logonRisk(10, "2001:db8::5") (typeName decoded, severity undefined); plus one mapWindows end-to-end case `parseSiemExport(elastic(logon4624("3", "-")))` asserting severity "Low" and mitreTechniques []. (2) Add companion/tests/analysis/internalIp.test.ts unit-speccing isInternalIpv4's full table: true for 10.0.0.1, 127.0.0.1, 0.1.2.3, 192.168.1.1, 172.16.0.1, 172.31.255.255, 169.254.10.10, 100.64.0.1, 100.127.255.255; false for the boundary neighbours 172.15.255.255, 172.32.0.1, 100.63.255.255, 100.128.0.1, 192.169.0.1, and for non-IPv4 inputs "", "-", "::1", "2001:db8::5", "10.0.0" (documenting that false means "not internal IPv4", not "public").
+
+**Status:** Open
+
+#### TC2-2 — The asset-graph generation-token race guard (commit 8f10ebd3) has no test — the harness can pin the out-of-order-response behavior but no test loads dashboard-asset-graph.js at all  `MEDIUM`
+
+**Location:** `public/js/dashboard-asset-graph.js:39`
+
+Commit 8f10ebd3 added assetGraphLoadSeq to loadAssetGraph so that when an analyst switches cases fast, a stale request's late response (success OR failure) cannot overwrite the newer case's graph, and so that the LATEST load's failure clears the cached graph instead of leaving the previous case's assets on screen with hasAssetGraph() wrongly true. None of this is tested: no file in companion/tests loads dashboard-asset-graph.js (hostFacetMerge.test.ts stubs assetOverrideMerges directly, and the only other mentions are comments), so both new branches — `seq !== assetGraphLoadSeq → ignore` and `!g || !Array.isArray(g.assets) → clear + repaint` — plus hasAssetGraph()'s trust in that state are invisible to the suite. The sibling fix from the same commit series (dashboard-host-scope.js's decideHostScope throw) DID get harness tests in hostScopePanel.test.ts, proving the vm-based loadDashboardModule pattern handles exactly this module shape (stubbed fetch + document). If the token logic regresses — e.g. a refactor to async/await drops the seq capture, or moves the ++ after the fetch — fast case switches silently paint case A's assets and IOC edges over case B again (cross-case evidence displayed under the wrong case id), and every test stays green. The module is load-clean (no module-scope DOM access; assetTypesEnabled is a local Set), so the test needs only fetch, document.getElementById, and DfirTimelineView stubs.
+
+**Evidence:**
+```
+    const seq = ++assetGraphLoadSeq;
+    fetch(`/cases/${caseId}/asset-graph${DfirTimelineView.timeQuery()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((g) => {
+        if (seq !== assetGraphLoadSeq) return; // superseded by a newer load — ignore entirely
+        if (!g || !Array.isArray(g.assets)) {
+          assetGraphData = null;
+          renderAssetGraph();
+          renderAssetList();
+          return;
+        }
+        assetGraphData = g;
+```
+
+**Fix:** Add companion/tests/dashboard/assetGraphPanel.test.ts following hostScopePanel.test.ts's pattern: `loadDashboardModule<{loadAssetGraph(id: string): void; hasAssetGraph(): boolean; assetGraphAssets(): Array<{name: string}>}>("dashboard-asset-graph.js", ["dashboard-escape.js"], { fetch: fetchStub, document: { getElementById: () => ({ innerHTML: "", textContent: "", style: {} }), querySelectorAll: () => [] }, DfirTimelineView: { timeQuery: () => "" } })` where fetchStub records a manually-resolvable deferred per call. Three tests: (1) out-of-order success — call loadAssetGraph("case-a") then loadAssetGraph("case-b"); resolve B's deferred with `{ok: true, json: async () => ({assets: [{name: "b-host", type: "host", compromised: false}], iocs: [], edges: []})}`, flush microtasks, then resolve A with an a-host graph; assert assetGraphAssets() still returns b-host and hasAssetGraph() is true. (2) stale failure ignored — resolve the OLD load with `{ok: false}` after the new one succeeded; assert the graph survives. (3) latest failure clears — a single loadAssetGraph whose response is `{ok: false, json: async () => ({error: "boom"})}`; assert hasAssetGraph() returns false and assetGraphAssets() is empty (the error body must never be cached as graph data).
+
+**Status:** Open
+
+#### TC2-3 — readZip's local-header offset is unguarded and untested — a crafted zip passes the new TC-5 EOCD guard and still surfaces Node's raw ERR_OUT_OF_RANGE (demonstrated)  `LOW`
+
+**Location:** `companion/src/analysis/zipArchive.ts:193`
+
+The TC-5 fix bounded the central-directory pointer in archiveIsEncrypted (zipExtract.ts:73) with two tests, but its own fix text also called for the same bound "on localOffset + 30 before the local-header reads at lines 193-194" — and the fix commit never touched zipArchive.ts. The gap is real today, not speculative: I built a zip via the repo's own createZip, overwrote the central record's relative-offset-of-local-header field (ptr+42) with 0xffffff00, and called extractZipEntries — archiveIsEncrypted's guard passes (the central record itself is in bounds, signature and flags valid), then readZip line 193 throws `RangeError ERR_OUT_OF_RANGE: The value of "offset" is out of range. It must be >= 0 and <= 125. Received 4294967066`. Through the tools run-upload route (composition/externalTools.ts:256 → routes/tools.ts catch) the analyst again receives Node's internal offset message instead of the actionable "corrupt ZIP" wording — exactly the failure mode TC-5 existed to eliminate. readZip's own ptr walk (line 179) is also unguarded for its second caller, caseExportArchive.ts:496, which never runs archiveIsEncrypted first. No test in zipExtract.test.ts or zipArchive.test.ts crafts a bad localOffset, so the branch is invisible to the suite.
+
+**Evidence:**
+```
+    // Jump to the local header to find the actual data start (its name/extra lengths may differ).
+    const localNameLen = archive.readUInt16LE(localOffset + 26);
+    const localExtraLen = archive.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+```
+
+**Fix:** In readZip, add two bounds inside the walk loop: `if (ptr + 46 > archive.length) throw new Error("corrupt ZIP: central directory out of bounds");` before the SIG_CENTRAL check at line 179 (covers the caseExportArchive.ts caller that skips archiveIsEncrypted), and `if (localOffset + 30 > archive.length) throw new Error("corrupt ZIP: local header out of bounds");` before line 193. Then add the test that demonstrated the defect to companion/tests/analysis/zipExtract.test.ts, mirroring the two existing crafted-EOCD tests: build createZip([{path: "sample.bin", data: Buffer.from("payload")}]), locate the EOCD (0x06054b50 scan), read the central-directory start from eocd+16, overwrite the localOffset field with `archive.writeUInt32LE(0xffffff00, ptr + 42)`, and expect extractZipEntries to throw /corrupt ZIP: local header/i — currently it throws the raw RangeError, so the test fails until the guard lands.
+
+**Status:** Open
+
+#### TC2-4 — location()'s binary-search rewrite (PF-2 fix) is only pinned at line 1, column 1 — no test asserts a multi-line or mid-line error position that could catch an off-by-one  `LOW`
+
+**Location:** `companion/src/analysis/huntQueryParser.ts:108`
+
+The PF-2 fix replaced location()'s trivially-correct slice/split with a precomputed newline-offset array, a one-slot module-level memo (newlineMemoText/newlineMemoOffsets), and hand-rolled binary-search arithmetic (`line: low + 1`, `lineStart = newlines[low-1] + 1`, `column: offset - lineStart + 1`). The fix's stated contract was "keeps error-path syntaxError() positions identical", but the only position assertion in companion/tests/analysis/huntQueryParser.test.ts is `line: 1, column: 1` for an error at offset 0 — the degenerate case that almost any wrong formula still satisfies (both `<` and `<=` in the comparison, and ±1 slips in lineStart, all produce 1/1 there). These positions are analyst-facing: hunt-workbench.js:325 renders `"— line ${typed.line}, column ${typed.column}"` next to the query editor on POST /hunt-query/validate and /execute failures. A regression in the comparison direction, the lineStart derivation, or a memo-staleness bug across consecutive parses of different texts would silently point every multi-line error at the wrong place while the entire suite stays green.
+
+**Evidence:**
+```
+  let low = 0;
+  let high = newlines.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (newlines[mid] < offset) low = mid + 1;
+    else high = mid;
+  }
+  const lineStart = low === 0 ? 0 : newlines[low - 1] + 1;
+  return { line: low + 1, column: offset - lineStart + 1 };
+```
+
+**Fix:** Extend companion/tests/analysis/huntQueryParser.test.ts with three verified cases (I probed each against the actual parser — two of the originally proposed inputs do not behave as described): (1) multi-line: parseHuntQuery("source.ip=192.0.2.1\n| group by sorce.ip") throws code "unknown_field" at { line: 2, column: 12 } — note the grammar is `| group by <field>`; the originally proposed "| group_by sorce.ip" instead throws unknown_stage at line 2, column 3 (usable as a second pin if wanted, but not for the field column). (2) first-line non-1 column: parseHuntQuery("source.ip=192.0.2.1 and sorce.ip=10.0.0.1") throws "unknown_field" at { line: 1, column: 25 } — the originally proposed "severity=Zigh" parses successfully (severity values are not validated at parse time) and must not be used. (3) memo staleness: in one test, parseHuntQuery("host.name=a\nand sorce.ip=1") throws at { line: 2, column: 5 }, then parseHuntQuery("host.name=a and\nsorce.ip=1") throws at { line: 2, column: 1 } — same error token, different newline layouts, pinning that newlineOffsets' one-slot memo re-keys on the second text. Each follows the existing try/catch + toMatchObject pattern at huntQueryParser.test.ts:62-75.
+
+**Status:** Open
+
+
 ## 5. Performance Concerns in VQL/Parsing Logic
 
 Parsing and VQL-adjacent code is largely in good shape: the Plaso/CSV pipeline streams multi-hundred-MB super-timelines with bounded memory (`companion/src/analysis/plasoImport.ts` + `csvImport.ts`), the hunt-query executor enforces scanned-row/duration/group/regex budgets with paged SQLite reads (`companion/src/analysis/huntQueryExecutor.ts`), and cross-source correlation uses hash-bucketed union-find instead of pairwise scans (`correlate.ts`). The remaining defects cluster in two patterns: per-row `new RegExp` construction inside million-iteration import loops, and one line-based importer (`syslogImport.ts`) that still materializes every mapped line before aggregating — the exact OOM pattern the Plaso path was rebuilt to avoid, on the same `/import-file` route that explicitly advertises 400 MB+ files. Note: there is no Python source in this repository (the only .py files are vendored under node_modules), so this dimension covers the TypeScript server only.
@@ -435,6 +699,70 @@ const rec = (await this.listClients()).find((c) => c.clientId === clientId);
 **Status:** Fixed in f27c41d9.
 
 
+### Second pass (2026-08-21)
+
+The first pass's five performance fixes hold up well under re-review: `huntQueryParser.ts`'s one-slot newline memo is correct under any call pattern (parsing is fully synchronous, every `location()` call in a parse passes the same string, and a text change merely recomputes), `veloMessageFields.ts` precompiles its label patterns with a sound lazy fallback, `evtxXmlImport.ts`'s memoized `elText`/`attr` maps carry no `lastIndex` state, and `getFlowInfo` now does a targeted `client_info()` lookup instead of enumerating the fleet. The second pass found one significant regression-shaped gap in the PF-1 streaming rework: `syslogImport.ts`'s accumulator buffers a full `MappedEvent` for every *failed* sshd auth line even though the brute-force correlation only ever rewrites *accepted* events — so the one input the feature targets (an auth.log flood) measured +526 MB peak and 2x parse time versus +2 MB for an equal-size non-sshd log. Two smaller residues of the same fixed classes remain: the hunt executor still compiles its `matches` RegExp per row (up to 50k throwaway compiles per query), and the evtx count loop the PF-3 fix introduced blocks the event loop ~0.4 s per 300 MB with no yield or abort check — the exact pattern commit b1360438 fixed for syslog's count. The other hunting grounds (`correlate.ts`, `superTimelineStore.ts`'s paged SQLite query, `huntQueryAggregation.ts`, `logAggregate.ts`, `veloRowNormalize.ts`, and the chainsaw/hayabusa/wazuh/k8s importers) came up clean.
+
+#### PF2-1 — Syslog accumulator buffers a full MappedEvent for every failed sshd auth line — a brute-force flood defeats the PF-1 streaming fix (526 MB peak, 2x parse time, measured)  `HIGH`
+
+**Location:** `companion/src/analysis/syslogImport.ts:238`
+
+createSyslogAccumulator.line() holds back BOTH outcomes of parseSshAuth — accepted and failed — as full MappedEvents in sshEvents[] until finish(), but markSshBruteForce() can only ever rewrite ACCEPTED events (sshBruteForce.ts:95-108: the failed branch just records ms into failuresByIp and `continue`s; hits are pushed exclusively from the accepted branch). Failed lines therefore gain nothing from being buffered as events, yet they are the dominant content of exactly the input this correlation targets: an auth.log from an internet-facing host under password guessing is line after line of `Failed password for ... from ...`. Measured on the real route path (parseSyslogProgress): a 2M-line / 212 MB sshd failed-password flood peaks +526 MB RSS and parses in 39.1 s, versus +2 MB and 19.4 s for a same-size non-sshd flood that streams through the aggregator — i.e. for the most plausible large plain-syslog file in IR, the PF-1 materialization (~260 B/line retained plus doubled parse time from allocation/GC churn) is reintroduced, scaling to ~1.3 GB extra at the route's ~512 MB input limit — an OOM kill in a memory-limited container on the same /cases/:id/import-file route PF-1 was rated HIGH for.
+
+**Evidence:**
+```
+if (/^sshd\b/i.test(p.app)) {
+        const auth = parseSshAuth(p.message);
+        if (auth) {
+          sshAuth.push({
+            key: sshEvents.push(m) - 1,
+            ms: Date.parse(p.timestamp) || 0,
+            ip: auth.ip,
+            result: auth.result,
+          });
+          return;
+        }
+      }
+      agg.add(m);
+```
+
+**Fix:** In line(), split by auth.result: for "failed", call agg.add(m) immediately (nothing ever rewrites a failed event) and push only the compact tuple { key: -1, ms, ip, result: "failed" } into sshAuth (markSshBruteForce never reads a failed event's key); keep buffering only "accepted" MappedEvents in sshEvents — bounded by real logins, which are rare. finish() is unchanged: markSshBruteForce hits still reference only accepted keys, so the rewrite/add of the accepted buffer works as today, and ordering stays within the already-documented three-way-tie tolerance of agg.finish()'s re-sort. Optionally go further and fold failures straight into a Map<ip, number[]> of timestamps as lines stream (markSshBruteForce builds exactly that internally), shrinking the flood's residual to raw numbers per IP; but eliminating the per-failure MappedEvent (description + aggKey strings dominate the 526 MB) is the essential, small diff.
+
+**Status:** Open
+
+#### PF2-2 — Hunt executor compiles the matches-predicate RegExp per row per evaluation — the one per-row compile the PF-3/PF-4 sweep missed  `LOW`
+
+**Location:** `companion/src/analysis/huntQueryExecutor.ts:249`
+
+compareScalar() constructs `new RegExp(String(expected ?? ""), predicate.regexFlags)` on every evaluation of a `matches` predicate, although the pattern and flags are per-query constants (a literal from the parsed AST or a resolved $parameter, already validated once by validateHuntRegex at parse time). With maxRegexEvaluations = 50,000 and maxScannedRows = 100,000, a single interactive /hunt-query/execute request performs up to 50k throwaway escape-free compiles of the same pattern: measured 61.4 ms vs 17.2 ms with a cached instance at the full budget — ~45 ms of pure compile waste plus 50k RegExp allocations of GC churn per query, repeated on every keystroke-driven /validate + /execute round-trip from the workbench. duringRange() in the same function similarly re-parses the constant time-window string and re-runs Date.parse(range.from/to) for every row of a `during` predicate. Same defect class as the fixed PF-3/PF-4, on the interactive VQL path instead of the import path.
+
+**Evidence:**
+```
+return new RegExp(String(expected ?? ""), predicate.regexFlags).test(String(actual ?? ""));
+```
+
+**Fix:** Cache per execution in the existing EvaluationContext: add `regexCache: Map<string, RegExp>` (key `${pattern} ${flags}`) created once in executeHuntQuery's state, and in compareScalar look up/compile-once before .test(). Give `during` the same treatment by caching the resolved {fromMs, toMs} per expected-string in the context (the anchorTime is fixed for the whole execution), replacing the per-row duringRange + double Date.parse. No behavior change; both caches die with the request.
+
+**Status:** Open
+
+#### PF2-3 — parseWinEventXmlProgress's event-count loop blocks the event loop ~0.4-0.7 s with no yield or abort check — the exact gap the branch fixed for syslog's count loop  `LOW`
+
+**Location:** `companion/src/analysis/evtxXmlImport.ts:171`
+
+The PF-3 fix replaced the allocating `text.match(/<Event\b/gi)` count with a counting exec loop, but the loop runs fully synchronously before the parse loop's first await: no setImmediate yield and no throwIfImportAborted between the top-of-function check and the end of the count. Measured: 417 ms of uninterrupted event-loop block counting 1M events in a 309 MB export (~0.7 s at the route's ~512 MB limit), during which every other request and any pending job cancellation stalls. The branch itself established that this class must yield — commit b1360438 added SYSLOG_COUNT_CHUNK to parseSyslogProgress with the comment "it MUST yield, or a multi-million-line input would block the event loop (and any pending cancellation) for the whole count before the parse loop's first await" — and the identical reasoning applies verbatim to this sibling counting loop on the same import route.
+
+**Evidence:**
+```
+let total = 0;
+  const countRe = /<Event\b/gi;
+  while (countRe.exec(text) !== null) total++;
+```
+
+**Fix:** Mirror the syslog count fix: every N matches (e.g. a COUNT_CHUNK of 100_000 — each iteration scans a whole event block, so a coarser budget than syslog's per-line 1M is appropriate) do `await new Promise<void>((resolve) => setImmediate(resolve)); throwIfImportAborted(signal);` inside the counting loop. ~5 lines, identical in shape to syslogImport.ts's SYSLOG_COUNT_CHUNK block.
+
+**Status:** Open
+
+
 ## 6. Docker and Dependency Risks
 
 The container story is mostly well-engineered: the 3-stage `Dockerfile` builds with `npm ci` against the lockfile and prunes dev deps, `.dockerignore` keeps evidence (`cases/`), `.env`, `node_modules`, and `.git` out of the build context, `docker-entrypoint.sh` uses `set -e`, quoted expansions, and `exec node` so the server runs as PID 1 with correct signal handling, and `docker-compose.yml` publishes the port to `127.0.0.1` only. The extension's production dependency surface audits clean, and no secrets are baked into the image or compose file. The gaps that remain are operational rather than architectural: the runtime stage never drops root (no `USER` directive) even though the process parses hostile forensic evidence and holds bind mounts back to the host, and `companion/package-lock.json` pins undici 8.3.0, which carries four HIGH advisories (including a TLS certificate-validation bypass) that a simple lockfile refresh within the existing `^8.3.0` range would clear. Image-level `HEALTHCHECK` and digest-pinned base tags round out the fix list.
@@ -506,6 +834,27 @@ FROM node:22-slim AS companion-build
 **Status:** Fixed in f1a45b61.
 
 
+### Second pass (2026-08-21)
+
+After the first pass's DD-1..4 fixes plus the ~14 external-review iterations, this dimension is in strong shape. Production dependencies are now clean: `npm audit --omit=dev` reports **0 vulnerabilities** in `companion/` and **0 HIGH/CRITICAL** in `extension/` (undici/nanoid of DD-2 are refreshed within-range; the extension's vite/vitest/postcss advisories are dev-only and never ship). All three `Dockerfile` stages are digest-pinned (`node:22-slim@sha256:d649c27…`), and `docker-entrypoint.sh` was re-read end-to-end: its lexical/realpath split, `deny_chown` confinement (incl. the new `/opt` denial), dotenv override parsing, and the `KNOWN_STORES` list were all cross-checked against the server's own resolution (`authFactory.ts:22-23`, `server.ts:606`, `runtimeStores.ts`) and found consistent — the auth-hash, cases-root, and store-sibling derivations match on both symlinked and relative roots. One residual inconsistency remains in the healthcheck story: the baked `Dockerfile` probe was deliberately pointed at the auth-exempt `/health` (DD-3), but `docker-compose.yml:61` still probes the auth-gated `/dashboard`.
+
+#### DD2-1 — Compose healthcheck probes auth-gated /dashboard, not /health — reports unhealthy under the recommended team mode  `LOW`
+
+**Location:** `docker-compose.yml:61`
+
+The DD-3 fix deliberately baked a Dockerfile HEALTHCHECK against /health because /health is the one endpoint exempt from both the host-check and the auth gate (PUBLIC_GET in companion/src/auth/policy.ts:14, HOST_CHECK_EXEMPT_PATHS in originGuard.ts:228). The compose healthcheck was left probing GET /dashboard, which is an AUTHENTICATED_SHELL (policy.ts:23). A compose healthcheck overrides the baked one, so compose users' liveness probe is the /dashboard one. In single-user mode (the shipped compose default) /dashboard returns 200 and the probe passes, but when the operator enables the multi-user config that railway.toml explicitly recommends for real cases (DFIR_AUTH_MODE=team), teamAuth.middleware() gates /dashboard: an unauthenticated request whose Accept header lacks text/html — exactly the case for the healthcheck's Node fetch(), which sends Accept: */* — takes the res.status(401).json(...) branch in teamAuth.ts:239 (not the HTML redirect). r.ok is then false, the probe exits 1, and Docker marks the fully-functional container permanently 'unhealthy' (which orchestrators like Portainer/Swarm may act on). The failure consequence is a healthy container reported unhealthy under the documented team-mode deployment.
+
+**Evidence:**
+```
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4773/dashboard').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+```
+
+**Fix:** In docker-compose.yml:61 change the probe URL from /dashboard to /health: test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4773/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]. If also de-hardcoding the port, read it from the environment inside the Node one-liner exactly as the Dockerfile HEALTHCHECK does ('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health') — compose's CMD exec form performs no shell expansion, so $DFIR_PORT in the URL string would not work.
+
+**Status:** Open
+
+
 ## Finding Index
 
 | ID | Severity | Location | Title |
@@ -534,3 +883,18 @@ FROM node:22-slim AS companion-build
 | DD-2 | HIGH | `companion/package.json:83` | Lockfile pins undici 8.3.0 and nanoid 5.1.11, each carrying HIGH npm advisories with in-range fixes |
 | DD-3 | LOW | `Dockerfile:70` | No HEALTHCHECK baked into the image; only compose users get liveness checks |
 | DD-4 | LOW | `Dockerfile:11` | Base images use floating tags without digest pinning; compose pulls :latest |
+| EH2-1 | MEDIUM | `public/js/dashboard-host-scope.js:228` | loadHostScope silently ignores a failed ledger read and keeps the previous case's clearance ledger on screen |
+| EH2-2 | LOW | `public/js/dashboard-asset-graph.js:53` | loadAssetGraph's rejection arm bypasses the new generation-token clearing, leaving the stale cross-case graph the fix claims to prevent |
+| DUP2-1 | MEDIUM | `companion/src/analysis/iocValue.ts:60` | The internal-IPv4 consolidation stopped short of iocValue.ts — the enrichment SSRF gate still treats CGNAT 100.64/10 as public |
+| DUP2-2 | LOW | `companion/src/reports/attackLayer.ts:60` | DUP-2's sweep missed two more local severity-rank tables: inverted encodings in reports/attackLayer.ts and reports/iocBlocklist.ts |
+| DUP2-3 | LOW | `companion/src/analysis/veloMessageFields.ts:30` | escapeRegExp is hand-rolled nine times across companion/src, including a fresh copy the branch carried into veloMessageFields.ts |
+| DUP2-4 | LOW | `companion/src/routes/import.ts:335` | The streaming-import kind predicate (evtxxml || syslog) is copied five times across the import routes and the resume handler |
+| DUP2-5 | LOW | `companion/src/analysis/siemImport.ts:1201` | The worst-severity comparator is still declared in nine files although siemImport.ts already exports it as worst() |
+| TC2-1 | MEDIUM | `companion/src/analysis/siemImport.ts:815` | isPublicIpv4's IPv4-shape requirement (blank/IPv6 logon sources count as internal) is pinned by zero tests — the naive-negation regression the code's own comment forbids passes the whole suite |
+| TC2-2 | MEDIUM | `public/js/dashboard-asset-graph.js:39` | The asset-graph generation-token race guard (commit 8f10ebd3) has no test — the harness can pin the out-of-order-response behavior but no test loads dashboard-asset-graph.js at all |
+| TC2-3 | LOW | `companion/src/analysis/zipArchive.ts:193` | readZip's local-header offset is unguarded and untested — a crafted zip passes the new TC-5 EOCD guard and still surfaces Node's raw ERR_OUT_OF_RANGE (demonstrated) |
+| TC2-4 | LOW | `companion/src/analysis/huntQueryParser.ts:108` | location()'s binary-search rewrite (PF-2 fix) is only pinned at line 1, column 1 — no test asserts a multi-line or mid-line error position that could catch an off-by-one |
+| PF2-1 | HIGH | `companion/src/analysis/syslogImport.ts:238` | Syslog accumulator buffers a full MappedEvent for every failed sshd auth line — a brute-force flood defeats the PF-1 streaming fix (526 MB peak, 2x parse time, measured) |
+| PF2-2 | LOW | `companion/src/analysis/huntQueryExecutor.ts:249` | Hunt executor compiles the matches-predicate RegExp per row per evaluation — the one per-row compile the PF-3/PF-4 sweep missed |
+| PF2-3 | LOW | `companion/src/analysis/evtxXmlImport.ts:171` | parseWinEventXmlProgress's event-count loop blocks the event loop ~0.4-0.7 s with no yield or abort check — the exact gap the branch fixed for syslog's count loop |
+| DD2-1 | LOW | `docker-compose.yml:61` | Compose healthcheck probes auth-gated /dashboard, not /health — reports unhealthy under the recommended team mode |
