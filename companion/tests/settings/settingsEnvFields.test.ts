@@ -83,6 +83,35 @@ describe("Settings modal ⇄ POST /settings/env allowlist", () => {
   });
 });
 
+describe("Settings modal \u21c4 .env.example", () => {
+  // The reverse of the allowlist contract above: a documented setting the UI never renders is
+  // invisible to any analyst who does not read .env.example, and nothing failed when one drifted
+  // out. 48 had — every auth and network-access key, the whole Jira/ServiceNow/Slack/Teams/Telegram
+  // set, the log level, the update check. Most are deliberately not editable from a browser, which
+  // is a reason to render them READ-ONLY, not a reason to omit them.
+  //
+  // Reachable means the Settings modal OR the setup wizard, which configures NSRL through its own
+  // field helper rather than an `env-` id — measuring only the modal is what hid that in the first
+  // place.
+  it("renders every DFIR_* setting documented in .env.example", async () => {
+    const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
+    const documented = new Set([...example.matchAll(/^#?\s*(DFIR_[A-Z0-9_]+)=/gm)].map((m) => m[1]));
+
+    const html = await dashboardHtml();
+    const wizard = await readFile(
+      new URL("../../../public/js/dashboard-wizard-steps.js", import.meta.url),
+      "utf8",
+    );
+    const reachable = new Set<string>([
+      ...[...html.matchAll(/env-(DFIR_[A-Z0-9_]+)/g)].map((m) => m[1]),
+      ...[...wizard.matchAll(/F\(\s*"(DFIR_[A-Z0-9_]+)"/g)].map((m) => m[1]),
+    ]);
+
+    const missing = [...documented].filter((k) => !reachable.has(k)).sort();
+    expect(missing, `documented in .env.example but nowhere in the UI: ${missing.join(", ")}`).toEqual([]);
+  });
+});
+
 describe("saveSettings()", () => {
   it("posts only the keys the analyst actually changed", async () => {
     // saveSettings moved to js/dashboard-env-settings.js (#415 tier 3) and openSettingsModal to a

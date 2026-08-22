@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
+
 ### Fixed
 - **Exporting a case on Windows no longer fails as a security refusal** — a sidecar save during the export was reported as a symlink attack.
 
