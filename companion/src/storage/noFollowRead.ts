@@ -20,6 +20,13 @@ import { constants } from "node:fs";
  */
 export const NOFOLLOW_SUPPORTED = typeof constants.O_NOFOLLOW === "number";
 
+/**
+ * How many times openNoFollow re-opens a file that was replaced between its check and its open.
+ * Only the non-O_NOFOLLOW path can see this. A concurrent atomic write loses the race at most once
+ * or twice; anything still swapping after this many tries is treated as hostile.
+ */
+const SWAP_RETRIES = 5;
+
 export type LinkGuardKind = "symlink" | "hardlink";
 
 /**
@@ -49,34 +56,53 @@ export class LinkGuardError extends Error {
  * The caller owns the returned handle and must close it.
  */
 export async function openNoFollow(path: string): Promise<FileHandle> {
-  // Without O_NOFOLLOW the pre-check is the only thing that can reject a link that is ALREADY in
-  // place; the identity comparison after the open is what catches a swap during it.
-  const before = NOFOLLOW_SUPPORTED ? null : await lstat(path);
-  if (before?.isSymbolicLink()) throw new LinkGuardError("symlink", path);
+  // An identity mismatch means the file was REPLACED between the check and the open. A symlink
+  // swap does that — and so does every ordinary atomic write in this codebase, which writes a temp
+  // file and renames it over the target. On the O_NOFOLLOW path `before` is null and the question
+  // never arises, so this only ever bit Windows: exporting a case while any sidecar saved reported
+  // the analyst's own write as "symlink detected … refusing to include in export (security)".
+  //
+  // Retrying is safe. The guarantee is that the returned handle's identity matches a pre-check that
+  // saw a non-symlink, and each attempt re-establishes both halves of that from scratch. An
+  // attacker swapping repeatedly cannot make a mismatched pair look matched; they can only cause
+  // more attempts, which the bound below turns into a refusal.
+  for (let attempt = 0; ; attempt++) {
+    // Without O_NOFOLLOW the pre-check is the only thing that can reject a link that is ALREADY in
+    // place; the identity comparison after the open is what catches a swap during it.
+    const before = NOFOLLOW_SUPPORTED ? null : await lstat(path);
+    if (before?.isSymbolicLink()) throw new LinkGuardError("symlink", path);
 
-  let handle: FileHandle;
-  try {
-    handle = await open(path, constants.O_RDONLY | (NOFOLLOW_SUPPORTED ? constants.O_NOFOLLOW : 0));
-  } catch (err) {
-    // ELOOP is precisely "you asked me not to follow a symlink, and it is one".
-    if ((err as NodeJS.ErrnoException).code === "ELOOP") throw new LinkGuardError("symlink", path);
-    throw err;
-  }
-
-  try {
-    const opened = await handle.stat();
-    if (opened.nlink > 1) throw new LinkGuardError("hardlink", path);
-    // Windows fallback: the file the descriptor points at must be the file that was checked. Inode
-    // and device are the identity a rename or relink cannot preserve.
-    if (before && (before.ino !== opened.ino || before.dev !== opened.dev)) {
-      throw new LinkGuardError("symlink", path);
+    let handle: FileHandle;
+    try {
+      handle = await open(path, constants.O_RDONLY | (NOFOLLOW_SUPPORTED ? constants.O_NOFOLLOW : 0));
+    } catch (err) {
+      // ELOOP is precisely "you asked me not to follow a symlink, and it is one".
+      if ((err as NodeJS.ErrnoException).code === "ELOOP") throw new LinkGuardError("symlink", path);
+      throw err;
     }
-    return handle;
-  } catch (err) {
-    await handle.close().catch(() => {
-      /* the throw below is what the caller needs to see */
-    });
-    throw err;
+
+    try {
+      const opened = await handle.stat();
+      if (opened.nlink > 1) throw new LinkGuardError("hardlink", path);
+      // Windows fallback: the file the descriptor points at must be the file that was checked.
+      // Inode and device are the identity a rename or relink cannot preserve.
+      if (before && (before.ino !== opened.ino || before.dev !== opened.dev)) {
+        await handle.close().catch(() => {
+          /* replaced under us; the retry re-opens from scratch */
+        });
+        // Persistent churn is indistinguishable from a determined attacker, so refuse rather than
+        // spin. A rename loses to the next attempt; only something re-replacing the file on every
+        // single try reaches this.
+        if (attempt >= SWAP_RETRIES) throw new LinkGuardError("symlink", path);
+        continue;
+      }
+      return handle;
+    } catch (err) {
+      await handle.close().catch(() => {
+        /* the throw below is what the caller needs to see */
+      });
+      throw err;
+    }
   }
 }
 

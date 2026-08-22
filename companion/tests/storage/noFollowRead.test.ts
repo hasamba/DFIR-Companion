@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, symlink, link, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,5 +143,87 @@ describe("openNoFollow", () => {
     const path = join(dir, "aliased-2");
     await link(secretPath, path);
     await expect(openNoFollow(path)).rejects.toBeInstanceOf(LinkGuardError);
+  });
+});
+
+// The branch below is unreachable on this platform in normal operation: Linux HAS O_NOFOLLOW, so
+// `before` is null and the identity comparison never runs. It runs on Windows, where it turned
+// every concurrent atomic write into "symlink detected … refusing to include in export (security)"
+// — an analyst exporting a case while any sidecar saved. Forcing the fallback is the only way to
+// cover it anywhere but Windows, and it went unnoticed precisely because nothing did.
+describe("openNoFollow — the Windows fallback, forced (no O_NOFOLLOW)", () => {
+  const loadWithFallback = async (lstatImpl?: (p: string) => Promise<unknown>) => {
+    vi.resetModules();
+    vi.doMock("node:fs", async () => {
+      const real = await vi.importActual<typeof import("node:fs")>("node:fs");
+      const constants = { ...real.constants } as Record<string, unknown>;
+      delete constants.O_NOFOLLOW;
+      return { ...real, constants, default: { ...real, constants } };
+    });
+    if (lstatImpl) {
+      vi.doMock("node:fs/promises", async () => {
+        const real = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+        return { ...real, default: real, lstat: lstatImpl };
+      });
+    }
+    return import("../../src/storage/noFollowRead.js");
+  };
+
+  afterEach(() => {
+    vi.doUnmock("node:fs");
+    vi.doUnmock("node:fs/promises");
+    vi.resetModules();
+  });
+
+  it("takes the fallback path at all once O_NOFOLLOW is gone", async () => {
+    const mod = await loadWithFallback();
+    expect(mod.NOFOLLOW_SUPPORTED).toBe(false);
+  });
+
+  // A rename by our own atomicWrite lands here: the file the descriptor opened is not the file the
+  // check saw, because a legitimate write replaced it in between.
+  it("retries a file replaced between the check and the open, and returns the real content", async () => {
+    const path = join(dir, "swapped-once.txt");
+    await writeFile(path, CONTENT, "utf8");
+
+    const realFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let calls = 0;
+    const mod = await loadWithFallback(async (p: string) => {
+      const st = await realFs.lstat(p);
+      // First look only: report an identity that cannot match the opened descriptor, exactly as a
+      // rename between the two syscalls would.
+      if (calls++ === 0) return { ...st, ino: Number(st.ino) + 1, isSymbolicLink: () => false };
+      return st;
+    });
+
+    const buf = await mod.readFileNoFollow(path);
+    expect(buf.toString("utf8")).toBe(CONTENT);
+    expect(calls).toBeGreaterThan(1); // it actually retried rather than passing first time
+  });
+
+  // The bound is what keeps the retry from becoming a spin against a hostile writer.
+  it("still refuses when the file is replaced on every single attempt", async () => {
+    const path = join(dir, "swapped-always.txt");
+    await writeFile(path, CONTENT, "utf8");
+
+    const realFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let calls = 0;
+    const mod = await loadWithFallback(async (p: string) => {
+      calls++;
+      const st = await realFs.lstat(p);
+      return { ...st, ino: Number(st.ino) + 1, isSymbolicLink: () => false };
+    });
+
+    await expect(mod.readFileNoFollow(path)).rejects.toBeInstanceOf(mod.LinkGuardError);
+    expect(calls).toBeGreaterThan(1); // bounded, not one-shot
+    expect(calls).toBeLessThan(20); // bounded, not a spin
+  });
+
+  // The pre-check still rejects a link that is already in place, fallback or not.
+  it("still refuses a symlink that was there before the open", async () => {
+    const path = join(dir, "fallback-link");
+    await symlink(secretPath, path);
+    const mod = await loadWithFallback();
+    await expect(mod.readFileNoFollow(path)).rejects.toBeInstanceOf(mod.LinkGuardError);
   });
 });

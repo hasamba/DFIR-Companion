@@ -141,13 +141,14 @@ jobs:
   # symlinks, and file-locking timeouts) and surfaced at the worst possible moment, blocking the
   # binaries for two releases running.
   #
-  # `continue-on-error` because the known failures above are not fixed yet: this job exists to make
-  # Windows health VISIBLE per-PR rather than once per release. Drop the flag once the suite is
-  # green on Windows, and it becomes a real gate.
+  # It ran advisory only long enough to fix what it found — a real product bug (the export guard
+  # reading the application's own atomic write as a symlink attack, which only the no-O_NOFOLLOW
+  # fallback can hit) and a timeout calibrated on Linux hardware. It is a gate now: a permanently
+  # red check teaches everyone to ignore CI, which is the same blindness that let Windows rot in
+  # the first place.
   companion-windows:
-    name: Companion test (Windows, advisory)
+    name: Companion test (Windows)
     runs-on: windows-latest
-    continue-on-error: true
     timeout-minutes: 40
     steps:
       - name: Checkout
