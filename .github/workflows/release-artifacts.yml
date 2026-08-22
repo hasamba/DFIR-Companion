@@ -253,9 +253,16 @@ jobs:
         if: steps.creds.outputs.configured == 'true'
         uses: actions/checkout@v4
         with:
-          # git archive below reads the tagged tree, and a shallow clone of a tag ref has it.
-          # fetch-depth 0 anyway: the source archive is what Mozilla reviews, and a truncated
-          # history is not worth risking to save a few seconds.
+          # NO explicit `ref`. That is deliberate, and the opposite of the obvious choice.
+          #
+          # The source archive must match the BINARY being submitted, and that binary was built by
+          # the extension-zip job from ITS checkout — which is also refless. Pinning this one to
+          # the tag would desynchronise the two on a workflow_dispatch that names a tag while
+          # running from a branch: extension-zip would build the branch, this job would archive the
+          # tag, and Mozilla would receive source that does not correspond to the add-on. On the
+          # normal tag-push path both resolve to the same commit anyway.
+          #
+          # The "source matches the package" step below turns that from a comment into a check.
           fetch-depth: 0
 
       - name: Download extension zip (Firefox)
@@ -300,8 +307,51 @@ jobs:
           }
           ls -lh amo-source.zip
 
-      - name: Submit to AMO
+      - name: Check the source matches the package
         if: steps.creds.outputs.configured == 'true'
+        # Submitting source that does not correspond to the binary is a policy violation, and the
+        # way it happens is mundane: a workflow_dispatch naming a tag while the checkout resolves
+        # to a branch. Comparing the version in the checked-out manifest against the one inside the
+        # downloaded artifact catches exactly that, before anything reaches Mozilla.
+        run: |
+          set -euo pipefail
+          SOURCE_VERSION=$(node -p "require('./extension/manifest.json').version")
+          if [ "$SOURCE_VERSION" != "$VERSION" ]; then
+            echo "::error::source tree is version ${SOURCE_VERSION} but the package is ${VERSION} — refusing to submit mismatched source"
+            exit 1
+          fi
+          echo "source and package agree on ${VERSION}"
+
+      - name: Has AMO already got this version?
+        if: steps.creds.outputs.configured == 'true'
+        id: existing
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # Makes the job RE-RUNNABLE, which matters more than it sounds. Re-running a release after
+        # one job fails is routine, and AMO refuses a version number it already holds: without this
+        # check, the second run turns a perfectly good submission into a red release, and the only
+        # way to get green is to burn a version number.
+        #
+        # `has-version` exits 2 when it cannot tell (auth failure, AMO outage, non-JSON). That is
+        # NOT treated as "no": guessing wrong in that direction is what causes the duplicate.
+        run: |
+          set -euo pipefail
+          ADDON_ID="dfir-companion@hasamba.github.io"
+          if ! ANSWER=$(node extension/scripts/amoApi.mjs has-version "$ADDON_ID" "$VERSION"); then
+            echo "::error::could not ask AMO whether it already holds ${VERSION} — stopping rather than risking a duplicate submission"
+            exit 1
+          fi
+          echo "amo has-version -> $ANSWER"
+          if [ "$ANSWER" = "yes" ]; then
+            echo "::notice::AMO already holds version ${VERSION}; skipping the upload. This run is a no-op, not a failure."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Submit to AMO
+        if: steps.creds.outputs.configured == 'true' && steps.existing.outputs.skip != 'true'
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -310,7 +360,7 @@ jobs:
         # job burns its timeout on a submission that already succeeded.
         run: |
           set -euo pipefail
-          npx --yes web-ext@10 sign \
+          npx --yes web-ext@10.6.0 sign \
             --source-dir dist-firefox \
             --channel listed \
             --upload-source-code amo-source.zip \
@@ -321,48 +371,24 @@ jobs:
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-        # The real safety net, mirroring the Chrome job: web-ext exiting 0 is not proof the
-        # version exists on AMO. This asks AMO directly. It verifies the version was ACCEPTED
-        # FOR REVIEW, which is the most a tag can achieve — a human still has to approve it
-        # before anyone can install it.
+        # The real safety net, mirroring the Chrome job: web-ext exiting 0 is not proof AMO holds
+        # the version. This asks AMO. It runs on the skipped path too, so a re-run still ends by
+        # confirming the version is really there rather than assuming the earlier run left it.
+        #
+        # What it proves is "accepted for review" — the most a tag can achieve. A human reviewer
+        # still has to approve the version before anyone can install it.
         run: |
           set -euo pipefail
           ADDON_ID="dfir-companion@hasamba.github.io"
-
-          # AMO authenticates with a short-lived HS256 JWT minted from the issuer/secret pair.
-          TOKEN=$(node -e '
-            const crypto = require("crypto");
-            const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
-            const iat = Math.floor(Date.now() / 1000);
-            const head = b64({ alg: "HS256", typ: "JWT" });
-            const body = b64({ iss: process.env.AMO_JWT_ISSUER, jti: String(Math.random()), iat, exp: iat + 240 });
-            const sig = crypto.createHmac("sha256", process.env.AMO_JWT_SECRET)
-              .update(head + "." + body).digest("base64url");
-            process.stdout.write(head + "." + body + "." + sig);
-          ')
-
-          URL="https://addons.mozilla.org/api/v5/addons/addon/${ADDON_ID}/versions/?filter=all_with_unlisted"
-          BODY=$(curl -sS -H "Authorization: JWT ${TOKEN}" "$URL")
-
-          FOUND=$(printf '%s' "$BODY" | node -e '
-            let raw = "";
-            process.stdin.on("data", (c) => (raw += c));
-            process.stdin.on("end", () => {
-              let parsed;
-              try { parsed = JSON.parse(raw); } catch { console.log("PARSE_ERROR"); return; }
-              const results = parsed.results || [];
-              const hit = results.find((v) => v.version === process.env.VERSION);
-              console.log(hit ? "YES" : "NO:" + results.slice(0, 5).map((v) => v.version).join(","));
-            });
-          ')
-
-          if [ "$FOUND" = "YES" ]; then
-            echo "::notice::AMO accepted version ${VERSION} for review. A human reviewer must approve it before users can install it."
-          else
-            echo "::error::AMO does not list version ${VERSION} after upload (got: ${FOUND})"
-            printf '%s\n' "$BODY" | head -c 2000
+          if ! ANSWER=$(node extension/scripts/amoApi.mjs has-version "$ADDON_ID" "$VERSION"); then
+            echo "::error::could not confirm with AMO that version ${VERSION} was accepted"
             exit 1
           fi
+          if [ "$ANSWER" != "yes" ]; then
+            echo "::error::AMO does not list version ${VERSION} after upload"
+            exit 1
+          fi
+          echo "::notice::AMO holds version ${VERSION}, accepted for review. A human reviewer must approve it before users can install it."
 
   chrome-webstore:
     name: Publish to Chrome Web Store

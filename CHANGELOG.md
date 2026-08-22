@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Firefox add-on versions submit to Mozilla automatically** — a `v*` tag now uploads the release zip and its source archive to AMO, the same way tags publish to the Chrome Web Store. A green tag means accepted for review, not live.
+- **Firefox add-on versions submit to Mozilla automatically** — a `v*` tag now uploads the release zip and its source archive to AMO, the same way tags publish to the Chrome Web Store. Re-running a release is safe: it detects a version AMO already holds and skips the upload. A green tag means accepted for review, not live.
 - **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
 
 ### Fixed

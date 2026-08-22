@@ -185,9 +185,28 @@ Three things make this job different from the Chrome one, and each is load-beari
   days; `--approval-timeout 0` submits and exits. **A green tag therefore means "accepted for
   review", never "live"** — a reviewer still has to approve it before anyone can install it.
 
-The verification step asks AMO directly whether it holds the new version, because `web-ext`
-exiting 0 does not prove the upload landed. `tests/architecture/amoSubmissionJob.test.ts` guards
-all of the above; every one of its assertions has been mutation-tested red.
+**Re-running the workflow is safe.** AMO refuses a version number it already holds, so a naive
+job turns the second run of a release — routine, after any other job fails — into a red release
+that can only be made green by burning a version number. A pre-flight step asks AMO whether the
+version is already there and skips the upload if so. When it *cannot* tell (auth failure, AMO
+outage, a non-JSON body), it stops the job rather than guessing: guessing "not there" is what
+causes the duplicate.
+
+The verification step then asks AMO directly whether it holds the version, because `web-ext`
+exiting 0 does not prove the upload landed. It runs on the skipped path too, so a re-run still
+ends by confirming rather than assuming.
+
+One more guard worth knowing about: the job compares the version in the checked-out source
+against the version inside the downloaded package and refuses to submit if they differ.
+Submitting source that does not correspond to the binary is a policy violation, and the way it
+happens is mundane — a `workflow_dispatch` naming a tag while the checkout resolves to a branch.
+For the same reason the checkout deliberately pins **no** `ref`: the source has to come from the
+same commit as the build, and the build's own checkout is refless.
+
+The AMO API calls live in [`scripts/amoApi.mjs`](./scripts/amoApi.mjs) rather than inline in the
+workflow, so they are unit-tested (`tests/amoApi.test.ts`) instead of being logic that only ever
+runs on a tag. `tests/architecture/amoSubmissionJob.test.ts` guards the job's wiring; every one of
+its assertions has been mutation-tested red.
 
 **One-time human steps** (CI cannot do these): create the Mozilla developer account, enable
 two-factor auth on it, do the first upload and fill the listing — summary, description, category,

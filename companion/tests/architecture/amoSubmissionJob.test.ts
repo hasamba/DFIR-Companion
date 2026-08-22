@@ -31,7 +31,14 @@ const workflow = parseYaml(
     {
       needs?: string | string[];
       if?: string;
-      steps: { name?: string; uses?: string; run?: string; with?: Record<string, unknown> }[];
+      steps: {
+        name?: string;
+        id?: string;
+        if?: string;
+        uses?: string;
+        run?: string;
+        with?: Record<string, unknown>;
+      }[];
     }
   >;
 };
@@ -69,9 +76,54 @@ describe("the AMO submission job", () => {
   it("verifies against AMO instead of trusting web-ext's exit code", () => {
     const verify = job.steps.find((s) => s.name?.startsWith("Verify AMO"));
     expect(verify, "no verification step — web-ext exiting 0 is not proof").toBeDefined();
-    expect(verify!.run).toContain("addons.mozilla.org/api/v5");
+    expect(verify!.run).toContain("amoApi.mjs has-version");
     // The failure branch must actually fail. A verify step that only echoes is decoration.
     expect(verify!.run).toMatch(/exit 1/);
+  });
+
+  it("is safe to re-run, which a release workflow has to be", () => {
+    // Re-running a release after one job fails is routine, and AMO refuses a version it already
+    // holds. Without the pre-flight, the second run turns a good submission into a red release
+    // and the only way back to green is burning a version number.
+    const preflight = job.steps.find((s) => s.id === "existing");
+    expect(preflight, "no step checking whether AMO already has this version").toBeDefined();
+    expect(preflight!.run).toContain("amoApi.mjs has-version");
+
+    const submit = job.steps.find((s) => s.name === "Submit to AMO");
+    expect(submit!.if, "Submit runs unconditionally — a re-run would duplicate the version").toContain(
+      "steps.existing.outputs.skip != 'true'",
+    );
+  });
+
+  it("still verifies on the skipped path", () => {
+    // A re-run that skips the upload must not report success without checking. The verify step is
+    // gated only on credentials, never on the pre-flight's answer.
+    const verify = job.steps.find((s) => s.name?.startsWith("Verify AMO"));
+    expect(verify!.if).not.toContain("steps.existing");
+  });
+
+  it("refuses to submit source that does not match the package", () => {
+    // The failure is mundane: a workflow_dispatch naming a tag while the checkout resolves to a
+    // branch. Shipping Mozilla source that does not correspond to the binary is a policy
+    // violation, so this compares the two versions and stops.
+    const match = job.steps.find((s) => s.name === "Check the source matches the package");
+    expect(match, "nothing checks the source against the package").toBeDefined();
+    expect(match!.run).toMatch(/exit 1/);
+  });
+
+  it("does not pin the checkout to a ref, which would desynchronise it from the build", () => {
+    // Counter-intuitive on purpose: the source must match the binary, and the binary is built by
+    // extension-zip from ITS refless checkout. Pinning only this one to the tag is what CREATES
+    // the mismatch the step above catches.
+    const checkout = job.steps.find((s) => s.uses?.startsWith("actions/checkout"));
+    expect(checkout!.with?.ref).toBeUndefined();
+  });
+
+  it("pins web-ext to an exact version", () => {
+    // A publishing path that installs whatever is newest today is not reproducible: the run that
+    // ships a release should behave like the run that tested it.
+    const submit = job.steps.find((s) => s.name === "Submit to AMO");
+    expect(submit!.run).toMatch(/web-ext@\d+\.\d+\.\d+ /);
   });
 
   it("submits the add-on ID the manifest transform pins", async () => {
