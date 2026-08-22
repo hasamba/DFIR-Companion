@@ -125,7 +125,7 @@ The capture extension lets you screenshot any browser tab with a keyboard shortc
 
     !!! info "What it collects, since a temporary load never asks"
 
-        Firefox shows its data-collection notice only for a signed add-on installed normally; `about:debugging` grants everything silently. The extension declares **browsing activity** (a capture carries the tab's URL and title) and **website content** (the screenshot, and the rows a Push scrapes). It goes to the companion address you configure — by default one on your own machine, or a team companion on another host if you point it there — and nowhere else.
+        Firefox shows its data-collection notice only for a signed add-on installed normally; `about:debugging` grants everything silently. The extension declares **browsing activity** (a capture carries the tab's URL and title) and **website content** (the screenshot, and the rows a Push scrapes). The extension sends it to the companion address you configure and nowhere else; what that companion forwards afterwards — a vision model reads the screenshots, AI synthesis reads the rows, enrichment queries reputation services — is the companion's own configuration.
     4. The extension icon appears in the toolbar.
 
     !!! note "Temporary add-ons don't survive a restart"

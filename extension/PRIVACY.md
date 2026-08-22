@@ -10,12 +10,20 @@ is licensed AGPL-3.0-only.
 ## Summary
 
 **The Extension sends data to exactly one destination at a time: the DFIR Companion server
-address you configure. By default that is `http://127.0.0.1:4773` — a server on your own
-machine — and for a single analyst working locally, nothing the Extension handles ever leaves
-the machine. If you point the Extension at a team Companion instead, captures go to that host,
-because that is what you asked it to do. In either case it makes no calls to the extension
-authors, to any analytics service, or to any other third party. There is no tracking, no
-telemetry, and no remote logging.**
+address you configure. By default that is `http://127.0.0.1:4773`, a server on your own machine;
+point it at a team Companion instead and captures go to that host. The Extension sends data
+nowhere else — no calls to the extension authors, to any analytics service, or to any other
+third party, and no tracking, telemetry, or remote logging.**
+
+**Where the Extension's promise ends.** It ends at the Companion, and this is the part worth
+reading twice. What that server does next is its own configuration, not the Extension's. With a
+vision provider configured, the Companion sends **the screenshots themselves** to that model to
+read them into the timeline. With a synthesis provider configured, it sends timeline content —
+including the rows you pushed — to that model. With enrichment enabled, IOCs drawn from those
+rows go to third-party reputation services. Each needs a provider you set up, so none of it
+happens on a Companion you have not configured that way; all of it is governed by the
+Companion's own documentation, not by this policy. The Extension cannot promise on the
+Companion's behalf, so it does not.
 
 You — the analyst — are always in control of what is sent and when. A fresh installation has
 **no access to any website**. Persistent access is granted one console origin at a time.
@@ -59,7 +67,9 @@ The Extension supports a forensic investigation workflow in two ways:
 
 - All captured screenshots and pushed detections are transmitted **only** to the DFIR
   Companion server address you configure. The default is `http://127.0.0.1:4773`, a server on
-  your own computer, and on that default nothing the Extension handles leaves your machine.
+  your own computer; on that default the Extension puts nothing on the network beyond your own
+  machine. What the Companion forwards afterwards is its configuration, not the Extension's —
+  see "Where the Extension's promise ends" above.
 - **The address is yours to change, and changing it changes where the evidence goes.** Team
   mode exists for exactly that: a Companion another person or machine can reach. Point the
   Extension at one — which is also what the optional team service token is for — and captures
