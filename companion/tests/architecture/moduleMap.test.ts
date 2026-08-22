@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // ARCHITECTURE.md is what people read; scripts/module-map.json is what CI enforces. A document
@@ -35,7 +36,9 @@ const boundaryCounts = (): {
   JSON.parse(
     execFileSync(
       process.execPath,
-      [new URL("companion/scripts/check-boundaries.mjs", ROOT).pathname, "--json"],
+      // fileURLToPath, NOT `.pathname`: on Windows `.pathname` yields "/D:/a/…", which Node then
+      // resolves against the drive as "D:\D:\a\…" and the script is never found.
+      [fileURLToPath(new URL("companion/scripts/check-boundaries.mjs", ROOT)), "--json"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     ),
   );

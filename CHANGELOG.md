@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.35.1] - 2026-08-21
 
 ### Fixed
-- **The release build produces binaries again** — two architecture suites resolved their script path with `.pathname`, which on Windows yields `/D:/a/…` and resolves as `D:\D:\a\…`. Every case failed, taking the Windows EXE job down; because the release-attach step is gated on it, v0.35.0 published with no downloads even though the AppImage and extension zips had built.
+- **Windows CI resolves filesystem paths natively** — three architecture suites and both dashboard scripts built paths with `new URL()`/`.pathname`. On Windows that yields `/D:/a/…` (resolved as `D:\D:\a\…`), and an absolute `C:\…` argument makes the drive letter parse as a URL scheme. Every case in those files failed, taking the Windows EXE job down; because the release-attach step is gated on it, v0.35.0 published with no downloads even though the AppImage and extension zips had built.
 
 ### Changed
 - **Query Translator and Investigation Log join the Analyst view** — v0.35.0 made them reachable via Deep-Dive only; they now also sit in the analyst's densest workspace, where the rest of the panels are.

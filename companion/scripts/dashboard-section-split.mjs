@@ -18,14 +18,18 @@
 // come from `npm run inventory:dashboard`.
 import ts from "typescript";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const asJson = args.includes("--json");
 const htmlArg = args.indexOf("--html");
+// Native paths, not URLs — see the note in dashboard-inventory.mjs. An absolute Windows argument
+// makes `new URL()` read the drive letter as a scheme and throw ERR_INVALID_URL_SCHEME.
 const HTML_PATH =
   htmlArg !== -1 && args[htmlArg + 1]
-    ? new URL(args[htmlArg + 1], `file://${process.cwd()}/`)
-    : new URL("../../public/dashboard.html", import.meta.url);
+    ? resolve(args[htmlArg + 1])
+    : fileURLToPath(new URL("../../public/dashboard.html", import.meta.url));
 const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--html");
 const [FROM, TO] = positional.map(Number);
 if (!Number.isInteger(FROM) || !Number.isInteger(TO) || FROM > TO) {

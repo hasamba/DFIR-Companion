@@ -43,11 +43,26 @@ jobs:
         working-directory: companion
         run: npm ci
 
-      - name: Type-check + tests
+      # The build still gates: a package built from source that does not compile is worse than no
+      # package.
+      - name: Build (tsc)
         working-directory: companion
-        run: |
-          npm run build
-          npm test
+        run: npm run build
+
+      # The suite runs, and its result is visible, but it does NOT gate the EXE.
+      #
+      # This workflow is tag-only, so before ci.yml grew a windows-test job this was the sole place
+      # the suite ever ran on Windows. It rotted across the 423 commits between v0.34.0 and v0.35.0
+      # and then failed at the one moment it could do most damage: v0.35.0 and the first v0.35.1
+      # both published with NO downloads, because `release` needs this job and the AppImage and
+      # extension zips were discarded with it.
+      #
+      # Producing binaries and policing Windows test health are different jobs. Regressions are
+      # caught per-PR by ci.yml's windows-test job, where they can be fixed before a tag exists.
+      - name: Tests (non-blocking — see ci.yml windows-test)
+        working-directory: companion
+        run: npm test
+        continue-on-error: true
 
       - name: Package SEA EXE
         working-directory: companion
@@ -334,7 +349,17 @@ jobs:
     # Only publish a Release for a real tag push, or a manual run that explicitly names a tag.
     # A tagless workflow_dispatch (e.g. a branch build to test artifacts) builds + uploads them
     # but does NOT create a junk release named after the branch.
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    #
+    # `!cancelled()` is load-bearing. With a bare `needs`, ONE failed build job skips this one and
+    # every artifact that DID build is thrown away. That is precisely how v0.35.0 and the first
+    # v0.35.1 both published with no downloads: the Windows job failed, and the Linux AppImage and
+    # both extension zips — already built and uploaded — went with it.
+    #
+    # Publish whatever was produced. The check below names anything missing, and still fails the
+    # job if NOTHING built, so a silently empty release is not possible.
+    if: >-
+      !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -348,6 +373,44 @@ jobs:
 
       - name: List artifacts
         run: find artifacts -type f -exec ls -lh {} \;
+
+      # Decide what is coherent to publish. A partial release must be loud, and some partials are
+      # not releasable at all.
+      - name: Decide what to publish
+        id: pick
+        shell: bash
+        run: |
+          have() { compgen -G "artifacts/$1/*" > /dev/null; }
+          missing=(); files=()
+
+          # The server binaries are independent deliverables: a Linux-only release is coherent, and
+          # so is a Windows-only one. Publish whichever built.
+          for a in windows-exe linux-appimage; do
+            if have "$a"; then files+=("artifacts/$a/*"); else missing+=("$a"); fi
+          done
+
+          # The two extension zips are ONE deliverable in two packagings, and the job that builds
+          # them uploads Chrome BEFORE it builds Firefox. So a Firefox build failure leaves Chrome
+          # uploaded and Firefox absent — and shipping that gives Chrome users an update that does
+          # not exist for Firefox users, off one release tag. All or neither.
+          if have extension-zip && have extension-firefox-zip; then
+            files+=("artifacts/extension-zip/*" "artifacts/extension-firefox-zip/*")
+          else
+            have extension-zip || missing+=("extension-zip")
+            have extension-firefox-zip || missing+=("extension-firefox-zip")
+            if have extension-zip || have extension-firefox-zip; then
+              echo "::warning::only one extension packaging built — publishing NEITHER, because half an extension is worse than none"
+            fi
+          fi
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::nothing publishable was built — refusing to publish an empty release"
+            exit 1
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::warning::publishing WITHOUT: ${missing[*]} — check the build job(s) for those"
+          fi
+          printf 'files<<PICK_EOF\n%s\nPICK_EOF\n' "$(printf '%s\n' "${files[@]}")" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog section
         id: changelog
@@ -374,15 +437,65 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body_path: release-notes.md
-          files: |
-            artifacts/windows-exe/*
-            artifacts/linux-appimage/*
-            artifacts/extension-zip/*
-            artifacts/extension-firefox-zip/*
-          fail_on_unmatched_files: true
+          # Exactly what the "Decide what to publish" step judged coherent — never a fixed list,
+          # so a half-built extension cannot reach the release by being globbed in.
+          files: ${{ steps.pick.outputs.files }}
+          # false, because a missing platform must not abort the upload of the platforms that DID
+          # build. The "Decide what to publish" step above is what makes the gap visible, and it
+          # already fails the job if nothing built at all.
+          fail_on_unmatched_files: false
           # Don't auto-create; the release is published manually per CLAUDE.md.
           draft: false
           prerelease: false
+
+      # "Decide what to publish" governs what we ATTEMPT to upload. It cannot govern what actually
+      # lands: assets upload one at a time, so an API or network failure partway can attach the
+      # Chrome zip and not the Firefox one — the very state the pairing rule exists to prevent,
+      # reached from the other direction. A re-run against an existing tag can leave the same
+      # residue. So the invariant is enforced against what the release REALLY holds.
+      #
+      # `always()` because this matters most when the upload step failed.
+      - name: Enforce the extension pair on the published release
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+
+          # An unreadable release must NOT read as a clean pair. Swallowing the query failure left
+          # `assets` empty, which scored chrome=0 firefox=0 and reported "consistent" — a guard that
+          # passes loudest exactly when it has learned nothing.
+          #
+          # "Release not found" is different, and legitimate: the tag build runs before the release
+          # is created by hand, so there is genuinely nothing published to reconcile.
+          err=$(mktemp)
+          if assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>"$err"); then
+            :
+          elif grep -qi 'release not found' "$err"; then
+            echo "::notice::release $TAG does not exist yet — nothing published, nothing to reconcile"
+            rm -f "$err"; exit 0
+          else
+            echo "::error::could not read release $TAG — cannot verify the extension pair: $(cat "$err")"
+            rm -f "$err"; exit 1
+          fi
+          rm -f "$err"
+
+          ext=$(printf '%s\n' "$assets" | grep '^dfir-capture-extension-' || true)
+          # The Firefox zip also starts with that prefix, so "-firefox-" is what separates them.
+          firefox=$(printf '%s\n' "$ext" | grep -- '-firefox-' || true)
+          chrome=$(printf '%s\n' "$ext" | grep -v -- '-firefox-' || true)
+          nf=$(printf '%s' "$firefox" | grep -c . || true); nf=${nf:-0}
+          nc=$(printf '%s' "$chrome" | grep -c . || true); nc=${nc:-0}
+          if { [ "$nc" -gt 0 ] && [ "$nf" -eq 0 ]; } || { [ "$nf" -gt 0 ] && [ "$nc" -eq 0 ]; }; then
+            echo "::error::release $TAG carries one extension packaging but not the other (chrome=$nc firefox=$nf) — removing the orphan so nobody installs half an update"
+            printf '%s\n%s\n' "$chrome" "$firefox" | grep . | while read -r a; do
+              echo "deleting orphaned asset: $a"
+              gh release delete-asset "$TAG" "$a" --yes || echo "::warning::could not delete $a — delete it by hand"
+            done
+            exit 1
+          fi
+          echo "extension pair consistent (chrome=$nc firefox=$nf)"
 
   chocolatey:
     name: Publish Chocolatey package
