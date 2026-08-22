@@ -11,12 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.35.1] - 2026-08-21
+## [0.35.1] - 2026-08-22
 
 ### Fixed
-- **Windows CI resolves filesystem paths natively** — three architecture suites and both dashboard scripts built paths with `new URL()`/`.pathname`. On Windows that yields `/D:/a/…` (resolved as `D:\D:\a\…`), and an absolute `C:\…` argument makes the drive letter parse as a URL scheme. Every case in those files failed, taking the Windows EXE job down; because the release-attach step is gated on it, v0.35.0 published with no downloads even though the AppImage and extension zips had built.
+- **The release ships downloads again** — v0.35.0 published with no binaries at all. One platform's failure discarded every other platform's artifacts: the attach step needed the Windows job, so the Linux AppImage and both extension zips were built, uploaded and thrown away with it.
+- **Windows CI resolves filesystem paths natively** — three architecture suites and both dashboard scripts built paths with `new URL()`/`.pathname`. On Windows that yields `/D:/a/…` (resolved as `D:\D:\a\…`), and an absolute `C:\…` argument makes the drive letter parse as a URL scheme. Fixing it took the Windows suite from 8 failing files to 3.
 
 ### Changed
+- **Release binaries no longer gate on the Windows test suite** — the build still gates, the suite runs advisory. Producing binaries and policing test health are different jobs.
+- **The Windows suite runs on every PR** — it previously ran only on a release tag, so it rotted for a whole release cycle and surfaced when it did most damage. Advisory until the last three failures are fixed.
+- **A release publishes what built, and never half an extension** — the two extension zips ship as a pair or not at all, enforced on the published release rather than only on what is uploaded. Nothing built at all still fails.
 - **Query Translator and Investigation Log join the Analyst view** — v0.35.0 made them reachable via Deep-Dive only; they now also sit in the analyst's densest workspace, where the rest of the panels are.
 
 ## [0.35.0] - 2026-08-21
