@@ -3,7 +3,13 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { resolve, dirname, relative } from "path";
 import { fileURLToPath } from "url";
 
-import { toFirefoxManifest, FIREFOX_ONLY_KEYS, MIN_FIREFOX_VERSION, GECKO_ID } from "../scripts/manifest-firefox.mjs";
+import {
+  toFirefoxManifest,
+  FIREFOX_ONLY_KEYS,
+  MIN_FIREFOX_VERSION,
+  GECKO_ID,
+  DATA_COLLECTION_PERMISSIONS,
+} from "../scripts/manifest-firefox.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (name: string) => JSON.parse(readFileSync(resolve(__dirname, "..", name), "utf-8"));
@@ -28,6 +34,75 @@ describe("the generated Firefox manifest", () => {
     const id = firefoxManifest.browser_specific_settings.gecko.id;
     expect(id).not.toMatch(/@(example\.(com|net|org)|(.+\.)?(test|invalid|localhost))$/);
     expect(id).toBe(GECKO_ID);
+  });
+
+  it("declares data collection, which AMO rejects the package for omitting", () => {
+    // Mandatory in every AMO submission since 2025-11-03. The validator's message is
+    // "The data_collection_permissions property is missing", and it blocks the upload.
+    const dcp = firefoxManifest.browser_specific_settings.gecko.data_collection_permissions;
+    expect(dcp).toBeDefined();
+    expect(Array.isArray(dcp.required)).toBe(true);
+    expect(dcp.required.length).toBeGreaterThan(0);
+    expect(dcp.required).toEqual([...DATA_COLLECTION_PERMISSIONS.required]);
+  });
+
+  it("does not claim `none`, which the capture payload would contradict", () => {
+    // `none` asserts the add-on neither collects nor transmits. CapturePayload POSTs the tab URL,
+    // its title and a screenshot to a separate process, which is collection under Mozilla's
+    // definition however local that process is. Declaring `none` next to companionClient.ts is the
+    // kind of mismatch that costs an add-on its listing, not just a review round.
+    const required: string[] = firefoxManifest.browser_specific_settings.gecko.data_collection_permissions.required;
+    expect(required).not.toContain("none");
+    expect(required).toContain("browsingActivity"); // CapturePayload.url / .tabTitle
+    expect(required).toContain("websiteContent"); // the screenshot, and scraped console rows
+  });
+
+  it("declares no telemetry, matching the promise PRIVACY.md makes", () => {
+    const gecko = firefoxManifest.browser_specific_settings.gecko;
+    const declared: string[] = [
+      ...gecko.data_collection_permissions.required,
+      ...(gecko.data_collection_permissions.optional ?? []),
+    ];
+    expect(declared).not.toContain("technicalAndInteraction");
+  });
+
+  it("only ever declares categories AMO recognises", () => {
+    // A typo here is not a test failure anywhere else — it is an upload rejection at submission
+    // time, i.e. the slowest possible place to find it.
+    const VALID_REQUIRED = [
+      "none",
+      "authenticationInfo",
+      "bookmarksInfo",
+      "browsingActivity",
+      "financialAndPaymentInfo",
+      "healthInfo",
+      "locationInfo",
+      "personalCommunications",
+      "personallyIdentifyingInfo",
+      "searchTerms",
+      "websiteActivity",
+      "websiteContent",
+    ];
+    const gecko = firefoxManifest.browser_specific_settings.gecko;
+    for (const value of gecko.data_collection_permissions.required) {
+      expect(VALID_REQUIRED).toContain(value);
+    }
+    // `technicalAndInteraction` is the one value that may appear in `optional` but never `required`.
+    for (const value of gecko.data_collection_permissions.optional ?? []) {
+      expect([...VALID_REQUIRED.filter((v) => v !== "none"), "technicalAndInteraction"]).toContain(value);
+    }
+  });
+
+  it("keeps the exported declaration immune to mutation through the built manifest", () => {
+    // Both builds import the same frozen constant. Handing out a live reference would let a caller
+    // that edits its own manifest silently change what the other build ships.
+    const other = toFirefoxManifest(chromeManifest);
+    firefoxManifest.browser_specific_settings.gecko.data_collection_permissions.required.push("healthInfo");
+    expect(other.browser_specific_settings.gecko.data_collection_permissions.required).toEqual([
+      ...DATA_COLLECTION_PERMISSIONS.required,
+    ]);
+    // Undo, so later assertions in this file still see the shipped value.
+    firefoxManifest.browser_specific_settings.gecko.data_collection_permissions.required.pop();
   });
 
   it("uses background.scripts instead of service_worker", () => {
@@ -62,6 +137,24 @@ describe("the generated Firefox manifest", () => {
     const min = firefoxManifest.browser_specific_settings.gecko.strict_min_version;
     expect(min).toMatch(/^\d+(\.\d+)*$/);
     expect(Number.parseInt(min, 10)).toBeGreaterThanOrEqual(128);
+  });
+
+  it("requires Firefox 140+, so no install can collect data without the consent screen", () => {
+    // The floor and the declaration are one decision, not two. Firefox reads
+    // data_collection_permissions from 140; on 128–139 the key is ignored and the add-on would
+    // install with the pre-2025 prompt, collecting exactly what the declaration says it collects
+    // while telling the analyst nothing. Mozilla's three sanctioned answers are raise the floor,
+    // disable collection there, or ship a replacement consent screen — this is the first.
+    const min = firefoxManifest.browser_specific_settings.gecko.strict_min_version;
+    expect(Number.parseInt(min, 10)).toBeGreaterThanOrEqual(140);
+  });
+
+  it("stays desktop-only, which is what settles the Android consent floor", () => {
+    // An extension reaches Firefox for Android only if gecko_android is present — even `{}` opts
+    // in. Its absence is load-bearing twice over: it keeps a screenshot-and-context-menu tool out
+    // of a browser it was never built for, and it makes Android's own 142 consent floor moot,
+    // because nothing can install there to need it.
+    expect(firefoxManifest.browser_specific_settings.gecko_android).toBeUndefined();
   });
 
   it("injects pageHook into the MAIN world unconditionally", () => {

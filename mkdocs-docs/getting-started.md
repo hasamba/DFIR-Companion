@@ -117,7 +117,7 @@ The capture extension lets you screenshot any browser tab with a keyboard shortc
 
 === "Firefox"
 
-    Needs **Firefox 128 or later**. There is no Mozilla Add-ons listing yet, so it loads as a temporary add-on:
+    Needs **Firefox 140 or later**. There is no Mozilla Add-ons listing yet, so it loads as a temporary add-on:
 
     1. Download `dfir-capture-extension-firefox-*.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it. (Building from source instead? Run `npm run build:firefox` inside `extension/` — it writes the same files to `extension/dist-firefox/`.)
     2. In Firefox, go to `about:debugging#/runtime/this-firefox`.

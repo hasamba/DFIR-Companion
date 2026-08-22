@@ -17,10 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
 
 ### Fixed
+- **The Firefox add-on can be submitted to AMO again** — the generated manifest carried no `data_collection_permissions`, which AMO has required in every submission since 2025-11-03 and rejects the upload for omitting.
 - **The capture extension keeps the team service token** — the popup only saved it when you pressed Start, and picking a case wrote the stored token back over the one you typed, so every import went out unauthenticated and the companion answered 401. Every field now saves as you leave it.
 - **A rejected token no longer reads as "companion offline"** — the popup reported an HTTP 401 from the case list as an unreachable server, sending analysts to restart a companion that was answering.
 - **Exporting a case on Windows no longer fails as a security refusal** — a sidecar save during the export was reported as a symlink attack.
 - **`docker compose pull` fetches the current release again** — the compose image tag sat at 0.34.0 for the whole 0.35.x line, so users got a container a full release behind their checkout. A gate now fails when any of the six version-bearing files disagree.
+
+### Changed
+- **The Firefox add-on now requires Firefox 140** (was 128) — 140 is the first release that shows the data-collection consent screen, and Mozilla does not permit collecting without one. 140 is itself an ESR and 128 ESR ended in September 2025.
 
 ## [0.35.1] - 2026-08-22
 

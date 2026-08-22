@@ -22,12 +22,59 @@
 export const GECKO_ID = "dfir-companion@hasamba.github.io";
 
 /**
- * Firefox 128 (the current ESR) is the floor because it is where scripting.executeScript gained
- * world: "MAIN". serviceWorker.ts injects pageHook.js into MAIN unconditionally; on an older
- * Firefox that call would quietly land in the isolated world, wrap a `fetch` no page script calls,
- * report ready, and then capture nothing (#298). Do not lower this.
+ * Two independent floors, and the higher one wins.
+ *
+ * 128 is where scripting.executeScript gained world: "MAIN". serviceWorker.ts injects pageHook.js
+ * into MAIN unconditionally; on an older Firefox that call would quietly land in the isolated
+ * world, wrap a `fetch` no page script calls, report ready, and then capture nothing (#298).
+ *
+ * 140 is where Firefox learned to READ data_collection_permissions below and show the consent
+ * screen it drives. Mozilla gives exactly three ways to ship a data-collecting add-on to older
+ * releases — raise the floor, turn the collection off there, or build a replacement consent screen
+ * — and "declare it and let the old prompt say nothing" is not among them. Turning collection off
+ * would mean shipping an add-on that cannot capture, which is the whole product; a hand-rolled
+ * consent screen is real UI in the one component that touches evidence, written for browsers
+ * nobody should still be running. So the floor moves, which is also what Mozilla recommends for a
+ * first submission.
+ *
+ * The users this costs are close to none: 140 is itself an ESR, and 128 ESR went end-of-life in
+ * September 2025, so an enterprise pinned to ESR is already at or above this line.
+ *
+ * Do not lower this. Below 140 the add-on collects without disclosing; below 128 it silently
+ * captures nothing.
  */
-export const MIN_FIREFOX_VERSION = "128.0";
+export const MIN_FIREFOX_VERSION = "140.0";
+
+/**
+ * AMO has required a data-collection declaration in every submission since 2025-11-03; a package
+ * without one is rejected by the validator ("The data_collection_permissions property is missing"),
+ * not merely flagged. Firefox 140+ turns it into the install-time consent screen; older Firefox
+ * ignores the key, which is why the 128 floor below can stay where it is.
+ *
+ * `none` would be the easier claim and it is the wrong one. Mozilla scopes collection to data
+ * "handled outside the add-on or the local browser" — not to data that leaves the machine — and
+ * every capture POSTs the tab URL, its title and a full screenshot to a separate process. That the
+ * process is the analyst's own companion on 127.0.0.1 is what PRIVACY.md says, and it stays true;
+ * it is not what this key asks. A reviewer reading companionClient.ts next to a `none` declaration
+ * would be reading a false statement.
+ *
+ * - browsingActivity — CapturePayload carries `url` and `tabTitle` for every capture.
+ * - websiteContent   — the screenshot itself, plus the console rows a Push scrapes.
+ *
+ * Deliberately absent: `websiteActivity` (a capture's `triggerType` records why the capture fired,
+ * never what the analyst clicked or typed) and `technicalAndInteraction` (no telemetry exists to
+ * declare, and PRIVACY.md promises there never will be).
+ */
+/*
+ * There is deliberately no `gecko_android` key. Omitting it is what keeps the add-on desktop-only:
+ * per MDN, an extension is offered on Firefox for Android only if the key is present, even as an
+ * empty object. Adding one to silence web-ext's Android version warning would opt a screenshot-and
+ * -context-menu tool into a browser it was never built or tested for — and since no Android user
+ * can install it, the consent floor Android would need (142) is moot.
+ */
+export const DATA_COLLECTION_PERMISSIONS = Object.freeze({
+  required: Object.freeze(["browsingActivity", "websiteContent"]),
+});
 
 /** The manifest keys this transform is allowed to change. Asserted by tests/firefox.test.ts. */
 export const FIREFOX_ONLY_KEYS = ["browser_specific_settings", "background", "incognito"];
@@ -52,7 +99,13 @@ export function toFirefoxManifest(base) {
     out[key] = value;
     if (key === "manifest_version") {
       out.browser_specific_settings = {
-        gecko: { id: GECKO_ID, strict_min_version: MIN_FIREFOX_VERSION },
+        gecko: {
+          id: GECKO_ID,
+          strict_min_version: MIN_FIREFOX_VERSION,
+          // Cloned, not referenced: the exported constant is frozen, and handing callers a live
+          // reference to it would make one build's manifest mutable through another's import.
+          data_collection_permissions: { required: [...DATA_COLLECTION_PERMISSIONS.required] },
+        },
       };
       // Chrome rejects `not_allowed`; Firefox supports it and then makes private windows entirely
       // invisible to the add-on. Chrome stays excluded by default and the runtime independently

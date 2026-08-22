@@ -27,7 +27,7 @@ there it is always a temporary add-on — but you no longer have to build it: ev
 `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the
 `extension/dist` **folder**.
 
-**Firefox 128+**
+**Firefox 140+**
 
     npm run build:firefox
 
@@ -169,5 +169,13 @@ and should not be changed casually:
   existing installs stop receiving updates, and every analyst's saved settings (companion URL,
   active case, dragged button position) are orphaned. `tests/firefox.test.ts` fails if it is ever
   set back to a reserved documentation domain.
-- **`MIN_FIREFOX_VERSION`** (`128.0`) — the MAIN-world floor described under
-  [Build & load](#build--load-development--unpacked). Lowering it makes capture fail silently.
+- **`MIN_FIREFOX_VERSION`** (`140.0`) — two floors in one number. 128 is where
+  `scripting.executeScript` gained `world: "MAIN"`; below it, capture fails silently. 140 is where
+  Firefox reads `data_collection_permissions` and shows the consent screen it drives; below it, the
+  add-on would collect what it declares while the install prompt said nothing, which is not one of
+  the three ways Mozilla permits shipping to older releases. Lowering it breaks one or the other.
+- **`DATA_COLLECTION_PERMISSIONS`** (`browsingActivity`, `websiteContent`) — mandatory in every AMO
+  submission since 2025-11-03; without it the upload is rejected outright. It is not `none` because
+  Mozilla counts any hand-off outside the browser as collection, and a capture POSTs the tab URL,
+  its title and a screenshot to the companion process. There is deliberately no `gecko_android`
+  key: any value there — `{}` included — would publish this desktop tool to Firefox for Android.

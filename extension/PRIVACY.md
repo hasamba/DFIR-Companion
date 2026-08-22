@@ -63,6 +63,21 @@ The Extension supports a forensic investigation workflow in two ways:
 - Settings and the offline queue stay in your browser's local extension storage and are
   never uploaded anywhere except your own companion.
 
+## What the Firefox install prompt says
+
+Firefox shows a data-collection notice when you install the Extension. It names
+**browsing activity** and **website content**, because a capture sends the tab's URL and title
+along with the screenshot itself, and Mozilla counts any hand-off outside the browser as
+collection — including one to a server on your own computer.
+
+The Extension requires Firefox 140 or later for this reason: 140 is the first release that can
+show that notice, and shipping to an older one would mean collecting what is described here while
+the install prompt said nothing.
+
+That notice describes what the Extension sends **to your own DFIR Companion**, and nothing else.
+It is not a disclosure of data reaching the authors or any third party; as stated above, none
+does. The Extension declares no telemetry of any kind.
+
 ## Permissions and why they are needed
 
 | Permission | Why |
