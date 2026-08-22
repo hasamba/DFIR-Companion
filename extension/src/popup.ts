@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
+import { caseListFailure, settingsFromForm } from "./popupSettings.js";
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
 import {
@@ -180,14 +181,30 @@ async function save(settings: Settings): Promise<void> {
 }
 
 function readForm(running: boolean): Settings {
-  return {
-    caseId: caseSelect().value.trim(),
-    companionUrl: normalizeCompanionUrl($("companionUrl").value),
-    serviceToken: $("serviceToken").value.trim(),
-    intervalSeconds: Math.max(5, Number($("intervalSeconds").value) || 10),
-    dedupThreshold: Math.max(0, Number($("dedupThreshold").value) || 5),
+  return settingsFromForm(
+    {
+      caseId: caseSelect().value,
+      companionUrl: $("companionUrl").value,
+      serviceToken: $("serviceToken").value,
+      intervalSeconds: $("intervalSeconds").value,
+      dedupThreshold: $("dedupThreshold").value,
+    },
     running,
-  };
+  );
+}
+
+/**
+ * Persist the whole form, keeping the capture state the service worker owns.
+ *
+ * Every field edit routes through here. The popup is a transient window — it closes on the next
+ * click into the page — so a value that is only in the DOM is lost the moment the analyst looks
+ * away. That is how a typed Team service token used to disappear on a page reload.
+ */
+async function persistForm(): Promise<Settings> {
+  const stored = await load();
+  const next = readForm(stored.running);
+  await save(next);
+  return next;
 }
 
 async function refreshStatus(s: Settings): Promise<void> {
@@ -216,19 +233,23 @@ async function loadCases(
   companionUrl: string,
   selectedId: string,
   serviceToken: string,
-): Promise<boolean> {
+): Promise<{ ok: boolean; failure?: string }> {
   const sel = caseSelect();
+  // 0 means the fetch never got a response at all; any other value is the companion answering,
+  // which is a very different thing to tell the analyst (see caseListFailure).
+  let status = 0;
   try {
     const res = await fetch(`${companionUrl}/cases`, {
       method: "GET",
       headers: serviceToken ? { Authorization: `Bearer ${serviceToken}` } : {},
     });
+    status = res.status;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cases = (await res.json()) as Array<{ caseId: string; name: string }>;
     sel.innerHTML = "";
     if (cases.length === 0) {
       sel.appendChild(new Option("(no cases — create one in the dashboard)", ""));
-      return true;
+      return { ok: true };
     }
     sel.appendChild(new Option("— no case (push button hidden) —", ""));
     for (const c of cases) {
@@ -236,13 +257,15 @@ async function loadCases(
       sel.appendChild(new Option(label, c.caseId));
     }
     sel.value = cases.some((c) => c.caseId === selectedId) ? selectedId : "";
-    return true;
+    return { ok: true };
   } catch {
-    // Offline or endpoint missing — keep the last-used case selectable so Start works.
+    // Unreachable, unauthorized, or an endpoint the server does not have — keep the last-used case
+    // selectable either way so Start still works once the cause is fixed.
+    const failure = caseListFailure(status);
     sel.innerHTML = "";
-    if (selectedId) sel.appendChild(new Option(`${selectedId} (offline — last used)`, selectedId));
-    else sel.appendChild(new Option("(companion offline — start it, then Refresh)", ""));
-    return false;
+    if (selectedId) sel.appendChild(new Option(`${selectedId} (last used — ${failure})`, selectedId));
+    else sel.appendChild(new Option(`(${failure})`, ""));
+    return { ok: false, failure };
   }
 }
 
@@ -299,19 +322,30 @@ async function init() {
   await refreshSiteAccess();
   await initToolOverride();
 
-  // Auto-save the case selection immediately on change so the analyst can switch cases
-  // (or clear them) without pressing Start — screenshots stay in their current state.
-  caseSelect().addEventListener("change", async () => {
-    const current = await load();
-    await save({ ...current, caseId: caseSelect().value });
-  });
+  // Auto-save every field as soon as the analyst leaves it, so nothing depends on remembering to
+  // press Start. The popup closes on the next click into the page, and an unsaved value dies with
+  // it: that is what used to strand the Team service token and make imports 401.
+  //
+  // "change" rather than "input": it fires on blur for a text box and immediately for the case
+  // dropdown, which keeps the write count low without ever losing a value.
+  for (const id of ["caseId", "companionUrl", "serviceToken", "intervalSeconds", "dedupThreshold"]) {
+    document.getElementById(id)!.addEventListener("change", () => void persistForm());
+  }
 
   // Re-fetch the case list — e.g. after creating a case in the dashboard, or after
   // pointing Companion URL at a different instance.
   document.getElementById("refreshCases")!.onclick = async () => {
-    const url = normalizeCompanionUrl($("companionUrl").value);
-    const ok = await loadCases(url, caseSelect().value, $("serviceToken").value.trim());
-    statusEl().textContent = ok ? "case list refreshed" : `companion offline — check URL (${url})`;
+    // Persist first: the analyst has usually just pasted a token or a URL, and Refresh is the
+    // natural place to press before Start.
+    const saved = await persistForm();
+    const result = await loadCases(saved.companionUrl, saved.caseId, saved.serviceToken);
+    // Re-persist: a refresh can drop the stored case from the list (it was closed or archived, or
+    // the token is scoped elsewhere), which blanks the dropdown. Without this the service worker
+    // would keep capturing into a case the analyst can no longer see.
+    const settled = await persistForm();
+    statusEl().textContent = result.ok
+      ? "case list refreshed"
+      : `${result.failure} (${settled.companionUrl})`;
   };
   // Cases are created in the dashboard — open it in a new tab.
   document.getElementById("openDashboard")!.onclick = (e) => {
