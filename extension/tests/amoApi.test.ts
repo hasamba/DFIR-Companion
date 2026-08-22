@@ -9,6 +9,7 @@ import {
   isAmoUrl,
   readNext,
   readCount,
+  isReadableVersion,
 } from "../scripts/amoApi.mjs";
 
 describe("mintJwt", () => {
@@ -337,5 +338,58 @@ describe("unreadable entries and the count reconciliation", () => {
     })) as unknown as typeof fetch;
     const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
     expect(result).toMatchObject({ status: "no", seen: ["0.40.0", "0.39.0"] });
+  });
+});
+
+describe("blank version strings", () => {
+  // `""` is a string, and that was the whole problem: it passed a typeof check, entered the list
+  // of versions read, and let a page whose entry was never really read produce a confident
+  // absence — while padding that list so the server's count reconciled. readNext has always held
+  // empty strings to this standard; these assert the same rule where it was missing.
+  const walk = async (raw: string) => {
+    const impl = (async () => ({ text: async () => raw })) as unknown as typeof fetch;
+    return hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+  };
+
+  it.each([
+    ["empty", ""],
+    ["a single space", " "],
+    ["whitespace", "   \t "],
+  ])("treats an entry whose version is %s as unread", async (_label, version) => {
+    const raw = JSON.stringify({ count: 2, next: null, results: [{ version }, { version: "0.40.0" }] });
+    const result = await walk(raw);
+    expect(result.status).toBe("unknown");
+    expect(result.seen).toEqual(["0.40.0"]);
+  });
+
+  it("does not let a blank entry pad the count", async () => {
+    // count 2, two entries, one blank. Counting the blank one makes the totals agree and yields a
+    // definitive "not there" from a list half of which was never read.
+    const raw = JSON.stringify({ count: 2, next: null, results: [{ version: "" }, { version: "0.40.0" }] });
+    expect((await walk(raw)).status).toBe("unknown");
+  });
+
+  it("refuses to be asked about a blank version", () => {
+    // Not a server problem — a programming error, and a quiet one: a blank sought version
+    // "matches" a blank entry, and against a healthy list returns a confident absence.
+    for (const bad of ["", " ", "\n"]) {
+      expect(() => findVersion(JSON.stringify({ results: [] }), bad)).toThrow(TypeError);
+    }
+  });
+
+  it("still finds a real version on a page that also has a blank one", () => {
+    const raw = JSON.stringify({ results: [{ version: "" }, { version: "0.36.0" }] });
+    expect(findVersion(raw, "0.36.0").status).toBe("yes");
+  });
+});
+
+describe("isReadableVersion", () => {
+  it("accepts a real version and rejects every blank shape", () => {
+    expect(isReadableVersion("0.36.0")).toBe(true);
+    expect(isReadableVersion("")).toBe(false);
+    expect(isReadableVersion("   ")).toBe(false);
+    expect(isReadableVersion(undefined)).toBe(false);
+    expect(isReadableVersion(null)).toBe(false);
+    expect(isReadableVersion(42)).toBe(false);
   });
 });

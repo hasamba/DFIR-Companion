@@ -28,6 +28,19 @@ export async function mintJwt(issuer, secret, opts = {}) {
 }
 
 /**
+ * A version string this code can actually act on.
+ *
+ * `""` is a string, and that is the whole problem: it satisfied a `typeof` check, entered the list
+ * of versions read, and let a page containing an entry whose version was never really read produce
+ * a definitive "not there" — while padding that list so the server's count reconciled. Blank is
+ * unread, and unread is unknown. `readNext` has always held empty strings to this standard; this
+ * is the same rule applied where it was missing.
+ */
+export function isReadableVersion(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/**
  * Does AMO already hold this version of this add-on?
  *
  * Deliberately strict about what counts as "no". An unparseable body, an auth error, or a
@@ -40,6 +53,12 @@ export async function mintJwt(issuer, secret, opts = {}) {
  * @returns {{ status: "yes" | "no" | "unknown", seen: string[], reason?: string }}
  */
 export function findVersion(raw, version) {
+  // Asking whether AMO holds version "" is a programming error, not a question with an answer.
+  // Left unchecked it is a quiet one: an empty sought version against an empty entry "matches",
+  // and against a healthy list returns a confident absence.
+  if (!isReadableVersion(version)) {
+    throw new TypeError(`findVersion needs a non-blank version, got ${JSON.stringify(version)}`);
+  }
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -64,7 +83,7 @@ export function findVersion(raw, version) {
   const readable = [];
   let unreadable = 0;
   for (const entry of parsed.results) {
-    if (entry && typeof entry === "object" && typeof entry.version === "string") {
+    if (entry && typeof entry === "object" && isReadableVersion(entry.version)) {
       readable.push(entry.version);
     } else {
       unreadable++;
@@ -142,10 +161,13 @@ export async function hasVersion({ addonId, version, token, fetchImpl = fetch, m
       return { status: "unknown", seen, reason: `request failed on page ${page}: ${err.message}`, pages: page };
     }
     const parsed = findVersion(raw, version);
+    // Keep whatever the page DID yield, including when it is being rejected. When this stops a
+    // release, the log should say what it managed to read — "unknown, saw 0.40.0 and 0.39.0" is a
+    // diagnosis; "unknown, saw nothing" reads like a broken token.
+    seen.push(...parsed.seen);
     if (parsed.status === "unknown") {
       return { status: "unknown", seen, reason: parsed.reason, pages: page };
     }
-    seen.push(...parsed.seen);
     if (parsed.status === "yes") return { status: "yes", seen, pages: page };
 
     const next = readNext(raw);
@@ -246,8 +268,10 @@ export function readCount(raw) {
  */
 if (process.argv[1] && process.argv[1].endsWith("amoApi.mjs")) {
   const [, , command, addonId, version] = process.argv;
-  if (command !== "has-version" || !addonId || !version) {
-    console.error("usage: node amoApi.mjs has-version <addonId> <version>");
+  // `!version` alone lets " " through, and a blank version asks AMO a question with no answer.
+  // Exit 2, the same code as "cannot tell", so the workflow stops rather than submitting.
+  if (command !== "has-version" || !isReadableVersion(addonId) || !isReadableVersion(version)) {
+    console.error("usage: node amoApi.mjs has-version <addonId> <version>  (neither may be blank)");
     process.exit(2);
   }
   const token = await mintJwt(process.env.AMO_JWT_ISSUER, process.env.AMO_JWT_SECRET);

@@ -288,6 +288,13 @@ jobs:
           # submitting bytes that differ from the zip attached to the GitHub Release.
           test -f dist-firefox/manifest.json || { echo "::error::manifest.json is not at the archive root"; exit 1; }
           VERSION=$(node -p "require('./dist-firefox/manifest.json').version")
+          # `node -p` prints the string "undefined" for a missing key, which is truthy in shell and
+          # would sail on to be asked about, not found, and submitted. Everything downstream treats
+          # this value as authoritative, so it is checked where it enters rather than trusted.
+          case "$VERSION" in
+            [0-9]*.[0-9]*) ;;
+            *) echo "::error::package manifest has no usable version (got '${VERSION}')"; exit 1 ;;
+          esac
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "submitting version $VERSION"
 

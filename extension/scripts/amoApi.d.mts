@@ -46,3 +46,5 @@ export type PageTotal =
   | { kind: "malformed"; reason: string };
 
 export declare function readCount(raw: string): PageTotal;
+
+export declare function isReadableVersion(value: unknown): boolean;
