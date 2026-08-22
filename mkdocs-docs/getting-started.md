@@ -122,6 +122,10 @@ The capture extension lets you screenshot any browser tab with a keyboard shortc
     1. Download `dfir-capture-extension-firefox-*.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it. (Building from source instead? Run `npm run build:firefox` inside `extension/` — it writes the same files to `extension/dist-firefox/`.)
     2. In Firefox, go to `about:debugging#/runtime/this-firefox`.
     3. Click **Load Temporary Add-on…** and select the `manifest.json` inside the unzipped folder — the manifest **file**, not the folder. (Chrome asks for a folder here; Firefox asks for the manifest inside it.)
+
+    !!! info "What it collects, since a temporary load never asks"
+
+        Firefox shows its data-collection notice only for a signed add-on installed normally; `about:debugging` grants everything silently. The extension declares **browsing activity** (a capture carries the tab's URL and title) and **website content** (the screenshot, and the rows a Push scrapes). All of it goes to your own companion and nowhere else.
     4. The extension icon appears in the toolbar.
 
     !!! note "Temporary add-ons don't survive a restart"

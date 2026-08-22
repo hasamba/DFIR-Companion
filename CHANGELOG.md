@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
 
 ### Fixed
+- **The Firefox install instructions say what the add-on collects** — a temporary add-on loaded through `about:debugging` gets every permission silently and shows no data-collection notice, and that is the only install route the docs describe until the AMO listing exists.
 - **The Firefox add-on can be submitted to AMO again** — the generated manifest carried no `data_collection_permissions`, which AMO has required in every submission since 2025-11-03 and rejects the upload for omitting.
 - **The capture extension keeps the team service token** — the popup only saved it when you pressed Start, and picking a case wrote the stored token back over the one you typed, so every import went out unauthenticated and the companion answered 401. Every field now saves as you leave it.
 - **A rejected token no longer reads as "companion offline"** — the popup reported an HTTP 401 from the case list as an unreachable server, sending analysts to restart a companion that was answering.

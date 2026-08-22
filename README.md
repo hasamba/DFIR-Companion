@@ -721,6 +721,13 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet,
    so the release zip is unsigned and cannot be installed permanently.
 
+   > **What it collects, since a temporary load never asks.** Firefox shows its data-collection
+   > notice only for a signed add-on installed normally; `about:debugging` grants everything
+   > silently. The extension declares **browsing activity** (a capture carries the tab's URL and
+   > title) and **website content** (the screenshot, and the rows a Push scrapes). All of it goes
+   > to your own companion and nowhere else. See
+   > [extension/PRIVACY.md](extension/PRIVACY.md).
+
    The popup only **attaches** to an existing case — you create cases in the dashboard.
 
 3. Open `http://127.0.0.1:4773/dashboard`, click **+ New case** to create your case (it

@@ -63,20 +63,29 @@ The Extension supports a forensic investigation workflow in two ways:
 - Settings and the offline queue stay in your browser's local extension storage and are
   never uploaded anywhere except your own companion.
 
-## What the Firefox install prompt says
+## What the Extension declares it collects
 
-Firefox shows a data-collection notice when you install the Extension. It names
-**browsing activity** and **website content**, because a capture sends the tab's URL and title
-along with the screenshot itself, and Mozilla counts any hand-off outside the browser as
-collection — including one to a server on your own computer.
+The Extension declares two categories of data collection, in the words Mozilla requires:
 
-The Extension requires Firefox 140 or later for this reason: 140 is the first release that can
-show that notice, and shipping to an older one would mean collecting what is described here while
-the install prompt said nothing.
+- **Browsing activity** — a capture carries the tab's URL and title.
+- **Website content** — the screenshot itself, and the rows a console Push scrapes.
 
-That notice describes what the Extension sends **to your own DFIR Companion**, and nothing else.
-It is not a disclosure of data reaching the authors or any third party; as stated above, none
-does. The Extension declares no telemetry of any kind.
+Mozilla counts any hand-off outside the browser as collection, including one to a server on
+your own computer, which is why these are declared rather than `none`. Both describe what the
+Extension sends **to your own DFIR Companion**, and nothing else. Nothing reaches the authors
+or any third party, and the Extension declares no telemetry of any kind.
+
+**When Firefox shows you this, and when it does not.** Firefox 140 and later display a
+data-collection notice as you install a signed add-on — from Mozilla Add-ons, or from a signed
+file. The Extension requires 140 for that reason: shipping the declaration to an older Firefox
+would mean collecting what is described here behind a prompt that said nothing.
+
+A **temporary** add-on is different. Loading an unsigned build through
+`about:debugging` → "Load Temporary Add-on…" — the route the project's own install
+instructions describe, because there is no Mozilla Add-ons listing yet — displays **no prompt at
+all**. Firefox grants every permission silently and shows no data-collection notice. Until the
+listing exists, this policy is the disclosure, which is why the install instructions repeat the
+two categories above rather than leaving Firefox to state them.
 
 ## Permissions and why they are needed
 

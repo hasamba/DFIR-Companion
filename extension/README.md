@@ -34,6 +34,12 @@ there it is always a temporary add-on — but you no longer have to build it: ev
 `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → select
 `extension/dist-firefox/manifest.json` — the manifest **file**, not the folder Chrome asks for.
 
+> **What it collects, since a temporary load never asks.** Firefox shows its data-collection
+> notice only for a signed add-on installed normally; `about:debugging` grants everything silently.
+> This add-on declares **browsing activity** (a capture carries the tab's URL and title) and
+> **website content** (the screenshot, and the rows a Push scrapes). All of it goes to your own
+> companion and nowhere else. See [PRIVACY.md](PRIVACY.md).
+
 Not developing? Unzip `dfir-capture-extension-firefox-<tag>.zip` from the
 [latest release](https://github.com/hasamba/DFIR-Companion/releases/latest) and point the same
 **Load Temporary Add-on…** dialog at the `manifest.json` inside it — the archive holds exactly what
