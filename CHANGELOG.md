@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
 
 ### Fixed
+- **The extension's store description stops calling the companion local** — the address is a setting, and the listing sits beside the privacy policy that says so.
 - **The extension privacy policy stops promising data never leaves your machine** — it does on the default loopback companion, but the address is a setting and team mode exists for a companion another host can reach. The policy now says where evidence goes in both cases, covers Firefox as well as Chrome, and carries a current date.
 - **The Firefox install instructions say what the add-on collects** — a temporary add-on loaded through `about:debugging` gets every permission silently and shows no data-collection notice, and that is the only install route the docs describe until the AMO listing exists.
 - **The Firefox add-on can be submitted to AMO again** — the generated manifest carried no `data_collection_permissions`, which AMO has required in every submission since 2025-11-03 and rejects the upload for omitting.

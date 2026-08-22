@@ -9,12 +9,13 @@ is licensed AGPL-3.0-only.
 
 ## Summary
 
-**The Extension sends data to one place: the DFIR Companion server address you configure. By
-default that is `http://127.0.0.1:4773` — a server on your own machine — and for a single
-analyst working locally, nothing ever leaves the machine. If you point the Extension at a team
-Companion instead, captures go to that host, because that is what you asked it to do. It makes
-no calls to the extension authors, to any analytics service, or to any other third party in
-either case. There is no tracking, no telemetry, and no remote logging.**
+**The Extension sends data to exactly one destination at a time: the DFIR Companion server
+address you configure. By default that is `http://127.0.0.1:4773` — a server on your own
+machine — and for a single analyst working locally, nothing the Extension handles ever leaves
+the machine. If you point the Extension at a team Companion instead, captures go to that host,
+because that is what you asked it to do. In either case it makes no calls to the extension
+authors, to any analytics service, or to any other third party. There is no tracking, no
+telemetry, and no remote logging.**
 
 You — the analyst — are always in control of what is sent and when. A fresh installation has
 **no access to any website**. Persistent access is granted one console origin at a time.
@@ -31,13 +32,13 @@ The Extension supports a forensic investigation workflow in two ways:
    security tool's web console (for example **Splunk**, **Velociraptor**, **Elastic/Kibana**,
    or **CrowdStrike Falcon**), the Extension can extract the **structured results you are
    looking at** (the JSON the console already fetched, or the visible results table) and push
-   those rows to your local DFIR Companion when you click the **"📤 Push → DFIR-Companion"**
+   those rows to the Companion you configured when you click the **"📤 Push → DFIR-Companion"**
    button. This step only ever runs on your explicit click — nothing is sent automatically
    from these pages.
 
 3. **Right-click "Send to DFIR-Companion".** On a page where you invoke the menu, you can send a text
    selection, a table, or a link and choose "Send to DFIR-Companion" to push that selected
-   text, the nearest table's rows, or the link's URL to your local companion. Like the Push
+   text, the nearest table's rows, or the link's URL to that same Companion. Like the Push
    button above, this only ever runs when you explicitly choose it from the menu.
 
 ## What data is handled
@@ -67,8 +68,10 @@ The Extension supports a forensic investigation workflow in two ways:
 - The Extension contains **no third-party SDKs, analytics, advertising, or crash/usage
   reporting.** It does not sell or share data with anyone, and the developers receive no
   data from it.
-- Settings and the offline queue stay in your browser's local extension storage and are
-  never uploaded anywhere except the Companion you configured.
+- Your settings and the permission audit stay in the browser's extension storage and are
+  never uploaded anywhere at all. The offline queue is stored there too; what leaves it are the
+  queued captures themselves, delivered to the Companion you configured once it is reachable
+  again.
 
 ## What the Extension declares it collects
 
@@ -124,8 +127,9 @@ late message from that page.
 ## Data retention
 
 The Extension itself does not retain forensic data beyond the local send-queue needed to
-deliver captures to your companion. Once delivered, evidence is stored and managed by **your**
-DFIR Companion server, under your control. Clearing the Extension's storage (or removing the
+deliver captures to the Companion. Once delivered, evidence is stored and managed by that
+DFIR Companion server, under the control of whoever runs it — you, on the default local
+address; your team and its retention rules, if you pointed the Extension at a team Companion. Clearing the Extension's storage (or removing the
 Extension) clears its settings, permission audit, and any undelivered queued captures. Approved
 origins can be revoked from the popup, the Extension options page, or the browser's extension
 permission controls.
