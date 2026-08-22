@@ -73,9 +73,36 @@ describe("findVersion", () => {
     expect(findVersion("null", "0.36.0").status).toBe("unknown");
   });
 
-  it("does not crash on malformed version entries", () => {
+  it("still reports a hit when other entries are malformed", () => {
+    // Precedence, not luck: the version IS there, so nothing is left to be uncertain about.
     const body = JSON.stringify({ results: [null, { version: 42 }, { version: "0.36.0" }] });
     expect(findVersion(body, "0.36.0")).toMatchObject({ status: "yes" });
+  });
+
+  it("refuses to call it absent when an entry's version could not be read", () => {
+    // The entry it could not read might BE the version sought. Answering "no" here is what makes
+    // the caller submit a version AMO may already hold.
+    const body = JSON.stringify({ results: [null, { version: "0.40.0" }] });
+    const result = findVersion(body, "0.36.0");
+    expect(result.status).toBe("unknown");
+    expect(result.reason).toContain("1 of 2 entries");
+  });
+
+  it.each([
+    ["null", null],
+    ["a number version", { version: 42 }],
+    ["a missing version key", { id: 7 }],
+    ["a string instead of an object", "0.36.0"],
+  ])("treats an entry that is %s as unreadable", (_label, entry) => {
+    const body = JSON.stringify({ results: [entry, { version: "0.40.0" }] });
+    expect(findVersion(body, "0.36.0").status).toBe("unknown");
+  });
+
+  it("reports only genuinely readable versions in seen", () => {
+    // `seen` feeds the count reconciliation. A placeholder for an unread entry would pad it and
+    // make a short list reconcile against the server's total.
+    const body = JSON.stringify({ results: [null, { version: "0.40.0" }] });
+    expect(findVersion(body, "0.36.0").seen).toEqual(["0.40.0"]);
   });
 
   it("matches the version exactly, not by prefix", () => {
@@ -275,5 +302,40 @@ describe("malformed pagination metadata", () => {
     // Finding it is definitive. A bogus count must not turn a hit into a stop.
     const raw = JSON.stringify({ count: 999, next: null, results: [{ version: "0.36.0" }] });
     expect((await walk(raw)).status).toBe("yes");
+  });
+});
+
+describe("unreadable entries and the count reconciliation", () => {
+  const walk = async (raw: string) => {
+    const impl = (async () => ({ text: async () => raw })) as unknown as typeof fetch;
+    return hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+  };
+
+  it("does not let placeholders satisfy the server's count", async () => {
+    // Two entries, one unreadable, count: 2, no next page. Counting the unreadable one would make
+    // the totals agree and produce a confident "not there" from a list half of which was unread.
+    const raw = JSON.stringify({ count: 2, next: null, results: [null, { version: "0.40.0" }] });
+    const result = await walk(raw);
+    expect(result.status).toBe("unknown");
+    expect(result.reason).toContain("readable version string");
+  });
+
+  it("stops on the page with the unreadable entry rather than paging past it", async () => {
+    const raw = JSON.stringify({ count: 9, next: "https://addons.mozilla.org/x", results: [{ id: 1 }] });
+    const result = await walk(raw);
+    expect(result).toMatchObject({ status: "unknown", pages: 1 });
+  });
+
+  it("accumulates only readable versions across pages", async () => {
+    const FIRST = versionsUrl("a@b");
+    const SECOND = "https://addons.mozilla.org/api/v5/addons/addon/a%40b/versions/?page=2";
+    const impl = (async (url: string) => ({
+      text: async () =>
+        String(url) === FIRST
+          ? JSON.stringify({ count: 2, next: SECOND, results: [{ version: "0.40.0" }] })
+          : JSON.stringify({ count: 2, next: null, results: [{ version: "0.39.0" }] }),
+    })) as unknown as typeof fetch;
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    expect(result).toMatchObject({ status: "no", seen: ["0.40.0", "0.39.0"] });
   });
 });

@@ -55,8 +55,33 @@ export function findVersion(raw, version) {
     const detail = typeof parsed.detail === "string" ? parsed.detail : "no results array";
     return { status: "unknown", seen: [], reason: detail };
   }
-  const seen = parsed.results.map((v) => (v && typeof v.version === "string" ? v.version : "?"));
-  return { status: seen.includes(version) ? "yes" : "no", seen };
+  // An entry whose `version` cannot be read is a version this code did NOT read — it may well be
+  // the one being sought. Mapping it to a placeholder and concluding "not found" turns a contract
+  // violation into the answer that makes the caller submit.
+  //
+  // It also quietly defeated the count reconciliation below: placeholders padded `seen`, so
+  // seen.length matched the server's total while some versions had never actually been read.
+  const readable = [];
+  let unreadable = 0;
+  for (const entry of parsed.results) {
+    if (entry && typeof entry === "object" && typeof entry.version === "string") {
+      readable.push(entry.version);
+    } else {
+      unreadable++;
+    }
+  }
+
+  // Precedence matters. A hit is definitive whatever else the page contained: the version is
+  // there, so there is nothing left to be uncertain about and nothing to submit.
+  if (readable.includes(version)) return { status: "yes", seen: readable };
+  if (unreadable > 0) {
+    return {
+      status: "unknown",
+      seen: readable,
+      reason: `${unreadable} of ${parsed.results.length} entries had no readable version string`,
+    };
+  }
+  return { status: "no", seen: readable };
 }
 
 /** Versions endpoint including unlisted/in-review ones — a fresh upload is not public yet. */

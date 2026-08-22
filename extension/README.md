@@ -208,8 +208,9 @@ only the first page and concluding "absent" is wrong as soon as the add-on has 2
 wrong in the direction that costs a release — re-running an older tag's workflow is exactly when
 the version sought sits deep in the list. An incomplete read is reported as unknown,
 never as absent: a failed page, a `next` link pointing off AMO, running out of the page budget,
-pagination metadata the code cannot interpret (`next` present but not a URL), or a body whose own
-`count` exceeds the number of versions actually read. Only an explicit end-of-list that reconciles
+pagination metadata the code cannot interpret (`next` present but not a URL), a body whose own
+`count` exceeds the number of versions actually read, or an entry whose version string cannot be
+read — that entry may be the version being sought, so it cannot support an absence. Only an explicit end-of-list that reconciles
 with that count yields a definitive "not there".
 
 One limitation it cannot cover: AMO reserves the version numbers of *deleted* versions, but
