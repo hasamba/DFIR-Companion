@@ -12,7 +12,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-const read = (f: string) => readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8");
+// Newlines are normalised because the assertions below bound the DISTANCE between two anchors, and
+// a CRLF checkout adds a character per line inside that window. The idle-event assertion spans 499
+// characters against a 500 limit on Linux and 506 on Windows — it failed there for the sole reason
+// that the file had \r\n endings.
+const read = (f: string) =>
+  readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 const connect = read("dashboard-case-connect.js");
 const status = read("dashboard-ai-status.js");
@@ -45,7 +50,10 @@ describe("the four moments the pill re-derives", () => {
   // "idle" is the event most likely to be wrong: it is emitted by whichever run just finished, and
   // that run knows nothing about a gate still holding the next one.
   it("verifies an idle event against the case", () => {
-    expect(status).toMatch(/evt\.status === "idle"[\s\S]{0,500}refreshAiState\(activeCaseId\)/);
+    // The bound only has to say "these two are in the same stanza", and 500 left one character of
+    // headroom over the actual 499 — so any two-character edit to that region of the source would
+    // have reddened this for a reason unrelated to what it checks.
+    expect(status).toMatch(/evt\.status === "idle"[\s\S]{0,900}refreshAiState\(activeCaseId\)/);
   });
 
   it("re-reads after a duplicate-host pair is resolved", () => {

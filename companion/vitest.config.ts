@@ -26,10 +26,18 @@ export default defineConfig({
     // different set of failures on every run, which trains everyone to dismiss real regressions as
     // flake. 15s keeps genuinely-hung tests failing fast while removing the starvation false
     // positives — and removes the incentive to keep bumping timeouts one test at a time.
-    testTimeout: 15_000,
+    //
+    // 15s is that reasoning measured on LINUX. The Windows runner has fewer cores, slower
+    // filesystem calls and a virus scanner in the path, and it reproduced the exact symptom this
+    // comment describes: consecutive runs failed a DIFFERENT set of files each time — stateStore,
+    // encryptedCaseRoutes, playbookHunts, veloImportExternal, backupManager, importWriterExclusion
+    // — nearly every one reporting "Test timed out in 15000ms" rather than an assertion. Applying
+    // the idle-Linux number to a slower platform re-creates the starvation false positives the
+    // number exists to remove, so it scales with the platform rather than per test.
+    testTimeout: process.platform === "win32" ? 45_000 : 15_000,
     // Same reasoning for setup/teardown: a beforeEach doing mkdtemp + createApp() starves too, and
     // a hook timeout fails the whole file rather than one test.
-    hookTimeout: 15_000,
+    hookTimeout: process.platform === "win32" ? 45_000 : 15_000,
     // Real OCR (TesseractOcrRunner) hits the network for language data and isn't mocked by
     // every test that triggers a capture — off by default so the suite never depends on
     // network access; tests/server/ocrSearchRoute.test.ts opts back in per test.
