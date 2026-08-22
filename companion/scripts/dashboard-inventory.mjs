@@ -492,10 +492,7 @@ if (process.argv.includes("--update")) {
   // goes red again the next time anyone regenerates. Formatting here makes the two agree forever.
   const raw = JSON.stringify(report, null, 2) + "\n";
   const options = (await prettier.resolveConfig(JSON_PATH)) ?? {};
-  writeFileSync(
-    JSON_PATH,
-    await prettier.format(raw, { ...options, parser: "json", filepath: JSON_PATH }),
-  );
+  writeFileSync(JSON_PATH, await prettier.format(raw, { ...options, parser: "json", filepath: JSON_PATH }));
   console.log(`[inventory] wrote ${rows.length} sections to scripts/dashboard-inventory.json`);
 } else if (process.argv.includes("--json")) {
   console.log(JSON.stringify(report, null, 2));
