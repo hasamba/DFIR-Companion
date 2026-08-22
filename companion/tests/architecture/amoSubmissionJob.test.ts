@@ -37,6 +37,7 @@ const workflow = parseYaml(
         if?: string;
         uses?: string;
         run?: string;
+        env?: Record<string, unknown>;
         with?: Record<string, unknown>;
       }[];
     }
