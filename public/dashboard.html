@@ -1318,6 +1318,42 @@
         <div class="sfield-row">
           <div class="sfield"><label>Max pinned findings<span class="sfield-hint">DFIR_MAX_PINNED_FINDINGS — how many findings an analyst can pin to the sticky top strip at once; deliberately small to avoid clutter (default 5)</span></label><input id="env-DFIR_MAX_PINNED_FINDINGS" placeholder="5" /></div>
         </div>
+        <div class="settings-group-head">Network access control</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Shown so the live value is visible without a shell. These decide which hostnames and origins the companion answers to, so a writable one would re-open the DNS-rebinding hole.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Allowed origins<span class="sfield-hint">DFIR_ALLOWED_ORIGINS — browser origins permitted to call the API. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ALLOWED_ORIGINS" placeholder="(localhost only)" readonly /></div>
+          <div class="sfield"><label>Allowed hosts<span class="sfield-hint">DFIR_ALLOWED_HOSTS — exact Host headers the server answers to. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ALLOWED_HOSTS" placeholder="(localhost only)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Allowed host suffixes<span class="sfield-hint">DFIR_ALLOWED_HOST_SUFFIXES — domain suffixes accepted in the Host header. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ALLOWED_HOST_SUFFIXES" placeholder="(none)" readonly /></div>
+          <div class="sfield"><label>Env file path<span class="sfield-hint">DFIR_ENV_FILE — which .env this process loaded. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ENV_FILE" placeholder="(companion/.env)" readonly /></div>
+        </div>
+        <div class="settings-group-head">Team authentication</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Set before the server starts: you cannot configure the sign-in provider from a dashboard you must already be signed in to reach. Secrets are redacted by the server.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Auth mode<span class="sfield-hint">DFIR_AUTH_MODE — single-user | team. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_MODE" placeholder="single-user" readonly /></div>
+          <div class="sfield"><label>Auth data dir<span class="sfield-hint">DFIR_AUTH_DATA_DIR — where accounts and sessions live; default is a sibling of the cases root. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_DATA_DIR" placeholder="(beside cases root)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Session lifetime (h)<span class="sfield-hint">DFIR_AUTH_SESSION_HOURS — how long a signed-in session stays valid. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_SESSION_HOURS" placeholder="(default)" readonly /></div>
+          <div class="sfield"><label>Secure cookie<span class="sfield-hint">DFIR_AUTH_COOKIE_SECURE — true when served over HTTPS. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_COOKIE_SECURE" placeholder="true" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Bootstrap token<span class="sfield-hint">DFIR_AUTH_BOOTSTRAP_TOKEN — required for first-admin setup from a non-loopback client. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_BOOTSTRAP_TOKEN" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+          <div class="sfield"><label>OIDC issuer<span class="sfield-hint">DFIR_AUTH_OIDC_ISSUER — identity-provider issuer URL. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_ISSUER" placeholder="(not set)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>OIDC client id<span class="sfield-hint">DFIR_AUTH_OIDC_CLIENT_ID — this application's client id. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_CLIENT_ID" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>OIDC client secret<span class="sfield-hint">DFIR_AUTH_OIDC_CLIENT_SECRET — redacted by the server. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_CLIENT_SECRET" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>OIDC redirect URI<span class="sfield-hint">DFIR_AUTH_OIDC_REDIRECT_URI — callback the provider returns to. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_REDIRECT_URI" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>OIDC scopes<span class="sfield-hint">DFIR_AUTH_OIDC_SCOPES — scopes requested at sign-in. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_SCOPES" placeholder="openid profile email" readonly /></div>
+        </div>
+        <div class="settings-group-head">Logging</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Log level<span class="sfield-hint">DFIR_LOG_LEVEL — server log verbosity (error/warn/info/debug).</span></label><input id="env-DFIR_LOG_LEVEL" placeholder="info" /></div>
+        </div>
       </div>
 
       <!-- AI -->
@@ -1616,6 +1652,12 @@
         <div class="sfield-row">
           <div class="sfield"><label>Report model-performance footnote<span class="sfield-hint">DFIR_REPORT_MODEL_PERF — add a "§3.5 Model performance" footnote (synth model, findings vs safety-net backfill, second-opinion agreement rate) to the exported report (off by default)</span></label><input id="env-DFIR_REPORT_MODEL_PERF" placeholder="off" /></div>
         </div>
+        <div class="settings-group-head">Inline prompt overrides</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Prompts are normally pointed at a file above — the inline form exists for deployments that inject configuration as environment variables. Shown here so an inline override is never invisible.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Custom-importer prompt (inline)<span class="sfield-hint">DFIR_AI_IMPORTGEN_PROMPT — whole prompt as a value rather than a file path. This <b>overrides</b> the file form above when both are set.</span></label><input id="env-DFIR_AI_IMPORTGEN_PROMPT" placeholder="(using built-in)" /></div>
+          <div class="sfield"><label>Narrative prompt (inline)<span class="sfield-hint">DFIR_AI_NARRATIVE_PROMPT — whole prompt as a value rather than a file path. This <b>overrides</b> the file form above when both are set.</span></label><input id="env-DFIR_AI_NARRATIVE_PROMPT" placeholder="(using built-in)" /></div>
+        </div>
       </div>
 
       <!-- Enrichment -->
@@ -1737,6 +1779,11 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Shodan (Exposed Hosts)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS_SHODAN — Shodan lookup delay (default 1000)</span></label><input id="env-DFIR_ENRICH_DELAY_MS_SHODAN" placeholder="1000" /></div>
+        </div>
+        <div class="settings-group-head">Read-only enrichment settings</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>MalwareBazaar key (legacy alias)<span class="sfield-hint">DFIR_MB_KEY — the old name for the Hunting.ch key above. Set either; prefer the field above.</span></label><input id="env-DFIR_MB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Country centroids URL<span class="sfield-hint">DFIR_COUNTRY_CENTROIDS_URL — source for the map's country coordinates. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_COUNTRY_CENTROIDS_URL" placeholder="(built-in)" readonly /></div>
         </div>
       </div>
 
@@ -1909,6 +1956,41 @@
           <div class="sfield"><label>Skip webhook TLS verify<span class="sfield-hint">DFIR_NOTIFY_INSECURE — true to accept self-signed certs on webhook endpoints (lab only)</span></label><input id="env-DFIR_NOTIFY_INSECURE" placeholder="false" /></div>
         </div>
 
+        <div class="settings-group-head">Jira (read-only)</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Ticketing credentials stay operator-managed in .env — the dashboard can push tickets but cannot rewrite the connection. Token is redacted by the server.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Jira base URL<span class="sfield-hint">DFIR_JIRA_URL — e.g. https://example.atlassian.net. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_URL" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>Jira user<span class="sfield-hint">DFIR_JIRA_USER — account the push authenticates as. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_USER" placeholder="(not set)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Jira API token<span class="sfield-hint">DFIR_JIRA_TOKEN — redacted by the server. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_TOKEN" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+          <div class="sfield"><label>Project key<span class="sfield-hint">DFIR_JIRA_PROJECT_KEY — project new issues are filed under. Not a secret, but the server redacts anything ending <code>_KEY</code>, so the value cannot be shown here. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_PROJECT_KEY" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Issue type<span class="sfield-hint">DFIR_JIRA_ISSUE_TYPE — issue type used for pushed findings. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_ISSUE_TYPE" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_JIRA_CA — path to a private CA bundle for TLS. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_CA" placeholder="(not set)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Skip TLS verification<span class="sfield-hint">DFIR_JIRA_INSECURE — disables certificate checking. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_INSECURE" placeholder="false" readonly /></div>
+        </div>
+        <div class="settings-group-head">ServiceNow (read-only)</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Same policy as Jira. Password is redacted by the server.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Instance URL<span class="sfield-hint">DFIR_SERVICENOW_URL — e.g. https://example.service-now.com. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_URL" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>User<span class="sfield-hint">DFIR_SERVICENOW_USER — account the push authenticates as. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_USER" placeholder="(not set)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Password<span class="sfield-hint">DFIR_SERVICENOW_PASSWORD — redacted by the server. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_PASSWORD" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+          <div class="sfield"><label>Caller<span class="sfield-hint">DFIR_SERVICENOW_CALLER — caller recorded on created incidents. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_CALLER" placeholder="(not set)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Category<span class="sfield-hint">DFIR_SERVICENOW_CATEGORY — incident category. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_CATEGORY" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>Subcategory<span class="sfield-hint">DFIR_SERVICENOW_SUBCATEGORY — incident subcategory. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_SUBCATEGORY" placeholder="(not set)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_SERVICENOW_CA — path to a private CA bundle for TLS. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_CA" placeholder="(not set)" readonly /></div>
+          <div class="sfield"><label>Skip TLS verification<span class="sfield-hint">DFIR_SERVICENOW_INSECURE — disables certificate checking. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_INSECURE" placeholder="false" readonly /></div>
+        </div>
       </div>
 
       <!-- Velociraptor Triage -->
@@ -2412,6 +2494,10 @@
         <div class="sfield-row" data-safe-style="margin-top:10px">
           <div class="sfield"><label>Update repo<span class="sfield-hint">DFIR_UPDATE_REPO — GitHub owner/repo to check for releases (default hasamba/DFIR-Companion; set for forks)</span></label><input id="env-DFIR_UPDATE_REPO" placeholder="hasamba/DFIR-Companion" /></div>
         </div>
+        <div class="settings-group-head">Read-only</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Update check<span class="sfield-hint">DFIR_UPDATE_CHECK — on/off for the newer-release notice.</span></label><input id="env-DFIR_UPDATE_CHECK" placeholder="off" /></div>
+        </div>
       </div>
 
       <!-- Notifications (issue #58) — Slack / MS Teams / SMTP email channels for critical findings,
@@ -2494,6 +2580,40 @@
         <div class="sfield">
           <label>Channels <span id="ntfCount" class="sfield-hint" data-safe-style="display:inline"></span></label>
           <div id="ntfList" data-safe-style="max-height:300px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:4px"></div>
+        </div>
+        <div class="settings-group-head">Slack app credentials (read-only)</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Channel routing is configured above through the notifications API. These are the APP-level credentials, kept in .env: a bot token and the secret that authenticates Slack's inbound calls are operator property, not dashboard fields.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>App token<span class="sfield-hint">DFIR_SLACK_APP_TOKEN — redacted by the server. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SLACK_APP_TOKEN" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+          <div class="sfield"><label>Signing secret<span class="sfield-hint">DFIR_SLACK_SIGNING_SECRET — verifies that inbound requests really came from Slack. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SLACK_SIGNING_SECRET" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Socket mode<span class="sfield-hint">DFIR_SLACK_SOCKET_MODE — use a socket connection instead of inbound webhooks. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SLACK_SOCKET_MODE" placeholder="false" readonly /></div>
+          <div class="sfield"><label>Action users<span class="sfield-hint">DFIR_SLACK_ACTION_USERS — who may trigger actions from Slack. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SLACK_ACTION_USERS" placeholder="(none)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Response hosts<span class="sfield-hint">DFIR_SLACK_RESPONSE_HOSTS — hosts the server will call back. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SLACK_RESPONSE_HOSTS" placeholder="(Slack only)" readonly /></div>
+        </div>
+        <div class="settings-group-head">Teams credentials (read-only)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Teams token<span class="sfield-hint">DFIR_TEAMS_TOKEN — redacted by the server. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TEAMS_TOKEN" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+          <div class="sfield"><label>Action users<span class="sfield-hint">DFIR_TEAMS_ACTION_USERS — who may trigger actions from Teams. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TEAMS_ACTION_USERS" placeholder="(none)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Response hosts<span class="sfield-hint">DFIR_TEAMS_RESPONSE_HOSTS — hosts the server will call back. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TEAMS_RESPONSE_HOSTS" placeholder="(Teams only)" readonly /></div>
+        </div>
+        <div class="settings-group-head">Telegram credentials (read-only)</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Reloadable from .env without a restart, but never writable here — the dashboard has no business rewriting the war-room bot's credential.</p>
+        <div class="sfield-row">
+          <div class="sfield"><label>Bot token<span class="sfield-hint">DFIR_TELEGRAM_BOT_TOKEN — redacted by the server. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TELEGRAM_BOT_TOKEN" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+          <div class="sfield"><label>Webhook secret<span class="sfield-hint">DFIR_TELEGRAM_SECRET_TOKEN — authenticates Telegram's inbound calls. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TELEGRAM_SECRET_TOKEN" type="password" placeholder="(not set)" readonly autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>API base<span class="sfield-hint">DFIR_TELEGRAM_API_BASE — override for a self-hosted bot API. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TELEGRAM_API_BASE" placeholder="(telegram.org)" readonly /></div>
+          <div class="sfield"><label>Long polling<span class="sfield-hint">DFIR_TELEGRAM_POLL — poll instead of receiving webhooks. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TELEGRAM_POLL" placeholder="false" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Action users<span class="sfield-hint">DFIR_TELEGRAM_ACTION_USERS — who may trigger actions from Telegram. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TELEGRAM_ACTION_USERS" placeholder="(none)" readonly /></div>
         </div>
       </div>
 
