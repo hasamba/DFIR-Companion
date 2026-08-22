@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Maintainer note:** keep entries concise (one line each). Add changes under `[Unreleased]`
 > as you go; on release, rename it to the version + date, bump `companion/package.json`,
-> `extension/package.json`, `extension/manifest.json` (+ both `package-lock.json`), and tag `vX.Y.Z`.
+> `extension/package.json`, `extension/manifest.json` (+ both `package-lock.json`) and the `image:`
+> tag in `docker-compose.yml`, then tag `vX.Y.Z`. `tests/architecture/versionSync.test.ts` fails if
+> any of the six disagree.
 
 ## [Unreleased]
 
 ### Fixed
 - **Exporting a case on Windows no longer fails as a security refusal** — a sidecar save during the export was reported as a symlink attack.
+- **`docker compose pull` fetches the current release again** — the compose image tag sat at 0.34.0 for the whole 0.35.x line, so users got a container a full release behind their checkout. A gate now fails when any of the six version-bearing files disagree.
 
 ## [0.35.1] - 2026-08-22
 

@@ -33,7 +33,7 @@ companion/updates/
 **/.env
 
 # Node
-node_modules/
+node_modules
 dist/
 *.timestamp-*.mjs
 .gstack/
