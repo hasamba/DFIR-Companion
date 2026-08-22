@@ -21,7 +21,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
-import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { pollFor, pollBudget, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 // Fills the three array fields every ForensicEvent carries but no super-timeline assertion in
 // this file reads, so each literal below stays about the fields the route actually filters on.
@@ -93,7 +93,7 @@ describe("super-timeline dual-write", () => {
         const response = await request(app).get("/cases/c1/super-timeline");
         return response.body.total > 0 ? response : undefined;
       },
-      { timeoutMs: 3_000, intervalMs: 25 },
+      { timeoutMs: pollBudget(3_000), intervalMs: 25 },
     );
     expect(res.status).toBe(200);
     expect(res.body.total).toBeGreaterThan(0);
@@ -108,7 +108,7 @@ describe("super-timeline dual-write", () => {
         const current = await importMetaStore.load("c1");
         return current.lastImportedAt ? current : undefined;
       },
-      { timeoutMs: 3_000, intervalMs: 25 },
+      { timeoutMs: pollBudget(3_000), intervalMs: 25 },
     );
     expect((await stateStore.load("c1")).forensicTimeline).toHaveLength(0);
     expect(meta.addedCount).toBe(0);
