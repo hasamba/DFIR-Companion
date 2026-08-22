@@ -227,6 +227,143 @@ jobs:
           path: extension/${{ env.FIREFOX_ZIP_NAME }}
           if-no-files-found: error
 
+  amo-listing:
+    name: Submit to Mozilla Add-ons
+    needs: extension-zip
+    # Same gate as the Chrome job and the GitHub Release: a real tag, or a workflow_dispatch that
+    # names one. Independent of both, so an AMO hiccup never blocks the release and vice-versa.
+    # No-ops cleanly until the AMO credentials exist, so it is safe to merge before they do.
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check for AMO credentials
+        id: creds
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+        run: |
+          if [ -n "$AMO_JWT_ISSUER" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AMO secrets not set (AMO_JWT_ISSUER/AMO_JWT_SECRET). Skipping submission."
+          fi
+
+      - name: Checkout
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          # git archive below reads the tagged tree, and a shallow clone of a tag ref has it.
+          # fetch-depth 0 anyway: the source archive is what Mozilla reviews, and a truncated
+          # history is not worth risking to save a few seconds.
+          fetch-depth: 0
+
+      - name: Download extension zip (Firefox)
+        if: steps.creds.outputs.configured == 'true'
+        # The FIREFOX artifact specifically. The Chrome zip is a separate artifact and must stay
+        # out of this directory — signing the Chrome package would submit a manifest with no
+        # browser_specific_settings, no data_collection_permissions, and a service_worker key
+        # Firefox does not support.
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-firefox-zip
+          path: ff-zip
+
+      - name: Unpack the exact package the release ships
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          ZIP=$(ls ff-zip/*.zip | head -n1)
+          echo "signing $ZIP"
+          mkdir -p dist-firefox
+          unzip -q "$ZIP" -d dist-firefox
+          # web-ext signs a DIRECTORY, so unpack rather than rebuild. Rebuilding here would risk
+          # submitting bytes that differ from the zip attached to the GitHub Release.
+          test -f dist-firefox/manifest.json || { echo "::error::manifest.json is not at the archive root"; exit 1; }
+          VERSION=$(node -p "require('./dist-firefox/manifest.json').version")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "submitting version $VERSION"
+
+      - name: Build the human-readable source archive
+        if: steps.creds.outputs.configured == 'true'
+        # Mandatory for this add-on, not optional: the shipped bundles are minified, and AMO
+        # rejects a submission whose code a reviewer cannot read. `git archive` takes only
+        # committed files, so no node_modules, no build output, and nothing gitignored travels.
+        # extension/BUILD.md sits at the root of the result and carries the build instructions
+        # Mozilla requires.
+        run: |
+          set -euo pipefail
+          git archive --format=zip -o amo-source.zip HEAD:extension
+          unzip -l amo-source.zip | grep -q "BUILD.md" || {
+            echo "::error::BUILD.md missing from the source archive — AMO requires build instructions in it"
+            exit 1
+          }
+          ls -lh amo-source.zip
+
+      - name: Submit to AMO
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # --approval-timeout 0 is what keeps this job from hanging. A listed submission goes to
+        # HUMAN review, which takes hours to days; without it web-ext waits for approval and the
+        # job burns its timeout on a submission that already succeeded.
+        run: |
+          set -euo pipefail
+          npx --yes web-ext@10 sign \
+            --source-dir dist-firefox \
+            --channel listed \
+            --upload-source-code amo-source.zip \
+            --approval-timeout 0
+
+      - name: Verify AMO accepted the version
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # The real safety net, mirroring the Chrome job: web-ext exiting 0 is not proof the
+        # version exists on AMO. This asks AMO directly. It verifies the version was ACCEPTED
+        # FOR REVIEW, which is the most a tag can achieve — a human still has to approve it
+        # before anyone can install it.
+        run: |
+          set -euo pipefail
+          ADDON_ID="dfir-companion@hasamba.github.io"
+
+          # AMO authenticates with a short-lived HS256 JWT minted from the issuer/secret pair.
+          TOKEN=$(node -e '
+            const crypto = require("crypto");
+            const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+            const iat = Math.floor(Date.now() / 1000);
+            const head = b64({ alg: "HS256", typ: "JWT" });
+            const body = b64({ iss: process.env.AMO_JWT_ISSUER, jti: String(Math.random()), iat, exp: iat + 240 });
+            const sig = crypto.createHmac("sha256", process.env.AMO_JWT_SECRET)
+              .update(head + "." + body).digest("base64url");
+            process.stdout.write(head + "." + body + "." + sig);
+          ')
+
+          URL="https://addons.mozilla.org/api/v5/addons/addon/${ADDON_ID}/versions/?filter=all_with_unlisted"
+          BODY=$(curl -sS -H "Authorization: JWT ${TOKEN}" "$URL")
+
+          FOUND=$(printf '%s' "$BODY" | node -e '
+            let raw = "";
+            process.stdin.on("data", (c) => (raw += c));
+            process.stdin.on("end", () => {
+              let parsed;
+              try { parsed = JSON.parse(raw); } catch { console.log("PARSE_ERROR"); return; }
+              const results = parsed.results || [];
+              const hit = results.find((v) => v.version === process.env.VERSION);
+              console.log(hit ? "YES" : "NO:" + results.slice(0, 5).map((v) => v.version).join(","));
+            });
+          ')
+
+          if [ "$FOUND" = "YES" ]; then
+            echo "::notice::AMO accepted version ${VERSION} for review. A human reviewer must approve it before users can install it."
+          else
+            echo "::error::AMO does not list version ${VERSION} after upload (got: ${FOUND})"
+            printf '%s\n' "$BODY" | head -c 2000
+            exit 1
+          fi
+
   chrome-webstore:
     name: Publish to Chrome Web Store
     needs: extension-zip

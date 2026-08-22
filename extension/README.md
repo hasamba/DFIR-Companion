@@ -12,9 +12,10 @@ once** uses temporary `activeTab` access and does not retain site permission.
 
 Listed publication is set up via CI (see [Publishing](#publishing-chrome-web-store)); once the
 listing is live, install it from the Chrome Web Store for one-click setup and automatic updates.
-Until then (and for development), use the unpacked load below. Firefox has no AMO listing yet, so
-there it is always a temporary add-on — but you no longer have to build it: every release attaches
-`dfir-capture-extension-firefox-<tag>.zip` (see [Releases](https://github.com/hasamba/DFIR-Companion/releases/latest)).
+Until then (and for development), use the unpacked load below. The Firefox add-on has been
+submitted to AMO and is awaiting first review; until it is approved, load it as a temporary
+add-on — every release attaches `dfir-capture-extension-firefox-<tag>.zip` (see
+[Releases](https://github.com/hasamba/DFIR-Companion/releases/latest)).
 
 ## Build & load (development / unpacked)
 
@@ -56,10 +57,10 @@ permanent install; that needs the AMO listing below.
 
 Both targets emit the same bundles from the same sources; only the manifest differs. There is no
 `manifest-firefox.json` on disk — [`scripts/manifest-firefox.mjs`](./scripts/manifest-firefox.mjs)
-derives it from `manifest.json` at build time, so every shared field has one source (#300). Firefox
-128 is the floor because it is where `scripting.executeScript` gained `world: "MAIN"`, which the
-API-interception hook below depends on; on anything older the hook installs into the isolated world
-and silently captures nothing (#298).
+derives it from `manifest.json` at build time, so every shared field has one source (#300).
+Firefox 140 is the floor, for two independent reasons — the `world: "MAIN"` support the
+API-interception hook depends on (#298) and the data-collection consent screen — both spelled out
+under [Publishing (Firefox / AMO)](#publishing-firefox--amo).
 
 ## Test
     npm test
@@ -126,8 +127,8 @@ The periodic capture timer is implemented with `chrome.alarms`, which clamps `pe
 
 ## Publishing (Chrome Web Store)
 
-Privacy policy: [`PRIVACY.md`](./PRIVACY.md) — the Extension sends data only to your local
-companion (`127.0.0.1:4773`); no third-party calls. Use its raw GitHub URL as the listing's
+Privacy policy: [`PRIVACY.md`](./PRIVACY.md) — the Extension sends data only to the companion
+address you configure, `127.0.0.1:4773` by default; no third-party calls. Use its raw GitHub URL as the listing's
 required privacy-policy link.
 
 Store icons live in [`icons/`](./icons) (16/32/48/128, derived from the Companion logo) and are
@@ -159,15 +160,39 @@ page reflects the permissions the browser has actually granted.
 
 ## Publishing (Firefox / AMO)
 
-Not submitted to AMO yet, but the build is packaged: `release-artifacts.yml`'s **`extension-zip`**
-job now builds both targets and attaches `dfir-capture-extension-firefox-<tag>.zip` — zipped from
-inside `dist-firefox/`, so `manifest.json` sits at the archive root — alongside the Chrome zip on
-every `v*` tag (#366). The job's `sha256` output stays the *Chrome* zip's, because the Chocolatey
-package downloads and verifies that specific asset.
+`release-artifacts.yml`'s **`extension-zip`** job builds both targets and attaches
+`dfir-capture-extension-firefox-<tag>.zip` — zipped from inside `dist-firefox/`, so
+`manifest.json` sits at the archive root — alongside the Chrome zip on every `v*` tag (#366). The
+job's `sha256` output stays the *Chrome* zip's, because the Chocolatey package downloads and
+verifies that specific asset.
 
-What is still missing is the listing itself: AMO upload/publish needs API credentials and a first
-manual submission, exactly as the Chrome listing did. Until then the release zip is an unsigned
-temporary add-on, not a permanent install.
+The **`amo-listing`** job then submits that same zip to Mozilla on every `v*` tag. It no-ops until
+these repo secrets are set, so it is safe to merge before the credentials exist:
+
+- `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` — from <https://addons.mozilla.org/developers/addon/api/key/>
+
+Three things make this job different from the Chrome one, and each is load-bearing:
+
+- **It signs the unpacked release zip, not a fresh build.** `web-ext sign` takes a directory, so
+  the job unzips the artifact rather than rebuilding. Rebuilding could submit bytes that differ
+  from the asset attached to the GitHub Release.
+- **It uploads the source with every version.** The shipped bundles are minified, so AMO rejects a
+  submission whose code a reviewer cannot read — and it asks again for *each* version, not just the
+  first. The job builds that archive with `git archive HEAD:extension`, which carries only
+  committed files, and [`BUILD.md`](./BUILD.md) rides at its root with the build instructions
+  Mozilla requires. A guard fails the job if that file ever goes missing.
+- **It does not wait for approval.** A listed version goes to human review, which takes hours to
+  days; `--approval-timeout 0` submits and exits. **A green tag therefore means "accepted for
+  review", never "live"** — a reviewer still has to approve it before anyone can install it.
+
+The verification step asks AMO directly whether it holds the new version, because `web-ext`
+exiting 0 does not prove the upload landed. `tests/architecture/amoSubmissionJob.test.ts` guards
+all of the above; every one of its assertions has been mutation-tested red.
+
+**One-time human steps** (CI cannot do these): create the Mozilla developer account, enable
+two-factor auth on it, do the first upload and fill the listing — summary, description, category,
+support URL, licence (AGPL-3.0-only), and the privacy-policy link. After that, tagged releases
+submit new versions automatically.
 
 Two values in [`scripts/manifest-firefox.mjs`](./scripts/manifest-firefox.mjs) are already settled
 and should not be changed casually:
