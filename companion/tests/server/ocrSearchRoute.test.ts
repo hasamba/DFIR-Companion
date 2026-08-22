@@ -7,7 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { _resetDedupCache } from "../../src/ingest/captureIngest.js";
 import type { OcrRunner } from "../../src/analysis/ocrRedact.js";
-import { pollFor, POLL_TIMEOUT_MS, type PollOptions } from "../helpers/poll.js";
+import { pollFor, pollBudget, POLL_TIMEOUT_MS, type PollOptions } from "../helpers/poll.js";
 
 // Stub OCR runner — "reads" a fixed line so the background-index path is exercised without tesseract.
 const stubOcr: OcrRunner = {
@@ -150,7 +150,7 @@ describe("POST /captures background OCR indexing", () => {
       // Doubled because this is the slowest workload in the file: seven background OCR jobs behind a
       // concurrency cap. The per-file waits this replaces gave each file its own 4s, so a single
       // DEFAULT budget would have made the wait SHORTER than before — the opposite of the point.
-      await waitForIndexed(files, { timeoutMs: POLL_TIMEOUT_MS * 2 });
+      await waitForIndexed(files, { timeoutMs: pollBudget(20_000) });
       expect(Object.keys(await cases.loadOcrIndex("c1"))).toHaveLength(7);
     },
     POLL_TIMEOUT_MS * 3,
