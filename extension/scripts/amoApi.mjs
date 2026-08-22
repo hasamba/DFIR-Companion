@@ -124,11 +124,32 @@ export async function hasVersion({ addonId, version, token, fetchImpl = fetch, m
     if (parsed.status === "yes") return { status: "yes", seen, pages: page };
 
     const next = readNext(raw);
-    if (!next) return { status: "no", seen, pages: page }; // list exhausted — a real absence
-    if (!isAmoUrl(next)) {
-      return { status: "unknown", seen, reason: `next page pointed off-site: ${next}`, pages: page };
+    if (next.kind === "malformed") {
+      // `next` was present but not a usable link. That is not "the list ended" — it is a response
+      // this code does not understand, and the two must not collapse into the same answer.
+      return { status: "unknown", seen, reason: next.reason, pages: page };
     }
-    url = next;
+    if (next.kind === "end") {
+      // The only path that may return a definitive absence, and only once the server's own count
+      // agrees that everything was read.
+      const total = readCount(raw);
+      if (total.kind === "malformed") {
+        return { status: "unknown", seen, reason: total.reason, pages: page };
+      }
+      if (total.kind === "number" && seen.length < total.value) {
+        return {
+          status: "unknown",
+          seen,
+          reason: `list ended after ${seen.length} version(s) but the server reported ${total.value}`,
+          pages: page,
+        };
+      }
+      return { status: "no", seen, pages: page };
+    }
+    if (!isAmoUrl(next.url)) {
+      return { status: "unknown", seen, reason: `next page pointed off-site: ${next.url}`, pages: page };
+    }
+    url = next.url;
   }
   return {
     status: "unknown",
@@ -138,14 +159,58 @@ export async function hasVersion({ addonId, version, token, fetchImpl = fetch, m
   };
 }
 
-/** `next` from a page body, or null when this is the last page. Never throws — the body is parsed. */
-function readNext(raw) {
+/**
+ * Classify a page's `next` field into the THREE outcomes it actually has.
+ *
+ * Collapsing them into "falsy means the end" is what made malformed metadata read as a definitive
+ * absence: `next: 42`, `next: {}` and `next: ""` are not "no more pages", they are a response this
+ * code does not understand — and absence is the answer that makes the caller submit.
+ *
+ * @returns {{ kind: "url", url: string } | { kind: "end" } | { kind: "malformed", reason: string }}
+ */
+export function readNext(raw) {
+  let parsed;
   try {
-    const next = JSON.parse(raw).next;
-    return typeof next === "string" && next ? next : null;
+    parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return { kind: "malformed", reason: "page body was not JSON" };
   }
+  if (!parsed || typeof parsed !== "object") {
+    return { kind: "malformed", reason: "page body was not an object" };
+  }
+  // Only an explicit null (or an absent key) means the list is finished. That is what AMO sends.
+  if (parsed.next === null || parsed.next === undefined) return { kind: "end" };
+  if (typeof parsed.next !== "string" || parsed.next === "") {
+    return { kind: "malformed", reason: `next was ${JSON.stringify(parsed.next)}, not a URL` };
+  }
+  return { kind: "url", url: parsed.next };
+}
+
+/**
+ * The server's own total, used to reconcile against what was actually read.
+ *
+ * Without it, a response claiming 99 versions while returning 25 and no `next` yields a confident
+ * "not there" from a list that was never finished.
+ *
+ * @returns {{ kind: "number", value: number } | { kind: "absent" } | { kind: "malformed", reason: string }}
+ */
+export function readCount(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { kind: "malformed", reason: "page body was not JSON" };
+  }
+  if (!parsed || typeof parsed !== "object" || parsed.count === undefined || parsed.count === null) {
+    // Not every paginated body is required to carry it, and failing every run over a missing
+    // optional field would make the pre-flight useless. Absent means "cannot reconcile", not
+    // "broken" — the `next` chain is still the primary signal.
+    return { kind: "absent" };
+  }
+  if (typeof parsed.count !== "number" || !Number.isInteger(parsed.count) || parsed.count < 0) {
+    return { kind: "malformed", reason: `count was ${JSON.stringify(parsed.count)}, not a whole number` };
+  }
+  return { kind: "number", value: parsed.count };
 }
 
 /**

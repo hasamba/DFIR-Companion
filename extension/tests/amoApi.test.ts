@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
 
-import { mintJwt, findVersion, versionsUrl, hasVersion, isAmoUrl } from "../scripts/amoApi.mjs";
+import {
+  mintJwt,
+  findVersion,
+  versionsUrl,
+  hasVersion,
+  isAmoUrl,
+  readNext,
+  readCount,
+} from "../scripts/amoApi.mjs";
 
 describe("mintJwt", () => {
   it("produces a verifiable HS256 JWT", async () => {
@@ -94,8 +102,11 @@ describe("hasVersion paging", () => {
   // The endpoint paginates at 25. Reading page one and calling it absent is wrong the moment the
   // add-on has 26 versions, and wrong in the direction that costs a release: "no" means "submit",
   // and AMO then rejects the duplicate.
-  const page = (versions: string[], next: string | null) =>
-    JSON.stringify({ count: 99, next, results: versions.map((version) => ({ version })) });
+  // `total` defaults to this page's own length, i.e. a single-page list. Multi-page fixtures pass
+  // the real total — a body claiming more versions than the walk ever sees is itself a tested case
+  // below, not something every fixture should assert by accident.
+  const page = (versions: string[], next: string | null, total = versions.length) =>
+    JSON.stringify({ count: total, next, results: versions.map((version) => ({ version })) });
 
   const fakeFetch = (pages: Record<string, string>) => {
     const calls: string[] = [];
@@ -113,8 +124,8 @@ describe("hasVersion paging", () => {
 
   it("finds a version that only appears on the second page", async () => {
     const { impl, calls } = fakeFetch({
-      [FIRST]: page(["0.40.0", "0.39.0"], SECOND),
-      [SECOND]: page(["0.36.0", "0.35.1"], null),
+      [FIRST]: page(["0.40.0", "0.39.0"], SECOND, 4),
+      [SECOND]: page(["0.36.0", "0.35.1"], null, 4),
     });
     const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
     expect(result.status).toBe("yes");
@@ -131,8 +142,8 @@ describe("hasVersion paging", () => {
 
   it("only says no after the whole list is exhausted", async () => {
     const { impl } = fakeFetch({
-      [FIRST]: page(["0.40.0"], SECOND),
-      [SECOND]: page(["0.39.0"], null),
+      [FIRST]: page(["0.40.0"], SECOND, 2),
+      [SECOND]: page(["0.39.0"], null, 2),
     });
     const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
     expect(result).toMatchObject({ status: "no", pages: 2 });
@@ -142,7 +153,7 @@ describe("hasVersion paging", () => {
   it("reports unknown when a later page fails, never no", async () => {
     // The dangerous case: page 1 parsed fine, so a naive implementation would answer from it.
     const { impl } = fakeFetch({
-      [FIRST]: page(["0.40.0"], SECOND),
+      [FIRST]: page(["0.40.0"], SECOND, 2),
       [SECOND]: '{"detail":"Internal Server Error"}',
     });
     const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
@@ -163,7 +174,7 @@ describe("hasVersion paging", () => {
     // `next` is data from a response, not an instruction. Following it anywhere would send the
     // developer's JWT to whatever host the body named.
     const { impl, calls } = fakeFetch({
-      [FIRST]: page(["0.40.0"], "https://evil.example/api/v5/versions/?page=2"),
+      [FIRST]: page(["0.40.0"], "https://evil.example/api/v5/versions/?page=2", 2),
     });
     const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
     expect(result.status).toBe("unknown");
@@ -173,7 +184,7 @@ describe("hasVersion paging", () => {
 
   it("gives up with unknown rather than looping forever", async () => {
     // A server that always returns a `next` must not spin the job until its timeout.
-    const selfReferential = (async () => ({ text: async () => page(["0.1.0"], FIRST) })) as unknown as typeof fetch;
+    const selfReferential = (async () => ({ text: async () => page(["0.1.0"], FIRST, 999) })) as unknown as typeof fetch;
     const result = await hasVersion({
       addonId: "a@b",
       version: "0.36.0",
@@ -193,5 +204,76 @@ describe("isAmoUrl", () => {
     expect(isAmoUrl("https://addons.mozilla.org.evil.example/x")).toBe(false); // suffix trick
     expect(isAmoUrl("https://evil.example/x")).toBe(false);
     expect(isAmoUrl("not a url")).toBe(false);
+  });
+});
+
+describe("malformed pagination metadata", () => {
+  // Every case here used to produce a confident "no", because `next` was read as "truthy string or
+  // the list ended". A definitive absence is the answer that makes the caller SUBMIT, so a
+  // response this code cannot interpret must never reach it.
+  const body = (extra: Record<string, unknown>) =>
+    JSON.stringify({ count: 1, results: [{ version: "0.40.0" }], ...extra });
+
+  const walk = async (raw: string) => {
+    const impl = (async () => ({ text: async () => raw })) as unknown as typeof fetch;
+    return hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+  };
+
+  it.each([
+    ["a number", 42],
+    ["an object", {}],
+    ["an array", []],
+    ["a boolean", true],
+    ["an empty string", ""],
+  ])("treats next being %s as unknown, not as the end of the list", async (_label, next) => {
+    expect(readNext(body({ next })).kind).toBe("malformed");
+    expect((await walk(body({ next }))).status).toBe("unknown");
+  });
+
+  it.each([
+    ["null", null],
+    ["absent", undefined],
+  ])("treats next being %s as a genuine end of list", async (_label, next) => {
+    const raw = next === undefined ? body({}) : body({ next });
+    expect(readNext(raw).kind).toBe("end");
+    expect((await walk(raw)).status).toBe("no");
+  });
+
+  it("refuses to call it absent when the server counted more than it returned", async () => {
+    // 99 declared, 1 delivered, no next link. The list plainly did not finish, so "not there"
+    // is not a conclusion available from it.
+    const raw = JSON.stringify({ count: 99, next: null, results: [{ version: "0.40.0" }] });
+    const result = await walk(raw);
+    expect(result.status).toBe("unknown");
+    expect(result.reason).toContain("1 version(s) but the server reported 99");
+  });
+
+  it.each([
+    ["a string", "99"],
+    ["a fraction", 1.5],
+    ["negative", -1],
+  ])("treats count being %s as unknown", async (_label, count) => {
+    const raw = JSON.stringify({ count, next: null, results: [{ version: "0.40.0" }] });
+    expect(readCount(raw).kind).toBe("malformed");
+    expect((await walk(raw)).status).toBe("unknown");
+  });
+
+  it("still answers when count is absent entirely", async () => {
+    // A missing optional field must not make the pre-flight useless — the `next` chain remains the
+    // primary signal, and it said the list ended.
+    const raw = JSON.stringify({ next: null, results: [{ version: "0.40.0" }] });
+    expect(readCount(raw).kind).toBe("absent");
+    expect((await walk(raw)).status).toBe("no");
+  });
+
+  it("accepts a count that agrees with what was read", async () => {
+    const raw = JSON.stringify({ count: 1, next: null, results: [{ version: "0.40.0" }] });
+    expect((await walk(raw)).status).toBe("no");
+  });
+
+  it("does not reconcile the count when the version was found", async () => {
+    // Finding it is definitive. A bogus count must not turn a hit into a stop.
+    const raw = JSON.stringify({ count: 999, next: null, results: [{ version: "0.36.0" }] });
+    expect((await walk(raw)).status).toBe("yes");
   });
 });

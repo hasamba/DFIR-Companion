@@ -32,3 +32,17 @@ export declare function hasVersion(args: {
   fetchImpl?: typeof fetch;
   maxPages?: number;
 }): Promise<PagedLookup>;
+
+export type NextPage =
+  | { kind: "url"; url: string }
+  | { kind: "end" }
+  | { kind: "malformed"; reason: string };
+
+export declare function readNext(raw: string): NextPage;
+
+export type PageTotal =
+  | { kind: "number"; value: number }
+  | { kind: "absent" }
+  | { kind: "malformed"; reason: string };
+
+export declare function readCount(raw: string): PageTotal;
