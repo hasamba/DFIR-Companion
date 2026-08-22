@@ -445,7 +445,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Configurable event ingestion cap** (`DFIR_MAX_EVENTS`) — overrides the default 2000-event-per-import safety cap
 - **Prompt regression / eval harness** — CI-safe and real-provider golden-output testing for AI extraction/synthesis quality
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
-- **Browser extension** — Chrome/Comet from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf), or Firefox 128+ from the `dfir-capture-extension-firefox-*.zip` on any [release](https://github.com/hasamba/DFIR-Companion/releases/latest); connects to the local server, no standalone function
+- **Browser extension** — Chrome/Comet from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf), or Firefox 140+ from the `dfir-capture-extension-firefox-*.zip` on any [release](https://github.com/hasamba/DFIR-Companion/releases/latest); connects to the local server, no standalone function
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
@@ -705,7 +705,7 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
    **Easiest:** install directly from the
    [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf).
-   On **Firefox 128+**, download `dfir-capture-extension-firefox-*.zip` from the
+   On **Firefox 140+**, download `dfir-capture-extension-firefox-*.zip` from the
    [latest release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it.
 
    Or build from source:
@@ -713,13 +713,22 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    cd DFIR-Companion/extension
    npm install
    npm run build             # Chrome/Comet → load extension/dist as an unpacked extension
-   npm run build:firefox     # Firefox 128+ → load extension/dist-firefox/manifest.json
+   npm run build:firefox     # Firefox 140+ → load extension/dist-firefox/manifest.json
    ```
 
    On Firefox, load it from `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…**
    and pick the `manifest.json` **file** (Chrome asks for the folder; Firefox does not). Firefox
    drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet,
    so the release zip is unsigned and cannot be installed permanently.
+
+   > **What it collects, since a temporary load never asks.** Firefox shows its data-collection
+   > notice only for a signed add-on installed normally; `about:debugging` grants everything
+   > silently. The extension declares **browsing activity** (a capture carries the tab's URL and
+   > title) and **website content** (the screenshot, and the rows a Push scrapes). The extension
+   > sends it to the companion address you configure and nowhere else; what that companion forwards
+   > afterwards — a vision model reads the screenshots, AI synthesis reads the rows, enrichment
+   > queries reputation services — is the companion's own configuration. See
+   > [extension/PRIVACY.md](extension/PRIVACY.md).
 
    The popup only **attaches** to an existing case — you create cases in the dashboard.
 
