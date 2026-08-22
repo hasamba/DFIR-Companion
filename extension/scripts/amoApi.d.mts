@@ -48,3 +48,7 @@ export type PageTotal =
 export declare function readCount(raw: string): PageTotal;
 
 export declare function isReadableVersion(value: unknown): boolean;
+
+export declare const AMO_VERSION_RE: RegExp;
+
+export declare function isValidAddonVersion(value: unknown): boolean;

