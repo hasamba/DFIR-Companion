@@ -157,7 +157,7 @@ describe("hasVersion paging", () => {
       [FIRST]: page(["0.40.0", "0.39.0"], SECOND, 4),
       [SECOND]: page(["0.36.0", "0.35.1"], null, 4),
     });
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result.status).toBe("yes");
     expect(result.pages).toBe(2);
     expect(calls).toEqual([FIRST, SECOND]);
@@ -165,7 +165,7 @@ describe("hasVersion paging", () => {
 
   it("stops paging as soon as it finds the version", async () => {
     const { impl, calls } = fakeFetch({ [FIRST]: page(["0.36.0"], SECOND) });
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result.status).toBe("yes");
     expect(calls).toEqual([FIRST]); // never asked for page 2
   });
@@ -175,7 +175,7 @@ describe("hasVersion paging", () => {
       [FIRST]: page(["0.40.0"], SECOND, 2),
       [SECOND]: page(["0.39.0"], null, 2),
     });
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result).toMatchObject({ status: "no", pages: 2 });
     expect(result.seen).toEqual(["0.40.0", "0.39.0"]);
   });
@@ -186,7 +186,7 @@ describe("hasVersion paging", () => {
       [FIRST]: page(["0.40.0"], SECOND, 2),
       [SECOND]: '{"detail":"Internal Server Error"}',
     });
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result.status).toBe("unknown");
     expect(result.reason).toContain("Internal Server Error");
   });
@@ -195,7 +195,7 @@ describe("hasVersion paging", () => {
     const impl = (async () => {
       throw new Error("ECONNRESET");
     }) as unknown as typeof fetch;
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result).toMatchObject({ status: "unknown" });
     expect(result.reason).toContain("ECONNRESET");
   });
@@ -206,7 +206,7 @@ describe("hasVersion paging", () => {
     const { impl, calls } = fakeFetch({
       [FIRST]: page(["0.40.0"], "https://evil.example/api/v5/versions/?page=2", 2),
     });
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result.status).toBe("unknown");
     expect(result.reason).toContain("off-site");
     expect(calls).toEqual([FIRST]); // the JWT never left AMO
@@ -218,7 +218,7 @@ describe("hasVersion paging", () => {
     const result = await hasVersion({
       addonId: "a@b",
       version: "0.36.0",
-      token: "t",
+      mintToken: async () => "t",
       fetchImpl: selfReferential,
       maxPages: 3,
     });
@@ -246,7 +246,7 @@ describe("malformed pagination metadata", () => {
 
   const walk = async (raw: string) => {
     const impl = (async () => ({ text: async () => raw })) as unknown as typeof fetch;
-    return hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    return hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
   };
 
   it.each([
@@ -311,7 +311,7 @@ describe("malformed pagination metadata", () => {
 describe("unreadable entries and the count reconciliation", () => {
   const walk = async (raw: string) => {
     const impl = (async () => ({ text: async () => raw })) as unknown as typeof fetch;
-    return hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    return hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
   };
 
   it("does not let placeholders satisfy the server's count", async () => {
@@ -338,7 +338,7 @@ describe("unreadable entries and the count reconciliation", () => {
           ? JSON.stringify({ count: 2, next: SECOND, results: [{ version: "0.40.0" }] })
           : JSON.stringify({ count: 2, next: null, results: [{ version: "0.39.0" }] }),
     })) as unknown as typeof fetch;
-    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    const result = await hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
     expect(result).toMatchObject({ status: "no", seen: ["0.40.0", "0.39.0"] });
   });
 });
@@ -350,7 +350,7 @@ describe("blank version strings", () => {
   // empty strings to this standard; these assert the same rule where it was missing.
   const walk = async (raw: string) => {
     const impl = (async () => ({ text: async () => raw })) as unknown as typeof fetch;
-    return hasVersion({ addonId: "a@b", version: "0.36.0", token: "t", fetchImpl: impl });
+    return hasVersion({ addonId: "a@b", version: "0.36.0", mintToken: async () => "t", fetchImpl: impl });
   };
 
   it.each([
@@ -444,5 +444,61 @@ describe("isValidAddonVersion", () => {
     const { readFileSync } = await import("node:fs");
     const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
     expect(isValidAddonVersion(manifest.version)).toBe(true);
+  });
+});
+
+describe("a fresh JWT per request", () => {
+  // AMO rejects a replayed `jti`, and the token lives four minutes. One token minted by the caller
+  // and reused for the whole walk is a replay on page two and on every retry — which is precisely
+  // the path taken when the version sought is deep in a long list.
+  const FIRST = versionsUrl("a@b");
+  const SECOND = "https://addons.mozilla.org/api/v5/addons/addon/a%40b/versions/?page=2";
+
+  it("mints a new token for every page and sends each one", async () => {
+    const sent: string[] = [];
+    let minted = 0;
+    const fetchImpl = (async (url: string, init: { headers: Record<string, string> }) => {
+      sent.push(init.headers.Authorization);
+      return {
+        text: async () =>
+          String(url) === FIRST
+            ? JSON.stringify({ count: 2, next: SECOND, results: [{ version: "0.40.0" }] })
+            : JSON.stringify({ count: 2, next: null, results: [{ version: "0.39.0" }] }),
+      };
+    }) as unknown as typeof fetch;
+
+    const result = await hasVersion({
+      addonId: "a@b",
+      version: "0.36.0",
+      mintToken: async () => `jwt-${++minted}`,
+      fetchImpl,
+    });
+
+    expect(result.status).toBe("no");
+    expect(minted).toBe(2);
+    expect(sent).toEqual(["JWT jwt-1", "JWT jwt-2"]);
+    expect(new Set(sent).size).toBe(sent.length); // no token used twice
+  });
+
+  it("refuses a bare token, so the old calling convention cannot creep back", async () => {
+    await expect(
+      hasVersion({ addonId: "a@b", version: "0.36.0", token: "t" } as unknown as Parameters<typeof hasVersion>[0]),
+    ).rejects.toThrow(/mintToken factory/);
+  });
+
+  it("mints real, distinct JWTs when wired to mintJwt", async () => {
+    const sent: string[] = [];
+    const fetchImpl = (async (_url: string, init: { headers: Record<string, string> }) => {
+      sent.push(init.headers.Authorization);
+      return { text: async () => JSON.stringify({ count: 1, next: null, results: [{ version: "0.40.0" }] }) };
+    }) as unknown as typeof fetch;
+    await hasVersion({
+      addonId: "a@b",
+      version: "0.36.0",
+      mintToken: () => mintJwt("iss", "sec"),
+      fetchImpl,
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/^JWT [\w-]+\.[\w-]+\.[\w-]+$/);
   });
 });

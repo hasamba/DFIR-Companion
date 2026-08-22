@@ -241,9 +241,20 @@ jobs:
         id: creds
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # Both, or neither. Checking only the issuer let a half-configured pair — mid-setup, or
+        # mid-rotation — report itself as configured and then die further down inside mintJwt or
+        # web-ext, which is neither the documented clean no-op nor a legible error.
+        #
+        # Exactly one present is not a no-op either: somebody plainly intended to publish and the
+        # setup is broken. Skipping that silently would drop a release from AMO with nothing but a
+        # green tick to show for it, so it fails here where the reason is obvious.
         run: |
-          if [ -n "$AMO_JWT_ISSUER" ]; then
+          if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$AMO_JWT_ISSUER" ] || [ -n "$AMO_JWT_SECRET" ]; then
+            echo "::error::only one of AMO_JWT_ISSUER / AMO_JWT_SECRET is set — set both to publish, or neither to skip"
+            exit 1
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::AMO secrets not set (AMO_JWT_ISSUER/AMO_JWT_SECRET). Skipping submission."
@@ -309,8 +320,17 @@ jobs:
         run: |
           set -euo pipefail
           git archive --format=zip -o amo-source.zip HEAD:extension
-          unzip -l amo-source.zip | grep -q "BUILD.md" || {
-            echo "::error::BUILD.md missing from the source archive — AMO requires build instructions in it"
+
+          # Deliberately NOT `unzip -l ... | grep -q`. `grep -q` exits on its first match, unzip
+          # takes SIGPIPE and exits 141, and `set -o pipefail` above makes the whole pipeline fail
+          # — so the guard reported "BUILD.md missing" on an archive that contained it, 20 runs out
+          # of 20, blocking every credentialed submission before the upload.
+          #
+          # grep reading a FILE has no pipe to break, and -x matches a whole line, so a stray
+          # `docs/BUILD.md.bak` cannot satisfy the guard either.
+          unzip -Z1 amo-source.zip > amo-source-listing.txt
+          grep -qx "BUILD.md" amo-source-listing.txt || {
+            echo "::error::BUILD.md missing from the source archive root — AMO requires build instructions in it"
             exit 1
           }
           ls -lh amo-source.zip

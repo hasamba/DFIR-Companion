@@ -144,6 +144,35 @@ describe("the AMO submission job", () => {
     expect(verify!.run).toContain(GECKO_ID);
   });
 
+  it("requires BOTH credentials, and says so when only one is set", () => {
+    // Checking only the issuer let a half-configured pair report itself as configured and then die
+    // further down inside mintJwt or web-ext — neither the documented no-op nor a legible error.
+    const check = job.steps.find((s) => s.name?.startsWith("Check for AMO credentials"));
+    expect(Object.keys(check!.env ?? {})).toEqual(
+      expect.arrayContaining(["AMO_JWT_ISSUER", "AMO_JWT_SECRET"]),
+    );
+    expect(check!.run).toContain('[ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]');
+    // Exactly one present means somebody meant to publish and the setup is broken. Skipping that
+    // silently would drop a release from AMO with only a green tick to show for it.
+    expect(check!.run).toMatch(/only one of AMO_JWT_ISSUER/);
+    expect(check!.run).toMatch(/exit 1/);
+  });
+
+  it("checks the source archive without a pipeline that can SIGPIPE", () => {
+    // `unzip -l | grep -q` reported "BUILD.md missing" on an archive containing it, 20 runs out of
+    // 20: grep -q exits on first match, unzip takes SIGPIPE and exits 141, and pipefail turns that
+    // into a failed guard. It blocked every credentialed submission before the upload.
+    const build = job.steps.find((s) => s.name?.startsWith("Build the human-readable"));
+    // Comments stripped first: the step explains this very bug in prose, and a gate that reads
+    // prose as code fails on its own documentation.
+    const code = build!
+      .run!.split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+    expect(code).not.toMatch(/unzip[^\n]*\|[^\n]*grep/);
+    expect(code).toContain("grep -qx");
+  });
+
   it("no-ops cleanly when the credentials are absent", () => {
     // The job merges before the secrets exist. It must skip, not fail, or every release until
     // someone adds them is red for a reason that is not a defect.

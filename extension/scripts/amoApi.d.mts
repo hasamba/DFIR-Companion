@@ -28,7 +28,8 @@ export interface PagedLookup extends VersionLookup {
 export declare function hasVersion(args: {
   addonId: string;
   version: string;
-  token: string;
+  /** Called once per request. Must return a FRESH JWT — AMO rejects a replayed `jti`. */
+  mintToken: () => Promise<string>;
   fetchImpl?: typeof fetch;
   maxPages?: number;
 }): Promise<PagedLookup>;

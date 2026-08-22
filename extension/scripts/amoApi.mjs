@@ -157,20 +157,30 @@ export const MAX_PAGES = 80;
  * fails at AMO with a duplicate-version error. That failure is loud and correct; it just is not
  * one the pre-flight can pre-empt.
  *
+ * Takes a token FACTORY, not a token. AMO requires a unique `jti` per request and the JWT lives
+ * four minutes, so one token minted by the caller and reused for every page is a replay on page
+ * two — and on every retry. Walking a long version list is exactly when both happen, which is
+ * exactly when this check matters.
+ *
  * @param {object} args
  * @param {string} args.addonId
  * @param {string} args.version
- * @param {string} args.token A JWT from mintJwt.
+ * @param {() => Promise<string>} args.mintToken Called once per request; must return a fresh JWT.
  * @param {typeof fetch} [args.fetchImpl] Injected by tests.
  * @param {number} [args.maxPages]
  * @returns {Promise<{ status: "yes" | "no" | "unknown", seen: string[], reason?: string, pages: number }>}
  */
-export async function hasVersion({ addonId, version, token, fetchImpl = fetch, maxPages = MAX_PAGES }) {
+export async function hasVersion({ addonId, version, mintToken, fetchImpl = fetch, maxPages = MAX_PAGES }) {
+  if (typeof mintToken !== "function") {
+    throw new TypeError("hasVersion needs a mintToken factory, so every request carries a fresh JWT");
+  }
   let url = versionsUrl(addonId);
   const seen = [];
   for (let page = 1; page <= maxPages; page++) {
     let raw;
     try {
+      // Fresh per page. Reusing one token across the walk is the replay AMO rejects.
+      const token = await mintToken();
       const res = await fetchImpl(url, { headers: { Authorization: `JWT ${token}` } });
       raw = await res.text();
     } catch (err) {
@@ -311,12 +321,14 @@ if (process.argv[1] && process.argv[1].endsWith("amoApi.mjs")) {
     console.error("       node amoApi.mjs check-version <version>");
     process.exit(2);
   }
-  const token = await mintJwt(process.env.AMO_JWT_ISSUER, process.env.AMO_JWT_SECRET);
+  // A factory, not a token: minted per request inside the walk, so page two and the retry below
+  // each carry their own `jti` rather than replaying the first one.
+  const mintToken = () => mintJwt(process.env.AMO_JWT_ISSUER, process.env.AMO_JWT_SECRET);
   // Two attempts: a single transient 5xx should not decide a release, but a real outage should
   // stop it rather than be retried into a duplicate submission.
   let last = { status: "unknown", seen: [], reason: "not attempted", pages: 0 };
   for (let attempt = 1; attempt <= 2; attempt++) {
-    last = await hasVersion({ addonId, version, token });
+    last = await hasVersion({ addonId, version, mintToken });
     if (last.status !== "unknown") break;
   }
   if (last.status === "unknown") {

@@ -171,6 +171,11 @@ these repo secrets are set, so it is safe to merge before the credentials exist:
 
 - `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` — from <https://addons.mozilla.org/developers/addon/api/key/>
 
+Set **both or neither**. With neither, the job skips and says so. With exactly one — mid-setup, or
+mid-rotation — it fails immediately rather than dying further down inside `web-ext`: somebody
+plainly meant to publish, and skipping that silently would drop a release from AMO with nothing but
+a green tick to show for it.
+
 Three things make this job different from the Chrome one, and each is load-bearing:
 
 - **It signs the unpacked release zip, not a fresh build.** `web-ext sign` takes a directory, so
