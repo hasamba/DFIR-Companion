@@ -1,18 +1,20 @@
 # Privacy Policy — DFIR Companion: Evidence Capture & Push
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-22_
 
 This is the privacy policy for the **DFIR Companion — Evidence Capture & Push** browser
-extension (the "Extension"), published for Chrome and other Chromium browsers. It is part of
-the open-source [DFIR Companion](https://github.com/hasamba/DFIR-Companion) project and is
-licensed AGPL-3.0-only.
+extension (the "Extension"), published for Firefox, Chrome, and other Chromium browsers. It is
+part of the open-source [DFIR Companion](https://github.com/hasamba/DFIR-Companion) project and
+is licensed AGPL-3.0-only.
 
 ## Summary
 
-**The Extension sends data only to a DFIR Companion server running on your own machine
-(`http://127.0.0.1:4773` by default, a `localhost` address). It makes no calls to the
-extension authors, to any analytics service, or to any other third party. There is no
-tracking, no telemetry, and no remote logging.**
+**The Extension sends data to one place: the DFIR Companion server address you configure. By
+default that is `http://127.0.0.1:4773` — a server on your own machine — and for a single
+analyst working locally, nothing ever leaves the machine. If you point the Extension at a team
+Companion instead, captures go to that host, because that is what you asked it to do. It makes
+no calls to the extension authors, to any analytics service, or to any other third party in
+either case. There is no tracking, no telemetry, and no remote logging.**
 
 You — the analyst — are always in control of what is sent and when. A fresh installation has
 **no access to any website**. Persistent access is granted one console origin at a time.
@@ -55,13 +57,18 @@ The Extension supports a forensic investigation workflow in two ways:
 ## Where the data goes
 
 - All captured screenshots and pushed detections are transmitted **only** to the DFIR
-  Companion server address you configure — by default `http://127.0.0.1:4773`, i.e. a server
-  on your own computer. No data leaves your machine via the Extension.
+  Companion server address you configure. The default is `http://127.0.0.1:4773`, a server on
+  your own computer, and on that default nothing the Extension handles leaves your machine.
+- **The address is yours to change, and changing it changes where the evidence goes.** Team
+  mode exists for exactly that: a Companion another person or machine can reach. Point the
+  Extension at one — which is also what the optional team service token is for — and captures
+  travel to that host over your network. The Extension does not restrict the address, so read
+  it as the destination it is.
 - The Extension contains **no third-party SDKs, analytics, advertising, or crash/usage
   reporting.** It does not sell or share data with anyone, and the developers receive no
   data from it.
 - Settings and the offline queue stay in your browser's local extension storage and are
-  never uploaded anywhere except your own companion.
+  never uploaded anywhere except the Companion you configured.
 
 ## What the Extension declares it collects
 
@@ -70,10 +77,12 @@ The Extension declares two categories of data collection, in the words Mozilla r
 - **Browsing activity** — a capture carries the tab's URL and title.
 - **Website content** — the screenshot itself, and the rows a console Push scrapes.
 
-Mozilla counts any hand-off outside the browser as collection, including one to a server on
-your own computer, which is why these are declared rather than `none`. Both describe what the
-Extension sends **to your own DFIR Companion**, and nothing else. Nothing reaches the authors
-or any third party, and the Extension declares no telemetry of any kind.
+Mozilla counts any hand-off outside the browser as collection — including one to a server on
+your own computer — which is why these are declared rather than `none`. The declaration would
+be required for the default loopback address alone; a team Companion on another host only makes
+it plainer. Both categories describe what the Extension sends **to the Companion you
+configured**, and nothing else. Nothing reaches the authors or any third party, and the
+Extension declares no telemetry of any kind.
 
 **When Firefox shows you this, and when it does not.** Firefox 140 and later display a
 data-collection notice as you install a signed add-on — from Mozilla Add-ons, or from a signed

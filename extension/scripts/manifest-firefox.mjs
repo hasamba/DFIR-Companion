@@ -52,11 +52,12 @@ export const MIN_FIREFOX_VERSION = "140.0";
  * ignores the key, which is why the 128 floor below can stay where it is.
  *
  * `none` would be the easier claim and it is the wrong one. Mozilla scopes collection to data
- * "handled outside the add-on or the local browser" — not to data that leaves the machine — and
- * every capture POSTs the tab URL, its title and a full screenshot to a separate process. That the
- * process is the analyst's own companion on 127.0.0.1 is what PRIVACY.md says, and it stays true;
- * it is not what this key asks. A reviewer reading companionClient.ts next to a `none` declaration
- * would be reading a false statement.
+ * "handled outside the add-on or the local browser" — not to data that leaves the machine — so the
+ * default 127.0.0.1 companion already settles it: every capture POSTs the tab URL, its title and a
+ * full screenshot to a separate process. The companion address is also just a setting, and team
+ * mode exists for a companion another machine can reach, so the destination is not even reliably
+ * local. A reviewer reading companionClient.ts next to a `none` declaration would be reading a
+ * false statement.
  *
  * - browsingActivity — CapturePayload carries `url` and `tabTitle` for every capture.
  * - websiteContent   — the screenshot itself, plus the console rows a Push scrapes.

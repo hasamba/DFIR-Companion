@@ -724,8 +724,8 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    > **What it collects, since a temporary load never asks.** Firefox shows its data-collection
    > notice only for a signed add-on installed normally; `about:debugging` grants everything
    > silently. The extension declares **browsing activity** (a capture carries the tab's URL and
-   > title) and **website content** (the screenshot, and the rows a Push scrapes). All of it goes
-   > to your own companion and nowhere else. See
+   > title) and **website content** (the screenshot, and the rows a Push scrapes). It goes to the
+   > companion address you configure — by default one on your own machine — and nowhere else. See
    > [extension/PRIVACY.md](extension/PRIVACY.md).
 
    The popup only **attaches** to an existing case — you create cases in the dashboard.
