@@ -12,6 +12,32 @@
 
   const F = (key, label, opts) => Object.assign({ key, label }, opts || {});
   const WIZARD_STEPS = [
+    // Presidio comes first because it is a boundary ON step 1: it decides what the AI provider is
+    // allowed to see. Its three keys are also the only ones in this table /settings/reload cannot
+    // apply — DFIR_PRESIDIO_ is deliberately off that allowlist, because the analyzer client is
+    // built once at startup — so kind:"presidio" saves, tests the URL as typed, and says "restart"
+    // instead of the save -> apply-live -> test every other step runs.
+    {
+      id: "presidio",
+      icon: "🕵️",
+      label: "Presidio PII scan",
+      status: "presidio",
+      kind: "presidio",
+      blurb:
+        "OPTIONAL — a second PII detector in front of the AI. It scans text the built-in patterns have ALREADY masked, and catches the names and IDs a regex cannot.",
+      note: "Presidio reads your case text — masked, but still your timeline. Run the analyzer yourself, on this machine or your own network. These three values are read at STARTUP: save them here, then restart the server.",
+      fields: [
+        F("DFIR_PRESIDIO_URL", "Analyzer URL", {
+          hint: "http://localhost:5002 — a Presidio Analyzer container you run yourself. Blank = the layer is off.",
+        }),
+        F("DFIR_PRESIDIO_MIN_SCORE", "Confidence floor", {
+          hint: "0–1, default 0.6. Findings the analyzer scores below this are ignored.",
+        }),
+        F("DFIR_PRESIDIO_TIMEOUT_MS", "Request timeout (ms)", {
+          hint: "Budget for ONE scan request, default 60000. Raise it for a slow or shared analyzer.",
+        }),
+      ],
+    },
     {
       id: "velociraptor",
       icon: "🦖",
@@ -266,9 +292,10 @@
       ],
     },
     // Notifications are stored in a GLOBAL config file (not .env), so this step uses the dedicated
-    // /notifications API (add channel → test), NOT /settings/env. The wizard handles the common
-    // webhook case (Slack/Teams/Mattermost/Discord — one URL); email/Telegram (multi-field) stay in
-    // Settings → Notifications. kind:"notifications" routes to its own handler.
+    // /notifications API (add channel → test), NOT /settings/env. It covers the webhook case
+    // (Slack/Teams/Mattermost/Discord — one URL) and Telegram (a bot token + a chat id); email
+    // needs a whole SMTP block and stays in Settings → Notifications. kind:"notifications" routes
+    // to its own handler.
     {
       id: "notifications",
       icon: "🔔",
@@ -276,8 +303,8 @@
       status: "notifications",
       kind: "notifications",
       blurb:
-        "Get a Slack / Teams / Mattermost / Discord ping on new findings, playbook updates, and milestones.",
-      note: "Adds a webhook channel + sends a test message. Email & Telegram (more fields) live in Settings → Notifications.",
+        "Get a Slack / Teams / Mattermost / Discord / Telegram ping on new findings, playbook updates, and milestones.",
+      note: "Adds a channel + sends a test message. Email (a full SMTP block) lives in Settings → Notifications.",
     },
   ];
 

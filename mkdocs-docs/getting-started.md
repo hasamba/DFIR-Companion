@@ -78,6 +78,7 @@ When you open the dashboard for the first time with no AI provider configured, a
 | Step | What you configure |
 |------|--------------------|
 | **AI analysis** | Provider (OpenAI, Anthropic/Claude, OpenRouter, Gemini, Ollama, LiteLLM), model name, API key. A "Save & test" button confirms the key works before you proceed. |
+| **Presidio PII scan** | Optional analyzer URL, confidence floor and timeout for the extra PII detector in front of the AI. Save, then restart — these keys are read at startup. |
 | **Velociraptor** | API config path for hunt-and-collect integration. |
 | **DFIR-IRIS** | URL + key for bidirectional case sync. |
 | **Timesketch** | URL + credentials to push the timeline to Timesketch. |
@@ -87,7 +88,7 @@ When you open the dashboard for the first time with no AI provider configured, a
 | **Customer exposure** | Keys for LeakCheck, HIBP, DeHashed. |
 | **Push ingest** | Token for the webhook endpoint. |
 | **NSRL** | Path to a known-good hash database. |
-| **Notifications** | Slack/Teams/Mattermost/Discord webhook for alert notifications. |
+| **Notifications** | Slack/Teams/Mattermost/Discord webhook, or a Telegram bot (token + chat ID), for alert notifications. |
 
 !!! tip
     Everything is optional. You can dismiss the wizard and add things later from **Settings**. You can reopen the wizard any time from **Settings → General → Open setup wizard**.

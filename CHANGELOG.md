@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
+- **The setup wizard configures Presidio and Telegram** — a Presidio step (analyzer URL, confidence floor, timeout) that warns on a non-local URL, tests the URL as typed, and says to restart because those keys are read at startup; and a Telegram bot option on the Notifications step, which can borrow the war-room bot's token from `.env` and offers the chats it is already bound to. Both were reachable only from Settings.
 
 ### Fixed
 - **Exporting a case on Windows no longer fails as a security refusal** — a sidecar save during the export was reported as a symlink attack.
