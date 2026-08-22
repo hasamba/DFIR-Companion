@@ -80,6 +80,27 @@
   }
 
   function wizRenderStep(step) {
+    if (step.kind === "presidio") {
+      return (
+        "<h3>" +
+        step.icon +
+        " " +
+        esc(step.label) +
+        "</h3>" +
+        '<p class="wiz-sub">' +
+        esc(step.blurb) +
+        "</p>" +
+        (step.note
+          ? '<div class="wiz-note">🛡️ ' + esc(step.note) + "</div>"
+          : "") +
+        wizRenderFields(step.fields) +
+        '<div id="wizPresidioWarn" class="wiz-note" data-safe-style="display:none;border-left-color:#e0a458"></div>' +
+        '<div class="wiz-actions"><button class="wiz-btn" id="wizPresidioSaveBtn">Save</button>' +
+        '<button class="wiz-btn secondary" id="wizPresidioTestBtn">Test connection</button>' +
+        '<span data-safe-style="font-size:11px;color:var(--text-muted)">Saved to your local .env (gitignored), and read at startup.</span></div>' +
+        '<div id="wizPresidioResult" class="wiz-result"></div>'
+      );
+    }
     if (step.kind === "notifications") {
       return (
         "<h3>" +
@@ -93,9 +114,15 @@
         (step.note
           ? '<div class="wiz-note">🔔 ' + esc(step.note) + "</div>"
           : "") +
-        '<div class="wiz-field"><label>Channel type<span class="wiz-hint">Slack / Teams / Mattermost / Discord — all use an incoming-webhook URL.</span></label>' +
-        '<select id="wizNotifType"><option value="slack">Slack</option><option value="teams">MS Teams</option><option value="mattermost">Mattermost</option><option value="discord">Discord</option></select></div>' +
-        '<div class="wiz-field"><label>Webhook URL</label><input id="wizNotifUrl" placeholder="https://hooks.slack.com/services/…" autocomplete="off" /></div>' +
+        '<div class="wiz-field"><label>Channel type<span class="wiz-hint">Slack / Teams / Mattermost / Discord use an incoming-webhook URL. Telegram uses a bot token and a chat ID.</span></label>' +
+        '<select id="wizNotifType"><option value="slack">Slack</option><option value="teams">MS Teams</option><option value="mattermost">Mattermost</option><option value="discord">Discord</option><option value="telegram">Telegram bot</option></select></div>' +
+        '<div class="wiz-field" id="wizNotifUrlRow"><label>Webhook URL</label><input id="wizNotifUrl" placeholder="https://hooks.slack.com/services/…" autocomplete="off" /></div>' +
+        '<div id="wizNotifTgRows" data-safe-style="display:none">' +
+        '<div class="wiz-field"><label>Bot token<span class="wiz-hint">From @BotFather. Leave it blank to reuse the war-room bot\'s DFIR_TELEGRAM_BOT_TOKEN — the token then lives in .env only, and rotating it there is enough.</span></label>' +
+        '<input id="wizNotifTgToken" type="password" placeholder="Bot token (123456789:AAF…)" autocomplete="new-password" /></div>' +
+        '<div class="wiz-field"><label>Chat ID<span class="wiz-hint">A @channel name, or a numeric id like -1001234567890. Check it points where you mean — notifications carry case content.</span></label>' +
+        '<input id="wizNotifTgChatId" list="wizNotifTgChats" placeholder="Chat ID" autocomplete="off" /><datalist id="wizNotifTgChats"></datalist></div>' +
+        "</div>" +
         '<div class="wiz-field"><label>Minimum severity<span class="wiz-hint">Only findings at or above this severity notify (milestones always do).</span></label>' +
         '<select id="wizNotifSev"><option value="Critical">Critical</option><option value="High" selected>High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="Info">Info</option></select></div>' +
         '<div class="wiz-actions"><button class="wiz-btn" id="wizNotifSaveBtn">Add &amp; send test</button>' +
@@ -184,6 +211,7 @@
     test,
     resultEl,
     btn,
+    okText,
   ) {
     const updates = wizCollect(fields);
     if (Object.keys(updates).length === 0) {
@@ -259,7 +287,7 @@
       }
     } else {
       resultEl.style.color = "#5ad17a";
-      resultEl.textContent = "✓ Saved.";
+      resultEl.textContent = okText || "✓ Saved.";
     }
     if (btn) btn.disabled = false;
     await wizRefreshStatus();
@@ -290,6 +318,13 @@
     } else if (step.kind === "notifications") {
       const btn = wizEl("wizNotifSaveBtn");
       if (btn) btn.onclick = wizSaveNotification;
+      wizEl("wizNotifType").onchange = wizNotifTypeChanged;
+      wizNotifTypeChanged();
+      wizLoadNotifTelegramHints();
+    } else if (step.kind === "presidio") {
+      wizEl("wizPresidioSaveBtn").onclick = wizSavePresidio;
+      wizEl("wizPresidioTestBtn").onclick = wizTestPresidio;
+      wizEl(wizFieldId("DFIR_PRESIDIO_URL")).oninput = wizPresidioLocalWarning;
     } else {
       const btn = wizEl("wizStepSaveBtn"),
         res = wizEl("wizStepResult");
@@ -301,19 +336,155 @@
     wizUpdateNav();
   }
 
+  // ── Presidio step ──
+  // Everything here exists because DFIR_PRESIDIO_ is the one family in the step table that
+  // /settings/reload will not apply: the analyzer client is built once at startup, so a save is
+  // only half the job and the step has to say so. Hence Save and Test are separate buttons — Test
+  // probes the URL as TYPED (nothing is saved), and Save reports "restart" rather than "connected".
+  function wizPresidioUrl() {
+    const el = wizEl(wizFieldId("DFIR_PRESIDIO_URL"));
+    return el ? el.value.trim() : "";
+  }
+  // The same warning Settings → AI shows, for the same reason: Presidio reads the case text —
+  // masked, but still the timeline — so a non-local analyzer sends that text off this machine.
+  function wizPresidioLocalWarning() {
+    const warn = wizEl("wizPresidioWarn");
+    if (!warn) return;
+    const url = wizPresidioUrl().toLowerCase();
+    const isLocal =
+      !url ||
+      /(?:\/\/|@)(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/.test(
+        url,
+      );
+    warn.style.display = isLocal ? "none" : "block";
+    warn.textContent =
+      "⚠ This Presidio URL is not local. Presidio reads your case text — masked, but still " +
+      "your timeline. Pointing it at a remote host sends that text off this machine.";
+  }
+  // Runs the FIXED synthetic sample (never case data) through the URL currently in the box, so the
+  // analyst can confirm the container answers before committing anything to .env.
+  async function wizTestPresidio() {
+    const res = wizEl("wizPresidioResult");
+    const btn = wizEl("wizPresidioTestBtn");
+    const url = wizPresidioUrl();
+    if (!url) {
+      res.style.color = "#ffb05a";
+      res.textContent = "Enter the analyzer URL first.";
+      return;
+    }
+    btn.disabled = true;
+    res.style.color = "#9aa4b2";
+    res.textContent = "Testing…";
+    try {
+      const r = await fetch("/system/presidio-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (body.error) {
+        res.style.color = "#ff9f9f";
+        // Node's fetch reports a refused or unroutable host as the bare string "fetch failed",
+        // which reads as "Failed: fetch failed" — say what actually happened instead.
+        res.textContent = /^fetch failed$/i.test(body.error)
+          ? "✗ Failed — could not reach that URL"
+          : "✗ Failed: " + esc(body.error);
+        btn.disabled = false;
+        return;
+      }
+      res.style.color = "#5ad17a";
+      res.textContent =
+        "✓ Connected — now Save, then restart the server to activate it.";
+    } catch (e) {
+      res.style.color = "#ff9f9f";
+      res.textContent = "Could not reach the server: " + esc(e.message);
+    }
+    btn.disabled = false;
+  }
+  async function wizSavePresidio() {
+    await wizSaveAndTestGeneric(
+      wizardStepById("presidio").fields,
+      null, // NOT reloadable — /settings/reload rejects this prefix by design
+      null, // and testing the SAVED value would need a restart first, so Test is its own button
+      wizEl("wizPresidioResult"),
+      wizEl("wizPresidioSaveBtn"),
+      "✓ Saved to .env. Restart the server to activate the layer — these three keys are read at startup.",
+    );
+  }
+
+  // ── Notifications step ──
+  // Telegram takes a bot token and a chat ID instead of a webhook URL, so the two field groups
+  // swap. Severity, the add, and the test send are shared.
+  function wizNotifTypeChanged() {
+    const telegram = wizEl("wizNotifType").value === "telegram";
+    wizEl("wizNotifUrlRow").style.display = telegram ? "none" : "";
+    wizEl("wizNotifTgRows").style.display = telegram ? "" : "none";
+  }
+  // Ask /notifications/status the two things the Telegram fields cannot answer for themselves:
+  // whether .env already carries a bot token (else an operator who configured the war-room bot
+  // sees an empty box and pastes the same token twice), and which chats that bot is already bound
+  // to. Best-effort: typing both values by hand still works if this never answers.
+  async function wizLoadNotifTelegramHints() {
+    let status;
+    try {
+      status = await (await fetch("/notifications/status")).json();
+    } catch {
+      return;
+    }
+    // The await above outlives the pane: a click on another rail item replaced this markup, and
+    // the ids below would then resolve to nothing or, worse, to a re-rendered pane's fields.
+    if (wizCurrent !== "notifications") return;
+    const token = wizEl("wizNotifTgToken");
+    if (token && status.telegramEnvToken)
+      token.placeholder =
+        "Bot token — (already set) in .env, leave blank to use it";
+    const input = wizEl("wizNotifTgChatId");
+    const list = wizEl("wizNotifTgChats");
+    if (!input || !list) return;
+    const prefill = ntfChatPrefill(status.telegramChats || []);
+    list.replaceChildren(
+      ...prefill.options.map((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.label = o.label;
+        return opt;
+      }),
+    );
+    // Pre-filled into a VISIBLE field, never silently defaulted — this is where case content will
+    // be sent, so the analyst sees the destination and can change it before Add.
+    if (!input.value) input.value = prefill.value;
+  }
+
   // Notifications step: add a webhook channel via the dedicated /notifications API (NOT /settings/env —
   // notifications live in a global config file), then send a test message to it. On 501 the feature is
   // off (no notificationStore); surface that. Refreshes /setup/status so the rail flips ✓.
   async function wizSaveNotification() {
     const type = wizEl("wizNotifType").value;
-    const url = wizEl("wizNotifUrl").value.trim();
     const minSeverity = wizEl("wizNotifSev").value;
     const res = wizEl("wizNotifResult"),
       btn = wizEl("wizNotifSaveBtn");
-    if (!/^https?:\/\//i.test(url)) {
-      res.style.color = "#ffb05a";
-      res.textContent = "Enter the incoming-webhook URL (https://…).";
-      return;
+    // `payload`, not `body`: the try below declares its own `const body` for the RESPONSE, in the
+    // same block as this send — which puts this name in that block's temporal dead zone and throws
+    // "Cannot access 'body' before initialization" on every add.
+    const payload = { type, minSeverity };
+    if (type === "telegram") {
+      const chatId = wizEl("wizNotifTgChatId").value.trim();
+      if (!chatId) {
+        res.style.color = "#ffb05a";
+        res.textContent = "Enter the chat ID the bot should post to.";
+        return;
+      }
+      // A blank token is legitimate — the server falls back to DFIR_TELEGRAM_BOT_TOKEN, and 400s
+      // with its own message when there is nothing to fall back to.
+      payload.telegram = { botToken: wizEl("wizNotifTgToken").value, chatId };
+    } else {
+      const url = wizEl("wizNotifUrl").value.trim();
+      if (!/^https?:\/\//i.test(url)) {
+        res.style.color = "#ffb05a";
+        res.textContent = "Enter the incoming-webhook URL (https://…).";
+        return;
+      }
+      payload.webhookUrl = url;
     }
     btn.disabled = true;
     res.style.color = "#9aa4b2";
@@ -323,7 +494,7 @@
       const add = await fetch("/notifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, webhookUrl: url, minSeverity }),
+        body: JSON.stringify(payload),
       });
       const body = await add.json().catch(() => ({}));
       if (add.status === 501) {

@@ -227,7 +227,7 @@ list of known compromised hosts and users.
 ## Features
 
 ### Onboarding
-- **Setup wizard** — guided multi-step dashboard overlay (auto-shown first-run; also in Settings → General / AI) to configure AI (extraction **and** synthesis model, separately), the integrations (Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest, NSRL, and a notification webhook (Slack/Teams/Mattermost/Discord) — each with Save → apply-live → connection/status test, and a ✓/○ progress rail. Everything is optional and dismissible
+- **Setup wizard** — guided multi-step dashboard overlay (auto-shown first-run; also in Settings → General / AI) to configure AI (extraction **and** synthesis model, separately), the optional Presidio PII scan, the integrations (Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest, NSRL, and a notification channel (Slack/Teams/Mattermost/Discord webhook, or a Telegram bot) — each with Save → apply-live → connection/status test, and a ✓/○ progress rail. Everything is optional and dismissible
 
 ### Capture & ingest
 - **Least-privilege MV3 browser extension** — zero site access at install, exact-origin console approval/revocation, one-off active-tab capture, timer + event-driven capture, local permission audit, offline queue + auto-sync
