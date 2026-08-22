@@ -203,6 +203,18 @@ happens is mundane — a `workflow_dispatch` naming a tag while the checkout res
 For the same reason the checkout deliberately pins **no** `ref`: the source has to come from the
 same commit as the build, and the build's own checkout is refless.
 
+The version check follows **every page** of AMO's versions list, which paginates at 25. Reading
+only the first page and concluding "absent" is wrong as soon as the add-on has 26 versions, and
+wrong in the direction that costs a release — re-running an older tag's workflow is exactly when
+the version sought sits deep in the list. An incomplete read (a failed page, a `next` link
+pointing off AMO, or running out of the page budget) is reported as unknown, never as absent.
+
+One limitation it cannot cover: AMO reserves the version numbers of *deleted* versions, but
+listing those needs `filter=all_with_deleted`, which requires admin permissions a developer token
+does not have. If a version was submitted and later deleted, the upload fails at AMO with a
+duplicate-version error instead of being skipped. That failure is loud and correct; it just is not
+one the pre-flight can pre-empt.
+
 The AMO API calls live in [`scripts/amoApi.mjs`](./scripts/amoApi.mjs) rather than inline in the
 workflow, so they are unit-tested (`tests/amoApi.test.ts`) instead of being logic that only ever
 runs on a tag. `tests/architecture/amoSubmissionJob.test.ts` guards the job's wiring; every one of

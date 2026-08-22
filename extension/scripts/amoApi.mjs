@@ -64,6 +64,90 @@ export function versionsUrl(addonId) {
   return `https://addons.mozilla.org/api/v5/addons/addon/${encodeURIComponent(addonId)}/versions/?filter=all_with_unlisted`;
 }
 
+/** Only AMO's own host may be followed. `next` is server-supplied data, not a trusted instruction. */
+export function isAmoUrl(url) {
+  try {
+    return new URL(url).origin === "https://addons.mozilla.org";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How many pages to follow before giving up. 25 versions per page, so this covers 2000 — far past
+ * anything this add-on will reach, and still a bound rather than a `while (true)` against a remote
+ * server that decides when the list ends.
+ */
+export const MAX_PAGES = 80;
+
+/**
+ * Does AMO hold this version, across ALL pages?
+ *
+ * The endpoint paginates at 25. Reading only the first page and concluding "absent" is wrong the
+ * moment the add-on has 26 versions — and wrong in the one direction that hurts, because the
+ * caller turns "no" into "submit" and AMO then rejects the duplicate. Re-running an OLDER tag's
+ * workflow is exactly when the version sought is deep in the list.
+ *
+ * Every incomplete read is UNKNOWN, never "no": a failed page, a `next` pointing somewhere that is
+ * not AMO, or running out of the page budget. "No" is returned only after the list is exhausted.
+ *
+ * Known limitation, not solvable from here: AMO reserves the version numbers of DELETED versions,
+ * but listing those needs `filter=all_with_deleted`, which requires admin permissions this token
+ * does not have. If a version was submitted and later deleted, this reports "no" and the upload
+ * fails at AMO with a duplicate-version error. That failure is loud and correct; it just is not
+ * one the pre-flight can pre-empt.
+ *
+ * @param {object} args
+ * @param {string} args.addonId
+ * @param {string} args.version
+ * @param {string} args.token A JWT from mintJwt.
+ * @param {typeof fetch} [args.fetchImpl] Injected by tests.
+ * @param {number} [args.maxPages]
+ * @returns {Promise<{ status: "yes" | "no" | "unknown", seen: string[], reason?: string, pages: number }>}
+ */
+export async function hasVersion({ addonId, version, token, fetchImpl = fetch, maxPages = MAX_PAGES }) {
+  let url = versionsUrl(addonId);
+  const seen = [];
+  for (let page = 1; page <= maxPages; page++) {
+    let raw;
+    try {
+      const res = await fetchImpl(url, { headers: { Authorization: `JWT ${token}` } });
+      raw = await res.text();
+    } catch (err) {
+      return { status: "unknown", seen, reason: `request failed on page ${page}: ${err.message}`, pages: page };
+    }
+    const parsed = findVersion(raw, version);
+    if (parsed.status === "unknown") {
+      return { status: "unknown", seen, reason: parsed.reason, pages: page };
+    }
+    seen.push(...parsed.seen);
+    if (parsed.status === "yes") return { status: "yes", seen, pages: page };
+
+    const next = readNext(raw);
+    if (!next) return { status: "no", seen, pages: page }; // list exhausted — a real absence
+    if (!isAmoUrl(next)) {
+      return { status: "unknown", seen, reason: `next page pointed off-site: ${next}`, pages: page };
+    }
+    url = next;
+  }
+  return {
+    status: "unknown",
+    seen,
+    reason: `gave up after ${maxPages} pages without exhausting the list`,
+    pages: maxPages,
+  };
+}
+
+/** `next` from a page body, or null when this is the last page. Never throws — the body is parsed. */
+function readNext(raw) {
+  try {
+    const next = JSON.parse(raw).next;
+    return typeof next === "string" && next ? next : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * CLI: `node amoApi.mjs has-version <addonId> <version>`
  *
@@ -79,17 +163,9 @@ if (process.argv[1] && process.argv[1].endsWith("amoApi.mjs")) {
   const token = await mintJwt(process.env.AMO_JWT_ISSUER, process.env.AMO_JWT_SECRET);
   // Two attempts: a single transient 5xx should not decide a release, but a real outage should
   // stop it rather than be retried into a duplicate submission.
-  let last = { status: "unknown", seen: [], reason: "not attempted" };
+  let last = { status: "unknown", seen: [], reason: "not attempted", pages: 0 };
   for (let attempt = 1; attempt <= 2; attempt++) {
-    let raw = "";
-    try {
-      const res = await fetch(versionsUrl(addonId), { headers: { Authorization: `JWT ${token}` } });
-      raw = await res.text();
-    } catch (err) {
-      last = { status: "unknown", seen: [], reason: `request failed: ${err.message}` };
-      continue;
-    }
-    last = findVersion(raw, version);
+    last = await hasVersion({ addonId, version, token });
     if (last.status !== "unknown") break;
   }
   if (last.status === "unknown") {

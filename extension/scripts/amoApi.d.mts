@@ -16,3 +16,19 @@ export interface VersionLookup {
 export declare function findVersion(raw: string, version: string): VersionLookup;
 
 export declare function versionsUrl(addonId: string): string;
+
+export declare function isAmoUrl(url: string): boolean;
+
+export declare const MAX_PAGES: number;
+
+export interface PagedLookup extends VersionLookup {
+  pages: number;
+}
+
+export declare function hasVersion(args: {
+  addonId: string;
+  version: string;
+  token: string;
+  fetchImpl?: typeof fetch;
+  maxPages?: number;
+}): Promise<PagedLookup>;
