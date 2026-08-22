@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Exporting a case on Windows no longer fails as a security refusal** — Windows has no `O_NOFOLLOW`, so the symlink guard falls back to comparing a file's identity across the open. The application's own atomic writes replace a file by rename, which changes that identity, so an export running while any sidecar saved aborted with "symlink detected … refusing to include in export (security)" — blaming the analyst's own write on an attacker. A replaced file is now re-opened, bounded, and only persistent replacement is refused. The guarantee is unchanged: the descriptor handed back still has to match a pre-check that saw a non-symlink.
+- **Exporting a case on Windows no longer fails as a security refusal** — a sidecar save during the export was reported as a symlink attack.
 
 ## [0.35.1] - 2026-08-22
 
