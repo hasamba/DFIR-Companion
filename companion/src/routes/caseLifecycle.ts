@@ -851,6 +851,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         shodan: has("DFIR_SHODAN_KEY"),
       },
       nsrl: has("DFIR_NSRL_DB") || has("DFIR_NSRL_FILE") || !!options.nsrlStore,
+      // Not reloadable, so this turns true only after a restart: the tick means active, not typed.
+      presidio: has("DFIR_PRESIDIO_URL"),
     });
   });
   // Redirect root to the dashboard.
