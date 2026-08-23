@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base, type TestInfo } from "@playwright/test";
 import { seedDemoCase } from "./api.js";
 
 /**
@@ -13,18 +13,26 @@ import { seedDemoCase } from "./api.js";
  *
  * testId is unique per test and stable across a run; retry disambiguates attempts of the same
  * test, which is what the counter was originally added to fix. Together they need no shared state.
+ *
+ * EXPORTED because a spec that builds its own case id needs the same three inputs, and a private
+ * copy is what went wrong before: caseCreate.spec.ts grew a hand-rolled version that dropped
+ * workerIndex and retry AND truncated testId, so its creating test answered 409 on every CI retry.
+ * One helper, one set of traps.
  */
-function caseIdFor(testId: string, workerIndex: number, retry: number): string {
+export function caseIdFor(prefix: string, testInfo: TestInfo): string {
   // NOT truncated. Playwright's testId is <fileHash>-<indexWithinFile>, so cutting it to a fixed
   // prefix keeps the file hash and drops the part that distinguishes tests — every test in a file
   // then shares one case id, which is strictly worse than the counter this replaced.
-  const safe = testId.replace(/[^\w.-]/g, "");
-  return `e2e-demo-w${workerIndex}-r${retry}-${safe}`;
+  //
+  // isValidCaseId (src/storage/caseStore.ts) caps a case id at 80 characters, and the untruncated
+  // form runs about 60 with a short prefix, so keep prefixes short rather than trimming testId.
+  const safe = testInfo.testId.replace(/[^\w.-]/g, "");
+  return `${prefix}-w${testInfo.workerIndex}-r${testInfo.retry}-${safe}`;
 }
 
 export const test = base.extend<{ demoCase: string }>({
   demoCase: async ({ baseURL }, use, testInfo) => {
-    const caseId = caseIdFor(testInfo.testId, testInfo.workerIndex, testInfo.retry);
+    const caseId = caseIdFor("e2e-demo", testInfo);
     await seedDemoCase(baseURL ?? "http://127.0.0.1:4788", caseId);
     await use(caseId);
   },
