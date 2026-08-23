@@ -149,17 +149,16 @@ test("US-238: a toolbar that cannot fit its labels collapses to reachable icons"
   // at 1900px with full labels (measured: scrollHeight 80 vs row 31) — with a case attached the
   // un-collapsed state is unreachable at any width.
   //
-  // Asserted: the COLLAPSE direction, which is the story's claim and is deterministic. NOT
-  // asserted: labels returning when the window grows back. That path is real but timing-broken —
-  // fitToolbar re-measures in the first frame after the resize, catches the layout mid-reflow
-  // (measured 77px in the fit's own frame vs 38px settled), re-collapses, and nothing re-fits
-  // until the next toolbar mutation. Instrumented via a class-attribute observer: the fit RUNS on
-  // the grow and re-adds the class against a layout that fits moments later. Pinning that here
-  // would pin the bug; it is filed instead.
-  await page.setViewportSize({ width: 1900, height: 800 });
+  // The labeled baseline is 2560, not 1900: even disconnected, the full-label row wraps at 1900
+  // (settled scrollHeight 77 with the class held off, vs threshold ~49.6 — an earlier "settled
+  // 38" reading that suggested it fits was taken with icons-only applied, i.e. it measured the
+  // collapsed row). So both directions are driven from a width where the labels genuinely fit.
+  await page.setViewportSize({ width: 2560, height: 800 });
   await page.goto("/dashboard");
   await page.waitForLoadState("networkidle");
   const toolbar = page.locator("#toolbarMain");
+  // Without this baseline, the collapse below could be asserting a class already on at load.
+  await expect(toolbar, "at 2560px the labels must fit uncollapsed").not.toHaveClass(/\bicons-only\b/);
 
   await page.setViewportSize({ width: 700, height: 800 });
   await expect(toolbar, "a 700px viewport must collapse the toolbar").toHaveClass(/\bicons-only\b/, {
@@ -169,6 +168,13 @@ test("US-238: a toolbar that cannot fit its labels collapses to reachable icons"
   // toolbar button needs a ::before icon exists because a text-only label gets font-size:0 here.
   await expect(page.locator("#importBtn")).toBeVisible();
   await expect(page.locator("#newCaseBtn")).toBeVisible();
+
+  // And the labels come back when the room does — the fit measures current geometry on the grow,
+  // so no trigger beyond the header ResizeObserver is needed.
+  await page.setViewportSize({ width: 2560, height: 800 });
+  await expect(toolbar, "growing back to 2560px must restore the labels").not.toHaveClass(/\bicons-only\b/, {
+    timeout: 10_000,
+  });
 });
 
 test("US-225: a collapsed section stays collapsed across a reload", async ({ page, demoCase }) => {
