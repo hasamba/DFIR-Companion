@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/test.js";
+import { test, expect, caseIdFor } from "../fixtures/test.js";
 import type { Locator, Page } from "@playwright/test";
 
 // Covers: US-002
@@ -48,13 +48,8 @@ async function openDashboard(page: Page): Promise<void> {
   await expect(page.locator("#newCaseBtn")).toBeEnabled();
 }
 
-/** Unique per test run; POST /cases rejects ids outside [A-Za-z0-9._-]. */
-function freshCaseId(prefix: string, testId: string): string {
-  return `${prefix}-${testId.replace(/[^\w.-]/g, "").slice(0, 10)}`;
-}
-
 test("creates a case through the dialog and connects to it", async ({ page }, testInfo) => {
-  const caseId = freshCaseId("e2e-ui", testInfo.testId);
+  const caseId = caseIdFor("e2e-ui", testInfo);
   await openDashboard(page);
 
   const dialog = await openNewCaseDialog(page);
@@ -115,7 +110,7 @@ test("refuses malformed case metadata without creating a case", async ({ page },
   ];
 
   for (const [index, entry] of malformed.entries()) {
-    const caseId = freshCaseId(`e2e-type-${index}`, testInfo.testId);
+    const caseId = caseIdFor(`e2e-type-${index}`, testInfo);
     const data: Record<string, unknown> = {
       caseId,
       name: "E2E boundary case",
