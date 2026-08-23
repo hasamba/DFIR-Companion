@@ -227,6 +227,197 @@ jobs:
           path: extension/${{ env.FIREFOX_ZIP_NAME }}
           if-no-files-found: error
 
+  amo-listing:
+    name: Submit to Mozilla Add-ons
+    needs: extension-zip
+    # Same gate as the Chrome job and the GitHub Release: a real tag, or a workflow_dispatch that
+    # names one. Independent of both, so an AMO hiccup never blocks the release and vice-versa.
+    # No-ops cleanly until the AMO credentials exist, so it is safe to merge before they do.
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check for AMO credentials
+        id: creds
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # Both, or neither. Checking only the issuer let a half-configured pair — mid-setup, or
+        # mid-rotation — report itself as configured and then die further down inside mintJwt or
+        # web-ext, which is neither the documented clean no-op nor a legible error.
+        #
+        # Exactly one present is not a no-op either: somebody plainly intended to publish and the
+        # setup is broken. Skipping that silently would drop a release from AMO with nothing but a
+        # green tick to show for it, so it fails here where the reason is obvious.
+        run: |
+          if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$AMO_JWT_ISSUER" ] || [ -n "$AMO_JWT_SECRET" ]; then
+            echo "::error::only one of AMO_JWT_ISSUER / AMO_JWT_SECRET is set — set both to publish, or neither to skip"
+            exit 1
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AMO secrets not set (AMO_JWT_ISSUER/AMO_JWT_SECRET). Skipping submission."
+          fi
+
+      - name: Checkout
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          # NO explicit `ref`. That is deliberate, and the opposite of the obvious choice.
+          #
+          # The source archive must match the BINARY being submitted, and that binary was built by
+          # the extension-zip job from ITS checkout — which is also refless. Pinning this one to
+          # the tag would desynchronise the two on a workflow_dispatch that names a tag while
+          # running from a branch: extension-zip would build the branch, this job would archive the
+          # tag, and Mozilla would receive source that does not correspond to the add-on. On the
+          # normal tag-push path both resolve to the same commit anyway.
+          #
+          # The "source matches the package" step below turns that from a comment into a check.
+          fetch-depth: 0
+
+      - name: Download extension zip (Firefox)
+        if: steps.creds.outputs.configured == 'true'
+        # The FIREFOX artifact specifically. The Chrome zip is a separate artifact and must stay
+        # out of this directory — signing the Chrome package would submit a manifest with no
+        # browser_specific_settings, no data_collection_permissions, and a service_worker key
+        # Firefox does not support.
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-firefox-zip
+          path: ff-zip
+
+      - name: Unpack the exact package the release ships
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          ZIP=$(ls ff-zip/*.zip | head -n1)
+          echo "signing $ZIP"
+          mkdir -p dist-firefox
+          unzip -q "$ZIP" -d dist-firefox
+          # web-ext signs a DIRECTORY, so unpack rather than rebuild. Rebuilding here would risk
+          # submitting bytes that differ from the zip attached to the GitHub Release.
+          test -f dist-firefox/manifest.json || { echo "::error::manifest.json is not at the archive root"; exit 1; }
+          VERSION=$(node -p "require('./dist-firefox/manifest.json').version")
+          # Everything downstream treats this value as authoritative, so it is checked where it
+          # enters. Validated by the tested module rather than a shell glob: the glob this replaced
+          # (`[0-9]*.[0-9]*`) accepted 0abc.9xyz, 2.01, 1.2-beta and `1.2 && curl evil.example`.
+          # `node -p` also prints the string "undefined" for a missing key, which is truthy here.
+          if ! node extension/scripts/amoApi.mjs check-version "$VERSION"; then
+            echo "::error::package manifest has no usable version (got '${VERSION}')"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "submitting version $VERSION"
+
+      - name: Build the human-readable source archive
+        if: steps.creds.outputs.configured == 'true'
+        # Mandatory for this add-on, not optional: the shipped bundles are minified, and AMO
+        # rejects a submission whose code a reviewer cannot read. `git archive` takes only
+        # committed files, so no node_modules, no build output, and nothing gitignored travels.
+        # extension/BUILD.md sits at the root of the result and carries the build instructions
+        # Mozilla requires.
+        run: |
+          set -euo pipefail
+          git archive --format=zip -o amo-source.zip HEAD:extension
+
+          # Deliberately NOT `unzip -l ... | grep -q`. `grep -q` exits on its first match, unzip
+          # takes SIGPIPE and exits 141, and `set -o pipefail` above makes the whole pipeline fail
+          # — so the guard reported "BUILD.md missing" on an archive that contained it, 20 runs out
+          # of 20, blocking every credentialed submission before the upload.
+          #
+          # grep reading a FILE has no pipe to break, and -x matches a whole line, so a stray
+          # `docs/BUILD.md.bak` cannot satisfy the guard either.
+          unzip -Z1 amo-source.zip > amo-source-listing.txt
+          grep -qx "BUILD.md" amo-source-listing.txt || {
+            echo "::error::BUILD.md missing from the source archive root — AMO requires build instructions in it"
+            exit 1
+          }
+          ls -lh amo-source.zip
+
+      - name: Check the source matches the package
+        if: steps.creds.outputs.configured == 'true'
+        # Submitting source that does not correspond to the binary is a policy violation, and the
+        # way it happens is mundane: a workflow_dispatch naming a tag while the checkout resolves
+        # to a branch. Comparing the version in the checked-out manifest against the one inside the
+        # downloaded artifact catches exactly that, before anything reaches Mozilla.
+        run: |
+          set -euo pipefail
+          SOURCE_VERSION=$(node -p "require('./extension/manifest.json').version")
+          if [ "$SOURCE_VERSION" != "$VERSION" ]; then
+            echo "::error::source tree is version ${SOURCE_VERSION} but the package is ${VERSION} — refusing to submit mismatched source"
+            exit 1
+          fi
+          echo "source and package agree on ${VERSION}"
+
+      - name: Has AMO already got this version?
+        if: steps.creds.outputs.configured == 'true'
+        id: existing
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # Makes the job RE-RUNNABLE, which matters more than it sounds. Re-running a release after
+        # one job fails is routine, and AMO refuses a version number it already holds: without this
+        # check, the second run turns a perfectly good submission into a red release, and the only
+        # way to get green is to burn a version number.
+        #
+        # `has-version` exits 2 when it cannot tell (auth failure, AMO outage, non-JSON). That is
+        # NOT treated as "no": guessing wrong in that direction is what causes the duplicate.
+        run: |
+          set -euo pipefail
+          ADDON_ID="dfir-companion@hasamba.github.io"
+          if ! ANSWER=$(node extension/scripts/amoApi.mjs has-version "$ADDON_ID" "$VERSION"); then
+            echo "::error::could not ask AMO whether it already holds ${VERSION} — stopping rather than risking a duplicate submission"
+            exit 1
+          fi
+          echo "amo has-version -> $ANSWER"
+          if [ "$ANSWER" = "yes" ]; then
+            echo "::notice::AMO already holds version ${VERSION}; skipping the upload. This run is a no-op, not a failure."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Submit to AMO
+        if: steps.creds.outputs.configured == 'true' && steps.existing.outputs.skip != 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # --approval-timeout 0 is what keeps this job from hanging. A listed submission goes to
+        # HUMAN review, which takes hours to days; without it web-ext waits for approval and the
+        # job burns its timeout on a submission that already succeeded.
+        run: |
+          set -euo pipefail
+          npx --yes web-ext@10.6.0 sign \
+            --source-dir dist-firefox \
+            --channel listed \
+            --upload-source-code amo-source.zip \
+            --approval-timeout 0
+
+      - name: Verify AMO accepted the version
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # The real safety net, mirroring the Chrome job: web-ext exiting 0 is not proof AMO holds
+        # the version. This asks AMO. It runs on the skipped path too, so a re-run still ends by
+        # confirming the version is really there rather than assuming the earlier run left it.
+        #
+        # What it proves is "accepted for review" — the most a tag can achieve. A human reviewer
+        # still has to approve the version before anyone can install it.
+        run: |
+          set -euo pipefail
+          ADDON_ID="dfir-companion@hasamba.github.io"
+          if ! ANSWER=$(node extension/scripts/amoApi.mjs has-version "$ADDON_ID" "$VERSION"); then
+            echo "::error::could not confirm with AMO that version ${VERSION} was accepted"
+            exit 1
+          fi
+          if [ "$ANSWER" != "yes" ]; then
+            echo "::error::AMO does not list version ${VERSION} after upload"
+            exit 1
+          fi
+          echo "::notice::AMO holds version ${VERSION}, accepted for review. A human reviewer must approve it before users can install it."
+
   chrome-webstore:
     name: Publish to Chrome Web Store
     needs: extension-zip
