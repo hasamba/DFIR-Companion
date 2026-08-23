@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../src/server.js";
@@ -25,6 +25,23 @@ const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 // directories from dirname(casesRoot) — templates/, bundles/, logs/, tagger/, report-templates/,
 // dashboard-views/ and more. With a bare mkdtemp dir as the cases root, dirname() is the OS temp
 // dir itself and every one of those would be scattered into /tmp on each run.
+// Sweep roots STRANDED by earlier runs before creating this run's. The exit/SIGTERM teardown
+// below is best-effort only: Playwright escalates a webServer that does not die to SIGKILL, which
+// no handler survives, and ten runs left ten roots in one afternoon of suite work. Age-gated so a
+// concurrent run's live root (minutes old at most — port 4788 serializes runs anyway) is never
+// touched; 2 hours is far beyond any real run and far below the 388,954-directory pile #173
+// records this repo reaching once before.
+const STALE_ROOT_MS = 2 * 60 * 60 * 1000;
+for (const name of readdirSync(tmpdir())) {
+  if (!name.startsWith("dfir-e2e-")) continue;
+  const stale = join(tmpdir(), name);
+  try {
+    if (Date.now() - statSync(stale).mtimeMs > STALE_ROOT_MS) rmSync(stale, { recursive: true, force: true });
+  } catch {
+    // Someone else's live dir or a race with its own cleanup — leave it.
+  }
+}
+
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), "dfir-e2e-"));
 const CASES_ROOT = join(TEMP_ROOT, "cases");
 mkdirSync(CASES_ROOT, { recursive: true });
@@ -35,7 +52,10 @@ let stub: AiStub | undefined;
 let closing = false;
 
 async function main(): Promise<void> {
-  stub = await startAiStub();
+  // The fixed port is what lets a spec reach the stub's /debug/requests recorder: the specs know
+  // 4788 for the app, and 4789 for its provider. Runs are serialized machine-wide on 4788 already,
+  // so 4789 inherits the same singleton guarantee.
+  stub = await startAiStub({ port: 4789 });
   // The provider is configured in-process rather than from a .env file, so nothing on the
   // developer's machine can leak a real key or endpoint into a test run.
   //

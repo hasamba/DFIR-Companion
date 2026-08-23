@@ -1,9 +1,11 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { test, expect } from "../fixtures/test.js";
+import { test, expect, caseIdFor } from "../fixtures/test.js";
 import type { Page, TestInfo } from "@playwright/test";
 
-// Covers: US-002, US-013, US-082
+// Covers: US-002, US-013, US-082, US-282
+// (US-282 — the last-import summary banner — is asserted in step 3: #importMeta must name the
+// imported file and the importer the server picked, from /cases/:id/import-meta.)
 // (feature-user-stories.csv) — case creation, unified evidence import and the report artifacts,
 // joined into ONE journey driven entirely by the mouse and keyboard.
 //
@@ -113,30 +115,13 @@ test("an analyst creates a case, imports evidence, reads the timeline and downlo
   // per-assertion budgets, which are what keep a slow CI worker from failing an otherwise fine run.
   test.setTimeout(120_000);
 
-  // POST /cases rejects ids outside [A-Za-z0-9._-].
-  //
-  // Built exactly like fixtures/test.ts, for the reasons recorded there. This test CREATES its case
-  // through the dialog, so a reused id is not a shared-state nuisance the way it is for a seeded
-  // spec — POST /cases answers 409, the dialog stays open on "a case with that id already exists",
-  // and the very first assertion fails, burying whatever actually went wrong.
-  //
-  // workerIndex and retry keep parallel workers and CI retries (retries: 1) apart.
-  //
-  // testId is NOT truncated, and must not be. It is <fileHash>-<indexWithinFile>, so slicing it to
-  // a fixed prefix keeps the file hash and drops the only part that separates one test in this file
-  // from another — every test here would then claim the same case. It is harmless while this file
-  // holds a single test, which is exactly what makes it worth stating: the second test added here
-  // would collide silently. This slice was copied from freshCaseId() in caseCreate.spec.ts, which
-  // still has it.
-  //
-  // The full id runs ~60 characters ("e2e-journey-w0-r0-" plus Playwright's 41-character
-  // <fileHash>-<testHash>), against the 80-character ceiling isValidCaseId enforces in
-  // storage/caseStore.ts:22. That is 20 characters of headroom, and this prefix is longer than the
-  // "e2e-demo-" one the fixture uses — so lengthening it further is not free.
-  const caseId = `e2e-journey-w${testInfo.workerIndex}-r${testInfo.retry}-${testInfo.testId.replace(
-    /[^\w.-]/g,
-    "",
-  )}`;
+  // Built by the shared caseIdFor() helper — workerIndex + retry + untruncated testId. This test
+  // CREATES its case through the dialog, so a reused id is not a shared-state nuisance the way it
+  // is for a seeded spec: POST /cases answers 409, the dialog stays open on "a case with that id
+  // already exists", and the very first assertion fails, burying whatever actually went wrong.
+  // The traps that make the helper's shape necessary are documented on the helper itself
+  // (fixtures/test.ts) — this file used to carry a hand-rolled copy with two of them intact.
+  const caseId = caseIdFor("e2e-journey", testInfo);
   const caseName = "E2E journey — end to end by mouse";
   const evidencePath = writeEvidenceFile(testInfo);
 

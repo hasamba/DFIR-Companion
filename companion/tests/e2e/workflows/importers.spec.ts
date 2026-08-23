@@ -1,10 +1,12 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { test, expect } from "../fixtures/test.js";
 import type { APIRequestContext } from "@playwright/test";
 
 // Covers: US-013, US-015, US-016, US-032, US-033, US-035, US-036, US-037, US-038
+// Not US-289: its story is the AI-assisted EXTRACTION over a free-form log, and the fixed-reply
+// stub cannot prove extraction happened (COVERAGE.md §3) — the US-015 test here asserts the route
+// accepts and stores, which is that story's boundary, not its behavior.
 // (feature-user-stories.csv) — the unified sniffing import, the log/THOR/auditd/journald/Wazuh
 // importers, import undo/redo, generic file import and stored-evidence access.
 //
@@ -201,13 +203,15 @@ test("US-013: the unified import sniffs the format and reports which one it chos
 test("US-037, US-038: a generic file import is stored and the artifact is retrievable", async ({
   page,
   demoCase,
-}) => {
+}, testInfo) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
-  // import-file takes an absolute path on the SERVER. The suite's server runs on this machine, so a
-  // temp file here is reachable by it. Written under the OS temp dir, never inside the repo.
-  const dir = mkdtempSync(join(tmpdir(), "dfir-e2e-evidence-"));
-  const path = join(dir, "evidence.log");
+  // import-file takes an absolute path on the SERVER. The suite's server runs on this machine, so
+  // a file in this test's output directory is reachable by it. testInfo.outputPath(), not
+  // mkdtemp(): Playwright clears test-results/ each run, where a mkdtemp dir survives any failed
+  // or interrupted run forever — this call site had stranded four dfir-e2e-evidence-* dirs.
+  const path = testInfo.outputPath("evidence.log");
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, "2026-05-18 02:30:00 FS01 sshd[1234]: Accepted password for jsmith\n");
 
   const file = await postImport(page.request, demoCase, "import-file", { path });

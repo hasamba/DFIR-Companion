@@ -118,20 +118,75 @@ honest coverage disposition, not a claim that browser coverage would be impossib
 IDs here makes `check:us-map` report the gap deliberately instead of rediscovering it as an
 unexplained warning.
 
-- Dashboard interactions and views: **US-222, US-223, US-224, US-225, US-226, US-227, US-228,
-  US-229, US-230, US-231, US-232, US-233, US-234, US-236, US-237, US-238, US-239, US-240**.
-- Offline/PWA and administration pages: **US-243, US-244, US-245, US-246, US-247**.
-- Analysis, enrichment, provider and integration behavior: **US-252, US-253, US-254, US-255,
-  US-256, US-257, US-258, US-259, US-260, US-261, US-262, US-263, US-264, US-265, US-266,
-  US-267, US-268, US-269, US-270, US-271, US-272, US-274, US-275, US-276, US-277, US-278,
-  US-279, US-280, US-281, US-282, US-283, US-284, US-285, US-286, US-287, US-288, US-289,
-  US-290, US-291, US-292, US-293, US-294, US-295, US-296, US-297, US-298, US-299, US-300,
-  US-301, US-302, US-303, US-304, US-305, US-306, US-307, US-308, US-309, US-310, US-311,
-  US-312, US-313, US-314**.
-- Team-auth policies and endpoints: **US-315, US-316, US-317, US-318, US-319, US-320, US-321,
-  US-322, US-323, US-324, US-325, US-326, US-327, US-328, US-329, US-330, US-331, US-332,
-  US-333, US-334, US-335, US-336**. The Playwright server intentionally runs with team auth off;
-  Supertest suites exercise bootstrap, login, sessions, roles, tokens, policy classification and
-  remote-binding refusal in isolation.
-- Narrow route/static-asset contracts: **US-337, US-338, US-339, US-340, US-341, US-342, US-343,
-  US-344, US-345, US-346, US-347, US-348, US-349, US-350**.
+The 2026-08 coverage expansion moved 53 stories out of this section into real browser specs
+(`staticContracts`, `opsSurfaces`, `integrationRefusals`, `importersDeterministic`,
+`dashboardControls`, `findingsAndIocActions`, `timelineLenses`, `caseControls`,
+`announcerEvents`, `anonymization`, plus claims added to `custody`, `threatData`, `importers`,
+`synthesis` and `analystJourney`). What remains, and why, per story:
+
+- **US-232** merge-target case picker — the modal is a generic candidates-list component reached
+  only from the asset-override and exposure-FP merge flows; driving it means building one of
+  those flows end to end first.
+- **US-243** mobile PWA offline shell — needs a service-worker registration + offline-reload
+  journey; not attempted yet.
+- **US-244, US-245, US-246, US-247** admin/login pages — same class as the team-auth block
+  below: the pages' real behaviors (roles, tokens, audit log, bootstrap) exist only with team
+  auth on, which this harness deliberately never enables. Supertest covers the endpoints.
+- **US-252** deep-reasoning toggle — the option only affects Anthropic/OpenRouter providers, and
+  the harness's stub is OpenAI-shaped; the toggle's own label says as much.
+- **US-253, US-267** AI-generated hunt VQL / multi-platform query translation — blocked by the
+  fixed-reply stub (§3); the envelopes are covered in `velociraptor.spec.ts`.
+- **US-255, US-256, US-257, US-258, US-260, US-269, US-270, US-271** — derivation and job
+  machinery below the UI: prompt drift, token batching, phishing correlation, clock-skew
+  DETECTION (the recompute route IS covered in `opsSurfaces`), IOC-repair of provoked
+  corruption, admission ordering, resume-after-restart (needs a server restart mid-run, which
+  the webServer harness cannot do), and cancel (the stub answers too fast to catch a running
+  job). Unit suites cover each.
+- **US-265** confidence badges, **US-278** cockpit phase view — renderable from the seeded case
+  and honestly still debt: no spec asserts the badge or the card list yet (the card ACTION route
+  is covered in `opsSurfaces`).
+- **US-275** KEV matching — needs the live CISA catalogue; the empty-catalogue contract is
+  pinned in `threatData.spec.ts`.
+- **US-300, US-301** Jira / ServiceNow push — the push and its idempotent re-push send case
+  data to a real tracker; the unconfigured-boundary contracts (501 naming the env vars, status
+  reporting unconfigured) are pinned unclaimed in `integrationRefusals.spec.ts`, and the push
+  logic runs against mocked transports in `tests/integrations/`.
+- **US-302** SO-CRATES submission & polling — needs a live sandbox; the job-list surface the
+  dashboard polls is pinned unclaimed in `integrationRefusals.spec.ts`.
+- **US-339** hunt-execution cancel — cancelling needs an execution IN PROGRESS, and the harness
+  has no hunt backend to keep one running; the cancel-after-end refusal is pinned unclaimed in
+  `opsSurfaces.spec.ts`.
+- **US-289** generic AI-assisted log import — the extraction is the story and the fixed-reply
+  stub cannot prove it (§3); the acceptance boundary rides the US-015 test unclaimed.
+- **US-280, US-281, US-304, US-305** war-room bots and notification dispatch — sending anything
+  reaches a real chat/webhook. A loopback webhook sink is a plausible future harness extension;
+  nothing is claimed today.
+- **US-290** log dedup before AI — the aggregation is asserted at unit level
+  (`logAggregate`); the browser surface shows only its side effect.
+- **US-292…US-299** CIRCL / hunting.ch / RDAP / RockyRaccoon / Shodan / orchestration / custom
+  TLS / MCP agentic — live third-party systems (§4) or infra with no honest offline seam.
+- **US-303** LeakCheck — configured-only surface; no reachable route to assert without a key.
+- **US-307, US-308, US-309** Gemini/Ollama/LiteLLM providers — wiring alternatives to the one
+  provider path the whole suite already drives (US-306, claimed in `synthesis.spec.ts`); unit
+  suites cover their request shaping.
+- **US-310** base-URL safety validation — `validateBaseUrl` has no route-level caller to
+  exercise; unit-covered.
+- **US-311** atomic writes — storage infrastructure (`atomicWrite`), unit-covered.
+- **US-314** update-available notice — the check is a GitHub round-trip this suite must never
+  make; the opt-in default and "never checked" disclosure ARE pinned (unclaimed) in
+  `opsSurfaces.spec.ts`.
+- **US-340** signed-release pack download — the release workflow starts behind team auth
+  (workflow/submit answers 409 without it); the reachable refusals are pinned (unclaimed) in
+  `opsSurfaces.spec.ts`, the full chain lives in the Supertest suites.
+Claims that are deliberately PARTIAL, and say so where they are claimed: **US-224** drives
+open ↔ closed through the lifecycle menu (archive/restore transitions are route-covered by
+US-005 in `caseLifecycle.spec.ts`); **US-225** covers collapse + persistence, not drag-reorder;
+**US-237** covers the Essential/All toggle and tab activation, not the in-app deep-link callers;
+**US-240** captures the import and synthesis announcements — import FAILURE is not provokable
+through this harness's UI, because every text file falls back to the log importer and is
+accepted; **US-268** covers the queue surface (list + trackable job), with progress/cancel/resume
+noted above.
+
+- Team-auth policies and endpoints: **US-315 … US-336**. The Playwright server intentionally
+  runs with team auth off; Supertest suites exercise bootstrap, login, sessions, roles, tokens,
+  policy classification and remote-binding refusal in isolation.
