@@ -101,6 +101,18 @@
         }),
         F("DFIR_TIMESKETCH_USER", "Username"),
         F("DFIR_TIMESKETCH_PASSWORD", "Password", { secret: true }),
+        // Timesketch is nearly always self-hosted behind its own cert, so Test lands on
+        // "self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)" — a dead end while this pair
+        // lived only in Settings › All. Same reasoning as the IRIS step above.
+        F("DFIR_TIMESKETCH_INSECURE", "Skip TLS verify", {
+          hint: "true = accept a self-signed Timesketch cert without verifying (lab only).",
+        }),
+        // Global key, not DFIR_TIMESKETCH_: the step's reload prefix won't apply it, so the field
+        // carries its own — wizSaveAndTestGeneric reloads it when the field was saved.
+        F("DFIR_TLS_ALLOW_INSECURE_EXTERNAL", "Allow insecure TLS to external hosts", {
+          hint: "Skip TLS verify toward a NON-loopback host is refused (MITM risk) unless this is true. Applies to every integration; prefer a CA bundle.",
+          reload: "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+        }),
       ],
     },
     {

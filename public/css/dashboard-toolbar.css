@@ -251,8 +251,18 @@
 .settings-modal[data-mode="essential"]:not([data-searching]) .stab:not([data-essential]) { display: none !important; }
 .settings-modal[data-mode="essential"]:not([data-searching]) .stab-pane:not([data-essential="pane"]) > *:not([data-essential]) { display: none !important; }
 .settings-modal[data-mode="essential"]:not([data-searching]) :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential]) { display: none !important; }
+/* A row is a FIXED 2- or 3-column grid, and `display: none` on the rule above removes the unmarked
+   fields from the grid WITHOUT collapsing their tracks. So a row contributing one field to Essential
+   drew it at 49% of the line (33% in a row3) with the rest blank — and the two widths a few rows
+   apart, Timesketch's "Skip TLS verify" beside Notion's, read as a bug rather than a layout. 22 rows
+   land here, every enrichment and exposure API key among them. Let a lone marked field span its row.
+
+   `:has()` is doing the counting `:only-child` cannot: the hidden siblings are still in the DOM, so
+   "no marked field is preceded by another marked field" is what "this row contributes exactly one"
+   has to be spelled as. Two or more marked fields still share the row as before. */
+.settings-modal[data-mode="essential"]:not([data-searching]) :is(.sfield-row, .sfield-row3, .sgrid):not(:has(> .sfield[data-essential] ~ .sfield[data-essential])) > .sfield[data-essential] { grid-column: 1 / -1; }
 /* ── Search ─────────────────────────────────────────────────────────────────────────────
-   `data-searching` on the modal means a non-empty query is active. The three Essential rules
+   `data-searching` on the modal means a non-empty query is active. The four Essential rules
    above opt OUT of it rather than these rules out-specificing three `!important` declarations —
    one uniform edit, and it is what lets a search reach a tab Essential hides entirely. A test
    in tests/settings/settingsSearch.test.ts pins that opt-out onto every Essential rule.

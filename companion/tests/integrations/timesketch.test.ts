@@ -160,6 +160,50 @@ describe("TimesketchClient network failure", () => {
       "Timesketch request failed: fetch failed -> connect ECONNREFUSED 10.0.0.2:5000 (ECONNREFUSED)",
     );
   });
+
+  it("adds no TLS advice to a connection failure", async () => {
+    // Guards the pairing, not the helper (that is tests/integrations/tlsTrustHint.test.ts):
+    // answering "nothing is listening" with "skip certificate verification" would send an
+    // operator disabling a security control over a wrong port.
+    const errno = Object.assign(new Error("connect ECONNREFUSED 10.0.0.2:5000"), { code: "ECONNREFUSED" });
+    const client = new TimesketchClient({
+      baseUrl: "https://10.0.0.2:5000",
+      username: "u",
+      password: "p",
+      fetchFn: async () => {
+        throw new TypeError("fetch failed", { cause: errno });
+      },
+    });
+    await expect(client.login()).rejects.toThrow(/^(?!.*DFIR_TIMESKETCH_INSECURE)/s);
+  });
+
+  it("points a rejected certificate at DFIR_TIMESKETCH_CA / _INSECURE, not Node's --use-system-ca", async () => {
+    // The reported failure verbatim: a self-hosted Timesketch behind its own cert. Node's message
+    // ends in --use-system-ca, which is not a setting this app has — the analyst needs the two it
+    // does have, and the global opt-in a non-loopback host additionally requires.
+    const errno = Object.assign(
+      new Error(
+        "self-signed certificate; if the root CA is installed locally, try running Node.js with --use-system-ca",
+      ),
+      { code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    );
+    const client = new TimesketchClient({
+      baseUrl: "https://timesketch.example.org",
+      username: "u",
+      password: "p",
+      fetchFn: async () => {
+        throw new TypeError("fetch failed", { cause: errno });
+      },
+    });
+    const err = await client.login().then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT"); // Node's own words are kept
+    expect(err?.message).toContain("DFIR_TIMESKETCH_CA");
+    expect(err?.message).toContain("DFIR_TIMESKETCH_INSECURE=1");
+    expect(err?.message).toContain("DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true");
+  });
 });
 
 // ---- orchestrator with a recording mock client -----------------------------

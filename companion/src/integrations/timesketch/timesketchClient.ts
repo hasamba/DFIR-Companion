@@ -10,6 +10,7 @@
 // https://github.com/google/timesketch/tree/master/api_client/python
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { tlsTrustHint } from "../tlsTrustHint.js";
 
 export interface TimesketchClientOptions {
   baseUrl: string; // e.g. https://timesketch.example.org
@@ -145,7 +146,15 @@ export class TimesketchClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
-      throw new TimesketchApiError(`Timesketch request failed: ${describeFetchError(err)}`, 0, "network");
+      // The cause chain reaches the message twice on purpose: describeFetchError quotes Node's own
+      // words (which end in an unhelpful --use-system-ca suggestion), and tlsTrustHint adds the
+      // DFIR_TIMESKETCH_CA / DFIR_TIMESKETCH_INSECURE pair Node cannot know about — and only when
+      // the failure really is a rejected certificate.
+      throw new TimesketchApiError(
+        `Timesketch request failed: ${describeFetchError(err)}${tlsTrustHint(err, "TIMESKETCH")}`,
+        0,
+        "network",
+      );
     }
     this.ingestCookies(res);
     return res;

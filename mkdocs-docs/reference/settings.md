@@ -16,9 +16,20 @@ The rule, for anyone adding a field:
 > Anything with a working default lives under **All**.
 
 So credentials and endpoint URLs are Essential; timeouts, retry counts, throttle delays, output
-caps, TLS trust overrides (`_CA`, `_INSECURE`), and prompt-file overrides are not. Tabs that manage
-content rather than configuration — IOC Whitelist, NSRL, Importers, KEV, Report Templates,
-Dashboard Views — sit under All too: they are empty and working out of the box.
+caps, CA-bundle paths (`_CA`) and prompt-file overrides are not. Tabs that manage content rather
+than configuration — IOC Whitelist, NSRL, Importers, KEV, Report Templates, Dashboard Views — sit
+under All too: they are empty and working out of the box.
+
+**Skip TLS verify** (`DFIR_<NAME>_INSECURE`) is the one deliberate exception, on every integration
+that has it — MISP, YETI, OpenCTI, DFIR-IRIS, Timesketch, Notion, ClickUp and the notification
+webhooks — together with the global **Allow insecure TLS to external hosts**
+(`DFIR_TLS_ALLOW_INSECURE_EXTERNAL`) a non-loopback host additionally needs. A self-hosted instance
+behind a self-signed certificate is dead without one of them, and the error it fails with names no
+setting at all, so burying the flag under All left the connect flow failing with no visible knob to
+reach for. Prefer a `_CA` bundle where you have one: it keeps verification on.
+
+Jira and ServiceNow have the same flag and stay out of Essential — their whole block is read-only in
+the dashboard by design, a security boundary edited in `.env` and applied by a restart.
 
 **Tools** is All-only in full. Every external binary it wires up (Hayabusa, the Velociraptor CLI,
 Suricata, Snort, YARA) is blank-means-off, so nothing is broken by leaving them unconfigured —
