@@ -243,6 +243,22 @@ describe("Settings Essential mode — wiring", () => {
     }
   });
 
+  // A row that contributes ONE field to Essential used to draw it at its column share — 49% in a
+  // `.sfield-row`, 33% in a `.sfield-row3` — with the rest of the line blank, because `display: none`
+  // on its row-mates removes them from a FIXED grid without collapsing their tracks. 22 rows sit in
+  // that position (every enrichment and exposure API key among them), so the two widths landed a few
+  // rows apart — Timesketch's "Skip TLS verify" above Notion's — and read as a bug rather than a
+  // layout. Pinned because the fix is invisible in the markup: nothing about a stranded field says it
+  // is stranded, so a later rewrite of the hiding rules can drop the span with nothing else failing.
+  it("lets a row's only Essential field span the whole row", () => {
+    const css = dashboardStylesheet();
+    const rule =
+      '.settings-modal[data-mode="essential"]:not([data-searching]) :is(.sfield-row, .sfield-row3, .sgrid):not(:has(> .sfield[data-essential] ~ .sfield[data-essential])) > .sfield[data-essential]';
+    const at = css.indexOf(rule);
+    expect(at, "missing the lone-field span rule").toBeGreaterThan(-1);
+    expect(css.slice(at, at + rule.length + 40)).toContain("grid-column: 1 / -1");
+  });
+
   it("opens in Essential unless the analyst chose All", async () => {
     const html = await dashboard();
     const fn = html.slice(html.indexOf("function settingsMode()"), html.indexOf("function stabHidden("));
