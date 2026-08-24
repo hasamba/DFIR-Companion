@@ -1811,6 +1811,10 @@
       <!-- Integrations -->
       <div class="stab-pane" id="stab-integrations">
         <div class="srestart-note" data-essential>⚠ All integration settings require a server restart to take effect</div>
+        <div class="settings-group-head" data-essential>TLS (all integrations)</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Allow insecure TLS to external hosts<span class="sfield-hint">DFIR_TLS_ALLOW_INSECURE_EXTERNAL — a DFIR_*_INSECURE=1 setting is refused for NON-loopback hosts (MITM risk: an on-path attacker can harvest the API key) unless this is true. Default false. Prefer a DFIR_*_CA bundle, which keeps verification ON.</span></label><input id="env-DFIR_TLS_ALLOW_INSECURE_EXTERNAL" placeholder="false" /></div>
+        </div>
         <div class="settings-group-head">Presidio (optional external PII detector)</div>
         <div class="sfield-row">
           <div class="sfield">
@@ -1835,8 +1839,8 @@
           <div class="sfield"><label>Customer ID<span class="sfield-hint">DFIR_IRIS_CUSTOMER_ID</span></label><input id="env-DFIR_IRIS_CUSTOMER_ID" placeholder="1" /></div>
           <div class="sfield"><label>Classification ID<span class="sfield-hint">DFIR_IRIS_CLASSIFICATION_ID</span></label><input id="env-DFIR_IRIS_CLASSIFICATION_ID" placeholder="1" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
           <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>

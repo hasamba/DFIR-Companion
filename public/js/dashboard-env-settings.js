@@ -327,6 +327,7 @@
     "DFIR_PUSH_TOKEN",
     "DFIR_NSRL_",
     "DFIR_TOOL_",
+    "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
   ];
 
   // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178). Returns the
