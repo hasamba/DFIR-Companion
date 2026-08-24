@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Self-signed IRIS is configurable from Essential settings** — Skip TLS verify (`DFIR_IRIS_INSECURE`) now shows in the Essential view, alongside a new global "Allow insecure TLS to external hosts" field (`DFIR_TLS_ALLOW_INSECURE_EXTERNAL`, default false) that the non-loopback MITM guard already required but no UI offered. The new key saves and reloads live, so a reconnect picks it up without a restart.
 - **Firefox add-on versions submit to Mozilla automatically** — a `v*` tag now uploads the release zip and its source archive to AMO, the same way tags publish to the Chrome Web Store. Re-running a release is safe: it detects a version AMO already holds and skips the upload. A green tag means accepted for review, not live.
 - **Every documented setting is visible in Settings** — the 48 that were configurable only by editing `.env` now render there, read-only where the server refuses to write them, each saying why.
 - **The setup wizard configures Presidio and Telegram** — a Presidio step (analyzer URL, confidence floor, timeout) that warns on a non-local URL, tests the URL as typed, and says to restart because those keys are read at startup; and a Telegram bot option on the Notifications step, which can borrow the war-room bot's token from `.env` and offers the chats it is already bound to. Both were reachable only from Settings.

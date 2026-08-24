@@ -77,6 +77,10 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   // reachable without a restart. Its siblings stay off deliberately — ACTION_USERS and SECRET_TOKEN
   // authorize the INBOUND bot, and nothing in the outbound path re-reads them.
   "DFIR_TELEGRAM_BOT_TOKEN",
+  // Exact key. buildTlsFetch reads it from process.env at client-build time, so a save must land it
+  // there before the integration's Test/reconnect rebuilds the client — without this reload the flag
+  // sits in .env until a restart while the reconnect keeps refusing the insecure external host.
+  "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
 ]);
 
 // Only keys starting with one of these prefixes may be written via POST /settings/env. The
@@ -188,6 +192,9 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_JOBS_MAX",
   "DFIR_JOBS_CONCURRENCY",
   "DFIR_JOBS_PER_CASE",
+  // The global opt-in that lets a DFIR_*_INSECURE=1 knob apply to a non-loopback host (the
+  // per-integration _INSECURE keys are already writable through their family prefixes).
+  "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
 ];
 
 /**

@@ -54,11 +54,16 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
   ],
   // Keys only. Domain limits, the HIBP user-agent, the DeHashed base URL and the delay all default.
   exposure: ["DFIR_LEAKCHECK_KEY", "DFIR_HIBP_KEY", "DFIR_DEHASHED_KEY", "DFIR_SHODAN_KEY"],
-  // What each integration needs to connect at all. Optional IRIS ids, `_CA`/`_INSECURE`, the 15
+  // What each integration needs to connect at all. Optional IRIS ids, `_CA`, the 15
   // Velociraptor tuning/VQL knobs, and DFIR_PUBLIC_URL (link rendering only) are All-only.
+  // DFIR_IRIS_INSECURE and the global DFIR_TLS_ALLOW_INSECURE_EXTERNAL opt-in are Essential:
+  // a self-signed IRIS instance is dead without them, and burying the pair in All left the
+  // connect flow failing with no visible knob to reach for.
   integrations: [
+    "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
     "DFIR_IRIS_URL",
     "DFIR_IRIS_KEY",
+    "DFIR_IRIS_INSECURE",
     "DFIR_TIMESKETCH_URL",
     "DFIR_TIMESKETCH_USER",
     "DFIR_TIMESKETCH_PASSWORD",
