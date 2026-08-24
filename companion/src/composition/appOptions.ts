@@ -478,6 +478,10 @@ export interface AppOptions {
   notionClient?: NotionClient;
   notionOptions?: NotionPushOptions;
   notionExportStore?: NotionExportStore;
+  // Rebuild the Notion client from current config (used by POST /notion/reconnect so a token saved
+  // via Settings applies without a server restart). Mirrors rebuildIrisClient; defaults to the
+  // env-based buildNotionClient, and tests inject a stub (no network).
+  rebuildNotionClient?: () => NotionClient | undefined;
   // ClickUp export (issue #36 Phase 3): a configured client (when DFIR_CLICKUP_TOKEN is set) pushes
   // the Response Playbook as ClickUp tasks. The per-task ClickUp ids are remembered per case in
   // clickupExportStore so a re-export updates instead of duplicating. Default target list id +
@@ -485,6 +489,9 @@ export interface AppOptions {
   clickupClient?: ClickUpClient;
   clickupExportStore?: ClickUpExportStore;
   clickupOptions?: { defaultListId?: string };
+  // Rebuild the ClickUp client from current config (used by POST /clickup/reconnect). Same
+  // contract as rebuildNotionClient above.
+  rebuildClickupClient?: () => ClickUpClient | undefined;
   // Jira export (issue #272): push individual findings as Jira issues. Configured via
   // DFIR_JIRA_URL, DFIR_JIRA_USER, DFIR_JIRA_TOKEN, and DFIR_JIRA_PROJECT_KEY.
   // Typed as the INTERFACE, not the concrete client: everything downstream

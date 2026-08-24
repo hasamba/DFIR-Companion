@@ -125,9 +125,11 @@
   // Save any unsaved field edits, then re-read .env, rebuild the Velociraptor client, and refresh
   // the inventory (the reachability probe). Works even when the API wasn't configured at boot or
   // the server was down — no companion restart.
-  async function doVeloReconnect() {
-    const btn = document.getElementById("veloReconnectBtn");
-    const msg = document.getElementById("veloClientsMsg");
+  // Ids are parameters because Settings → Integrations carries a second copy of this control: one
+  // implementation, so no copy can forget an after-effect (veloEnabled, clients, monitor picker).
+  async function doVeloReconnect(btnId, msgId) {
+    const btn = document.getElementById(btnId || "veloReconnectBtn");
+    const msg = document.getElementById(msgId || "veloClientsMsg");
     if (btn) btn.disabled = true;
     if (msg) msg.textContent = "saving…";
     const saved = await saveSettings();

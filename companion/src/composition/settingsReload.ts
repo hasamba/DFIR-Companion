@@ -105,12 +105,12 @@ export function createSettingsReload({
       rebuilt.push("velociraptor");
     }
     if (prefix === "DFIR_NOTION_") {
-      options.notionClient = buildNotionClient();
+      options.notionClient = (options.rebuildNotionClient ?? buildNotionClient)();
       options.notionOptions = notionPushOptions();
       rebuilt.push("notion");
     }
     if (prefix === "DFIR_CLICKUP_") {
-      options.clickupClient = buildClickUpClient();
+      options.clickupClient = (options.rebuildClickupClient ?? buildClickUpClient)();
       options.clickupOptions = clickupOptions();
       rebuilt.push("clickup");
     }

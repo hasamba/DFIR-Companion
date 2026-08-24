@@ -38,6 +38,35 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, serverLogger, syncPlaybook } = ctx;
   const logLine = (msg: string): void => serverLogger.info(msg);
 
+  // The one answer shape every "Test connection" control in Settings → Integrations reads, so a
+  // caller never has to tell a missing credential apart from an unreachable server by parsing prose:
+  //
+  //   { configured: false, ok: false, error }  the keys are absent — nothing was attempted
+  //   { configured: true,  ok: true,  user }   the credentials reached the remote and it answered
+  //   { configured: true,  ok: false, error }  the credentials exist and the remote refused / is down
+  //
+  // Always 200: "the remote rejected our token" is a successful test that reports a failure, not a
+  // failed request, and an HTTP error status here would be indistinguishable from the Companion's own.
+  //
+  // `extra` carries whatever that integration's own /status route reports, because a reconnect can
+  // CHANGE it (a Notion default database, a ClickUp default list). Without it the dashboard would
+  // keep the state it read at page load and prompt for a target the analyst just configured.
+  async function probeConnection<T>(
+    res: Response,
+    client: { me(): Promise<T> } | undefined,
+    missingError: string,
+    userOf: (me: T) => string | undefined,
+    extra: Record<string, unknown> = {},
+  ): Promise<Response> {
+    if (!client) return res.status(200).json({ configured: false, ok: false, error: missingError });
+    try {
+      const me = await client.me();
+      return res.status(200).json({ configured: true, ok: true, user: userOf(me), ...extra });
+    } catch (err) {
+      return res.status(200).json({ configured: true, ok: false, error: (err as Error).message });
+    }
+  }
+
   // Push a case to DFIR-IRIS: find-or-create the case by name, then push assets→assets,
   // IOCs→IOCs, forensic timeline→timeline, executive summary→case summary, everything else→notes.
   // Body: { caseName? } — an explicit override; otherwise the name from the last push is reused
@@ -251,6 +280,28 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     });
   });
 
+  // Re-read DFIR_NOTION_* from .env (Settings only writes the file), rebuild the client, and call
+  // users/me to verify the token — the Settings "Test connection" control. Mirrors /iris/reconnect,
+  // so a token corrected in Settings applies WITHOUT the #1-gotcha restart.
+  app.post("/notion/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_NOTION_");
+      ctx.rebuildForPrefix("DFIR_NOTION_"); // swaps options.notionClient + notionOptions
+      return await probeConnection(
+        res,
+        options.notionClient,
+        "Notion not configured (set DFIR_NOTION_TOKEN)",
+        (me) => me.name || me.id || undefined,
+        {
+          hasDatabase: !!options.notionOptions?.databaseId,
+          hasParent: !!options.notionOptions?.parentPageId,
+        },
+      );
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
+    }
+  });
+
   // Export a case into a Notion page. The Companion writes ALL its content inside ONE managed
   // toggle block it owns; a re-export refreshes that block and never touches the investigators'
   // own notes/screenshots. Body: { mode: "new"|"existing", page?, parent?, database? }.
@@ -315,6 +366,24 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     });
   });
 
+  // Re-read DFIR_CLICKUP_* from .env, rebuild the client, and call /user to verify the token.
+  // Same contract as /notion/reconnect above.
+  app.post("/clickup/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_CLICKUP_");
+      ctx.rebuildForPrefix("DFIR_CLICKUP_"); // swaps options.clickupClient + clickupOptions
+      return await probeConnection(
+        res,
+        options.clickupClient,
+        "ClickUp not configured (set DFIR_CLICKUP_TOKEN)",
+        (me) => me.username || me.id || undefined,
+        { defaultListId: options.clickupOptions?.defaultListId ?? "" },
+      );
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
+    }
+  });
+
   // Push the Response Playbook to a ClickUp list as tasks. Body { listId? } — falls back to the
   // saved list, then the configured default. Re-export UPDATES the tasks it created (by remembered
   // id) instead of duplicating.
@@ -364,6 +433,20 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       issueType: options.jiraOptions?.issueType ?? "",
     });
   });
+
+  // Verify the Jira credentials by calling /myself — the Settings "Test connection" control.
+  // PINGS THE LIVE CLIENT AND DOES NOT RELOAD .env, unlike the Notion/ClickUp routes above: Jira's
+  // fields are deliberately read-only in Settings (the dashboard must not be able to move
+  // DFIR_JIRA_INSECURE), so its config only ever changes by editing .env and restarting. A reload
+  // here would quietly apply a boundary change the UI is not allowed to make.
+  app.post("/jira/test", async (_req: Request, res: Response) =>
+    probeConnection(
+      res,
+      options.jiraClient,
+      "Jira not configured (set DFIR_JIRA_URL, DFIR_JIRA_USER, and DFIR_JIRA_TOKEN in .env, then restart)",
+      (me) => me.displayName || me.id || undefined,
+    ),
+  );
 
   // Push one finding as a Jira issue. Body { findingId, projectKey?, issueType? } — the project
   // falls back to DFIR_JIRA_PROJECT_KEY. Re-pushing the same finding UPDATES the issue it created
@@ -471,6 +554,17 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       subcategory: options.servicenowOptions?.subcategory ?? "",
     });
   });
+
+  // Verify the ServiceNow credentials by reading the authenticated user. Ping-only for the same
+  // reason as /jira/test above — the fields are read-only in Settings.
+  app.post("/servicenow/test", async (_req: Request, res: Response) =>
+    probeConnection(
+      res,
+      options.servicenowClient,
+      "ServiceNow not configured (set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD in .env, then restart)",
+      (me) => me.userName || me.userId || undefined,
+    ),
+  );
 
   // Push one finding as a ServiceNow incident. Body { findingId, caller?, category?, subcategory? }
   // — each falls back to its DFIR_SERVICENOW_* default. Re-pushing the same finding UPDATES the
