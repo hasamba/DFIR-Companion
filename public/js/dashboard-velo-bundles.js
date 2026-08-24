@@ -319,8 +319,15 @@
       if (browse) browse.onclick = veloBrowseArtifacts;
       const refreshClients = document.getElementById("veloRefreshClientsBtn");
       if (refreshClients) refreshClients.onclick = doRefreshVeloClients;
+      // Wrapped, not passed by reference: doVeloReconnect now takes (btnId, msgId) so the copy of
+      // this control on Settings → Integrations can report into its own line, and an unwrapped
+      // handler would hand it the click Event as the button id.
       const reconnect = document.getElementById("veloReconnectBtn");
-      if (reconnect) reconnect.onclick = doVeloReconnect;
+      if (reconnect) reconnect.onclick = () => doVeloReconnect();
+      const settingsReconnect = document.getElementById("veloSettingsReconnectBtn");
+      if (settingsReconnect)
+        settingsReconnect.onclick = () =>
+          doVeloReconnect("veloSettingsReconnectBtn", "veloSettingsReconnectMsg");
       const addM = document.getElementById("veloAddManualBtn");
       if (addM) addM.onclick = veloAddManual;
       const save = document.getElementById("veloSaveBundleBtn");

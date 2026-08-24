@@ -279,41 +279,121 @@
     // never published — the one feature the analyst can already see, broken by an unrelated one.
     window.openIrisImportModal = openIrisImportModal;
 
-    // Settings → DFIR-IRIS "Test / reconnect": save any unsaved field edits first, then re-read
-    // .env, rebuild the client, and ping. Applies a saved URL/key (or IRIS coming back online)
-    // without the #1-gotcha restart.
-    const irisReconnectBtn = document.getElementById("irisReconnectBtn");
-    if (irisReconnectBtn) irisReconnectBtn.onclick = async () => {
-      const msg = document.getElementById("irisReconnectMsg");
-      irisReconnectBtn.disabled = true;
-      msg.style.color = "var(--text-muted)";
-      msg.textContent = "saving…";
-      const saved = await saveSettings();
-      if (!saved) {
-        msg.style.color = "var(--danger-bg)";
-        msg.textContent = "save failed — fix the error above and retry";
-        irisReconnectBtn.disabled = false;
-        return;
-      }
-      msg.textContent = "reconnecting…";
-      fetch("/iris/reconnect", { method: "POST" })
-        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
-        .then((res) => {
-          if (res.ok) {
-            msg.style.color = "var(--badge-success-text)";
-            msg.textContent = "✓ connected" + (res.baseUrl ? " to " + res.baseUrl : "");
-            addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption();   // reveal now-available actions
-          } else if (res.configured) {
+    // ── Settings → Integrations "Test connection" ─────────────────────────────
+    // DFIR-IRIS was the only integration on that tab with one of these. Every other target was
+    // configure-and-hope: type a URL and a token, close Settings, and find out the credentials were
+    // wrong the next time a push failed in the middle of an investigation. They all answer the same
+    // {configured, ok, error} shape from the server, so the differences are data — the route, what
+    // to call it, and what a success makes newly available.
+    //
+    // save:true IS THE HALF THAT IS EASY TO MISS. The probe runs SERVER-side, against .env, so a
+    // token typed into the field but not yet saved would be tested in its previous value — a green
+    // result for a configuration that was never applied. Where the dashboard owns the config, the
+    // handler saves first. Jira and ServiceNow are deliberately read-only here (.env + restart), so
+    // they have nothing to save and their route only pings the live client; the copy says so rather
+    // than implying a failed test can be fixed in this modal.
+    const INTEGRATION_TESTS = [
+      {
+        btn: "irisReconnectBtn", msg: "irisReconnectMsg", url: "/iris/reconnect", save: true,
+        missing: "not configured — set IRIS URL + key above and reconnect",
+        onOk: () => { addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption(); },
+      },
+      {
+        btn: "timesketchReconnectBtn", msg: "timesketchReconnectMsg", url: "/timesketch/reconnect", save: true,
+        missing: "not configured — set the Timesketch URL, user + password above and reconnect",
+        onOk: () => {
+          addPushOption("timesketch", "Timesketch export (Forensic Timeline)");
+          addPushOption("timesketch-super", "Timesketch export (Super Timeline)");
+        },
+      },
+      {
+        btn: "notionReconnectBtn", msg: "notionReconnectMsg", url: "/notion/reconnect", save: true,
+        missing: "not configured — set the Notion integration token above and reconnect",
+        // Carries the same two flags /notion/status does, because a reconnect can ADD a default
+        // database/parent — without them the export modal would keep demanding a target the
+        // analyst has just configured.
+        onOk: (res) => {
+          addPushOption("notion", "Export to Notion");
+          notionHasDefault = !!(res.hasDatabase || res.hasParent);
+        },
+      },
+      {
+        btn: "clickupReconnectBtn", msg: "clickupReconnectMsg", url: "/clickup/reconnect", save: true,
+        missing: "not configured — set the ClickUp API token above and reconnect",
+        onOk: (res) => {
+          addPushOption("clickup", "Push to ClickUp");
+          clickupDefaultList = res.defaultListId || clickupDefaultList;
+        },
+      },
+      {
+        // On the ENRICHMENT tab, not Integrations: the same two keys feed the IOC provider, and the
+        // reconnect rebuilds both. Wired from here anyway — this module owns the Push menu the test
+        // reveals, and a second module for one button would split the table that keeps them alike.
+        btn: "mispReconnectBtn", msg: "mispReconnectMsg", url: "/misp/reconnect", save: true,
+        missing: "not configured — set the MISP URL + key above and reconnect",
+        onOk: () => addPushOption("misp", "Push to MISP (IOCs + Forensic Timeline)"),
+      },
+      // YETI and OpenCTI are threat-intel PROVIDERS, not push targets, so they reveal nothing on
+      // success and carry no onOk: the enrichment modal rebuilds its provider list and re-reads
+      // /enrich-health every time it opens, and the route has already recorded this probe's verdict
+      // in that same health gate — so the ● dot agrees with what the button just said.
+      {
+        btn: "yetiReconnectBtn", msg: "yetiReconnectMsg", url: "/enrichment/yeti/reconnect", save: true,
+        missing: "not configured — set the YETI URL + key above and reconnect",
+      },
+      {
+        btn: "openctiReconnectBtn", msg: "openctiReconnectMsg", url: "/enrichment/opencti/reconnect", save: true,
+        missing: "not configured — set the OpenCTI URL + token above and reconnect",
+      },
+      {
+        btn: "jiraTestBtn", msg: "jiraTestMsg", url: "/jira/test", save: false,
+        missing: "not configured — set DFIR_JIRA_URL, DFIR_JIRA_USER and DFIR_JIRA_TOKEN in .env, then restart",
+        onOk: () => document.body.classList.add("has-jira"),
+      },
+      {
+        btn: "snowTestBtn", msg: "snowTestMsg", url: "/servicenow/test", save: false,
+        missing: "not configured — set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER and DFIR_SERVICENOW_PASSWORD in .env, then restart",
+        onOk: () => document.body.classList.add("has-servicenow"),
+      },
+    ];
+    for (const t of INTEGRATION_TESTS) {
+      const btn = document.getElementById(t.btn);
+      if (!btn) continue;
+      btn.onclick = async () => {
+        const msg = document.getElementById(t.msg);
+        btn.disabled = true;
+        msg.style.color = "var(--text-muted)";
+        if (t.save) {
+          msg.textContent = "saving…";
+          const saved = await saveSettings();
+          if (!saved) {
             msg.style.color = "var(--danger-bg)";
-            msg.textContent = "✗ configured but unreachable: " + (res.error || "ping failed");
-          } else {
-            msg.style.color = "var(--text-muted)";
-            msg.textContent = "not configured — set IRIS URL + key above and reconnect";
+            msg.textContent = "save failed — fix the error above and retry";
+            btn.disabled = false;
+            return;
           }
-        })
-        .catch((err) => { msg.style.color = "var(--danger-bg)"; msg.textContent = "reconnect failed: " + err.message; })
-        .finally(() => { irisReconnectBtn.disabled = false; });
-    };
+        }
+        msg.textContent = t.save ? "reconnecting…" : "testing…";
+        fetch(t.url, { method: "POST" })
+          .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+          .then((res) => {
+            if (res.ok) {
+              msg.style.color = "var(--badge-success-text)";
+              msg.textContent = "✓ connected" +
+                (res.baseUrl ? " to " + res.baseUrl : "") + (res.user ? " as " + res.user : "");
+              if (t.onOk) t.onOk(res);   // reveal the actions this integration makes available
+            } else if (res.configured) {
+              msg.style.color = "var(--danger-bg)";
+              msg.textContent = "✗ configured but unreachable: " + (res.error || "ping failed");
+            } else {
+              msg.style.color = "var(--text-muted)";
+              msg.textContent = t.missing;
+            }
+          })
+          .catch((err) => { msg.style.color = "var(--danger-bg)"; msg.textContent = "test failed: " + err.message; })
+          .finally(() => { btn.disabled = false; });
+      };
+    }
 
     // ── Push playbook to ClickUp modal ────────────────────────────────────────
     const clickupOverlay = document.getElementById("clickupOverlay");

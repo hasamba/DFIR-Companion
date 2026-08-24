@@ -76,7 +76,7 @@ export function createSettingsReload({
   return function rebuildForPrefix(prefix: string): string[] {
     const rebuilt: string[] = [];
     if (ENRICHMENT_PREFIXES.has(prefix)) {
-      const providers = buildEnrichmentProviders();
+      const providers = (options.rebuildEnrichmentProviders ?? buildEnrichmentProviders)();
       setEnrichmentProviders(providers);
       options.enrichmentProviders = providers;
       rebuilt.push("enrichment");
@@ -86,7 +86,7 @@ export function createSettingsReload({
       rebuilt.push("exposure");
     }
     if (prefix === "DFIR_MISP_") {
-      options.mispPushClient = buildMispPushClient();
+      options.mispPushClient = (options.rebuildMispPushClient ?? buildMispPushClient)();
       options.mispPushOptions = mispPushOptions();
       rebuilt.push("misp");
     }
@@ -105,12 +105,12 @@ export function createSettingsReload({
       rebuilt.push("velociraptor");
     }
     if (prefix === "DFIR_NOTION_") {
-      options.notionClient = buildNotionClient();
+      options.notionClient = (options.rebuildNotionClient ?? buildNotionClient)();
       options.notionOptions = notionPushOptions();
       rebuilt.push("notion");
     }
     if (prefix === "DFIR_CLICKUP_") {
-      options.clickupClient = buildClickUpClient();
+      options.clickupClient = (options.rebuildClickupClient ?? buildClickUpClient)();
       options.clickupOptions = clickupOptions();
       rebuilt.push("clickup");
     }

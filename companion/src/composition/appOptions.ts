@@ -93,7 +93,7 @@ import type { TemplateStore } from "../analysis/templateStore.js";
 import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import type { HostScopeStore } from "../analysis/hostScopeStore.js";
-import type { MispPushClient } from "../integrations/misp/mispPushClient.js";
+import type { MispPushClientLike } from "../integrations/misp/mispPushClient.js";
 import type { MispPushOptions } from "../integrations/misp/mispPush.js";
 import type { NotionClient } from "../integrations/notion/notionClient.js";
 import type { NotionPushOptions } from "../integrations/notion/notionPush.js";
@@ -331,6 +331,11 @@ export interface AppOptions {
   autoSynthesizeDebounceMs?: number;
   // Threat-intel enrichment providers (VirusTotal, MalwareBazaar, AbuseIPDB…).
   enrichmentProviders?: EnrichmentProvider[];
+  // Rebuild the provider set from current config — used by POST /settings/reload and by the
+  // Settings "Test / reconnect" controls for the self-hosted providers (YETI, OpenCTI), so a key
+  // saved in the dashboard applies without a restart. Defaults to the env-based
+  // buildEnrichmentProviders; tests inject stubs (no network).
+  rebuildEnrichmentProviders?: () => EnrichmentProvider[];
   enrichDelayMs?: number;
   enrichProviderDelayMs?: Record<string, number>; // per-provider throttle overrides (keyed by provider.name)
   enrichJitterMs?: number; // ± random jitter added to the inter-call wait (#78)
@@ -470,14 +475,25 @@ export interface AppOptions {
   hostScopeStore?: HostScopeStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
   // (distribution, analysis state, base URL for the event link).
-  mispPushClient?: MispPushClient;
+  // Typed as the INTERFACE, not the concrete client, for the reason spelled out on jiraClient
+  // below: every consumer (pushCaseToMisp, the `configured` flag, the reconnect ping) needs only
+  // the six methods, and naming the class forces route tests to launder their stub through an
+  // `as unknown as` cast — which is what kept them out of the typecheck (#385).
+  mispPushClient?: MispPushClientLike;
   mispPushOptions?: MispPushOptions;
+  // Rebuild the MISP push client from current config (used by POST /misp/reconnect). Same contract
+  // as rebuildNotionClient below; defaults to the env-based buildMispPushClient.
+  rebuildMispPushClient?: () => MispPushClientLike | undefined;
   // Notion export: a configured client (when DFIR_NOTION_TOKEN is set) + push options
   // (default parent database/page, container title). The export's page/container pointer is
   // remembered per case in notionExportStore so a re-export refreshes only Companion content.
   notionClient?: NotionClient;
   notionOptions?: NotionPushOptions;
   notionExportStore?: NotionExportStore;
+  // Rebuild the Notion client from current config (used by POST /notion/reconnect so a token saved
+  // via Settings applies without a server restart). Mirrors rebuildIrisClient; defaults to the
+  // env-based buildNotionClient, and tests inject a stub (no network).
+  rebuildNotionClient?: () => NotionClient | undefined;
   // ClickUp export (issue #36 Phase 3): a configured client (when DFIR_CLICKUP_TOKEN is set) pushes
   // the Response Playbook as ClickUp tasks. The per-task ClickUp ids are remembered per case in
   // clickupExportStore so a re-export updates instead of duplicating. Default target list id +
@@ -485,6 +501,9 @@ export interface AppOptions {
   clickupClient?: ClickUpClient;
   clickupExportStore?: ClickUpExportStore;
   clickupOptions?: { defaultListId?: string };
+  // Rebuild the ClickUp client from current config (used by POST /clickup/reconnect). Same
+  // contract as rebuildNotionClient above.
+  rebuildClickupClient?: () => ClickUpClient | undefined;
   // Jira export (issue #272): push individual findings as Jira issues. Configured via
   // DFIR_JIRA_URL, DFIR_JIRA_USER, DFIR_JIRA_TOKEN, and DFIR_JIRA_PROJECT_KEY.
   // Typed as the INTERFACE, not the concrete client: everything downstream

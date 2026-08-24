@@ -124,7 +124,9 @@ export const FEATURES: Feature[] = [
       "clickupDefaultList",
       "notionOverlay",
       "irisImportOverlay",
-      "irisReconnectBtn",
+      // The Settings → Integrations connection-test table (the per-button element captures moved
+      // into its loop, so the old irisReconnectBtn binding is gone with them).
+      "INTEGRATION_TESTS",
       "clickupOverlay",
       "irisPushOverlay",
     ],
