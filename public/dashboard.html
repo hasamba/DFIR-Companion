@@ -1718,6 +1718,10 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
         </div>
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+          <button id="yetiReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the YETI settings, rebuilds the provider, and exchanges the API key for a token — the same call enrichment makes first. Applies WITHOUT restarting the server.">Test / reconnect</button>
+          <span id="yetiReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+        </div>
         <div class="settings-group-head" data-essential>OpenCTI</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>OpenCTI URL<span class="sfield-hint">DFIR_OPENCTI_URL</span></label><input id="env-DFIR_OPENCTI_URL" placeholder="https://opencti.example.org" /></div>
@@ -1729,6 +1733,10 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Malicious score threshold<span class="sfield-hint">DFIR_OPENCTI_MALICIOUS_SCORE — x_opencti_score ≥ this → malicious (default 75)</span></label><input id="env-DFIR_OPENCTI_MALICIOUS_SCORE" placeholder="75" /></div>
+        </div>
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+          <button id="openctiReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the OpenCTI settings, rebuilds the provider, and runs the `me` query — authenticated, but sends no indicator. Applies WITHOUT restarting the server.">Test / reconnect</button>
+          <span id="openctiReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
         <div class="settings-group-head">CIRCL hashlookup (keyless hash → known-good)</div>
         <div class="sfield-row">

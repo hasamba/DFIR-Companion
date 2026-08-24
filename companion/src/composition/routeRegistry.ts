@@ -24,6 +24,7 @@ import { registerToolsRoutes } from "../routes/tools.js";
 import { registerImportRoutes } from "../routes/import.js";
 import { registerVelociraptorRoutes } from "../routes/velociraptor.js";
 import { registerThreatIntelRoutes } from "../routes/threatIntel.js";
+import { registerEnrichmentTestRoutes } from "../routes/enrichmentTest.js";
 import { registerAnonymizationRoutes } from "../routes/anonymization.js";
 import { registerTimelineRoutes } from "../routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "../routes/analysisGraph.js";
@@ -94,6 +95,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerImportRoutes(app, ctx);
   registerVelociraptorRoutes(app, ctx);
   registerThreatIntelRoutes(app, ctx);
+  registerEnrichmentTestRoutes(app, ctx);
   registerAnonymizationRoutes(app, ctx);
   registerTimelineRoutes(app, ctx);
   registerAnalysisGraphRoutes(app, ctx);

@@ -59,6 +59,20 @@ const INTEGRATIONS = [
     msg: "mispReconnectMsg",
     url: "/misp/reconnect",
   },
+  {
+    id: "yeti",
+    pane: "enrichment",
+    button: "yetiReconnectBtn",
+    msg: "yetiReconnectMsg",
+    url: "/enrichment/yeti/reconnect",
+  },
+  {
+    id: "opencti",
+    pane: "enrichment",
+    button: "openctiReconnectBtn",
+    msg: "openctiReconnectMsg",
+    url: "/enrichment/opencti/reconnect",
+  },
 ] as const;
 
 // Where each settings pane starts and ends in the markup, so "is the button on the right tab?" is

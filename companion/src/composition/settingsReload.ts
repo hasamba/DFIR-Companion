@@ -76,7 +76,7 @@ export function createSettingsReload({
   return function rebuildForPrefix(prefix: string): string[] {
     const rebuilt: string[] = [];
     if (ENRICHMENT_PREFIXES.has(prefix)) {
-      const providers = buildEnrichmentProviders();
+      const providers = (options.rebuildEnrichmentProviders ?? buildEnrichmentProviders)();
       setEnrichmentProviders(providers);
       options.enrichmentProviders = providers;
       rebuilt.push("enrichment");

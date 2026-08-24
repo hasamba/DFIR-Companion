@@ -191,6 +191,7 @@
     "ROUTE GET /enrich-health",
     "ROUTE POST /cases/:id/enrich-control",
     "ROUTE POST /cases/:id/enrich",
+    "ROUTE POST /enrichment/:id/reconnect",
     "ROUTE GET /cases/:id/anon-control",
     "ROUTE POST /cases/:id/anon-control",
     "ROUTE GET /cases/:id/anon-entities",

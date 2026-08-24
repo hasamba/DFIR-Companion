@@ -333,6 +333,18 @@
         missing: "not configured — set the MISP URL + key above and reconnect",
         onOk: () => addPushOption("misp", "Push to MISP (IOCs + Forensic Timeline)"),
       },
+      // YETI and OpenCTI are threat-intel PROVIDERS, not push targets, so they reveal nothing on
+      // success and carry no onOk: the enrichment modal rebuilds its provider list and re-reads
+      // /enrich-health every time it opens, and the route has already recorded this probe's verdict
+      // in that same health gate — so the ● dot agrees with what the button just said.
+      {
+        btn: "yetiReconnectBtn", msg: "yetiReconnectMsg", url: "/enrichment/yeti/reconnect", save: true,
+        missing: "not configured — set the YETI URL + key above and reconnect",
+      },
+      {
+        btn: "openctiReconnectBtn", msg: "openctiReconnectMsg", url: "/enrichment/opencti/reconnect", save: true,
+        missing: "not configured — set the OpenCTI URL + token above and reconnect",
+      },
       {
         btn: "jiraTestBtn", msg: "jiraTestMsg", url: "/jira/test", save: false,
         missing: "not configured — set DFIR_JIRA_URL, DFIR_JIRA_USER and DFIR_JIRA_TOKEN in .env, then restart",
@@ -369,7 +381,7 @@
               msg.style.color = "var(--badge-success-text)";
               msg.textContent = "✓ connected" +
                 (res.baseUrl ? " to " + res.baseUrl : "") + (res.user ? " as " + res.user : "");
-              t.onOk(res);   // reveal the actions this integration makes available
+              if (t.onOk) t.onOk(res);   // reveal the actions this integration makes available
             } else if (res.configured) {
               msg.style.color = "var(--danger-bg)";
               msg.textContent = "✗ configured but unreachable: " + (res.error || "ping failed");

@@ -331,6 +331,11 @@ export interface AppOptions {
   autoSynthesizeDebounceMs?: number;
   // Threat-intel enrichment providers (VirusTotal, MalwareBazaar, AbuseIPDB…).
   enrichmentProviders?: EnrichmentProvider[];
+  // Rebuild the provider set from current config — used by POST /settings/reload and by the
+  // Settings "Test / reconnect" controls for the self-hosted providers (YETI, OpenCTI), so a key
+  // saved in the dashboard applies without a restart. Defaults to the env-based
+  // buildEnrichmentProviders; tests inject stubs (no network).
+  rebuildEnrichmentProviders?: () => EnrichmentProvider[];
   enrichDelayMs?: number;
   enrichProviderDelayMs?: Record<string, number>; // per-provider throttle overrides (keyed by provider.name)
   enrichJitterMs?: number; // ± random jitter added to the inter-call wait (#78)
