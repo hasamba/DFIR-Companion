@@ -64,3 +64,29 @@ describe("startAiStub", () => {
     expect(stub.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   });
 });
+
+describe("request recording", () => {
+  it("records each completion body and serves it back on /debug/requests", async () => {
+    const marker = `MARKER-${Math.random().toString(36).slice(2)}`;
+    await fetch(`${stub.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "stub", messages: [{ role: "user", content: `find ${marker}` }] }),
+    });
+    const res = await fetch(`${stub.url}/debug/requests`);
+    expect(res.status).toBe(200);
+    const bodies = (await res.json()) as string[];
+    expect(bodies.some((b) => b.includes(marker))).toBe(true);
+  });
+
+  it("honors a fixed port when asked for one", async () => {
+    const fixed = await startAiStub({ port: 45788 });
+    try {
+      expect(fixed.url).toBe("http://127.0.0.1:45788");
+      const res = await fetch(`${fixed.url}/v1/models`);
+      expect(res.status).toBe(200);
+    } finally {
+      await fixed.close();
+    }
+  });
+});

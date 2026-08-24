@@ -25,7 +25,16 @@ export interface AiStub {
  * product rather than standing in for a provider, so those endpoints are left uncovered and said
  * to be uncovered. See tests/e2e/workflows/analysis.spec.ts.
  */
-export async function startAiStub(): Promise<AiStub> {
+/**
+ * Requests are recorded so a spec can prove what LEFT the app — the anonymization suite reads
+ * /debug/requests to assert that real hostnames never reached the provider. Recording changes no
+ * reply, so determinism holds. The buffer is capped: a full suite makes hundreds of calls and an
+ * unbounded array would only grow.
+ */
+const RECORD_CAP = 200;
+
+export async function startAiStub(opts?: { port?: number }): Promise<AiStub> {
+  const recorded: string[] = [];
   const server: Server = createServer((req, res) => {
     const send = (code: number, body: unknown): void => {
       res.writeHead(code, { "content-type": "application/json" });
@@ -37,10 +46,19 @@ export async function startAiStub(): Promise<AiStub> {
       return;
     }
 
+    if (req.method === "GET" && req.url?.startsWith("/debug/requests")) {
+      send(200, recorded);
+      return;
+    }
+
     if (req.method === "POST" && req.url?.startsWith("/v1/chat/completions")) {
-      // The body is drained but not inspected: the reply is fixed so assertions stay deterministic.
-      req.resume();
+      // The body is recorded (never inspected for the reply, which stays fixed) so specs can
+      // assert what the app actually sent to its provider.
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => {
+        recorded.push(Buffer.concat(chunks).toString("utf8"));
+        if (recorded.length > RECORD_CAP) recorded.splice(0, recorded.length - RECORD_CAP);
         send(200, {
           id: "chatcmpl-stub",
           object: "chat.completion",
@@ -63,8 +81,11 @@ export async function startAiStub(): Promise<AiStub> {
     send(404, { error: `stub has no route for ${req.method} ${req.url}` });
   });
 
-  // Loopback only. A test run must never accept connections from the network.
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  // Loopback only. A test run must never accept connections from the network. The port defaults
+  // to an OS-assigned one; server-entry.ts asks for a FIXED port so the browser specs can find
+  // /debug/requests without any discovery channel (the harness's /settings/env reads a .env file
+  // that deliberately does not exist, so nothing else can carry the origin to a spec).
+  await new Promise<void>((resolve) => server.listen(opts?.port ?? 0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
 
   return {

@@ -1,6 +1,11 @@
 import { test, expect } from "../fixtures/test.js";
 
-// Covers: US-040, US-131, US-354
+// Covers: US-040, US-131, US-354, US-268, US-306
+// (US-268: the job-queue surface — the list answering for a case and a synthesis reporting a
+// trackable job — is exactly what the first two tests assert. Retry-after-restart and priority
+// admission stay unit-level; see COVERAGE.md. US-306: every stubbed synthesis in this suite runs
+// through providers/openai.ts against an OpenAI-shaped endpoint — base URL, key and model wiring
+// included — which is the story's whole claim; only the vendor hostname is swapped for the stub.)
 // (feature-user-stories.csv) — POST /cases/:id/synthesize being reachable, and the async job list backing the status panel.
 //
 
