@@ -76,6 +76,15 @@
         F("DFIR_IRIS_CLASSIFICATION_ID", "Classification ID", {
           hint: "Numeric (optional).",
         }),
+        F("DFIR_IRIS_INSECURE", "Skip TLS verify", {
+          hint: "true = accept a self-signed IRIS cert without verifying (lab only).",
+        }),
+        // Global key, not DFIR_IRIS_: the step's reload prefix won't apply it, so the field
+        // carries its own — wizSaveAndTestGeneric reloads it when the field was saved.
+        F("DFIR_TLS_ALLOW_INSECURE_EXTERNAL", "Allow insecure TLS to external hosts", {
+          hint: "Skip TLS verify toward a NON-loopback host is refused (MITM risk) unless this is true. Applies to every integration; prefer a CA bundle.",
+          reload: "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+        }),
       ],
     },
     {

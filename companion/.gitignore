@@ -9,6 +9,9 @@ notifications/
 /velociraptor/
 # Server + per-case session logs (DFIR_LOG_LEVEL). May contain case identifiers / activity traces.
 logs/
+# Runtime operational-metrics samples (runtimeStores.ts writes them beside the cases root, which in
+# a dev checkout is companion/diagnostics/). ANCHORED like /velociraptor/ above.
+/diagnostics/
 dist/
 *.timestamp-*.mjs
 .env

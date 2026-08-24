@@ -28,6 +28,9 @@ interface WizardField {
   label: string;
   secret?: boolean;
   hint?: string;
+  /** Per-field reload override for a key outside the step's prefix family (e.g. the global
+   *  DFIR_TLS_ALLOW_INSECURE_EXTERNAL on the IRIS step). */
+  reload?: string;
 }
 interface WizardProvider {
   id: string;
@@ -57,13 +60,17 @@ const steps = (): WizardStep[] =>
     .map((id) => wizard.wizardStepById(id))
     .filter((s): s is WizardStep => s !== undefined);
 
-/** Every (prefix, source) pair a step will POST to /settings/reload — steps and sub-providers. */
+/** Every (prefix, source) pair a step will POST to /settings/reload — steps, sub-providers, and
+ *  per-field overrides. */
 const reloadPrefixes = (): Array<{ prefix: string; from: string }> =>
   steps().flatMap((s) => [
     ...(s.reload ? [{ prefix: s.reload, from: s.id }] : []),
     ...(s.providers ?? [])
       .filter((p) => p.reload)
       .map((p) => ({ prefix: p.reload as string, from: `${s.id}/${p.id}` })),
+    ...[...(s.fields ?? []), ...(s.providers ?? []).flatMap((p) => p.fields)]
+      .filter((f) => f.reload)
+      .map((f) => ({ prefix: f.reload as string, from: `${s.id}/${f.key}` })),
   ]);
 
 /** Every env key the wizard renders an input for. */

@@ -242,13 +242,25 @@
       if (btn) btn.disabled = false;
       return;
     }
-    if (reloadPrefix) {
+    // The step's prefix, plus any per-field reload override that was actually saved (a field whose
+    // key sits outside the step's family — e.g. the global DFIR_TLS_ALLOW_INSECURE_EXTERNAL on the
+    // IRIS step — would otherwise stay in .env until a restart while the test below runs stale).
+    const reloadPrefixes = [
+      ...new Set(
+        [reloadPrefix]
+          .concat(fields.filter((f) => f.reload && updates[f.key]).map((f) => f.reload))
+          .filter(Boolean),
+      ),
+    ];
+    if (reloadPrefixes.length) {
       resultEl.textContent = "Applying…";
-      await fetch("/settings/reload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prefix: reloadPrefix }),
-      }).catch(() => {});
+      for (const prefix of reloadPrefixes) {
+        await fetch("/settings/reload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prefix }),
+        }).catch(() => {});
+      }
     }
     if (test) {
       resultEl.textContent = "Testing the connection…";
