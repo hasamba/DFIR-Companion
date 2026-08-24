@@ -86,7 +86,7 @@ export function createSettingsReload({
       rebuilt.push("exposure");
     }
     if (prefix === "DFIR_MISP_") {
-      options.mispPushClient = buildMispPushClient();
+      options.mispPushClient = (options.rebuildMispPushClient ?? buildMispPushClient)();
       options.mispPushOptions = mispPushOptions();
       rebuilt.push("misp");
     }

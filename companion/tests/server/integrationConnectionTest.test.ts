@@ -10,6 +10,7 @@ import type { NotionClient } from "../../src/integrations/notion/notionClient.js
 import type { ClickUpClient } from "../../src/integrations/clickup/clickupClient.js";
 import type { JiraClientLike } from "../../src/integrations/jira/jiraClient.js";
 import type { ServiceNowClientLike } from "../../src/integrations/servicenow/servicenowClient.js";
+import type { MispPushClientLike } from "../../src/integrations/misp/mispPushClient.js";
 
 // Settings -> Integrations grew a "Test connection" control for every integration, not only
 // DFIR-IRIS. Each control needs a route that answers the same three states the IRIS one does,
@@ -35,6 +36,10 @@ const mockClickUp = (me: () => Promise<{ id?: string; username?: string }>): Cli
 const mockJira = (me: JiraClientLike["me"]): JiraClientLike => ({ me }) as unknown as JiraClientLike;
 const mockSnow = (me: ServiceNowClientLike["me"]): ServiceNowClientLike =>
   ({ me }) as unknown as ServiceNowClientLike;
+// MISP has no me(): its own reachability check is ping() (GET /servers/getVersion), the same call
+// the push path and the enrichment probe make first.
+const mockMisp = (ping: () => Promise<void>): MispPushClientLike =>
+  ({ ping }) as unknown as MispPushClientLike;
 
 async function makeApp(opts: AppOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-conn-test-"));
@@ -114,6 +119,48 @@ describe("POST /clickup/reconnect", () => {
     expect((await request(app).get("/clickup/status")).body.configured).toBe(false);
     await request(app).post("/clickup/reconnect");
     expect((await request(app).get("/clickup/status")).body.configured).toBe(true);
+  });
+});
+
+describe("POST /misp/reconnect", () => {
+  it("reports not-configured when the rebuild yields no client", async () => {
+    const app = await makeApp({ rebuildMispPushClient: () => undefined });
+    const res = await request(app).post("/misp/reconnect");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: false, ok: false });
+    expect(res.body.error).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("pings the rebuilt client and reports ok", async () => {
+    const app = await makeApp({ rebuildMispPushClient: () => mockMisp(async () => {}) });
+    const res = await request(app).post("/misp/reconnect");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: true, ok: true });
+  });
+
+  it("passes the connectivity check's own diagnosis through, not a generic failure", async () => {
+    // mispConnectivity.ts turns undici's useless "fetch failed" into a sentence naming the URL and
+    // the setting at fault. The whole point of a test button is to show the analyst THAT.
+    const app = await makeApp({
+      rebuildMispPushClient: () =>
+        mockMisp(
+          failing(
+            "MISP connectivity check failed: connection refused by https://misp.example.org — nothing is listening on that host/port (MISP is down, or DFIR_MISP_URL has the wrong port)",
+          ),
+        ),
+    });
+    const res = await request(app).post("/misp/reconnect");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: true, ok: false });
+    expect(res.body.error).toMatch(/connection refused/);
+    expect(res.body.error).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("swaps in the rebuilt client so /misp/status then reports configured", async () => {
+    const app = await makeApp({ rebuildMispPushClient: () => mockMisp(async () => {}) });
+    expect((await request(app).get("/misp/status")).body.configured).toBe(false);
+    await request(app).post("/misp/reconnect");
+    expect((await request(app).get("/misp/status")).body.configured).toBe(true);
   });
 });
 

@@ -93,7 +93,7 @@ import type { TemplateStore } from "../analysis/templateStore.js";
 import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import type { HostScopeStore } from "../analysis/hostScopeStore.js";
-import type { MispPushClient } from "../integrations/misp/mispPushClient.js";
+import type { MispPushClientLike } from "../integrations/misp/mispPushClient.js";
 import type { MispPushOptions } from "../integrations/misp/mispPush.js";
 import type { NotionClient } from "../integrations/notion/notionClient.js";
 import type { NotionPushOptions } from "../integrations/notion/notionPush.js";
@@ -470,8 +470,15 @@ export interface AppOptions {
   hostScopeStore?: HostScopeStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
   // (distribution, analysis state, base URL for the event link).
-  mispPushClient?: MispPushClient;
+  // Typed as the INTERFACE, not the concrete client, for the reason spelled out on jiraClient
+  // below: every consumer (pushCaseToMisp, the `configured` flag, the reconnect ping) needs only
+  // the six methods, and naming the class forces route tests to launder their stub through an
+  // `as unknown as` cast — which is what kept them out of the typecheck (#385).
+  mispPushClient?: MispPushClientLike;
   mispPushOptions?: MispPushOptions;
+  // Rebuild the MISP push client from current config (used by POST /misp/reconnect). Same contract
+  // as rebuildNotionClient below; defaults to the env-based buildMispPushClient.
+  rebuildMispPushClient?: () => MispPushClientLike | undefined;
   // Notion export: a configured client (when DFIR_NOTION_TOKEN is set) + push options
   // (default parent database/page, container title). The export's page/container pointer is
   // remembered per case in notionExportStore so a re-export refreshes only Companion content.

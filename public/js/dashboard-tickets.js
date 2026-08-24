@@ -326,6 +326,14 @@
         },
       },
       {
+        // On the ENRICHMENT tab, not Integrations: the same two keys feed the IOC provider, and the
+        // reconnect rebuilds both. Wired from here anyway — this module owns the Push menu the test
+        // reveals, and a second module for one button would split the table that keeps them alike.
+        btn: "mispReconnectBtn", msg: "mispReconnectMsg", url: "/misp/reconnect", save: true,
+        missing: "not configured — set the MISP URL + key above and reconnect",
+        onOk: () => addPushOption("misp", "Push to MISP (IOCs + Forensic Timeline)"),
+      },
+      {
         btn: "jiraTestBtn", msg: "jiraTestMsg", url: "/jira/test", save: false,
         missing: "not configured — set DFIR_JIRA_URL, DFIR_JIRA_USER and DFIR_JIRA_TOKEN in .env, then restart",
         onOk: () => document.body.classList.add("has-jira"),

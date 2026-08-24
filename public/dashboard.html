@@ -1705,6 +1705,10 @@
           <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
           <div class="sfield"><label>Timeline push limit<span class="sfield-hint">DFIR_MISP_TIMELINE_LIMIT — max FORENSIC-timeline events pushed per export (default 5000); costs one round-trip per event, so a huge timeline can block the export for hours. Past the cap the most severe events are kept (Info cut first) and the push warns it truncated</span></label><input id="env-DFIR_MISP_TIMELINE_LIMIT" placeholder="5000" /></div>
         </div>
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+          <button id="mispReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the MISP settings, rebuilds both the push client and the IOC enrichment provider, and runs MISP's connectivity check — applies WITHOUT restarting the server.">Test / reconnect</button>
+          <span id="mispReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+        </div>
         <div class="settings-group-head" data-essential>YETI</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
@@ -1842,7 +1846,7 @@
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
         </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="irisReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
@@ -1859,7 +1863,7 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
         </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="timesketchReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Timesketch settings, rebuilds the client, and logs in to test the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="timesketchReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
@@ -1877,7 +1881,7 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_NOTION_CA</span></label><input id="env-DFIR_NOTION_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
         </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="notionReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Notion settings, rebuilds the client, and asks Notion who the token belongs to — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="notionReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
@@ -1890,7 +1894,7 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_CLICKUP_CA</span></label><input id="env-DFIR_CLICKUP_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
         </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="clickupReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the ClickUp settings, rebuilds the client, and asks ClickUp who the token belongs to — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="clickupReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
@@ -1945,7 +1949,7 @@
         <div class="sfield-row">
           <div class="sfield"><label>Binary spawn retries<span class="sfield-hint">DFIR_VELOCIRAPTOR_SPAWN_RETRIES — retries on transient EPERM/EBUSY lock when spawning the velociraptor binary (default 6)</span></label><input id="env-DFIR_VELOCIRAPTOR_SPAWN_RETRIES" placeholder="6" /></div>
         </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="veloSettingsReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Velociraptor settings, rebuilds the connection, and refreshes the client list — applies WITHOUT restarting the server. Same action as the Reconnect button on the Velociraptor tab.">Test / reconnect</button>
           <span id="veloSettingsReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
@@ -1993,7 +1997,7 @@
         <div class="sfield-row">
           <div class="sfield"><label>Skip TLS verification<span class="sfield-hint">DFIR_JIRA_INSECURE — disables certificate checking. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_JIRA_INSECURE" placeholder="false" readonly /></div>
         </div>
-        <div data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="jiraTestBtn" type="button" data-tip="Asks Jira who these credentials belong to. Tests the RUNNING connection only — these fields are read-only here, so a change to .env still needs a server restart before it can be tested.">Test connection</button>
           <span id="jiraTestMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
@@ -2015,7 +2019,7 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_SERVICENOW_CA — path to a private CA bundle for TLS. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_CA" placeholder="(not set)" readonly /></div>
           <div class="sfield"><label>Skip TLS verification<span class="sfield-hint">DFIR_SERVICENOW_INSECURE — disables certificate checking. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_SERVICENOW_INSECURE" placeholder="false" readonly /></div>
         </div>
-        <div data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="snowTestBtn" type="button" data-tip="Asks ServiceNow who these credentials belong to. Tests the RUNNING connection only — these fields are read-only here, so a change to .env still needs a server restart before it can be tested.">Test connection</button>
           <span id="snowTestMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>

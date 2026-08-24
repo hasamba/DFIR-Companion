@@ -408,6 +408,7 @@
     "ROUTE POST /cases/:id/push/timesketch",
     "ROUTE POST /cases/:id/push/timesketch-super",
     "ROUTE GET /misp/status",
+    "ROUTE POST /misp/reconnect",
     "ROUTE POST /cases/:id/push/misp",
     "ROUTE GET /notion/status",
     "ROUTE POST /notion/reconnect",

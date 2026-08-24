@@ -51,17 +51,21 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   // `extra` carries whatever that integration's own /status route reports, because a reconnect can
   // CHANGE it (a Notion default database, a ClickUp default list). Without it the dashboard would
   // keep the state it read at page load and prompt for a target the analyst just configured.
-  async function probeConnection<T>(
+  //
+  // `probe` rather than a fixed `client.me()`: MISP has no such call — its reachability check is
+  // ping() (GET /servers/getVersion) and returns nothing to name. The probe returns the account
+  // label to show, or undefined when the integration cannot report one.
+  async function probeConnection<C>(
     res: Response,
-    client: { me(): Promise<T> } | undefined,
+    client: C | undefined,
     missingError: string,
-    userOf: (me: T) => string | undefined,
+    probe: (client: C) => Promise<string | undefined>,
     extra: Record<string, unknown> = {},
   ): Promise<Response> {
     if (!client) return res.status(200).json({ configured: false, ok: false, error: missingError });
     try {
-      const me = await client.me();
-      return res.status(200).json({ configured: true, ok: true, user: userOf(me), ...extra });
+      const user = await probe(client);
+      return res.status(200).json({ configured: true, ok: true, user, ...extra });
     } catch (err) {
       return res.status(200).json({ configured: true, ok: false, error: (err as Error).message });
     }
@@ -242,6 +246,33 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     res.status(200).json({ configured: !!options.mispPushClient, baseUrl: options.mispPushOptions?.baseUrl });
   });
 
+  // Re-read DFIR_MISP_* from .env, rebuild, and run MISP's own connectivity check — the Settings
+  // "Test / reconnect" control. The rebuild covers BOTH things those keys feed: the push client
+  // probed here and the IOC enrichment provider (rebuildForPrefix rebuilds the provider set for
+  // this prefix), which is why the control sits on the Enrichment tab beside the fields.
+  //
+  // The probe is ping() rather than a me()-style identity call — MISP has none — and its error is
+  // passed through untouched: mispConnectivity.ts has already turned undici's "fetch failed" into a
+  // sentence naming the URL and the setting at fault, which is the whole value of a test button.
+  app.post("/misp/reconnect", async (_req: Request, res: Response) => {
+    try {
+      await reloadEnvPrefix("DFIR_MISP_");
+      ctx.rebuildForPrefix("DFIR_MISP_"); // swaps options.mispPushClient + mispPushOptions + enrichment
+      return await probeConnection(
+        res,
+        options.mispPushClient,
+        "MISP not configured (set DFIR_MISP_URL and DFIR_MISP_KEY)",
+        async (c) => {
+          await c.ping();
+          return undefined; // the ping reports reachability only — there is no account to name
+        },
+        { baseUrl: options.mispPushOptions?.baseUrl },
+      );
+    } catch (err) {
+      return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
+    }
+  });
+
   // Push a case to MISP: find-or-create the event by the idempotency tag, then push IOCs and
   // the forensic timeline as attributes and MITRE techniques as tags. Idempotent: re-push adds
   // only what's missing (attributes deduplicated by value).
@@ -291,7 +322,10 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
         res,
         options.notionClient,
         "Notion not configured (set DFIR_NOTION_TOKEN)",
-        (me) => me.name || me.id || undefined,
+        async (c) => {
+          const me = await c.me();
+          return me.name || me.id || undefined;
+        },
         {
           hasDatabase: !!options.notionOptions?.databaseId,
           hasParent: !!options.notionOptions?.parentPageId,
@@ -376,7 +410,10 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
         res,
         options.clickupClient,
         "ClickUp not configured (set DFIR_CLICKUP_TOKEN)",
-        (me) => me.username || me.id || undefined,
+        async (c) => {
+          const me = await c.me();
+          return me.username || me.id || undefined;
+        },
         { defaultListId: options.clickupOptions?.defaultListId ?? "" },
       );
     } catch (err) {
@@ -444,7 +481,10 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       res,
       options.jiraClient,
       "Jira not configured (set DFIR_JIRA_URL, DFIR_JIRA_USER, and DFIR_JIRA_TOKEN in .env, then restart)",
-      (me) => me.displayName || me.id || undefined,
+      async (c) => {
+        const me = await c.me();
+        return me.displayName || me.id || undefined;
+      },
     ),
   );
 
@@ -562,7 +602,10 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       res,
       options.servicenowClient,
       "ServiceNow not configured (set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD in .env, then restart)",
-      (me) => me.userName || me.userId || undefined,
+      async (c) => {
+        const me = await c.me();
+        return me.userName || me.userId || undefined;
+      },
     ),
   );
 
