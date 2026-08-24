@@ -1701,8 +1701,8 @@
           <div class="sfield"><label>Distribution (0-3)<span class="sfield-hint">DFIR_MISP_DISTRIBUTION</span></label><input id="env-DFIR_MISP_DISTRIBUTION" placeholder="0" /></div>
           <div class="sfield"><label>Analysis state (0-2)<span class="sfield-hint">DFIR_MISP_ANALYSIS</span></label><input id="env-DFIR_MISP_ANALYSIS" placeholder="1" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
           <div class="sfield"><label>Timeline push limit<span class="sfield-hint">DFIR_MISP_TIMELINE_LIMIT — max FORENSIC-timeline events pushed per export (default 5000); costs one round-trip per event, so a huge timeline can block the export for hours. Past the cap the most severe events are kept (Info cut first) and the push warns it truncated</span></label><input id="env-DFIR_MISP_TIMELINE_LIMIT" placeholder="5000" /></div>
         </div>
         <div class="settings-group-head" data-essential>YETI</div>
@@ -1710,18 +1710,18 @@
           <div class="sfield" data-essential><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
           <div class="sfield" data-essential><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="sfield-row">
+        <div class="sfield-row" data-essential>
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
         </div>
         <div class="settings-group-head" data-essential>OpenCTI</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>OpenCTI URL<span class="sfield-hint">DFIR_OPENCTI_URL</span></label><input id="env-DFIR_OPENCTI_URL" placeholder="https://opencti.example.org" /></div>
           <div class="sfield" data-essential><label>OpenCTI token<span class="sfield-hint">DFIR_OPENCTI_KEY</span></label><input id="env-DFIR_OPENCTI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="sfield-row">
+        <div class="sfield-row" data-essential>
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_OPENCTI_CA</span></label><input id="env-DFIR_OPENCTI_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_OPENCTI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_OPENCTI_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_OPENCTI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_OPENCTI_INSECURE" placeholder="false" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Malicious score threshold<span class="sfield-hint">DFIR_OPENCTI_MALICIOUS_SCORE — x_opencti_score ≥ this → malicious (default 75)</span></label><input id="env-DFIR_OPENCTI_MALICIOUS_SCORE" placeholder="75" /></div>
@@ -1855,9 +1855,9 @@
           <div class="sfield" data-essential><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR-Companion Forensic Timeline" /></div>
         </div>
-        <div class="sfield-row">
+        <div class="sfield-row" data-essential>
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
         </div>
         <div class="settings-group-head" data-essential>Notion</div>
         <div class="sfield-row" data-essential>
@@ -1868,19 +1868,19 @@
           <div class="sfield" data-essential><label>Parent page ID<span class="sfield-hint">DFIR_NOTION_PARENT_PAGE_ID — alternative default parent for "new page"</span></label><input id="env-DFIR_NOTION_PARENT_PAGE_ID" placeholder="(optional)" /></div>
           <div class="sfield"><label>Managed block title<span class="sfield-hint">DFIR_NOTION_CONTAINER_TITLE</span></label><input id="env-DFIR_NOTION_CONTAINER_TITLE" placeholder="🔍 DFIR Companion — Auto-generated" /></div>
         </div>
-        <div class="sfield-row3">
+        <div class="sfield-row3" data-essential>
           <div class="sfield"><label>Max timeline rows<span class="sfield-hint">DFIR_NOTION_MAX_TIMELINE</span></label><input id="env-DFIR_NOTION_MAX_TIMELINE" placeholder="500" /></div>
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_NOTION_CA</span></label><input id="env-DFIR_NOTION_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
         </div>
         <div class="settings-group-head" data-essential>ClickUp</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label>API token<span class="sfield-hint">DFIR_CLICKUP_TOKEN — personal token (Settings › Apps › API Token, pk_…)</span></label><input id="env-DFIR_CLICKUP_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield" data-essential><label>Default list ID<span class="sfield-hint">DFIR_CLICKUP_LIST_ID — optional; pre-fills the push modal (list URL's …/li/&lt;id&gt;)</span></label><input id="env-DFIR_CLICKUP_LIST_ID" placeholder="(optional)" /></div>
         </div>
-        <div class="sfield-row">
+        <div class="sfield-row" data-essential>
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_CLICKUP_CA</span></label><input id="env-DFIR_CLICKUP_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label>Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
         </div>
         <div class="settings-group-head" data-essential>Velociraptor</div>
         <div class="sfield-row" data-essential>
@@ -1952,12 +1952,12 @@
         </div>
 
         <!-- Notifications global settings (#58) -->
-        <div class="settings-group-head">Notifications (global)</div>
+        <div class="settings-group-head" data-essential>Notifications (global)</div>
         <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">These settings apply to all notification channels (Slack, Teams, Mattermost, Discord, Telegram, SMTP). Channel credentials and thresholds are managed on the <strong>Notifications</strong> tab.</p>
-        <div class="sfield-row3">
+        <div class="sfield-row3" data-essential>
           <div class="sfield"><label>Public base URL<span class="sfield-hint">DFIR_PUBLIC_URL — base URL used in notification deep-links back to the case (default derived from host:port)</span></label><input id="env-DFIR_PUBLIC_URL" placeholder="http://127.0.0.1:4773" /></div>
           <div class="sfield"><label>Webhook CA bundle<span class="sfield-hint">DFIR_NOTIFY_CA — CA bundle path for self-hosted webhook endpoints (Mattermost, etc.)</span></label><input id="env-DFIR_NOTIFY_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label>Skip webhook TLS verify<span class="sfield-hint">DFIR_NOTIFY_INSECURE — true to accept self-signed certs on webhook endpoints (lab only)</span></label><input id="env-DFIR_NOTIFY_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label>Skip webhook TLS verify<span class="sfield-hint">DFIR_NOTIFY_INSECURE — true to accept self-signed certs on webhook endpoints (lab only)</span></label><input id="env-DFIR_NOTIFY_INSECURE" placeholder="false" /></div>
         </div>
 
         <div class="settings-group-head">Jira (read-only)</div>

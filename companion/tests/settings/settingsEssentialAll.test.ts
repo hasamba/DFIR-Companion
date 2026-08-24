@@ -35,8 +35,9 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_AI_SECOND_OPINION_KEY",
     "DFIR_AI_SECOND_OPINION_BASE_URL",
   ],
-  // Credentials only. `_CA`/`_INSECURE` (the default trust store works), the keyless hashlookup/
-  // RDAP/GeoIP endpoint URLs, the GeoIP map limits, and every throttle delay are All-only.
+  // Credentials, plus each self-hostable source's "Skip TLS verify" flag. `_CA` (finding a bundle
+  // path is a deliberate trip), the keyless hashlookup/RDAP/GeoIP endpoint URLs, the GeoIP map
+  // limits, and every throttle delay stay All-only.
   enrichment: [
     "DFIR_VT_KEY",
     "DFIR_ABUSEIPDB_KEY",
@@ -46,19 +47,27 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_CROWDSTRIKE_CLIENT_SECRET",
     "DFIR_MISP_URL",
     "DFIR_MISP_KEY",
+    "DFIR_MISP_INSECURE",
     "DFIR_YETI_URL",
     "DFIR_YETI_KEY",
+    "DFIR_YETI_INSECURE",
     "DFIR_OPENCTI_URL",
     "DFIR_OPENCTI_KEY",
+    "DFIR_OPENCTI_INSECURE",
     "DFIR_GEOIP_KEY",
   ],
   // Keys only. Domain limits, the HIBP user-agent, the DeHashed base URL and the delay all default.
   exposure: ["DFIR_LEAKCHECK_KEY", "DFIR_HIBP_KEY", "DFIR_DEHASHED_KEY", "DFIR_SHODAN_KEY"],
   // What each integration needs to connect at all. Optional IRIS ids, `_CA`, the 15
   // Velociraptor tuning/VQL knobs, and DFIR_PUBLIC_URL (link rendering only) are All-only.
-  // DFIR_IRIS_INSECURE and the global DFIR_TLS_ALLOW_INSECURE_EXTERNAL opt-in are Essential:
-  // a self-signed IRIS instance is dead without them, and burying the pair in All left the
-  // connect flow failing with no visible knob to reach for.
+  //
+  // EVERY "Skip TLS verify" flag the dashboard can write is Essential, alongside the global
+  // DFIR_TLS_ALLOW_INSECURE_EXTERNAL opt-in a non-loopback host additionally needs. A self-hosted
+  // instance behind a self-signed cert is dead without them, and the error the analyst actually
+  // meets ("self-signed certificate ... DEPTH_ZERO_SELF_SIGNED_CERT") names no setting at all — so
+  // burying the flag in All left the connect flow failing with no visible knob to reach for. Jira
+  // and ServiceNow have the same flag and are deliberately NOT here: theirs are read-only by
+  // design (a security boundary the dashboard must not move), and Essential never shows read-only.
   integrations: [
     "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
     "DFIR_IRIS_URL",
@@ -67,11 +76,15 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_TIMESKETCH_URL",
     "DFIR_TIMESKETCH_USER",
     "DFIR_TIMESKETCH_PASSWORD",
+    "DFIR_TIMESKETCH_INSECURE",
     "DFIR_NOTION_TOKEN",
     "DFIR_NOTION_DATABASE_ID",
     "DFIR_NOTION_PARENT_PAGE_ID",
+    "DFIR_NOTION_INSECURE",
     "DFIR_CLICKUP_TOKEN",
     "DFIR_CLICKUP_LIST_ID",
+    "DFIR_CLICKUP_INSECURE",
+    "DFIR_NOTIFY_INSECURE",
     "DFIR_VELOCIRAPTOR_API_CONFIG",
     "DFIR_VELOCIRAPTOR_BINARY",
     "DFIR_VELOCIRAPTOR_GUI_URL",
@@ -81,8 +94,11 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
   // binary is blank-means-off: nothing is broken by leaving Hayabusa, Suricata, Snort, YARA and the
   // Velociraptor CLI unconfigured, so wiring them up is a deliberate trip to All.
   //
-  // Notifications contributes no env keys — its config lives behind the /notifications API, which
-  // is why that pane opts in whole with data-essential="pane" rather than field by field.
+  // The Notifications TAB contributes no env keys — its config lives behind the /notifications
+  // API, which is why that pane opts in whole with data-essential="pane" rather than field by
+  // field. The "Notifications (global)" block whose DFIR_NOTIFY_INSECURE is listed above sits on
+  // the INTEGRATIONS tab, not that one, and is the webhook half of the same self-signed-cert story
+  // (a self-hosted Mattermost). DFIR_NOTIFY_CA and DFIR_PUBLIC_URL beside it stay All-only.
 };
 
 const ALL_ESSENTIAL = Object.values(ESSENTIAL_ENV_KEYS).flat().sort();
