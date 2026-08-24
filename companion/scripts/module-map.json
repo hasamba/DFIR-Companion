@@ -166,6 +166,7 @@
     "caseArchive.ts": "analysis/case",
     "caseEncryption.ts": "analysis/privacy",
     "caseExportArchive.ts": "analysis/case",
+    "caseExistsGate.ts": "analysis/case",
     "caseIdGate.ts": "analysis/case",
     "caseLockGate.ts": "analysis/case",
     "casePassword.ts": "analysis/case",

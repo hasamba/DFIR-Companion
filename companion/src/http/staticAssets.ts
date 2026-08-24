@@ -236,6 +236,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   // Case templates and incident types — the new-case template picker and its caches.
   "/js/dashboard-case-templates.js": "application/javascript; charset=utf-8",
   // Velociraptor triage — bundles, clients, hunt jobs and the collection they drive.
+  "/js/dashboard-velo-case.js": "application/javascript; charset=utf-8",
   "/js/dashboard-velo-coverage.js": "application/javascript; charset=utf-8",
   "/js/dashboard-velo-triage.js": "application/javascript; charset=utf-8",
   // Vim-style keyboard navigation for the Forensic Timeline.

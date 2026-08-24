@@ -109,14 +109,12 @@ describe("Velociraptor live monitors — routes", () => {
 
   it("starts a monitor, lists it active, then stops + deletes it", async () => {
     const { app } = await makeApp();
-    const start = await request(app)
-      .post("/cases/c1/velociraptor/monitors")
-      .send({
-        clientId: "C.abc123",
-        artifact: "Windows.Events.ProcessCreation",
-        pollSeconds: 15,
-        hostname: "WS01",
-      });
+    const start = await request(app).post("/cases/c1/velociraptor/monitors").send({
+      clientId: "C.abc123",
+      artifact: "Windows.Events.ProcessCreation",
+      pollSeconds: 15,
+      hostname: "WS01",
+    });
     expect(start.status).toBe(202);
     expect(start.body.monitor.id).toBe("C.abc123__Windows.Events.ProcessCreation");
     expect(start.body.monitor.pollSeconds).toBe(15);
@@ -211,14 +209,12 @@ describe("Velociraptor live monitors — routes", () => {
 
   it("poll-now ingests new monitoring rows into the timeline + advances stats", async () => {
     const { app, stateStore } = await makeApp();
-    const start = await request(app)
-      .post("/cases/c1/velociraptor/monitors")
-      .send({
-        clientId: "C.abc123",
-        artifact: "Windows.Events.ProcessCreation",
-        pollSeconds: 30,
-        hostname: "WS01",
-      });
+    const start = await request(app).post("/cases/c1/velociraptor/monitors").send({
+      clientId: "C.abc123",
+      artifact: "Windows.Events.ProcessCreation",
+      pollSeconds: 30,
+      hostname: "WS01",
+    });
     const mid = start.body.monitor.id;
 
     const poll = await request(app).post(`/cases/c1/velociraptor/monitors/${encodeURIComponent(mid)}/poll`);
@@ -254,6 +250,9 @@ describe("Velociraptor live monitors — routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velomon-noclient-"));
     const store = new CaseStore(root);
     const bare = createApp(store, {});
+    // The case has to be REAL for this to be a test about the 200/501: the case-exists gate on
+    // /cases/:id/velociraptor now answers 404 first, and would have made this pass for the wrong reason.
+    await request(bare).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     expect((await request(bare).get("/cases/c1/velociraptor/monitors")).status).toBe(200);
     expect(
       (await request(bare).post("/cases/c1/velociraptor/monitors").send({ clientId: "C.x", artifact: "A.B" }))

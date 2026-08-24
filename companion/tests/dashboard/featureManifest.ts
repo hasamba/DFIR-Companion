@@ -907,7 +907,6 @@ export const FEATURES: Feature[] = [
       "loadVeloBundles",
       "loadVeloClients",
       "loadVeloHuntJobs",
-      "veloCaseId",
       "applyVeloEnabled",
       "doRefreshVeloClients",
       "doVeloReconnect",
@@ -1601,6 +1600,7 @@ export { duplicateBindings };
  */
 export const NON_FEATURES = new Set([
   "dashboard-state.js",
+  "dashboard-velo-case.js", // pure helper: the connected case, and whether a bundle may run
   "dashboard-velo-coverage.js", // pure helper: builds a hunt's per-artifact accounting line, holds nothing
   "dashboard-escape.js",
   "dashboard-time.js",
