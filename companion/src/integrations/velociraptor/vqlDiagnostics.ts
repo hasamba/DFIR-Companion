@@ -45,6 +45,15 @@ export function vqlLogErrors(stderr: string): string {
   return out.join("; ").slice(0, VQL_LOG_ERRORS_MAX);
 }
 
+// The one phrase every no-launch-id message shares, so a caller can recognise ITS failure (and only
+// that one) without matching on wording that drifts. Kept next to the builder that emits it.
+const NO_LAUNCH_ID_MARKER = "accepted the query but returned no";
+
+/** True when `message` is a launch that compiled but produced no hunt / flow id. */
+export function isNoLaunchIdError(message: string): boolean {
+  return String(message || "").includes(NO_LAUNCH_ID_MARKER);
+}
+
 /**
  * What to tell the analyst when `hunt()` / `collect_client()` came back with no id.
  *
@@ -65,7 +74,7 @@ export function vqlLogErrors(stderr: string): string {
 export function noLaunchIdMessage(what: string, permissions: string, reason = ""): string {
   const said = reason.trim() ? ` — Velociraptor said: ${reason.trim()}` : "";
   return (
-    `Velociraptor accepted the query but returned no ${what} id${said}.` +
+    `Velociraptor ${NO_LAUNCH_ID_MARKER} ${what} id${said}.` +
     " Usual causes: an artifact needs a third-party tool whose download URL is not set on the server," +
     ` the VQL references an artifact/plugin that does not exist, or the api_client role lacks ${permissions}.`
   );

@@ -214,6 +214,69 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(job.artifacts).toContain("Generic.System.Pstree");
   });
 
+  // The 5-hour dead end this closes: on a server with no egress, ONE tool it has never downloaded fails
+  // the whole hunt while Velociraptor compiles it, and the API returns a bare NULL. The analyst saw
+  // "no bundle hunt id" and three generic guesses, none of which named an artifact or a tool.
+  const toolRunner = (hunt: unknown): VqlRunner => {
+    return async (statements) => {
+      const p = statements[0];
+      if (p.includes("artifact_definitions()"))
+        return {
+          rows: [
+            {
+              name: "Windows.System.Pslist",
+              description: "Running processes",
+              type: "CLIENT",
+              tools: [{ name: "FileYaraWindows", url: "https://github.com/x/full_windows.yar.gz" }],
+            },
+          ],
+          raw: "",
+        };
+      if (p.includes("inventory()"))
+        // No hash: the server has never fetched this one, though the URL itself looks fine.
+        return {
+          rows: [{ name: "FileYaraWindows", url: "https://github.com/x/full_windows.yar.gz" }],
+          raw: "",
+        };
+      if (p.includes("hunt(") && p.includes("artifacts=[")) return { rows: [{ Hunt: hunt }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+  };
+
+  it("run-bundle names the un-downloaded tools when the hunt refuses to launch", async () => {
+    const made = await makeApp(toolRunner(null));
+    const bundle = await request(made.app)
+      .post("/bundles")
+      .send({ name: "Yara sweep", artifacts: ["Windows.System.Pslist"] });
+    const run = await request(made.app)
+      .post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: bundle.body.id, waitMinutes: 30 });
+    expect(run.status).toBe(502);
+    expect(run.body.error).toContain("no bundle hunt id");
+    expect(run.body.error).toContain("FileYaraWindows"); // the tool
+    expect(run.body.error).toContain("Windows.System.Pslist"); // the artifact that needs it
+    expect(run.body.error).toContain("Server Artifacts"); // where to fix it
+  });
+
+  it("run-bundle reports the un-downloaded tools on a successful launch too", async () => {
+    const made = await makeApp(toolRunner({ HuntId: "H.TOOL1", state: "RUNNING" }));
+    const bundle = await request(made.app)
+      .post("/bundles")
+      .send({ name: "Yara sweep", artifacts: ["Windows.System.Pslist"] });
+    const run = await request(made.app)
+      .post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: bundle.body.id, waitMinutes: 30 });
+    expect(run.status).toBe(202);
+    expect(run.body.artifacts).toEqual(["Windows.System.Pslist"]); // warned about, never dropped
+    expect(run.body.unheldTools).toEqual([
+      {
+        tool: "FileYaraWindows",
+        url: "https://github.com/x/full_windows.yar.gz",
+        artifacts: ["Windows.System.Pslist"],
+      },
+    ]);
+  });
+
   it("supports MULTIPLE concurrent hunts — a second run keeps the first", async () => {
     // two runs whose mock returns distinct hunt ids
     let n = 0;
