@@ -163,6 +163,12 @@ function priorityRank(priority: JobPriority): number {
 
 export class JobManager {
   private table: JobTable = emptyJobTable();
+  /**
+   * Answers "which model runs this job" for every registration. Installed rather than constructed
+   * because runtimeStores.ts builds this manager before the pipeline exists; createApp holds both.
+   * Unset in a minimal wiring, and every job then simply carries no model.
+   */
+  private modelFor?: (input: RegisterInput) => string | undefined;
   private readonly controllers = new Map<string, AbortController>();
   private readonly admissions = new Map<string, Deferred>();
   private readonly durabilities = new Map<string, Deferred>();
@@ -207,6 +213,11 @@ export class JobManager {
     if (this.initializationError) throw this.initializationError;
   }
 
+  /** Install the "which model runs this job" resolver. Called once, by createApp. */
+  useModelResolver(resolve: (input: RegisterInput) => string | undefined): void {
+    this.modelFor = resolve;
+  }
+
   register(input: RegisterInput): RegisteredJob {
     const caseId = input.caseId ?? null;
     const existing = this.reusedRegistration(input, caseId);
@@ -244,12 +255,16 @@ export class JobManager {
     const parameters = input.parameters
       ? (sanitizeManifestValue(input.parameters) as Record<string, ManifestValue>)
       : undefined;
+    // Asked once, here: the model a job runs is pinned when the work is queued, not re-read while
+    // the row is drawn. See composition/jobModel.ts.
+    const model = this.modelFor?.(input);
     this.table = this.limitTable(
       createJob(this.table, {
         id: jobId,
         caseId,
         kind: input.kind,
         ...(input.label !== undefined ? { label: input.label } : {}),
+        ...(model ? { model } : {}),
         ...(input.detail !== undefined ? { detail: input.detail } : {}),
         ...(input.priority ? { priority: input.priority } : {}),
         ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
