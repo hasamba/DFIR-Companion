@@ -2010,6 +2010,29 @@ describe("parseVelociraptorJson — network identifiers keep events distinct (#6
     for (const e of parsed.events) expect(e.aggKey!.length).toBeLessThanOrEqual(440);
   });
 
+  // #643 — the IPv6 candidate was anchored with \b at BOTH ends, and a "::" sitting next to a
+  // NUMERIC group offers no word boundary to anchor on. Those addresses were never extracted, so
+  // the digit strip erased them and the two connections merged — the exact failure #640 fixed,
+  // still live for one address family. Every pair below is numeric on purpose: "::a" vs "::b"
+  // passed even before this fix, because the LETTERS survive the strip as words, so it proved
+  // nothing about address extraction.
+  it.each([
+    ["leading :: , one group", "::1", "::99"],
+    ["leading :: , several groups", "::dead:1", "::dead:99"],
+    ["leading :: , all numeric", "::1:2:3", "::9:8:7"],
+    ["trailing :: ", "1::", "9::"],
+    ["compressed in the middle", "2001:db8::1", "2001:db8::99"],
+    ["link-local", "fe80::1", "fe80::99"],
+    ["zone id", "fe80::1%eth0", "fe80::99%eth0"],
+    ["bracketed with a port", "[2001:db8::1]:443", "[2001:db8::99]:443"],
+    ["fully expanded, no hex letters", "2001:0:0:0:0:0:0:1", "2001:0:0:0:0:0:0:9"],
+  ])("does NOT merge two IPv6 destinations — %s", (_label, a, b) => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([sigmaNetRow({ tgtIp: a }), sigmaNetRow({ tgtIp: b })]),
+    );
+    expect(parsed.events).toHaveLength(2);
+  });
+
   it("does NOT split on a clock time, which shares IPv6's shape", () => {
     // "00:00:00" must not read as an address — otherwise every timestamped line becomes its own
     // event and aggregation stops working entirely.
