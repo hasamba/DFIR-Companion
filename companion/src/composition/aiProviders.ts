@@ -83,8 +83,12 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   const imageDetail = params.imageDetail ?? "high";
   // Empty string → undefined so each provider falls back to its built-in default.
   const baseUrl = params.baseUrl?.trim() || undefined;
-  // Strong models over a large timeline can take >60s — make the request timeout tunable.
-  const timeoutMs = params.timeoutMs ?? (Number(process.env.DFIR_AI_TIMEOUT_MS) || 180_000);
+  // Strong models over a large timeline can take MINUTES, not seconds — make the request timeout
+  // tunable, and default it high enough that an ordinary case completes. 900s, not the old 180s:
+  // the CLI-backed providers (claude-code, codex) are local agent processes rather than completion
+  // APIs, and a real synthesis over a few hundred events routinely runs 5–10 minutes. At 180s every
+  // such run died at exactly the timeout, which reads as "the CLI is broken" when it is not.
+  const timeoutMs = params.timeoutMs ?? (Number(process.env.DFIR_AI_TIMEOUT_MS) || 900_000);
   // Bound completion tokens. Without this, OpenRouter reserves the model's full max
   // output for its per-request credit check and can 402 a large request (e.g. THOR
   // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.

@@ -28,7 +28,7 @@ export class CodexProvider implements AIProvider {
   constructor(opts: CodexOptions) {
     this.model = opts.model;
     this.bin = opts.bin?.trim() || "codex";
-    this.timeoutMs = opts.timeoutMs ?? 180_000;
+    this.timeoutMs = opts.timeoutMs ?? 900_000;
     this.runner = opts.runner ?? defaultCodexRunner;
   }
 

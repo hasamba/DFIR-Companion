@@ -50,7 +50,7 @@ describe("buildAiDiagnostics", () => {
     expect(d.provider).toBeNull();
     expect(d.model).toBeNull();
     // sensible numeric defaults
-    expect(d.timeoutMs).toBe(180_000);
+    expect(d.timeoutMs).toBe(900_000);
     expect(d.maxTokens).toBe(16_000);
     expect(d.contextTokens).toBe(128_000);
     expect(d.anonymizeDefault).toBe(true);

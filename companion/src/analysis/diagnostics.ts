@@ -90,7 +90,7 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
     velociraptorModel: orNull(env.DFIR_AI_VELO_MODEL),
     baseUrl,
     imageDetail: orNull(visionEnv(env, "IMAGE_DETAIL")) ?? "high",
-    timeoutMs: num(env.DFIR_AI_TIMEOUT_MS, 180_000),
+    timeoutMs: num(env.DFIR_AI_TIMEOUT_MS, 900_000),
     maxTokens: num(env.DFIR_AI_MAX_TOKENS, 16_000),
     contextTokens: num(env.DFIR_AI_CONTEXT_TOKENS, 128_000),
     anonymizeDefault: (env.DFIR_ANONYMIZE ?? "on").toLowerCase() !== "off",
