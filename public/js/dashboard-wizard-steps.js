@@ -50,9 +50,12 @@
       fields: [
         F("DFIR_VELOCIRAPTOR_API_CONFIG", "API config path", {
           hint: "Path to the velociraptor --api_config YAML (api_client.yaml).",
+          browse: "Select Velociraptor API config file",
         }),
-        F("DFIR_VELOCIRAPTOR_BINARY", "velociraptor binary", {
+        F("DFIR_VELOCIRAPTOR_BINARY", "Velociraptor binary", {
           hint: "Path to the velociraptor executable (optional if on PATH).",
+          browse: "Select Velociraptor binary",
+          download: true,
         }),
         F("DFIR_VELOCIRAPTOR_GUI_URL", "GUI URL", {
           hint: "Base URL for client links (optional).",

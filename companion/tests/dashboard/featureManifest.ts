@@ -627,9 +627,11 @@ export const FEATURES: Feature[] = [
   {
     // Velociraptor settings "Browse…" file picker + "Download latest release" button. Deliberately
     // independent of dashboard-merge-picker.js beside it — see the module header for why.
+    // wirePathBrowseControls is published for the setup wizard, whose Velociraptor step renders
+    // its own Browse… / Download-latest buttons and rebuilds them on every visit.
     file: "dashboard-velo-fs-browse.js",
     initializer: "initFsBrowse",
-    publish: ["initFsBrowse"],
+    publish: ["initFsBrowse", "wirePathBrowseControls"],
     private: ["state"],
   },
   {
@@ -804,9 +806,11 @@ export const FEATURES: Feature[] = [
   {
     // The .env settings form. loadedEnvValues is why the IIFE matters: it is the snapshot that
     // decides which integration groups get rebuilt on save (#178).
+    // wireAiModelPicker is published so the setup wizard's AI step drives the SAME model combo
+    // box as Settings → AI instead of carrying a second copy of it.
     file: "dashboard-env-settings.js",
     initializer: "initEnvSettings",
-    publish: ["initEnvSettings", "fetchEnvSettings", "saveSettings"],
+    publish: ["initEnvSettings", "fetchEnvSettings", "saveSettings", "wireAiModelPicker"],
     private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES"],
   },
   {
