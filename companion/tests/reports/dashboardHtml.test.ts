@@ -391,6 +391,36 @@ describe("dashboard.html", () => {
     expect(html).toContain("/geo-map");
   });
 
+  // The panel rendered its markers over an empty gray canvas for as long as it named a tile host
+  // directly: Leaflet loads tiles as <img>, and the server sends `img-src 'self' data:`. The tile
+  // template has to stay same-origin, and the operator's DFIR_GEOMAP_TILE_URL is resolved by the
+  // proxy (routes/geoTiles.ts) rather than shipped to the browser.
+  it("loads basemap tiles from this origin, never from a tile host directly (#133)", async () => {
+    const html = dashboardClientSource();
+    expect(html).toContain('GEO_TILE_URL = "/geo-tiles/{z}/{x}/{y}.png"');
+    expect(html).toContain("L.tileLayer(GEO_TILE_URL");
+    // The one remaining mention is the placeholder on the Settings field naming the default; the
+    // client must not fetch from it.
+    expect(html).not.toContain('L.tileLayer("https://');
+    expect(html).not.toContain("geoMapTileUrl");
+    // A dead tile server has to say so. A blank basemap and an empty world look identical.
+    expect(html).toContain('tiles.on("tileerror"');
+  });
+
+  // A 440px strip cannot show a continent. Both fullscreen paths are asserted: the native API and
+  // the class fallback for a browser that refuses it.
+  it("can expand the geographic map to fullscreen (#133)", async () => {
+    const html = dashboardClientSource();
+    expect(html).toContain('id="geoFullscreenBtn"');
+    expect(html).toContain('data-act="geoToggleFullscreen"');
+    expect(html).toContain("function geoToggleFullscreen");
+    expect(html).toContain("requestFullscreen");
+    expect(html).toContain("geo-fullscreen");
+    // Leaflet caches the container size, so a resized map draws the old size and leaves the rest
+    // gray until it is told to re-measure.
+    expect(html).toContain("invalidateSize()");
+  });
+
   it("has the Playbook Match panel with per-step status and a jump to the evidencing event (#230)", async () => {
     const html = dashboardClientSource();
     expect(html).toContain('id="sec-playbook-match"');

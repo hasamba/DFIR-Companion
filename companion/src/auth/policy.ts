@@ -21,7 +21,11 @@ const PUBLIC_GET = new Set([
   "/js/safe-dom.js",
 ]);
 const AUTHENTICATED_SHELLS = new Set(["/", "/dashboard", "/mobile"]);
-const AUTHENTICATED_ASSET_PREFIXES = ["/js", "/vendor"];
+// "/geo-tiles" is the proxied basemap under the Geographic Map (routes/geoTiles.ts). It carries no
+// case data — a tile is the same picture of the world for every user — so it sits with the other
+// static assets rather than falling through to the global-admin default, which would blank the map
+// for every non-admin role.
+const AUTHENTICATED_ASSET_PREFIXES = ["/js", "/vendor", "/geo-tiles"];
 const AUTHENTICATED_GLOBAL_READ_PREFIXES = [
   "/templates",
   "/report-templates",

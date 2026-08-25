@@ -23,6 +23,7 @@ import {
 } from "../analysis/preflight.js";
 import { checkConfiguredPromptDrift } from "../analysis/promptCapabilities.js";
 import { getAppVersion } from "../version.js";
+import { tileTemplate } from "./geoTiles.js";
 import {
   resolveUpdateMode,
   buildUpdateStatus,
@@ -123,7 +124,11 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       toolsEnabled: !!options.toolRunner,
       customImporters: importerRegistry.importers.size,
       updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked,
-      geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      // INFORMATIONAL. The dashboard does not fetch from this — it asks GET /geo-tiles/:z/:x/:y.png
+      // and the proxy reads the same env var server-side (routes/geoTiles.ts), because a tile
+      // loaded straight from here is an <img> the CSP refuses. Reported so an operator debugging an
+      // air-gapped install can see which tile server the companion will actually try.
+      geoMapTileUrl: tileTemplate(),
     });
   });
 
