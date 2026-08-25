@@ -522,14 +522,11 @@
           msg.textContent = "error: " + (j.error || "failed");
           return;
         }
-        // The server drops artifacts THIS Velociraptor doesn't have, and artifacts whose third-party
-        // tool it cannot download — either one would have failed the whole hunt. Say what was dropped.
-        const list = (v) => (Array.isArray(v) ? v : []);
-        const skipped = list(j.unknownArtifacts).concat(
-          list(j.unavailableArtifacts).map((u) => `${u.artifact}: ${u.reason}`),
-        );
-        if (skipped.length) {
-          msg.innerHTML = `launched ✓ — skipped ${skipped.length} artifact(s), not on this server or missing their tool: <span data-safe-style="color:var(--sev-high)">${esc(skipped.join(", "))}</span>`;
+        // What the server dropped, and the tools it has not fetched yet — the wording and the two
+        // very different reasons live in js/dashboard-velo-coverage.js.
+        const launchNotes = veloLaunchNotesHtml(j);
+        if (launchNotes) {
+          msg.innerHTML = launchNotes;
         } else {
           msg.textContent = "";
           form.style.display = "none";

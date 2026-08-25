@@ -23,8 +23,11 @@ import {
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import {
   artifactToolProblem,
+  launchWithUnheldToolHint,
   parseArtifactTools,
   parseToolInventory,
+  toolsNotHeldByServer,
+  unheldToolsHint,
 } from "../../src/integrations/velociraptor/artifactTools.js";
 import {
   noLaunchIdMessage,
@@ -2171,5 +2174,125 @@ describe("VelociraptorClient.huntArtifactRows", () => {
     await c.huntArtifactRows("H.1", "Custom.X", ["Pivot0"]);
     await c.huntArtifactRows("H.1", "Generic.Scanner.ThorZIP/ThorExec");
     expect(programs.some((p) => p.includes("FROM artifact_definitions("))).toBe(false);
+  });
+});
+
+// The gap this closes: `artifactToolProblem` only catches a tool whose URL is not a URL. A tool with a
+// perfectly valid GitHub URL that the SERVER cannot reach (an air-gapped lab) looks fine to every check
+// we had — and still aborts the whole hunt when Velociraptor tries to fetch it at compile time. We
+// cannot know whether the server has egress, but we CAN see which tools it has not downloaded yet, and
+// say so instead of leaving "no hunt id" as the only clue.
+describe("toolsNotHeldByServer / unheldToolsHint", () => {
+  const YARA_FILE = {
+    name: "DetectRaptor.Generic.Detection.YaraFile",
+    tools: parseArtifactTools([
+      { name: "FileYaraWindows", url: "https://github.com/x/DetectRaptor/raw/master/full_windows.yar.gz" },
+      { name: "FileYaraLinux", url: "https://github.com/x/DetectRaptor/raw/master/full_linux.yar.gz" },
+    ]),
+  };
+  const YARA_PROC = {
+    name: "DetectRaptor.Windows.Detection.YaraProcessWin",
+    tools: parseArtifactTools([
+      { name: "FileYaraWindows", url: "https://github.com/x/DetectRaptor/raw/master/full_windows.yar.gz" },
+    ]),
+  };
+  const THOR = {
+    name: "Generic.Scanner.ThorZIP",
+    tools: parseArtifactTools([{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }]),
+  };
+  const LOL_RMM = {
+    name: "DetectRaptor.Windows.Detection.LolRMM",
+    tools: parseArtifactTools([{ name: "DetectRaptorLolRMM", url: "https://github.com/x/lolrmm.csv" }]),
+  };
+
+  it("reports the tools with no stored file, and stays quiet about the ones the server holds", () => {
+    // Measured shapes from a live server: an uploaded tool keeps its original url but gains a hash.
+    const inventory = parseToolInventory([
+      { name: "FileYaraWindows", url: "https://github.com/x/DetectRaptor/raw/master/full_windows.yar.gz" },
+      { name: "FileYaraLinux", url: "https://github.com/x/DetectRaptor/raw/master/full_linux.yar.gz" },
+      { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "ca5a50a52690" },
+      { name: "DetectRaptorLolRMM", url: "", hash: "3e49ba0ccdb8" },
+    ]);
+    const unheld = toolsNotHeldByServer(
+      [YARA_FILE.name, YARA_PROC.name, THOR.name, LOL_RMM.name],
+      [YARA_FILE, YARA_PROC, THOR, LOL_RMM],
+      inventory,
+    );
+    expect(unheld.map((u) => u.tool)).toEqual(["FileYaraWindows", "FileYaraLinux"]);
+    // One tool, every artifact that needs it — so the analyst knows the blast radius of one upload.
+    expect(unheld[0].artifacts).toEqual([YARA_FILE.name, YARA_PROC.name]);
+    expect(unheld[0].url).toContain("full_windows.yar.gz");
+  });
+
+  // A tool with no URL AND no file is the worst case of all — the server can neither fetch nor serve
+  // it. artifactToolProblem deliberately waves an empty URL through (too destructive to drop on), so
+  // this is where it gets said.
+  it("reports a tool that has no download URL at all", () => {
+    const noUrl = { name: "Linux.Collector.Uac", tools: parseArtifactTools([{ name: "uac", url: "" }]) };
+    const unheld = toolsNotHeldByServer(
+      [noUrl.name],
+      [noUrl],
+      parseToolInventory([{ name: "uac", url: "" }]),
+    );
+    expect(unheld).toEqual([{ tool: "uac", url: "", artifacts: ["Linux.Collector.Uac"] }]);
+  });
+
+  it("ignores artifacts with no tools and artifacts absent from the catalog", () => {
+    const plain = { name: "Windows.NTFS.MFT" };
+    expect(toolsNotHeldByServer(["Windows.NTFS.MFT", "Windows.Bogus.Typo"], [plain], new Map())).toEqual([]);
+  });
+
+  it("names the tools, the artifacts and the fix in the hint — and is empty when nothing is missing", () => {
+    expect(unheldToolsHint([])).toBe("");
+    const hint = unheldToolsHint([
+      {
+        tool: "FileYaraWindows",
+        url: "https://github.com/x/full_windows.yar.gz",
+        artifacts: [YARA_FILE.name],
+      },
+      { tool: "extsentry", url: "", artifacts: ["DetectRaptor.Generic.Detection.BrowserExtensions"] },
+    ]);
+    expect(hint).toContain("FileYaraWindows");
+    expect(hint).toContain("extsentry");
+    expect(hint).toContain(YARA_FILE.name);
+    expect(hint).toContain("Server Artifacts");
+  });
+});
+
+// The wrapper the run-bundle route launches through. Velociraptor answers a request it could not
+// compile with a bare NULL and no reason, so this is the only place the pre-flight's findings can
+// reach the analyst. It must stay narrow: a failure that is NOT the no-launch-id one, or a run with
+// every tool already on the server, has to come back untouched rather than carry a wrong diagnosis.
+describe("launchWithUnheldToolHint", () => {
+  const UNHELD = [{ tool: "FileYaraWindows", url: "https://github.com/x/y.gz", artifacts: ["A.one"] }];
+
+  it("returns the launch result untouched when it succeeds", async () => {
+    const result = await launchWithUnheldToolHint(UNHELD, async () => ({ huntId: "H.1" }));
+    expect(result).toEqual({ huntId: "H.1" });
+  });
+
+  it("appends the unheld tools to a launch that produced no hunt id", async () => {
+    const boom = async () => {
+      throw new Error(noLaunchIdMessage("hunt", "START_HUNT"));
+    };
+    await expect(launchWithUnheldToolHint(UNHELD, boom)).rejects.toThrow("FileYaraWindows");
+  });
+
+  it("rethrows a failure that is not the no-launch-id one, unchanged", async () => {
+    const original = new Error("connection refused");
+    await expect(
+      launchWithUnheldToolHint(UNHELD, async () => {
+        throw original;
+      }),
+    ).rejects.toBe(original);
+  });
+
+  it("rethrows unchanged when the server holds every tool the run needs", async () => {
+    const original = new Error(noLaunchIdMessage("hunt", "START_HUNT"));
+    await expect(
+      launchWithUnheldToolHint([], async () => {
+        throw original;
+      }),
+    ).rejects.toBe(original);
   });
 });

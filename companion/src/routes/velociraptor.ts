@@ -4,6 +4,7 @@ import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { parseVeloRef, EXTERNAL_IMPORT_NEEDS_SERVER } from "../analysis/veloRef.js";
 import { preflightBundleArtifacts } from "../integrations/velociraptor/bundlePreflight.js";
+import { launchWithUnheldToolHint } from "../integrations/velociraptor/artifactTools.js";
 import {
   buildVelociraptorClient,
   matchClient,
@@ -550,7 +551,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       );
       for (const note of pre.notes) logLine(`[velociraptor] bundle "${bundle.name}": ${note}`);
       if (pre.error) return res.status(400).json({ error: pre.error });
-      const { unknownArtifacts, unavailableArtifacts, definitions } = pre;
+      const { unknownArtifacts, unavailableArtifacts, unheldTools, definitions } = pre;
       const artifactsToRun = pre.artifacts;
 
       // Fan the ONE chosen window out across the surviving artifacts' own date parameters, so each
@@ -563,13 +564,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       );
 
       logLine(
-        `[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}${unavailableArtifacts.length ? `, ${unavailableArtifacts.length} missing a tool` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`,
+        `[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}${unavailableArtifacts.length ? `, ${unavailableArtifacts.length} missing a tool` : ""}${unheldTools.length ? `, ${unheldTools.length} tool(s) not yet on the server` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`,
       );
-      const launch = await options.velociraptorClient.launchArtifactHunt(
-        artifactsToRun,
-        bundle.name,
-        target,
-        { timeoutSeconds, params: huntParams, expirySeconds },
+      const huntOpts = { timeoutSeconds, params: huntParams, expirySeconds };
+      const launch = await launchWithUnheldToolHint(unheldTools, () =>
+        velo.launchArtifactHunt(artifactsToRun, bundle.name, target, huntOpts),
       );
       const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
       const job: VeloHuntJob = {
@@ -622,6 +621,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         artifacts: launch.artifacts,
         unknownArtifacts,
         unavailableArtifacts,
+        unheldTools,
         timeScope: job.timeScope,
       });
     } catch (err) {

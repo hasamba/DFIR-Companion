@@ -8,6 +8,8 @@
 // (Generic.Scanner.ThorZIP: THOR Lite is licensed, so it cannot ship a URL), which is why running that
 // bundle against an untouched server collected nothing from any of its 45 artifacts.
 
+import { isNoLaunchIdError } from "./vqlDiagnostics.js";
+
 /** One tool, as `artifact_definitions().tools` and `inventory()` both report it. */
 export interface VeloArtifactTool {
   name: string;
@@ -108,4 +110,95 @@ export function partitionByToolAvailability(
     else runnable.push(artifact);
   }
   return { runnable, unavailable };
+}
+
+/** One tool the server has no file for yet, and the bundle artifacts that need it. */
+export interface UnheldTool {
+  tool: string;
+  url: string; // where Velociraptor would fetch it from; "" when the tool has no URL at all
+  artifacts: string[]; // every artifact in this run that declares it
+}
+
+// A hint is a banner, not a report: enough tools to recognise the problem, not the whole list.
+const UNHELD_HINT_MAX = 6;
+const listSome = (items: readonly string[]): string =>
+  items.length > UNHELD_HINT_MAX
+    ? `${items.slice(0, UNHELD_HINT_MAX).join(", ")} (+${items.length - UNHELD_HINT_MAX} more)`
+    : items.join(", ");
+
+/**
+ * The tools this run needs that the server has NOT downloaded yet.
+ *
+ * artifactToolProblem answers a different, narrower question — "is this tool's URL a URL?" — and is
+ * allowed to DROP an artifact on the answer. This one is the warning that check cannot give: a tool
+ * with a perfectly valid GitHub URL that the server has never fetched looks healthy to every check we
+ * had, and on a server without egress (an air-gapped lab, a proxy, a firewall) Velociraptor still fails
+ * to fetch it while compiling the hunt — which loses the ENTIRE run, artifacts and all, and reports
+ * only "no hunt id". We cannot know from here whether the server has egress. We CAN see what it holds.
+ *
+ * Nothing is dropped on this: on a server WITH egress these tools fetch on first use and the hunt is
+ * fine, so acting on it would silently gut a sweep that would have worked. `inventory` must be the
+ * server's REAL tool state — the declared metadata never carries a hash, so passing that would report
+ * every tool in the bundle as missing.
+ */
+export function toolsNotHeldByServer(
+  artifacts: readonly string[],
+  definitions: readonly { name: string; tools?: VeloArtifactTool[] }[],
+  inventory: Map<string, VeloArtifactTool>,
+): UnheldTool[] {
+  const byName = new Map(definitions.map((d) => [d.name, d]));
+  const out = new Map<string, UnheldTool>();
+  for (const artifact of artifacts) {
+    for (const declared of byName.get(artifact)?.tools ?? []) {
+      const t = inventory.get(declared.name) ?? declared;
+      if (t.materialized) continue; // the server holds the file — nothing to fetch
+      const entry = out.get(declared.name) ?? {
+        tool: declared.name,
+        url: (t.url ?? "").trim(),
+        artifacts: [],
+      };
+      if (!entry.artifacts.includes(artifact)) entry.artifacts.push(artifact);
+      out.set(declared.name, entry);
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * The sentence to append to a launch failure, naming the tools that are the likeliest cause and what
+ * to do about them. Empty when the server holds every tool the run needs — then the failure is
+ * something else and this must not add noise to it.
+ */
+export function unheldToolsHint(unheld: readonly UnheldTool[]): string {
+  if (!unheld.length) return "";
+  const tools = listSome(unheld.map((u) => (u.url ? `${u.tool} (${u.url})` : `${u.tool} (no download URL)`)));
+  const artifacts = listSome([...new Set(unheld.flatMap((u) => u.artifacts))]);
+  return (
+    ` This bundle also needs ${unheld.length} tool(s) this server has not downloaded yet, which is the` +
+    " likeliest cause: Velociraptor fetches every tool while it compiles the hunt, so ONE it cannot" +
+    ` reach aborts the whole run — ${tools}.` +
+    ` Upload them in Velociraptor (Server Artifacts → Tools), or remove the artifact(s) that need them` +
+    ` from the bundle: ${artifacts}.`
+  );
+}
+
+/**
+ * Launch, and when Velociraptor refuses with its bare NULL, say what the pre-flight already knows.
+ *
+ * `hunt()` answers a request it could not compile with no reason at all, so the generic message can
+ * only guess. Where the pre-flight found tools this server has never fetched, they are the likeliest
+ * cause on a server without egress — and the only thing the analyst can act on — so they are appended
+ * to the failure rather than left in the server's own log. Every other failure is rethrown untouched.
+ */
+export async function launchWithUnheldToolHint<T>(
+  unheld: readonly UnheldTool[],
+  launch: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await launch();
+  } catch (e) {
+    const message = (e as Error).message;
+    const hint = isNoLaunchIdError(message) ? unheldToolsHint(unheld) : "";
+    throw hint ? new Error(message + hint) : e;
+  }
 }
