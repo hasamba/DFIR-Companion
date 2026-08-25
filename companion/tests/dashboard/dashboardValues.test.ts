@@ -122,13 +122,14 @@ describe("jobMenuView", () => {
 });
 
 describe("updateJobRow", () => {
-  /** The five children updateJobRow reaches for, and nothing else. */
+  /** The children updateJobRow reaches for, and nothing else. */
   const fakeRow = () => {
     const cells: Record<string, Record<string, unknown>> = {
       ".job-st": { className: "", textContent: "" },
       ".job-detail": { textContent: "", style: {} },
       ".job-kind": { textContent: "" },
       ".job-label": { textContent: "" },
+      ".job-model": { textContent: "", style: {} },
     };
     return { cells, querySelector: (sel: string) => cells[sel] };
   };
@@ -147,6 +148,34 @@ describe("updateJobRow", () => {
     v.updateJobRow(row, { job: { kind: "k", status: "done" }, detail: "" });
     expect((row.cells[".job-detail"].style as Record<string, string>).display).toBe("none");
     expect(row.cells[".job-label"].textContent).toBe("");
+  });
+
+  it("names the model on the row, and shows the cell", () => {
+    const row = fakeRow();
+    v.updateJobRow(row, {
+      job: { kind: "synthesis", status: "running", model: "anthropic/claude-sonnet-4" },
+      detail: "",
+    });
+    expect(row.cells[".job-model"].textContent).toBe("anthropic/claude-sonnet-4");
+    expect((row.cells[".job-model"].style as Record<string, string>).display).toBe("");
+  });
+
+  // Enrichment runs no model. An empty chip would read as "the model has no name", not "no model".
+  it("hides the model cell for a job no model runs", () => {
+    const row = fakeRow();
+    v.updateJobRow(row, { job: { kind: "enrichment", status: "running" }, detail: "" });
+    expect(row.cells[".job-model"].textContent).toBe("");
+    expect((row.cells[".job-model"].style as Record<string, string>).display).toBe("none");
+  });
+
+  // The popover patches rows far more often than it rebuilds them, and a row built before this
+  // change (or by any caller that renders a leaner row) simply has no model cell to write into.
+  it("survives a row with no model cell at all", () => {
+    const row = fakeRow();
+    delete row.cells[".job-model"];
+    expect(() =>
+      v.updateJobRow(row, { job: { kind: "k", status: "done", model: "m" }, detail: "" }),
+    ).not.toThrow();
   });
 
   // textContent, never innerHTML — the label is evidence-derived and the status comes off the wire.

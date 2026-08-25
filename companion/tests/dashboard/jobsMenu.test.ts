@@ -20,6 +20,7 @@ type StubJob = {
   id: string;
   kind: string;
   status: string;
+  model?: string;
   cancellable?: boolean;
   resumable?: boolean;
   failure?: { retryable: boolean };
@@ -60,12 +61,12 @@ function pageStubs(jobs: StubJob[]) {
 
 const PRELOAD = ["dashboard-escape.js", "dashboard-values.js", "dashboard-fragments.js"];
 
-async function renderedRows(jobs: StubJob[]): Promise<{ ids: string[]; badge: string }> {
+async function renderedRows(jobs: StubJob[]): Promise<{ ids: string[]; badge: string; html: string }> {
   const stubs = pageStubs(jobs);
   const api = loadDashboardModule<JobsApi>("dashboard-jobs.js", PRELOAD, stubs.globals);
   await api.loadJobs();
   const ids = [...stubs.menu.innerHTML.matchAll(/data-job-id="([^"]+)"/g)].map((m) => m[1]);
-  return { ids, badge: stubs.badge.textContent };
+  return { ids, badge: stubs.badge.textContent, html: stubs.menu.innerHTML };
 }
 
 const finished = (n: number): StubJob[] =>
@@ -101,6 +102,26 @@ describe("the background-jobs popover", () => {
     expect(ids[0]).toBe("done-0");
     expect(ids).toContain("queued-1");
     expect(ids.indexOf("queued-1")).toBe(ids.length - 1);
+  });
+
+  // Three synthesis rows saying only "synthesis / failed" cannot tell "this model times out" from
+  // "one run was unlucky". The row names the model that ran it.
+  it("names the model running an AI job", async () => {
+    const { html } = await renderedRows([
+      { id: "synth-1", kind: "synthesis", status: "running", model: "anthropic/claude-sonnet-4" },
+    ]);
+
+    expect(html).toContain("anthropic/claude-sonnet-4");
+  });
+
+  // The popover only rebuilds its rows when the id/cancel/resume shape changes; every other refresh
+  // patches the existing nodes. A model span that only EXISTS when the first render had a model is
+  // a node updateJobRow cannot find later, so it is always emitted and hidden when empty.
+  it("emits a hidden model slot for a job no model runs", async () => {
+    const { html } = await renderedRows([{ id: "enrich-1", kind: "enrichment", status: "running" }]);
+
+    expect(html).toContain("job-model");
+    expect(html).toMatch(/class="job-model"[^>]*display:none/);
   });
 
   it("keeps a resumable interrupted job visible behind a wall of history", async () => {

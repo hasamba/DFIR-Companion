@@ -45,6 +45,13 @@ export interface Job {
   caseId: string | null;
   kind: JobKind;
   label?: string;
+  /**
+   * The AI model driving this job, when one does. Set at registration from the provider that will
+   * actually run the work, NOT read from env at render time: a job outlives a Settings change, and
+   * a row that renamed its own model after the fact would misattribute every finished run.
+   * Unset for jobs no model runs (enrichment, a deterministic import, a Velociraptor collect).
+   */
+  model?: string;
   status: JobStatus;
   priority: JobPriority;
   parentJobId?: string;
@@ -90,6 +97,7 @@ export interface CreateJobInput {
   caseId: string | null;
   kind: JobKind;
   label?: string;
+  model?: string;
   detail?: string;
   priority?: JobPriority;
   parentJobId?: string;
@@ -112,6 +120,7 @@ export function createJob(table: JobTable, input: CreateJobInput): JobTable {
     caseId: input.caseId,
     kind: input.kind,
     ...(input.label !== undefined ? { label: input.label } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     status,
     priority: input.priority ?? "normal",
@@ -411,6 +420,7 @@ export const jobSchema: z.ZodType<Job> = z.object({
   caseId: z.string().min(1).nullable(),
   kind: z.enum(JOB_KINDS),
   label: z.string().optional(),
+  model: z.string().min(1).max(200).optional(),
   status: z.enum(JOB_STATUSES),
   priority: z.enum(["low", "normal", "high"]),
   parentJobId: z.string().optional(),
