@@ -283,6 +283,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     enrichRetries: numEnv("DFIR_ENRICH_RETRIES"),
     enrichRetryBackoffMs: numEnv("DFIR_ENRICH_RETRY_BACKOFF_MS"),
     enrichMaxIocs: numEnv("DFIR_ENRICH_MAX"),
+    enrichMaxBatches: numEnv("DFIR_ENRICH_MAX_BATCHES"),
     customerExposureProviders: buildCustomerExposureProviders(),
     customerExposureDelayMs: numEnv("DFIR_EXPOSURE_DELAY_MS"),
     // Reachability gate: probe a self-hosted MISP/YETI before sending IOCs, cached this long

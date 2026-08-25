@@ -1764,7 +1764,8 @@
         <div class="settings-group-head">Throttling</div>
         <div class="sfield-row3">
           <div class="sfield"><label>Enrich delay (ms)<span class="sfield-hint">DFIR_ENRICH_DELAY_MS</span></label><input id="env-DFIR_ENRICH_DELAY_MS" placeholder="1500" /></div>
-          <div class="sfield"><label>Max IOCs / run<span class="sfield-hint">DFIR_ENRICH_MAX</span></label><input id="env-DFIR_ENRICH_MAX" placeholder="100" /></div>
+          <div class="sfield"><label>Max IOCs / batch<span class="sfield-hint">DFIR_ENRICH_MAX</span></label><input id="env-DFIR_ENRICH_MAX" placeholder="100" /></div>
+          <div class="sfield"><label>Max batches / run<span class="sfield-hint">DFIR_ENRICH_MAX_BATCHES — a capped batch chains the next one; 1 stops after the first</span></label><input id="env-DFIR_ENRICH_MAX_BATCHES" placeholder="20" /></div>
           <div class="sfield"><label>Health TTL (ms)<span class="sfield-hint">DFIR_ENRICH_HEALTH_TTL_MS</span></label><input id="env-DFIR_ENRICH_HEALTH_TTL_MS" placeholder="60000" /></div>
         </div>
         <div class="sfield-row">
