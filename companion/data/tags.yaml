@@ -162,3 +162,18 @@ staging_temp_executable:
   mitre: ['T1036']
   severity: Medium
   view: 'Temp-path executables'
+
+# ─────────────────────────── Removable media ───────────────────────────
+# A mass-storage mount arrives ungraded, and Info never reaches the forensic timeline — so without
+# this rule the AI cannot reason about a USB device at all, whichever bundle collected it. Low, not
+# higher: attaching a USB stick is ordinary, and only the surrounding activity makes it exfil.
+removable_media_mount:
+  description: Removable mass-storage device mounted (USB device history)
+  any:
+    - { field: artifactName, contains: ['Mounted.Mass.Storage', 'USB', 'RemovableMedia'] }
+    - { field: message, contains: ['USBSTOR', 'MountedDevices', 'MountPoints2', 'setupapi.dev.log'] }
+    - { field: path, contains: ['\Enum\USBSTOR\', '\MountPoints2\'] }
+  tags: ['removable-media', 'usb']
+  mitre: ['T1091', 'T1052.001']
+  severity: Low
+  view: 'Removable media'
