@@ -204,9 +204,38 @@ For specifically recognized consoles (Security Onion Alerts/Hunt, Kibana, SO-CRA
 
 **What gets captured:** the full visible tab content (a screenshot) plus the URL and tab title. Evidence is stored to disk immediately — before any AI analysis.
 
-### Step 3 — Import artifact files
+### Step 3a — Run the Velociraptor hunt bundles
 
-While screenshots are great for consoles, you should also import raw artifact exports whenever possible. Raw exports give the AI more structured data.
+If Velociraptor is connected, start here. A hunt bundle collects a named set of artifacts from every enrolled endpoint and imports the results for you. No manual export, no file picker.
+
+Open **Settings → Velociraptor**. Three bundles ship built-in:
+
+| Bundle | What it collects | Where results land |
+|--------|------------------|--------------------|
+| **Best Practice** | The quick-wins detection sweep — DetectRaptor rules, Hayabusa, Chainsaw, THOR, condensed account usage, process and network state, persistence, scheduled tasks | Forensic timeline (the AI sees them) |
+| **Super-Timeline Triage** *(optional)* | Raw host artifacts — MFT, USN journal, prefetch, amcache, shellbags, SRUM, jump lists, registry, event logs | **Super-timeline only** |
+| **Linux Triage** | Linux host triage — users, persistence, network, packages, detection artifacts | Forensic timeline |
+
+**Run Best Practice on every case.** It is the fastest path from "a case exists" to "the dashboard has findings".
+
+**Super-Timeline Triage is optional.** Its artifacts hold hundreds of thousands of rows, so its results go to the super-timeline and never to the forensic timeline — they would drown synthesis. Run it when you need file-level or execution-level detail, then promote the rows that matter up from the **Super-Timeline** panel (Section 9). Skip it on a first pass.
+
+To run a bundle:
+
+1. Connect the case you want the results in. **▶ Run** stays disabled until a case is selected — a collection has to land somewhere.
+2. Click **▶ Run** on the bundle.
+3. Set the run options: wait minutes, hunt expiry (1 hour / 1 day / 1 week), client OS, minimum severity, time scope, and include/exclude labels. The defaults are fine for a first pass.
+4. Click **Run hunt**.
+
+The hunt runs on every enrolled client unless you set a label or OS filter. After the wait, the Companion collects the results, imports them, and synthesizes. Click **Collect now** on the job card to pull early.
+
+> **Tip — cut the volume before the hunt, not after.** Set a **time scope** (e.g. last 7 days) to bound the collection at the source, and a **minimum severity** to hold back low-value rows at import. Both controls are on the run form.
+
+Every bundle is editable, built-ins included. Open **Edit** to add or drop artifacts, raise the collection timeout for slow artifacts like THOR, or tune per-artifact parameters and exclude filters. **Reset to default** restores a shipped built-in.
+
+### Step 3b — Import artifact files
+
+Import raw artifact exports for anything a bundle did not collect — an offline host, a third-party tool's output, a phishing sample. Raw exports give the AI more structured data than a screenshot does.
 
 Click the **Import** button (toolbar, top of dashboard). A file picker opens. Drag or select any of the supported file types (see Section 7 for the full list). The server auto-detects the format and imports it.
 
@@ -1129,9 +1158,9 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 - Custom VQL hunts from the dashboard
 - Per-hunt auto-collect (results import automatically after `DFIR_VELO_HUNT_WAIT_MIN`)
 - Live CLIENT_EVENT monitoring (see Section 15)
-- Triage bundles (Fast Triage / Full Triage / custom)
+- Triage bundles (Best Practice / Super-Timeline Triage / Linux Triage / custom)
 
-**Triage bundles:** Settings → Velociraptor → Bundles. Built-in bundles include Fast Triage (quick artifact set) and Full Triage (comprehensive). You can create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results.
+**Triage bundles:** Settings → Velociraptor. Three bundles ship built-in — **Best Practice** (quick-wins detection sweep), **Super-Timeline Triage** (raw host artifacts, super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results. See Section 4, Step 3a for the walkthrough.
 
 ### DFIR-IRIS
 
