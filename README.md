@@ -882,7 +882,7 @@ single-writer process model.
 | `DFIR_VISION_KEY` | — | Provider API key; leave blank for an auth-less local proxy or for `claude-code` (uses your logged-in `claude` CLI subscription instead) |
 | `DFIR_AI_CLAUDE_CODE_BIN` | `claude` on PATH | `claude-code` only: absolute path to the `claude` binary if it isn't on PATH |
 | `DFIR_VISION_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
-| `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
+| `DFIR_AI_TIMEOUT_MS` | `900000` | Per-request timeout (ms); CLI providers (claude-code, codex) need minutes on a large timeline |
 | `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
 | `DFIR_AI_SYNTH_MAX_EVENTS` | `600` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
 | `DFIR_REPORT_SYNTH_COVERAGE` | _(off)_ | Set truthy to add a **§3.4 Synthesis coverage** footnote to the report — "considered N of M in-window events (K omitted: budget/filtered)", the token estimate, and how many high-severity omissions the safety-net backfill recovered. The dashboard synth-meta card always shows this line; this flag only controls whether it also appears in the exported report |
@@ -1080,8 +1080,9 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 | `DFIR_PBHUNT_SUGGEST_MAX` | `30` | Max number of **AI-suggested playbook hunts** returned per generation (one per endpoint-related task; needs an AI provider) |
 
 **Triage bundles** (**Settings → Velociraptor** tab): *Browse server artifacts* lists the server's collectable
-`CLIENT` artifacts; assemble + save named **bundles** (a single **Best Practice** quick-wins sweep ships by
-default, stored globally next to `cases/` in `bundles/`). **Every bundle, built-ins included, is editable in
+`CLIENT` artifacts; assemble + save named **bundles** (three ship built-in — **Best Practice** (quick-wins
+sweep), **Super-Timeline Triage** (raw host artifacts, routed to the super-timeline only) and **Linux
+Triage** — stored globally next to `cases/` in `bundles/`). **Every bundle, built-ins included, is editable in
 place** — an edit saves an override; **Reset to default** discards it. **Run** one as a hunt (optionally scoped
 by include/exclude labels + OS, and a **minimum-severity** import floor). The **collection timeout** is a bundle
 setting (configured in the editor — bump it for slow artifacts like THOR; Velociraptor's default is 600 s) and is

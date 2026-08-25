@@ -24,6 +24,7 @@
     "ROUTE GET /diagnostics/sizes",
     "ROUTE POST /diagnostics/ai-test",
     "ROUTE POST /system/presidio-test",
+    "ROUTE GET /system/presidio-health",
     "ROUTE GET /diagnostics/claude-code-status",
     "ROUTE POST /diagnostics/claude-code-login",
     "ROUTE GET /diagnostics/codex-status",

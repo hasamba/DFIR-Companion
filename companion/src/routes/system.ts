@@ -513,6 +513,32 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
+  // Live reachability for the anonymization modal's "Real names (people)" row. That row was drawn
+  // from presidioConfigured alone — DFIR_PRESIDIO_URL being non-empty — so a container that exited
+  // days ago still rendered as "Presidio is on", and the analyst only learned otherwise when an AI
+  // call failed closed. Configured and reachable are two different facts; this route supplies the
+  // second one.
+  //
+  // Probes the SAVED url, not one from the body: the modal has no url to send, that value is
+  // server-side and startup-only. It runs the same synthetic sample through the same client the
+  // real scan uses, so a port that answers but cannot analyze reads as unreachable rather than as
+  // a pass. 5s, not the scan's 60s budget: this is a liveness question, and a modal must not sit
+  // on an unanswered row for a minute.
+  //
+  // 200 on every outcome, on the same terms as /system/presidio-test above — a dead container is a
+  // renderable state, not a server fault. A 5xx would land in the dashboard's "endpoint missing"
+  // catch and give the analyst the wrong advice entirely.
+  app.get("/system/presidio-health", async (_req: Request, res: Response) => {
+    const url = (process.env.DFIR_PRESIDIO_URL ?? "").trim();
+    if (!url) return res.json({ configured: false });
+    try {
+      await new HttpPresidioClient(url, 5_000).analyze(PRESIDIO_SAMPLE_TEXT);
+      return res.json({ configured: true, url, reachable: true });
+    } catch (err) {
+      return res.json({ configured: true, url, reachable: false, error: (err as Error).message });
+    }
+  });
+
   // Claude Code connection status (installed / signed-in) for Settings → AI and the wizard.
   app.get("/diagnostics/claude-code-status", async (_req: Request, res: Response) => {
     const status = await getClaudeCodeStatus({ bin: process.env.DFIR_AI_CLAUDE_CODE_BIN });
