@@ -398,6 +398,12 @@ Each IOC shows:
   Security Onion, combined-log, network, and Velociraptor importers, each IOC is tagged with the exact
   source-event row that produced it, so the chain shows **"linked"** (authoritative, traced to a real
   event) rather than **"approximate"** (inferred). AI-synthesis output cannot forge a "linked" tag.
+  A linked event can still stand for many records: the timeline collapses repeats of the same shape
+  into one row and shows the first one's text, and long records are cut short before storage. Each
+  extraction row therefore says **"1 of N merged records"** when it is a group, and warns
+  **"value not in this event's stored text"** when the indicator appears nowhere in the record as
+  stored — open the source artifact for the exact row. Network addresses are exempt from the
+  collapse, so two connections to different destinations stay two events.
 - **🚫 Mark False Positive** — known-good, excludes from analysis
 - Click to run enrichment on demand
 

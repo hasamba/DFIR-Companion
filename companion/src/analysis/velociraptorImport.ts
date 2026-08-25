@@ -164,20 +164,52 @@ function hashStr(s: string): string {
   return (h >>> 0).toString(36);
 }
 
+// An IP address is made of digits, so the volatile-id strip in msgFingerprint erases it. That is
+// right for a PID and wrong for a peer address: for a network event the OTHER END IS THE EVENT, so
+// two connections to different destinations are two events, not one repeat. Two Sysmon
+// network-connection rows differing only in TgtIP used to fingerprint identically, merge into one
+// event holding the FIRST row's text, and leave every IOC scraped from the merged rows pointing at
+// an event that named a different address (#640). Domains and URLs are mostly letters and already
+// survive the strip; only addresses need rescuing.
+//
+// IPv6 shares its shape with a clock time ("00:00:00"), so a colon candidate counts only when it
+// carries a "::" or at least three colons. A fully numeric, fully expanded IPv6 literal is missed
+// by that rule — vanishingly rare in this telemetry, and the cost of the miss is one merged event,
+// not a wrong link.
+const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
+const COLON_ADDR_RE = /\b[0-9a-f]{0,4}(?::{1,2}[0-9a-f]{0,4}){2,7}\b/gi;
+
+function networkTokens(msg: string): string[] {
+  const out = new Set<string>();
+  for (const m of msg.match(IPV4_RE) ?? []) {
+    if (m.split(".").every((o) => Number(o) <= 255)) out.add(m.toLowerCase());
+  }
+  for (const m of msg.match(COLON_ADDR_RE) ?? []) {
+    const colons = (m.match(/:/g) ?? []).length;
+    if (m.includes("::") || colons >= 3) out.add(m.toLowerCase());
+  }
+  // Sorted so the fingerprint does not depend on the order the addresses happen to appear in.
+  return [...out].sort();
+}
+
 // Fingerprint a message for aggregation: normalize away VOLATILE bits (GUIDs, any digits — PIDs,
-// thread/record ids, counters) but keep the words, then hash the WHOLE thing. So two detections
-// that differ only in a PID collapse, while two that name different tools (HackTool:Passview vs
-// HackTool:Mimikatz) stay separate — the message, not just the rule title, decides identity. The
-// hash (not a prefix) means a distinguishing token anywhere in a long, boilerplate-heavy message
-// still separates the events.
+// thread/record ids, counters) but keep the words AND every network address, then hash the WHOLE
+// thing. So two detections that differ only in a PID collapse, while two that name different tools
+// (HackTool:Passview vs HackTool:Mimikatz) or different peers stay separate — the message, not just
+// the rule title, decides identity. The hash (not a prefix) means a distinguishing token anywhere
+// in a long, boilerplate-heavy message still separates the events, and keeps the folded key a fixed
+// length however many addresses one message names.
 function msgFingerprint(msg: string): string {
-  const norm = oneLine(msg)
+  const line = oneLine(msg)
     .toLowerCase()
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "");
+  const addrs = networkTokens(line);
+  const norm = line
     .replace(/\d+/g, "")
     .replace(/[^a-z]+/g, " ")
     .trim();
-  return norm ? hashStr(norm) : "";
+  const joined = addrs.length ? `${norm} ${addrs.join(" ")}`.trim() : norm;
+  return joined ? hashStr(joined) : "";
 }
 
 // ───────────────────────────── detection verdicts ─────────────────────────────

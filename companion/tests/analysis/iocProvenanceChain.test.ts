@@ -200,3 +200,96 @@ describe("buildIocProvenanceChains", () => {
     expect(chains.i1.extractionAuthoritative).toBe(false);
   });
 });
+
+// #640 — an extraction event can stand for MANY collapsed records (aggregation keeps the first
+// row's text and a `count`), and `description`/`message` are truncated before storage. Either way
+// the IOC value can be absent from the event the panel shows, which reads as a mis-attribution.
+// The chain must disclose both rather than implying the shown text is the source.
+describe("buildIocProvenanceChains — merge and truncation disclosure (#640)", () => {
+  it("reports the repeat count and time span of a merged extraction event", () => {
+    const events = [
+      ev({
+        id: "e1",
+        severity: "Medium",
+        description: "Sigma: Net Conn - TgtIP: 203.0.113.10",
+        timestamp: "2026-01-01T00:00:00Z",
+        endTimestamp: "2026-01-01T06:00:00Z",
+        count: 47,
+      }),
+    ];
+    const chains = buildIocProvenanceChains(
+      [ioc({ id: "i1", type: "ip", value: "203.0.113.10", extractedFrom: ["e1"] })],
+      events,
+      [],
+    );
+    expect(chains.i1.extraction[0].count).toBe(47);
+    expect(chains.i1.extraction[0].endTimestamp).toBe("2026-01-01T06:00:00Z");
+  });
+
+  it("omits count and endTimestamp for an event that stands for one record", () => {
+    const events = [ev({ id: "e1", severity: "Medium", description: "one and only 203.0.113.10" })];
+    const chains = buildIocProvenanceChains(
+      [ioc({ id: "i1", type: "ip", value: "203.0.113.10", extractedFrom: ["e1"] })],
+      events,
+      [],
+    );
+    expect(chains.i1.extraction[0].count).toBeUndefined();
+    expect(chains.i1.extraction[0].endTimestamp).toBeUndefined();
+  });
+
+  it("flags an extraction event whose stored text does NOT contain the IOC value", () => {
+    // The merged-away sibling row carried 203.0.113.99; the surviving text names another address.
+    const events = [
+      ev({
+        id: "e1",
+        severity: "Medium",
+        description: "Sigma: Net Conn - TgtIP: 203.0.113.10",
+        count: 47,
+      }),
+    ];
+    const chains = buildIocProvenanceChains(
+      [ioc({ id: "i1", type: "ip", value: "203.0.113.99", extractedFrom: ["e1"] })],
+      events,
+      [],
+    );
+    expect(chains.i1.extraction[0].valueHidden).toBe(true);
+  });
+
+  it("does NOT flag an event whose message carries the value past the description cut-off", () => {
+    const events = [
+      ev({
+        id: "e1",
+        severity: "Medium",
+        description: "Sigma: Potentially Malicious PwSh - ScriptBlock: # ====",
+        message: `${"x".repeat(500)} $c = New-Object Net.Sockets.TcpClient("203.0.113.99", 443)`,
+      }),
+    ];
+    const chains = buildIocProvenanceChains(
+      [ioc({ id: "i1", type: "ip", value: "203.0.113.99", extractedFrom: ["e1"] })],
+      events,
+      [],
+    );
+    expect(chains.i1.extraction[0].valueHidden).toBeUndefined();
+  });
+
+  it("does NOT flag an event that carries the value in a structured field only", () => {
+    const events = [ev({ id: "e1", severity: "High", dstIp: "203.0.113.99", description: "conn" })];
+    const chains = buildIocProvenanceChains(
+      [ioc({ id: "i1", type: "ip", value: "203.0.113.99", extractedFrom: ["e1"] })],
+      events,
+      [],
+    );
+    expect(chains.i1.extraction[0].valueHidden).toBeUndefined();
+  });
+
+  it("matches the value case-insensitively (a hash cased differently is still visible)", () => {
+    const hash = "A".repeat(64);
+    const events = [ev({ id: "e1", severity: "High", description: `file hash ${hash.toLowerCase()}` })];
+    const chains = buildIocProvenanceChains(
+      [ioc({ id: "i1", type: "hash", value: hash, extractedFrom: ["e1"] })],
+      events,
+      [],
+    );
+    expect(chains.i1.extraction[0].valueHidden).toBeUndefined();
+  });
+});
