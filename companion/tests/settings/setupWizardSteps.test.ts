@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -31,6 +31,10 @@ interface WizardField {
   /** Per-field reload override for a key outside the step's prefix family (e.g. the global
    *  DFIR_TLS_ALLOW_INSECURE_EXTERNAL on the IRIS step). */
   reload?: string;
+  /** Title of the server-side file picker this path field opens. */
+  browse?: string;
+  /** Adds the "download the latest Velociraptor release" button beside the field. */
+  download?: boolean;
 }
 interface WizardProvider {
   id: string;
@@ -111,6 +115,37 @@ describe("the setup wizard's step table ⇄ the routes it calls", () => {
     expect(presidio?.reload, "a Presidio reload prefix would 400 on every save").toBeUndefined();
     expect(RELOADABLE_ENV_PREFIXES.has("DFIR_PRESIDIO_")).toBe(false);
     expect(validateEnvUpdates({ DFIR_PRESIDIO_URL: "http://localhost:5002" })).toEqual([]);
+  });
+
+  // Settings → Integrations has had Browse… and "⬇ Download latest" on the two Velociraptor paths
+  // since they were added; the wizard asked for the same two paths as bare text boxes, so a
+  // first-run analyst had to know the path or leave the step. The controls are DATA on the field,
+  // and nothing but this test connects that data to the module that binds it.
+  it("gives the Velociraptor paths the same Browse… and download controls as Settings", async () => {
+    const velo = wizard.wizardStepById("velociraptor");
+    const field = (key: string): WizardField | undefined => velo?.fields?.find((f) => f.key === key);
+    expect(
+      field("DFIR_VELOCIRAPTOR_API_CONFIG")?.browse,
+      "no file picker on the API config path",
+    ).toBeTruthy();
+    expect(field("DFIR_VELOCIRAPTOR_BINARY")?.browse, "no file picker on the binary path").toBeTruthy();
+    expect(field("DFIR_VELOCIRAPTOR_BINARY")?.download, "no download button on the binary path").toBe(true);
+    expect(
+      field("DFIR_VELOCIRAPTOR_API_CONFIG")?.download,
+      "the config path must not offer a binary download",
+    ).toBeUndefined();
+
+    // The renderer emits the buttons, and the wizard binds them after EVERY step render — the
+    // pane is rebuilt on each visit, so a one-shot binding at load would be dead on the second.
+    const read = (file: string): Promise<string> =>
+      readFile(new URL(`../../../public/js/${file}`, import.meta.url), "utf8");
+    const fragments = await read("dashboard-fragments.js");
+    expect(fragments).toContain("data-wiz-browse");
+    expect(fragments).toContain("data-wiz-download");
+    const browse = await read("dashboard-velo-fs-browse.js");
+    expect(browse).toContain("window.wirePathBrowseControls");
+    expect(browse).toContain('fetch("/settings/velociraptor/download-latest"');
+    expect(await read("dashboard-setup-wizard.js")).toContain("wirePathBrowseControls(pane)");
   });
 
   it("answers /setup/status for every step that draws a rail tick", async () => {

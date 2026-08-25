@@ -29,6 +29,37 @@
       "Try <code>claude-haiku-4-5</code> (cheap) or <code>claude-sonnet-4-6</code>.",
   };
   const LOCAL_PROVIDERS = new Set(["ollama", "litellm"]);
+  // The wizard's two model combo boxes, driven by the SAME code as Settings → AI
+  // (window.wireAiModelPicker, js/dashboard-env-settings.js). `role` is the server's fixed enum;
+  // `elementKey` is the id suffix, so these two do not collide with the Settings pickers of the
+  // same role that also live on this page. The synthesis picker falls back to the wizard's own
+  // vision fields, never to the Settings ones.
+  const WIZ_MODEL_PICKERS = [
+    {
+      role: "vision",
+      elementKey: "wizard-vision",
+      providerId: "wizProvider",
+      modelId: "wizModel",
+      keyId: "wizKey",
+      baseUrlId: "wizBaseUrl",
+      envBaseUrlKey: "DFIR_VISION_BASE_URL",
+      fallbackProviderId: "",
+      fallbackKeyId: "",
+      fallbackBaseUrlId: "",
+    },
+    {
+      role: "synthesis",
+      elementKey: "wizard-synthesis",
+      providerId: "wizSynthProvider",
+      modelId: "wizSynthModel",
+      keyId: "wizSynthKey",
+      baseUrlId: "wizSynthBaseUrl",
+      envBaseUrlKey: "DFIR_AI_SYNTH_BASE_URL",
+      fallbackProviderId: "wizProvider",
+      fallbackKeyId: "wizKey",
+      fallbackBaseUrlId: "wizBaseUrl",
+    },
+  ];
 
   // ── AI step logic (#181, preserved) ──
   function wizResetAiStep() {
@@ -48,6 +79,10 @@
     wizEl("wizSynthSaveBtn").disabled = false;
     const ccWizCard = wizEl("claude-code-status-wizard");
     if (ccWizCard) ccWizCard.style.display = "none";
+    // Clearing the <input> leaves the combo box still listing the previous provider's models, so
+    // replay the provider change the listeners below are already wired to.
+    wizEl("wizProvider").dispatchEvent(new Event("change"));
+    wizEl("wizSynthProvider").dispatchEvent(new Event("change"));
   }
   // Claude Code connection-status card mirrored inside the wizard's own AI step (distinct
   // cc-*-wizard ids so it doesn't collide with the Settings → AI instance). No hard "ready" gate
@@ -226,6 +261,8 @@
         : "none";
     });
     wizEl("wizTestSaveBtn").onclick = wizSaveAndTestAi;
+    if (typeof wireAiModelPicker === "function")
+      WIZ_MODEL_PICKERS.forEach(wireAiModelPicker);
   }
 
   window.wizResetAiStep = wizResetAiStep;

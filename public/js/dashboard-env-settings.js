@@ -20,6 +20,10 @@
       modelId: "env-DFIR_VISION_MODEL",
       keyId: "env-DFIR_VISION_KEY",
       baseUrlId: "env-DFIR_VISION_BASE_URL",
+      // Vision IS the fallback every other role borrows from, so it has none of its own.
+      fallbackProviderId: "",
+      fallbackKeyId: "",
+      fallbackBaseUrlId: "",
     },
     {
       role: "synthesis",
@@ -48,21 +52,35 @@
     return (document.getElementById(id)?.value || "").trim();
   }
 
+  // The suffix on this picker's three element ids. Separate from picker.role because role is a
+  // fixed server enum and the setup wizard has its OWN vision and synthesis pickers on the same
+  // page: two "vision" pickers would otherwise share one <select> and one in-flight request slot.
+  function pickerKey(picker) {
+    return picker.elementKey || picker.role;
+  }
+
+  // Where a role looks when its OWN provider/key/base-URL field is blank. Named per picker rather
+  // than hard-coded to the Settings ids, because the setup wizard drives the same code against
+  // wizProvider / wizKey / wizBaseUrl. "" means "no fallback — this role IS the fallback".
+  function fallbackId(picker, field, settingsDefault) {
+    return picker[field] === undefined ? settingsDefault : picker[field];
+  }
+
   function resolvedModelProvider(picker) {
     const selected = fieldValue(picker.providerId);
     if (selected) return selected;
     if (picker.role === "velociraptor") return "openrouter";
-    return fieldValue("env-DFIR_VISION_PROVIDER");
+    const id = fallbackId(picker, "fallbackProviderId", "env-DFIR_VISION_PROVIDER");
+    return id ? fieldValue(id) : "";
   }
 
   function requestBaseUrl(picker) {
     const value = fieldValue(picker.baseUrlId);
     if (value) return value;
-    const key = picker.baseUrlId.replace(/^env-/, "");
+    const key = picker.envBaseUrlKey || picker.baseUrlId.replace(/^env-/, "");
     if (loadedEnvValues[key]) return "";
-    return picker.role === "vision"
-      ? undefined
-      : fieldValue("env-DFIR_VISION_BASE_URL") || undefined;
+    const id = fallbackId(picker, "fallbackBaseUrlId", "env-DFIR_VISION_BASE_URL");
+    return (id && fieldValue(id)) || undefined;
   }
 
   function modelOption(value, label, disabled = false) {
@@ -76,7 +94,7 @@
   function showCustomModelInput(picker, visible, focus = false) {
     const input = document.getElementById(picker.modelId);
     if (!input) return;
-    const select = document.getElementById("ai-model-picker-" + picker.role);
+    const select = document.getElementById("ai-model-picker-" + pickerKey(picker));
     const hasModels = select?.dataset.hasModels === "1";
     input.style.display = visible ? "" : "none";
     input.style.order = hasModels ? "2" : "0";
@@ -85,7 +103,7 @@
   }
 
   function replaceModelOptions(picker, models) {
-    const select = document.getElementById("ai-model-picker-" + picker.role);
+    const select = document.getElementById("ai-model-picker-" + pickerKey(picker));
     if (!select) return;
     const current = fieldValue(picker.modelId);
     select.replaceChildren(
@@ -109,7 +127,7 @@
   }
 
   function showModelPickerLoading(picker) {
-    const select = document.getElementById("ai-model-picker-" + picker.role);
+    const select = document.getElementById("ai-model-picker-" + pickerKey(picker));
     if (!select) return;
     const current = fieldValue(picker.modelId);
     select.replaceChildren(modelOption("", "Loading available models…", true));
@@ -121,7 +139,7 @@
   }
 
   function applySelectedModel(picker) {
-    const select = document.getElementById("ai-model-picker-" + picker.role);
+    const select = document.getElementById("ai-model-picker-" + pickerKey(picker));
     const input = document.getElementById(picker.modelId);
     if (!select || !input) return;
     if (select.value === CUSTOM_MODEL_VALUE) {
@@ -135,18 +153,19 @@
 
   async function refreshAiModels(picker) {
     const provider = resolvedModelProvider(picker);
-    const status = document.getElementById("ai-model-status-" + picker.role);
+    const status = document.getElementById("ai-model-status-" + pickerKey(picker));
     if (!provider) {
       replaceModelOptions(picker, []);
       if (status) status.textContent = "Choose a provider first.";
       return;
     }
-    const version = (modelRequestVersions.get(picker.role) || 0) + 1;
-    modelRequestVersions.set(picker.role, version);
+    const version = (modelRequestVersions.get(pickerKey(picker)) || 0) + 1;
+    modelRequestVersions.set(pickerKey(picker), version);
     showModelPickerLoading(picker);
     if (status) status.textContent = "Loading available models…";
     const roleKey = fieldValue(picker.keyId);
-    const mainKey = picker.role === "vision" ? "" : fieldValue("env-DFIR_VISION_KEY");
+    const keyFallback = fallbackId(picker, "fallbackKeyId", "env-DFIR_VISION_KEY");
+    const mainKey = keyFallback ? fieldValue(keyFallback) : "";
     const body = { provider, role: picker.role, apiKey: roleKey || mainKey };
     const baseUrl = requestBaseUrl(picker);
     if (baseUrl !== undefined) body.baseUrl = baseUrl;
@@ -157,7 +176,7 @@
         body: JSON.stringify(body),
       });
       const result = await response.json().catch(() => ({}));
-      if (modelRequestVersions.get(picker.role) !== version) return;
+      if (modelRequestVersions.get(pickerKey(picker)) !== version) return;
       if (!response.ok) throw new Error(result.error || "model list request failed");
       const models = Array.isArray(result.models)
         ? result.models.filter((model) => typeof model === "string")
@@ -170,7 +189,7 @@
             ? `${models.length} available models — choose one or enter a model ID manually.`
             : "No models were returned; enter a model ID manually.");
     } catch (error) {
-      if (modelRequestVersions.get(picker.role) !== version) return;
+      if (modelRequestVersions.get(pickerKey(picker)) !== version) return;
       replaceModelOptions(picker, []);
       if (status)
         status.textContent =
@@ -178,27 +197,31 @@
     }
   }
 
-  function wireAiModelPickers() {
-    AI_MODEL_PICKERS.forEach((picker) => {
-      const button = document.getElementById("load-ai-models-" + picker.role);
-      const select = document.getElementById("ai-model-picker-" + picker.role);
-      if (!button || !select || button.dataset.aiModelsWired) return;
-      button.dataset.aiModelsWired = "1";
-      button.addEventListener("click", () => refreshAiModels(picker));
-      select.addEventListener("change", () => applySelectedModel(picker));
-      document
-        .getElementById(picker.providerId)
-        ?.addEventListener("change", () => refreshAiModels(picker));
-      document
-        .getElementById(picker.keyId)
-        ?.addEventListener("change", () => refreshAiModels(picker));
-      document
-        .getElementById(picker.baseUrlId)
-        ?.addEventListener("change", () => refreshAiModels(picker));
-      document.getElementById(picker.modelId)?.addEventListener("input", () => {
-        select.value = CUSTOM_MODEL_VALUE;
-      });
+  // One picker. Published, because the setup wizard's AI step has the same combo box over its own
+  // wizProvider / wizModel / wizKey fields and reimplementing it there is how the two drift apart.
+  function wireAiModelPicker(picker) {
+    const button = document.getElementById("load-ai-models-" + pickerKey(picker));
+    const select = document.getElementById("ai-model-picker-" + pickerKey(picker));
+    if (!button || !select || button.dataset.aiModelsWired) return;
+    button.dataset.aiModelsWired = "1";
+    button.addEventListener("click", () => refreshAiModels(picker));
+    select.addEventListener("change", () => applySelectedModel(picker));
+    document
+      .getElementById(picker.providerId)
+      ?.addEventListener("change", () => refreshAiModels(picker));
+    document
+      .getElementById(picker.keyId)
+      ?.addEventListener("change", () => refreshAiModels(picker));
+    document
+      .getElementById(picker.baseUrlId)
+      ?.addEventListener("change", () => refreshAiModels(picker));
+    document.getElementById(picker.modelId)?.addEventListener("input", () => {
+      select.value = CUSTOM_MODEL_VALUE;
     });
+  }
+
+  function wireAiModelPickers() {
+    AI_MODEL_PICKERS.forEach(wireAiModelPicker);
   }
 
   async function fetchEnvSettings() {
@@ -478,5 +501,6 @@
 
   window.fetchEnvSettings = fetchEnvSettings;
   window.saveSettings = saveSettings;
+  window.wireAiModelPicker = wireAiModelPicker;
   window.initEnvSettings = initEnvSettings;
 })();

@@ -329,7 +329,17 @@ export function registerStaticAssets(app: Express): void {
     app.get(route, async (_req, res) => {
       try {
         const buf = await readPublicAsset(route.slice(1)); // strip leading "/"
-        res.type(type).set("Cache-Control", "public, max-age=86400").send(buf);
+        // "no-cache" means STORE IT, BUT ASK FIRST — not "do not cache". Express already computes
+        // an ETag over this buffer, so an unchanged asset costs one conditional request and a
+        // bodiless 304; nothing is re-downloaded.
+        //
+        // It replaced `max-age=86400`, which had no version in any URL to go with it. The dashboard
+        // HTML is generated per request and these files are not, so for a day after any change the
+        // browser paired TODAY'S markup with YESTERDAY'S script and stylesheet — new controls that
+        // no module wires and no rule styles. That is indistinguishable from a broken feature, it
+        // survives an ordinary reload, and it lands on every analyst who upgrades the companion,
+        // not only on whoever edited the file.
+        res.type(type).set("Cache-Control", "no-cache").send(buf);
       } catch {
         res.status(404).end();
       }

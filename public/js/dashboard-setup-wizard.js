@@ -344,6 +344,9 @@
         btn.onclick = () =>
           wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
     }
+    // Path fields render their own Browse… / Download-latest buttons (wizRenderFields), and this
+    // pane is rebuilt on every visit — so they are re-bound here rather than once at load.
+    if (typeof wirePathBrowseControls === "function") wirePathBrowseControls(pane);
     wizRenderRail();
     wizUpdateNav();
   }
