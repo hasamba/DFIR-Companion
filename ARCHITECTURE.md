@@ -126,6 +126,25 @@ The reason is not tidiness. A real case carries tens of thousands of prefetch, a
 rows. Feeding them to a model exhausts the token budget and drowns the signal that earned the
 forensic cut in the first place.
 
+### The content tagger's promotion window is the import that collected the event
+
+The deterministic content tagger is what lifts high-value telemetry out of `Info` — but it can only
+do so during the import that collected it. The order is **merge-all → tag → demote**: merge-all puts
+every event in the forensic timeline, the tagger raises the ones its rules match, and demote then
+removes whatever is still `Info`. `runAndApplyTagger` **maps over the forensic timeline and never
+appends to it**, so once demote has run, the event is in the super-timeline only and out of reach.
+
+The consequence to hold on to: **a new tagger rule changes what future collections surface to the
+model, not what past ones do.** A later "Run tagger" still evaluates the historical super-timeline
+rows and still writes their tags — so they become findable by tag — but it cannot raise them back
+across the cut. Surfacing old evidence to the model means re-collecting it.
+
+Do not close that gap by appending inside `runAndApplyTagger`. Promoting historical rows in bulk is
+precisely the flooding this boundary exists to prevent; a backfill has to be analyst-initiated,
+previewed and capped, like every other path below. `tests/analysis/taggerPromotionBoundary.test.ts`
+pins both halves — that the import-time promotion works and survives demote, and that a post-demote
+run moves nothing.
+
 ### Three analyst-initiated paths touch the raw record
 
 None of them run on their own — each is a button the analyst presses. Two now satisfy the rule
