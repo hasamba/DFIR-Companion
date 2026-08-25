@@ -168,7 +168,7 @@ export interface ElementLike {
 }
 
 export interface JobView {
-  job: { id?: string; kind: string; label?: string; status: string };
+  job: { id?: string; kind: string; label?: string; model?: string; status: string };
   cancel?: boolean;
   resume?: boolean;
   detail: string;

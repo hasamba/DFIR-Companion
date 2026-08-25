@@ -90,8 +90,13 @@ function jobMenuView(j) {
 function updateJobRow(row, view) {
   const status = row.querySelector(".job-st");
   const detail = row.querySelector(".job-detail");
+  const model = row.querySelector(".job-model");
   row.querySelector(".job-kind").textContent = view.job.kind;
   row.querySelector(".job-label").textContent = view.job.label || "";
+  if (model) {
+    model.textContent = view.job.model || "";
+    model.style.display = view.job.model ? "" : "none";
+  }
   status.className = `job-st job-${view.job.status}`;
   status.textContent = view.job.status;
   detail.textContent = view.detail;

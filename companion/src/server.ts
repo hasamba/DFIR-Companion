@@ -45,6 +45,7 @@ import { createSettingsReload } from "./composition/settingsReload.js";
 import { createCaseNotifier } from "./composition/caseNotifier.js";
 import { createOcrIndexer } from "./composition/ocrIndexer.js";
 import { createAiControlCache } from "./composition/aiControlCache.js";
+import { jobModelResolver } from "./composition/jobModel.js";
 import { buildIrisClient, buildTimesketchClient } from "./composition/integrationClients.js";
 
 // Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
@@ -97,6 +98,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // collects). Unlike the state lock this one is never optional: an import's "+N events" and its undo
   // checkpoint are only correct if nothing else writes inside its section. See analysis/importLock.ts.
   const importLock = options.importLock ?? new ImportLock();
+
+  // Name the model on every AI job the jobs popover lists (#633 follow-up). Installed here because
+  // this is the first place holding BOTH the job manager and the pipeline whose provider answers
+  // the question. See composition/jobModel.ts for what counts as an AI job and why.
+  options.jobManager?.useModelResolver(jobModelResolver(options.pipeline));
 
   // Automatic content-based tagger: after an import dual-writes its new events into the super-timeline,
   // tag just those events (Timesketch tagger analyzer, ported). Best-effort + non-fatal + gated on

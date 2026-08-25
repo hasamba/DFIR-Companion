@@ -286,6 +286,11 @@
   border-radius: 5px; padding: 5px 8px; font-size: 12px; margin-bottom: 6px; }
 .job-kind { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; color: var(--text-muted); }
 .job-label { color: var(--text-bright); word-break: break-all; flex: 1 1 140px; min-width: 0; }
+/* Its own line, below the header: at 340px the kind + label + status already fill line 1, and
+   sharing it pushed the status badge — the first thing an analyst scans for — down a row. */
+.job-model { flex: 0 0 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px;
+  color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-model::before { content: "model "; font-family: inherit; color: var(--text-faint); }
 .job-st { border-radius: 3px; padding: 0 6px; font-size: 10px; font-weight: bold; white-space: nowrap; flex: 0 0 auto; align-self: center; }
 .job-queued { background: #9aa4b222; color: #b6c0cc; border: 1px solid #9aa4b255; }
 .job-running { background: #6aa9ff22; color: #6aa9ff; border: 1px solid #6aa9ff55; }

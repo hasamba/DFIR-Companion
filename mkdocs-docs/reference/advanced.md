@@ -104,6 +104,13 @@ The jobs badge in the top toolbar is rebuilt from a durable ledger whenever the 
 It shows queued and running work plus recent outcomes, progress, speed, ETA, warnings, and the last
 committed checkpoint.
 
+A row that an AI model drives also names that model — synthesis, Deep Pass, and CSV/log imports,
+all of which run the text model (`DFIR_AI_SYNTH_MODEL`, falling back to the vision model). The name
+is recorded when the job is queued, not read back from Settings when the row is drawn, so a finished
+run still names the model that produced it after you point synthesis somewhere else. Rows with no
+model named run none: enrichment is HTTP lookups, a non-CSV/log import parses locally, and an MCP
+run uses whatever model the Claude Code CLI defaults to unless `DFIR_MCP_MODEL` sets one.
+
 If the server stops during an import or Deep Pass, the old running row becomes **interrupted** on
 startup instead of disappearing. A **Resume** button appears only when that job saved restart-safe
 parameters and still has retry attempts left. CSV/log imports continue after the last evidence batch
