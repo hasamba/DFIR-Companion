@@ -1341,6 +1341,60 @@ describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () =>
     expect(ev.description.length).toBeLessThanOrEqual(600); // description stays the short summary
   });
 
+  // ── The message cap. A PowerShell script long enough to be cut kept its C2 table in the
+  // half that was cut, so the stored event named no attacker infrastructure at all — on a real case
+  // (INC-2026-001) 181 events each held exactly 4,001 characters of module boilerplate and not one
+  // C2 host. The cap itself stays: the forensic timeline feeds AI synthesis and the cap is what
+  // bounds it. What must not stay is the SILENCE about what the cap removed.
+  //
+  // A message whose indicators sit on both sides of the cut, so the assertions can tell "kept" apart
+  // from "disclosed". The filler is deliberately indicator-free.
+  const PRE_CUT_DOMAIN = "staging-pre.example.com";
+  const PRE_CUT_IP = "198.51.100.9";
+  const POST_CUT_DOMAIN = "workspacin-post.example.net";
+  const POST_CUT_IP = "203.0.113.77";
+  function splitIndicatorScript(): string {
+    const head = `ScriptBlock: Invoke-WebRequest ${PRE_CUT_DOMAIN} ; $peer = "${PRE_CUT_IP}"\n`;
+    const filler = "Write-Host 'benign module boilerplate line' ; ".repeat(200);
+    const tail = `\n$C2 = @("${POST_CUT_DOMAIN}") ; $ExfilIp = "${POST_CUT_IP}"`;
+    return head + filler + tail;
+  }
+
+  it("keeps the post-cut indicators discoverable from the stored event", () => {
+    const raw = splitIndicatorScript();
+    expect(raw.length).toBeGreaterThan(4000); // the fixture must actually reach the cap
+    expect(raw.indexOf(POST_CUT_DOMAIN)).toBeGreaterThan(4000); // …and hide its C2 table past it
+    const text = JSON.stringify({
+      "Custom.PSScript": [{ Message: raw, SomeTime: "2026-06-01T00:00:00Z" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    const message = r.events[0].message as string;
+
+    // What the analyst reads before the cut is unchanged.
+    expect(message).toContain(PRE_CUT_DOMAIN);
+    expect(message).toContain(PRE_CUT_IP);
+    // The body is still capped — this is a disclosure, not a raised ceiling.
+    expect(message.slice(0, 4001)).toBe(`${raw.slice(0, 4000)}\u2026`);
+    // The note is a short disclosure, not the rest of the script smuggled back in.
+    expect(message.length).toBeLessThan(4001 + 800);
+    // And the indicators the cut removed are named, with the size of the cut.
+    expect(message).toContain(POST_CUT_DOMAIN);
+    expect(message).toContain(POST_CUT_IP);
+    expect(message).toContain(`${raw.length - 4000} more characters`);
+  });
+
+  it("leaves a message that fits the cap exactly as it was", () => {
+    // No cut ⇒ nothing to disclose. A note on an untruncated message would be noise on every row.
+    const raw = `ScriptBlock: ${"Write-Host 'x' ; ".repeat(50)}${POST_CUT_DOMAIN}`;
+    expect(raw.length).toBeLessThan(4000);
+    const text = JSON.stringify({
+      "Custom.PSScript": [{ Message: raw, SomeTime: "2026-06-01T00:00:00Z" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    expect(r.events[0].message).toBe(raw);
+    expect(r.events[0].message).not.toContain("more characters");
+  });
+
   it("does NOT set message when the description already contains the whole thing (#9)", () => {
     // A short message wholly inside the (uncapped) description adds nothing to reveal → message stays unset.
     const text = JSON.stringify({

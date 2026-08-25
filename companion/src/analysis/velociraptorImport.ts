@@ -26,6 +26,7 @@ import { normalizeRow } from "./veloRowNormalize.js";
 import { parsedNewProcess, salientFromMessage } from "./veloMessageFields.js";
 import { thorFields } from "./thorRowMap.js";
 import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
+import { remainderNote } from "./truncatedRemainder.js";
 import { parseCsv } from "./csvImport.js";
 import {
   extractRecords,
@@ -147,14 +148,24 @@ function rowMessage(row: Row): string {
 // analyst may want to read in full, beyond the truncated one-line `description`. Generously capped
 // so it stays bounded in state. Returns "" when there's no message OR the message adds nothing
 // beyond what's already in `description` (so we don't stamp a redundant expandable block).
+//
+// The cap stays where it is: it is what keeps one 100 KB ScriptBlockText from sitting in case state
+// on every row that quotes it. What the cap must not do is stay QUIET about what it removed. On a
+// real case (INC-2026-001) the script kept its C2 table 7,626 characters in, so every stored event
+// showed four thousand characters of module boilerplate and not one attacker host, and nothing said
+// a table had been dropped. `remainderNote` appends one bounded line naming the size of the cut and
+// the indicators inside it — the analyst reads it in the expanded row, and the local text consumers
+// (second-look keyword search, CVE/KEV grounding) match on it. It runs on the dropped tail only, and
+// only when there is a tail. The synthesis prompt renders `description`, not `message`, so the note
+// costs the model no tokens (see renderPromptEvent in ai/synthesisPromptEvents.ts).
 const MESSAGE_CAP = 4000;
 function fullMessage(row: Row, description: string): string {
   const raw = rowMessage(row).trim();
   if (!raw) return "";
-  const capped = raw.length > MESSAGE_CAP ? `${raw.slice(0, MESSAGE_CAP)}…` : raw;
   // If the description already contains (nearly) the whole message there's no extra detail to reveal.
   if (description.includes(raw) || raw.length <= 80) return "";
-  return capped;
+  if (raw.length <= MESSAGE_CAP) return raw;
+  return `${raw.slice(0, MESSAGE_CAP)}…${remainderNote(raw.slice(MESSAGE_CAP))}`;
 }
 
 // A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
