@@ -63,3 +63,46 @@ describe("veloCoverageHtml", () => {
     expect(html).toContain("&lt;img src=x&gt;");
   });
 });
+
+// The launch-time half of the same module. SKIPPED artifacts were dropped from the run; UNHELD tools
+// dropped nothing — the server just has no file for them yet. Conflating the two would tell an
+// analyst a sweep is smaller than it is, or that a run is fine when one unreachable tool will kill it.
+describe("veloLaunchNotesHtml", () => {
+  it("is empty when nothing was skipped and every tool is on the server", () => {
+    expect(cov.veloLaunchNotesHtml({})).toBe("");
+    expect(cov.veloLaunchNotesHtml({ unknownArtifacts: [], unheldTools: [] })).toBe("");
+  });
+
+  it("names skipped artifacts, both the unknown ones and the ones missing a tool", () => {
+    const html = cov.veloLaunchNotesHtml({
+      unknownArtifacts: ["Windows.Bogus.Typo"],
+      unavailableArtifacts: [{ artifact: "Generic.Scanner.ThorZIP", reason: "no download URL" }],
+    });
+    expect(html).toContain("skipped 2 artifact(s)");
+    expect(html).toContain("Windows.Bogus.Typo");
+    expect(html).toContain("Generic.Scanner.ThorZIP: no download URL");
+    expect(html).not.toContain("tool(s) were not on this server yet");
+  });
+
+  it("warns about tools the server has not fetched WITHOUT calling them skipped", () => {
+    const html = cov.veloLaunchNotesHtml({
+      unheldTools: [{ tool: "FileYaraWindows", url: "https://example.invalid/y.gz", artifacts: ["A.one"] }],
+    });
+    expect(html).toContain("1 tool(s) were not on this server yet");
+    expect(html).toContain("FileYaraWindows");
+    expect(html).toContain("the run will not start");
+    expect(html).not.toContain("skipped");
+  });
+
+  it("reports both at once, and escapes what the server sent back", () => {
+    const html = cov.veloLaunchNotesHtml({
+      unknownArtifacts: ["<img src=x>"],
+      unheldTools: [{ tool: "<script>", url: "", artifacts: [] }],
+    });
+    expect(html).toContain("skipped 1 artifact(s)");
+    expect(html).toContain("1 tool(s) were not on this server yet");
+    expect(html).not.toContain("<img src=x>");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;img src=x&gt;");
+  });
+});

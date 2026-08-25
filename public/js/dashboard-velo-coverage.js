@@ -50,3 +50,35 @@ function veloCoverageHtml(job) {
   }
   return html;
 }
+
+// What the run-bundle route left behind, said at launch (#385 file-size ledger: extracted from
+// dashboard-velo-triage.js rather than grown inside it).
+//
+// Two different things, and conflating them would be wrong. SKIPPED artifacts were dropped — this
+// server does not have them, or cannot download their tool — and the hunt runs without them. UNHELD
+// tools cost nothing yet: the server simply has no file for them, and fetches each while it compiles
+// the hunt. Harmless with egress and fatal without it, because ONE it cannot reach loses the entire
+// run — so the analyst is told which they are while the hunt is still young.
+
+/* exported veloLaunchNotesHtml */
+function veloLaunchNotesHtml(j) {
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const tint = (items, sev) => `<span data-safe-style="color:var(--sev-${sev})">${esc(items.join(", "))}</span>`;
+  const skipped = list(j.unknownArtifacts).concat(
+    list(j.unavailableArtifacts).map((u) => `${u.artifact}: ${u.reason}`),
+  );
+  const unheld = list(j.unheldTools).map((u) => u.tool);
+  const notes = [];
+  if (skipped.length)
+    notes.push(
+      `skipped ${skipped.length} artifact(s), not on this server or missing their tool: ` +
+        tint(skipped, "high"),
+    );
+  if (unheld.length)
+    notes.push(
+      `${unheld.length} tool(s) were not on this server yet — Velociraptor fetches them while it ` +
+        "starts the hunt, and if it cannot reach one the run will not start: " +
+        tint(unheld, "medium"),
+    );
+  return notes.length ? `launched ✓ — ${notes.join("; ")}` : "";
+}

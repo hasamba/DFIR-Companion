@@ -8,7 +8,9 @@
 
 import {
   partitionByToolAvailability,
+  toolsNotHeldByServer,
   type UnavailableArtifact,
+  type UnheldTool,
   type VeloArtifactTool,
 } from "./artifactTools.js";
 import type { VeloArtifactInfo } from "./velociraptorApi.js";
@@ -17,6 +19,10 @@ export interface BundlePreflight {
   artifacts: string[]; // the subset to launch
   unknownArtifacts: string[]; // named by the bundle, absent from the server's catalog
   unavailableArtifacts: UnavailableArtifact[]; // present, but the server cannot get their tool
+  // Runnable, but needing a tool the server has no file for yet — a WARNING, never a reason to drop:
+  // Velociraptor fetches every tool while it compiles the hunt, and one it cannot reach loses the whole
+  // run. Empty when the tool inventory could not be read (the declared metadata cannot answer this).
+  unheldTools: UnheldTool[];
   definitions: VeloArtifactInfo[]; // the catalog, so the caller's time-scope plan needn't re-fetch it
   error?: string; // nothing can run — the caller answers 400 and launches nothing
   notes: string[]; // what was dropped and why, for the caller's log
@@ -49,6 +55,7 @@ export async function preflightBundleArtifacts(
     artifacts: [...artifacts],
     unknownArtifacts: [],
     unavailableArtifacts: [],
+    unheldTools: [],
     definitions,
     notes,
   });
@@ -94,6 +101,7 @@ export async function preflightBundleArtifacts(
       artifacts: [],
       unknownArtifacts,
       unavailableArtifacts: unavailable,
+      unheldTools: [],
       definitions,
       notes,
       error: `every artifact in this bundle needs a third-party tool the server cannot download: ${unavailable
@@ -101,10 +109,22 @@ export async function preflightBundleArtifacts(
         .join("; ")}`,
     };
   }
+  // What the URL check above cannot see: a tool with a VALID url that this server has simply never
+  // fetched. Only the inventory can answer it, so a failed inventory read means no warning at all
+  // rather than a false one — see toolsNotHeldByServer.
+  const unheldTools = inventory ? toolsNotHeldByServer(runnable, definitions, inventory) : [];
+  if (unheldTools.length)
+    notes.push(
+      `${unheldTools.length} tool(s) not downloaded to this server yet — Velociraptor fetches them while ` +
+        `it compiles the hunt, and one it cannot reach fails the whole run: ` +
+        unheldTools.map((u) => `${u.tool} (${u.url || "no download URL"})`).join(", "),
+    );
+
   return {
     artifacts: runnable,
     unknownArtifacts,
     unavailableArtifacts: unavailable,
+    unheldTools,
     definitions,
     notes,
   };

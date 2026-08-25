@@ -431,6 +431,11 @@ export interface VeloCoverageApi {
     emptyArtifacts?: string[];
     truncatedArtifacts?: { name: string; kept: number; total: number }[];
   }): string;
+  veloLaunchNotesHtml(run: {
+    unknownArtifacts?: string[];
+    unavailableArtifacts?: { artifact: string; reason: string }[];
+    unheldTools?: { tool: string; url?: string; artifacts?: string[] }[];
+  }): string;
 }
 
 // public/js/dashboard-velo-case.js — which case Velociraptor work runs against, and whether it may run.

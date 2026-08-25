@@ -37,6 +37,15 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 
 Settings → Velociraptor → Bundles. Built-in bundles include **Fast Triage** (quick artifact set) and **Full Triage** (comprehensive). You can create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results.
 
+#### Third-party tools
+
+Some artifacts need a third-party tool (THOR, the DetectRaptor YARA packs, an extension feed). Velociraptor fetches **every** tool a bundle needs while it compiles the hunt — before any client is contacted — so one tool it cannot obtain aborts the whole run and returns no hunt id at all.
+
+The pre-flight checks each tool against the server's own tool inventory and reports two different problems:
+
+- **A tool with no usable download URL** — the `todo.…` placeholder that licensed tools ship with. Its artifact is dropped from the run and named, so the rest of the bundle still collects.
+- **A tool the server holds no file for yet**, even though its URL looks fine. Nothing is dropped for this — on a server with internet access those download on first use — but the tools are listed on the bundle card, and if the hunt then refuses to start, the error names them as the likeliest cause. This is the usual failure on an air-gapped or proxied server: upload the file under **Server Artifacts → Tools** in the Velociraptor GUI, or remove the artifact that needs it from the bundle.
+
 #### Time scope
 
 The bundle run form has a **Time scope** control: **All time** (the default), last 24 hours / 7 days / 30 days / 90 days, or a custom UTC start/end range. The window is applied during collection, not after: it's mapped onto each artifact's own date parameters (names vary by artifact — `DateAfter`/`DateBefore`, `StartDate`, …), so fewer rows leave the endpoint and the hunt finishes faster, rather than importing everything and filtering it out afterward.

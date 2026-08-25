@@ -86,6 +86,59 @@ describe("preflightBundleArtifacts", () => {
     expect(pre.error).toBeUndefined();
   });
 
+  // The air-gapped-server case: THOR and lolrmm were uploaded by hand, but the DetectRaptor YARA packs
+  // are still only a GitHub URL. Every existing check passes them, Velociraptor then fails to fetch one
+  // while compiling the hunt, and the analyst gets "no hunt id" for all 43 artifacts. Warn, do not drop:
+  // on a server WITH egress these fetch fine, and dropping them would silently gut the sweep.
+  it("warns about tools the server has not downloaded yet, without dropping their artifacts", async () => {
+    const YARA = def("DetectRaptor.Generic.Detection.YaraFile", [
+      { name: "FileYaraWindows", url: "https://github.com/x/full_windows.yar.gz" },
+    ]);
+    const pre = await preflightBundleArtifacts(
+      ["DetectRaptor.Generic.Detection.YaraFile", "Generic.Scanner.ThorZIP"],
+      async () => [YARA, THOR],
+      async () =>
+        parseToolInventory([
+          { name: "FileYaraWindows", url: "https://github.com/x/full_windows.yar.gz" },
+          { name: "ThorZIP", url: "todo.thor-lite.zip.download.url", hash: "ca5a50a52690" },
+        ]),
+    );
+    expect(pre.artifacts).toEqual(["DetectRaptor.Generic.Detection.YaraFile", "Generic.Scanner.ThorZIP"]);
+    expect(pre.unavailableArtifacts).toEqual([]);
+    expect(pre.unheldTools).toEqual([
+      {
+        tool: "FileYaraWindows",
+        url: "https://github.com/x/full_windows.yar.gz",
+        artifacts: ["DetectRaptor.Generic.Detection.YaraFile"],
+      },
+    ]);
+    expect(pre.notes.join(" ")).toContain("FileYaraWindows");
+  });
+
+  // The declared metadata NEVER carries a hash (it echoes the artifact YAML), so falling back to it
+  // would report every tool in the bundle as missing — a false alarm on a perfectly healthy server.
+  it("says nothing about unheld tools when the inventory read failed", async () => {
+    const pre = await preflightBundleArtifacts(
+      ["Windows.NTFS.MFT"],
+      async () => [def("Windows.NTFS.MFT", [{ name: "Chainsaw", url: "https://github.com/x/chainsaw.zip" }])],
+      async () => {
+        throw new Error("inventory() unavailable");
+      },
+    );
+    expect(pre.artifacts).toEqual(["Windows.NTFS.MFT"]);
+    expect(pre.unheldTools).toEqual([]);
+  });
+
+  it("reports no unheld tools when the server holds every one of them", async () => {
+    const pre = await preflightBundleArtifacts(
+      ["Generic.Scanner.ThorZIP"],
+      async () => [THOR],
+      async () => parseToolInventory([{ name: "ThorZIP", url: "todo.x", hash: "ca5a50a52690" }]),
+    );
+    expect(pre.unheldTools).toEqual([]);
+    expect(pre.notes).toEqual([]);
+  });
+
   it("keeps the catalog it fetched, so the caller's time-scope plan needn't fetch it again", async () => {
     const pre = await preflightBundleArtifacts(["Windows.NTFS.MFT"], async () => [
       def("Windows.NTFS.MFT"),
