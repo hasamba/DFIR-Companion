@@ -553,6 +553,10 @@ export interface AppOptions {
   updateRepo?: string; // default DEFAULT_UPDATE_REPO; override for forks
   updateCheckEnv?: string; // raw DFIR_UPDATE_CHECK (passed, not read globally, for testability)
   updateFetch?: typeof fetch; // injectable so tests never hit the network
+  // Basemap tile fetch for GET /geo-tiles/:z/:x/:y.png (routes/geoTiles.ts). Injectable for the
+  // same reason as updateFetch: the tile proxy is the one route whose whole job is an outbound
+  // request, and no test should reach tile.openstreetmap.org to prove it.
+  geoTileFetch?: typeof fetch;
   // Demo mode (DFIR_DEMO_MODE): blocks all mutating routes except POST /cases/seed-demo so a
   // public Railway/cloud deployment is safe to share. The startup seed + periodic reset live in
   // startServer; the middleware here enforces the read-only surface at the API layer.

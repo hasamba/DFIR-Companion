@@ -161,6 +161,18 @@ describe("team-auth configuration and policy", () => {
     expect(resolveRequestPolicy("POST", "/settings/env")).toEqual({ kind: "global", permission: "admin" });
   });
 
+  // The proxied basemap (routes/geoTiles.ts). It carries no case data — a tile is the same picture
+  // of the world for every user — but an unlisted top-level path falls through to the global-admin
+  // default, which would leave the Geographic Map blank for every reader, investigator and
+  // reviewer while working perfectly for whoever added the route.
+  it("treats a basemap tile as an authenticated asset, and only for GET", () => {
+    expect(resolveRequestPolicy("GET", "/geo-tiles/3/4/5.png")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/geo-tiles/3/4/5.png")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+  });
+
   // The wizard's suggested incident number. It reads across every case on disk, so it must not be
   // per-case gated — but anyone who may create a case may ask what to call it, so it is no more
   // than authenticated either. It deliberately does NOT live under /cases/, where a single
