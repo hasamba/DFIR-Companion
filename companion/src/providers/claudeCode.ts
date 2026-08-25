@@ -118,7 +118,7 @@ export class ClaudeCodeProvider implements AIProvider {
   constructor(opts: ClaudeCodeOptions) {
     this.model = opts.model;
     this.bin = opts.bin?.trim() || "claude";
-    this.timeoutMs = opts.timeoutMs ?? 180_000;
+    this.timeoutMs = opts.timeoutMs ?? 900_000;
     this.runner = opts.runner ?? defaultClaudeRunner;
   }
 

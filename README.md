@@ -882,7 +882,7 @@ single-writer process model.
 | `DFIR_VISION_KEY` | — | Provider API key; leave blank for an auth-less local proxy or for `claude-code` (uses your logged-in `claude` CLI subscription instead) |
 | `DFIR_AI_CLAUDE_CODE_BIN` | `claude` on PATH | `claude-code` only: absolute path to the `claude` binary if it isn't on PATH |
 | `DFIR_VISION_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
-| `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
+| `DFIR_AI_TIMEOUT_MS` | `900000` | Per-request timeout (ms); CLI providers (claude-code, codex) need minutes on a large timeline |
 | `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
 | `DFIR_AI_SYNTH_MAX_EVENTS` | `300` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
 | `DFIR_REPORT_SYNTH_COVERAGE` | _(off)_ | Set truthy to add a **§3.4 Synthesis coverage** footnote to the report — "considered N of M in-window events (K omitted: budget/filtered)", the token estimate, and how many high-severity omissions the safety-net backfill recovered. The dashboard synth-meta card always shows this line; this flag only controls whether it also appears in the exported report |
