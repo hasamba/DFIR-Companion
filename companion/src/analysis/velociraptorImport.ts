@@ -173,11 +173,17 @@ function hashStr(s: string): string {
 // survive the strip; only addresses need rescuing.
 //
 // IPv6 shares its shape with a clock time ("00:00:00"), so a colon candidate counts only when it
-// carries a "::" or at least three colons. A fully numeric, fully expanded IPv6 literal is missed
-// by that rule — vanishingly rare in this telemetry, and the cost of the miss is one merged event,
-// not a wrong link.
+// carries a "::" or at least three colons. That guard is what keeps every timestamped line from
+// becoming its own event.
+//
+// The candidate is bounded by "not next to a hex digit or a colon" rather than \b (#643). A word
+// boundary cannot anchor a match that begins or ends at "::" beside a NUMERIC group — "::1" and
+// "1::" have no word character where the boundary is needed — so those addresses were never
+// extracted, the digit strip erased them, and two connections to different destinations merged
+// anyway. Letters hid it: "::dead" vs "::beef" separates on the words alone, so only the numeric
+// forms failed.
 const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
-const COLON_ADDR_RE = /\b[0-9a-f]{0,4}(?::{1,2}[0-9a-f]{0,4}){2,7}\b/gi;
+const COLON_ADDR_RE = /(?<![0-9a-f:])[0-9a-f]{0,4}(?::{1,2}[0-9a-f]{0,4}){2,7}(?![0-9a-f:])/gi;
 
 function networkTokens(msg: string): string[] {
   const out = new Set<string>();
