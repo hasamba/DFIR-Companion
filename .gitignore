@@ -20,6 +20,12 @@ notifications/
 # ANCHORED only (a bare `velociraptor/` would also match the src/integrations/velociraptor/ source dir).
 /velociraptor/
 
+# Third-party tool binaries staged for Velociraptor artifact tool uploads (velociraptor.exe,
+# autoruns, hollows_hunter, ...). Downloaded by the analyst per machine, tens of MB each, and
+# reproducible from their vendors — never source, never evidence. ANCHORED so a future
+# `companion/src/**/tools/` source dir cannot be swallowed by it.
+/companion/tools/
+
 # CISA KEV catalog cache (issue #99) — downloaded/imported by the analyst at runtime; never commit.
 # Anchored to companion/ because casesRoot defaults to companion/cases, so dirname(casesRoot)=companion/.
 /kev/
