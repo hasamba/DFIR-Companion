@@ -995,7 +995,8 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_ENRICH_JITTER_MS` | `0` | ± random jitter added to the inter-call wait (ms); spreads out aligned/parallel runs so they don't all hit a provider's rate-limit window together |
 | `DFIR_ENRICH_RETRIES` | `2` | Retry attempts for a provider call that hits a 429, honouring `Retry-After` when the provider sends one, before it's counted as an error |
 | `DFIR_ENRICH_RETRY_BACKOFF_MS` | `1000` | Base backoff before the first 429 retry (doubles each attempt, capped at 30s) when the provider gave no `Retry-After` |
-| `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |
+| `DFIR_ENRICH_MAX` | `100` | Max IOCs queried per enrich batch (hashes/IPs first) |
+| `DFIR_ENRICH_MAX_BATCHES` | `20` | How many capped batches one enrich kick may chain. A case with more IOCs than `DFIR_ENRICH_MAX` no longer stops at the cap: the run saves, then starts the next batch where it left off, up to this many. `1` restores the old single-run behaviour. Whatever the cap still leaves is reported in the status line, not silently dropped |
 | `DFIR_ENRICH_HEALTH_TTL_MS` | `60000` | Cache up/down verdict for self-hosted providers (ms) |
 | `DFIR_ENRICH_HEALTH_POLL_MS` | `60000` | Re-probe interval for down providers; `0` disables background poller |
 

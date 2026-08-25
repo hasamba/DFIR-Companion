@@ -98,14 +98,26 @@ export function createEnrichmentEngine({
    * actually finished: replaying after a CANCEL would re-register against the newer job that
    * cancelled it, cancel that in turn, and ping-pong the pair indefinitely.
    */
-  const replayDeferredKick = (caseId: string, parentRunId?: string): void => {
-    if (!deferredKicks.has(caseId)) return;
+  const replayDeferredKick = (caseId: string, parentRunId?: string): boolean => {
+    if (!deferredKicks.has(caseId)) return false;
     const force = deferredKicks.get(caseId)!;
     deferredKicks.delete(caseId);
     enrichInBackground(caseId, force, parentRunId);
+    return true;
   };
 
-  function enrichInBackground(caseId: string, force = false, parentRunId?: string): void {
+  /**
+   * Position in a batch chain. `enrichMaxIocs` bounds how long ONE run holds the case's single
+   * concurrency slot — it was never meant to abandon the indicators past it, but that is what it
+   * did: a 250-IOC case enriched 100 and stopped, and the analyst had to press OK again to get
+   * the rest. A capped run now queues the next batch itself, bounded by `enrichMaxBatches`.
+   */
+  interface BatchChain {
+    batch: number; // 1-based index of the run about to start
+    covered: ReadonlySet<string>; // IOC values earlier batches in this chain already took on
+  }
+
+  function enrichInBackground(caseId: string, force = false, parentRunId?: string, chain?: BatchChain): void {
     if (allProviders.length === 0 || !options.stateStore) return;
     let job: RegisteredJob | undefined; // #225: registered once providers are known
     void (async () => {
@@ -115,6 +127,8 @@ export function createEnrichmentEngine({
         pending.delete(caseId);
         return;
       } // nothing enabled — drop any stale pending mark so the poller can idle
+      const batch = chain?.batch ?? 1;
+      const maxBatches = Math.max(1, options.enrichMaxBatches ?? 20);
       const state = await options.stateStore!.load(caseId);
       // Skip the job/status/save when every enabled provider already checked every IOC and process
       // chain. This avoids spurious enrichment after unrelated re-synthesis; force bypasses it.
@@ -161,7 +175,7 @@ export function createEnrichmentEngine({
         detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})`,
       });
       logLine(
-        `[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`,
+        `[enrich] ${caseId} START batch=${batch}/${maxBatches} providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`,
       );
       const { iocs, summary } = await enrichIocs(state.iocs, {
         providers,
@@ -170,6 +184,9 @@ export function createEnrichmentEngine({
         jitterMs: options.enrichJitterMs,
         retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
         maxIocs: options.enrichMaxIocs,
+        // Everything earlier batches of this chain took on — so batch 2 starts where batch 1
+        // stopped instead of re-paying a rate-limited provider for the same indicators.
+        skipValues: chain?.covered,
         force,
         signal: job?.signal, // #225: analyst cancel — stop between IOCs (partial enrichment is additive/safe)
         health, // probe each provider (cached ~60s) before sending — skip the dead ones
@@ -188,7 +205,7 @@ export function createEnrichmentEngine({
       });
       const downNote = summary.unavailable.length ? ` unavailable=[${summary.unavailable.join(", ")}]` : "";
       logLine(
-        `[enrich] ${caseId} DONE queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped}${downNote}`,
+        `[enrich] ${caseId} DONE batch=${batch}/${maxBatches} queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped} capped=${summary.capped}${downNote}`,
       );
       // Queue incomplete cases for recovery; clear stale pending state when all providers answered.
       if (summary.unavailable.length) pending.add(caseId);
@@ -247,6 +264,25 @@ export function createEnrichmentEngine({
         ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)`
         : "";
       const aborted = job?.signal?.aborted === true;
+      // Chain the next batch when the cap left real work behind. Three things must hold:
+      //   • the batch made PROGRESS (queried > 0) — otherwise a provider that probes DOWN would
+      //     burn the whole budget re-probing a dead server; the health poller owns recovery.
+      //   • the analyst did not cancel.
+      //   • the budget is not spent.
+      // A deferred kick wins over the chain: it replays a FRESH chain that re-scans the whole
+      // case, so continuing as well would register two runs for the same remaining IOCs.
+      const budgetLeft = batch < maxBatches;
+      const willContinue =
+        summary.capped > 0 && summary.queried > 0 && !aborted && budgetLeft && !deferredKicks.has(caseId);
+      const capNote =
+        summary.capped === 0
+          ? ""
+          : willContinue
+            ? `; ${summary.capped} IOC(s) left by the cap — starting batch ${batch + 1}/${maxBatches}`
+            : summary.queried === 0
+              ? `; ${summary.capped} IOC(s) left by the cap — no provider answered, will retry`
+              : `; ${summary.capped} IOC(s) left by the cap (DFIR_ENRICH_MAX=${options.enrichMaxIocs ?? 100}` +
+                `${budgetLeft ? "" : ` × DFIR_ENRICH_MAX_BATCHES=${maxBatches}`}) — enrich again to continue`;
       if (job) await options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
       // A newer exclusive registration may have superseded this run — if an enrichment job for this
       // case is still active, that newer run owns the status; don't stomp its live "enriching IOC
@@ -255,13 +291,24 @@ export function createEnrichmentEngine({
         options.onAiStatus?.(caseId, {
           status: "idle",
           at: new Date().toISOString(),
-          detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}`,
+          detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}${capNote}`,
         });
       }
       // This run's results are saved, so a kick deferred behind it can now load them and enrich only
       // what it added. Not after an ABORT: the analyst cancelled, and replaying would restart the
       // work they just stopped.
-      if (!aborted) replayDeferredKick(caseId, parentRunId);
+      // Re-tested at the point of USE, not only where `willContinue` was decided: a kick can arrive
+      // in between (the run has not released its job yet, so it still defers), and replaying while
+      // also chaining would put two runs on the same remaining IOCs.
+      const replayed = !aborted && replayDeferredKick(caseId, parentRunId);
+      // Otherwise carry the chain on where this batch stopped. `covered` is what this batch
+      // ATTEMPTED, not what succeeded: an IOC whose only provider errored is never stamped into
+      // `enrichedBy`, and under `force` that stamp is ignored anyway — either would leave the
+      // cursor stuck on the same first N indicators for every remaining batch.
+      if (willContinue && !replayed) {
+        const covered = new Set([...(chain?.covered ?? []), ...summary.attemptedValues]);
+        enrichInBackground(caseId, force, parentRunId, { batch: batch + 1, covered });
+      }
     })().catch(async (err) => {
       // Superseding a still-QUEUED run rejects its admission rather than resolving it, so a
       // cancellation arrives here as a rejection. It is not a failure to report: stay silent when a
