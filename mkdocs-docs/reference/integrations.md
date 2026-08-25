@@ -31,11 +31,11 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 - Custom VQL hunts from the dashboard
 - Per-hunt auto-collect (results import automatically after `DFIR_VELO_HUNT_WAIT_MIN`)
 - Live CLIENT_EVENT monitoring (see [Live Monitoring](live-monitoring.md))
-- Triage bundles (Fast Triage / Full Triage / custom)
+- Triage bundles (Best Practice / Super-Timeline Triage / Linux Triage / custom)
 
 ### Triage Bundles
 
-Settings → Velociraptor → Bundles. Built-in bundles include **Fast Triage** (quick artifact set) and **Full Triage** (comprehensive). You can create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results.
+Settings → Velociraptor. Three bundles ship built-in — **Best Practice** (the quick-wins detection sweep), **Super-Timeline Triage** (raw host artifacts; results go to the super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results. See [Step 3a of the walkthrough](../walkthrough.md) for the run procedure.
 
 #### Third-party tools
 
