@@ -1080,8 +1080,9 @@ velociraptor --config server.config.yaml config api_client --name dfir --role ad
 | `DFIR_PBHUNT_SUGGEST_MAX` | `30` | Max number of **AI-suggested playbook hunts** returned per generation (one per endpoint-related task; needs an AI provider) |
 
 **Triage bundles** (**Settings → Velociraptor** tab): *Browse server artifacts* lists the server's collectable
-`CLIENT` artifacts; assemble + save named **bundles** (a single **Best Practice** quick-wins sweep ships by
-default, stored globally next to `cases/` in `bundles/`). **Every bundle, built-ins included, is editable in
+`CLIENT` artifacts; assemble + save named **bundles** (three ship built-in — **Best Practice** (quick-wins
+sweep), **Super-Timeline Triage** (raw host artifacts, routed to the super-timeline only) and **Linux
+Triage** — stored globally next to `cases/` in `bundles/`). **Every bundle, built-ins included, is editable in
 place** — an edit saves an override; **Reset to default** discards it. **Run** one as a hunt (optionally scoped
 by include/exclude labels + OS, and a **minimum-severity** import floor). The **collection timeout** is a bundle
 setting (configured in the editor — bump it for slow artifacts like THOR; Velociraptor's default is 600 s) and is
