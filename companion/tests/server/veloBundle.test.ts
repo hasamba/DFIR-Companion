@@ -448,6 +448,9 @@ describe("Velociraptor triage bundles — routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient-"));
     const store = new CaseStore(root);
     const bare = createApp(store, {}); // no velociraptorClient / pipeline
+    // The case has to be REAL for this to be a test about the 501: the case-exists gate on
+    // /cases/:id/velociraptor now answers 404 first, and would have made this pass for the wrong reason.
+    await request(bare).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(bare)
       .post("/cases/c1/velociraptor/run-bundle")
       .send({ bundleId: "best-practice" });
@@ -566,7 +569,69 @@ describe("Velociraptor hunt status polling — routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient2-"));
     const store = new CaseStore(root);
     const bare = createApp(store, {});
+    // The case has to be REAL for this to be a test about the 501: the case-exists gate on
+    // /cases/:id/velociraptor now answers 404 first, and would have made this pass for the
+    // wrong reason.
+    await request(bare).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(bare).post("/cases/c1/velociraptor/hunt-jobs/H.X/poll-status");
     expect(res.status).toBe(501);
+  });
+
+  // ── The case-exists gate on /cases/:id/velociraptor/* ──────────────────────────────────────
+  //
+  // The dashboard's case picker is PRE-FILLED from localStorage on a bare /dashboard without
+  // connecting, so "the field has a value" was never evidence that the case exists — and an
+  // analyst could type any id into it. Nothing downstream checked: the id-shape gate passes a
+  // well-formed unknown id and the lock gate passes a case with no meta, so run-bundle launched
+  // a real hunt on real endpoints for a case that was never created.
+  describe("refuses a case that does not exist, before anything is launched", () => {
+    it("404s run-bundle and never launches the hunt", async () => {
+      const launched: string[] = [];
+      const spy: VqlRunner = async (...args) => {
+        const [statements] = args;
+        if (statements[0].includes("hunt(") && statements[0].includes("artifacts=["))
+          launched.push(statements[0]);
+        return runner(...args);
+      };
+      const made = await makeApp(spy);
+
+      const res = await request(made.app)
+        .post("/cases/never-created/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("never-created");
+      // The point of the gate: no hunt reached Velociraptor. A 404 AFTER a launch would leave an
+      // untracked hunt running on live endpoints.
+      expect(launched).toEqual([]);
+    });
+
+    it("404s the rest of the per-case surface too — collect, import-external, deploy-hunt, hunt-jobs", async () => {
+      const made = await makeApp();
+      const gone = "never-created";
+      expect(
+        (await request(made.app).post(`/cases/${gone}/velociraptor/collect`).send({ huntId: "H.X" })).status,
+      ).toBe(404);
+      expect(
+        (await request(made.app).post(`/cases/${gone}/velociraptor/import-external`).send({ ref: "H.X" }))
+          .status,
+      ).toBe(404);
+      expect(
+        (
+          await request(made.app)
+            .post(`/cases/${gone}/velociraptor/deploy-hunt`)
+            .send({ vql: "SELECT 1 FROM scope()", title: "t" })
+        ).status,
+      ).toBe(404);
+      expect((await request(made.app).get(`/cases/${gone}/velociraptor/hunt-jobs`)).status).toBe(404);
+    });
+
+    it("still lets a real case through", async () => {
+      const made = await makeApp();
+      const res = await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect(res.status).toBe(202);
+    });
   });
 });

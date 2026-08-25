@@ -432,3 +432,21 @@ export interface VeloCoverageApi {
     truncatedArtifacts?: { name: string; kept: number; total: number }[];
   }): string;
 }
+
+// public/js/dashboard-velo-case.js — which case Velociraptor work runs against, and whether it may run.
+//
+// `activeCaseId` is page vocabulary the module reads by bare name, so a test seeds it on the sandbox
+// global rather than passing it in.
+export interface VeloCaseApi {
+  veloCaseId(): string;
+  veloRunBlockedReason(enabled: boolean, caseId: string): string;
+  activeCaseId: string | null;
+}
+
+// public/js/dashboard-velo-triage.js — the bundle list, the client inventory and the hunt jobs.
+// Only the slice these suites drive: the bundle list that carries the Run button.
+export interface VeloTriageApi {
+  loadVeloBundles(): Promise<void>;
+  activeCaseId: string | null;
+  veloEnabled: boolean;
+}

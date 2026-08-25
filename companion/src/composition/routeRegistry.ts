@@ -13,6 +13,7 @@
  */
 import type { Express } from "express";
 import type { RouteContext } from "../routes/context.js";
+import { createCaseExistsGate } from "../analysis/caseExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { registerSystemRoutes } from "../routes/system.js";
@@ -93,6 +94,16 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   mountCaseWriteGuard(app, store);
 
   registerImportRoutes(app, ctx);
+  // The third case gate, and the narrowest: /cases/:id/velociraptor/* additionally requires a case
+  // that EXISTS. The two mounted in httpStack.ts do not — caseIdGate validates the SHAPE of :id and
+  // caseLockGate lets a case with no meta through — and routes/velociraptor.ts checked caseExists in
+  // no handler at all, so run-bundle LAUNCHED A HUNT ON LIVE ENDPOINTS for a case id that was merely
+  // sitting in the dashboard's picker. See analysis/caseExistsGate.ts for the full account.
+  //
+  // Placement, for the same reason as the two gates above: it covers only what follows it, so it sits
+  // directly above the routes it guards — and BELOW mountAiRateLimit, whose coverage contract is that
+  // the limiter answers first even for a case that does not exist.
+  app.use("/cases/:id/velociraptor", createCaseExistsGate(store));
   registerVelociraptorRoutes(app, ctx);
   registerThreatIntelRoutes(app, ctx);
   registerEnrichmentTestRoutes(app, ctx);

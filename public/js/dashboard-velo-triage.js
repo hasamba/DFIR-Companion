@@ -22,11 +22,6 @@
   let _veloMonAutoBrowsed = false; // one-shot: auto-populate the event-artifact picker when Velociraptor is on
   let veloTsPreviewSeq = 0; // monotonic counter guarding the time-scope preview against out-of-order responses
 
-  function veloCaseId() {
-    const el = document.getElementById("caseId");
-    return el ? el.value.trim() : "";
-  }
-
   function applyVeloEnabled() {
     const note = document.getElementById("veloDisabledNote");
     if (note) note.style.display = veloEnabled ? "none" : "block";
@@ -194,9 +189,10 @@
     }
     el.innerHTML = bundles
       .map((b) => {
-        const runBtn = veloEnabled
-          ? `<button class="velo-run-btn" data-id="${escAttr(b.id)}" title="Run this bundle as a hunt on the configured Velociraptor server">▶ Run</button>`
-          : `<button disabled title="Velociraptor API not configured (set the API config path above)">▶ Run</button>`;
+        const runBlocked = veloRunBlockedReason(veloEnabled, veloCaseId());
+        const runBtn = runBlocked
+          ? `<button disabled title="${escAttr(runBlocked)}">▶ Run</button>`
+          : `<button class="velo-run-btn" data-id="${escAttr(b.id)}" title="Run this bundle as a hunt on the configured Velociraptor server">▶ Run</button>`;
         const editBtn = `<button class="velo-edit-btn" data-id="${escAttr(b.id)}" title="Edit this bundle">Edit</button>`;
         const dupBtn = `<button class="velo-dup-btn" data-id="${escAttr(b.id)}" title="Copy into the builder as a new bundle">Duplicate</button>`;
         // Built-ins can be edited in place; "Reset to default" appears once an override exists. Custom
@@ -787,7 +783,6 @@
   window.loadVeloBundles = loadVeloBundles;
   window.loadVeloClients = loadVeloClients;
   window.loadVeloHuntJobs = loadVeloHuntJobs;
-  window.veloCaseId = veloCaseId;
   window.applyVeloEnabled = applyVeloEnabled;
   window.doRefreshVeloClients = doRefreshVeloClients;
   window.doVeloReconnect = doVeloReconnect;
