@@ -103,3 +103,86 @@ describe("anonymizer modal — Presidio availability notice", () => {
     expect(list).not.toContain("PERSON");
   });
 });
+
+// The row said "Presidio is on" whenever DFIR_PRESIDIO_URL was non-empty, which is a statement
+// about configuration, not about the analyzer. A container that exited five days ago left the row
+// green and the analyst unaware until an AI call failed closed. Configured and reachable are two
+// facts; the modal now asks for the second one when it opens.
+describe("anonymizer modal — Presidio reachability probe", () => {
+  let probe: string;
+
+  beforeAll(() => {
+    probe = js.slice(
+      js.indexOf("function renderPresidioReachability()"),
+      js.indexOf("function openAnonModal()"),
+    );
+    expect(probe.length, "renderPresidioReachability()..openAnonModal() slice is empty").toBeGreaterThan(200);
+  });
+
+  it("probes the analyzer when the modal opens", () => {
+    const open = js.slice(js.indexOf("function openAnonModal()"), js.indexOf("function saveAnon("));
+    expect(open.length, "openAnonModal()..saveAnon() slice is empty").toBeGreaterThan(200);
+    expect(open).toContain("probePresidioHealth()");
+  });
+
+  it("asks the server, which owns the URL, rather than guessing from anonControl", () => {
+    expect(probe).toContain("/system/presidio-health");
+  });
+
+  // The probe answers after the modal is already on screen, so the analyst may have unticked the
+  // row in the meantime. Rebuilding the row would silently restore the tick from anonControl and
+  // discard that decision, so the result lands in a dedicated span and the note — never on the
+  // checkbox.
+  it("updates a dedicated status span, never the checkbox the analyst may have just changed", () => {
+    expect(modal).toContain('id="anonPresidioStatus"');
+    expect(probe).toContain("anonPresidioStatus");
+    expect(probe).not.toContain("anonPresidioEnabled");
+    expect(probe).not.toContain("renderPresidioCategory");
+  });
+
+  // "Real names (people) — via Presidio — analyzer unreachable" states both halves of a
+  // contradiction and makes the analyst decide which one to believe. The phrase after the dash has
+  // exactly one owner: the status span. The row must not hardcode a second one beside it.
+  it("replaces the state phrase rather than appending a contradiction next to it", () => {
+    const row = modal.slice(modal.indexOf("insertAdjacentHTML"), modal.indexOf("anonPresidioNote"));
+    expect(row).toContain('id="anonPresidioStatus"');
+    expect(row).not.toContain("via Presidio");
+  });
+
+  // #anonCategories is a two-column grid of short labels. Left in a half-width cell, this row's
+  // status text — longer than any category label — wraps mid-phrase and pulls the grid out of
+  // alignment. It is not a category either, so a full-width row of its own is what it should be.
+  it("spans the whole grid instead of sharing a half-width cell with a category", () => {
+    const row = modal.slice(modal.indexOf("insertAdjacentHTML"), modal.indexOf("anonPresidioNote"));
+    expect(row).toContain("grid-column:1/-1");
+    // The status must not be allowed to break the row across lines mid-phrase.
+    expect(row).toContain("white-space:nowrap");
+  });
+
+  it("says the analyzer is unreachable instead of leaving the row reading as on", () => {
+    expect(probe).toContain("reachable === false");
+    expect(probe).toContain("unreachable");
+  });
+
+  // The AI-status error already names the URL and the two ways out; the row must not be vaguer
+  // than the failure it is trying to pre-empt.
+  it("names the URL and both ways out — start the container, or untick the row", () => {
+    expect(probe).toMatch(/start the container/i);
+    expect(probe).toContain("untick");
+  });
+
+  it("offers a retry so a restarted container clears the warning without reopening the modal", () => {
+    expect(probe).toContain("anonPresidioRetry");
+    expect(probe).toContain("probePresidioHealth");
+  });
+
+  // An unreachable analyzer is not a reason to change what is saved: the URL is still configured
+  // and the per-case switch is still whatever the analyst set. A probe that wrote either would
+  // turn a transient outage into a persisted configuration change.
+  it("never writes state — the probe is a read", () => {
+    expect(probe).not.toContain('method: "POST"');
+    // An assignment, not a comparison — the renderer legitimately READS anonControl.presidio to
+    // know whether the layer is on for this case.
+    expect(probe).not.toMatch(/anonControl\.presidio\s*=(?!=)/);
+  });
+});

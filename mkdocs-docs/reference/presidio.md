@@ -46,6 +46,8 @@ The panel's category list ends with a **Real names (people)** row, because that 
 
 **Turning the layer off for a case.** Unticking that row stops Presidio scanning for that case only, takes effect immediately, and needs no restart — `DFIR_PRESIDIO_URL` stays configured, so ticking it again resumes scanning. This is the switch to reach for when the analyzer is down, too slow, or flagging noise mid-investigation; clearing the URL instead would mean editing `.env` and restarting the server, and would throw away the configuration you want back. The trade is real and the panel says so: with the switch off, names, non-Israeli national IDs and IBANs reach the model unmasked and no approval gate fires. Everything else is still masked by the built-in patterns. Flipping it either way is recorded in the case activity log, so the case record shows when coverage changed.
 
+**Whether the analyzer is actually up.** Configured and reachable are two different facts, and the row used to show only the first — with `DFIR_PRESIDIO_URL` set it read *via Presidio* whether or not anything answered at that URL. Opening the panel now probes the configured analyzer, and a dead one turns the row red: *analyzer unreachable*, with a **retry** beside it and a note naming the URL, the error, and the two ways out. Nothing is saved by the probe — an outage is not a reason to change the case's configuration — so the switch stays wherever you left it, and a retry that finds the container back up clears the warning without reopening the panel. The probe uses the same synthetic sample as **Test connection**; nothing from the case is sent.
+
 Three kinds of PII are **only** ever found by Presidio, and go undetected without it:
 
 | Undetected without Presidio | Why the built-in layer misses it |
@@ -84,6 +86,8 @@ Once every flagged value is resolved, re-run the action (or re-import the file) 
 ## Fail-closed behaviour
 
 With `DFIR_PRESIDIO_URL` set but the container unreachable (not started, wrong port, network issue), **AI calls fail** with an explicit error naming the URL and telling you to start the container or clear the variable — they do not silently proceed as if Presidio had found nothing. An analyst who turned this on is trusting that names are being caught; silently skipping the scan would violate that trust.
+
+The Anonymization panel warns before that happens: it probes the analyzer when you open it, so an outage shows on the **Real names (people)** row rather than waiting for the next AI call to fail.
 
 To disable the layer, clear `DFIR_PRESIDIO_URL`.
 

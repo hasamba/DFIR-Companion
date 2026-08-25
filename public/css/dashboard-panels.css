@@ -77,6 +77,8 @@
 .anon-chip.anon-chip-sup { opacity:.6; }
 .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--text-dim); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
 .anon-chip .anon-auto-rm:hover { color:var(--badge-danger-text); }
+.anon-presidio-retry { background:transparent; border:none; color:var(--accent); cursor:pointer; font-size:11px; padding:0; text-decoration:underline; }
+.anon-presidio-retry:hover { color:var(--accent-hover); }
 .anon-chip .anon-auto-restore:hover { color:var(--sev-low); }
 .anon-auto-grp { margin-bottom:6px; }
 .anon-cust-row { display:flex; align-items:center; gap:8px; padding:2px 0; }

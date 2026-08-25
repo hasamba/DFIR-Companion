@@ -53,6 +53,10 @@
   };
   let anonCustom = []; // working copy: [{ value, category }]
   let anonSuppressed = []; // values removed from auto-discovery (server-persisted)
+  // Whether the CONFIGURED analyzer actually answers — a different fact from anonControl's
+  // presidioConfigured, which only says DFIR_PRESIDIO_URL is non-empty. null until the modal has
+  // asked; { probing: true } while it is asking.
+  let presidioHealth = null;
 
   function renderAnonToggle() {
     const b = document.getElementById("anonToggle");
@@ -339,18 +343,107 @@
         : "Switched off for this case — names are NOT detected. The analyzer stays configured; tick to resume.";
     document.getElementById("anonCategories").insertAdjacentHTML(
       "beforeend",
-      `<label data-safe-style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0;opacity:${configured ? "1" : ".55"}" title="${escAttr(tip)}">` +
+      // Full-width row of its own, not a cell in the two-column category grid. The status
+      // phrase is longer than any category label, so in a half-width cell it wraps mid-phrase
+      // and pulls the whole grid out of alignment. It is not a category either (see above), so
+      // standing apart from them is also what it should look like.
+      `<label data-safe-style="grid-column:1/-1;display:flex;align-items:center;gap:6px;font-size:13px;margin:6px 0 2px;opacity:${configured ? "1" : ".55"}" title="${escAttr(tip)}">` +
         // Deliberately carries no category class: this box holds AnonControl.presidio, not a
         // category. PERSON has no entry in AnonControl.categories, so letting saveAnon read it
         // back with the category checkboxes would post a key the server drops on the floor.
         `<input type="checkbox" id="anonPresidioEnabled" ${configured ? "" : "disabled"} ${on ? "checked" : ""}> ` +
-        `Real names (people) — ${!configured ? "needs Presidio" : on ? "via Presidio" : "Presidio off for this case"}</label>`,
+        // The reachability result lands in this span, never on the row itself. The probe answers
+        // after the modal is already open, so the analyst may have unticked the box in the
+        // meantime — rebuilding the row would restore the tick from anonControl and throw that
+        // decision away.
+        `Real names (people) — <span id="anonPresidioStatus" data-safe-style="white-space:nowrap">${esc(presidioStatusText(configured, on))}</span></label>`,
     );
-    document.getElementById("anonPresidioNote").innerHTML = !configured
+    document.getElementById("anonPresidioNote").innerHTML = presidioNoteHtml(
+      configured,
+      on,
+    );
+    renderPresidioReachability();
+  }
+  // The note as configuration alone describes it. Kept separate because the reachability probe has
+  // to be able to put it back: a retry that finds the container up again must undo its own warning.
+  function presidioNoteHtml(configured, on) {
+    return !configured
       ? "<strong>Presidio is not configured.</strong> Names, non-Israeli national IDs and IBANs go undetected. Nothing else changes: cards, phones, IDs and emails are matched by the built-in patterns either way. Set <code>DFIR_PRESIDIO_URL</code> in Settings → AI (needs a restart); until then add known names below as <code>PERSON</code>."
       : on
         ? "<strong>Presidio is on.</strong> It catches what no pattern can — names, non-Israeli national IDs, IBANs — plus card / phone / email formats the built-ins miss. New values pause the AI call for your decision below. If the analyzer is down or too slow, untick this to keep working — the URL stays configured."
         : "<strong>Presidio is configured but switched off for this case.</strong> Names, non-Israeli national IDs and IBANs reach the model unmasked and no approval gate fires — everything else is still anonymized by the built-in patterns. Tick to turn scanning back on; no restart needed.";
+  }
+  // The phrase after the dash, as configuration alone describes it. Same reason presidioNoteHtml
+  // exists: the probe overwrites it, and a retry that finds the container up has to put it back.
+  function presidioStatusText(configured, on) {
+    return !configured
+      ? "needs Presidio"
+      : on
+        ? "via Presidio"
+        : "Presidio off for this case";
+  }
+  // Paints the probe result. Touches exactly two elements — the status span and the note — and
+  // never the checkbox or anonControl: an outage is not a reason to change what gets saved.
+  function renderPresidioReachability() {
+    const status = document.getElementById("anonPresidioStatus");
+    const note = document.getElementById("anonPresidioNote");
+    if (!status || !note) return;
+    const h = presidioHealth;
+    const configured = !!(anonControl && anonControl.presidioConfigured);
+    const on = configured && !(anonControl && anonControl.presidio === false);
+    const plain = esc(presidioStatusText(configured, on));
+    // Nothing to report: no analyzer configured, the layer is off for this case anyway, or the
+    // probe has not answered yet. The configuration note already says what those states mean.
+    if (!configured || !on || !h) {
+      status.innerHTML = plain;
+      return;
+    }
+    if (h.probing) {
+      status.innerHTML = `${plain} <span data-safe-style="color:var(--text-muted)">(checking…)</span>`;
+      return;
+    }
+    if (h.reachable === false) {
+      status.innerHTML =
+        `<strong data-safe-style="color:var(--badge-danger-text)">analyzer unreachable</strong>` +
+        ` <button id="anonPresidioRetry" class="anon-presidio-retry" title="Probe the analyzer again">retry</button>`;
+      const where = h.url ? `<code>${esc(h.url)}</code>` : "the configured URL";
+      note.innerHTML =
+        `<strong>Presidio is enabled, but the analyzer at ${where} does not answer.</strong> ` +
+        `AI calls on this case will FAIL until it does — the layer fails closed rather than ` +
+        `silently skipping the scan and letting names through. Start the container, or untick ` +
+        `this row to stand the layer down for this case; the URL stays configured either way.` +
+        (h.error
+          ? ` <span data-safe-style="color:var(--text-muted)">(${esc(h.error)})</span>`
+          : "");
+      const retry = document.getElementById("anonPresidioRetry");
+      if (retry) retry.onclick = () => probePresidioHealth();
+      return;
+    }
+    status.innerHTML = plain;
+    note.innerHTML = presidioNoteHtml(configured, on);
+  }
+  // Asks the server, which is the only side that knows DFIR_PRESIDIO_URL — it is startup-only and
+  // never sent to the page. Skipped entirely when no analyzer is configured: there is nothing to
+  // probe, and the row already says so.
+  function probePresidioHealth() {
+    if (!(anonControl && anonControl.presidioConfigured)) return;
+    presidioHealth = { probing: true };
+    renderPresidioReachability();
+    fetch("/system/presidio-health")
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((h) => {
+        presidioHealth = h;
+        renderPresidioReachability();
+      })
+      // An older server without this endpoint must leave the row exactly as configuration drew it,
+      // not accuse a healthy analyzer of being down.
+      .catch(() => {
+        presidioHealth = null;
+        renderPresidioReachability();
+      });
   }
   function openAnonModal() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -399,6 +492,9 @@
     // state can change elsewhere (another dashboard tab, an import landing) between connect and
     // this modal being opened, and a stale pending list here would show the wrong count/values.
     loadPresidioPending(caseId);
+    // Configured is not reachable. Ask now, while the analyst is looking at the row, rather than
+    // letting them find out from a failed AI call an hour later.
+    probePresidioHealth();
     document.getElementById("anonOverlay").classList.add("open");
   }
   function saveAnon() {
