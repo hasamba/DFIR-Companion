@@ -2879,8 +2879,10 @@
             <h3>👋 AI analysis</h3>
             <p class="wiz-sub">An AI provider reads screenshots and synthesizes findings. Skippable — analysis is the only thing that needs it.</p>
             <div class="wiz-note">✅ <strong>AI is optional.</strong> Evidence capture and all artifact imports (CSV, EVTX, THOR, SIEM, Velociraptor, memory dumps…) work without it.</div>
+            <div class="settings-group-head">Vision model <span data-safe-style="font-weight:400;color:var(--text-muted)">(required — reads screenshots and extracts the findings)</span></div>
+            <p class="wiz-sub" data-safe-style="margin:0 0 10px">The synthesis model below is configured separately, and can use a different provider.</p>
             <div class="wiz-field">
-              <label>Provider<span class="wiz-hint">Ollama / LiteLLM are local; the rest are hosted APIs.</span></label>
+              <label>Vision provider<span class="wiz-hint">DFIR_VISION_PROVIDER — Ollama / LiteLLM are local; the rest are hosted APIs.</span></label>
               <select id="wizProvider">
                 <option value="">— choose a provider —</option>
                 <option value="openai">OpenAI</option>
@@ -2903,17 +2905,21 @@
             </div>
             <div class="wiz-row">
               <div class="wiz-field">
-                <label>Vision model<span class="wiz-hint">Screenshots only — must support vision. Text work uses the model below.</span></label>
-                <input id="wizModel" placeholder="e.g. gpt-4o-mini" autocomplete="off" />
-                <div id="wizModelHint" class="wiz-modelhint"></div>
+                <label>Vision model<span class="wiz-hint">DFIR_VISION_MODEL — screenshots only, must support vision. Text work uses the model below.</span></label>
+                <div class="wiz-combo">
+                  <select id="ai-model-picker-wizard-vision" aria-label="Available vision models" aria-describedby="ai-model-status-wizard-vision"><option value="">Load the model list…</option><option value="__custom__">Enter model ID manually…</option></select>
+                  <input id="wizModel" aria-label="Manually entered vision model ID" aria-describedby="ai-model-status-wizard-vision" placeholder="e.g. gpt-4o-mini" autocomplete="off" />
+                  <button type="button" id="load-ai-models-wizard-vision" class="wiz-btn secondary">Refresh</button>
+                </div>
+                <div class="wiz-modelhint"><span id="ai-model-status-wizard-vision" role="status"></span> <span id="wizModelHint"></span></div>
               </div>
               <div class="wiz-field">
-                <label>API key<span class="wiz-hint">Stored only in your local .env (gitignored).</span></label>
+                <label>API key<span class="wiz-hint">DFIR_VISION_KEY — stored only in your local .env (gitignored).</span></label>
                 <input id="wizKey" type="password" placeholder="(not set)" autocomplete="new-password" />
               </div>
             </div>
             <div class="wiz-field" id="wizBaseUrlField" data-safe-style="display:none">
-              <label>Base URL override<span class="wiz-hint">For a local proxy / self-hosted endpoint.</span></label>
+              <label>Base URL override<span class="wiz-hint">DFIR_VISION_BASE_URL — for a local proxy / self-hosted endpoint.</span></label>
               <input id="wizBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
             </div>
             <div class="wiz-actions">
@@ -2921,12 +2927,12 @@
             </div>
             <div id="wizResult" class="wiz-result"></div>
             <div class="settings-group-head" data-safe-style="margin-top:16px">Synthesis model <span data-safe-style="font-weight:400;color:var(--text-muted)">(optional — a separate, often stronger, model for one-shot synthesis)</span></div>
-            <p class="wiz-sub" data-safe-style="margin:0 0 10px">Leave blank to keep using the extraction provider/model/key above for synthesis too.</p>
+            <p class="wiz-sub" data-safe-style="margin:0 0 10px">Pick any provider here — it does not have to be the vision provider. Leave the whole block blank to reuse the vision provider/model/key for synthesis too.</p>
             <div class="wiz-row">
               <div class="wiz-field">
-                <label>Synth provider<span class="wiz-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
+                <label>Synth provider<span class="wiz-hint">DFIR_AI_SYNTH_PROVIDER — independent of the vision provider above.</span></label>
                 <select id="wizSynthProvider">
-                  <option value="">— same as extraction —</option>
+                  <option value="">— same as the vision provider —</option>
                   <option value="openai">OpenAI</option>
                   <option value="openrouter">OpenRouter</option>
                   <option value="ollama">Ollama (local)</option>
@@ -2939,7 +2945,12 @@
               </div>
               <div class="wiz-field">
                 <label>Text model<span class="wiz-hint">DFIR_AI_SYNTH_MODEL — CSV/log extraction + synthesis. Use a strong model. e.g. gpt-4o</span></label>
-                <input id="wizSynthModel" placeholder="e.g. gpt-4o" autocomplete="off" />
+                <div class="wiz-combo">
+                  <select id="ai-model-picker-wizard-synthesis" aria-label="Available synthesis models" aria-describedby="ai-model-status-wizard-synthesis"><option value="">Load the model list…</option><option value="__custom__">Enter model ID manually…</option></select>
+                  <input id="wizSynthModel" aria-label="Manually entered synthesis model ID" aria-describedby="ai-model-status-wizard-synthesis" placeholder="e.g. gpt-4o" autocomplete="off" />
+                  <button type="button" id="load-ai-models-wizard-synthesis" class="wiz-btn secondary">Refresh</button>
+                </div>
+                <div class="wiz-modelhint"><span id="ai-model-status-wizard-synthesis" role="status"></span></div>
               </div>
             </div>
             <div class="wiz-row">

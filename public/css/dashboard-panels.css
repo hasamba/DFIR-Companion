@@ -154,8 +154,17 @@
 .wiz-modal input, .wiz-modal select { width: 100%; box-sizing: border-box; background: var(--bg-primary);
   color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 7px 8px; font-size: 13px; }
 .wiz-modal select option { background: var(--bg-elevated); }
-.wiz-row { display: flex; gap: 12px; }
-.wiz-row > .wiz-field { flex: 1; }
+.wiz-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; row-gap: 0; }
+/* Subgrid, not flex. Each field is label / control / hint, and a flex row only aligns the FIELD
+   tops — so a label whose hint wraps to two lines pushed its own input down and left the field
+   beside it floating above it. Sharing one set of row tracks makes every label, every input and
+   every hint in the row line up, whatever length the text is. */
+.wiz-row > .wiz-field { display: grid; grid-template-rows: subgrid; grid-row: span 3; min-width: 0; }
+/* An input with buttons or a picker beside it, e.g. the model combo and the Browse… path fields. */
+.wiz-combo { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.wiz-combo > input, .wiz-combo > select { flex: 1 1 0; min-width: 0; }
+.wiz-combo > button { flex: 0 0 auto; white-space: nowrap; padding: 6px 10px; font-size: 12px; }
+@media (max-width: 640px) { .wiz-row { grid-template-columns: minmax(0, 1fr); } }
 .wiz-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
 .wiz-btn { background: var(--accent-solid); color: #fff; border: 0; border-radius: 7px; padding: 8px 16px;
   font-size: 13px; cursor: pointer; }

@@ -161,14 +161,27 @@ function rvAnnotationRows(workflow) {
   }).join("")}</div>`;
 }
 
+// f.browse turns the field into a path picker (the string is the browse modal's title) and
+// f.download adds the "download the latest release" button beside it — the same two controls
+// Settings → Integrations has on the Velociraptor paths, which the wizard was missing.
+// wirePathBrowseControls (js/dashboard-velo-fs-browse.js) binds them from these data-attributes.
 function wizRenderFields(fields) {
   return fields.map(f => {
     const id = wizFieldId(f.key);
     const ph = f.secret ? "(not set)" : (f.hint ? "" : "");
     const type = f.secret ? 'type="password" autocomplete="new-password"' : 'autocomplete="off"';
+    const input = '<input id="' + id + '" ' + type + ' placeholder="' + esc(ph) + '" />';
+    const control = !f.browse ? input :
+      '<div class="wiz-combo">' + input +
+      '<button type="button" class="wiz-btn secondary" data-wiz-browse="' + escAttr(id) +
+      '" data-wiz-browse-title="' + escAttr(f.browse) + '">Browse…</button>' +
+      (f.download ? '<button type="button" class="wiz-btn secondary" data-wiz-download="' + escAttr(id) +
+        '" title="Fetches the current Velociraptor release for this server\u2019s OS from the official GitHub releases and fills this field with the saved path. Runs only when you click it.">\u2B07 Download latest</button>' : '') +
+      '</div>' +
+      (f.download ? '<div class="wiz-modelhint" data-wiz-download-msg="' + escAttr(id) + '"></div>' : '');
     return '<div class="wiz-field"><label>' + esc(f.label) +
       (f.hint ? '<span class="wiz-hint">' + esc(f.hint) + '</span>' : '') +
-      '</label><input id="' + id + '" ' + type + ' placeholder="' + esc(ph) + '" /></div>';
+      '</label>' + control + '</div>';
   }).join("");
 }
 

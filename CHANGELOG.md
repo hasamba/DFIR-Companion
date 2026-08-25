@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`docker compose pull` fetches the current release again** — the compose image tag sat at 0.34.0 for the whole 0.35.x line, so users got a container a full release behind their checkout. A gate now fails when any of the six version-bearing files disagree.
 
 ### Changed
+- **The analyst walkthrough now starts with the Velociraptor hunt bundles** — a new **Step 3a** covers running the built-in **Best Practice** sweep on every case and the optional **Super-Timeline Triage**, says where each one's results land (forensic timeline vs. super-timeline only), and gives the run procedure; importing artifact files becomes Step 3b. The Velociraptor integration reference also stops naming **Fast Triage** / **Full Triage**, two bundles the app replaced with Best Practice long ago.
 - **The Firefox add-on now requires Firefox 140** (was 128) — 140 is the first release that shows the data-collection consent screen, and Mozilla does not permit collecting without one. 140 is itself an ESR and 128 ESR ended in September 2025.
 
 ## [0.35.1] - 2026-08-22

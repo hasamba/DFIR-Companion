@@ -127,11 +127,21 @@
       );
     };
 
-    const downloadBtn = document.getElementById("veloDownloadLatestBtn");
-    const downloadMsg = document.getElementById("veloDownloadMsg");
-    downloadBtn.onclick = async () => {
-      downloadBtn.disabled = true;
-      downloadMsg.textContent = "downloading latest release…";
+    wireDownloadLatest(
+      document.getElementById("veloDownloadLatestBtn"),
+      binaryInput,
+      document.getElementById("veloDownloadMsg"),
+    );
+  }
+
+  // Shared by Settings and by the setup wizard's Velociraptor step, which renders its own copy of
+  // this button. The route downloads the release and answers with the saved path; the caller still
+  // has to press Save, because nothing here writes .env.
+  function wireDownloadLatest(button, targetInput, msg) {
+    if (!button || !targetInput || !msg) return;
+    button.onclick = async () => {
+      button.disabled = true;
+      msg.textContent = "downloading latest release…";
       try {
         const resp = await fetch("/settings/velociraptor/download-latest", {
           method: "POST",
@@ -139,15 +149,41 @@
         const j = await resp.json();
         if (!resp.ok || !j.ok)
           throw new Error(j.error || "HTTP " + resp.status);
-        binaryInput.value = j.path;
-        downloadMsg.textContent = `downloaded v${j.version} (${j.assetName}) → ${j.path}. Click Save to apply.`;
+        targetInput.value = j.path;
+        msg.textContent = `downloaded v${j.version} (${j.assetName}) → ${j.path}. Click Save to apply.`;
       } catch (err) {
-        downloadMsg.textContent = "download failed: " + err.message;
+        msg.textContent = "download failed: " + err.message;
       } finally {
-        downloadBtn.disabled = false;
+        button.disabled = false;
       }
     };
   }
 
+  // Bind every Browse… / Download-latest button inside a container that wizRenderFields just
+  // rendered. Called after each wizard step renders, because the step bodies are rebuilt on every
+  // visit and a listener bound to the previous DOM is gone with it.
+  function wirePathBrowseControls(container) {
+    if (!container) return;
+    container.querySelectorAll("[data-wiz-browse]").forEach((button) => {
+      const input = document.getElementById(button.dataset.wizBrowse);
+      if (!input) return;
+      button.onclick = () =>
+        openFsBrowseModal(
+          button.dataset.wizBrowseTitle || "Select a file",
+          input.value.trim(),
+          input.id,
+        );
+    });
+    container.querySelectorAll("[data-wiz-download]").forEach((button) => {
+      const id = button.dataset.wizDownload;
+      wireDownloadLatest(
+        button,
+        document.getElementById(id),
+        container.querySelector('[data-wiz-download-msg="' + id + '"]'),
+      );
+    });
+  }
+
+  window.wirePathBrowseControls = wirePathBrowseControls;
   window.initFsBrowse = initFsBrowse;
 })();
