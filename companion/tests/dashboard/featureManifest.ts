@@ -81,6 +81,7 @@ export const FEATURES: Feature[] = [
       "renderGeoMarkers",
       "geoFocusIp",
       "geoDownloadCsv",
+      "geoToggleFullscreen",
     ],
     private: [
       "geoMapData",
@@ -88,10 +89,10 @@ export const FEATURES: Feature[] = [
       "geoLayer",
       "geoFlowLayer",
       "geoMapTimer",
-      "geoMapInitializing",
-      // Missing from the first inventory, which is its own argument for asserting the EXACT global
-      // set rather than listing names by hand and hoping the list is complete.
-      "geoTileUrl",
+      // geoMapInitializing and geoTileUrl were here. Both belonged to the client fetching /health
+      // to learn which tile server to name in its <img> URLs — the arrangement the CSP refused.
+      // The tile proxy resolves that server-side, so the client names one fixed same-origin
+      // template, map creation is synchronous again, and neither binding has anything to hold.
     ],
   },
   {

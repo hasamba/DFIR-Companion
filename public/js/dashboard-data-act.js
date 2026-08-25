@@ -38,6 +38,7 @@
     renderGeoMarkers: (el) => renderGeoMarkers(),
     geoDownloadCsv: (el) => geoDownloadCsv(),
     ensureGeoMap: (el) => ensureGeoMap(),
+    geoToggleFullscreen: (el) => geoToggleFullscreen(),
     // Tagger
     runTagger: (el) => runTagger(),
     clearTaggerTags: (el) => clearTaggerTags(),
