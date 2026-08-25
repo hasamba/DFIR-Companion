@@ -1927,3 +1927,99 @@ describe("parseVelociraptorJson — PowerShell 4104 script-block fragments", () 
     expect(async_.events[0].description).toBe(sync.events[0].description);
   });
 });
+
+// #640 — msgFingerprint used to strip EVERY digit, so two Sysmon network-connection Sigma rows that
+// differed only in destination address produced an identical fingerprint, an identical aggKey, and
+// therefore ONE merged event holding the first row's description. Every IP scraped from every merged
+// row was then stamped with that one event id, so IOC provenance pointed an external IP at an event
+// whose text named a different destination. For a network connection the destination IS the event.
+describe("parseVelociraptorJson — network identifiers keep events distinct (#640)", () => {
+  function sigmaNetRow(over: { tgtIp?: string; srcPort?: number; pid?: number } = {}): object {
+    const { tgtIp = "203.0.113.10", srcPort = 57554, pid = 7116 } = over;
+    return {
+      _Source: "Windows.Sigma.Base",
+      Rule: { Title: "Net Conn (Sysmon Alert)", Level: "medium" },
+      Computer: "WS-01",
+      Timestamp: "2026-01-01T00:00:00Z",
+      Details:
+        `Initiated: true ¦ Proto: tcp ¦ SrcIP: 198.51.100.154 ¦ SrcPort: ${srcPort} ` +
+        `¦ TgtIP: ${tgtIp} ¦ TgtPort: 443 ¦ User: NT AUTHORITY\\SYSTEM ` +
+        `¦ Proc: C:\\Windows\\System32\\svchost.exe ¦ PID: ${pid}`,
+    };
+  }
+
+  it("does NOT merge two connections that differ only in destination IP", () => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([sigmaNetRow({ tgtIp: "203.0.113.10" }), sigmaNetRow({ tgtIp: "203.0.113.99" })]),
+    );
+    expect(parsed.events).toHaveLength(2);
+    const shown = parsed.events.map((e) => e.description).join(" | ");
+    expect(shown).toContain("203.0.113.10");
+    expect(shown).toContain("203.0.113.99");
+  });
+
+  it("links each destination IOC to an event whose text actually names it", () => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([sigmaNetRow({ tgtIp: "203.0.113.10" }), sigmaNetRow({ tgtIp: "203.0.113.99" })]),
+    );
+    const byKey = new Map(parsed.events.map((e) => [e.aggKey, e]));
+    for (const value of ["203.0.113.10", "203.0.113.99"]) {
+      const found = parsed.iocs.find((i) => i.type === "ip" && i.value === value);
+      expect(found?.sourceAggKeys?.length).toBe(1);
+      const linked = byKey.get(found!.sourceAggKeys![0]);
+      expect(`${linked?.description ?? ""} ${linked?.message ?? ""}`).toContain(value);
+    }
+  });
+
+  it("does NOT merge two connections that differ only in destination domain", () => {
+    const row = (host: string): object => ({
+      _Source: "Windows.Sigma.Base",
+      Rule: { Title: "Suspicious DNS Query", Level: "medium" },
+      Computer: "WS-01",
+      Timestamp: "2026-01-01T00:00:00Z",
+      Details: `QueryName: ${host} ¦ QueryStatus: 0 ¦ Proc: C:\\Windows\\System32\\svchost.exe`,
+    });
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([row("evil-a.example.com"), row("evil-b.example.com")]),
+    );
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  it("STILL merges repeats that differ only in volatile ids (port, PID)", () => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([
+        sigmaNetRow({ srcPort: 57554, pid: 7116 }),
+        sigmaNetRow({ srcPort: 61022, pid: 9214 }),
+        sigmaNetRow({ srcPort: 49800, pid: 3311 }),
+      ]),
+    );
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(3);
+  });
+
+  it("keeps the key bounded however many addresses a message names", () => {
+    // A netstat-style dump can name dozens of peers. The addresses go through the HASH, not into
+    // the key text, so the key stays short — while two dumps naming different peers still differ.
+    const dump = (base: string): object => ({
+      _Source: "Custom.Dump",
+      Message: `connections observed: ${Array.from({ length: 60 }, (_, i) => `${base}.${i}`).join(" ")}`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([dump("203.0.113"), dump("198.51.100")]));
+    expect(parsed.events).toHaveLength(2);
+    for (const e of parsed.events) expect(e.aggKey!.length).toBeLessThanOrEqual(440);
+  });
+
+  it("does NOT split on a clock time, which shares IPv6's shape", () => {
+    // "00:00:00" must not read as an address — otherwise every timestamped line becomes its own
+    // event and aggregation stops working entirely.
+    const row = (t: string): object => ({
+      _Source: "Custom.Log",
+      Message: `service heartbeat at ${t} — state nominal`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("01:02:03"), row("04:05:06")]));
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(2);
+  });
+});

@@ -159,6 +159,19 @@
         "<div data-safe-style='color:var(--text-muted)'>no provenance data for this IOC yet</div>";
       return;
     }
+    // An extraction link can be real and still land on an event whose text never names the IOC
+    // (#640): aggregation collapses same-shape records into ONE event and keeps the FIRST one's
+    // description, and description/message are truncated before storage. Saying "linked" and then
+    // showing a line that names a different address reads as a mis-attribution, so each row
+    // declares what it is standing for and whether the value is actually in it.
+    const mergeTag = (e) =>
+      e.count > 1
+        ? `<span class="iocchain-note" title="Aggregation collapsed ${escAttr(String(e.count))} same-shape records into this one timeline event and kept the first one's text. A sibling record may be the one that carried this IOC.">1 of ${esc(String(e.count))} merged records${e.endTimestamp ? " · through " + esc(e.endTimestamp) : ""}</span>`
+        : "";
+    const hiddenTag = (e) =>
+      e.valueHidden
+        ? `<span class="iocchain-warn" title="This IOC's value appears nowhere in the event record as stored — it came from a merged-away sibling record, or from text past the storage cut-off. Open the original artifact to see the record that carried it.">⚠ value not in this event's stored text</span>`
+        : "";
     const extractionRows = chain.extraction.length
       ? chain.extraction
           .map(
@@ -166,6 +179,8 @@
               `<div class="iocchain-row">` +
               `<span class="iocchain-time sev-${esc(e.severity)}">${esc(e.timestamp || "(undated)")}</span>` +
               `<a class="ev-jump iocchain-desc" href="${escAttr(eventDeepLink(caseId, e.eventId))}" data-evid="${escAttr(e.eventId)}" title="Jump to this event in the timeline">${esc(e.description || e.eventId)}</a>` +
+              mergeTag(e) +
+              hiddenTag(e) +
               (e.artifactName
                 ? `<span class="iocchain-tag">${esc(e.artifactName)}</span>`
                 : e.sources && e.sources.length
@@ -205,8 +220,13 @@
     const extractionCaveat = chain.extractionAuthoritative
       ? `<small data-safe-style="color:var(--accent)">(linked — a real source-event reference, not a guess)</small>`
       : `<small data-safe-style="color:var(--text-muted)">(approximate — matched by value, not a stored link)</small>`;
+    // Shown once under the rows when any of them carries a caveat, so the analyst reads WHY before
+    // concluding the tool attributed the value to the wrong record.
+    const gapNote = chain.extraction.some((e) => e.valueHidden || e.count > 1)
+      ? `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-top:3px">A timeline event can stand for many collapsed records and shows the first one's text; long records are also cut short when stored. Open the source artifact for the exact record.</div>`
+      : "";
     bodyEl.innerHTML =
-      `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in ${extractionCaveat}</strong>${extractionRows}${truncNote}</div>` +
+      `<div class="explain-section"><strong>Extraction — event(s) this IOC was seen in ${extractionCaveat}</strong>${extractionRows}${truncNote}${gapNote}</div>` +
       `<div class="explain-section"><strong>Enrichment — threat-intel lookups</strong>${enrichRows}</div>` +
       `<div class="explain-section"><strong>Findings citing this IOC</strong>${findingRows}</div>` +
       `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-top:6px">Playbook references aren't tracked yet — playbook tasks don't carry IOC links.</div>`;
