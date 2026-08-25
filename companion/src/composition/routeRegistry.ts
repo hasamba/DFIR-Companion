@@ -17,6 +17,7 @@ import { createCaseExistsGate } from "../analysis/caseExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { registerSystemRoutes } from "../routes/system.js";
+import { registerGeoTileRoutes } from "../routes/geoTiles.js";
 import { registerAiModelRoutes } from "../routes/aiModels.js";
 import { registerCaptureRoutes } from "../routes/captures.js";
 import { registerPushNotifyRoutes } from "../routes/pushNotify.js";
@@ -74,6 +75,11 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   const { store, options } = ctx;
   const transports: OutboundTransports = {};
   registerSystemRoutes(app, ctx);
+  // The basemap under the Geographic Map panel, proxied so the dashboard keeps `img-src 'self'`
+  // (see routes/geoTiles.ts). Mounted with the other unauthenticated-cost reads and BEFORE
+  // mountAiRateLimit: one map view fetches dozens of tiles, and a limiter sized for AI routes
+  // would blank the map it is meant to protect.
+  registerGeoTileRoutes(app, ctx);
   registerAiModelRoutes(app, ctx);
   registerCaptureRoutes(app, ctx);
   registerPushNotifyRoutes(app, ctx);

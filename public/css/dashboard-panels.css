@@ -385,3 +385,44 @@ body.has-servicenow .snow-push-btn, body.has-servicenow #findingBulkSnowBtn { di
 .ses-msg { font-size: 11px; color: var(--text-muted); }
 section#sec-sessions.ses-collapsed .ses-body { display: none; }
 
+
+/* ── Geographic Map: fullscreen (#133) ───────────────────────────────────────────────────────
+   Two spellings of the same state, because the native Fullscreen API is not always available —
+   an embedded webview, or a browser that rejects the request outside a user gesture it trusts.
+   `:fullscreen` covers the native path, `.geo-fullscreen` the CSS fallback dashboard-geo.js
+   falls back to. Both must restyle #geoMap, whose 440px height is set on the element itself,
+   so the height override carries !important; nothing else here needs it. */
+#geoMapWrap:fullscreen,
+#geoMapWrap.geo-fullscreen { background: var(--bg-primary); padding: 0; }
+/* EVERY DECLARATION THAT FIGHTS data-safe-style NEEDS !important, INCLUDING THE NATIVE PATH.
+   js/safe-dom.js compiles each data-safe-style attribute into a generated class and marks every
+   declaration in it !important — #geoMapWrap carries `position:relative`, so it emits
+   `.dfir-d-1r { position: relative !important }`. An id-plus-class selector loses to that on
+   cascade origin, not specificity, so the first version of this rule left the panel at
+   position:relative: the wrapper collapsed to zero height, and the map inside it — sized 100% of a
+   zero-height parent — went with it. The user-agent's own `:fullscreen { position: fixed }` is not
+   !important either, so the native path needs the same treatment for the same reason. */
+#geoMapWrap:fullscreen,
+#geoMapWrap.geo-fullscreen {
+  position: fixed !important; inset: 0 !important; z-index: 4000 !important; margin: 0 !important;
+  width: auto !important; height: auto !important;
+}
+#geoMapWrap:fullscreen #geoMap,
+#geoMapWrap.geo-fullscreen #geoMap { height: 100% !important; border-radius: 0; }
+/* Inside #geoMapWrap rather than beside the other controls: a native fullscreen renders only the
+   fullscreen element's own subtree, so a button in #geoControls would vanish exactly when the
+   analyst needs it to get back out. Above Leaflet's controls (z-index 1000) for the same reason. */
+#geoFullscreenBtn {
+  position: absolute; top: 8px; right: 8px; z-index: 1100;
+  font-size: 12px; padding: 4px 9px; cursor: pointer;
+  background: var(--bg-secondary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 4px;
+}
+#geoFullscreenBtn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+/* The tile-failure notice. Sits over the empty basemap, which is otherwise a silent gray box. */
+#geoTileMsg {
+  position: absolute; left: 8px; bottom: 8px; z-index: 1100; max-width: min(560px, calc(100% - 16px));
+  font-size: 12px; padding: 6px 9px; border-radius: 4px;
+  background: var(--bg-secondary); color: var(--text-primary);
+  border: 1px solid var(--sev-medium);
+}
