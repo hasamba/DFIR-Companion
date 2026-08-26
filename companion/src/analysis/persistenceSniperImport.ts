@@ -6,7 +6,7 @@
 // "Status = , Subject = " when PowerShell found nothing to sign-check, and a Reference URL that
 // adds noise, not signal. Kept as its own module (not inlined into velociraptorImport.ts) because
 // that file is frozen at its current size by the file-size ledger (#384) — see check-file-size.mjs.
-import { str, getCI, oneLine, addIoc, mitreFromText, type MappedEvent, type SiemIoc } from "./siemImport.js";
+import { str, getCI, oneLine, addIoc, mitreFromText, worst, type MappedEvent, type SiemIoc } from "./siemImport.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
@@ -57,13 +57,26 @@ export function mapPersistenceSniper(
   const sigStatus = /status\s*=\s*([^,]*)/i.exec(signature)?.[1]?.trim() ?? "";
   const sigFlag = sigStatus && sigStatus.toLowerCase() !== "valid" ? sigStatus : "";
 
+  // Grade directly from the module's own STRUCTURED verdict columns (IsLolbin, Signature) — never
+  // from the free-text description below. `subject` is built from Value/Path, real filesystem/
+  // registry content on the target host that an adversary can shape (e.g. naming a dropped file
+  // `evil.exe [lolbin]`); a downstream rule that re-parsed the rendered description for a bracket
+  // marker was both spoofable (a crafted Value fakes a High grade the module never gave) and lossy
+  // (the description is capped at 600 chars, so a long subject could push a genuine marker past the
+  // cut and leave a real LOLBin sitting at Info). Grading here, before any text is assembled, is
+  // immune to both: PersistenceSniper enumerates almost every autostart on the box — mostly signed,
+  // first-party, and ordinary — so most rows stay Info by design; only its own anomaly signals earn
+  // a promotion.
+  let severity: MappedEvent["severity"] = "Info";
+  if (sigFlag) severity = worst(severity, "Medium");
+  if (isLolbin) severity = worst(severity, "High");
+
   let description = `Velociraptor: Persistence [${technique || "unknown"}]`;
   if (subject) description += ` — ${subject}`;
   if (accessGained) description += ` (${accessGained})`;
+  // These markers are for the analyst reading the title — informational only, not re-parsed for
+  // grading (see above).
   if (sigFlag) description += ` [signature: ${sigFlag}]`;
-  // LOLBin-as-persistence is the module's own risk verdict (a binary that living-off-the-land
-  // technique catalogs flag as abusable) — surfaced as a distinct marker so the content tagger
-  // (data/tags.yaml) can grade it up from Info without re-deriving the verdict itself.
   if (isLolbin) description += ` [lolbin]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
@@ -74,7 +87,7 @@ export function mapPersistenceSniper(
   return {
     timestamp,
     description,
-    severity: "Info",
+    severity,
     mitre: mitreFromText(classification),
     aggKey,
     sources: ["Velociraptor"],

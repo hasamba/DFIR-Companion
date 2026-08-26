@@ -1195,14 +1195,69 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(desc).toContain("NotSigned");
   });
 
-  it("flags a LOLBin persistence target with a [lolbin] marker (grading hook for tags.yaml)", () => {
-    const desc = parseVelociraptorJson(JSON.stringify([sniperRow({ IsLolbin: "True" })])).events[0].description;
-    expect(desc).toContain("[lolbin]");
+  it("flags a LOLBin persistence target with a [lolbin] marker and grades it High", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow({ IsLolbin: "True" })])).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
   });
 
-  it("does not flag an ordinary, non-LOLBin persistence target", () => {
-    const desc = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].description;
-    expect(desc).not.toContain("[lolbin]");
+  it("does not flag an ordinary, non-LOLBin persistence target, and leaves it at Info", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0];
+    expect(e.description).not.toContain("[lolbin]");
+    expect(e.severity).toBe("Info");
+  });
+
+  it("grades a non-valid signature to Medium", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Signature: "Status = NotSigned, Subject = " })]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+  });
+
+  it("grades a LOLBin with an unsigned signature to High (worst of the two)", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "True", Signature: "Status = NotSigned, Subject = " })]),
+    ).events[0];
+    expect(e.severity).toBe("High");
+  });
+
+  // Grading reads the module's own structured IsLolbin/Signature columns directly — never the
+  // rendered description, which mixes in Value/Path (real content from the target host that an
+  // adversary can shape). A tagger rule that re-parsed the description for a "[lolbin]"/
+  // "[signature: ...]" substring was tried first and reverted for exactly this reason.
+  it("is not spoofed by a Value that fakes the [lolbin] marker text (IsLolbin: False)", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "False", Value: "C:\\Temp\\name[lolbin].exe" })]),
+    ).events[0];
+    expect(e.description).toContain("name[lolbin].exe");
+    expect(e.severity).toBe("Info");
+  });
+
+  it("is not spoofed by a Value that fakes the [signature: ...] marker text (clean signature)", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\Temp\\evil [signature: NotSigned].exe",
+          Signature: "Status = Valid, Subject = CN=Contoso",
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("Info");
+  });
+
+  // The description is capped at 600 chars (withHostSuffix + .slice(0, 600)) — a long Path/subject
+  // could push a marker built AFTER that cap out of the rendered text. Grading must not depend on
+  // the marker surviving truncation.
+  it("still grades High when a long Technique would truncate the [lolbin] marker out of the description", () => {
+    // Technique (unlike Value/Path) isn't length-capped before being embedded, so a long enough
+    // value pushes everything appended after it — including the [lolbin] marker — past the
+    // description's final .slice(0, 600).
+    const longTechnique = "Scheduled Task ".repeat(50).trim();
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "True", Technique: longTechnique })]),
+    ).events[0];
+    expect(e.description).not.toContain("[lolbin]"); // confirms the marker really was truncated away
+    expect(e.severity).toBe("High"); // ...yet grading still fired, because it never depended on it
   });
 
   it("does not choke on an empty Signature struct (no cert info available)", () => {

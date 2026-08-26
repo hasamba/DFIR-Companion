@@ -64,78 +64,10 @@ describe("bundled data/tags.yaml — removable media", () => {
   });
 });
 
-// PersistenceSniper enumerates every autostart on the box — mostly signed, first-party, and
-// ordinary — so it's mapped at Info by design (analysis/persistenceSniperImport.ts) and left there
-// unless one of its own anomaly markers is present. Without these rules NOTHING it finds ever
-// reaches the forensic timeline, however suspicious.
-describe("bundled data/tags.yaml — PersistenceSniper", () => {
-  const RULESET = compileText(
-    readFileSync(fileURLToPath(new URL("../../data/tags.yaml", import.meta.url)), "utf8"),
-  );
-
-  function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-    return {
-      timestamp: "2026-06-01T00:00:00Z",
-      description: "d",
-      severity: "Info",
-      mitreTechniques: [],
-      relatedFindingIds: [],
-      sourceScreenshots: [],
-      ...p,
-    };
-  }
-
-  it("raises a LOLBin persistence finding to High", () => {
-    const res = runTagger(
-      [
-        ev({
-          id: "e1",
-          artifactName: "Windows.Forensics.PersistenceSniper",
-          description: "Velociraptor: Persistence [Scheduled Task] — C:\\Windows\\System32\\rundll32.exe [lolbin]",
-        }),
-      ],
-      RULESET,
-    );
-    const hit = res.perEvent.find((e) => e.eventId === "e1");
-    expect(hit?.severity).toBe("High");
-    expect(hit?.tags).toContain("lolbin");
-  });
-
-  it("raises an unsigned persistence target to Medium", () => {
-    const res = runTagger(
-      [
-        ev({
-          id: "e2",
-          artifactName: "Windows.Forensics.PersistenceSniper",
-          description: "Velociraptor: Persistence [Registry Run Key] — C:\\evil.exe [signature: NotSigned]",
-        }),
-      ],
-      RULESET,
-    );
-    const hit = res.perEvent.find((e) => e.eventId === "e2");
-    expect(hit?.severity).toBe("Medium");
-    expect(hit?.tags).toContain("unsigned-binary");
-  });
-
-  it("leaves an ordinary, signed PersistenceSniper finding at Info (no flood)", () => {
-    const res = runTagger(
-      [
-        ev({
-          id: "e3",
-          artifactName: "Windows.Forensics.PersistenceSniper",
-          description: "Velociraptor: Persistence [Scheduled Task] — C:\\Windows\\System32\\svchost.exe (User)",
-        }),
-      ],
-      RULESET,
-    );
-    expect(res.perEvent.find((e) => e.eventId === "e3")).toBeUndefined();
-  });
-
-  it("does not fire on an unrelated artifact that happens to contain '[lolbin]' text", () => {
-    const res = runTagger(
-      [ev({ id: "e4", artifactName: "Windows.Detection.Yara.Process", description: "match: [lolbin] rule" })],
-      RULESET,
-    );
-    expect(res.perEvent.find((e) => e.eventId === "e4")).toBeUndefined();
-  });
-});
+// PersistenceSniper's grading (LOLBin -> High, non-valid signature -> Medium) is done directly in
+// analysis/persistenceSniperImport.ts, from the module's own structured columns — see that file's
+// tests. A tagger rule re-deriving the same verdict from the rendered description was tried first
+// and reverted: it was spoofable via a crafted Value/Path (a file literally named "evil.exe
+// [lolbin]" faked a High grade the module never gave) and lossy (the description's 600-char cap
+// could truncate a genuine marker, leaving a real LOLBin at Info). There is deliberately no
+// PersistenceSniper-specific rule in tags.yaml.

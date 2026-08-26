@@ -70,28 +70,15 @@ win_run_key:
   view: 'Autorun keys'
 
 # PersistenceSniper (Windows.Forensics.PersistenceSniper) enumerates every autostart mechanism on the
-# box — the large majority signed, first-party, and ordinary — so it lands as Info-severity by design
-# (see analysis/persistenceSniperImport.ts) and blanket-promoting every row would flood the timeline
-# with noise instead of signal. These two rules grade up only the module's own anomaly signals: a
-# binary living-off-the-land catalogs flag as abusable, or a persistence target that isn't signed by
-# a trusted publisher (or whose signature doesn't check out at all).
-persistencesniper_lolbin:
-  description: PersistenceSniper flagged a known LOLBin used as a persistence mechanism
-  all:
-    - { field: artifactName, contains: ['PersistenceSniper'] }
-    - { field: description, contains: ['[lolbin]'] }
-  tags: ['lolbin', 'persistence']
-  severity: High
-  view: 'Persistence — LOLBins'
-
-persistencesniper_unsigned:
-  description: PersistenceSniper persistence target with a non-valid Authenticode signature
-  all:
-    - { field: artifactName, contains: ['PersistenceSniper'] }
-    - { field: description, contains: ['[signature:'] }
-  tags: ['unsigned-binary', 'persistence']
-  severity: Medium
-  view: 'Persistence — unsigned binaries'
+# box — the large majority signed, first-party, and ordinary — so it grades Info by default and is
+# NOT re-graded here. Its two anomaly signals (a known LOLBin used for persistence; a target with a
+# non-valid Authenticode signature) are graded High/Medium directly in analysis/persistenceSniperImport.ts,
+# from the module's own structured IsLolbin/Signature columns — not by a tagger rule matching the
+# rendered description, which would be re-deriving the verdict from text an adversary partly controls
+# (Value/Path, real filesystem/registry content on the target) and would silently miss it once the
+# description's 600-char cap truncates a long entry. See that file's comment for the incident this
+# replaced: a crafted Value like `evil.exe [lolbin]` previously spoofed a High grade the module never
+# gave.
 
 # ─────────────────────────── Credential access / LSASS ───────────────────────────
 win_lsass_access:
