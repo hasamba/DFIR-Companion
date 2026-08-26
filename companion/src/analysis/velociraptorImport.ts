@@ -29,6 +29,7 @@ import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
 // The expandable full-detail message, and the cap that bounds it — see truncatedRemainder.ts.
 import { cappedMessage } from "./truncatedRemainder.js";
 import { parseCsv } from "./csvImport.js";
+import { scrapeEvidence } from "./veloTextIocs.js";
 import {
   extractRecords,
   mapWindows,
@@ -405,30 +406,6 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
     if (HEX_HASH.test(val)) addIoc(sink, "hash", val.toLowerCase());
   }
   return { sha256, md5 };
-}
-
-// Scrape IOCs out of a free-text detection field (a matched command Line, file Content, or
-// HitString) — `genericIocs` only fires on structured keys, so the download URL / C2 IP embedded
-// in a PowerShell-web-request or webshell hit (exactly the indicator the rule fired on) is
-// otherwise missed. URLs, octet-bounded IPv4 (so "10.0.22000" version strings aren't IPs), and
-// SHA256/SHA1/MD5 hashes.
-const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
-const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
-const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
-function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
-  if (!text) return;
-  for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
-  for (const m of text.matchAll(TEXT_IPV4)) {
-    const ip = cleanIp(m[0]);
-    if (ip) addIoc(sink, "ip", ip);
-  }
-  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
-}
-
-// The free-text fields that carry a detection's evidence (and its embedded IOCs).
-const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message", "Details"];
-function scrapeEvidence(row: Row, sink: Map<string, SiemIoc>): void {
-  for (const k of EVIDENCE_TEXT_KEYS) scrapeText(str(getCI(row, k)), sink);
 }
 
 // ───────────────────────────── EVTX-row normalization ─────────────────────────────

