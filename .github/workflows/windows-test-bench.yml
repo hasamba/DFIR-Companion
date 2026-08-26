@@ -7,7 +7,23 @@
 # IDENTICAL commit vary by 1.75x at the median per test file, so a single before/after pair proves
 # nothing: every leg runs 3 times and the legs are compared on their medians.
 #
-# Delete this workflow once the winning configuration has landed in ci.yml / vitest.config.ts.
+# It is kept rather than deleted because it is the only thing that can settle the next round of
+# this argument. It cannot fire on a PR or on master — only an explicit push to a bench/** branch
+# runs it — so it costs nothing until someone deliberately wants numbers.
+#
+# Results that produced the current configuration (run 32940797230, medians of 3):
+#
+#   config              wall      test phase   per-file p90   timeouts
+#   fastdisk            383.9s    567.4s         914ms        0/3     <- shipped
+#   fastdisk-cap2       419.1s    427.7s         626ms        0/3
+#   fastdisk-defender   437.5s    683.5s        1000ms        0/3
+#   defender            660.7s   1420.8s        5469ms        0/3
+#   baseline            748.8s   1667.9s        6381ms        0/3
+#   cap2                875.4s   1240.1s        4364ms        0/3
+#
+# Only the disk move is decisive: its wall-time range (260-445s) does not overlap baseline's
+# (651-768s). Capping the pool is decisively WORSE than baseline (828-956s). Everything else
+# overlaps its neighbours at n=3 and was not treated as a difference.
 name: Windows test bench
 
 # Pushing this branch pattern is the trigger: workflow_dispatch alone would not work, because
