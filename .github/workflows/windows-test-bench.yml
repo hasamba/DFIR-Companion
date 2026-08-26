@@ -1,4 +1,4 @@
-# TEMPORARY measurement harness for the "Companion test (Windows)" starvation false positives
+# Measurement harness for the "Companion test (Windows)" starvation false positives
 # (issue #173, PR #642). It exists to answer one question with numbers instead of guesses: WHICH
 # change removes the Windows-only timeouts — and at what cost in wall time.
 #
@@ -8,8 +8,8 @@
 # nothing: every leg runs 3 times and the legs are compared on their medians.
 #
 # It is kept rather than deleted because it is the only thing that can settle the next round of
-# this argument. It cannot fire on a PR or on master — only an explicit push to a bench/** branch
-# runs it — so it costs nothing until someone deliberately wants numbers.
+# this argument. It never runs unless someone deliberately asks for numbers on a bench/** branch —
+# see the trigger and the job guard below, which enforce that between them.
 #
 # Results that produced the current configuration (run 32940797230, medians of 3):
 #
@@ -26,9 +26,14 @@
 # overlaps its neighbours at n=3 and was not treated as a difference.
 name: Windows test bench
 
-# Pushing this branch pattern is the trigger: workflow_dispatch alone would not work, because
-# GitHub only registers a dispatchable workflow once it exists on the default branch, and this one
-# is deliberately never merged there.
+# Two ways in, and NEITHER is self-limiting on its own. `push` is filtered to bench/** here, but a
+# branch filter does not apply to a manual event: once this file is on the default branch GitHub
+# registers workflow_dispatch there, and dispatching it with the default master ref would launch all
+# 18 Windows legs. The `if` on the job below is what actually holds the line, so keep the two
+# together — the filter here is documentation, the guard there is the control.
+#
+# workflow_dispatch is kept rather than dropped because it is the only way to re-measure an existing
+# bench branch without pushing an empty commit to it.
 on:
   push:
     branches: ["bench/**"]
@@ -45,6 +50,10 @@ concurrency:
 jobs:
   bench:
     name: bench
+    # THE cost guard. 18 Windows legs is several hours of runner time, so this must never start by
+    # accident — a dispatch from master (the default ref in the Actions UI) skips every leg for free
+    # rather than billing for them. Pushing or dispatching a bench/** branch is the only way in.
+    if: startsWith(github.ref, 'refs/heads/bench/')
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
