@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import request from "supertest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,9 @@ import {
   DEFAULT_ON_OPEN_THROTTLE_MS,
   type IntegritySweep,
 } from "../../src/analysis/custodyIntegrity.js";
+// Imported statically, like every other test that drives createApp through supertest. Loading the
+// server module graph inside a test body spends the whole per-test timeout on the transform.
+import { createApp } from "../../src/server.js";
 
 let cases: CaseStore;
 let custody: CustodyStore;
@@ -156,8 +160,6 @@ describe("EvidenceIntegrityMonitor.status with per-case verification", () => {
 
 describe("POST /cases/:id/custody/verify", () => {
   it("kicks off verification for the opened case and returns immediately", async () => {
-    const { createApp } = await import("../../src/server.js");
-    const { default: request } = await import("supertest");
     const app = createApp(cases, { custodyStore: custody, integrityMonitor: monitor });
     await collect("c1", "a.csv", "one\n");
 
@@ -170,17 +172,12 @@ describe("POST /cases/:id/custody/verify", () => {
   });
 
   it("404s for a case that does not exist", async () => {
-    const { createApp } = await import("../../src/server.js");
-    const { default: request } = await import("supertest");
     const app = createApp(cases, { custodyStore: custody, integrityMonitor: monitor });
 
     expect((await request(app).post("/cases/nope/custody/verify").send({})).status).toBe(404);
   });
 
   it("501s when no monitor is wired", async () => {
-    const { createApp } = await import("../../src/server.js");
-    const { default: request } = await import("supertest");
-
     expect((await request(createApp(cases, {})).post("/cases/c1/custody/verify").send({})).status).toBe(501);
   });
 });
