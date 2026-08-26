@@ -32,6 +32,16 @@ export function mapPersistenceSniper(
   const accessGained = str(getCI(row, "Access Gained")).trim();
   const signature = str(getCI(row, "Signature")).trim();
   const isLolbin = str(getCI(row, "IsLolbin")).trim().toLowerCase() === "true";
+  const isBuiltinBinary = str(getCI(row, "IsBuiltinBinary")).trim().toLowerCase() === "true";
+  // IsLolbin alone is a weak, noisy signal: rundll32.exe/sc.exe/cmd.exe/msiexec.exe are all
+  // catalogued LOLBins, and they're ALSO how a large fraction of Windows' own stock scheduled
+  // tasks run (sysmain.dll, PcaSvc.dll, AppxDeploymentClient.dll, …) — on one real host's import,
+  // 27 rows came back IsLolbin=True and 23 of those were the OS's own recognised binaries
+  // (IsBuiltinBinary=True), flooding the timeline with High-severity "findings" that are just
+  // ordinary Windows behavior. Only escalate when the LOLBin technique is running from something
+  // that ISN'T PersistenceSniper's own inventory of expected system binaries — that combination
+  // (LOLBin-capable tool + not a recognised built-in) is the actually rare, actually suspicious one.
+  const lolbinFlag = isLolbin && !isBuiltinBinary;
 
   // Value is the actual executable/command the technique runs — the payload an analyst cares
   // about — when the module found one; Path (a registry key, task name, or service) is always
@@ -81,16 +91,17 @@ export function mapPersistenceSniper(
   let severity: MappedEvent["severity"] = "Info";
   if (sigFlag) severity = worst(severity, "Medium");
   if (staged) severity = worst(severity, "Medium");
-  if (isLolbin) severity = worst(severity, "High");
+  if (lolbinFlag) severity = worst(severity, "High");
 
   let description = `Velociraptor: Persistence [${technique || "unknown"}]`;
   if (subject) description += ` — ${subject}`;
   if (accessGained) description += ` (${accessGained})`;
   // These markers are for the analyst reading the title — informational only, not re-parsed for
-  // grading (see above).
+  // grading (see above). Gated on the SAME condition that drives severity, so the marker and the
+  // grade never disagree (a "[lolbin]" tag on an Info-severity row would be its own confusing bug).
   if (sigFlag) description += ` [signature: ${sigFlag}]`;
   if (staged) description += ` [staged: temp/appdata]`;
-  if (isLolbin) description += ` [lolbin]`;
+  if (lolbinFlag) description += ` [lolbin]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-persist|${technique.toLowerCase()}|${(value || path).toLowerCase()}|${host.toLowerCase()}`

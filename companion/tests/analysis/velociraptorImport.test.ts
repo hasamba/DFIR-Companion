@@ -1207,6 +1207,34 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.severity).toBe("Info");
   });
 
+  // Real-world regression (#657 follow-up): rundll32.exe/sc.exe/cmd.exe/msiexec.exe are all
+  // catalogued LOLBins AND how a large share of Windows' own stock scheduled tasks run. On one
+  // real host's import, 27/273 rows came back IsLolbin=True and 23 of those were the OS's own
+  // recognised binaries (IsBuiltinBinary=True) — treating IsLolbin alone as High flooded the
+  // timeline with "findings" that were just ordinary Windows behavior.
+  it("does not grade a LOLBin-capable tool as High when it's PersistenceSniper's own recognised built-in binary", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Technique: "Scheduled Task",
+          Value: "%windir%\\system32\\rundll32.exe sysmain.dll,PfSvWsSwapAssessmentTask",
+          IsLolbin: "True",
+          IsBuiltinBinary: "True",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).not.toContain("[lolbin]");
+    expect(e.severity).toBe("Info");
+  });
+
+  it("still grades High for a LOLBin technique that is NOT a recognised built-in binary", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "True", IsBuiltinBinary: "False" })]),
+    ).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
   it("grades a non-valid signature to Medium", () => {
     const e = parseVelociraptorJson(
       JSON.stringify([sniperRow({ Signature: "Status = NotSigned, Subject = " })]),
