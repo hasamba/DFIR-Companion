@@ -47,6 +47,29 @@ describe("extractDomains", () => {
     expect(extractDomains("New-Object System.Net.WebClient; [System.IO.File]::ReadAllBytes")).toEqual([]);
   });
 
+  // A CHAINED namespace is rejected above only because greedy matching runs past it to a last label
+  // no TLD table would accept ("webclient", "file"). A TERMINAL one has a real TLD sitting at the
+  // end — System.Net, System.IO, Microsoft.NET — and sailed straight through until the
+  // code-namespace pair check was added. PowerShell script blocks are full of these.
+  it.each([
+    "using namespace System.Net",
+    "[System.IO]::Path",
+    "Add-Type -AssemblyName System.Net",
+    "loaded Microsoft.NET runtime",
+    "at java.net.Socket and java.io directly",
+  ])("rejects a terminal code namespace: %s", (text) => {
+    expect(extractDomains(text)).toEqual([]);
+  });
+
+  // The pair check must not swallow the real domains those namespace roots also spell.
+  it.each([
+    ["visit microsoft.com for the advisory", "microsoft.com"],
+    ["exfil to acct.blob.core.windows.net/share", "acct.blob.core.windows.net"],
+    ["beacon to system.example.com", "system.example.com"],
+  ])("still extracts a real domain built on a namespace root: %s", (text, expected) => {
+    expect(extractDomains(text)).toContain(expected);
+  });
+
   it("rejects an internal AD/mDNS zone", () => {
     expect(extractDomains("logon from WS-01.northstar.local and DC1.corp")).toEqual([]);
   });

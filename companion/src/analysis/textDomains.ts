@@ -115,6 +115,22 @@ function isWindowsPathComponent(text: string, start: number): boolean {
   return text[start - 1] === "\\" && text[start - 2] !== "\\";
 }
 
+// A CHAINED code namespace needs no guard — greedy matching runs past it to a last label no TLD
+// table accepts ("System.Net.WebClient" ends in "webclient", "[System.IO.File]" in "file"). A
+// TERMINAL one is the problem: "using namespace System.Net", "[System.IO]::Path", "Microsoft.NET"
+// all end on a label that IS a real TLD, and PowerShell script blocks are full of them.
+//
+// The check is a PAIR, not a root list, because the roots spell real domains too: rejecting every
+// "microsoft.*" would lose microsoft.com. Only <root>.<child> with exactly two labels is rejected,
+// so acct.blob.core.windows.net and system.example.com are untouched. The cost is the rare domain
+// that is literally "system.io" or "windows.net" — the same trade the two-letter extensions make,
+// and the same way round, because a false IOC an analyst must dismiss by hand costs more.
+const NS_ROOTS = new Set(["system", "microsoft", "windows", "java", "javax", "mscorlib", "newtonsoft"]);
+const NS_CHILDREN = new Set(["net", "io", "ui"]);
+function isCodeNamespace(labels: string[]): boolean {
+  return labels.length === 2 && NS_ROOTS.has(labels[0]) && NS_CHILDREN.has(labels[1]);
+}
+
 /**
  * Every domain in `text`, lower-cased and de-duplicated, in first-seen order.
  *
@@ -134,6 +150,7 @@ export function extractDomains(text: string): string[] {
     // their own: TEXT_DOMAIN_RE requires an ALPHABETIC last label, so neither can match at all.
     if (TEXT_DOMAIN_SKIP_RE.test(d) || TEXT_FILE_EXT_RE.test(d)) continue;
     if (!hasPlausibleTld(d)) continue; // e.g. "artifacts.precondition", "system.net.webclient"
+    if (isCodeNamespace(d.split("."))) continue; // e.g. "system.net", "microsoft.net", "java.io"
     out.add(d);
   }
   return [...out];
