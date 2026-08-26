@@ -30,11 +30,33 @@ import { textIocs, type SiemIoc } from "./siemImport.js";
 export const REMAINDER_VALUE_BUDGET = 600;
 
 /**
- * Type order for the list. Network infrastructure first, because "which host did it talk to" is the
- * question the silent cut made unanswerable — and because when the budget runs out, the type that
- * gets cut should be the one an analyst can most easily recover from elsewhere in the case.
+ * How far back into the KEPT text the scan starts. A cap cuts on a character count, not on a token
+ * boundary, so it lands mid-value as readily as between two: the kept text ends with a dangling
+ * "c2-strad" and the dropped text opens with "dler.example.net". Scanning the dropped side alone
+ * then reports a suffix that never existed — a wrong indicator an analyst can pivot on and find
+ * nothing, with no sign the value was cut in half. Starting the scan a little BEFORE the cut hands
+ * the extractor the whole value again; whatever the kept text already shows in full is filtered out
+ * afterwards, so the look-back costs no budget.
+ *
+ * 512 characters covers every value the extractor can produce: a domain stops at 253, a SHA256 at
+ * 64, an IPv4 at 15. A URL can exceed it, but a mid-URL start cannot masquerade as a URL — the
+ * pattern is anchored on `https?://` — so the overflow case degrades to "not listed", never to
+ * "listed wrong".
  */
-const TYPE_ORDER: readonly SiemIoc["type"][] = ["url", "domain", "ip", "sid", "hash"];
+export const REMAINDER_OVERLAP = 512;
+
+/**
+ * Type order for the list. Network infrastructure first, because "which host did it talk to" is the
+ * question the silent cut made unanswerable.
+ *
+ * URLs come LAST despite being infrastructure, and that is the point: one is up to 300 characters
+ * and half the budget, while the host inside it is 17 and `textIocs` already extracts that host
+ * separately as a domain (or an ip). Listing URLs first spent the whole budget naming four servers
+ * in full and pushed every remaining C2 domain into "+N more" — the long form crowding out the very
+ * answer it contains. Ordered this way the note names every host it found, then spends what is left
+ * on the paths.
+ */
+const TYPE_ORDER: readonly SiemIoc["type"][] = ["domain", "ip", "sid", "hash", "url"];
 
 function rank(type: SiemIoc["type"]): number {
   const i = TYPE_ORDER.indexOf(type);
@@ -44,15 +66,26 @@ function rank(type: SiemIoc["type"]): number {
 /**
  * One line describing what a cap removed, ready to append to the text that survived it.
  *
+ * `kept` is the text the cap left in place and `dropped` is what it took. Both are needed: the size
+ * of the cut is `dropped`'s, but the SCAN starts inside `kept` so a value the cut split in half is
+ * read whole (see REMAINDER_OVERLAP), and anything `kept` already shows in full is then left out.
+ *
  * Returns "" only for an empty remainder — nothing was cut, so there is nothing to disclose. A
  * remainder that holds no indicators still gets a note: an analyst has to be able to tell "the cut
- * text was checked and held none" apart from "nobody looked". Pure; `dropped` is never mutated.
+ * text was checked and held none" apart from "nobody looked". Pure; neither input is mutated.
  */
-export function remainderNote(dropped: string): string {
+export function remainderNote(kept: string, dropped: string): string {
   if (!dropped) return "";
   const sink = new Map<string, SiemIoc>();
-  textIocs(dropped, sink); // linear in `dropped` — see textIocs' own note on why it has no input cap
-  const found = [...sink.values()].sort((a, b) => rank(a.type) - rank(b.type));
+  // Linear in the scanned text — see textIocs' own note on why it has no input cap.
+  textIocs(kept.slice(-REMAINDER_OVERLAP) + dropped, sink);
+  const keptLower = kept.toLowerCase();
+  const found = [...sink.values()]
+    // Already readable above the cut ⇒ not something the cut removed. Budget spent on it is budget
+    // stolen from a value the analyst genuinely cannot see. textIocs lowercases what it normalizes,
+    // so the containment test is done on one case.
+    .filter((i) => !keptLower.includes(i.value.toLowerCase()))
+    .sort((a, b) => rank(a.type) - rank(b.type));
   const head = `[cut here: ${dropped.length} more characters`;
   if (found.length === 0) return `\n\n${head} — no indicators in the cut text]`;
 
@@ -63,13 +96,16 @@ export function remainderNote(dropped: string): string {
   let used = 0;
   let lastType = "";
   for (const ioc of found) {
-    const cost = ioc.value.length + 2;
-    if (used + cost > REMAINDER_VALUE_BUDGET) break;
-    parts.push(
-      ioc.type === lastType ? `, ${ioc.value}` : `${parts.length ? "; " : ""}${ioc.type}: ${ioc.value}`,
-    );
+    const seg =
+      ioc.type === lastType ? `, ${ioc.value}` : `${parts.length ? "; " : ""}${ioc.type}: ${ioc.value}`;
+    // SKIP the value that does not fit, do not stop at it. One 300-character URL would otherwise
+    // silence every short domain and address behind it, leaving the note reporting the least useful
+    // thing it found — the opposite of listing infrastructure first. A skipped value still counts
+    // toward "+N more", so the tally stays honest about everything the note did not print.
+    if (used + seg.length > REMAINDER_VALUE_BUDGET) continue;
+    parts.push(seg);
     lastType = ioc.type;
-    used += cost;
+    used += seg.length;
     printed++;
   }
   const more = found.length - printed;

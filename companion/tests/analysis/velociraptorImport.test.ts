@@ -1383,6 +1383,29 @@ describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () =>
     expect(message).toContain(`${raw.length - 4000} more characters`);
   });
 
+  it("recovers a C2 domain the cut split in half", () => {
+    // The cap counts characters, not tokens, so it lands mid-domain as readily as between two.
+    // Scanning only what was dropped reports a suffix that never existed ("er.example.net"), which
+    // an analyst can pivot on and find nothing. Position the fixture so the cut falls inside the
+    // domain itself.
+    const STRADDLER = "c2-straddler.example.net";
+    const head = "ScriptBlock: Write-Host 'x' ; ";
+    const filler = "Write-Host 'benign module boilerplate line' ; ".repeat(200);
+    const cutAt = 4000 - 12; // 12 characters of the domain stay above the cap, the rest is dropped
+    const raw = `${head}${filler}`.slice(0, cutAt) + STRADDLER + " was the beacon target";
+    expect(raw.indexOf(STRADDLER)).toBeLessThan(4000);
+    expect(raw.indexOf(STRADDLER) + STRADDLER.length).toBeGreaterThan(4000); // genuinely split
+
+    const text = JSON.stringify({
+      "Custom.PSScript": [{ Message: raw, SomeTime: "2026-06-01T00:00:00Z" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    const message = r.events[0].message as string;
+    // The note names the WHOLE domain, not the half that fell past the cap.
+    expect(message.slice(4001)).toContain(STRADDLER);
+    expect(message.slice(4001)).not.toContain("er.example.net was");
+  });
+
   it("leaves a message that fits the cap exactly as it was", () => {
     // No cut ⇒ nothing to disclose. A note on an untruncated message would be noise on every row.
     const raw = `ScriptBlock: ${"Write-Host 'x' ; ".repeat(50)}${POST_CUT_DOMAIN}`;

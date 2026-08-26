@@ -165,7 +165,8 @@ function fullMessage(row: Row, description: string): string {
   // If the description already contains (nearly) the whole message there's no extra detail to reveal.
   if (description.includes(raw) || raw.length <= 80) return "";
   if (raw.length <= MESSAGE_CAP) return raw;
-  return `${raw.slice(0, MESSAGE_CAP)}…${remainderNote(raw.slice(MESSAGE_CAP))}`;
+  const kept = raw.slice(0, MESSAGE_CAP);
+  return `${kept}…${remainderNote(kept, raw.slice(MESSAGE_CAP))}`;
 }
 
 // A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
