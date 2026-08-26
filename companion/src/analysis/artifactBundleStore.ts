@@ -174,7 +174,7 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
     builtIn: true,
     artifacts: ["DetectRaptor.Generic.Detection.YaraFile", "Generic.Scanner.ThorZIP"],
     defaultWaitMinutes: 60, // these scan the whole disk — the 10-min Best Practice default collects too early
-    timeoutSeconds: 3600, // 1 hour default, well past the 600s Velociraptor default
+    timeoutSeconds: 6000, // matches the other bundles' default, well past the 600s Velociraptor default
     // Drop known-noisy rows at the source: YaraFile pagefile hits.
     filters: {
       "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'",
