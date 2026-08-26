@@ -9,7 +9,9 @@ import {
   resolveExtractedFrom,
   maxEventsDefault,
   logonRisk,
+  aggregateEvents,
   type SiemIoc,
+  type MappedEvent,
 } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
@@ -928,5 +930,66 @@ describe("textIocs — ReDoS guard (#249)", () => {
     const deep = `${"a.".repeat(120)}com`; // 121 labels — legal, if unusual
     textIocs(deep, sink);
     expect([...sink.values()]).toContainEqual({ type: "domain", value: deep });
+  });
+});
+
+// Two mapped events can legitimately share an aggKey while differing in severity — a Velociraptor
+// artifact whose per-row severity depends on row content (e.g. PersistenceSniper's IsLolbin), merged
+// against a digit-stripped key that folds the same finding across two user SIDs. worst()-ing only the
+// severity number would leave the displayed description/path/hashes pinned to whichever row arrived
+// first, so an analyst could see a High-severity row whose text describes something benign — with no
+// visible reason for the grade. #657.
+describe("aggregateEvents — severity/description consistency across a merge", () => {
+  function m(p: Partial<MappedEvent> & { severity: MappedEvent["severity"] }): MappedEvent {
+    return {
+      timestamp: "2026-06-01T00:00:00Z",
+      description: "d",
+      mitre: [],
+      aggKey: "k",
+      ...p,
+    };
+  }
+
+  it("promotes the WHOLE displayed record — not just the number — when a later row is more severe", () => {
+    const { events } = aggregateEvents([
+      m({ severity: "Info", description: "benign twin", path: "C:\\benign.exe" }),
+      m({ severity: "High", description: "actual LOLBin", path: "C:\\evil.exe" }),
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0].severity).toBe("High");
+    // The description and path must describe the SAME row that earned the High grade — not a
+    // Frankenstein of the first row's text under the second row's severity.
+    expect(events[0].description).toBe("actual LOLBin");
+    expect(events[0].path).toBe("C:\\evil.exe");
+    expect(events[0].count).toBe(2);
+  });
+
+  it("keeps the first row's record when a later merged row is LESS severe (no downgrade, no swap)", () => {
+    const { events } = aggregateEvents([
+      m({ severity: "High", description: "actual LOLBin", path: "C:\\evil.exe" }),
+      m({ severity: "Info", description: "benign twin", path: "C:\\benign.exe" }),
+    ]);
+    expect(events[0].severity).toBe("High");
+    expect(events[0].description).toBe("actual LOLBin");
+    expect(events[0].path).toBe("C:\\evil.exe");
+  });
+
+  it("still unions mitre/sources across the merge even when identity fields are promoted", () => {
+    const { events } = aggregateEvents([
+      m({ severity: "Info", description: "benign twin", mitre: ["T1547.001"], sources: ["Velociraptor"] }),
+      m({ severity: "High", description: "actual LOLBin", mitre: ["T1574.002"], sources: ["THOR"] }),
+    ]);
+    expect(events[0].mitreTechniques.sort()).toEqual(["T1547.001", "T1574.002"]);
+    expect(events[0].sources?.sort()).toEqual(["THOR", "Velociraptor"]);
+  });
+
+  it("does not leave a stale field from the first row on the promoted record", () => {
+    // First row carries a sha256 the second row doesn't have — after promotion to the second row's
+    // identity, that hash must NOT still be attached (it would misattribute it to the wrong file).
+    const { events } = aggregateEvents([
+      m({ severity: "Info", description: "benign twin", sha256: "a".repeat(64) }),
+      m({ severity: "High", description: "actual LOLBin" }),
+    ]);
+    expect(events[0].sha256).toBeUndefined();
   });
 });

@@ -1530,6 +1530,45 @@ export interface EventAggregator {
   finish(): { events: SiemEvent[]; groups: number };
 }
 
+// Copies the fields that identify and describe ONE underlying row — description, severity, and
+// every "which specific thing is this" field — onto `target`. Deliberately excludes the group-level
+// accumulator fields (id, timestamp/endTimestamp, count, aggKey, mitreTechniques, sources), which
+// the caller manages separately across a merge. A field absent on `m` is cleared, not left over
+// from whichever row `target` previously described — a stale path/hash from a DIFFERENT row would
+// misattribute it to the row actually being shown.
+function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
+  target.description = m.description;
+  target.severity = m.severity;
+  if (m.canonical) target.canonical = m.canonical;
+  else delete target.canonical;
+  if (m.sha256) target.sha256 = m.sha256;
+  else delete target.sha256;
+  if (m.md5) target.md5 = m.md5;
+  else delete target.md5;
+  if (m.path) target.path = m.path;
+  else delete target.path;
+  if (m.asset) target.asset = m.asset;
+  else delete target.asset;
+  if (m.processName) target.processName = m.processName;
+  else delete target.processName;
+  if (m.parentName) target.parentName = m.parentName;
+  else delete target.parentName;
+  if (m.pid !== undefined) target.pid = m.pid;
+  else delete target.pid;
+  if (m.commandLine) target.commandLine = m.commandLine;
+  else delete target.commandLine;
+  if (m.srcIp) target.srcIp = m.srcIp;
+  else delete target.srcIp;
+  if (m.dstIp) target.dstIp = m.dstIp;
+  else delete target.dstIp;
+  if (m.port) target.port = m.port;
+  else delete target.port;
+  if (m.artifactName) target.artifactName = m.artifactName;
+  else delete target.artifactName;
+  if (m.message) target.message = m.message;
+  else delete target.message;
+}
+
 export function createEventAggregator(
   opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
 ): EventAggregator {
@@ -1552,7 +1591,6 @@ export function createEventAggregator(
           if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
           if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
         }
-        existing.severity = worst(existing.severity, m.severity);
         for (const mt of m.mitre)
           if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
         if (m.sources)
@@ -1560,34 +1598,30 @@ export function createEventAggregator(
             existing.sources ??= [];
             if (!existing.sources.includes(s)) existing.sources.push(s);
           }
-        if (!existing.artifactName && m.artifactName) existing.artifactName = m.artifactName; // first-wins provenance
-        if (!existing.message && m.message) existing.message = m.message; // first-wins full detail
-        // `count` records repeats; retaining the first pointer avoids unbounded provenance arrays.
+        // Two rows can share an aggKey while differing meaningfully in risk (e.g. the same
+        // PersistenceSniper startup-item name across two user SIDs, one signed and ordinary, one
+        // an unsigned LOLBin — the digit-stripped key folds them together). worst()-ing only the
+        // severity NUMBER left description/path/hashes pinned to whichever row was seen first, so
+        // an analyst could see "High" attached to text that describes the benign twin, with
+        // nothing in the row explaining the grade. When the incoming row is STRICTLY more severe,
+        // promote the whole displayed record to it — never just the number.
+        if (SEVERITY_RANK[m.severity] < SEVERITY_RANK[existing.severity]) {
+          applyEventIdentity(existing, m);
+        }
+        // `count` records repeats; retaining one instance's identity avoids unbounded provenance arrays.
       } else {
-        byKey.set(key, {
+        const e: SiemEvent = {
           id: "",
           timestamp: m.timestamp,
-          description: m.description,
-          severity: m.severity,
+          description: "",
+          severity: "Info",
           mitreTechniques: [...m.mitre],
-          ...(m.canonical ? { canonical: m.canonical } : {}),
           count: 1,
           aggKey: m.aggKey,
-          ...(m.sha256 ? { sha256: m.sha256 } : {}),
-          ...(m.md5 ? { md5: m.md5 } : {}),
-          ...(m.path ? { path: m.path } : {}),
-          ...(m.asset ? { asset: m.asset } : {}),
-          ...(m.processName ? { processName: m.processName } : {}),
-          ...(m.parentName ? { parentName: m.parentName } : {}),
-          ...(m.pid !== undefined ? { pid: m.pid } : {}),
-          ...(m.commandLine ? { commandLine: m.commandLine } : {}),
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
-          ...(m.srcIp ? { srcIp: m.srcIp } : {}),
-          ...(m.dstIp ? { dstIp: m.dstIp } : {}),
-          ...(m.port ? { port: m.port } : {}),
-          ...(m.artifactName ? { artifactName: m.artifactName } : {}),
-          ...(m.message ? { message: m.message } : {}),
-        });
+        };
+        applyEventIdentity(e, m);
+        byKey.set(key, e);
         order.push(key);
       }
     },
