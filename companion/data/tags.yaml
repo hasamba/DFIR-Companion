@@ -69,6 +69,17 @@ win_run_key:
   severity: Medium
   view: 'Autorun keys'
 
+# PersistenceSniper (Windows.Forensics.PersistenceSniper) enumerates every autostart mechanism on the
+# box — the large majority signed, first-party, and ordinary — so it grades Info by default and is
+# NOT re-graded here. Its two anomaly signals (a known LOLBin used for persistence; a target with a
+# non-valid Authenticode signature) are graded High/Medium directly in analysis/persistenceSniperImport.ts,
+# from the module's own structured IsLolbin/Signature columns — not by a tagger rule matching the
+# rendered description, which would be re-deriving the verdict from text an adversary partly controls
+# (Value/Path, real filesystem/registry content on the target) and would silently miss it once the
+# description's 600-char cap truncates a long entry. See that file's comment for the incident this
+# replaced: a crafted Value like `evil.exe [lolbin]` previously spoofed a High grade the module never
+# gave.
+
 # ─────────────────────────── Credential access / LSASS ───────────────────────────
 win_lsass_access:
   description: LSASS process access / dump indicators (Sysmon 10, dump filenames)

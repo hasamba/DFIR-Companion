@@ -49,6 +49,7 @@ import {
   getCI,
   getPath,
   normalizeTime,
+  mitreFromText,
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
@@ -61,6 +62,7 @@ import {
 // as a generic detection() row, which would read no severity from a sibling field and silently
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
+import { mapPersistenceSniper } from "./persistenceSniperImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
@@ -122,13 +124,6 @@ const WRAPPER_KEYS = new Set([
   "alerts",
   "value",
 ]);
-
-// Pull MITRE technique ids out of any tactic/tag/meta text.
-function mitreFromText(...parts: string[]): string[] {
-  const out = new Set<string>();
-  for (const p of parts) for (const m of p.matchAll(/\bt\d{4}(?:\.\d{3})?\b/gi)) out.add(m[0].toUpperCase());
-  return [...out];
-}
 
 function flatStr(v: unknown): string {
   if (v == null) return "";
@@ -470,6 +465,7 @@ type Kind =
   | "download"
   | "startup"
   | "taskscheduler"
+  | "persistenceSniper"
   | "usn"
   | "mft"
   | "browser"
@@ -496,6 +492,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/browserdownload|evidence.*download/i.test(a)) return "download";
   if (/startup|autorun/i.test(a)) return "startup";
   if (/taskscheduler/i.test(a)) return "taskscheduler";
+  if (/persistencesniper/i.test(a)) return "persistenceSniper";
 
   const rule = getCI(row, "Rule");
   if (
@@ -532,6 +529,15 @@ function classify(row: Row, artifact: string): Kind {
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
     return "taskscheduler";
+  // Windows.Forensics.PersistenceSniper wraps the PersistenceSniper PowerShell module verbatim —
+  // Technique + Classification + "Access Gained" is that module's own column set and isn't reused
+  // by any other artifact, so it's a safe signature even without a recognisable _Source.
+  if (
+    getCI(row, "Technique") != null &&
+    getCI(row, "Classification") != null &&
+    getCI(row, "Access Gained") != null
+  )
+    return "persistenceSniper";
   // Windows.Forensics.Usn — the USN change-journal row: a `Reason` (the filesystem operation:
   // FILE_CREATE / FILE_DELETE / DATA_EXTEND / RENAME_* …) alongside a Usn/MFTId. Mapped specially so
   // the operation lands in the description + agg key (mapGeneric drops it → path-only events).
@@ -1581,6 +1587,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapStartup(row, host, rowSink)];
     } else if (kind === "taskscheduler") {
       ms = [mapTaskScheduler(row, host, rowSink)];
+    } else if (kind === "persistenceSniper") {
+      ms = [mapPersistenceSniper(row, host, rowSink, pickTime(row))];
     } else if (kind === "usn") {
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {

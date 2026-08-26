@@ -344,6 +344,7 @@
     "operationalImport.ts": "analysis/case",
     "operationalMetrics.ts": "storage",
     "osqueryImport.ts": "analysis/ingest",
+    "persistenceSniperImport.ts": "analysis/ingest",
     "pinnedFindings.ts": "analysis/findings",
     "pipeline.ts": "analysis/ai",
     "plasoImport.ts": "analysis/ingest",

@@ -1148,6 +1148,363 @@ describe("parseVelociraptorJson — taskscheduler rows (Windows.System.TaskSched
   });
 });
 
+describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.PersistenceSniper)", () => {
+  // Real column set from a collected PersistenceSniper flow — the module's own field names,
+  // wrapped verbatim by the VQL artifact (no Velociraptor-side renaming).
+  function sniperRow(overrides: Record<string, unknown> = {}): object {
+    return {
+      _Source: "Windows.Forensics.PersistenceSniper",
+      Hostname: "DESKTOP-9RNKFB0",
+      Technique: "Scheduled Task",
+      Classification: "MITRE ATT&CK T1053.005",
+      Path: "\\MicrosoftEdgeUpdateTaskMachineCore{BDCC8C3F-6BAE-41A3-8C40-C1742ACC916B}",
+      Value: "C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe /c",
+      "Access Gained": "User",
+      Note: "Scheduled tasks run executables or actions when certain conditions, such as user log in or machine boot up, are met.",
+      Reference: "https://attack.mitre.org/techniques/T1053/005/",
+      Signature:
+        "Status = Valid, Subject = CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+      IsBuiltinBinary: "False",
+      IsLolbin: "False",
+      VTEntries: "N/A",
+      ...overrides,
+    };
+  }
+
+  it("reads as a clean, readable title instead of a raw key=value dump", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].description;
+    const { title } = splitEventTitle(desc);
+    expect(title).toContain("Scheduled Task");
+    expect(title).toContain("MicrosoftEdgeUpdate.exe");
+    expect(title).toContain("User");
+    // The raw dump this replaces joined every column with "Key=Value - " — that shape must be gone.
+    expect(desc).not.toMatch(/Technique=/);
+    expect(desc).not.toMatch(/Classification=/);
+    expect(desc).not.toMatch(/Note=/);
+  });
+
+  it("omits the Reference URL and a clean Signature — noise, not signal", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].description;
+    expect(desc).not.toContain("attack.mitre.org");
+    expect(desc).not.toContain("Status = Valid");
+  });
+
+  it("surfaces a non-valid signature status (unsigned / mismatched)", () => {
+    const desc = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Signature: "Status = NotSigned, Subject = " })]),
+    ).events[0].description;
+    expect(desc).toContain("NotSigned");
+  });
+
+  it("flags a LOLBin persistence target with a [lolbin] marker and grades it High", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow({ IsLolbin: "True" })])).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
+  it("does not flag an ordinary, non-LOLBin persistence target, and leaves it at Info", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0];
+    expect(e.description).not.toContain("[lolbin]");
+    expect(e.severity).toBe("Info");
+  });
+
+  // Real-world regression (#657 follow-up): rundll32.exe/sc.exe/cmd.exe/msiexec.exe are all
+  // catalogued LOLBins AND how a large share of Windows' own stock scheduled tasks run. On one
+  // real host's import, 27/273 rows came back IsLolbin=True and 23 of those were the OS's own
+  // recognised binaries (IsBuiltinBinary=True) — treating IsLolbin alone as High flooded the
+  // timeline with "findings" that were just ordinary Windows behavior.
+  it("does not grade a LOLBin-capable tool as High when it's PersistenceSniper's own recognised built-in binary", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Technique: "Scheduled Task",
+          Value: "%windir%\\system32\\rundll32.exe sysmain.dll,PfSvWsSwapAssessmentTask",
+          IsLolbin: "True",
+          IsBuiltinBinary: "True",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).not.toContain("[lolbin]");
+    expect(e.severity).toBe("Info");
+  });
+
+  it("still grades High for a LOLBin technique that is NOT a recognised built-in binary", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "True", IsBuiltinBinary: "False" })]),
+    ).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
+  // The IsBuiltinBinary gate exists to suppress ROUTINE builtin LOLBin usage (rundll32.exe running
+  // an ordinary OS scheduled task) — it must NOT suppress genuine LOLBin abuse just because the
+  // tool itself is a legitimate, signed Windows binary. Classic living-off-the-land technique runs
+  // FROM a real builtin tool; that's the whole point. A builtin LOLBin with a bad signature or an
+  // unusual staging path is exactly the case that must still escalate.
+  it("still grades High for a builtin LOLBin whose signature doesn't check out", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\Windows\\System32\\rundll32.exe evil.dll,Entry",
+          IsLolbin: "True",
+          IsBuiltinBinary: "True",
+          Signature: "Status = NotSigned, Subject = ",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
+  it("still grades High for a builtin LOLBin staged in Temp/AppData", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\rundll32.exe",
+          IsLolbin: "True",
+          IsBuiltinBinary: "True",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
+  it("grades a non-valid signature to Medium", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Signature: "Status = NotSigned, Subject = " })]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+  });
+
+  it("grades a LOLBin with an unsigned signature to High (worst of the two)", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "True", Signature: "Status = NotSigned, Subject = " })]),
+    ).events[0];
+    expect(e.severity).toBe("High");
+  });
+
+  // Staged is graded High outright — a file sitting directly in a world-writable/transient location,
+  // wired up for persistence, is a strong signal whether or not the tool itself is a recognised
+  // built-in.
+  it("grades a persistence target staged in Temp/AppData to High, and flags it in the title", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\update.exe" })]),
+    ).events[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("[staged: temp/appdata]");
+  });
+
+  it("grades a persistence target staged in ProgramData/Public to High", () => {
+    const inProgramData = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\svc.exe" })]),
+    ).events[0];
+    expect(inProgramData.severity).toBe("High");
+
+    const inPublic = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\Public\\helper.exe" })]),
+    ).events[0];
+    expect(inPublic.severity).toBe("High");
+  });
+
+  it("does not flag an ordinary Program Files location as staged", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0]; // default Value is under Program Files
+    expect(e.description).not.toContain("[staged:");
+    expect(e.severity).toBe("Info");
+  });
+
+  // Real-world regression: the strict quoted-or-clean extraction used for the file IOC returns
+  // NOTHING once a Value carries trailing arguments — the common case for a Scheduled Task/service
+  // command line (PersistenceSniper's own real output: "…MpCmdRun.exe -IdleTask -TaskName …"). An
+  // earlier version of the staging check reused that same extraction and was silently blind to
+  // exactly the values it most needed to see. It must judge the raw Value/Path text instead.
+  it("still detects staging when the Value carries trailing arguments", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\evil.exe -x --quiet" })]),
+    ).events[0];
+    expect(e.description).toContain("[staged: temp/appdata]");
+    expect(e.severity).toBe("High");
+  });
+
+  // Windows Defender's own platform binary — a REAL, multi-level-deep vendor path under ProgramData.
+  // The staging check requires the file to sit DIRECTLY in the staging directory (no further
+  // subdirectory in between, same convention as data/tags.yaml's staging_temp_executable rule) so a
+  // legitimately deep, versioned install path doesn't false-match just because "ProgramData" appears
+  // somewhere in it.
+  it("does not flag a file nested deep under ProgramData in a real vendor path as staged", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value:
+            "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.26070.9-0\\MpCmdRun.exe -IdleTask",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).not.toContain("[staged:");
+  });
+
+  // A bare `\b` word boundary is satisfied by ANY non-word character — including another literal
+  // dot — so it treats an extension prefix earlier in a multi-dot filename as if it were the real,
+  // final extension: "readme.hta.txt" is a .txt file, but a `\.hta\b` check still matches because a
+  // dot follows "hta" too. The boundary must require an actual end-of-path shape (end of string,
+  // quote, whitespace, comma), not just "not a letter/digit/underscore".
+  it("does not treat an extension prefix earlier in a multi-dot filename as the real extension", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\readme.hta.txt" })]))
+      .events[0];
+    expect(e.description).not.toContain("[staged:");
+  });
+
+  // A cmd.exe operator needs no surrounding whitespace to chain commands — an allow-list of
+  // terminator characters (tried and reverted) missed every one of these.
+  it("still detects staging when a shell operator directly follows the extension, no whitespace", () => {
+    for (const value of [
+      "C:\\ProgramData\\evil.exe&calc.exe",
+      "C:\\ProgramData\\evil.exe&&whoami",
+      "C:\\ProgramData\\evil.exe|more",
+      "C:\\ProgramData\\evil.exe>out.txt",
+      "C:\\ProgramData\\evil.exe;whoami",
+    ]) {
+      const e = parseVelociraptorJson(JSON.stringify([sniperRow({ Value: value })])).events[0];
+      expect(e.description, value).toContain("[staged:");
+      expect(e.severity, value).toBe("High");
+    }
+  });
+
+  // Real-world false positive: scanning for the staging shape ANYWHERE in the raw text (tried and
+  // reverted) matched an UNRELATED reference inside an argument to a completely different, benign
+  // executable — a very common auto-updater pattern where msiexec.exe installs a package it staged
+  // in Temp itself. msiexec.exe is what's actually running (not staged); the .msi path is ordinary
+  // data passed to it, not the persistence technique's own target.
+  it("does not flag a Temp-staged file referenced only as an argument to an unrelated executable", () => {
+    for (const value of [
+      "msiexec.exe /i C:\\Windows\\Temp\\GoogleUpdate.msi /quiet",
+      "msiexec.exe /i C:\\Users\\bob\\AppData\\Local\\Temp\\update.msi",
+    ]) {
+      const e = parseVelociraptorJson(JSON.stringify([sniperRow({ Value: value })])).events[0];
+      expect(e.description, value).not.toContain("[staged:");
+      expect(e.severity, value).toBe("Info");
+    }
+  });
+
+  it("still detects a quoted staged payload after a launcher prefix with real intermediate path segments", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: 'app.exe "C:\\Users\\bob\\AppData\\Local\\Temp\\payload.dll"' })]),
+    ).events[0];
+    expect(e.description).toContain("[staged:");
+    expect(e.severity).toBe("High");
+  });
+
+  // Grading reads the module's own structured IsLolbin/Signature columns directly — never the
+  // rendered description, which mixes in Value/Path (real content from the target host that an
+  // adversary can shape). A tagger rule that re-parsed the description for a "[lolbin]"/
+  // "[signature: ...]" substring was tried first and reverted for exactly this reason.
+  it("is not spoofed by a Value that fakes the [lolbin] marker text (IsLolbin: False)", () => {
+    // An ordinary Program Files location — isolates the [lolbin]-text spoofing concern from the
+    // legitimate "staged in Temp/AppData" signal (that path shape is deliberately graded up).
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "False", Value: "C:\\Program Files\\App\\name[lolbin].exe" })]),
+    ).events[0];
+    expect(e.description).toContain("name[lolbin].exe");
+    expect(e.severity).toBe("Info");
+  });
+
+  it("is not spoofed by a Value that fakes the [signature: ...] marker text (clean signature)", () => {
+    // An ordinary Program Files location — isolates the [signature:]-text spoofing concern from the
+    // legitimate "staged in Temp" signal (that path shape is deliberately graded up on its own).
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\Program Files\\App\\evil [signature: NotSigned].exe",
+          Signature: "Status = Valid, Subject = CN=Contoso",
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("Info");
+  });
+
+  // The description is capped at 600 chars (withHostSuffix + .slice(0, 600)) — a long Path/subject
+  // could push a marker built AFTER that cap out of the rendered text. Grading must not depend on
+  // the marker surviving truncation.
+  it("still grades High when a long Technique would truncate the [lolbin] marker out of the description", () => {
+    // Technique (unlike Value/Path) isn't length-capped before being embedded, so a long enough
+    // value pushes everything appended after it — including the [lolbin] marker — past the
+    // description's final .slice(0, 600).
+    const longTechnique = "Scheduled Task ".repeat(50).trim();
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ IsLolbin: "True", Technique: longTechnique })]),
+    ).events[0];
+    expect(e.description).not.toContain("[lolbin]"); // confirms the marker really was truncated away
+    expect(e.severity).toBe("High"); // ...yet grading still fired, because it never depended on it
+  });
+
+  it("does not choke on an empty Signature struct (no cert info available)", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow({ Signature: "Status = , Subject = " })]))
+      .events[0].description;
+    expect(desc).not.toContain("Status =");
+  });
+
+  it("extracts the MITRE technique id from Classification", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0];
+    expect(e.mitreTechniques).toContain("T1053.005");
+  });
+
+  it("adds an unquoted Value with no arguments to split on as a file IOC", () => {
+    const row = sniperRow({ Value: "C:\\Windows\\System32\\evil.dll" });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value === "C:\\Windows\\System32\\evil.dll")).toBe(true);
+  });
+
+  it("trusts an explicitly quoted path over any extension/switch guessing", () => {
+    const row = sniperRow({ Value: '"C:\\Program Files\\Odd - Name.new\\thing.exe" -y' });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    const file = iocs.find((i) => i.type === "file" && i.value.includes("thing.exe"));
+    expect(file?.value).toBe("C:\\Program Files\\Odd - Name.new\\thing.exe");
+  });
+
+  it("does not fabricate a file IOC by guessing a split point in an unquoted path+argument value (invalid-IOC regression)", () => {
+    // The real case data's own Value — a legitimate path (with a space in "Program Files (x86)")
+    // plus a trailing "/c" argument glued on with no delimiter. Every split-point guess tried here
+    // (whitespace+separator, extension-anchored) eventually fabricated a truncated or concatenated
+    // non-existent path for SOME real layout ("Suite -64-bit", comma-joined AppInit_DLLs values,
+    // …) — so this deliberately extracts NOTHING from an unquoted value once whitespace is present,
+    // rather than guess. The title still shows the full raw value (see the title-formatting tests
+    // above); only structured IOC extraction is this conservative.
+    const iocs = parseVelociraptorJson(JSON.stringify([sniperRow()])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value.includes("MicrosoftEdgeUpdate"))).toBe(false);
+  });
+
+  it("does not concatenate a comma-joined multi-value Value into one fabricated file IOC", () => {
+    // AppInit_DLLs / Security Packages / Authentication Packages style values list several DLLs in
+    // one string. No character in "C:\evil1.dll,C:\evil2.dll" says where value 1 ends and value 2
+    // begins, so treating the whole thing as one file path would be its own invalid IOC.
+    const row = sniperRow({ Value: "C:\\Windows\\evil1.dll,C:\\Windows\\evil2.dll" });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value.includes("evil1.dll,C"))).toBe(false);
+  });
+
+  it("falls back to Path when a technique has no Value (e.g. a registry run key)", () => {
+    const row = sniperRow({
+      Technique: "Registry Run Key",
+      Classification: "MITRE ATT&CK T1547.001",
+      Path: "HKEY_USERS\\S-1-5-21-843861673-2156981796-2677025539-1001\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\MicrosoftEdgeAutoLaunch",
+      Value: "",
+    });
+    const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
+    expect(desc).toContain("MicrosoftEdgeAutoLaunch");
+  });
+
+  it("is classified by column detection when _Source is absent", () => {
+    const row = sniperRow();
+    delete (row as Record<string, unknown>)._Source;
+    const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
+    expect(desc).toContain("Scheduled Task");
+  });
+
+  it("sets severity to Info (raw finding listing, not a detection)", () => {
+    expect(parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].severity).toBe("Info");
+  });
+});
+
 describe("parseVelociraptorJson — InUse field in MFT detection rows", () => {
   function mftRow(inUse: boolean): object {
     return {

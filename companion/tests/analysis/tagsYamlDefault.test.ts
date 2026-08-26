@@ -63,3 +63,11 @@ describe("bundled data/tags.yaml — removable media", () => {
     expect(res.perEvent.find((e) => e.eventId === "e3")).toBeUndefined();
   });
 });
+
+// PersistenceSniper's grading (LOLBin -> High, non-valid signature -> Medium) is done directly in
+// analysis/persistenceSniperImport.ts, from the module's own structured columns — see that file's
+// tests. A tagger rule re-deriving the same verdict from the rendered description was tried first
+// and reverted: it was spoofable via a crafted Value/Path (a file literally named "evil.exe
+// [lolbin]" faked a High grade the module never gave) and lossy (the description's 600-char cap
+// could truncate a genuine marker, leaving a real LOLBin at Info). There is deliberately no
+// PersistenceSniper-specific rule in tags.yaml.

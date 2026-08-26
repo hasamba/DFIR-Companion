@@ -139,6 +139,7 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.Sysinternals.Autoruns",
       "Windows.System.TaskScheduler",
       "Windows.Persistence.PermanentWMIEvents",
+      "Windows.Forensics.PersistenceSniper",
       "Windows.Analysis.SuspiciousWMIConsumers",
       "Linux.Sigma.Triage",
       "Custom.Windows.System.Powershell.PSReadline.QuickWins",

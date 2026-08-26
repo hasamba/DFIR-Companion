@@ -6,7 +6,7 @@
     "extension/src",
     "public/dashboard.html"
   ],
-  "moduleCount": 803,
+  "moduleCount": 804,
   "routeCount": 477,
   "modules": [
     {
@@ -5337,6 +5337,20 @@
       ]
     },
     {
+      "path": "companion/src/analysis/persistenceSniperImport.ts",
+      "kind": "module",
+      "lines": 177,
+      "imports": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/velociraptorTitle.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/analysis/pinnedFindings.ts",
       "kind": "module",
       "lines": 138,
@@ -6431,6 +6445,7 @@
         "companion/src/analysis/networkImport.ts",
         "companion/src/analysis/oktaImport.ts",
         "companion/src/analysis/osqueryImport.ts",
+        "companion/src/analysis/persistenceSniperImport.ts",
         "companion/src/analysis/plasoImport.ts",
         "companion/src/analysis/pstreeDepth.ts",
         "companion/src/analysis/sandboxImport.ts",
@@ -8256,6 +8271,7 @@
       "imports": [
         "companion/src/analysis/chainsawImport.ts",
         "companion/src/analysis/csvImport.ts",
+        "companion/src/analysis/persistenceSniperImport.ts",
         "companion/src/analysis/scriptBlockFragments.ts",
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/stateTypes.ts",
@@ -8295,6 +8311,7 @@
       "lines": 46,
       "imports": [],
       "importedBy": [
+        "companion/src/analysis/persistenceSniperImport.ts",
         "companion/src/analysis/velociraptorImport.ts"
       ],
       "routes": [],

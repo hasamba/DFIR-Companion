@@ -247,6 +247,11 @@ describe("ArtifactBundleStore", () => {
     expect(bp?.params?.["Windows.Hayabusa.Rules"]?.RuleStatus).toBe("Stable and Experimental");
   });
 
+  it("ships Best Practice with PersistenceSniper alongside the other persistence artifacts", async () => {
+    const bp = await store.get("best-practice");
+    expect(bp?.artifacts).toContain("Windows.Forensics.PersistenceSniper");
+  });
+
   it("persists per-artifact WHERE filters and ships them on the Best Practice - Big Hogs built-in", async () => {
     const saved = await store.save({
       name: "F",
