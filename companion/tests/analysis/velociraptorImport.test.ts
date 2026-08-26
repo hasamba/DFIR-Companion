@@ -1228,6 +1228,22 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(file?.value).toBe("C:\\Program Files\\Company - Product\\app.exe");
   });
 
+  it("keeps a legitimate ' -digit' version/arch suffix in a folder name (invalid-IOC regression)", () => {
+    const row = sniperRow({ Value: "C:\\Program Files\\Suite -64-bit\\app.exe /c" });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    const file = iocs.find((i) => i.type === "file" && i.value.includes("app.exe"));
+    // "Suite -64-bit" is a real folder name segment, not an argument boundary — a bare "space then
+    // -/digit" rule truncates here into "C:\Program Files\Suite", a non-existent path.
+    expect(file?.value).toBe("C:\\Program Files\\Suite -64-bit\\app.exe");
+  });
+
+  it("trusts an explicitly quoted path over any extension/switch guessing", () => {
+    const row = sniperRow({ Value: '"C:\\Program Files\\Odd - Name.new\\thing.exe" -y' });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    const file = iocs.find((i) => i.type === "file" && i.value.includes("thing.exe"));
+    expect(file?.value).toBe("C:\\Program Files\\Odd - Name.new\\thing.exe");
+  });
+
   it("falls back to Path when a technique has no Value (e.g. a registry run key)", () => {
     const row = sniperRow({
       Technique: "Registry Run Key",

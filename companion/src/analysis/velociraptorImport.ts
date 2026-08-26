@@ -1492,13 +1492,24 @@ function mapPersistenceSniper(row: Row, host: string, sink: Map<string, SiemIoc>
   const subject = oneLine(value || path).slice(0, 300);
 
   // Pull a leading drive-letter path out of Value/Path as a file IOC (Value often carries trailing
-  // arguments, e.g. "C:\...\MicrosoftEdgeUpdate.exe /c" — same leading-path extraction as Startup).
-  // The switch boundary requires the "/"/"-" to be followed IMMEDIATELY by a non-space char (a real
-  // flag: "/c", "-k", "-NoProfile") — a bare "\s+-" also matches an ordinary " - " word separator
-  // inside a legitimate install path (e.g. "C:\Program Files\Company - Product\app.exe"), which
-  // would truncate the capture into a fabricated, non-existent path and emit an invalid file IOC.
+  // arguments concatenated with no delimiter, e.g. "C:\...\MicrosoftEdgeUpdate.exe /c"). A folder
+  // or product name can legitimately contain "-"/"/" right after a space too — "Suite -64-bit",
+  // "Company - Product" are both real install-path segments — so a bare "whitespace then -//" rule
+  // still fabricates a truncated, non-existent path as an IOC no matter how it's tuned. The one
+  // signal that isn't ambiguous: quotes (an explicit delimiter), or the text ending in a REAL file
+  // extension right where the split happens — a path segment never coincidentally ends in ".exe"/
+  // ".dll"/etc immediately before an argument-shaped token, so anchoring on the extension is safe
+  // where anchoring on the separator character alone is not.
   for (const candidate of [value, path]) {
-    const m = /^["']?([A-Za-z]:\\[^"']+?)(?:\s+[/-]\S|["']|$)/.exec(candidate);
+    const quoted = /^["']([A-Za-z]:\\[^"']+)["']/.exec(candidate);
+    if (quoted) {
+      addIoc(sink, "file", quoted[1].slice(0, 300));
+      continue;
+    }
+    const m =
+      /^([A-Za-z]:\\[^"']+?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk))(?:\s+[/-]\S|\s*$)/i.exec(
+        candidate,
+      );
     if (m) addIoc(sink, "file", m[1].slice(0, 300));
   }
 
