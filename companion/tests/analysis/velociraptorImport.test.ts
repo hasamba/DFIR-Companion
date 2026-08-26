@@ -1148,6 +1148,93 @@ describe("parseVelociraptorJson — taskscheduler rows (Windows.System.TaskSched
   });
 });
 
+describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.PersistenceSniper)", () => {
+  // Real column set from a collected PersistenceSniper flow — the module's own field names,
+  // wrapped verbatim by the VQL artifact (no Velociraptor-side renaming).
+  function sniperRow(overrides: Record<string, unknown> = {}): object {
+    return {
+      _Source: "Windows.Forensics.PersistenceSniper",
+      Hostname: "DESKTOP-9RNKFB0",
+      Technique: "Scheduled Task",
+      Classification: "MITRE ATT&CK T1053.005",
+      Path: "\\MicrosoftEdgeUpdateTaskMachineCore{BDCC8C3F-6BAE-41A3-8C40-C1742ACC916B}",
+      Value: "C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe /c",
+      "Access Gained": "User",
+      Note: "Scheduled tasks run executables or actions when certain conditions, such as user log in or machine boot up, are met.",
+      Reference: "https://attack.mitre.org/techniques/T1053/005/",
+      Signature: "Status = Valid, Subject = CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+      IsBuiltinBinary: "False",
+      IsLolbin: "False",
+      VTEntries: "N/A",
+      ...overrides,
+    };
+  }
+
+  it("reads as a clean, readable title instead of a raw key=value dump", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].description;
+    const { title } = splitEventTitle(desc);
+    expect(title).toContain("Scheduled Task");
+    expect(title).toContain("MicrosoftEdgeUpdate.exe");
+    expect(title).toContain("User");
+    // The raw dump this replaces joined every column with "Key=Value - " — that shape must be gone.
+    expect(desc).not.toMatch(/Technique=/);
+    expect(desc).not.toMatch(/Classification=/);
+    expect(desc).not.toMatch(/Note=/);
+  });
+
+  it("omits the Reference URL and a clean Signature — noise, not signal", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].description;
+    expect(desc).not.toContain("attack.mitre.org");
+    expect(desc).not.toContain("Status = Valid");
+  });
+
+  it("surfaces a non-valid signature status (unsigned / mismatched)", () => {
+    const desc = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Signature: "Status = NotSigned, Subject = " })]),
+    ).events[0].description;
+    expect(desc).toContain("NotSigned");
+  });
+
+  it("does not choke on an empty Signature struct (no cert info available)", () => {
+    const desc = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Signature: "Status = , Subject = " })]),
+    ).events[0].description;
+    expect(desc).not.toContain("Status =");
+  });
+
+  it("extracts the MITRE technique id from Classification", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0];
+    expect(e.mitreTechniques).toContain("T1053.005");
+  });
+
+  it("adds the Value executable as a file IOC", () => {
+    const iocs = parseVelociraptorJson(JSON.stringify([sniperRow()])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value.includes("MicrosoftEdgeUpdate.exe"))).toBe(true);
+  });
+
+  it("falls back to Path when a technique has no Value (e.g. a registry run key)", () => {
+    const row = sniperRow({
+      Technique: "Registry Run Key",
+      Classification: "MITRE ATT&CK T1547.001",
+      Path: "HKEY_USERS\\S-1-5-21-843861673-2156981796-2677025539-1001\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\MicrosoftEdgeAutoLaunch",
+      Value: "",
+    });
+    const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
+    expect(desc).toContain("MicrosoftEdgeAutoLaunch");
+  });
+
+  it("is classified by column detection when _Source is absent", () => {
+    const row = sniperRow();
+    delete (row as Record<string, unknown>)._Source;
+    const desc = parseVelociraptorJson(JSON.stringify([row])).events[0].description;
+    expect(desc).toContain("Scheduled Task");
+  });
+
+  it("sets severity to Info (raw finding listing, not a detection)", () => {
+    expect(parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].severity).toBe("Info");
+  });
+});
+
 describe("parseVelociraptorJson — InUse field in MFT detection rows", () => {
   function mftRow(inUse: boolean): object {
     return {

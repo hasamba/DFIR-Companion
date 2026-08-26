@@ -470,6 +470,7 @@ type Kind =
   | "download"
   | "startup"
   | "taskscheduler"
+  | "persistenceSniper"
   | "usn"
   | "mft"
   | "browser"
@@ -496,6 +497,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/browserdownload|evidence.*download/i.test(a)) return "download";
   if (/startup|autorun/i.test(a)) return "startup";
   if (/taskscheduler/i.test(a)) return "taskscheduler";
+  if (/persistencesniper/i.test(a)) return "persistenceSniper";
 
   const rule = getCI(row, "Rule");
   if (
@@ -532,6 +534,15 @@ function classify(row: Row, artifact: string): Kind {
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
     return "taskscheduler";
+  // Windows.Forensics.PersistenceSniper wraps the PersistenceSniper PowerShell module verbatim —
+  // Technique + Classification + "Access Gained" is that module's own column set and isn't reused
+  // by any other artifact, so it's a safe signature even without a recognisable _Source.
+  if (
+    getCI(row, "Technique") != null &&
+    getCI(row, "Classification") != null &&
+    getCI(row, "Access Gained") != null
+  )
+    return "persistenceSniper";
   // Windows.Forensics.Usn — the USN change-journal row: a `Reason` (the filesystem operation:
   // FILE_CREATE / FILE_DELETE / DATA_EXTEND / RENAME_* …) alongside a Usn/MFTId. Mapped specially so
   // the operation lands in the description + agg key (mapGeneric drops it → path-only events).
@@ -1461,6 +1472,59 @@ function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): M
   };
 }
 
+// Windows.Forensics.PersistenceSniper wraps Matteo Malvica's PersistenceSniper PowerShell module —
+// every row is one persistence mechanism the module found, with its own fixed column set (Technique
+// / Classification / Path / Value / Access Gained / Note / Reference / Signature / IsLolbin / …).
+// Without this mapper the row falls through to mapGeneric's key=value dump, which reads every
+// column back verbatim — including a Signature struct that stringifies to "Status = , Subject = "
+// when PowerShell found nothing to sign-check, and a Reference URL that adds noise, not signal.
+function mapPersistenceSniper(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const technique = str(getCI(row, "Technique")).trim();
+  const classification = str(getCI(row, "Classification")).trim();
+  const path = str(getCI(row, "Path")).trim();
+  const value = str(getCI(row, "Value")).trim();
+  const accessGained = str(getCI(row, "Access Gained")).trim();
+  const signature = str(getCI(row, "Signature")).trim();
+
+  // Value is the actual executable/command the technique runs — the payload an analyst cares
+  // about — when the module found one; Path (a registry key, task name, or service) is always
+  // present and is the fallback subject for techniques with no separate value (e.g. WMI events).
+  const subject = oneLine(value || path).slice(0, 300);
+
+  // Pull a leading drive-letter path out of Value/Path as a file IOC (Value often carries trailing
+  // arguments, e.g. "C:\...\MicrosoftEdgeUpdate.exe /c" — same leading-path extraction as Startup).
+  for (const candidate of [value, path]) {
+    const m = /^["']?([A-Za-z]:\\[^"']+?)(?:\s+\/|\s+-|["']|$)/.exec(candidate);
+    if (m) addIoc(sink, "file", m[1].slice(0, 300));
+  }
+
+  // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
+  // clean Authenticode signature is the common case and just adds noise to the title.
+  const sigStatus = /status\s*=\s*([^,]*)/i.exec(signature)?.[1]?.trim() ?? "";
+  const sigFlag = sigStatus && sigStatus.toLowerCase() !== "valid" ? sigStatus : "";
+
+  let description = `Velociraptor: Persistence [${technique || "unknown"}]`;
+  if (subject) description += ` — ${subject}`;
+  if (accessGained) description += ` (${accessGained})`;
+  if (sigFlag) description += ` [signature: ${sigFlag}]`;
+  description = withHostSuffix(description, host).slice(0, 600);
+
+  const aggKey = `vr-persist|${technique.toLowerCase()}|${(value || path).toLowerCase()}|${host.toLowerCase()}`
+    .replace(/\d+/g, "#")
+    .slice(0, 400);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity: "Info",
+    mitre: mitreFromText(classification),
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(path ? { path } : {}),
+    ...(host ? { asset: host } : {}),
+  };
+}
+
 // ───────────────────────────── row extraction ─────────────────────────────
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
@@ -1581,6 +1645,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapStartup(row, host, rowSink)];
     } else if (kind === "taskscheduler") {
       ms = [mapTaskScheduler(row, host, rowSink)];
+    } else if (kind === "persistenceSniper") {
+      ms = [mapPersistenceSniper(row, host, rowSink)];
     } else if (kind === "usn") {
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {
