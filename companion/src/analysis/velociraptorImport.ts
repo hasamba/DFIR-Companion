@@ -1493,8 +1493,12 @@ function mapPersistenceSniper(row: Row, host: string, sink: Map<string, SiemIoc>
 
   // Pull a leading drive-letter path out of Value/Path as a file IOC (Value often carries trailing
   // arguments, e.g. "C:\...\MicrosoftEdgeUpdate.exe /c" — same leading-path extraction as Startup).
+  // The switch boundary requires the "/"/"-" to be followed IMMEDIATELY by a non-space char (a real
+  // flag: "/c", "-k", "-NoProfile") — a bare "\s+-" also matches an ordinary " - " word separator
+  // inside a legitimate install path (e.g. "C:\Program Files\Company - Product\app.exe"), which
+  // would truncate the capture into a fabricated, non-existent path and emit an invalid file IOC.
   for (const candidate of [value, path]) {
-    const m = /^["']?([A-Za-z]:\\[^"']+?)(?:\s+\/|\s+-|["']|$)/.exec(candidate);
+    const m = /^["']?([A-Za-z]:\\[^"']+?)(?:\s+[/-]\S|["']|$)/.exec(candidate);
     if (m) addIoc(sink, "file", m[1].slice(0, 300));
   }
 

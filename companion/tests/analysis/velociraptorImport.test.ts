@@ -1212,6 +1212,22 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(iocs.some((i) => i.type === "file" && i.value.includes("MicrosoftEdgeUpdate.exe"))).toBe(true);
   });
 
+  it("strips a real trailing CLI switch from the file IOC (flag glued to the '-'/'/', no space)", () => {
+    const row = sniperRow({ Value: "C:\\Windows\\System32\\rundll32.exe -NoProfile" });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    const file = iocs.find((i) => i.type === "file" && i.value.includes("rundll32.exe"));
+    expect(file?.value).toBe("C:\\Windows\\System32\\rundll32.exe");
+  });
+
+  it("keeps a legitimate ' - ' word separator in the path instead of truncating into a fake file (invalid-IOC regression)", () => {
+    const row = sniperRow({ Value: "C:\\Program Files\\Company - Product\\app.exe -y" });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    const file = iocs.find((i) => i.type === "file" && i.value.includes("app.exe"));
+    // Must capture the FULL real path (dropping only the trailing " -y" switch) — not truncate at
+    // the " - " inside "Company - Product", which would fabricate a non-existent path as an IOC.
+    expect(file?.value).toBe("C:\\Program Files\\Company - Product\\app.exe");
+  });
+
   it("falls back to Path when a technique has no Value (e.g. a registry run key)", () => {
     const row = sniperRow({
       Technique: "Registry Run Key",
