@@ -17,7 +17,23 @@ type Row = Record<string, unknown>;
 // isn't re-deriving a verdict the module already computed; the path IS the ground truth for "is this
 // staged somewhere unusual", so there's nothing to spoof by shaping it — an attacker choosing to
 // stage there is exactly the case this is meant to catch.
-const STAGING_DIR_RE = /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\/i;
+//
+// Deliberately NOT built on the same strict quoted-or-clean extraction as the file IOC below: that
+// extraction returns nothing at all once a Value carries trailing arguments (the common case for a
+// Scheduled Task/service command line — "…MpCmdRun.exe -IdleTask …"), which silently blinded the
+// staging check to exactly the values it most needs to see. This regex instead scans the WHOLE raw
+// Value/Path text and anchors on a real executable extension immediately following the staging
+// directory with no further subdirectory in between — the same "must sit directly in that folder"
+// restriction as the file IOC's extension anchor (companion/src/analysis/velociraptorImport.ts's own
+// history has two prior rounds of counterexamples for weaker anchors), which is what keeps a
+// legitimately deep vendor path — Windows Defender's own
+// "C:\ProgramData\Microsoft\Windows Defender\Platform\<ver>\MpCmdRun.exe" — from false-matching:
+// there are backslashes between "ProgramData\" and the filename, so it can't match. A false MATCH
+// here only nudges severity, not a displayed IOC value, so scanning the whole string (rather than
+// only a leading, provably-single path) is an acceptable, much safer trade-off than it would be for
+// the file IOC.
+const STAGED_FILE_RE =
+  /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk)\b/i;
 
 export function mapPersistenceSniper(
   row: Row,
@@ -62,7 +78,9 @@ export function mapPersistenceSniper(
     }
   }
   for (const p of filePaths) addIoc(sink, "file", p);
-  const staged = filePaths.some((p) => STAGING_DIR_RE.test(p));
+  // Scans the raw value/path (see STAGED_FILE_RE's own comment for why) — not filePaths, which is
+  // empty for exactly the argument-carrying values this needs to see.
+  const staged = STAGED_FILE_RE.test(value) || STAGED_FILE_RE.test(path);
 
   // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
   // clean Authenticode signature is the common case and just adds noise to the title.
@@ -82,10 +100,6 @@ export function mapPersistenceSniper(
   // same row — a builtin tool alone, cleanly signed, not staged anywhere unusual, is the routine
   // case and stays suppressed; anything else earns the promotion.
   const lolbinFlag = isLolbin && (!isBuiltinBinary || sigFlag !== "" || staged);
-  // A NON-builtin binary (not in PersistenceSniper's inventory of expected system files) sitting in
-  // a staging directory is its own strong, specific combination — independent of the LOLBin catalog
-  // check — the classic "dropped somewhere transient, wired up for persistence" shape.
-  const unrecognizedStaged = !isBuiltinBinary && staged;
 
   // Grade directly from the module's own STRUCTURED verdict columns — never from the free-text
   // description below. `subject` is built from Value/Path, real filesystem/registry content on the
@@ -98,8 +112,10 @@ export function mapPersistenceSniper(
   // ordinary — so most rows stay Info by design; only its own anomaly signals earn a promotion.
   let severity: MappedEvent["severity"] = "Info";
   if (sigFlag) severity = worst(severity, "Medium");
-  if (staged) severity = worst(severity, "Medium");
-  if (unrecognizedStaged) severity = worst(severity, "High");
+  // Staged is treated as High outright: an executable sitting directly in a world-writable/transient
+  // location (per STAGED_FILE_RE) wired up for persistence is a strong signal on its own, whether or
+  // not the tool itself is a recognised built-in.
+  if (staged) severity = worst(severity, "High");
   if (lolbinFlag) severity = worst(severity, "High");
 
   let description = `Velociraptor: Persistence [${technique || "unknown"}]`;

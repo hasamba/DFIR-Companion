@@ -1283,38 +1283,27 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.severity).toBe("High");
   });
 
-  it("grades a persistence target staged in Temp/AppData to Medium, and flags it in the title", () => {
+  // Staged is graded High outright — a file sitting directly in a world-writable/transient location,
+  // wired up for persistence, is a strong signal whether or not the tool itself is a recognised
+  // built-in.
+  it("grades a persistence target staged in Temp/AppData to High, and flags it in the title", () => {
     const e = parseVelociraptorJson(
-      JSON.stringify([
-        sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\update.exe", IsBuiltinBinary: "True" }),
-      ]),
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\update.exe" })]),
     ).events[0];
-    expect(e.severity).toBe("Medium");
+    expect(e.severity).toBe("High");
     expect(e.description).toContain("[staged: temp/appdata]");
   });
 
-  it("grades a persistence target staged in ProgramData/Public to Medium (when it's a recognised binary)", () => {
+  it("grades a persistence target staged in ProgramData/Public to High", () => {
     const inProgramData = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\svc.exe", IsBuiltinBinary: "True" })]),
+      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\svc.exe" })]),
     ).events[0];
-    expect(inProgramData.severity).toBe("Medium");
+    expect(inProgramData.severity).toBe("High");
 
     const inPublic = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\Users\\Public\\helper.exe", IsBuiltinBinary: "True" })]),
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\Public\\helper.exe" })]),
     ).events[0];
-    expect(inPublic.severity).toBe("Medium");
-  });
-
-  // A NON-builtin binary (not in PersistenceSniper's own inventory of expected system files) sitting
-  // in a staging directory is a stronger, more specific combination than either signal alone — the
-  // classic "dropped somewhere transient, wired up for persistence" shape.
-  it("grades a NON-builtin binary staged in Temp/AppData/ProgramData to High", () => {
-    const e = parseVelociraptorJson(
-      JSON.stringify([
-        sniperRow({ Value: "C:\\ProgramData\\USOShared\\lsassa.exe", IsBuiltinBinary: "False" }),
-      ]),
-    ).events[0];
-    expect(e.severity).toBe("High");
+    expect(inPublic.severity).toBe("High");
   });
 
   it("does not flag an ordinary Program Files location as staged", () => {
@@ -1323,11 +1312,31 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.severity).toBe("Info");
   });
 
-  it("only judges the extracted, unambiguous file path for staging — not the raw Value blob", () => {
-    // Same invalid-IOC-extraction guardrail as the file-IOC tests: an unquoted Value with trailing
-    // arguments yields no extracted path at all, so there's nothing to judge (no false "staged").
+  // Real-world regression: the strict quoted-or-clean extraction used for the file IOC returns
+  // NOTHING once a Value carries trailing arguments — the common case for a Scheduled Task/service
+  // command line (PersistenceSniper's own real output: "…MpCmdRun.exe -IdleTask -TaskName …"). An
+  // earlier version of the staging check reused that same extraction and was silently blind to
+  // exactly the values it most needed to see. It must judge the raw Value/Path text instead.
+  it("still detects staging when the Value carries trailing arguments", () => {
     const e = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\Windows\\System32\\svchost.exe -k \\Temp\\netsvcs" })]),
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\evil.exe -x --quiet" })]),
+    ).events[0];
+    expect(e.description).toContain("[staged: temp/appdata]");
+    expect(e.severity).toBe("High");
+  });
+
+  // Windows Defender's own platform binary — a REAL, multi-level-deep vendor path under ProgramData.
+  // The staging check requires the file to sit DIRECTLY in the staging directory (no further
+  // subdirectory in between, same convention as data/tags.yaml's staging_temp_executable rule) so a
+  // legitimately deep, versioned install path doesn't false-match just because "ProgramData" appears
+  // somewhere in it.
+  it("does not flag a file nested deep under ProgramData in a real vendor path as staged", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.26070.9-0\\MpCmdRun.exe -IdleTask",
+        }),
+      ]),
     ).events[0];
     expect(e.description).not.toContain("[staged:");
   });
@@ -1347,10 +1356,12 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
   });
 
   it("is not spoofed by a Value that fakes the [signature: ...] marker text (clean signature)", () => {
+    // An ordinary Program Files location — isolates the [signature:]-text spoofing concern from the
+    // legitimate "staged in Temp" signal (that path shape is deliberately graded up on its own).
     const e = parseVelociraptorJson(
       JSON.stringify([
         sniperRow({
-          Value: "C:\\Temp\\evil [signature: NotSigned].exe",
+          Value: "C:\\Program Files\\App\\evil [signature: NotSigned].exe",
           Signature: "Status = Valid, Subject = CN=Contoso",
         }),
       ]),
