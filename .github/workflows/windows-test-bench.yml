@@ -1,0 +1,150 @@
+# Measurement harness for the "Companion test (Windows)" starvation false positives
+# (issue #173, PR #642). It exists to answer one question with numbers instead of guesses: WHICH
+# change removes the Windows-only timeouts — and at what cost in wall time.
+#
+# The config comment in companion/vitest.config.ts explicitly rejects "raise the timeout again" as
+# a fix, so any change here has to be justified against a measured baseline. Windows runs of an
+# IDENTICAL commit vary by 1.75x at the median per test file, so a single before/after pair proves
+# nothing: every leg runs 3 times and the legs are compared on their medians.
+#
+# It is kept rather than deleted because it is the only thing that can settle the next round of
+# this argument. It never runs unless someone deliberately asks for numbers on a bench/** branch —
+# see the trigger and the job guard below, which enforce that between them.
+#
+# Results that produced the current configuration (run 32940797230, medians of 3):
+#
+#   config              wall      test phase   per-file p90   timeouts
+#   fastdisk            383.9s    567.4s         914ms        0/3     <- shipped
+#   fastdisk-cap2       419.1s    427.7s         626ms        0/3
+#   fastdisk-defender   437.5s    683.5s        1000ms        0/3
+#   defender            660.7s   1420.8s        5469ms        0/3
+#   baseline            748.8s   1667.9s        6381ms        0/3
+#   cap2                875.4s   1240.1s        4364ms        0/3
+#
+# Only the disk move is decisive: its wall-time range (260-445s) does not overlap baseline's
+# (651-768s). Capping the pool is decisively WORSE than baseline (828-956s). Everything else
+# overlaps its neighbours at n=3 and was not treated as a difference.
+name: Windows test bench
+
+# Two ways in, and NEITHER is self-limiting on its own. `push` is filtered to bench/** here, but a
+# branch filter does not apply to a manual event: once this file is on the default branch GitHub
+# registers workflow_dispatch there, and dispatching it with the default master ref would launch all
+# 18 Windows legs. The `if` on the job below is what actually holds the line, so keep the two
+# together — the filter here is documentation, the guard there is the control.
+#
+# workflow_dispatch is kept rather than dropped because it is the only way to re-measure an existing
+# bench branch without pushing an empty commit to it.
+on:
+  push:
+    branches: ["bench/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a bench run — a half-finished matrix has no comparable medians.
+concurrency:
+  group: windows-test-bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: bench
+    # THE cost guard. 18 Windows legs is several hours of runner time, so this must never start by
+    # accident — a dispatch from master (the default ref in the Actions UI) skips every leg for free
+    # rather than billing for them. Pushing or dispatching a bench/** branch is the only way in.
+    if: startsWith(github.ref, 'refs/heads/bench/')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # fastdisk: put the vitest temp root on RUNNER_TEMP (D:, the VM's attached SSD) instead of
+        #           os.tmpdir() (C:, the network-attached Azure OS disk).
+        # defender: exclude the workspace and the temp root from real-time scanning.
+        # cap2:     hold the fork pool at 2 instead of vitest's default (availableParallelism - 1 = 3).
+        config:
+          [baseline, fastdisk, defender, fastdisk-defender, cap2, fastdisk-cap2]
+        run: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Build (tsc type-check)
+        working-directory: companion
+        run: npm run build
+
+      # Measures the thing the fastdisk leg is betting on, so a wall-time win can be explained
+      # rather than just observed: per-file create+write+fsync+unlink latency on each disk, plus
+      # the core count that decides vitest's default fork pool.
+      - name: Probe disks
+        shell: bash
+        run: |
+          cat > probe.mjs <<'EOF'
+          import { mkdtempSync, writeFileSync, openSync, fsyncSync, closeSync, unlinkSync, rmSync } from "node:fs";
+          import { tmpdir, availableParallelism, cpus, totalmem } from "node:os";
+          import { join } from "node:path";
+          const N = 300;
+          function probe(label, base) {
+            if (!base) return console.log(`PROBE ${label} base=<unset> skipped`);
+            const dir = mkdtempSync(join(base, "probe-"));
+            const t0 = process.hrtime.bigint();
+            for (let i = 0; i < N; i++) {
+              const p = join(dir, `f${i}.txt`);
+              writeFileSync(p, "x".repeat(4096));
+              const fd = openSync(p, "r+"); fsyncSync(fd); closeSync(fd);
+              unlinkSync(p);
+            }
+            const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+            rmSync(dir, { recursive: true, force: true });
+            console.log(`PROBE ${label} base=${base} ${N} files in ${ms.toFixed(0)}ms = ${(ms / N).toFixed(3)}ms/file`);
+          }
+          console.log(`PROBE cpus=${cpus().length} availableParallelism=${availableParallelism()} totalmem=${(totalmem() / 2 ** 30).toFixed(1)}GiB`);
+          probe("os-tmpdir", tmpdir());
+          probe("runner-temp", process.env.RUNNER_TEMP);
+          probe("workspace", process.env.GITHUB_WORKSPACE);
+          EOF
+          node probe.mjs
+
+      # Best-effort: if the image or an org policy blocks Defender changes, the leg still runs and
+      # simply measures the same thing as its non-defender twin. It must never fail the matrix.
+      - name: Exclude runner disks from Defender real-time scanning
+        if: contains(matrix.config, 'defender')
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP", "$env:GITHUB_WORKSPACE", "C:\Users\runneradmin\AppData\Local\Temp"
+          Add-MpPreference -ExclusionProcess "node.exe"
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+          Write-Host "RealtimeMonitoring disabled: $((Get-MpComputerStatus).RealTimeProtectionEnabled -eq $false)"
+
+      # Clearing RUNNER_TEMP makes vitest.config.ts fall back to os.tmpdir() — i.e. the pre-fix C:
+      # path. Legs whose name contains "fastdisk" leave it set and get D:. This is done inside the
+      # shell, not in a step `env:` block: the `env` context holds only workflow-declared variables,
+      # so `env.RUNNER_TEMP` would read as empty and silently put EVERY leg on the C: path.
+      - name: Test (vitest)
+        working-directory: companion
+        continue-on-error: true
+        shell: bash
+        run: |
+          CONFIG="${{ matrix.config }}"
+          case "$CONFIG" in
+            *fastdisk*) : ;;
+            *) export RUNNER_TEMP="" ;;
+          esac
+          echo "BENCH config=$CONFIG run=${{ matrix.run }} RUNNER_TEMP=[$RUNNER_TEMP]"
+          case "$CONFIG" in
+            *cap2*) npx vitest run --max-workers=2 --min-workers=2 ;;
+            *) npm test ;;
+          esac
