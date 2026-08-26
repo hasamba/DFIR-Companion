@@ -9,7 +9,18 @@ import { defineConfig } from "vitest/config";
 // into this root with no test change, and covers tests not written yet. tests/setup/tempRoot.ts
 // deletes it when the run ends. Kept short ("dfir-vt-") because it prefixes every temp path in the
 // suite and Windows still has a 260-char limit in play.
-const runTempRoot = mkdtempSync(join(tmpdir(), "dfir-vt-"));
+//
+// The BASE this root is created in matters as much as the root itself. GitHub's Windows runners
+// are Azure VMs with two disks: C: is the OS disk (a network-attached managed disk, IOPS-throttled
+// and burst-credited) and D: is the physically-attached ephemeral SSD. The checkout and
+// node_modules land on D:, but os.tmpdir() resolves to C:\Users\RUNNER~1\AppData\Local\Temp — so
+// every mkdtemp() in the suite wrote its case trees, zips and SQLite files to the SLOW disk while
+// module loading read from the fast one. RUNNER_TEMP is the runner's own scratch dir and is on the
+// same disk as the checkout on every hosted platform, so preferring it puts test I/O and module
+// I/O on one disk. Falsy-checked, not `??`: the bench workflow sets RUNNER_TEMP="" to reproduce the
+// pre-fix path, and an empty string must fall through to tmpdir().
+const runTempBase = process.env.RUNNER_TEMP || tmpdir();
+const runTempRoot = mkdtempSync(join(runTempBase, "dfir-vt-"));
 // Handed to the globalSetup teardown, which runs in this same (main) process.
 process.env.DFIR_TEST_TMP_ROOT = runTempRoot;
 
