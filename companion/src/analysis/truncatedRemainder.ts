@@ -112,3 +112,33 @@ export function remainderNote(kept: string, dropped: string): string {
   const tail = more > 0 ? ` (+${more} more)` : "";
   return `\n\n${head} — indicators in the cut text: ${parts.join("")}${tail}]`;
 }
+
+/**
+ * The cap on a stored event message. It is what keeps one 100 KB ScriptBlockText out of case state
+ * on every row that quotes it, and it is not the lever to reach for when a long message hides
+ * something — see this module's header for what is.
+ */
+export const MESSAGE_CAP = 4000;
+
+/**
+ * The full event detail (raw EVTX rendered Message / ScriptBlock text, etc.) an analyst may want to
+ * read beyond the one-line `description`, capped, and — when the cap bit — carrying the note that
+ * says what the cap removed.
+ *
+ * Returns "" when there is no message, or when it adds nothing beyond `description`, so a redundant
+ * expandable block is never stamped onto an event.
+ *
+ * Where the result is read: the analyst expands it on the super-timeline row, and the local text
+ * consumers (second-look keyword search, CVE/KEV grounding) match on it. The synthesis prompt
+ * renders `description`, not `message`, so the note costs the model no tokens — see
+ * renderPromptEvent in ai/synthesisPromptEvents.ts.
+ */
+export function cappedMessage(message: string, description: string): string {
+  const raw = message.trim();
+  if (!raw) return "";
+  // If the description already contains (nearly) the whole message there's no extra detail to reveal.
+  if (description.includes(raw) || raw.length <= 80) return "";
+  if (raw.length <= MESSAGE_CAP) return raw;
+  const kept = raw.slice(0, MESSAGE_CAP);
+  return `${kept}…${remainderNote(kept, raw.slice(MESSAGE_CAP))}`;
+}
