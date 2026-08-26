@@ -1207,34 +1207,10 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.mitreTechniques).toContain("T1053.005");
   });
 
-  it("adds the Value executable as a file IOC", () => {
-    const iocs = parseVelociraptorJson(JSON.stringify([sniperRow()])).iocs;
-    expect(iocs.some((i) => i.type === "file" && i.value.includes("MicrosoftEdgeUpdate.exe"))).toBe(true);
-  });
-
-  it("strips a real trailing CLI switch from the file IOC (flag glued to the '-'/'/', no space)", () => {
-    const row = sniperRow({ Value: "C:\\Windows\\System32\\rundll32.exe -NoProfile" });
+  it("adds an unquoted Value with no arguments to split on as a file IOC", () => {
+    const row = sniperRow({ Value: "C:\\Windows\\System32\\evil.dll" });
     const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
-    const file = iocs.find((i) => i.type === "file" && i.value.includes("rundll32.exe"));
-    expect(file?.value).toBe("C:\\Windows\\System32\\rundll32.exe");
-  });
-
-  it("keeps a legitimate ' - ' word separator in the path instead of truncating into a fake file (invalid-IOC regression)", () => {
-    const row = sniperRow({ Value: "C:\\Program Files\\Company - Product\\app.exe -y" });
-    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
-    const file = iocs.find((i) => i.type === "file" && i.value.includes("app.exe"));
-    // Must capture the FULL real path (dropping only the trailing " -y" switch) — not truncate at
-    // the " - " inside "Company - Product", which would fabricate a non-existent path as an IOC.
-    expect(file?.value).toBe("C:\\Program Files\\Company - Product\\app.exe");
-  });
-
-  it("keeps a legitimate ' -digit' version/arch suffix in a folder name (invalid-IOC regression)", () => {
-    const row = sniperRow({ Value: "C:\\Program Files\\Suite -64-bit\\app.exe /c" });
-    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
-    const file = iocs.find((i) => i.type === "file" && i.value.includes("app.exe"));
-    // "Suite -64-bit" is a real folder name segment, not an argument boundary — a bare "space then
-    // -/digit" rule truncates here into "C:\Program Files\Suite", a non-existent path.
-    expect(file?.value).toBe("C:\\Program Files\\Suite -64-bit\\app.exe");
+    expect(iocs.some((i) => i.type === "file" && i.value === "C:\\Windows\\System32\\evil.dll")).toBe(true);
   });
 
   it("trusts an explicitly quoted path over any extension/switch guessing", () => {
@@ -1242,6 +1218,27 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
     const file = iocs.find((i) => i.type === "file" && i.value.includes("thing.exe"));
     expect(file?.value).toBe("C:\\Program Files\\Odd - Name.new\\thing.exe");
+  });
+
+  it("does not fabricate a file IOC by guessing a split point in an unquoted path+argument value (invalid-IOC regression)", () => {
+    // The real case data's own Value — a legitimate path (with a space in "Program Files (x86)")
+    // plus a trailing "/c" argument glued on with no delimiter. Every split-point guess tried here
+    // (whitespace+separator, extension-anchored) eventually fabricated a truncated or concatenated
+    // non-existent path for SOME real layout ("Suite -64-bit", comma-joined AppInit_DLLs values,
+    // …) — so this deliberately extracts NOTHING from an unquoted value once whitespace is present,
+    // rather than guess. The title still shows the full raw value (see the title-formatting tests
+    // above); only structured IOC extraction is this conservative.
+    const iocs = parseVelociraptorJson(JSON.stringify([sniperRow()])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value.includes("MicrosoftEdgeUpdate"))).toBe(false);
+  });
+
+  it("does not concatenate a comma-joined multi-value Value into one fabricated file IOC", () => {
+    // AppInit_DLLs / Security Packages / Authentication Packages style values list several DLLs in
+    // one string. No character in "C:\evil1.dll,C:\evil2.dll" says where value 1 ends and value 2
+    // begins, so treating the whole thing as one file path would be its own invalid IOC.
+    const row = sniperRow({ Value: "C:\\Windows\\evil1.dll,C:\\Windows\\evil2.dll" });
+    const iocs = parseVelociraptorJson(JSON.stringify([row])).iocs;
+    expect(iocs.some((i) => i.type === "file" && i.value.includes("evil1.dll,C"))).toBe(false);
   });
 
   it("falls back to Path when a technique has no Value (e.g. a registry run key)", () => {

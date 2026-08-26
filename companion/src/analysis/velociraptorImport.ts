@@ -1491,26 +1491,26 @@ function mapPersistenceSniper(row: Row, host: string, sink: Map<string, SiemIoc>
   // present and is the fallback subject for techniques with no separate value (e.g. WMI events).
   const subject = oneLine(value || path).slice(0, 300);
 
-  // Pull a leading drive-letter path out of Value/Path as a file IOC (Value often carries trailing
-  // arguments concatenated with no delimiter, e.g. "C:\...\MicrosoftEdgeUpdate.exe /c"). A folder
-  // or product name can legitimately contain "-"/"/" right after a space too — "Suite -64-bit",
-  // "Company - Product" are both real install-path segments — so a bare "whitespace then -//" rule
-  // still fabricates a truncated, non-existent path as an IOC no matter how it's tuned. The one
-  // signal that isn't ambiguous: quotes (an explicit delimiter), or the text ending in a REAL file
-  // extension right where the split happens — a path segment never coincidentally ends in ".exe"/
-  // ".dll"/etc immediately before an argument-shaped token, so anchoring on the extension is safe
-  // where anchoring on the separator character alone is not.
+  // Pull a leading drive-letter path out of Value/Path as a file IOC. Real PersistenceSniper values
+  // routinely mix "path + trailing arguments" into one blob with NO reliable delimiter between the
+  // two (e.g. "C:\...\MicrosoftEdgeUpdate.exe /c"), or comma-join several values into one string
+  // (AppInit_DLLs, Security Packages, …). Every split-point GUESS tried here fabricated a truncated,
+  // non-existent path for some real, ordinary layout: splitting on "whitespace + -//" breaks on a
+  // folder/product name containing one ("Suite -64-bit", "Company - Product"); anchoring the split
+  // on a trailing file extension still concatenates a comma-joined multi-value list into one bogus
+  // "path" (nothing in that shape says where value 1 ends and value 2 begins). There is no syntactic
+  // rule that can safely guess a split point here, so this deliberately stops guessing: extract only
+  // when there's NOTHING to split — an explicitly quoted path (the quotes are the delimiter, not a
+  // guess), or an unquoted value that is ALREADY a single unadorned path (no whitespace, no comma —
+  // nothing else it could be). Anything else (unquoted path + args, comma-joined lists) yields no
+  // IOC rather than risk emitting one that doesn't exist on disk.
   for (const candidate of [value, path]) {
     const quoted = /^["']([A-Za-z]:\\[^"']+)["']/.exec(candidate);
     if (quoted) {
       addIoc(sink, "file", quoted[1].slice(0, 300));
-      continue;
+    } else if (/^[A-Za-z]:\\[^\s,"']+$/.test(candidate)) {
+      addIoc(sink, "file", candidate.slice(0, 300));
     }
-    const m =
-      /^([A-Za-z]:\\[^"']+?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk))(?:\s+[/-]\S|\s*$)/i.exec(
-        candidate,
-      );
-    if (m) addIoc(sink, "file", m[1].slice(0, 300));
   }
 
   // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
