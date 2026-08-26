@@ -2122,6 +2122,73 @@ describe("parseVelociraptorJson — network identifiers keep events distinct (#6
     expect(parsed.events[0].count).toBe(3);
   });
 
+  // #649 — #646 bounded the candidate on [^0-9a-z:], which only knows ASCII letters and does not
+  // know the underscore. Both are ordinary identifier characters, so both read as delimiters and
+  // the digits beside them became an "address" — the same defect as #646, reached through a
+  // character class that stops at ASCII. It bites hardest on non-English hosts, where usernames,
+  // paths and script content are routinely non-ASCII.
+  it.each([
+    ["Latin with an accent", "handler café::% done"],
+    ["Hebrew", "handler משתמש::% done"],
+    ["Cyrillic", "handler пользователь::% done"],
+    ["CJK", "handler 用户::% done"],
+    ["Greek", "handler χρήστης::% done"],
+  ])("STILL merges repeats that differ only in a volatile id — %s", (_label, template) => {
+    const row = (id: string): object => ({
+      _Source: "Custom.App",
+      Message: template.replace("%", id),
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("1234"), row("5678"), row("9012")]));
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(3);
+  });
+
+  // The connector-punctuation trade, at the level where the analyst sees it. A bound strict enough
+  // to reject "worker_::1234" also rejects "conn_::1", and nothing separates them, so connectors
+  // separate and this text yields an address token that is not one. The cost is these three
+  // records not merging; the alternative cost is two different destinations merging, which is the
+  // defect this whole area exists to prevent. Asserted, not left implicit, so the split reads as a
+  // known price rather than a regression. See networkTokens.ts for the full argument.
+  it("splits on an id beside a connector — the accepted cost of never suppressing an address", () => {
+    const row = (id: string): object => ({
+      _Source: "Custom.App",
+      Message: `handler worker_::${id} done`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("1234"), row("5678"), row("9012")]));
+    expect(parsed.events).toHaveLength(3);
+  });
+
+  // A real address beside the same connector must survive — the half the trade is protecting.
+  it.each([
+    ["hex-leading", "fe80::1", "fe80::99"],
+    ["colon-leading", "::1", "::99"],
+  ])("keeps two destinations apart beside a connector — %s", (_label, a, b) => {
+    const row = (tgt: string): object => ({
+      _Source: "Custom.App",
+      Message: `conn_${tgt}_closed`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row(a), row(b)]));
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  // The other half of the same rule: tightening the bound until identifier text stops matching must
+  // not also drop a real address that merely sits against ordinary punctuation.
+  it.each(["peer=%;", "(%)", "<%>", '"%"', "ip: %, port 443", "addr|%|"])(
+    "still separates two destinations written as %s",
+    (wrapper) => {
+      const row = (tgt: string): object => ({
+        _Source: "Custom.App",
+        Message: `conn ${wrapper.replace("%", tgt)} established`,
+        Timestamp: "2026-01-01T00:00:00Z",
+      });
+      const parsed = parseVelociraptorJson(JSON.stringify([row("fe80::1"), row("fe80::99")]));
+      expect(parsed.events).toHaveLength(2);
+    },
+  );
+
   // The rule is "is it a WORD or a standalone address", not "does it look like an id". A bare
   // "1234::1234" is a well-formed IPv6 literal with nothing attached, so it is treated as an
   // address and two of them are two events — the forensic-safe reading, since silently merging two
