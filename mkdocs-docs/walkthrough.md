@@ -43,7 +43,7 @@ Open **Settings → Velociraptor**. Four bundles ship built-in:
 | Bundle | What it collects | Where results land |
 |--------|------------------|--------------------|
 | **Best Practice** | The quick-wins detection sweep — DetectRaptor rules, Hayabusa, Chainsaw, condensed account usage, process and network state, persistence, scheduled tasks | Forensic timeline (the AI sees them) |
-| **Best Practice - Big Hogs** *(optional)* | The two slow full-disk/file scans split out of Best Practice — the DetectRaptor YARA file scan and THOR. 1-hour default timeout | Forensic timeline (the AI sees them) |
+| **Best Practice - Big Hogs** *(optional)* | The two slow full-disk/file scans split out of Best Practice — the DetectRaptor YARA file scan and THOR. Same 6000s default timeout as the other bundles | Forensic timeline (the AI sees them) |
 | **Super-Timeline Triage** *(optional)* | Raw host artifacts — MFT, USN journal, prefetch, amcache, shellbags, SRUM, jump lists, registry, event logs | **Super-timeline only** |
 | **Linux Triage** | Linux host triage — users, persistence, network, packages, detection artifacts | Forensic timeline |
 
