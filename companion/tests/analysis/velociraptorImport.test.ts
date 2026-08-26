@@ -1235,6 +1235,40 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.severity).toBe("High");
   });
 
+  // The IsBuiltinBinary gate exists to suppress ROUTINE builtin LOLBin usage (rundll32.exe running
+  // an ordinary OS scheduled task) — it must NOT suppress genuine LOLBin abuse just because the
+  // tool itself is a legitimate, signed Windows binary. Classic living-off-the-land technique runs
+  // FROM a real builtin tool; that's the whole point. A builtin LOLBin with a bad signature or an
+  // unusual staging path is exactly the case that must still escalate.
+  it("still grades High for a builtin LOLBin whose signature doesn't check out", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\Windows\\System32\\rundll32.exe evil.dll,Entry",
+          IsLolbin: "True",
+          IsBuiltinBinary: "True",
+          Signature: "Status = NotSigned, Subject = ",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
+  it("still grades High for a builtin LOLBin staged in Temp/AppData", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\rundll32.exe",
+          IsLolbin: "True",
+          IsBuiltinBinary: "True",
+        }),
+      ]),
+    ).events[0];
+    expect(e.description).toContain("[lolbin]");
+    expect(e.severity).toBe("High");
+  });
+
   it("grades a non-valid signature to Medium", () => {
     const e = parseVelociraptorJson(
       JSON.stringify([sniperRow({ Signature: "Status = NotSigned, Subject = " })]),
@@ -1251,22 +1285,36 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
 
   it("grades a persistence target staged in Temp/AppData to Medium, and flags it in the title", () => {
     const e = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\update.exe" })]),
+      JSON.stringify([
+        sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\update.exe", IsBuiltinBinary: "True" }),
+      ]),
     ).events[0];
     expect(e.severity).toBe("Medium");
     expect(e.description).toContain("[staged: temp/appdata]");
   });
 
-  it("grades a persistence target staged in ProgramData/Public to Medium", () => {
+  it("grades a persistence target staged in ProgramData/Public to Medium (when it's a recognised binary)", () => {
     const inProgramData = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\svc.exe" })]),
+      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\svc.exe", IsBuiltinBinary: "True" })]),
     ).events[0];
     expect(inProgramData.severity).toBe("Medium");
 
     const inPublic = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\Users\\Public\\helper.exe" })]),
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\Public\\helper.exe", IsBuiltinBinary: "True" })]),
     ).events[0];
     expect(inPublic.severity).toBe("Medium");
+  });
+
+  // A NON-builtin binary (not in PersistenceSniper's own inventory of expected system files) sitting
+  // in a staging directory is a stronger, more specific combination than either signal alone — the
+  // classic "dropped somewhere transient, wired up for persistence" shape.
+  it("grades a NON-builtin binary staged in Temp/AppData/ProgramData to High", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({ Value: "C:\\ProgramData\\USOShared\\lsassa.exe", IsBuiltinBinary: "False" }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("High");
   });
 
   it("does not flag an ordinary Program Files location as staged", () => {

@@ -33,15 +33,6 @@ export function mapPersistenceSniper(
   const signature = str(getCI(row, "Signature")).trim();
   const isLolbin = str(getCI(row, "IsLolbin")).trim().toLowerCase() === "true";
   const isBuiltinBinary = str(getCI(row, "IsBuiltinBinary")).trim().toLowerCase() === "true";
-  // IsLolbin alone is a weak, noisy signal: rundll32.exe/sc.exe/cmd.exe/msiexec.exe are all
-  // catalogued LOLBins, and they're ALSO how a large fraction of Windows' own stock scheduled
-  // tasks run (sysmain.dll, PcaSvc.dll, AppxDeploymentClient.dll, …) — on one real host's import,
-  // 27 rows came back IsLolbin=True and 23 of those were the OS's own recognised binaries
-  // (IsBuiltinBinary=True), flooding the timeline with High-severity "findings" that are just
-  // ordinary Windows behavior. Only escalate when the LOLBin technique is running from something
-  // that ISN'T PersistenceSniper's own inventory of expected system binaries — that combination
-  // (LOLBin-capable tool + not a recognised built-in) is the actually rare, actually suspicious one.
-  const lolbinFlag = isLolbin && !isBuiltinBinary;
 
   // Value is the actual executable/command the technique runs — the payload an analyst cares
   // about — when the module found one; Path (a registry key, task name, or service) is always
@@ -78,26 +69,44 @@ export function mapPersistenceSniper(
   const sigStatus = /status\s*=\s*([^,]*)/i.exec(signature)?.[1]?.trim() ?? "";
   const sigFlag = sigStatus && sigStatus.toLowerCase() !== "valid" ? sigStatus : "";
 
-  // Grade directly from the module's own STRUCTURED verdict columns (IsLolbin, Signature) — never
-  // from the free-text description below. `subject` is built from Value/Path, real filesystem/
-  // registry content on the target host that an adversary can shape (e.g. naming a dropped file
-  // `evil.exe [lolbin]`); a downstream rule that re-parsed the rendered description for a bracket
-  // marker was both spoofable (a crafted Value fakes a High grade the module never gave) and lossy
-  // (the description is capped at 600 chars, so a long subject could push a genuine marker past the
-  // cut and leave a real LOLBin sitting at Info). Grading here, before any text is assembled, is
-  // immune to both: PersistenceSniper enumerates almost every autostart on the box — mostly signed,
-  // first-party, and ordinary — so most rows stay Info by design; only its own anomaly signals earn
-  // a promotion.
+  // IsLolbin alone is a weak, noisy signal: rundll32.exe/sc.exe/cmd.exe/msiexec.exe are all
+  // catalogued LOLBins, and they're ALSO how a large fraction of Windows' own stock scheduled
+  // tasks run (sysmain.dll, PcaSvc.dll, AppxDeploymentClient.dll, …) — on one real host's import,
+  // 27 rows came back IsLolbin=True and 23 of those were the OS's own recognised binaries
+  // (IsBuiltinBinary=True), flooding the timeline with High-severity "findings" that were just
+  // ordinary Windows behavior. But gating on !IsBuiltinBinary ALONE went too far the other way:
+  // classic LOLBin abuse runs from a genuinely signed, built-in tool (that's the point of a
+  // living-off-the-land binary) — suppressing every IsBuiltinBinary=True row unconditionally would
+  // miss a builtin LOLBin loading a bad-signed or oddly-staged payload. Escalate on IsLolbin when
+  // EITHER it isn't a recognised built-in, OR one of the other anomaly signals also fired for the
+  // same row — a builtin tool alone, cleanly signed, not staged anywhere unusual, is the routine
+  // case and stays suppressed; anything else earns the promotion.
+  const lolbinFlag = isLolbin && (!isBuiltinBinary || sigFlag !== "" || staged);
+  // A NON-builtin binary (not in PersistenceSniper's inventory of expected system files) sitting in
+  // a staging directory is its own strong, specific combination — independent of the LOLBin catalog
+  // check — the classic "dropped somewhere transient, wired up for persistence" shape.
+  const unrecognizedStaged = !isBuiltinBinary && staged;
+
+  // Grade directly from the module's own STRUCTURED verdict columns — never from the free-text
+  // description below. `subject` is built from Value/Path, real filesystem/registry content on the
+  // target host that an adversary can shape (e.g. naming a dropped file `evil.exe [lolbin]`); a
+  // downstream rule that re-parsed the rendered description for a bracket marker was both spoofable
+  // (a crafted Value fakes a High grade the module never gave) and lossy (the description is capped
+  // at 600 chars, so a long subject could push a genuine marker past the cut and leave a real
+  // anomaly sitting at Info). Grading here, before any text is assembled, is immune to both:
+  // PersistenceSniper enumerates almost every autostart on the box — mostly signed, first-party, and
+  // ordinary — so most rows stay Info by design; only its own anomaly signals earn a promotion.
   let severity: MappedEvent["severity"] = "Info";
   if (sigFlag) severity = worst(severity, "Medium");
   if (staged) severity = worst(severity, "Medium");
+  if (unrecognizedStaged) severity = worst(severity, "High");
   if (lolbinFlag) severity = worst(severity, "High");
 
   let description = `Velociraptor: Persistence [${technique || "unknown"}]`;
   if (subject) description += ` — ${subject}`;
   if (accessGained) description += ` (${accessGained})`;
   // These markers are for the analyst reading the title — informational only, not re-parsed for
-  // grading (see above). Gated on the SAME condition that drives severity, so the marker and the
+  // grading (see above). Gated on the SAME conditions that drive severity, so the marker and the
   // grade never disagree (a "[lolbin]" tag on an Info-severity row would be its own confusing bug).
   if (sigFlag) description += ` [signature: ${sigFlag}]`;
   if (staged) description += ` [staged: temp/appdata]`;
