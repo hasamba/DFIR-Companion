@@ -6,7 +6,16 @@
 // "Status = , Subject = " when PowerShell found nothing to sign-check, and a Reference URL that
 // adds noise, not signal. Kept as its own module (not inlined into velociraptorImport.ts) because
 // that file is frozen at its current size by the file-size ledger (#384) — see check-file-size.mjs.
-import { str, getCI, oneLine, addIoc, mitreFromText, worst, type MappedEvent, type SiemIoc } from "./siemImport.js";
+import {
+  str,
+  getCI,
+  oneLine,
+  addIoc,
+  mitreFromText,
+  worst,
+  type MappedEvent,
+  type SiemIoc,
+} from "./siemImport.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
@@ -53,7 +62,8 @@ type Row = Record<string, unknown>;
 // and the allow-list silently dropped every one of them. `(?![.\w])` instead REJECTS only what's
 // actually wrong (another dot, or a continuing word character from a longer/unlisted extension) and
 // accepts everything else, with no allow-list to keep enumerating.
-const STAGING_EXT = "exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk";
+const STAGING_EXT =
+  "exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk";
 const STAGED_LEADING_RE = new RegExp(
   `^[A-Za-z]:\\\\(?:[^\\\\]+\\\\)*(?:temp|tmp|appdata\\\\local\\\\temp|programdata|public|windows\\\\temp)\\\\[^\\\\]*?\\.(?:${STAGING_EXT})(?![.\\w])`,
   "i",
@@ -160,9 +170,10 @@ export function mapPersistenceSniper(
   if (lolbinFlag) description += ` [lolbin]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
-  const aggKey = `vr-persist|${technique.toLowerCase()}|${(value || path).toLowerCase()}|${host.toLowerCase()}`
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey =
+    `vr-persist|${technique.toLowerCase()}|${(value || path).toLowerCase()}|${host.toLowerCase()}`
+      .replace(/\d+/g, "#")
+      .slice(0, 400);
 
   return {
     timestamp,

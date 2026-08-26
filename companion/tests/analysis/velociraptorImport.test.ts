@@ -1162,7 +1162,8 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
       "Access Gained": "User",
       Note: "Scheduled tasks run executables or actions when certain conditions, such as user log in or machine boot up, are met.",
       Reference: "https://attack.mitre.org/techniques/T1053/005/",
-      Signature: "Status = Valid, Subject = CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+      Signature:
+        "Status = Valid, Subject = CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
       IsBuiltinBinary: "False",
       IsLolbin: "False",
       VTEntries: "N/A",
@@ -1334,7 +1335,8 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     const e = parseVelociraptorJson(
       JSON.stringify([
         sniperRow({
-          Value: "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.26070.9-0\\MpCmdRun.exe -IdleTask",
+          Value:
+            "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.26070.9-0\\MpCmdRun.exe -IdleTask",
         }),
       ]),
     ).events[0];
@@ -1347,9 +1349,8 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
   // dot follows "hta" too. The boundary must require an actual end-of-path shape (end of string,
   // quote, whitespace, comma), not just "not a letter/digit/underscore".
   it("does not treat an extension prefix earlier in a multi-dot filename as the real extension", () => {
-    const e = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\readme.hta.txt" })]),
-    ).events[0];
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\readme.hta.txt" })]))
+      .events[0];
     expect(e.description).not.toContain("[staged:");
   });
 
@@ -1387,9 +1388,7 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
 
   it("still detects a quoted staged payload after a launcher prefix with real intermediate path segments", () => {
     const e = parseVelociraptorJson(
-      JSON.stringify([
-        sniperRow({ Value: 'app.exe "C:\\Users\\bob\\AppData\\Local\\Temp\\payload.dll"' }),
-      ]),
+      JSON.stringify([sniperRow({ Value: 'app.exe "C:\\Users\\bob\\AppData\\Local\\Temp\\payload.dll"' })]),
     ).events[0];
     expect(e.description).toContain("[staged:");
     expect(e.severity).toBe("High");
@@ -1439,9 +1438,8 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
   });
 
   it("does not choke on an empty Signature struct (no cert info available)", () => {
-    const desc = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ Signature: "Status = , Subject = " })]),
-    ).events[0].description;
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow({ Signature: "Status = , Subject = " })]))
+      .events[0].description;
     expect(desc).not.toContain("Status =");
   });
 
