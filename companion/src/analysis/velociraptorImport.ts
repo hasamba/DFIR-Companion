@@ -178,25 +178,40 @@ function hashStr(s: string): string {
 
 // An IP address is made of digits, so the volatile-id strip in msgFingerprint erases it. That is
 // right for a PID and wrong for a peer address: for a network event the OTHER END IS THE EVENT, so
-// two connections to different destinations are two events, not one repeat. Two Sysmon
-// network-connection rows differing only in TgtIP used to fingerprint identically, merge into one
-// event holding the FIRST row's text, and leave every IOC scraped from the merged rows pointing at
-// an event that named a different address (#640). Domains and URLs are mostly letters and already
-// survive the strip; only addresses need rescuing.
+// two connections to different destinations are two events, not one repeat. Rows differing only in
+// TgtIP used to fingerprint identically, merge into one event holding the FIRST row's text, and
+// leave every IOC scraped from the merged rows pointing at an event naming a different address
+// (#640). Domains and URLs are mostly letters and already survive the strip; only addresses need it.
 //
 // IPv6 shares its shape with a clock time ("00:00:00"), so a colon candidate counts only when it
-// carries a "::" or at least three colons. A fully numeric, fully expanded IPv6 literal is missed
-// by that rule — vanishingly rare in this telemetry, and the cost of the miss is one merged event,
-// not a wrong link.
+// carries a "::" or at least three colons. That guard keeps every timestamped line from becoming
+// its own event.
+//
+// A candidate is bounded by "not next to a LETTER, digit or colon", which is neither \b nor a
+// hex-only class — both were tried and both were wrong. \b cannot anchor a match beginning or
+// ending at "::" beside a numeric group, so "::1" and "1::" were never extracted at all (#643).
+// Widening to any non-hex character then let a word bound the candidate, so ordinary "::" text read
+// as an address — "[Convert]::FromBase64String" yielded "::f", "handler foo::1234" yielded
+// "::1234" — and where a volatile id sat against the "::" it landed inside the token, so records
+// that differ only in that id stopped merging: the collapse this function exists to perform, undone
+// by a false address (#646). The rule is WORD versus standalone address: a bare "1234::1234" is a
+// well-formed literal and counts; attach a word and it does not.
+//
+// The leading bound CONSUMES a character (group 1 is the address) rather than using a lookbehind,
+// and the first group is {1,4}? rather than {0,4}. Both are for speed — a lookbehind form measured
+// 2.3x slower over a real collection's messages — and the two forms were verified to agree on every
+// IPv6 shape the suite covers and on 203,675 real messages. Addresses are separated by spaces or
+// field marks here, so consuming one leading character never swallows a neighbouring address.
 const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
-const COLON_ADDR_RE = /\b[0-9a-f]{0,4}(?::{1,2}[0-9a-f]{0,4}){2,7}\b/gi;
+const COLON_ADDR_RE = /(?:^|[^0-9a-z:])((?:[0-9a-f]{1,4})?(?::{1,2}[0-9a-f]{0,4}){2,7})(?![0-9a-z:])/gi;
 
 function networkTokens(msg: string): string[] {
   const out = new Set<string>();
   for (const m of msg.match(IPV4_RE) ?? []) {
     if (m.split(".").every((o) => Number(o) <= 255)) out.add(m.toLowerCase());
   }
-  for (const m of msg.match(COLON_ADDR_RE) ?? []) {
+  for (const match of msg.matchAll(COLON_ADDR_RE)) {
+    const m = match[1]; // group 1 — the address without the character the leading bound consumed
     const colons = (m.match(/:/g) ?? []).length;
     if (m.includes("::") || colons >= 3) out.add(m.toLowerCase());
   }

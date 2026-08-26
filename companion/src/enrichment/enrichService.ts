@@ -39,6 +39,11 @@ export interface EnrichOptions {
   // aborting the lookup on the first rate-limit hit. Other errors are not retried here.
   retry?: RetryPolicy;
   maxIocs?: number; // cap IOCs queried per run (default 100)
+  // IOC values an earlier batch of the SAME chain already took responsibility for. Excluded from
+  // the candidate list so a chained run advances instead of re-paying a rate-limited provider for
+  // indicators the batch before it just covered. `enrichedBy` alone cannot do this: under `force`
+  // it is deliberately ignored, and an IOC whose only provider ERRORED never gets stamped at all.
+  skipValues?: ReadonlySet<string>;
   force?: boolean; // re-query IOCs already enriched
   now?: () => string; // injected timestamp
   sleep?: (ms: number) => Promise<void>; // injected delay (tests pass a no-op)
@@ -64,6 +69,13 @@ export interface EnrichSummary {
   queried: number; // IOCs actually looked up this run (≥1 real provider call)
   withHits: number; // IOCs that got ≥1 non-empty result
   skipped: number; // already-enriched (cached) or beyond the cap
+  // ONLY the IOCs the cap cut — real, unqueried work that a follow-up batch still owes. `skipped`
+  // folds these together with already-enriched ones, so it cannot tell a finished case from one
+  // with 150 indicators still waiting; the engine reads THIS to decide whether to chain a batch.
+  capped: number;
+  // Every IOC value this run took on (queried or attempted). A chained batch passes these back as
+  // `skipValues`, so the chain's cursor is what was ATTEMPTED, not only what succeeded.
+  attemptedValues: string[];
   errors: number; // provider call failures
   unavailable: string[]; // providers probed DOWN and skipped this run (no requests sent)
 }
@@ -125,6 +137,8 @@ export async function enrichIocs(
     // (169.254.169.254 cloud metadata, RFC1918, loopback, link-local IPv6). A crafted log line
     // or prompt-injected AI response can plant such a value as an IOC.
     .filter((c) => !isInternalTarget(c.ioc.value, c.ioc.type))
+    // Already covered by an earlier batch of this chain — see EnrichOptions.skipValues.
+    .filter((c) => !opts.skipValues?.has(c.ioc.value))
     .map((c) => {
       const supporting = opts.providers.filter((p) => p.supports(c.kind));
       const checked = new Set(c.ioc.enrichedBy ?? []);
@@ -141,6 +155,8 @@ export async function enrichIocs(
     queried: 0,
     withHits: 0,
     skipped: enrichable - toQuery.length,
+    capped: candidates.length - toQuery.length,
+    attemptedValues: toQuery.map((c) => c.ioc.value),
     errors: 0,
     unavailable: [],
   };

@@ -281,6 +281,35 @@ describe("enrichIocs", () => {
     expect(out.find((i) => i.value === "u1")!.enrichments).toBeUndefined();
   });
 
+  // `skipped` folds "already enriched" together with "cut by the cap", so a caller cannot tell a
+  // finished case from one with 150 IOCs still waiting. `capped` counts ONLY the cap's victims,
+  // which is what lets the engine decide whether another batch is owed.
+  it("counts cap victims in `capped`, separately from already-enriched IOCs in `skipped`", async () => {
+    const calls: string[] = [];
+    const vt = fakeProvider("VT", ["hash"], { source: "VT", verdict: "malicious" }, calls);
+    const iocs = [
+      ioc({ value: "done1", type: "hash", enrichedBy: ["VT"] }), // cached — not a cap victim
+      ioc({ value: "h1", type: "hash" }),
+      ioc({ value: "h2", type: "hash" }),
+      ioc({ value: "h3", type: "hash" }),
+    ];
+    const { summary } = await enrichIocs(iocs, { providers: [vt], sleep: noSleep, now, maxIocs: 1 });
+
+    expect(summary.queried).toBe(1);
+    expect(summary.capped).toBe(2); // h2 + h3 — real work the cap deferred
+    expect(summary.skipped).toBe(3); // unchanged: cached + capped, as before
+  });
+
+  it("reports capped 0 when the cap was never reached, so callers do not chain a pointless run", async () => {
+    const calls: string[] = [];
+    const vt = fakeProvider("VT", ["hash"], null, calls);
+    const iocs = [ioc({ value: "h1", type: "hash" }), ioc({ value: "h2", type: "hash" })];
+    const { summary } = await enrichIocs(iocs, { providers: [vt], sleep: noSleep, now, maxIocs: 10 });
+
+    expect(summary.queried).toBe(2);
+    expect(summary.capped).toBe(0);
+  });
+
   it("counts provider errors without aborting the run", async () => {
     const failing: EnrichmentProvider = {
       name: "X",
