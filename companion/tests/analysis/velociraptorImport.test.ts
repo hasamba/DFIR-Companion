@@ -2033,6 +2033,61 @@ describe("parseVelociraptorJson — network identifiers keep events distinct (#6
     expect(parsed.events).toHaveLength(2);
   });
 
+  // #646 — the candidate was bounded by "not next to a HEX digit or a colon", and a letter satisfies
+  // that, so any word::word text read as an address. "::" is everywhere in ordinary telemetry:
+  // PowerShell static calls, C++ and Ruby scope resolution, stack frames. Most invented tokens are
+  // CONSTANT across repeats and merely noise in the fingerprint. The two shapes below are not: a
+  // volatile id sitting directly against the "::" lands inside the token, so the token varies and
+  // the records stop merging — the exact collapse msgFingerprint exists to perform. Only these two
+  // discriminate; a case like "[Convert]::FromBase64String(1234)" merges either way, so asserting
+  // it would pass against the broken code and prove nothing.
+  it.each([
+    ["digits directly after the ::", "handler foo::% completed"],
+    ["digits directly before the ::", "handler %::foo completed"],
+  ])("STILL merges repeats that differ only in a volatile id — %s", (_label, template) => {
+    const row = (id: string): object => ({
+      _Source: "Custom.App",
+      Message: template.replace("%", id),
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("1234"), row("5678"), row("9012")]));
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(3);
+  });
+
+  // The rule is "is it a WORD or a standalone address", not "does it look like an id". A bare
+  // "1234::1234" is a well-formed IPv6 literal with nothing attached, so it is treated as an
+  // address and two of them are two events — the forensic-safe reading, since silently merging two
+  // destinations is the failure #640 exists to prevent. Attach a word and it stops being one.
+  it("treats a standalone address-shaped token as an address, an attached one as a word", () => {
+    const row = (m: string): object => ({
+      _Source: "Custom.App",
+      Message: m,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const standalone = parseVelociraptorJson(
+      JSON.stringify([row("handler 1234::1234 done"), row("handler 5678::5678 done")]),
+    );
+    expect(standalone.events).toHaveLength(2);
+    const attached = parseVelociraptorJson(
+      JSON.stringify([row("handler foo::1234 done"), row("handler foo::5678 done")]),
+    );
+    expect(attached.events).toHaveLength(1);
+  });
+
+  // The address forms above and these word forms are the two halves of the same boundary rule, so
+  // they are pinned together: tightening the bound until the junk disappears must not also drop a
+  // real address that happens to sit next to punctuation.
+  it("finds a real address beside punctuation while ignoring scope-resolution text", () => {
+    const row = (tgt: string): object => ({
+      _Source: "Custom.App",
+      Message: `[Convert]::FromBase64String($x); std::vector::at; peer=${tgt};`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("fe80::1"), row("fe80::99")]));
+    expect(parsed.events).toHaveLength(2);
+  });
+
   it("does NOT split on a clock time, which shares IPv6's shape", () => {
     // "00:00:00" must not read as an address — otherwise every timestamped line becomes its own
     // event and aggregation stops working entirely.
