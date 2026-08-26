@@ -1341,6 +1341,18 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.description).not.toContain("[staged:");
   });
 
+  // A bare `\b` word boundary is satisfied by ANY non-word character — including another literal
+  // dot — so it treats an extension prefix earlier in a multi-dot filename as if it were the real,
+  // final extension: "readme.hta.txt" is a .txt file, but a `\.hta\b` check still matches because a
+  // dot follows "hta" too. The boundary must require an actual end-of-path shape (end of string,
+  // quote, whitespace, comma), not just "not a letter/digit/underscore".
+  it("does not treat an extension prefix earlier in a multi-dot filename as the real extension", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\readme.hta.txt" })]),
+    ).events[0];
+    expect(e.description).not.toContain("[staged:");
+  });
+
   // Grading reads the module's own structured IsLolbin/Signature columns directly — never the
   // rendered description, which mixes in Value/Path (real content from the target host that an
   // adversary can shape). A tagger rule that re-parsed the description for a "[lolbin]"/

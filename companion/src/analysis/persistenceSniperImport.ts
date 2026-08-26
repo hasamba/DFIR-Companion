@@ -32,8 +32,16 @@ type Row = Record<string, unknown>;
 // here only nudges severity, not a displayed IOC value, so scanning the whole string (rather than
 // only a leading, provably-single path) is an acceptable, much safer trade-off than it would be for
 // the file IOC.
+//
+// The trailing boundary is an explicit end-of-path lookahead (end of string / quote / whitespace /
+// comma) — NOT a bare `\b`. A plain word boundary is satisfied by ANY non-word character, including
+// another literal dot, so it treats an extension prefix earlier in a multi-dot filename as if it
+// were the real one: "C:\ProgramData\readme.hta.txt" is a .txt file, but `\.hta\b` still matches
+// because a dot follows "hta" too. Requiring the boundary to actually look like the end of a path
+// closes that off while leaving every real case (bare end of string, a closing quote, a following
+// argument) matching exactly as before.
 const STAGED_FILE_RE =
-  /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk)\b/i;
+  /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk)(?=["'\s,]|$)/i;
 
 export function mapPersistenceSniper(
   row: Row,

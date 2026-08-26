@@ -5339,7 +5339,7 @@
     {
       "path": "companion/src/analysis/persistenceSniperImport.ts",
       "kind": "module",
-      "lines": 146,
+      "lines": 154,
       "imports": [
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/velociraptorTitle.ts"
