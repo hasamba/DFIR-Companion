@@ -1353,6 +1353,22 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.description).not.toContain("[staged:");
   });
 
+  // A cmd.exe operator needs no surrounding whitespace to chain commands — an allow-list of
+  // terminator characters (tried and reverted) missed every one of these.
+  it("still detects staging when a shell operator directly follows the extension, no whitespace", () => {
+    for (const value of [
+      "C:\\ProgramData\\evil.exe&calc.exe",
+      "C:\\ProgramData\\evil.exe&&whoami",
+      "C:\\ProgramData\\evil.exe|more",
+      "C:\\ProgramData\\evil.exe>out.txt",
+      "C:\\ProgramData\\evil.exe;whoami",
+    ]) {
+      const e = parseVelociraptorJson(JSON.stringify([sniperRow({ Value: value })])).events[0];
+      expect(e.description, value).toContain("[staged:");
+      expect(e.severity, value).toBe("High");
+    }
+  });
+
   // Grading reads the module's own structured IsLolbin/Signature columns directly — never the
   // rendered description, which mixes in Value/Path (real content from the target host that an
   // adversary can shape). A tagger rule that re-parsed the description for a "[lolbin]"/

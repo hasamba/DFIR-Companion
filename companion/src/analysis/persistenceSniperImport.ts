@@ -33,15 +33,22 @@ type Row = Record<string, unknown>;
 // only a leading, provably-single path) is an acceptable, much safer trade-off than it would be for
 // the file IOC.
 //
-// The trailing boundary is an explicit end-of-path lookahead (end of string / quote / whitespace /
-// comma) — NOT a bare `\b`. A plain word boundary is satisfied by ANY non-word character, including
-// another literal dot, so it treats an extension prefix earlier in a multi-dot filename as if it
-// were the real one: "C:\ProgramData\readme.hta.txt" is a .txt file, but `\.hta\b` still matches
-// because a dot follows "hta" too. Requiring the boundary to actually look like the end of a path
-// closes that off while leaving every real case (bare end of string, a closing quote, a following
-// argument) matching exactly as before.
+// The trailing boundary is a negative lookahead — "not immediately followed by more filename" —
+// rather than a bare `\b` or an allow-list of terminator characters. Two prior attempts both fell
+// to a real command-line shape:
+//   - A bare `\b` is satisfied by ANY non-word character, including another literal dot, so it
+//     treated an extension prefix earlier in a multi-dot filename as the real one:
+//     "C:\ProgramData\readme.hta.txt" is a .txt file, but `\.hta\b` matches anyway because a dot
+//     follows "hta" too.
+//   - An allow-list of terminators (quote/whitespace/comma/end) fixed that but is inherently
+//     incomplete: cmd.exe operators need no surrounding whitespace — "evil.exe&calc.exe",
+//     "evil.exe|more", "evil.exe>out.txt" — so the allow-list silently dropped every one of them.
+// `(?![.\w])` instead REJECTS only what's actually wrong (another dot, or a continuing word
+// character like the "1" in a longer, unlisted extension) and accepts everything else — every
+// punctuation/operator a real command line can put right after a filename, with no allow-list to
+// keep enumerating.
 const STAGED_FILE_RE =
-  /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk)(?=["'\s,]|$)/i;
+  /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk)(?![.\w])/i;
 
 export function mapPersistenceSniper(
   row: Row,
