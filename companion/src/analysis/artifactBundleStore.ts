@@ -136,6 +136,7 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.Mounted.Mass.Storage",
       "Windows.Analysis.EvidenceOfDownload",
       "Windows.Sys.StartupItems",
+      "Windows.Sysinternals.Autoruns",
       "Windows.System.TaskScheduler",
       "Windows.Persistence.PermanentWMIEvents",
       "Windows.Analysis.SuspiciousWMIConsumers",
