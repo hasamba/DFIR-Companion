@@ -58,6 +58,18 @@ describe("readFileNoFollow", () => {
     await expect(readFileNoFollow(join(dir, "dangling"))).rejects.toBeInstanceOf(LinkGuardError);
   });
 
+  // An open() that loses the race against the rm() below is not a finding — it is the race being run.
+  // POSIX reports that as ENOENT. Windows has a second state POSIX does not: between the unlink and
+  // the last handle closing, the entry still exists but is delete-pending, and opening it returns
+  // ERROR_ACCESS_DENIED (EPERM) or ERROR_SHARING_VIOLATION (EBUSY). Neither can be a leak — nothing
+  // was returned to read — so both belong with ENOENT rather than rethrown.
+  //
+  // The list was ENOENT-only until the suite's temp root moved onto the runner's fast disk, which cut
+  // per-file I/O ~10-30x and let this 200-iteration loop actually reach the delete-pending window;
+  // it then failed one leg of the bench matrix with an EPERM this handler rethrew. The bug was always
+  // here — the slow disk just never ran the loop fast enough to hit it.
+  const RACE_LOST = new Set(["ENOENT", "EPERM", "EBUSY"]);
+
   // THE RACE ITSELF. The path is swapped between a plain file and a symlink to the secret while
   // reads run against it. A check-then-read implementation loses this: it lstats the plain file,
   // the swap lands, and the read follows the link. Reading through the checked descriptor cannot —
@@ -77,7 +89,7 @@ describe("readFileNoFollow", () => {
       const reading = readFileNoFollow(path).then(
         (buf) => buf.toString("utf8"),
         (err: unknown) => {
-          if (!(err instanceof LinkGuardError) && (err as NodeJS.ErrnoException).code !== "ENOENT") {
+          if (!(err instanceof LinkGuardError) && !RACE_LOST.has((err as NodeJS.ErrnoException).code ?? "")) {
             throw err;
           }
           return null;
