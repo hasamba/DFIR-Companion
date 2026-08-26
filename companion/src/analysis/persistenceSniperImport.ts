@@ -11,6 +11,14 @@ import { withHostSuffix } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
 
+// Same staging-directory convention as data/tags.yaml's staging_temp_executable rule (world-writable
+// / transient locations malware commonly drops into). Judged directly against the row's OWN Value/
+// Path text — unlike the [lolbin]/[signature: …] markers this replaced elsewhere in this file, this
+// isn't re-deriving a verdict the module already computed; the path IS the ground truth for "is this
+// staged somewhere unusual", so there's nothing to spoof by shaping it — an attacker choosing to
+// stage there is exactly the case this is meant to catch.
+const STAGING_DIR_RE = /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\/i;
+
 export function mapPersistenceSniper(
   row: Row,
   host: string,
@@ -43,14 +51,17 @@ export function mapPersistenceSniper(
   // guess), or an unquoted value that is ALREADY a single unadorned path (no whitespace, no comma —
   // nothing else it could be). Anything else (unquoted path + args, comma-joined lists) yields no
   // IOC rather than risk emitting one that doesn't exist on disk.
+  const filePaths: string[] = [];
   for (const candidate of [value, path]) {
     const quoted = /^["']([A-Za-z]:\\[^"']+)["']/.exec(candidate);
     if (quoted) {
-      addIoc(sink, "file", quoted[1].slice(0, 300));
+      filePaths.push(quoted[1].slice(0, 300));
     } else if (/^[A-Za-z]:\\[^\s,"']+$/.test(candidate)) {
-      addIoc(sink, "file", candidate.slice(0, 300));
+      filePaths.push(candidate.slice(0, 300));
     }
   }
+  for (const p of filePaths) addIoc(sink, "file", p);
+  const staged = filePaths.some((p) => STAGING_DIR_RE.test(p));
 
   // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
   // clean Authenticode signature is the common case and just adds noise to the title.
@@ -69,6 +80,7 @@ export function mapPersistenceSniper(
   // a promotion.
   let severity: MappedEvent["severity"] = "Info";
   if (sigFlag) severity = worst(severity, "Medium");
+  if (staged) severity = worst(severity, "Medium");
   if (isLolbin) severity = worst(severity, "High");
 
   let description = `Velociraptor: Persistence [${technique || "unknown"}]`;
@@ -77,6 +89,7 @@ export function mapPersistenceSniper(
   // These markers are for the analyst reading the title — informational only, not re-parsed for
   // grading (see above).
   if (sigFlag) description += ` [signature: ${sigFlag}]`;
+  if (staged) description += ` [staged: temp/appdata]`;
   if (isLolbin) description += ` [lolbin]`;
   description = withHostSuffix(description, host).slice(0, 600);
 

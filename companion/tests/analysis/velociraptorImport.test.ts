@@ -1221,13 +1221,50 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(e.severity).toBe("High");
   });
 
+  it("grades a persistence target staged in Temp/AppData to Medium, and flags it in the title", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\bob\\AppData\\Local\\Temp\\update.exe" })]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("[staged: temp/appdata]");
+  });
+
+  it("grades a persistence target staged in ProgramData/Public to Medium", () => {
+    const inProgramData = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\ProgramData\\svc.exe" })]),
+    ).events[0];
+    expect(inProgramData.severity).toBe("Medium");
+
+    const inPublic = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\Users\\Public\\helper.exe" })]),
+    ).events[0];
+    expect(inPublic.severity).toBe("Medium");
+  });
+
+  it("does not flag an ordinary Program Files location as staged", () => {
+    const e = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0]; // default Value is under Program Files
+    expect(e.description).not.toContain("[staged:");
+    expect(e.severity).toBe("Info");
+  });
+
+  it("only judges the extracted, unambiguous file path for staging — not the raw Value blob", () => {
+    // Same invalid-IOC-extraction guardrail as the file-IOC tests: an unquoted Value with trailing
+    // arguments yields no extracted path at all, so there's nothing to judge (no false "staged").
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ Value: "C:\\Windows\\System32\\svchost.exe -k \\Temp\\netsvcs" })]),
+    ).events[0];
+    expect(e.description).not.toContain("[staged:");
+  });
+
   // Grading reads the module's own structured IsLolbin/Signature columns directly — never the
   // rendered description, which mixes in Value/Path (real content from the target host that an
   // adversary can shape). A tagger rule that re-parsed the description for a "[lolbin]"/
   // "[signature: ...]" substring was tried first and reverted for exactly this reason.
   it("is not spoofed by a Value that fakes the [lolbin] marker text (IsLolbin: False)", () => {
+    // An ordinary Program Files location — isolates the [lolbin]-text spoofing concern from the
+    // legitimate "staged in Temp/AppData" signal (that path shape is deliberately graded up).
     const e = parseVelociraptorJson(
-      JSON.stringify([sniperRow({ IsLolbin: "False", Value: "C:\\Temp\\name[lolbin].exe" })]),
+      JSON.stringify([sniperRow({ IsLolbin: "False", Value: "C:\\Program Files\\App\\name[lolbin].exe" })]),
     ).events[0];
     expect(e.description).toContain("name[lolbin].exe");
     expect(e.severity).toBe("Info");
