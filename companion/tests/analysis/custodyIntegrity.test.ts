@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import request from "supertest";
 import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,9 @@ import {
   resolveIntegrityConfig,
   type IntegritySweep,
 } from "../../src/analysis/custodyIntegrity.js";
+// Imported statically, like every other test that drives createApp through supertest. Loading the
+// server module graph inside a test body spends the whole per-test timeout on the transform.
+import { createApp } from "../../src/server.js";
 
 let cases: CaseStore;
 let custody: CustodyStore;
@@ -194,13 +198,11 @@ describe("EvidenceIntegrityMonitor.status", () => {
 
 describe("evidence integrity in GET /diagnostics", () => {
   it("reports the monitor's last sweep, and defaults to disabled when none is wired", async () => {
-    const { createApp } = await import("../../src/server.js");
     const app = createApp(cases, { custodyStore: custody, integrityMonitor: monitor });
 
     await collect("c1", "a.csv", "one\n");
     await monitor.runSweep();
 
-    const { default: request } = await import("supertest");
     const res = await request(app).get("/diagnostics");
     expect(res.status).toBe(200);
     expect(res.body.report.evidenceIntegrity).toMatchObject({
