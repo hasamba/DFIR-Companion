@@ -18,37 +18,53 @@ type Row = Record<string, unknown>;
 // staged somewhere unusual", so there's nothing to spoof by shaping it — an attacker choosing to
 // stage there is exactly the case this is meant to catch.
 //
-// Deliberately NOT built on the same strict quoted-or-clean extraction as the file IOC below: that
-// extraction returns nothing at all once a Value carries trailing arguments (the common case for a
-// Scheduled Task/service command line — "…MpCmdRun.exe -IdleTask …"), which silently blinded the
-// staging check to exactly the values it most needs to see. This regex instead scans the WHOLE raw
-// Value/Path text and anchors on a real executable extension immediately following the staging
-// directory with no further subdirectory in between — the same "must sit directly in that folder"
-// restriction as the file IOC's extension anchor (companion/src/analysis/velociraptorImport.ts's own
-// history has two prior rounds of counterexamples for weaker anchors), which is what keeps a
-// legitimately deep vendor path — Windows Defender's own
-// "C:\ProgramData\Microsoft\Windows Defender\Platform\<ver>\MpCmdRun.exe" — from false-matching:
-// there are backslashes between "ProgramData\" and the filename, so it can't match. A false MATCH
-// here only nudges severity, not a displayed IOC value, so scanning the whole string (rather than
-// only a leading, provably-single path) is an acceptable, much safer trade-off than it would be for
-// the file IOC.
+// Not built on the same strict quoted-or-clean extraction as the file IOC below: that extraction
+// returns nothing at all once a Value carries trailing arguments (the common case for a Scheduled
+// Task/service command line — "…MpCmdRun.exe -IdleTask …"), which silently blinded the staging check
+// to exactly the values it most needs to see.
+//
+// An earlier version instead scanned for this shape ANYWHERE in the raw Value/Path text, with no
+// regard for where in the string it appeared — which let it match an UNRELATED reference inside an
+// argument to something else entirely, e.g. "msiexec.exe /i C:\Windows\Temp\update.msi": the
+// executable actually being RUN is msiexec.exe (not staged, and a very common, benign auto-updater
+// pattern), but the Temp-staged .msi it's installing — passed as ordinary data, not the persistence
+// target — still matched. Restricted here to the two shapes that actually identify the row's own
+// target: (a) the LEADING drive-letter path (there's no ambiguity about what a bare, unquoted value
+// beginning with "C:\…" refers to), or (b) a fully QUOTED drive-letter path anywhere in the string
+// (the quotes are an explicit, unambiguous delimiter — covers a launcher prefix before a quoted
+// payload, e.g. `rundll32.exe "C:\ProgramData\wscadminui.dll",stow`). An unquoted reference embedded
+// later in an argument list matches neither and is deliberately not flagged — there's no reliable
+// way to tell "the technique's own target" from "a data argument to something else" without quotes
+// or leading position to anchor on.
+//
+// `(?:[^\\]+\\)*` before the staging-directory name allows real intermediate path segments — the
+// common Temp layout is "C:\Users\<name>\AppData\Local\Temp\…", not "C:\AppData\Local\Temp\…" — while
+// `[^\\]*?` AFTER it still requires the file to sit DIRECTLY in the staging directory with no further
+// subdirectory, which is what keeps a legitimately deep vendor path — Windows Defender's own
+// "C:\ProgramData\Microsoft\Windows Defender\Platform\<ver>\MpCmdRun.exe" — from false-matching.
 //
 // The trailing boundary is a negative lookahead — "not immediately followed by more filename" —
-// rather than a bare `\b` or an allow-list of terminator characters. Two prior attempts both fell
-// to a real command-line shape:
-//   - A bare `\b` is satisfied by ANY non-word character, including another literal dot, so it
-//     treated an extension prefix earlier in a multi-dot filename as the real one:
-//     "C:\ProgramData\readme.hta.txt" is a .txt file, but `\.hta\b` matches anyway because a dot
-//     follows "hta" too.
-//   - An allow-list of terminators (quote/whitespace/comma/end) fixed that but is inherently
-//     incomplete: cmd.exe operators need no surrounding whitespace — "evil.exe&calc.exe",
-//     "evil.exe|more", "evil.exe>out.txt" — so the allow-list silently dropped every one of them.
-// `(?![.\w])` instead REJECTS only what's actually wrong (another dot, or a continuing word
-// character like the "1" in a longer, unlisted extension) and accepts everything else — every
-// punctuation/operator a real command line can put right after a filename, with no allow-list to
-// keep enumerating.
-const STAGED_FILE_RE =
-  /\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*?\.(?:exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk)(?![.\w])/i;
+// rather than a bare `\b` or an allow-list of terminator characters. Two prior attempts both fell to
+// a real command-line shape: a bare `\b` is satisfied by ANY non-word character, including another
+// literal dot, so it treated an extension prefix earlier in a multi-dot filename as the real one
+// ("C:\ProgramData\readme.hta.txt" is a .txt file, but `\.hta\b` matches anyway because a dot follows
+// "hta" too); an allow-list of terminators (quote/whitespace/comma/end) fixed that but is inherently
+// incomplete — cmd.exe operators need no surrounding whitespace ("evil.exe&calc.exe", "evil.exe|more")
+// and the allow-list silently dropped every one of them. `(?![.\w])` instead REJECTS only what's
+// actually wrong (another dot, or a continuing word character from a longer/unlisted extension) and
+// accepts everything else, with no allow-list to keep enumerating.
+const STAGING_EXT = "exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk";
+const STAGED_LEADING_RE = new RegExp(
+  `^[A-Za-z]:\\\\(?:[^\\\\]+\\\\)*(?:temp|tmp|appdata\\\\local\\\\temp|programdata|public|windows\\\\temp)\\\\[^\\\\]*?\\.(?:${STAGING_EXT})(?![.\\w])`,
+  "i",
+);
+const STAGED_QUOTED_RE = new RegExp(
+  `["'][A-Za-z]:\\\\(?:[^\\\\"']+\\\\)*(?:temp|tmp|appdata\\\\local\\\\temp|programdata|public|windows\\\\temp)\\\\[^\\\\"']*?\\.(?:${STAGING_EXT})["']`,
+  "i",
+);
+function isStaged(text: string): boolean {
+  return STAGED_LEADING_RE.test(text) || STAGED_QUOTED_RE.test(text);
+}
 
 export function mapPersistenceSniper(
   row: Row,
@@ -93,9 +109,9 @@ export function mapPersistenceSniper(
     }
   }
   for (const p of filePaths) addIoc(sink, "file", p);
-  // Scans the raw value/path (see STAGED_FILE_RE's own comment for why) — not filePaths, which is
+  // Judges the raw value/path (see the STAGED_*_RE comment above for why) — not filePaths, which is
   // empty for exactly the argument-carrying values this needs to see.
-  const staged = STAGED_FILE_RE.test(value) || STAGED_FILE_RE.test(path);
+  const staged = isStaged(value) || isStaged(path);
 
   // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
   // clean Authenticode signature is the common case and just adds noise to the title.

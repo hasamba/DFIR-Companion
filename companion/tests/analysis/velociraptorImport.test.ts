@@ -1369,6 +1369,32 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     }
   });
 
+  // Real-world false positive: scanning for the staging shape ANYWHERE in the raw text (tried and
+  // reverted) matched an UNRELATED reference inside an argument to a completely different, benign
+  // executable — a very common auto-updater pattern where msiexec.exe installs a package it staged
+  // in Temp itself. msiexec.exe is what's actually running (not staged); the .msi path is ordinary
+  // data passed to it, not the persistence technique's own target.
+  it("does not flag a Temp-staged file referenced only as an argument to an unrelated executable", () => {
+    for (const value of [
+      "msiexec.exe /i C:\\Windows\\Temp\\GoogleUpdate.msi /quiet",
+      "msiexec.exe /i C:\\Users\\bob\\AppData\\Local\\Temp\\update.msi",
+    ]) {
+      const e = parseVelociraptorJson(JSON.stringify([sniperRow({ Value: value })])).events[0];
+      expect(e.description, value).not.toContain("[staged:");
+      expect(e.severity, value).toBe("Info");
+    }
+  });
+
+  it("still detects a quoted staged payload after a launcher prefix with real intermediate path segments", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({ Value: 'app.exe "C:\\Users\\bob\\AppData\\Local\\Temp\\payload.dll"' }),
+      ]),
+    ).events[0];
+    expect(e.description).toContain("[staged:");
+    expect(e.severity).toBe("High");
+  });
+
   // Grading reads the module's own structured IsLolbin/Signature columns directly — never the
   // rendered description, which mixes in Value/Path (real content from the target host that an
   // adversary can shape). A tagger rule that re-parsed the description for a "[lolbin]"/
