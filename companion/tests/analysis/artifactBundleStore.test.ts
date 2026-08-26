@@ -247,7 +247,7 @@ describe("ArtifactBundleStore", () => {
     expect(bp?.params?.["Windows.Hayabusa.Rules"]?.RuleStatus).toBe("Stable and Experimental");
   });
 
-  it("persists per-artifact WHERE filters and ships them on the Best Practice built-in", async () => {
+  it("persists per-artifact WHERE filters and ships them on the Best Practice - Big Hogs built-in", async () => {
     const saved = await store.save({
       name: "F",
       description: "",
@@ -255,8 +255,22 @@ describe("ArtifactBundleStore", () => {
       filters: { "A.B": "NOT X =~ 'y'" },
     });
     expect(saved.filters).toEqual({ "A.B": "NOT X =~ 'y'" });
+    const bigHogs = await store.get("best-practice-big-hogs");
+    expect(bigHogs?.filters?.["DetectRaptor.Generic.Detection.YaraFile"]).toContain("pagefile");
+  });
+
+  it("ships Best Practice - Big Hogs with the slow artifacts and a 1-hour timeout", async () => {
+    const bigHogs = await store.get("best-practice-big-hogs");
+    expect(bigHogs).not.toBeNull();
+    expect(bigHogs?.builtIn).toBe(true);
+    expect(bigHogs?.artifacts).toEqual([
+      "DetectRaptor.Generic.Detection.YaraFile",
+      "Generic.Scanner.ThorZIP",
+    ]);
+    expect(bigHogs?.timeoutSeconds).toBe(3600);
     const bp = await store.get("best-practice");
-    expect(bp?.filters?.["DetectRaptor.Generic.Detection.YaraFile"]).toContain("pagefile");
+    expect(bp?.artifacts).not.toContain("DetectRaptor.Generic.Detection.YaraFile");
+    expect(bp?.artifacts).not.toContain("Generic.Scanner.ThorZIP");
   });
 
   it("sanitizes params — drops nested objects and coerces values to strings", async () => {

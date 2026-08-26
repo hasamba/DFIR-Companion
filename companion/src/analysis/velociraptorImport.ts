@@ -26,7 +26,10 @@ import { normalizeRow } from "./veloRowNormalize.js";
 import { parsedNewProcess, salientFromMessage } from "./veloMessageFields.js";
 import { thorFields } from "./thorRowMap.js";
 import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
+// The expandable full-detail message, and the cap that bounds it — see truncatedRemainder.ts.
+import { cappedMessage } from "./truncatedRemainder.js";
 import { parseCsv } from "./csvImport.js";
+import { scrapeEvidence } from "./veloTextIocs.js";
 import {
   extractRecords,
   mapWindows,
@@ -59,6 +62,7 @@ import {
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
+import { networkTokens } from "./networkTokens.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
@@ -143,68 +147,11 @@ function rowMessage(row: Row): string {
   return isObject(ev) ? str(getCI(ev, "Message")) : "";
 }
 
-// The FULL untruncated event detail (raw EVTX rendered Message / ScriptBlock text, etc.) that the
-// analyst may want to read in full, beyond the truncated one-line `description`. Generously capped
-// so it stays bounded in state. Returns "" when there's no message OR the message adds nothing
-// beyond what's already in `description` (so we don't stamp a redundant expandable block).
-const MESSAGE_CAP = 4000;
-function fullMessage(row: Row, description: string): string {
-  const raw = rowMessage(row).trim();
-  if (!raw) return "";
-  const capped = raw.length > MESSAGE_CAP ? `${raw.slice(0, MESSAGE_CAP)}…` : raw;
-  // If the description already contains (nearly) the whole message there's no extra detail to reveal.
-  if (description.includes(raw) || raw.length <= 80) return "";
-  return capped;
-}
-
 // A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
 function hashStr(s: string): string {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
-}
-
-// An IP address is made of digits, so the volatile-id strip in msgFingerprint erases it. That is
-// right for a PID and wrong for a peer address: for a network event the OTHER END IS THE EVENT, so
-// two connections to different destinations are two events, not one repeat. Rows differing only in
-// TgtIP used to fingerprint identically, merge into one event holding the FIRST row's text, and
-// leave every IOC scraped from the merged rows pointing at an event naming a different address
-// (#640). Domains and URLs are mostly letters and already survive the strip; only addresses need it.
-//
-// IPv6 shares its shape with a clock time ("00:00:00"), so a colon candidate counts only when it
-// carries a "::" or at least three colons. That guard keeps every timestamped line from becoming
-// its own event.
-//
-// A candidate is bounded by "not next to a LETTER, digit or colon", which is neither \b nor a
-// hex-only class — both were tried and both were wrong. \b cannot anchor a match beginning or
-// ending at "::" beside a numeric group, so "::1" and "1::" were never extracted at all (#643).
-// Widening to any non-hex character then let a word bound the candidate, so ordinary "::" text read
-// as an address — "[Convert]::FromBase64String" yielded "::f", "handler foo::1234" yielded
-// "::1234" — and where a volatile id sat against the "::" it landed inside the token, so records
-// that differ only in that id stopped merging: the collapse this function exists to perform, undone
-// by a false address (#646). The rule is WORD versus standalone address: a bare "1234::1234" is a
-// well-formed literal and counts; attach a word and it does not.
-//
-// The leading bound CONSUMES a character (group 1 is the address) rather than using a lookbehind,
-// and the first group is {1,4}? rather than {0,4}. Both are for speed — a lookbehind form measured
-// 2.3x slower over a real collection's messages — and the two forms were verified to agree on every
-// IPv6 shape the suite covers and on 203,675 real messages. Addresses are separated by spaces or
-// field marks here, so consuming one leading character never swallows a neighbouring address.
-const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
-const COLON_ADDR_RE = /(?:^|[^0-9a-z:])((?:[0-9a-f]{1,4})?(?::{1,2}[0-9a-f]{0,4}){2,7})(?![0-9a-z:])/gi;
-
-function networkTokens(msg: string): string[] {
-  const out = new Set<string>();
-  for (const m of msg.match(IPV4_RE) ?? []) {
-    if (m.split(".").every((o) => Number(o) <= 255)) out.add(m.toLowerCase());
-  }
-  for (const match of msg.matchAll(COLON_ADDR_RE)) {
-    const m = match[1]; // group 1 — the address without the character the leading bound consumed
-    const colons = (m.match(/:/g) ?? []).length;
-    if (m.includes("::") || colons >= 3) out.add(m.toLowerCase());
-  }
-  // Sorted so the fingerprint does not depend on the order the addresses happen to appear in.
-  return [...out].sort();
 }
 
 // Fingerprint a message for aggregation: normalize away VOLATILE bits (GUIDs, any digits — PIDs,
@@ -459,30 +406,6 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
     if (HEX_HASH.test(val)) addIoc(sink, "hash", val.toLowerCase());
   }
   return { sha256, md5 };
-}
-
-// Scrape IOCs out of a free-text detection field (a matched command Line, file Content, or
-// HitString) — `genericIocs` only fires on structured keys, so the download URL / C2 IP embedded
-// in a PowerShell-web-request or webshell hit (exactly the indicator the rule fired on) is
-// otherwise missed. URLs, octet-bounded IPv4 (so "10.0.22000" version strings aren't IPs), and
-// SHA256/SHA1/MD5 hashes.
-const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
-const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
-const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
-function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
-  if (!text) return;
-  for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
-  for (const m of text.matchAll(TEXT_IPV4)) {
-    const ip = cleanIp(m[0]);
-    if (ip) addIoc(sink, "ip", ip);
-  }
-  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
-}
-
-// The free-text fields that carry a detection's evidence (and its embedded IOCs).
-const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message", "Details"];
-function scrapeEvidence(row: Row, sink: Map<string, SiemIoc>): void {
-  for (const k of EVIDENCE_TEXT_KEYS) scrapeText(str(getCI(row, k)), sink);
 }
 
 // ───────────────────────────── EVTX-row normalization ─────────────────────────────
@@ -1697,7 +1620,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       // when it adds detail beyond the truncated `description`. Stamped here (like artifactName) so
       // every mapper's result benefits. Set only if the mapper didn't already provide one.
       if (!m.message) {
-        const full = fullMessage(row, m.description);
+        const full = cappedMessage(rowMessage(row), m.description);
         if (full) m.message = full;
       }
       // Tag every event with the SOURCE artifact (from the row's _Source/_Artifact — stamped by the
