@@ -69,6 +69,30 @@ win_run_key:
   severity: Medium
   view: 'Autorun keys'
 
+# PersistenceSniper (Windows.Forensics.PersistenceSniper) enumerates every autostart mechanism on the
+# box — the large majority signed, first-party, and ordinary — so it lands as Info-severity by design
+# (see analysis/persistenceSniperImport.ts) and blanket-promoting every row would flood the timeline
+# with noise instead of signal. These two rules grade up only the module's own anomaly signals: a
+# binary living-off-the-land catalogs flag as abusable, or a persistence target that isn't signed by
+# a trusted publisher (or whose signature doesn't check out at all).
+persistencesniper_lolbin:
+  description: PersistenceSniper flagged a known LOLBin used as a persistence mechanism
+  all:
+    - { field: artifactName, contains: ['PersistenceSniper'] }
+    - { field: description, contains: ['[lolbin]'] }
+  tags: ['lolbin', 'persistence']
+  severity: High
+  view: 'Persistence — LOLBins'
+
+persistencesniper_unsigned:
+  description: PersistenceSniper persistence target with a non-valid Authenticode signature
+  all:
+    - { field: artifactName, contains: ['PersistenceSniper'] }
+    - { field: description, contains: ['[signature:'] }
+  tags: ['unsigned-binary', 'persistence']
+  severity: Medium
+  view: 'Persistence — unsigned binaries'
+
 # ─────────────────────────── Credential access / LSASS ───────────────────────────
 win_lsass_access:
   description: LSASS process access / dump indicators (Sysmon 10, dump filenames)

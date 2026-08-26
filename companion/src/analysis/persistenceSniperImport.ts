@@ -23,6 +23,7 @@ export function mapPersistenceSniper(
   const value = str(getCI(row, "Value")).trim();
   const accessGained = str(getCI(row, "Access Gained")).trim();
   const signature = str(getCI(row, "Signature")).trim();
+  const isLolbin = str(getCI(row, "IsLolbin")).trim().toLowerCase() === "true";
 
   // Value is the actual executable/command the technique runs — the payload an analyst cares
   // about — when the module found one; Path (a registry key, task name, or service) is always
@@ -60,6 +61,10 @@ export function mapPersistenceSniper(
   if (subject) description += ` — ${subject}`;
   if (accessGained) description += ` (${accessGained})`;
   if (sigFlag) description += ` [signature: ${sigFlag}]`;
+  // LOLBin-as-persistence is the module's own risk verdict (a binary that living-off-the-land
+  // technique catalogs flag as abusable) — surfaced as a distinct marker so the content tagger
+  // (data/tags.yaml) can grade it up from Info without re-deriving the verdict itself.
+  if (isLolbin) description += ` [lolbin]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-persist|${technique.toLowerCase()}|${(value || path).toLowerCase()}|${host.toLowerCase()}`

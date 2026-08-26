@@ -1195,6 +1195,16 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
     expect(desc).toContain("NotSigned");
   });
 
+  it("flags a LOLBin persistence target with a [lolbin] marker (grading hook for tags.yaml)", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow({ IsLolbin: "True" })])).events[0].description;
+    expect(desc).toContain("[lolbin]");
+  });
+
+  it("does not flag an ordinary, non-LOLBin persistence target", () => {
+    const desc = parseVelociraptorJson(JSON.stringify([sniperRow()])).events[0].description;
+    expect(desc).not.toContain("[lolbin]");
+  });
+
   it("does not choke on an empty Signature struct (no cert info available)", () => {
     const desc = parseVelociraptorJson(
       JSON.stringify([sniperRow({ Signature: "Status = , Subject = " })]),
