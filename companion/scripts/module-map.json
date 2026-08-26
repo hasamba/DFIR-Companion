@@ -328,6 +328,7 @@
     "mobileLeappImport.ts": "analysis/ingest",
     "mobileSummary.ts": "analysis/workflow",
     "networkImport.ts": "analysis/ingest",
+    "networkTokens.ts": "analysis/ingest",
     "notebookStore.ts": "analysis/workflow",
     "notificationStore.ts": "analysis/notify",
     "notifications.ts": "analysis/notify",
