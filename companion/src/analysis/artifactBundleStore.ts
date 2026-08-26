@@ -110,7 +110,6 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.EventLogs.Chainsaw",
       "Windows.EventLogs.CondensedAccountUsage",
       "DetectRaptor.Generic.Detection.BrowserExtensions",
-      "DetectRaptor.Generic.Detection.YaraFile",
       "DetectRaptor.Generic.Detection.YaraWebshell",
       "DetectRaptor.Linux.Detection.YaraProcessLinux",
       "DetectRaptor.Macos.Detection.YaraProcessMacos",
@@ -141,7 +140,6 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.Persistence.PermanentWMIEvents",
       "Windows.Analysis.SuspiciousWMIConsumers",
       "Linux.Sigma.Triage",
-      "Generic.Scanner.ThorZIP",
       "Custom.Windows.System.Powershell.PSReadline.QuickWins",
       "Windows.System.DNSCache",
       "Generic.System.Pstree",
@@ -162,11 +160,23 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
         RuleStatus: "Stable and Experimental",
       },
     },
-    // Drop known-noisy rows at the source: YaraFile pagefile hits, and an in-development Evtx rule.
+    // Drop known-noisy rows at the source: an in-development Evtx rule.
     // (The Evtx column name is inferred — adjust in the editor if your results use a different one.)
     filters: {
-      "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'",
       "DetectRaptor.Windows.Detection.Evtx": "NOT Detection =~ 'Powershell large Base64 blob'",
+    },
+  },
+  {
+    id: "best-practice-big-hogs",
+    name: "Best Practice - Big Hogs",
+    description: "Slow full-disk/file scans split out of Best Practice (YaraFile, THOR ZIP)",
+    builtIn: true,
+    artifacts: ["DetectRaptor.Generic.Detection.YaraFile", "Generic.Scanner.ThorZIP"],
+    defaultWaitMinutes: 60, // these scan the whole disk — the 10-min Best Practice default collects too early
+    timeoutSeconds: 3600, // 1 hour default, well past the 600s Velociraptor default
+    // Drop known-noisy rows at the source: YaraFile pagefile hits.
+    filters: {
+      "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'",
     },
   },
   {
