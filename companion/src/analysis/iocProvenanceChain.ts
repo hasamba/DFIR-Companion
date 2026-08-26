@@ -29,6 +29,9 @@ export interface ProvenanceExtractionEvent {
   sources?: string[];
   artifactName?: string; // the specific artifact/source-tool identifier (e.g. "Windows.Network.DNS"),
   // finer-grained than `sources` (e.g. "Velociraptor") — set by importers that know it
+  count?: number; // records this event stands for when aggregation collapsed repeats; absent ⇒ 1
+  endTimestamp?: string; // last occurrence of a collapsed group (`timestamp` is the first)
+  valueHidden?: true; // the IOC value appears NOWHERE in this event's stored text or fields — see below
 }
 
 export interface ProvenanceEnrichmentLookup {
@@ -57,6 +60,30 @@ export interface IocProvenanceChain {
   // false when it's the value-match guess below
   enrichment: ProvenanceEnrichmentLookup[];
   findings: ProvenanceFindingRef[];
+}
+
+// Does this event's STORED record actually contain the IOC value? A link can be real and still land
+// on an event whose text never names the value, for two reasons (#640): aggregation keeps only the
+// FIRST collapsed row's text, and `description`/`message` are truncated before storage. Reporting
+// the link without reporting that gap reads as a mis-attribution to the analyst. Searches the same
+// fields the approximate matcher indexes, plus `message` and the process/command fields an IOC can
+// legitimately come from — anything the dashboard can put in front of the analyst.
+function eventShowsValue(e: ForensicEvent, needle: string): boolean {
+  const fields = [
+    e.description,
+    e.message,
+    e.sha256,
+    e.md5,
+    e.srcIp,
+    e.dstIp,
+    e.path,
+    e.processName,
+    e.parentName,
+    e.commandLine,
+    e.asset,
+  ];
+  for (const f of fields) if (f && f.toLowerCase().includes(needle)) return true;
+  return false;
 }
 
 // Build the chain for every IOC in one pass: index events + findings ONCE (O(events + findings)),
@@ -134,6 +161,7 @@ export function buildIocProvenanceChains(
     }
     dedup.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const extractionTruncated = Math.max(0, dedup.length - MAX_EXTRACTION_EVENTS);
+    const needle = ioc.value.trim().toLowerCase();
     const extraction: ProvenanceExtractionEvent[] = dedup.slice(0, MAX_EXTRACTION_EVENTS).map((e) => ({
       eventId: e.id,
       timestamp: e.timestamp,
@@ -141,6 +169,9 @@ export function buildIocProvenanceChains(
       severity: e.severity,
       sources: e.sources && e.sources.length ? e.sources : undefined,
       artifactName: e.artifactName,
+      ...(e.count && e.count > 1 ? { count: e.count } : {}),
+      ...(e.count && e.count > 1 && e.endTimestamp ? { endTimestamp: e.endTimestamp } : {}),
+      ...(needle && !eventShowsValue(e, needle) ? { valueHidden: true as const } : {}),
     }));
 
     const enrichment: ProvenanceEnrichmentLookup[] = (ioc.enrichments ?? [])

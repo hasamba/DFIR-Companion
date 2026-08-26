@@ -450,6 +450,7 @@
     "veloRowNormalize.ts": "analysis/ingest",
     "thorRowMap.ts": "analysis/ingest",
     "textDomains.ts": "analysis/ingest",
+    "veloTextIocs.ts": "analysis/ingest",
     "velociraptorImport.ts": "analysis/ingest",
     "velociraptorRelease.ts": "analysis/case",
     "velociraptorTitle.ts": "analysis/ingest",

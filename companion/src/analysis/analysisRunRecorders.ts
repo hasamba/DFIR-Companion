@@ -263,6 +263,9 @@ export async function recordEnrichmentRun(
         ...(input.summary.unavailable.length
           ? [`unavailable providers: ${input.summary.unavailable.join(", ")}`]
           : []),
+        // The cap deferring work is a property of THIS run, and the ledger is what a reviewer
+        // reads to know whether the case was enriched completely.
+        ...(input.summary.capped ? [`${input.summary.capped} IOC(s) deferred by maxIocs`] : []),
       ],
     },
     output: investigationOutput(input.outputState),

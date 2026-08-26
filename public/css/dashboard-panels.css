@@ -337,6 +337,10 @@ body.has-servicenow .snow-push-btn, body.has-servicenow #findingBulkSnowBtn { di
 .iocchain-time { flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
 .iocchain-desc { flex: 1; min-width: 0; word-break: break-word; font-size: 12px; }
 .iocchain-tag { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+/* #640 — an extraction row states what it stands for. .iocchain-note is neutral (this event is a
+   merge of N records); .iocchain-warn is a caution (the IOC value is in none of the stored text). */
+.iocchain-note { flex-shrink: 0; font-size: 11px; color: var(--text-muted); font-style: italic; }
+.iocchain-warn { flex-shrink: 0; font-size: 11px; color: var(--badge-warning-text); font-weight: 600; }
 .hunt-modal { width: min(740px, 95vw); }
 .hunt-card { border: 1px solid var(--border-color); border-radius: 6px; margin: 8px 0; overflow: hidden; }
 .hunt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;

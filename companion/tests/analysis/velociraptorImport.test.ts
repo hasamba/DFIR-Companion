@@ -1994,3 +1994,177 @@ describe("parseVelociraptorJson — domains embedded in free text (script blocks
     expect(d.some((v) => /^\d/.test(v))).toBe(false); // 10.0.22621.2506, v4.0.30319
   });
 });
+
+// #640 — msgFingerprint used to strip EVERY digit, so two Sysmon network-connection Sigma rows that
+// differed only in destination address produced an identical fingerprint, an identical aggKey, and
+// therefore ONE merged event holding the first row's description. Every IP scraped from every merged
+// row was then stamped with that one event id, so IOC provenance pointed an external IP at an event
+// whose text named a different destination. For a network connection the destination IS the event.
+describe("parseVelociraptorJson — network identifiers keep events distinct (#640)", () => {
+  function sigmaNetRow(over: { tgtIp?: string; srcPort?: number; pid?: number } = {}): object {
+    const { tgtIp = "203.0.113.10", srcPort = 57554, pid = 7116 } = over;
+    return {
+      _Source: "Windows.Sigma.Base",
+      Rule: { Title: "Net Conn (Sysmon Alert)", Level: "medium" },
+      Computer: "WS-01",
+      Timestamp: "2026-01-01T00:00:00Z",
+      Details:
+        `Initiated: true ¦ Proto: tcp ¦ SrcIP: 198.51.100.154 ¦ SrcPort: ${srcPort} ` +
+        `¦ TgtIP: ${tgtIp} ¦ TgtPort: 443 ¦ User: NT AUTHORITY\\SYSTEM ` +
+        `¦ Proc: C:\\Windows\\System32\\svchost.exe ¦ PID: ${pid}`,
+    };
+  }
+
+  it("does NOT merge two connections that differ only in destination IP", () => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([sigmaNetRow({ tgtIp: "203.0.113.10" }), sigmaNetRow({ tgtIp: "203.0.113.99" })]),
+    );
+    expect(parsed.events).toHaveLength(2);
+    const shown = parsed.events.map((e) => e.description).join(" | ");
+    expect(shown).toContain("203.0.113.10");
+    expect(shown).toContain("203.0.113.99");
+  });
+
+  it("links each destination IOC to an event whose text actually names it", () => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([sigmaNetRow({ tgtIp: "203.0.113.10" }), sigmaNetRow({ tgtIp: "203.0.113.99" })]),
+    );
+    const byKey = new Map(parsed.events.map((e) => [e.aggKey, e]));
+    for (const value of ["203.0.113.10", "203.0.113.99"]) {
+      const found = parsed.iocs.find((i) => i.type === "ip" && i.value === value);
+      expect(found?.sourceAggKeys?.length).toBe(1);
+      const linked = byKey.get(found!.sourceAggKeys![0]);
+      expect(`${linked?.description ?? ""} ${linked?.message ?? ""}`).toContain(value);
+    }
+  });
+
+  it("does NOT merge two connections that differ only in destination domain", () => {
+    const row = (host: string): object => ({
+      _Source: "Windows.Sigma.Base",
+      Rule: { Title: "Suspicious DNS Query", Level: "medium" },
+      Computer: "WS-01",
+      Timestamp: "2026-01-01T00:00:00Z",
+      Details: `QueryName: ${host} ¦ QueryStatus: 0 ¦ Proc: C:\\Windows\\System32\\svchost.exe`,
+    });
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([row("evil-a.example.com"), row("evil-b.example.com")]),
+    );
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  it("STILL merges repeats that differ only in volatile ids (port, PID)", () => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([
+        sigmaNetRow({ srcPort: 57554, pid: 7116 }),
+        sigmaNetRow({ srcPort: 61022, pid: 9214 }),
+        sigmaNetRow({ srcPort: 49800, pid: 3311 }),
+      ]),
+    );
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(3);
+  });
+
+  it("keeps the key bounded however many addresses a message names", () => {
+    // A netstat-style dump can name dozens of peers. The addresses go through the HASH, not into
+    // the key text, so the key stays short — while two dumps naming different peers still differ.
+    const dump = (base: string): object => ({
+      _Source: "Custom.Dump",
+      Message: `connections observed: ${Array.from({ length: 60 }, (_, i) => `${base}.${i}`).join(" ")}`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([dump("203.0.113"), dump("198.51.100")]));
+    expect(parsed.events).toHaveLength(2);
+    for (const e of parsed.events) expect(e.aggKey!.length).toBeLessThanOrEqual(440);
+  });
+
+  // #643 — the IPv6 candidate was anchored with \b at BOTH ends, and a "::" sitting next to a
+  // NUMERIC group offers no word boundary to anchor on. Those addresses were never extracted, so
+  // the digit strip erased them and the two connections merged — the exact failure #640 fixed,
+  // still live for one address family. Every pair below is numeric on purpose: "::a" vs "::b"
+  // passed even before this fix, because the LETTERS survive the strip as words, so it proved
+  // nothing about address extraction.
+  it.each([
+    ["leading :: , one group", "::1", "::99"],
+    ["leading :: , several groups", "::dead:1", "::dead:99"],
+    ["leading :: , all numeric", "::1:2:3", "::9:8:7"],
+    ["trailing :: ", "1::", "9::"],
+    ["compressed in the middle", "2001:db8::1", "2001:db8::99"],
+    ["link-local", "fe80::1", "fe80::99"],
+    ["zone id", "fe80::1%eth0", "fe80::99%eth0"],
+    ["bracketed with a port", "[2001:db8::1]:443", "[2001:db8::99]:443"],
+    ["fully expanded, no hex letters", "2001:0:0:0:0:0:0:1", "2001:0:0:0:0:0:0:9"],
+  ])("does NOT merge two IPv6 destinations — %s", (_label, a, b) => {
+    const parsed = parseVelociraptorJson(
+      JSON.stringify([sigmaNetRow({ tgtIp: a }), sigmaNetRow({ tgtIp: b })]),
+    );
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  // #646 — the candidate was bounded by "not next to a HEX digit or a colon", and a letter satisfies
+  // that, so any word::word text read as an address. "::" is everywhere in ordinary telemetry:
+  // PowerShell static calls, C++ and Ruby scope resolution, stack frames. Most invented tokens are
+  // CONSTANT across repeats and merely noise in the fingerprint. The two shapes below are not: a
+  // volatile id sitting directly against the "::" lands inside the token, so the token varies and
+  // the records stop merging — the exact collapse msgFingerprint exists to perform. Only these two
+  // discriminate; a case like "[Convert]::FromBase64String(1234)" merges either way, so asserting
+  // it would pass against the broken code and prove nothing.
+  it.each([
+    ["digits directly after the ::", "handler foo::% completed"],
+    ["digits directly before the ::", "handler %::foo completed"],
+  ])("STILL merges repeats that differ only in a volatile id — %s", (_label, template) => {
+    const row = (id: string): object => ({
+      _Source: "Custom.App",
+      Message: template.replace("%", id),
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("1234"), row("5678"), row("9012")]));
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(3);
+  });
+
+  // The rule is "is it a WORD or a standalone address", not "does it look like an id". A bare
+  // "1234::1234" is a well-formed IPv6 literal with nothing attached, so it is treated as an
+  // address and two of them are two events — the forensic-safe reading, since silently merging two
+  // destinations is the failure #640 exists to prevent. Attach a word and it stops being one.
+  it("treats a standalone address-shaped token as an address, an attached one as a word", () => {
+    const row = (m: string): object => ({
+      _Source: "Custom.App",
+      Message: m,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const standalone = parseVelociraptorJson(
+      JSON.stringify([row("handler 1234::1234 done"), row("handler 5678::5678 done")]),
+    );
+    expect(standalone.events).toHaveLength(2);
+    const attached = parseVelociraptorJson(
+      JSON.stringify([row("handler foo::1234 done"), row("handler foo::5678 done")]),
+    );
+    expect(attached.events).toHaveLength(1);
+  });
+
+  // The address forms above and these word forms are the two halves of the same boundary rule, so
+  // they are pinned together: tightening the bound until the junk disappears must not also drop a
+  // real address that happens to sit next to punctuation.
+  it("finds a real address beside punctuation while ignoring scope-resolution text", () => {
+    const row = (tgt: string): object => ({
+      _Source: "Custom.App",
+      Message: `[Convert]::FromBase64String($x); std::vector::at; peer=${tgt};`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("fe80::1"), row("fe80::99")]));
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  it("does NOT split on a clock time, which shares IPv6's shape", () => {
+    // "00:00:00" must not read as an address — otherwise every timestamped line becomes its own
+    // event and aggregation stops working entirely.
+    const row = (t: string): object => ({
+      _Source: "Custom.Log",
+      Message: `service heartbeat at ${t} — state nominal`,
+      Timestamp: "2026-01-01T00:00:00Z",
+    });
+    const parsed = parseVelociraptorJson(JSON.stringify([row("01:02:03"), row("04:05:06")]));
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].count).toBe(2);
+  });
+});

@@ -342,6 +342,11 @@ export interface AppOptions {
   enrichRetries?: number; // retry attempts for a provider call that hits a 429 (#78)
   enrichRetryBackoffMs?: number; // base backoff before the first 429 retry, doubles each attempt (#78)
   enrichMaxIocs?: number;
+  // How many capped runs one kick may chain (default 20). `enrichMaxIocs` bounds how long a single
+  // run holds the case's concurrency slot; it was never meant to abandon the indicators past it. A
+  // capped run therefore queues a follow-up batch, and this is the stop: 20 × 100 = 2000 IOCs per
+  // kick before the analyst is asked to enrich again. Set 1 to restore the old one-run behaviour.
+  enrichMaxBatches?: number;
   // Customer Exposure is separate from IOC enrichment: only customer-owned domains/emails are
   // sent to breach-data providers. IOC domains are never queried here.
   customerExposureProviders?: CustomerExposureProvider[];
