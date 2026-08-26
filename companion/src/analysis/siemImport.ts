@@ -158,6 +158,14 @@ export function getPath(row: Row, path: string): unknown {
   return cur;
 }
 
+// Pull MITRE technique ids out of any tactic/tag/meta/classification text. Shared across importers
+// (Velociraptor's Sigma/YARA/detection mappers, PersistenceSniper) so each doesn't reimplement it.
+export function mitreFromText(...parts: string[]): string[] {
+  const out = new Set<string>();
+  for (const p of parts) for (const m of p.matchAll(/\bt\d{4}(?:\.\d{3})?\b/gi)) out.add(m[0].toUpperCase());
+  return [...out];
+}
+
 // ───────────────────────────── container unwrapping ─────────────────────────────
 
 // If an element wraps its real fields under `_source` (Elastic), return that; else the element.
