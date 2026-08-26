@@ -55,15 +55,16 @@ export default defineConfig({
     // an aggregate makes them look alike. The tail was the C: temp root above; moving it to D: is
     // what this file now does, measured over 6 configurations x 3 runs (see
     // .github/workflows/windows-test-bench.yml): wall 748.8s -> 383.9s, test phase 1667.9s ->
-    // 567.4s, per-file p90 6381ms -> 914ms (Linux is 708ms), and the slowest single test 46.5s ->
-    // 16.1s. The same matrix rejected the two other candidates on their numbers: capping the fork
-    // pool at 2 made it WORSE (875.4s, +17%), and a Defender exclusion bought 12% on its own but
-    // nothing once the I/O was already on the fast disk.
+    // 567.4s, and per-file p90 6381ms -> 914ms, against 708ms on Linux. The same matrix rejected
+    // the two other candidates on their numbers: capping the fork pool at 2 made it WORSE (875.4s,
+    // +17%), and a Defender exclusion bought 12% on its own but nothing once the I/O was already on
+    // the fast disk.
     //
-    // 45s stays. It is not a per-test allowance any test needs — the slowest single test on Windows
-    // is now 16.1s — it is the ceiling that keeps a hung test from burning the job's 40 minutes,
-    // and headroom against the 45s cliff went from roughly none to 29s. Tightening it is a separate
-    // change that needs its own run of the bench matrix, not a guess.
+    // 45s stays. It is the ceiling that keeps a hung test from burning the job's 40 minutes, not an
+    // allowance any test needs: the slowest test actually governed by it went 26.9s -> 16.1s, so
+    // headroom went 18.1s -> 28.9s. (Slower tests exist — the full-pipeline run reached 46.5s — but
+    // they pass their own timeout to it() and this number never applied to them.) Tightening 45s is
+    // a separate change that needs its own run of the bench matrix, not a guess.
     testTimeout: process.platform === "win32" ? 45_000 : 15_000,
     // Same reasoning for setup/teardown: a beforeEach doing mkdtemp + createApp() starves too, and
     // a hook timeout fails the whole file rather than one test.
