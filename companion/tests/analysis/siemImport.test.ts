@@ -630,6 +630,66 @@ describe("parseSiemExport — aggregation & volume", () => {
   });
 });
 
+// A Windows aggregation key used to name the channel, the EID, the accounts and the subject — and
+// never the host. Aggregation is on by default, so ONE attacker action taken on N machines
+// collapsed into one row that names exactly one of them, and the other N-1 machines vanished from
+// the case: from the timeline, from `assetGraph` (which builds from `event.asset`), and from the
+// provenance of every IOC scraped off the merged-away rows. `count: N` was the only trace left,
+// and it cannot say whether N is repeats on one host or one repeat on N hosts (#659).
+//
+// The host now keys the group, as it already did for `mapGeneric` in this same module, for THOR
+// (thorRowMap.ts, whose key comment describes this exact loss), for Hayabusa and for every ecar
+// mapper. The cost is real and accepted: an estate where 500 workstations log the same benign 4624
+// now yields 500 rows, not 1. That is the trade this repo has already chosen once, in
+// networkTokens.ts: a silent merge is a report-integrity failure the analyst cannot see, while an
+// unmerged repeat is timeline noise they can.
+describe("parseSiemExport — one action on N hosts stays N events (#659)", () => {
+  const on = (host: string, rec: Record<string, unknown>) => ({ ...rec, computer_name: host });
+
+  it("keeps the same service install on two servers as two events, each naming its own host", () => {
+    const r = parseSiemExport(elastic(on("SRV-A", SVC_7045), on("SRV-B", SVC_7045)));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["SRV-A", "SRV-B"]);
+    // Each row's own text must name its own host — not the surviving row's.
+    for (const e of r.events) expect(e.description).toContain(`@ ${e.asset}`);
+  });
+
+  it("keeps the same account logging on to a DC and a workstation as two events", () => {
+    const r = parseSiemExport(elastic(on("DC-01", LOGON_4624), on("WS-77", LOGON_4624)));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["DC-01", "WS-77"]);
+  });
+
+  it("keeps the same process creation on two workstations as two events", () => {
+    const r = parseSiemExport(elastic(on("WS-01", SYSMON_PROC), on("WS-99", SYSMON_PROC)));
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still merges genuine repeats on ONE host into a counted row", () => {
+    const copies = Array.from({ length: 4 }, (_, i) => ({
+      ...on("SRV-A", SVC_7045),
+      "@timestamp": `2017-03-20T10:0${i}:00.000Z`,
+    }));
+    const r = parseSiemExport(elastic(...copies));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(4);
+  });
+
+  it("treats a host spelled in different cases as one host", () => {
+    const r = parseSiemExport(elastic(on("SRV-A", SVC_7045), on("srv-a", SVC_7045)));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  it("still merges repeats in an export that names no host at all", () => {
+    const anon = { ...SVC_7045 };
+    delete (anon as Record<string, unknown>).computer_name;
+    const r = parseSiemExport(elastic(anon, anon));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+});
+
 describe("parseSiemExport — generic (non-Windows) SIEM/EDR fallback", () => {
   it("maps an arbitrary EDR record using field auto-detection (time/host/severity/message)", () => {
     const edr = {
