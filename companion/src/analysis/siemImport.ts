@@ -1238,10 +1238,21 @@ export function mapWindows(
     severity,
     mitre,
     canonical,
+    // The HOST leads the key. Without it, ONE attacker action taken on N machines collapsed into one
+    // counted row naming exactly one of them, and the other N-1 machines left the case entirely:
+    // the timeline showed one host, `assetGraph` (which builds from `event.asset`) never learned the
+    // rest, and every IOC scraped off the merged-away rows pointed at the survivor. `count: N` was
+    // the only trace, and it cannot say whether N is repeats on one host or one repeat on N hosts —
+    // so a service dropped on 12 servers read as one server (#659). `mapGeneric` below, THOR
+    // (thorRowMap.ts), Hayabusa and every ecar mapper already key on the host; this was the outlier.
+    // The cost is accepted, not overlooked: 500 workstations logging the same benign 4624 now yield
+    // 500 rows. networkTokens.ts settled that trade for #640 — a silent merge is a report-integrity
+    // failure the analyst cannot see, an unmerged repeat is noise they can. The key is lowercased as
+    // a whole, so SRV-A and srv-a stay one host; a host-less export keys on "" and merges as before.
     // pid (on process-creation events) is in the key so distinct creations stay distinct rows rather
     // than aggregating into one — preserving per-process granularity and enabling pid correlation.
     aggKey:
-      `win|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),
