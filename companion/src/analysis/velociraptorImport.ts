@@ -63,6 +63,7 @@ import {
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper } from "./persistenceSniperImport.js";
+import { mapBinaryRename } from "./binaryRenameImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
@@ -466,6 +467,7 @@ type Kind =
   | "startup"
   | "taskscheduler"
   | "persistenceSniper"
+  | "binaryRename"
   | "usn"
   | "mft"
   | "browser"
@@ -493,6 +495,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/startup|autorun/i.test(a)) return "startup";
   if (/taskscheduler/i.test(a)) return "taskscheduler";
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
+  if (/binaryrename/i.test(a)) return "binaryRename";
 
   const rule = getCI(row, "Rule");
   if (
@@ -538,6 +541,14 @@ function classify(row: Row, artifact: string): Kind {
     getCI(row, "Access Gained") != null
   )
     return "persistenceSniper";
+  // DetectRaptor.Windows.Detection.BinaryRename — a file stat plus its version resource, with no
+  // Detection column of its own. `OriginalFilename` under VersionInformation alongside an OSPath is
+  // that artifact's signature; no other artifact pairs the two.
+  {
+    const vi = getCI(row, "VersionInformation");
+    if (isObject(vi) && getCI(vi, "OriginalFilename") != null && getCI(row, "OSPath") != null)
+      return "binaryRename";
+  }
   // Windows.Forensics.Usn — the USN change-journal row: a `Reason` (the filesystem operation:
   // FILE_CREATE / FILE_DELETE / DATA_EXTEND / RENAME_* …) alongside a Usn/MFTId. Mapped specially so
   // the operation lands in the description + agg key (mapGeneric drops it → path-only events).
@@ -681,6 +692,13 @@ function detectionLabel(artifact: string): string {
     if (last) return `DetectRaptor ${last} detection`;
   }
   return "Velociraptor detection";
+}
+
+// Does the ARTIFACT name mark a rule pack whose rows are detections by construction (DetectRaptor's
+// `*.Detection.*` families and anything self-labelled "detection")? Used only to keep an unrecognised
+// row from such a pack out of Info; it never lowers a grade.
+function isDetectionArtifact(artifact: string): boolean {
+  return /detectraptor|\.detection\.|detection$/i.test(artifact.trim());
 }
 
 // A DetectRaptor-style detection: the `Detection`/`RuleName` verdict leads. If a parsed Windows
@@ -1589,6 +1607,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapTaskScheduler(row, host, rowSink)];
     } else if (kind === "persistenceSniper") {
       ms = [mapPersistenceSniper(row, host, rowSink, pickTime(row))];
+    } else if (kind === "binaryRename") {
+      ms = [mapBinaryRename(row, host, rowSink, pickTime(row))];
     } else if (kind === "usn") {
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {
@@ -1611,6 +1631,16 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapLnk(row, artifact, host)];
     } else {
       ms = [mapGeneric(row, artifact, host, rowSink)];
+      // A row from a DETECTION rule pack that matched no signature still lands in the generic
+      // key=value dump at Info — and Info never reaches the forensic timeline, so the detection the
+      // pack fired is invisible to synthesis. BinaryRename was one such artifact (it ships no
+      // `Detection` column, so rowVerdict() returns null and classify() falls through); it now has a
+      // mapper of its own, but the next pack with that shape should not be silently discarded while
+      // it waits for one. Floor the grade to Medium — the same "a named rule fired" baseline
+      // detectionSeverity() uses — and only ever raise it.
+      if (isDetectionArtifact(artifact)) {
+        for (const m of ms) if (m && m.severity === "Info") m.severity = "Medium";
+      }
     }
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
