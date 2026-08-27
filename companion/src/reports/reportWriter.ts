@@ -29,7 +29,8 @@ import { projectAlignment } from "../analysis/clockSkew.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
-import { detectTimelineGaps, gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
+import { gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
+import { detectGapsWithWaves } from "../analysis/activityWaves.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -409,13 +410,12 @@ export class ReportWriter {
     return detectBeacons(state.forensicTimeline, beaconEnvOptions());
   }
 
-  // Timeline gaps (#83): suspiciously long silent periods in the forensic timeline — a complete gap
-  // (every source dark) is the classic log-tampering signature, a partial gap is a single-tool
-  // coverage blindspot. Derived on demand with the same scope/legitimate filtering as the report.
-  // Thresholds from DFIR_GAP_MIN_MINUTES / DFIR_GAP_DENSITY_FACTOR / DFIR_GAP_ACTIVE_HOURS. No AI call.
+  // Timeline gaps (#83): long silent periods — complete (every source dark, the log-tampering
+  // signature), partial (one tool blind), or `betweenWaves` (dwell time between two bursts). Read via
+  // detectGapsWithWaves so this panel labels a window exactly as the finding about it does.
   async timelineGaps(caseId: string): Promise<TimelineGap[]> {
     const state = await this.loadFilteredState(caseId);
-    return detectTimelineGaps(state.forensicTimeline, gapEnvOptions());
+    return detectGapsWithWaves(state.forensicTimeline, gapEnvOptions()).gaps;
   }
 
   // Timeline anomalies (#175): per-asset event-rate spikes relative to the per-bucket median.

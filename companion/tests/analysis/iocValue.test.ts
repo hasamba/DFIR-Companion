@@ -217,3 +217,93 @@ describe("isInternalTarget (SSRF guard)", () => {
     expect(isInternalTarget("::ffff:808:808", "ip")).toBe(false); // ::ffff:8.8.8.8 in hex — public
   });
 });
+
+describe("defanged indicators", () => {
+  it("refangs a bracketed dot in a URL", () => {
+    expect(repairIocValue({ type: "url", value: "http://203.0.113[.]52/stager.exe" })).toEqual({
+      value: "http://203.0.113.52/stager.exe",
+    });
+  });
+
+  it("refangs a bracketed dot in an IP and a domain", () => {
+    expect(repairIocValue({ type: "ip", value: "203.0.113[.]52" })).toEqual({ value: "203.0.113.52" });
+    expect(repairIocValue({ type: "domain", value: "evil[.]example[.]com" })).toEqual({
+      value: "evil.example.com",
+    });
+  });
+
+  it("refangs the hxxp scheme", () => {
+    expect(repairIocValue({ type: "url", value: "hxxps://evil[.]com/a" })).toEqual({
+      value: "https://evil.com/a",
+    });
+    expect(repairIocValue({ type: "url", value: "hxxp://evil[.]com/a" })).toEqual({
+      value: "http://evil.com/a",
+    });
+  });
+
+  it("refangs the [dot] and (.) spellings", () => {
+    expect(repairIocValue({ type: "domain", value: "evil[dot]com" })).toEqual({ value: "evil.com" });
+    expect(repairIocValue({ type: "domain", value: "evil(.)com" })).toEqual({ value: "evil.com" });
+  });
+
+  it("refangs a bracketed scheme separator", () => {
+    expect(repairIocValue({ type: "url", value: "http[://]evil[.]com" })).toEqual({
+      value: "http://evil.com",
+    });
+  });
+
+  it("drops a URL truncated mid-defang instead of storing the fragment", () => {
+    // An extractor whose URL pattern stops at "[" yields "http://203.0.113[" — a value that can
+    // never match anything and can never be corrected. Storing it puts permanent garbage in the case.
+    expect(repairIocValue({ type: "url", value: "http://203.0.113[" })).toBeNull();
+    expect(repairIocValue({ type: "url", value: "http://203.0.113[." })).toBeNull();
+    expect(repairIocValue({ type: "domain", value: "evil[" })).toBeNull();
+  });
+
+  it("leaves a legitimate bracket in a URL path alone", () => {
+    const value = "https://en.wikipedia.org/wiki/Foo_[bar]";
+    expect(repairIocValue({ type: "url", value })).toEqual({ value });
+  });
+
+  it("does not refang a non-network type", () => {
+    const value = "C:\\Users\\a[.]b\\tool.exe";
+    expect(repairIocValue({ type: "file", value })).toEqual({ value });
+  });
+});
+
+describe("refang scope within a URL", () => {
+  // Defanging targets the part a browser would act on — the scheme and the host. A path or query
+  // may legitimately contain the same character sequences, and rewriting them changes the exact
+  // string every later correlation and retrieval depends on.
+  it("leaves a defang-shaped sequence in the path alone", () => {
+    const value = "https://example.com/search/(.)";
+    expect(repairIocValue({ type: "url", value })).toEqual({ value });
+  });
+
+  it("leaves a defang-shaped sequence in the query alone", () => {
+    const value = "https://example.com/a?q=foo[.]bar&r=[at]";
+    expect(repairIocValue({ type: "url", value })).toEqual({ value });
+  });
+
+  it("leaves a [dot] literal in a fragment alone", () => {
+    const value = "https://example.com/p#see[dot]this";
+    expect(repairIocValue({ type: "url", value })).toEqual({ value });
+  });
+
+  it("still refangs the host while preserving the path verbatim", () => {
+    expect(repairIocValue({ type: "url", value: "hxxps://evil[.]example[.]com/path/(.)/x?q=a[.]b" })).toEqual(
+      { value: "https://evil.example.com/path/(.)/x?q=a[.]b" },
+    );
+  });
+
+  it("refangs a schemeless host with a path", () => {
+    expect(repairIocValue({ type: "url", value: "evil[.]com/a[.]b" })).toEqual({
+      value: "evil.com/a[.]b",
+    });
+  });
+
+  it("refangs the whole value for ip and domain types (they have no path)", () => {
+    expect(repairIocValue({ type: "domain", value: "evil[.]com" })).toEqual({ value: "evil.com" });
+    expect(repairIocValue({ type: "ip", value: "10[.]0[.]0[.]1" })).toEqual({ value: "10.0.0.1" });
+  });
+});

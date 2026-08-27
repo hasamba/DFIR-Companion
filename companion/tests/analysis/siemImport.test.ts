@@ -993,3 +993,42 @@ describe("aggregateEvents — severity/description consistency across a merge", 
     expect(events[0].sha256).toBeUndefined();
   });
 });
+
+// A System-log 7045 record names the binary in ImagePath, not the Security-log 4697 spelling
+// ServiceFileName. Dropping it leaves an analyst — or a model — with a service DISPLAY NAME and
+// nothing to judge it by, which is how a stock Intel NIC driver gets read as a fake driver name
+// planted to blend into Services.msc. The image path is the field that settles it.
+describe("service installation (System 7045)", () => {
+  const svc = (data: Record<string, string>) => ({
+    "@timestamp": "2026-08-26T13:50:08.000Z",
+    log_name: "System",
+    computer_name: "DESKTOP-LAB01",
+    event_id: 7045,
+    level: "Information",
+    event_data: data,
+  });
+
+  it("renders ImagePath, ServiceType and StartType", () => {
+    const r = parseSiemExport(
+      elastic(
+        svc({
+          ServiceName: "Intel(R) PRO/1000 PCI Express Network Connection Driver I",
+          ImagePath: "\\SystemRoot\\System32\\drivers\\e1i68x64.sys",
+          ServiceType: "kernel mode driver",
+          StartType: "demand start",
+        }),
+      ),
+    );
+    const d = r.events[0].description;
+    expect(d).toContain("ImagePath=\\SystemRoot\\System32\\drivers\\e1i68x64.sys");
+    expect(d).toContain("ServiceType=kernel mode driver");
+    expect(d).toContain("StartType=demand start");
+  });
+
+  it("still renders the Security-log ServiceFileName spelling", () => {
+    const r = parseSiemExport(
+      elastic(svc({ ServiceName: "EvilSvc", ServiceFileName: "C:\\Windows\\Temp\\evil.exe" })),
+    );
+    expect(r.events[0].description).toContain("ServiceFileName=C:\\Windows\\Temp\\evil.exe");
+  });
+});

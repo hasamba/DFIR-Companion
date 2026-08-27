@@ -151,8 +151,26 @@ export function mapPersistenceSniper(
   // anomaly sitting at Info). Grading here, before any text is assembled, is immune to both:
   // PersistenceSniper enumerates almost every autostart on the box — mostly signed, first-party, and
   // ordinary — so most rows stay Info by design; only its own anomaly signals earn a promotion.
+  // The classic malicious-service shape: a binary that is NOT validly signed, is NOT one of the
+  // module's recognised built-ins, and is wired up to run with SYSTEM-level privileges. No one of
+  // the three is decisive — an unsigned User-level Run key is ordinary, plenty of recognised
+  // builtins run as System, and a validly-signed vendor service running as System is the norm — but
+  // together they are the shape a dropped service payload actually has, wherever it was staged.
+  //
+  // Why it needs its own rule: on the signature flag alone this row grades Medium, which puts it
+  // BELOW the Critical/High backfill that guarantees a finding when the model skips an event. A real
+  // Meterpreter getsystem service binary, correctly imported and correctly handed to synthesis,
+  // passed through a case unmentioned for exactly this reason — while the same case raised a
+  // High-severity masquerading finding about a legitimate signed NIC driver.
+  //
+  // Graded from the module's own STRUCTURED columns, like every other signal here — never from the
+  // rendered description (see the note above for why that distinction matters).
+  const systemLevel = /\b(system|admin)/i.test(accessGained);
+  const unsignedSystemPayload = sigFlag !== "" && !isBuiltinBinary && systemLevel;
+
   let severity: MappedEvent["severity"] = "Info";
   if (sigFlag) severity = worst(severity, "Medium");
+  if (unsignedSystemPayload) severity = worst(severity, "High");
   // Staged is treated as High outright: an executable sitting directly in a world-writable/transient
   // location (per STAGED_FILE_RE) wired up for persistence is a strong signal on its own, whether or
   // not the tool itself is a recognised built-in.

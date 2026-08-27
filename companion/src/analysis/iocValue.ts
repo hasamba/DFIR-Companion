@@ -225,10 +225,66 @@ function canonicalize(type: string, v: string): string {
 // requirement is what keeps "…/wiki/Foo_(bar)" intact: there, the parens belong to the indicator.
 const ANNOTATION_RE = /^([^()]*\S)\s+\(([^()]+)\)$/;
 
+// Defanging (`203.0.113[.]52`, `hxxp://evil[.]com`) is how reports and threat intel write a live
+// indicator so a reader cannot click it. It is a PRESENTATION of the indicator, not a different one —
+// but stored verbatim it silently splits the case: the defanged copy never matches the fanged copy in
+// dedup, in correlation, or against any other tool, so one real address becomes two half-evidenced
+// IOCs. Only the network types are refanged; a file path may legitimately contain brackets.
+const REFANGABLE = new Set(["ip", "domain", "url"]);
+
+// The defang spellings seen in the wild, applied in order. `hxxp` defangs BOTH t's, so the two x's
+// restore to two t's. `[://]` and `[:]` cover the schemes that bracket the separator instead.
+const DEFANG_RULES: readonly (readonly [RegExp, string])[] = [
+  [/\bh(?:xx|XX)(p|P)(s|S)?(?=:|\[)/g, "htt$1$2"],
+  [/\[:\/\/\]/g, "://"],
+  [/\[:\]/g, ":"],
+  [/\[\s*(?:\.|dot)\s*\]/gi, "."],
+  [/\(\s*(?:\.|dot)\s*\)/gi, "."],
+  [/\{\s*(?:\.|dot)\s*\}/gi, "."],
+  [/\[@\]/g, "@"],
+  [/\[at\]/gi, "@"],
+];
+
+// An indicator whose text ends mid-defang — "http://203.0.113[" or "…100[." — is TRUNCATED, not
+// defanged: an extractor whose URL pattern treats "[" as a terminator stopped there and dropped the
+// rest of the address. The remainder is unrecoverable, and what is left can never match anything,
+// so it is a permanent malformed indicator. Better to drop it than to bank it.
+const TRUNCATED_DEFANG_RE = /\[\.?$/;
+
+// Everything up to and including the authority (scheme + host + optional port) — the part defanging
+// exists to neutralise, because it is what a click would act on. The path, query and fragment start
+// at the first "/", "?" or "#" AFTER the "://", and are left exactly as found: they may legitimately
+// contain the same character sequences ("…/search/(.)", "?q=foo[.]bar"), and rewriting them changes
+// the exact string every later correlation, dedup and retrieval depends on.
+function authorityEnd(url: string): number {
+  const scheme = /^[a-z][a-z0-9+.-]*(?::|\[:\]|\[:\/\/\])\/*/i.exec(url);
+  const from = scheme ? scheme[0].length : 0;
+  const rest = url.slice(from);
+  const m = /[/?#]/.exec(rest);
+  return m ? from + m.index : url.length;
+}
+
+// Restore a defanged network indicator to its real form. Non-network types pass through untouched.
+// For a URL only the scheme and authority are rewritten (see authorityEnd); an ip or domain has no
+// path component, so the whole value is fair game.
+export function refangIocValue(type: string, value: string): string {
+  if (!REFANGABLE.has(type)) return value;
+  const cut = type === "url" ? authorityEnd(value) : value.length;
+  let head = value.slice(0, cut);
+  for (const [re, to] of DEFANG_RULES) head = head.replace(re, to);
+  return head + value.slice(cut);
+}
+
 export function repairIocValue(ioc: { type: string; value: string }): RepairedIocValue | null {
   const type = ioc.type;
-  const raw = (ioc.value ?? "").trim();
+  // Refang BEFORE anything else: every downstream step (annotation split, canonicalize, validity)
+  // should see the real indicator, not its unclickable presentation.
+  const raw = refangIocValue(type, (ioc.value ?? "").trim()).trim();
   if (!raw) return null;
+  // A network indicator still carrying a dangling defang bracket after refanging was truncated by
+  // the extractor, not defanged — the rest of the address is gone. Drop it rather than persist a
+  // fragment that can never match and can never be repaired.
+  if (REFANGABLE.has(type) && TRUNCATED_DEFANG_RE.test(raw)) return null;
   // Multi-line or oversized: this is a text blob that was mis-typed as an indicator (a whole
   // PowerShell help page stored as an "ip"), not an annotated indicator. Nothing to salvage.
   if (/[\r\n]/.test(raw)) return null;
