@@ -16,6 +16,7 @@ import {
   type MappedEvent,
   type SiemIoc,
 } from "./siemImport.js";
+import { isStagedCommandValue } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
@@ -62,19 +63,6 @@ type Row = Record<string, unknown>;
 // and the allow-list silently dropped every one of them. `(?![.\w])` instead REJECTS only what's
 // actually wrong (another dot, or a continuing word character from a longer/unlisted extension) and
 // accepts everything else, with no allow-list to keep enumerating.
-const STAGING_EXT =
-  "exe|dll|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|msi|scr|cpl|ocx|sys|drv|hta|jar|py|pyw|msc|lnk";
-const STAGED_LEADING_RE = new RegExp(
-  `^[A-Za-z]:\\\\(?:[^\\\\]+\\\\)*(?:temp|tmp|appdata\\\\local\\\\temp|programdata|public|windows\\\\temp)\\\\[^\\\\]*?\\.(?:${STAGING_EXT})(?![.\\w])`,
-  "i",
-);
-const STAGED_QUOTED_RE = new RegExp(
-  `["'][A-Za-z]:\\\\(?:[^\\\\"']+\\\\)*(?:temp|tmp|appdata\\\\local\\\\temp|programdata|public|windows\\\\temp)\\\\[^\\\\"']*?\\.(?:${STAGING_EXT})["']`,
-  "i",
-);
-function isStaged(text: string): boolean {
-  return STAGED_LEADING_RE.test(text) || STAGED_QUOTED_RE.test(text);
-}
 
 export function mapPersistenceSniper(
   row: Row,
@@ -121,7 +109,7 @@ export function mapPersistenceSniper(
   for (const p of filePaths) addIoc(sink, "file", p);
   // Judges the raw value/path (see the STAGED_*_RE comment above for why) — not filePaths, which is
   // empty for exactly the argument-carrying values this needs to see.
-  const staged = isStaged(value) || isStaged(path);
+  const staged = isStagedCommandValue(value) || isStagedCommandValue(path);
 
   // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
   // clean Authenticode signature is the common case and just adds noise to the title.

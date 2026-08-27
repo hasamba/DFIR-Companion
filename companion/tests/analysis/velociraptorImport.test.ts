@@ -2712,3 +2712,226 @@ describe("parseVelociraptorJson — network identifiers keep events distinct (#6
     expect(parsed.events[0].count).toBe(2);
   });
 });
+
+// DetectRaptor.Windows.Detection.BinaryRename reports a file whose on-disk name does not match the
+// OriginalFilename compiled into it. Every row IS a detection, but the artifact ships no `Detection`
+// column, so the rows fell through to the generic key=value dump and graded Info — and Info never
+// reaches the forensic timeline, so the analysis never saw them. A real case hid a cmd.exe copied to
+// `java.exe` this way; a competing tool made the same artifact its headline finding.
+describe("parseVelociraptorJson — BinaryRename rows (DetectRaptor.Windows.Detection.BinaryRename)", () => {
+  function renameRow(overrides: Record<string, unknown> = {}): object {
+    const { VersionInformation, ...rest } = overrides as Record<string, never>;
+    return {
+      _Source: "DetectRaptor.Windows.Detection.BinaryRename",
+      Fqdn: "DESKTOP-LAB01",
+      OSPath: "C:\\LockBitSim\\tools\\activemq_java_stub\\java.exe",
+      Name: "java.exe",
+      Size: 344129,
+      VersionInformation: {
+        CompanyName: "Microsoft Corporation",
+        OriginalFilename: "Cmd.Exe",
+        InternalName: "cmd",
+        ProductName: "Microsoft\u00ae Windows\u00ae Operating System",
+        ...(VersionInformation as object | undefined),
+      },
+      Hash: { SHA256: "96367aebfb73b9a91572f4cb0e935861ce7a015c12da8569a7ebea1d89cb8175" },
+      Mtime: "2026-08-26T14:35:18.3874441Z",
+      ...rest,
+    };
+  }
+
+  it("names the binary the file actually is, not just the name it wears", () => {
+    const e = parseVelociraptorJson(JSON.stringify([renameRow()])).events[0];
+    expect(e.description).toContain("java.exe");
+    expect(e.description).toContain("Cmd.Exe");
+    expect(e.description).toContain("Microsoft Corporation");
+  });
+
+  it("grades a renamed system utility High and maps T1036.003", () => {
+    const e = parseVelociraptorJson(JSON.stringify([renameRow()])).events[0];
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1036.003");
+  });
+
+  it("grades a renamed non-system binary staged in a temp directory High", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        renameRow({
+          OSPath: "C:\\Users\\v\\AppData\\Local\\Temp\\svchost.exe",
+          Name: "svchost.exe",
+          VersionInformation: { OriginalFilename: "Updater.exe", CompanyName: "Acme Ltd" },
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("High");
+  });
+
+  it("still surfaces an ordinary vendor rename at Medium, never Info", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        renameRow({
+          OSPath: "C:\\Program Files\\Acme\\setup.exe",
+          Name: "setup.exe",
+          VersionInformation: { OriginalFilename: "AcmeInstaller.exe", CompanyName: "Acme Ltd" },
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+  });
+
+  it("records the path and hash as IOCs", () => {
+    const r = parseVelociraptorJson(JSON.stringify([renameRow()]));
+    const vals = r.iocs.map((i) => i.value.toLowerCase());
+    expect(vals).toContain("c:\\lockbitsim\\tools\\activemq_java_stub\\java.exe");
+    expect(vals).toContain("96367aebfb73b9a91572f4cb0e935861ce7a015c12da8569a7ebea1d89cb8175");
+  });
+
+  it("keeps the file timestamp and host", () => {
+    const e = parseVelociraptorJson(JSON.stringify([renameRow()])).events[0];
+    expect(e.timestamp).toContain("2026-08-26T14:35:18");
+    expect(e.description).toContain("DESKTOP-LAB01");
+  });
+
+  it("does not fire when the on-disk name already matches the original", () => {
+    // Same artifact, a row where nothing was renamed: no detection to report, so it must not be
+    // escalated just because the artifact name says "BinaryRename".
+    const e = parseVelociraptorJson(
+      JSON.stringify([renameRow({ OSPath: "C:\\Windows\\System32\\cmd.exe", Name: "cmd.exe" })]),
+    ).events[0];
+    expect(e.severity).not.toBe("High");
+  });
+});
+
+// Regression cover for the review findings on the BinaryRename mapper. Every case below shipped
+// green under the first version because each of its seven tests passed exactly one row and asserted
+// only severity or description — the defects all lived in aggregation, in fields, or in inputs no
+// single-row happy-path fixture reaches.
+describe("parseVelociraptorJson — BinaryRename edge cases", () => {
+  function row(o: Record<string, unknown> = {}): object {
+    return {
+      _Source: "DetectRaptor.Windows.Detection.BinaryRename",
+      Fqdn: "DESKTOP-LAB01",
+      OSPath: "C:\\stage\\java.exe",
+      Name: "java.exe",
+      VersionInformation: { OriginalFilename: "Cmd.Exe", CompanyName: "Microsoft Corporation" },
+      Hash: { SHA256: "a".repeat(64), MD5: "b".repeat(32) },
+      Mtime: "2026-08-26T14:35:18Z",
+      ...o,
+    };
+  }
+
+  it("keeps two binaries dropped at different paths as separate events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        row({ OSPath: "C:\\stage1\\java.exe" }),
+        row({ OSPath: "C:\\stage2\\java.exe", Hash: { SHA256: "c".repeat(64) } }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.path).sort()).toEqual(["C:\\stage1\\java.exe", "C:\\stage2\\java.exe"]);
+  });
+
+  it("does not fold numerically-distinct names together", () => {
+    // The aggregation key must not digit-strip: svchost1.exe and svchost2.exe are two files.
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        row({ OSPath: "C:\\a\\svchost1.exe", Name: "svchost1.exe" }),
+        row({ OSPath: "C:\\b\\svchost2.exe", Name: "svchost2.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("grades a renamed system utility in System32 High, not Medium", () => {
+    // A legitimate cmd.exe in System32 is NAMED cmd.exe. A renamed one there needs admin rights to
+    // place and is the classic blend-in location, so a vendor-root allowance must not cover it.
+    const e = parseVelociraptorJson(
+      JSON.stringify([row({ OSPath: "C:\\Windows\\System32\\svhost.exe", Name: "svhost.exe" })]),
+    ).events[0];
+    expect(e.severity).toBe("High");
+  });
+
+  it("carries sha256 and md5 on the event for cross-tool correlation", () => {
+    const e = parseVelociraptorJson(JSON.stringify([row()])).events[0];
+    expect(e.sha256).toBe("a".repeat(64));
+    expect(e.md5).toBe("b".repeat(32));
+  });
+
+  it("ignores a malformed hash rather than storing it", () => {
+    const e = parseVelociraptorJson(JSON.stringify([row({ Hash: { SHA256: "not-a-hash", MD5: "" } })]))
+      .events[0];
+    expect(e.sha256).toBeUndefined();
+    expect(e.md5).toBeUndefined();
+  });
+
+  it("surfaces a binary with no version resource instead of burying it at Info", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        row({
+          OSPath: "C:\\Users\\v\\AppData\\Local\\Temp\\x.exe",
+          Name: "x.exe",
+          VersionInformation: { OriginalFilename: "", CompanyName: "" },
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("High"); // staged
+    expect(e.description).toContain("no version resource");
+    expect(e.description).not.toContain("is really");
+    expect(e.mitreTechniques).toEqual([]); // no rename proved, so no masquerading claim
+  });
+
+  it("floors an unstaged resourceless binary at Medium", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        row({
+          OSPath: "C:\\Tools\\helper.exe",
+          Name: "helper.exe",
+          VersionInformation: { OriginalFilename: "" },
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+  });
+
+  it("makes no rename claim when the row names no file", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        {
+          _Source: "DetectRaptor.Windows.Detection.BinaryRename",
+          Fqdn: "DESKTOP-LAB01",
+          VersionInformation: { OriginalFilename: "Cmd.Exe" },
+          Mtime: "2026-08-26T14:35:18Z",
+        },
+      ]),
+    ).events[0];
+    expect(e.severity).not.toBe("High");
+    expect(e.description).not.toContain("is really");
+  });
+
+  it("lets an explicit rule verdict win over the inferred grade", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([row({ Detection: { Name: "Renamed binary", Criticality: "Low" } })]),
+    ).events[0];
+    expect(e.severity).toBe("Low");
+  });
+});
+
+// The general half of the same defect: any detection rule pack whose rows match no signature lands
+// in the generic key=value dump at Info, which never reaches the forensic timeline.
+describe("parseVelociraptorJson — unrecognised detection-pack rows", () => {
+  it("floors an unrecognised DetectRaptor row to Medium instead of Info", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        { _Source: "DetectRaptor.Windows.Detection.SomeNewPack", Fqdn: "H1", Widget: "unrecognised shape" },
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+  });
+
+  it("leaves an ordinary telemetry artifact at Info", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([{ _Source: "Windows.Sys.Users", Fqdn: "H1", Widget: "unrecognised shape" }]),
+    ).events[0];
+    expect(e.severity).toBe("Info");
+  });
+});
