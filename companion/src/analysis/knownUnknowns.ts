@@ -15,7 +15,8 @@
 // iocAnchors, evidenceGraph); no new detection, no AI, no I/O. Every line is a LEAD, not proof.
 
 import type { CollectDirective, ForensicEvent, InvestigationState } from "./stateTypes.js";
-import { detectTimelineGaps, type GapOptions } from "./gapDetect.js";
+import { type GapOptions } from "./gapDetect.js";
+import { detectGapsWithWaves } from "./activityWaves.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import type { NextTechnique } from "./adversaryEmulation.js";
 import type { PlaybookMatch } from "./playbookMatch.js";
@@ -42,7 +43,7 @@ const CORE_TACTICS: readonly IrisTactic[] = [
 ];
 
 export interface KnownUnknownsOptions {
-  gapOptions?: GapOptions; // forwarded to detectTimelineGaps
+  gapOptions?: GapOptions; // forwarded to detectGapsWithWaves
   nextTechniques?: readonly NextTechnique[]; // from adversaryEmulation — caller supplies (needs the offline dataset)
   playbookMatch?: PlaybookMatch | null; // #230 top playbook match — caller supplies (needs the offline catalog)
   yieldWarning?: ImportYieldWarning | null; // source-yield #10 trigger (a): a zero-yield AI import (caller loads importMeta)
@@ -318,7 +319,7 @@ export function buildKnownUnknownItems(
   // 2. Coverage gaps — silent windows (complete = every source dark, the strongest log-tampering
   //    lead). No `collect` here: the dashboard links these to the existing Timeline Gaps panel, which
   //    already owns the shadow-artifact deploy UI.
-  const gaps = detectTimelineGaps(scopedEvents, opts.gapOptions);
+  const gaps = detectGapsWithWaves(scopedEvents, opts.gapOptions).gaps;
   const maxGaps = Math.max(0, opts.maxGaps ?? DEFAULT_MAX_GAPS);
   const orderedGaps = [...gaps.filter((g) => g.complete), ...gaps.filter((g) => !g.complete)].slice(
     0,

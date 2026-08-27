@@ -1213,6 +1213,49 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
   // real host's import, 27/273 rows came back IsLolbin=True and 23 of those were the OS's own
   // recognised binaries (IsBuiltinBinary=True) — treating IsLolbin alone as High flooded the
   // timeline with "findings" that were just ordinary Windows behavior.
+  // An unsigned, non-builtin binary wired up to run with SYSTEM privileges is the classic malicious
+  // service shape, and none of its three signals is decisive alone: an unsigned User-level Run key is
+  // ordinary, plenty of recognised builtins run as System, and a validly-signed vendor service running
+  // as System is the norm. Together they are not ordinary. Graded Medium — on the signature flag alone —
+  // a row like this sits below the Critical/High safety net that backfills a finding when the model
+  // skips an event, so a real getsystem service binary can pass through synthesis unmentioned.
+  it("grades High for an unsigned, non-builtin persistence entry that gains System", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          Technique: "Windows Service",
+          Classification: "MITRE ATT&CK T1543.003",
+          Path: "kesknq",
+          Value: "C:\\LockBitSim\\tools\\svc_kesknq\\kesknq.exe",
+          "Access Gained": "System",
+          Signature: "Status = NotSigned, Subject = ",
+          IsBuiltinBinary: "False",
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("High");
+  });
+
+  it("leaves an unsigned non-builtin entry at Medium when it only gains User", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow({
+          "Access Gained": "User",
+          Signature: "Status = NotSigned, Subject = ",
+          IsBuiltinBinary: "False",
+        }),
+      ]),
+    ).events[0];
+    expect(e.severity).toBe("Medium");
+  });
+
+  it("leaves a validly-signed System service alone — that is the ordinary case", () => {
+    const e = parseVelociraptorJson(
+      JSON.stringify([sniperRow({ "Access Gained": "System", IsBuiltinBinary: "True" })]),
+    ).events[0];
+    expect(e.severity).toBe("Info");
+  });
+
   it("does not grade a LOLBin-capable tool as High when it's PersistenceSniper's own recognised built-in binary", () => {
     const e = parseVelociraptorJson(
       JSON.stringify([

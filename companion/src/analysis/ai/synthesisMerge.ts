@@ -9,7 +9,8 @@ import {
 } from "../findingGrounding.js";
 import { scoreFindingsRelevance } from "../findingRelevance.js";
 import { reconsiderKeyQuestions } from "../fpCascade.js";
-import { backfillSilenceGapFindings, detectTimelineGaps, gapEnvOptions } from "../gapDetect.js";
+import { backfillSilenceGapFindings, gapEnvOptions } from "../gapDetect.js";
+import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWaves.js";
 import { backfillHighSeverityFindings } from "../highSeverityFindings.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { shortHost } from "../iocAnchors.js";
@@ -188,6 +189,12 @@ function linkEventsToFindings(
  * classic signature of cleared logs / a stopped collector, so it is escalated to a finding too. Gaps
  * are derived on read (not persisted); only the complete ones earn a persisted finding, and the
  * finding id is derived from the bounding events, so re-synthesis over the same gap is idempotent.
+ *
+ * Activity waves: gap analysis alone assumes a silence means MISSING data. When substantial activity
+ * sits on both sides of the quiet stretch, the opposite reading is likelier — the host was touched
+ * more than once with real dwell time between visits. So wave detection runs FIRST and marks those
+ * gaps, both to emit the cadence as its own finding and so the gap findings for those boundaries stop
+ * repeating the log-tampering framing for a silence that is already accounted for.
  */
 function applyBackfills(
   linked: InvestigationState,
@@ -198,9 +205,10 @@ function applyBackfills(
   const backfilled = backfillHighSeverityFindings(linked, eligibleIds, ts);
   const highSeverityBackfillCount = backfilled.findings.length - linked.findings.length;
   const gapOpts = gapEnvOptions();
-  const gaps = detectTimelineGaps(scopedEvents, gapOpts);
+  const { gaps, pattern } = detectGapsWithWaves(scopedEvents, gapOpts);
+  const withWaves = backfillActivityWaveFinding(backfilled, pattern, ts);
   return {
-    state: backfillSilenceGapFindings(backfilled, gaps, ts, gapOpts.maxFindings),
+    state: backfillSilenceGapFindings(withWaves, gaps, ts, gapOpts.maxFindings),
     highSeverityBackfillCount,
   };
 }

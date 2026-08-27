@@ -14,7 +14,8 @@ import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../anal
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
-import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
+import { gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
+import { detectGapsWithWaves } from "../analysis/activityWaves.js";
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
@@ -362,7 +363,7 @@ function modelPerformanceNote(modelPerf: ModelPerfSnapshot | null | undefined, l
 function timelineCoverage(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.3 Timeline coverage", "");
   lines.push(`_${GAP_CAVEAT}_`, "");
-  const gaps = detectTimelineGaps(state.forensicTimeline, gapEnvOptions());
+  const gaps = detectGapsWithWaves(state.forensicTimeline, gapEnvOptions()).gaps;
   if (gaps.length === 0) {
     lines.push("_No suspicious silent periods detected in the forensic timeline._", "");
     return;
@@ -372,7 +373,9 @@ function timelineCoverage(state: InvestigationState, lines: string[]): void {
     "| --- | --- | --- | --- | --- |",
   );
   for (const g of gaps) {
-    const kind = g.complete ? "complete silence" : "partial";
+    // A wave boundary is accounted-for dwell time, not suspected missing data — the same wording
+    // the finding for this window uses, so the two surfaces never disagree.
+    const kind = g.betweenWaves ? "dwell interval" : g.complete ? "complete silence" : "partial";
     const silent = g.silentSources.length ? g.silentSources.join(", ") : "all sources";
     const active = g.activeSources.length ? g.activeSources.join(", ") : "—";
     lines.push(

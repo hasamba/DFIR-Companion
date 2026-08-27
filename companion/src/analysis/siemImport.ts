@@ -685,7 +685,17 @@ const SUBJECT_KEYS = [
   "IpAddress",
   "WorkstationName",
   "ServiceName",
+  // 4697 (Security) names the binary ServiceFileName; 7045 (System) names it ImagePath. Only the
+  // first spelling was listed, so every System-log service install arrived carrying a service
+  // DISPLAY NAME and nothing else — and a display name alone cannot be judged. That is how a stock
+  // "Intel(R) PRO/1000 …" NIC driver load reads as a fake driver name planted to blend into
+  // Services.msc: the field that settles it (\SystemRoot\System32\drivers\e1i68x64.sys, a
+  // kernel-mode driver in a protected directory) was dropped before anyone saw the event. All three
+  // are stable per service, so aggregation is unaffected.
+  "ImagePath",
   "ServiceFileName",
+  "ServiceType",
+  "StartType",
   "Image",
   "CommandLine",
   // For a PowerShell script block the SCRIPT IS the subject, exactly as the command line is the

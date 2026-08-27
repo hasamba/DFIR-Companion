@@ -44,6 +44,10 @@ export interface TimelineGap {
   durationLabel: string; // human-readable duration, e.g. "2h 15m"
   severity: Severity; // High when ALL sources went silent (complete), else Medium (partial)
   complete: boolean; // true when the WHOLE environment went dark (no source logged at all)
+  // Set by activityWaves.ts markWaveBoundaries(): this silence separates two substantial waves of
+  // activity, so it is accounted-for dwell time rather than suspected missing data. Absent until
+  // wave analysis runs — detectTimelineGaps() alone never sets it.
+  betweenWaves?: boolean;
   silentSources: string[]; // sources that produced no events during the window (sorted)
   activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
   beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
@@ -103,7 +107,10 @@ function startMs(e: ForensicEvent): number {
 // The end of an event's real-world span: the aggregated `endTimestamp` when present and valid, else
 // its `timestamp`. So a long aggregated row (e.g. "20 logons over 3h") closes the gap at its END,
 // not its first occurrence — otherwise the tail of an aggregated event reads as a false silence.
-function endMs(e: ForensicEvent): number {
+// Exported so activityWaves.ts can close a wave at the same instant a gap opens. Two modules
+// disagreeing about when activity ended would have one of them report a dwell interval that never
+// happened.
+export function endMs(e: ForensicEvent): number {
   const end = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
   return Number.isNaN(end) ? Date.parse(e.timestamp) : end;
 }
@@ -113,7 +120,7 @@ function endMs(e: ForensicEvent): number {
 // but-non-empty endTimestamp (e.g. "invalid-date") as the display value while endMs correctly
 // fell back — so the gap card rendered a garbage ISO string for startTimestamp, and a Finding
 // built from it carried a non-ISO firstSeen (#15).
-function endTsStr(e: ForensicEvent): string {
+export function endTsStr(e: ForensicEvent): string {
   const end = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
   return Number.isNaN(end) ? e.timestamp : e.endTimestamp!;
 }
@@ -421,20 +428,35 @@ export function backfillSilenceGapFindings(
     existingIds.add(id);
     // The start time keeps the title unique per gap — two gaps of equal duration are distinct facts,
     // and the diff (by title) shouldn't collapse them or re-announce an unchanged one.
-    const title = `Timeline coverage gap: ${gap.durationLabel} of complete silence from ${gap.startTimestamp}`;
     const sources = gap.silentSources.length ? gap.silentSources.join(", ") : "all sources";
-    newFindings.push({
-      id,
-      severity: "High",
-      confidence: 50,
-      title,
-      description:
-        `No forensic activity was recorded from ${gap.startTimestamp} to ${gap.endTimestamp} ` +
+    // A silence that SEPARATES two substantial waves of activity is accounted for — logging resumed
+    // and kept going on the far side — so it reads as dwell time between visits, not as missing data.
+    // Same detected window, opposite conclusion, so the title, severity and ATT&CK mapping all change:
+    // calling a real 19-day dwell interval "suspected log tampering" buries the most important fact
+    // about the intrusion under a data-quality complaint. See activityWaves.ts.
+    const title = gap.betweenWaves
+      ? `Dwell interval: ${gap.durationLabel} between two waves of activity from ${gap.startTimestamp}`
+      : `Timeline coverage gap: ${gap.durationLabel} of complete silence from ${gap.startTimestamp}`;
+    const description = gap.betweenWaves
+      ? `No forensic activity was recorded from ${gap.startTimestamp} to ${gap.endTimestamp} ` +
+        `(${gap.durationLabel}), but substantial activity resumed afterwards and continued — so this is a ` +
+        `boundary between two waves of activity rather than a hole in the collection. Treat the interval ` +
+        `itself as the finding: establish whether the later wave reuses access, accounts, or an unpatched ` +
+        `entry point established by the earlier one. ${GAP_CAVEAT}`
+      : `No forensic activity was recorded from ${gap.startTimestamp} to ${gap.endTimestamp} ` +
         `(${gap.durationLabel}) — every source went silent (${sources}). A complete coverage gap is a ` +
         `classic indicator of log tampering (cleared Windows Event Logs, a stopped collector/auditd, or ` +
-        `deleted log files) or a collection blindspot. ${GAP_CAVEAT}`,
+        `deleted log files) or a collection blindspot. ${GAP_CAVEAT}`;
+    newFindings.push({
+      id,
+      severity: gap.betweenWaves ? "Medium" : "High",
+      confidence: 50,
+      title,
+      description,
       relatedIocs: [],
-      mitreTechniques: ["T1070"], // Indicator Removal — missing/cleared logs
+      // T1070 (Indicator Removal) only fits the missing-data reading. A dwell interval between two
+      // visits is not evidence that anything was removed, so it carries no technique of its own.
+      mitreTechniques: gap.betweenWaves ? [] : ["T1070"],
       sourceScreenshots: [],
       firstSeen: gap.startTimestamp || timestamp,
       lastUpdated: timestamp,
