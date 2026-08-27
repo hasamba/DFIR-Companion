@@ -666,13 +666,13 @@ export class VelociraptorClient {
     };
   }
 
-  // Snapshot the whole enrolled fleet — client_id + hostname + fqdn per client — so the Companion can
+  // Snapshot the whole enrolled fleet — client_id + hostname + fqdn + labels per client — so the Companion can
   // persist an INVENTORY and resolve a host → client_id from that file (robust + fast) instead of a
   // brittle live `clients(search=...)` lookup whose index tokenizes the hostname on dots. Metadata
   // only, so the per-query row cap is NOT applied (use the larger collect cap; a server can have many).
   async listClients(): Promise<VeloClientRecord[]> {
     const rows = await this.runRaw(
-      "SELECT client_id, os_info, last_seen_at FROM clients() LIMIT 100000",
+      "SELECT client_id, os_info, last_seen_at, labels FROM clients() LIMIT 100000",
       this.collectCap(),
     );
     const out: VeloClientRecord[] = [];

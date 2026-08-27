@@ -680,6 +680,34 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/\.catch\(\(?e\)? => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
   });
 
+  it("filters a bundle run by PICKING fleet labels, never by typing one", async () => {
+    // A typed label that no client carries does not fail — Velociraptor matches nobody, so the hunt
+    // launches, reports success and collects from nowhere. The run form must therefore offer the
+    // labels the cached inventory really holds, and read the run's filter back off those checkboxes.
+    //
+    // Booleans, not toContain: a failure on the raw string prints the whole client source.
+    const html = dashboardClientSource();
+    expect(html.includes('placeholder="include labels (comma-sep)"'), "the free-text label box is gone").toBe(
+      false,
+    );
+    expect(
+      /const fleetLabels = veloFleetLabels\(_veloClients\);/.test(html),
+      "the run form's choices come from the cached fleet",
+    ).toBe(true);
+    expect(
+      /\$\{veloLabelPickerHtml\("inc", fleetLabels\)\}[\s\S]{0,120}\$\{veloLabelPickerHtml\("exc", fleetLabels\)\}/.test(
+        html,
+      ),
+      "both filters render as pickers over that set",
+    ).toBe(true);
+    expect(
+      /const includeLabels = veloPickedLabels\(form, "inc"\);[\s\S]{0,120}const excludeLabels = veloPickedLabels\(form, "exc"\);/.test(
+        html,
+      ),
+      "the launch reads the checked labels, so several can be sent at once",
+    ).toBe(true);
+  });
+
   it("renders the hunt job card's degraded time-scope coverage as explicitly unverified, not as zero", async () => {
     const html = dashboardClientSource();
     // A 0-of-N scoped count with degraded:true must read as "we couldn't check", never as "nothing

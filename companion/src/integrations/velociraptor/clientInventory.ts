@@ -10,6 +10,14 @@ export interface VeloClientRecord {
   hostname: string;
   fqdn: string;
   lastSeen?: string;
+  /**
+   * The Velociraptor labels on this client, if it carries any.
+   *
+   * OMITTED WHEN EMPTY, like lastSeen. The inventory is a snapshot of up to 100,000 clients that
+   * is written to disk, and most of a fleet carries no label at all; an always-present `[]` would
+   * put 100,000 empty arrays in the file to say nothing. Read it as `record.labels ?? []`.
+   */
+  labels?: string[];
 }
 
 // Normalize one `clients()` row → a record (or null if it has no usable client id). Casing-tolerant:
@@ -23,6 +31,8 @@ export function normalizeClientRow(row: unknown): VeloClientRecord | null {
     OsInfo?: Record<string, unknown>;
     last_seen_at?: unknown;
     LastSeen?: unknown;
+    labels?: unknown;
+    Labels?: unknown;
   };
   const clientId = String(r.client_id ?? r.ClientId ?? "");
   if (!CLIENT_RE.test(clientId)) return null;
@@ -30,7 +40,26 @@ export function normalizeClientRow(row: unknown): VeloClientRecord | null {
   const hostname = String(os.hostname ?? os.Hostname ?? "").trim();
   const fqdn = String(os.fqdn ?? os.Fqdn ?? "").trim();
   const last = r.last_seen_at ?? r.LastSeen;
-  return { clientId, hostname, fqdn, ...(last != null && last !== "" ? { lastSeen: String(last) } : {}) };
+  const labels = normalizeLabels(r.labels ?? r.Labels);
+  return {
+    clientId,
+    hostname,
+    fqdn,
+    ...(last != null && last !== "" ? { lastSeen: String(last) } : {}),
+    ...(labels.length ? { labels } : {}),
+  };
+}
+
+// A clients() `labels` cell → the trimmed, deduped, non-empty label names on that client. Anything
+// that is not an array (an older server omits the column entirely) reads as no labels.
+function normalizeLabels(cell: unknown): string[] {
+  if (!Array.isArray(cell)) return [];
+  const out: string[] = [];
+  for (const raw of cell) {
+    const label = String(raw ?? "").trim();
+    if (label && !out.includes(label)) out.push(label);
+  }
+  return out;
 }
 
 // Pure: the best client record for a target host, from the inventory. Robust to the two real-world
