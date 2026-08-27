@@ -36,6 +36,7 @@ import {
   isObject,
   getCI,
   normalizeTime,
+  textIocs,
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
@@ -196,6 +197,14 @@ function mapRecord(
     if (ip && (/ip|addr/i.test(k) || IPV4.test(val))) addIoc(iocSink, "ip", ip);
     if (HEX_HASH.test(val)) addIoc(iocSink, "hash", val.toLowerCase());
   }
+  // A rendered script block is free text, and every extractor above is key-driven: `genericIocs`
+  // matches on the field NAME, so a C2 url sitting inside the script's body was never read and a
+  // Hayabusa 4104 produced no indicators at all (#652). Hayabusa does not share mapWindows — it
+  // renders through its own output profile — so the scrape it needs lives here. `fullMessage` is the
+  // whole reassembled script when Windows split the block across events; the per-field pass covers
+  // the ordinary single-part row, under whichever alias this profile named the field.
+  for (const [k, v] of pairs) if (isScriptBlockTextKey(k)) textIocs(v, iocSink);
+  if (fullMessage) textIocs(fullMessage, iocSink);
 
   const procRaw = firstStr(details, PROC_KEYS);
   const parentRaw = firstStr(details, PARENT_KEYS);
