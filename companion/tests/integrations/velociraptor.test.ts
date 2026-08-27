@@ -291,6 +291,18 @@ describe("VelociraptorClient.listClients", () => {
       { clientId: "C.kali", hostname: "kaliPurple", fqdn: "kaliPurple.windomain.local" },
     ]);
   });
+
+  // The run form's label picker offers what the fleet actually carries, so the snapshot has to ask
+  // for it. Drop the column and the picker is empty on a server full of labelled clients.
+  it("asks clients() for each client's labels", async () => {
+    const programs: string[] = [];
+    const runner: VqlRunner = async (statements) => {
+      programs.push(statements[0]);
+      return { rows: [], raw: "" };
+    };
+    await new VelociraptorClient(cfg, runner).listClients();
+    expect(programs[0]).toMatch(/SELECT [^"]*\blabels\b[^"]*FROM clients\(\)/);
+  });
 });
 
 describe("VelociraptorClient.collectOnClient", () => {
@@ -659,6 +671,30 @@ describe("normalizeClientRow", () => {
   it("returns null for a row with no valid client id", () => {
     expect(normalizeClientRow({ client_id: "nope", os_info: { hostname: "h" } })).toBeNull();
     expect(normalizeClientRow({})).toBeNull();
+  });
+
+  it("carries the client's labels, casing-tolerantly, trimmed and deduped", () => {
+    expect(
+      normalizeClientRow({
+        client_id: "C.a",
+        os_info: { hostname: "h" },
+        labels: ["WORKSTATION", " dmz ", "dmz", "", 7],
+      }),
+    ).toEqual({ clientId: "C.a", hostname: "h", fqdn: "", labels: ["WORKSTATION", "dmz", "7"] });
+    expect(normalizeClientRow({ ClientId: "C.b", Labels: ["SERVER"] })).toEqual({
+      clientId: "C.b",
+      hostname: "",
+      fqdn: "",
+      labels: ["SERVER"],
+    });
+  });
+
+  // Same contract as lastSeen: an absent field stays absent. The inventory is a snapshot of up to
+  // 100,000 clients written to disk, and most of a fleet carries no label at all.
+  it("omits labels entirely when the row has none", () => {
+    expect(normalizeClientRow({ client_id: "C.c", os_info: { hostname: "h" } })).not.toHaveProperty("labels");
+    expect(normalizeClientRow({ client_id: "C.d", labels: ["", "  "] })).not.toHaveProperty("labels");
+    expect(normalizeClientRow({ client_id: "C.e", labels: "not-an-array" })).not.toHaveProperty("labels");
   });
 });
 

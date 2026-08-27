@@ -422,6 +422,15 @@ export interface ScopeApi {
   };
 }
 
+// public/js/dashboard-velo-labels.js — the include/exclude label filter on a bundle run.
+export interface VeloLabelsApi {
+  veloFleetLabels(clients: { clientId: string; labels?: string[] }[] | null): string[];
+  veloLabelSummaryText(kind: string, picked: string[]): string;
+  veloLabelPickerHtml(kind: string, labels: string[]): string;
+  veloPickedLabels(form: { querySelector(sel: string): unknown } | null, kind: string): string[];
+  veloWireLabelPickers(form: { querySelector(sel: string): unknown } | null): void;
+}
+
 // public/js/dashboard-velo-coverage.js — the per-artifact accounting line under a hunt job.
 export interface VeloCoverageApi {
   veloCoverageHtml(job: {

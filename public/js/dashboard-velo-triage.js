@@ -269,6 +269,8 @@
       : "600s (Velociraptor default)";
     // Expiry defaults to the bundle's own default (1 hour when unset); it's overridable per run.
     const defExpiry = bundle.expirySeconds || 3600;
+    // Only labels the cached fleet really carries; js/dashboard-velo-labels.js says why it is a picker.
+    const fleetLabels = veloFleetLabels(_veloClients);
     const expiryOpts = [
       [3600, "1 hour"],
       [86400, "1 day"],
@@ -300,14 +302,15 @@
           <input type="datetime-local" class="velo-ts-end" title="Collect until (UTC) — leave empty to keep collecting forward" data-safe-style="padding:4px" />
           <span data-safe-style="font-size:10px;color:var(--text-muted)">UTC</span>
         </span>
-        <input class="velo-inc" placeholder="include labels (comma-sep)" data-safe-style="flex:1;min-width:140px;padding:4px" />
-        <input class="velo-exc" placeholder="exclude labels (comma-sep)" data-safe-style="flex:1;min-width:140px;padding:4px" />
+        ${veloLabelPickerHtml("inc", fleetLabels)}
+        ${veloLabelPickerHtml("exc", fleetLabels)}
         <button class="velo-run-go">Run hunt</button>
         <span class="velo-run-msg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
       </div>
       <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Collection timeout: <strong>${timeoutNote}</strong> — set it on the bundle (<em>Edit</em>) for slow artifacts like THOR. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>
       <div class="velo-ts-preview" data-safe-style="font-size:11px;color:var(--text-dim);margin-top:4px"></div>`;
     form.style.display = "block";
+    veloWireLabelPickers(form);
     form.querySelector(".velo-run-go").onclick = () => veloRunBundle(id, form);
     const ts = form.querySelector(".velo-timescope");
     const custom = form.querySelector(".velo-ts-custom");
@@ -495,8 +498,8 @@
       Number(form.querySelector(".velo-expiry").value) || undefined;
     const os = form.querySelector(".velo-os").value;
     const minSeverity = form.querySelector(".velo-minsev").value;
-    const includeLabels = form.querySelector(".velo-inc").value;
-    const excludeLabels = form.querySelector(".velo-exc").value;
+    const includeLabels = veloPickedLabels(form, "inc");
+    const excludeLabels = veloPickedLabels(form, "exc");
     const go = form.querySelector(".velo-run-go");
     go.disabled = true;
     msg.textContent = "launching hunt…";

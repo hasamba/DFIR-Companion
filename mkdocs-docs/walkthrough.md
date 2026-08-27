@@ -57,7 +57,7 @@ To run a bundle:
 
 1. Connect the case you want the results in. **▶ Run** stays disabled until a case is selected — a collection has to land somewhere.
 2. Click **▶ Run** on the bundle.
-3. Set the run options: wait minutes, hunt expiry (1 hour / 1 day / 1 week), client OS, minimum severity, time scope, and include/exclude labels. The defaults are fine for a first pass.
+3. Set the run options: wait minutes, hunt expiry (1 hour / 1 day / 1 week), client OS, minimum severity, time scope, and the include/exclude label filters. The two label filters are pickers, not text boxes: each lists the labels your cached client inventory actually holds, and you can tick as many as you want. A label added in Velociraptor since your last snapshot appears once you press **↻ Refresh client list** on Settings → Velociraptor. The defaults are fine for a first pass.
 4. Click **Run hunt**.
 
 The hunt runs on every enrolled client unless you set a label or OS filter. After the wait, the Companion collects the results, imports them, and synthesizes. Click **Collect now** on the job card to pull early.
