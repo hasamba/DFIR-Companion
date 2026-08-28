@@ -275,6 +275,7 @@
     "hypothesisStore.ts": "analysis/ai",
     "imageLoader.ts": "analysis/privacy",
     "imageRedact.ts": "analysis/privacy",
+    "flatWindowsEvent.ts": "analysis/ingest",
     "importDetect.ts": "analysis/ingest",
     "importDetectSources.ts": "analysis/ingest",
     "importLock.ts": "analysis/ingest",

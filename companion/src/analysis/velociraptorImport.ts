@@ -39,7 +39,6 @@ import {
   parseHashes,
   cleanIp,
   addIoc,
-  overlayFlatWindowsEid,
   mergeRowIocs,
   firstStr,
   baseName,
@@ -65,6 +64,7 @@ import {
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
+import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
