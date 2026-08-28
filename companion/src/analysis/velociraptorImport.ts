@@ -67,6 +67,9 @@ import { mapBinaryRename } from "./binaryRenameImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
+import { isDetectionContentPath, isGeneratedModuleScript } from "./veloDetectionNoise.js";
+import { decodeHitContext } from "./yaraHitContext.js";
+import { amcacheMasquerade } from "./amcacheMasquerade.js";
 
 type Row = Record<string, unknown>;
 
@@ -380,16 +383,12 @@ function vrHashes(row: Row): { sha256?: string; md5?: string } {
   return { sha256, md5 };
 }
 
-// A compiled Sigma signature file (Velociraptor's ".yms" convention) — never an observed
-// indicator, since a hit naming one is a match against the RULE's own content, not evidence.
-const isYmsPath = (v: string): boolean => /\.yms$/i.test(v.trim());
-
 // Extract IOCs from every column of a row (used by generic + YARA rows).
 function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string; md5?: string } {
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   genericIocs(
-    pairs.filter(([, v]) => !isYmsPath(v)),
+    pairs.filter(([, v]) => !isDetectionContentPath(v)),
     sink,
   );
   const { sha256, md5 } = vrHashes(row);
@@ -605,7 +604,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"]);
   const procName = firstStr(row, ["Exe", "ProcessName", "ImageName"]);
   const pid = firstStr(row, ["Pid", "ProcessId"]);
-  if (path && !isYmsPath(path)) addIoc(sink, "file", path);
+  if (path && !isDetectionContentPath(path)) addIoc(sink, "file", path);
   if (procName) addIoc(sink, "process", baseName(procName));
 
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
@@ -613,6 +612,9 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   let description = `Velociraptor YARA: ${titleSafe(ruleName)}`;
   if (procName) description += ` - ${baseName(procName)}${pid ? ` (pid ${pid})` : ""}`;
   else if (path) description += ` - ${path}`;
+  // WHY the rule fired. Description only, never the IOC sink — see yaraHitContext.
+  const hit = decodeHitContext(str(getCI(row, "HitContext")));
+  if (hit) description += ` [Hit: ${hit}]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
   return {
@@ -707,6 +709,12 @@ function isDetectionArtifact(artifact: string): boolean {
 function mapDetection(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const v = rowVerdict(row)!; // guaranteed by classify()
   let severity = detectionSeverity(v);
+  // The rule pack graded WHAT the program is; it never compared the two names the row carries.
+  const masq = amcacheMasquerade(row);
+  if (masq) {
+    severity = worst(severity, "High");
+    if (!v.mitre.includes("T1036.005")) v.mitre.push("T1036.005");
+  }
   scrapeEvidence(row, sink); // pull URLs/IPs/hashes out of the matched command line / file content
   const label = detectionLabel(artifact);
 
@@ -750,12 +758,12 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ]) ||
     str(getPath(row, "FileInfo.OSPath")).trim() ||
     str(getPath(row, "Detection.PathName"));
-  // The matched file is itself a Sigma rule (.yms — Velociraptor's compiled Sigma signature
-  // format): the "hit" is a keyword match against the RULE's own text (tool names, MITRE ids,
-  // etc. embedded in the signature), not against attacker-controlled content. Treat as Info
-  // regardless of what keyword tripped detectionSeverity, so shipping/updating detection content
-  // doesn't itself read as a Critical/High finding.
-  if (isYmsPath(path)) severity = "Info";
+  // The matched file IS detection content — a Sigma/YARA rule, or a sample log a rule was written
+  // against. The "hit" is a keyword match against the rule's own text (tool names, MITRE ids) or
+  // against the name of a captured attack log, not against attacker-controlled content on this
+  // host. Treat as Info regardless of what keyword tripped detectionSeverity, so running detection
+  // tooling does not itself read as a Critical/High finding. See veloDetectionNoise.
+  if (isDetectionContentPath(path)) severity = "Info";
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). Track the source field name so
   // it can be shown as a label (Line: / Content: / CommandLine: / etc.). NOT Detection.Regex /
@@ -785,7 +793,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
-  if (path && !isYmsPath(path)) addIoc(sink, "file", path);
+  if (path && !isDetectionContentPath(path)) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
   // over structured process/path, which win over the matched content/line. Every field is labeled
@@ -813,13 +821,14 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
-    titleTag = processName || pipe || (path && !isYmsPath(path) ? baseName(path) : "");
+    titleTag = processName || pipe || (path && !isDetectionContentPath(path) ? baseName(path) : "");
     subject = parts.join(" - ");
   }
 
   let description = `${label}: ${titleSafe(v.title)}`;
   if (titleTag) description += ` — ${titleTag}`;
   if (subject) description += ` - ${subject}`;
+  if (masq) description += ` [masquerade: ${masq.onDisk} claims ${masq.original}]`;
   if (fileDeleted) description += ` [deleted]`;
   description = withHostSuffix(description, host).slice(0, 4000);
 
@@ -1642,6 +1651,15 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
         for (const m of ms) if (m && m.severity === "Info") m.severity = "Medium";
       }
     }
+
+    // A 4104 script block that is generated or signed module scaffolding is detection content, not
+    // attacker content — the rule matched the shape of compiled PowerShell. Applied after the
+    // detection-pack floor above, so it wins over it, but NEVER above Medium: the markers live in a
+    // comment or a variable name, so an attacker can put them in a script, and a rule that named a
+    // technique (High/Critical) must survive whatever its payload is wrapped in. The broad
+    // "this PowerShell looks odd" verdicts this exists to quiet are Medium and below by nature.
+    if (isGeneratedModuleScript(row))
+      for (const m of ms) if (m && m.severity !== "High" && m.severity !== "Critical") m.severity = "Info";
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
     const realArtifact = artifactName(row);
