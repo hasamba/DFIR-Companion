@@ -2150,6 +2150,126 @@ describe("parseVelociraptorJson — forensic artifacts lead with the action, not
     expect(e.timestamp.slice(0, 10)).toBe("2026-07-02");
   });
 
+  it("Prefetch → the binary's NAME is graded: mimikatz High, csc.exe Medium, notepad stays Info", () => {
+    const evil = one({
+      _Source: "Windows.Forensics.Prefetch",
+      Executable: "MIMIKATZ.EXE",
+      RunCount: 6,
+      ExecutablePath: "\\DEVICE\\HARDDISKVOLUME4\\TEMP\\MIMIKATZ.EXE",
+      LastRunTimes: ["2026-07-02T12:16:39Z"],
+    });
+    expect(evil.severity).toBe("High");
+    expect(evil.mitreTechniques ?? []).toContain("T1003.001");
+
+    const csc = one({
+      _Source: "Windows.Timeline.Prefetch.Improved",
+      Executable: "CSC.EXE",
+      RunCount: 6,
+      ExecutablePath: "\\DEVICE\\HARDDISKVOLUME4\\WINDOWS\\MICROSOFT.NET\\FRAMEWORK64\\V4.0.30319\\CSC.EXE",
+      LastRunTimes: ["2026-07-02T12:14:02Z"],
+    });
+    expect(csc.severity).toBe("Medium");
+    expect(csc.mitreTechniques ?? []).toContain("T1027.004");
+
+    const benign = one({
+      _Source: "Windows.Forensics.Prefetch",
+      Executable: "NOTEPAD.EXE",
+      RunCount: 42,
+      ExecutablePath: "\\DEVICE\\HARDDISKVOLUME4\\WINDOWS\\SYSTEM32\\NOTEPAD.EXE",
+      LastRunTimes: ["2026-07-02T09:00:00Z"],
+    });
+    expect(benign.severity).toBe("Info");
+  });
+
+  it("SQLiteHunter browsing sources route to the browser mapper, not the key=value dump", () => {
+    const visit = one({
+      _Source: "Generic.Forensic.SQLiteHunter/Chromium Browser History_Visits",
+      URL: "http://203.0.113.10/trigona.exe",
+      Title: "Index of /",
+      VisitTime: "2026-07-02T12:10:00Z",
+      OSPath: "C:\\Users\\v\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\History",
+    });
+    expect(visit.description).toContain("Visited");
+    expect(visit.description).toContain("http://203.0.113.10/trigona.exe");
+    expect(visit.description).toContain("Index of /");
+    expect(visit.description).not.toContain("OSPath=");
+    expect(visit.timestamp.slice(0, 10)).toBe("2026-07-02");
+
+    const cached = one({
+      _Source: "Generic.Forensic.SQLiteHunter/IE or Edge WebCacheV01_All Data",
+      EntryURL: "https://filetransfer.io/data-package/9f2c",
+      AccessedTime: "2026-07-02T12:20:00Z",
+    });
+    expect(cached.description).toContain("https://filetransfer.io/data-package/9f2c");
+    expect(cached.description).not.toContain("EntryURL=");
+  });
+
+  it("Windows.Forensics.SAM → the account and its RID, never the password hash blob", () => {
+    const created = one({
+      _Source: "Windows.Forensics.SAM/Parsed",
+      Key: "HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\\Users\\000003E9",
+      ParsedV: {
+        username: "svc_backup",
+        fullname: "",
+        comment: "",
+        lmpwd_hash: "aad3b435b51404eeaad3b435b51404ee",
+        ntpwd_hash: "31d6cfe0d16ae931b73c59d7e0c089c0",
+      },
+      ParsedF: {
+        Rid: 1001,
+        LoginCount: 3,
+        PasswordResetDate: "2026-07-02T11:59:00Z",
+        LastLoginDate: "2026-07-02T12:05:00Z",
+        Flags: ["PASSWORD_NOT_REQUIRED"],
+      },
+      Mtime: "2026-07-02T11:58:00Z",
+    });
+    // A custom RID makes this a custom account, not a creation EVENT — the row carries no creation
+    // time, so it must not say "created" and must not claim T1136.001. Low keeps it on the timeline.
+    expect(created.description).toContain("Local account: svc_backup (RID 1001)");
+    expect(created.description).not.toContain("Local account created");
+    expect(created.description).toContain("password not required");
+    expect(created.description).not.toContain("lmpwd_hash");
+    expect(created.description).not.toContain("31d6cfe0");
+    expect(created.severity).toBe("Low");
+    expect(created.mitreTechniques ?? []).not.toContain("T1136.001");
+    expect(created.timestamp.slice(0, 10)).toBe("2026-07-02");
+
+    // WITH a real creation timestamp, the same account IS an account-creation finding.
+    const madeDuringTheIntrusion = one({
+      _Source: "Windows.Forensics.SAM/CreateTimes",
+      Key: "HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\\Users\\000003EA",
+      ParsedV: { username: "helpdesk_adm" },
+      ParsedF: { Rid: 1002 },
+      CreateTime: "2026-07-02T13:41:00Z",
+    });
+    expect(madeDuringTheIntrusion.description).toContain("Local account created: helpdesk_adm (RID 1002)");
+    expect(madeDuringTheIntrusion.severity).toBe("Medium");
+    expect(madeDuringTheIntrusion.mitreTechniques ?? []).toContain("T1136.001");
+    expect(madeDuringTheIntrusion.timestamp.slice(0, 19)).toBe("2026-07-02T13:41:00");
+
+    // Numeric ParsedF.Flags are SAM ACB bits, not Active Directory userAccountControl bits.
+    const rawFlags = one({
+      _Source: "Windows.Forensics.SAM/Parsed",
+      Key: "HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\\Users\\000003EB",
+      ParsedV: { username: "kiosk" },
+      ParsedF: { Rid: 1003, Flags: 0x0214 }, // ACB_PWNOTREQ | ACB_NORMAL | ACB_PWNOEXP
+    });
+    expect(rawFlags.description).toContain("password not required");
+    expect(rawFlags.description).toContain("password never expires");
+
+    // The built-in Administrator exists on every host — it must not be graded as a created account.
+    const builtin = one({
+      _Source: "Windows.Forensics.SAM/Parsed",
+      Key: "HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\\Users\\000001F4",
+      ParsedV: { username: "Administrator" },
+      ParsedF: { Rid: 500, LoginCount: 0 },
+    });
+    expect(builtin.description).toContain("Local account: Administrator (RID 500)");
+    expect(builtin.severity).toBe("Info");
+    expect(builtin.mitreTechniques ?? []).not.toContain("T1136.001");
+  });
+
   it("LNK → Shortcut to the target path, not the nested LNK structure", () => {
     const e = one({
       _Source: "Windows.Forensics.Lnk",
