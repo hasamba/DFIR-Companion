@@ -445,6 +445,37 @@ const STRONG_CMD =
 const SUSP_CMD =
   /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
 
+// Overlay the base Windows event table's verdict onto an event built from a FLAT row — one that
+// carries an EventID but none of the wrapper mapWindows() needs (no Channel, no EventData), which is
+// what a custom VQL artifact produces when it SELECTs its own columns. Such a row falls through to a
+// generic key=value dump at Info, and Info never reaches a forensic timeline; the dump describes the
+// row well, it just cannot know what the event TYPE means. Raises only, via worst(), so a grade the
+// row already earned elsewhere always wins.
+//
+// WIN_EVENTS is keyed by ID ALONE — the same hazard POWERSHELL_EVENTS is split out to avoid — so the
+// row must first be shown to belong to a log this table describes. Two gates below do that: the log
+// name when the row states one, and the ID's own range when it does not.
+
+// The two logs WIN_EVENTS actually describes. A row naming any other one — Application, a vendor
+// Operational channel — is numbered by that log, which this table knows nothing about.
+const WIN_EID_LOG = /^(security|system)(\.evtx)?$/i;
+const LOG_NAME_KEYS = ["Channel", "LogName", "Log", "EventLog", "LogFile"];
+// IDs that name their own log, for a row that names none. No other provider issues a Security audit
+// ID, so 1102 and the 4624-5145 block are safe to grade from the number alone. The table's System
+// entries (104, 6005, 6006, 7034-7045) are NOT: any Application or Operational provider numbering its
+// own events collides with them, and a bare 104 would turn such a row into a High log-clear finding.
+const SELF_SCOPED_EID = (eid: number): boolean => eid === 1102 || (eid >= 4624 && eid <= 5145);
+
+export function overlayFlatWindowsEid(row: Row, m: MappedEvent): void {
+  const eid = Number(getCI(row, "EventID") ?? getCI(row, "EventId"));
+  const def = Number.isFinite(eid) ? WIN_EVENTS[eid] : undefined;
+  if (!def) return;
+  const log = firstStr(row, LOG_NAME_KEYS).trim();
+  if (log ? !WIN_EID_LOG.test(log) : !SELF_SCOPED_EID(eid)) return;
+  m.severity = worst(m.severity, def.severity);
+  for (const t of def.mitre ?? []) if (!m.mitre.includes(t)) m.mitre.push(t);
+}
+
 // Channel → short tool label for the description and source tag.
 function channelLabel(channel: string): string {
   if (/sysmon/i.test(channel)) return "Sysmon";
@@ -1450,8 +1481,16 @@ function detectVendor(rec: Row): string | undefined {
 
 // ───────────────────────────── IOC sink ─────────────────────────────
 
+// Strip C0/C1 control characters and DEL. A source that reads a raw NTFS alternate data stream hands
+// the stream's own terminator straight through — Velociraptor's Zone.Identifier parse yields
+// "https://github.com/\u0000" verbatim. Stored as-is, that value never matches the same URL from any
+// other tool, blinds grep over every export carrying it, and truncates in a C-string consumer.
+export function scrubCtl(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
+}
+
 export function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value: string): void {
-  const v = value.trim();
+  const v = scrubCtl(value);
   if (!v) return;
   const key = `${type}:${v.toLowerCase()}`;
   if (!sink.has(key)) sink.set(key, { type, value: v });

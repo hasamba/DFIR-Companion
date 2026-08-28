@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { isTrustedSystemImage } from "../../src/analysis/winProcessBaseline.js";
 import {
+  addIoc,
   parseSiemExport,
   extractRecords,
   isSuspiciousCmd,
@@ -1220,5 +1221,29 @@ describe("service installation (System 7045)", () => {
       elastic(svc({ ServiceName: "EvilSvc", ServiceFileName: "C:\\Windows\\Temp\\evil.exe" })),
     );
     expect(r.events[0].description).toContain("ServiceFileName=C:\\Windows\\Temp\\evil.exe");
+  });
+});
+
+// A NUL rides into an IOC whenever a source reads a raw NTFS alternate data stream — Velociraptor's
+// Zone.Identifier parse yields "https://github.com/\u0000" verbatim. Stored as-is, the value never
+// matches the same URL from any other tool, and it blinds grep over every export that carries it.
+describe("addIoc — control characters", () => {
+  it("strips a NUL terminator before the value becomes a key", () => {
+    const sink = new Map<string, SiemIoc>();
+    addIoc(sink, "url", "https://github.com/\u0000");
+    expect([...sink.values()].map((i) => i.value)).toEqual(["https://github.com/"]);
+  });
+
+  it("folds the scrubbed value onto the clean one instead of storing both", () => {
+    const sink = new Map<string, SiemIoc>();
+    addIoc(sink, "url", "https://github.com/");
+    addIoc(sink, "url", "https://github.com/\u0000");
+    expect(sink.size).toBe(1);
+  });
+
+  it("drops a value that is nothing but control characters", () => {
+    const sink = new Map<string, SiemIoc>();
+    addIoc(sink, "url", "\u0000\u0007");
+    expect(sink.size).toBe(0);
   });
 });

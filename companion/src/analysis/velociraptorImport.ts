@@ -39,6 +39,8 @@ import {
   parseHashes,
   cleanIp,
   addIoc,
+  scrubCtl,
+  overlayFlatWindowsEid,
   mergeRowIocs,
   firstStr,
   baseName,
@@ -346,7 +348,9 @@ function pickTime(row: Row): string {
   return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
 }
 
-const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "System.Computer", "Host", "ClientName"];
+// "ComputerName" is the spelling a custom VQL artifact uses when it SELECTs the host itself rather
+// than inheriting Velociraptor's own Fqdn column; without it those events reach the case unattributed.
+const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "ComputerName", "System.Computer", "Host", "ClientName"];
 function pickHost(row: Row): string {
   for (const k of HOST_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
@@ -1367,12 +1371,28 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   };
 }
 
+// Zone.Identifier zones: 3 = Internet, 4 = Restricted sites. Both mean the file crossed a network
+// boundary onto this host. 0-2 (local machine / intranet / trusted) did not, and stay Info.
+const REMOTE_ZONES = new Set(["3", "4"]);
+// Extensions that RUN, or that mount something that runs. A document arriving from the Internet is
+// ordinary; an executable, a script, or a mountable container is how a payload lands — so the zone
+// becomes a finding only for these, never for the zone alone.
+const PAYLOAD_EXT =
+  /\.(exe|dll|sys|scr|com|cpl|ocx|msi|msp|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|jar|py|pyw|lnk|reg|inf|chm|iso|img|vhd|vhdx)$/i;
+
+// The parsed ZoneId column, else the raw ADS text the artifact also carries ("[ZoneTransfer]…ZoneId=3").
+function downloadZone(row: Row): string {
+  const direct = str(getCI(row, "ZoneId")).trim();
+  if (direct) return direct;
+  return /zoneid\s*=\s*(\d+)/i.exec(str(getCI(row, "_ZoneIdentifierContent")))?.[1] ?? "";
+}
+
 function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   // Velociraptor renders NTFS device paths with a leading \\.\  — strip it for readability.
   const raw = str(getCI(row, "DownloadedFilePath"));
   const rawPath = (raw.startsWith("\\\\.\\") ? raw.slice(4) : raw).trim();
-  const hostUrl = str(getCI(row, "HostUrl")).trim();
-  const referrerUrl = str(getCI(row, "ReferrerUrl")).trim();
+  const hostUrl = scrubCtl(str(getCI(row, "HostUrl")));
+  const referrerUrl = scrubCtl(str(getCI(row, "ReferrerUrl")));
   const name = rawPath ? baseName(rawPath) : "";
 
   if (hostUrl && /^https?:\/\//i.test(hostUrl)) addIoc(sink, "url", hostUrl.slice(0, 300));
@@ -1388,7 +1408,9 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   const urlDisplay = hostUrl || "unknown source";
   // Prefix with "Velociraptor:" so the artifact-name injection in the main loop can insert
   // [_Source] right after "Velociraptor" (consistent with every other mapper).
+  const remotePayload = REMOTE_ZONES.has(downloadZone(row)) && PAYLOAD_EXT.test(rawPath);
   let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
+  if (remotePayload) description += " [executable content from a remote zone]";
   description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-download|${name.toLowerCase()}|${urlDisplay.toLowerCase()}|${host.toLowerCase()}`
@@ -1398,8 +1420,8 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return {
     timestamp: pickTime(row),
     description,
-    severity: "Info",
-    mitre: [],
+    severity: remotePayload ? "Medium" : "Info",
+    mitre: remotePayload ? ["T1105"] : [],
     aggKey,
     sources: ["Velociraptor"],
     ...(sha256 ? { sha256 } : {}),
@@ -1641,6 +1663,11 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       if (isDetectionArtifact(artifact)) {
         for (const m of ms) if (m && m.severity === "Info") m.severity = "Medium";
       }
+      // A Windows event can also arrive FLAT — a bare EventID with no System/EventData wrapper and no
+      // Channel for mapWindows() to key on. The key=value dump describes such a row well; what it
+      // cannot supply is what the event TYPE means, so an explicit-credential logon (4648) graded Info
+      // and never reached the timeline. Overlay the event table's verdict; it only ever raises.
+      for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
     }
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
