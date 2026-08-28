@@ -2987,6 +2987,166 @@ describe("parseVelociraptorJson — unrecognised detection-pack rows", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Findings from the 005-EtherRat/TukTuk scenario benchmark. Every case below is
+// a row shape that real Velociraptor collections produce and that graded, timed,
+// or attributed wrongly — each verified against the collection before it was fixed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A masquerading binary is a COPY of the tool it impersonates, so it carries the SOURCE file's
+// Mtime and gets a fresh Btime on this volume. pickTime() prefers Mtime, so all ten renamed
+// binaries in the benchmark timestamped 2025-12-05 — the image-build date of the cmd.exe that was
+// copied — while the intrusion ran on 2026-08-18. High-severity masquerading evidence sat eight
+// months off the incident timeline, where no analyst would look for it.
+describe("parseVelociraptorJson — BinaryRename drop time", () => {
+  function copiedRow(o: Record<string, unknown> = {}): object {
+    return {
+      _Source: "DetectRaptor.Windows.Detection.BinaryRename",
+      Fqdn: "DESKTOP-OPE297N",
+      OSPath: "C:\\Users\\v\\AppData\\Local\\Temp\\node.exe",
+      Name: "node.exe",
+      VersionInformation: { OriginalFilename: "Cmd.Exe", CompanyName: "Microsoft Corporation" },
+      Hash: { SHA256: "a".repeat(64) },
+      Mtime: "2025-12-05T02:54:10.1128473Z",
+      Ctime: "2025-12-05T02:54:10.1128473Z",
+      Btime: "2026-08-18T16:14:12.6207768Z",
+      ...o,
+    };
+  }
+
+  it("times a copied binary at Btime — when it appeared HERE, not the source file's Mtime", () => {
+    const e = parseVelociraptorJson(JSON.stringify([copiedRow()])).events[0];
+    expect(e.timestamp.startsWith("2026-08-18T16:14:12")).toBe(true);
+  });
+
+  it("keeps the picked time when Btime is not later — an in-place file was not copied in", () => {
+    const e = parseVelociraptorJson(JSON.stringify([copiedRow({ Btime: "2025-11-01T00:00:00Z" })])).events[0];
+    expect(e.timestamp.startsWith("2025-12-05T02:54:10")).toBe(true);
+  });
+
+  it("keeps the picked time when Btime is absent or unparseable", () => {
+    for (const Btime of [undefined, "", "not a date"]) {
+      const e = parseVelociraptorJson(JSON.stringify([copiedRow({ Btime })])).events[0];
+      expect(e.timestamp.startsWith("2025-12-05T02:54:10")).toBe(true);
+    }
+  });
+});
+
+// Custom VQL artifacts SELECT the columns they want, so a Windows event arrives as a flat row: a
+// bare EventID with no System/EventData wrapper and no Channel. classify() sends it to the generic
+// key=value dump, which grades Info — and Info never reaches the forensic timeline. The benchmark's
+// explicit-credential logons (EID 4648) were invisible to synthesis for exactly this reason.
+describe("parseVelociraptorJson — flat Windows EventID rows", () => {
+  function logonRow(o: Record<string, unknown> = {}): object {
+    return {
+      EventTimestamp: "2026-08-18T15:41:08.378353595Z",
+      EventID: 4648,
+      ComputerName: "DESKTOP-OPE297N",
+      TargetAccount: "vagrant",
+      TargetDomain: "DESKTOP-OPE297N",
+      InitiatingUser: "WIN-F0NC9RLBH8J$",
+      SourceIP: "127.0.0.1",
+      InitiatingProcess: "C:\\Windows\\System32\\svchost.exe",
+      ...o,
+    };
+  }
+  const parse = (o: Record<string, unknown> = {}): ReturnType<typeof parseVelociraptorJson> =>
+    parseVelociraptorJson(JSON.stringify([logonRow(o)]), {
+      artifact: "Custom.DFIR.RDPLateralMovementDetection/ExplicitCredentialLogons",
+    });
+
+  it("grades a known EventID from the Windows event table instead of Info", () => {
+    const e = parse().events[0];
+    expect(e.severity).not.toBe("Info");
+    expect(e.mitreTechniques).toContain("T1078");
+  });
+
+  it("keeps the row's own fields in the description — the table adds a grade, it does not replace detail", () => {
+    const e = parse().events[0];
+    expect(e.description).toContain("TargetAccount=vagrant");
+    expect(e.description).toContain("InitiatingUser=WIN-F0NC9RLBH8J$");
+  });
+
+  it("attributes the event to the host named in ComputerName", () => {
+    expect(parse().events[0].asset).toBe("DESKTOP-OPE297N");
+  });
+
+  it("leaves an unknown EventID alone rather than inventing a grade", () => {
+    expect(parse({ EventID: 999999 }).events[0].severity).toBe("Info");
+  });
+
+  it("never lowers a grade the row already earned", () => {
+    const e = parse({ EventID: 4624, Detection: "Mimikatz credential dump", Criticality: "High" }).events[0];
+    expect(["High", "Critical"]).toContain(e.severity);
+  });
+});
+
+// Review follow-up on the drop-time fix. The first version parsed Btime with Date.parse and emitted
+// `new Date(ms).toISOString()`, which lost Velociraptor's sub-millisecond precision and read a
+// timezone-less Btime in the SERVER's own zone — so one collection dated differently on a UTC host
+// and a UTC+3 host. Both cases below fail against that version on any machine.
+describe("parseVelociraptorJson — BinaryRename drop time is normalized, not round-tripped", () => {
+  function copiedRow(o: Record<string, unknown> = {}): object {
+    return {
+      _Source: "DetectRaptor.Windows.Detection.BinaryRename",
+      Fqdn: "DESKTOP-OPE297N",
+      OSPath: "C:\\Users\\v\\AppData\\Local\\Temp\\node.exe",
+      Name: "node.exe",
+      VersionInformation: { OriginalFilename: "Cmd.Exe", CompanyName: "Microsoft Corporation" },
+      Mtime: "2025-12-05T02:54:10Z",
+      ...o,
+    };
+  }
+
+  it("keeps Btime's sub-millisecond precision", () => {
+    const e = parseVelociraptorJson(JSON.stringify([copiedRow({ Btime: "2026-08-18T16:14:12.6207768Z" })]))
+      .events[0];
+    expect(e.timestamp).toBe("2026-08-18T16:14:12.6207768Z");
+  });
+
+  it("reads a timezone-less Btime as UTC, like every other time column", () => {
+    const e = parseVelociraptorJson(JSON.stringify([copiedRow({ Btime: "2026-08-18 16:14:12" })])).events[0];
+    expect(e.timestamp).toBe("2026-08-18T16:14:12Z");
+  });
+});
+
+// Review follow-up on the flat-EventID overlay. WIN_EVENTS is keyed by ID ALONE — the same hazard the
+// PowerShell table is split out to avoid — so grading every generic row that carries an EventID let
+// any Application or Operational provider's own event 104 become a High log-clear finding.
+describe("parseVelociraptorJson — flat EventID overlay is scoped to its own log", () => {
+  const parse = (row: Record<string, unknown>): ReturnType<typeof parseVelociraptorJson> =>
+    parseVelociraptorJson(JSON.stringify([{ ComputerName: "HOST1", Detail: "x", ...row }]), {
+      artifact: "Custom.Some.Artifact",
+    });
+
+  it("does not grade a System-range EventID that names no log", () => {
+    const e = parse({ EventID: 104 }).events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques ?? []).not.toContain("T1070.001");
+  });
+
+  it("grades that same EventID once the row names the System log", () => {
+    const e = parse({ EventID: 104, Channel: "System" }).events[0];
+    expect(e.severity).not.toBe("Info");
+    expect(e.mitreTechniques).toContain("T1070.001");
+  });
+
+  it("ignores a Security EventID reused by another log", () => {
+    expect(parse({ EventID: 4648, Channel: "Application" }).events[0].severity).toBe("Info");
+  });
+
+  it("still grades a Security EventID that names no log — no other provider issues one", () => {
+    expect(parse({ EventID: 4648 }).events[0].severity).not.toBe("Info");
+  });
+
+  // The grade itself belongs to the event table and moves as that table is tuned. What these assert
+  // is the gate: naming the log opens it, and a System-range id that names none stays shut.
+  it("reads the log from LogName as well as Channel", () => {
+    expect(parse({ EventID: 7045, LogName: "System" }).events[0].severity).not.toBe("Info");
+    expect(parse({ EventID: 7045 }).events[0].severity).toBe("Info");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Detection CONTENT matched as if it were attacker content.
 //

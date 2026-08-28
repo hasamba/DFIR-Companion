@@ -19,6 +19,7 @@ import {
   addIoc,
   worst,
   isObject,
+  normalizeTime,
   type MappedEvent,
   type SiemIoc,
 } from "./siemImport.js";
@@ -184,6 +185,27 @@ function renameAggKey(f: RenameFacts, host: string): string {
   );
 }
 
+// A masquerading binary is a COPY of the tool it impersonates. A copy carries the SOURCE file's
+// Mtime and gets a fresh Btime on this volume, and velociraptorImport's pickTime() prefers Mtime — so
+// the event anchors at the build date of the file that was copied, not at the moment the attacker
+// dropped it here. In one real collection every renamed binary timestamped eight months before the
+// intrusion, off the incident timeline entirely. When Btime is LATER than the picked time, Btime is
+// when this file appeared on this host, which is the moment the analyst is looking for.
+//
+// The value is EMITTED through normalizeTime — the same path pickTime() uses — and parsed only to
+// order the two. A Date round-trip would do neither job: it truncates Velociraptor's sub-millisecond
+// precision (…12.6207768Z becomes …12.620Z), and it reads a timezone-less Btime in the SERVER's own
+// zone, so the same collection would date differently on a UTC host and a UTC+3 host.
+function dropTime(row: Row, picked: string): string {
+  const btime = normalizeTime(str(getCI(row, "Btime")));
+  if (!btime) return picked;
+  const btimeMs = Date.parse(btime);
+  if (Number.isNaN(btimeMs)) return picked;
+  const pickedMs = Date.parse(picked);
+  if (!Number.isNaN(pickedMs) && btimeMs <= pickedMs) return picked;
+  return btime;
+}
+
 export function mapBinaryRename(
   row: Row,
   host: string,
@@ -197,7 +219,7 @@ export function mapBinaryRename(
   else if (f.md5) addIoc(sink, "hash", f.md5);
 
   return {
-    timestamp,
+    timestamp: dropTime(row, timestamp),
     description: withHostSuffix(describeRename(f), host).slice(0, 600),
     severity: gradeRename(f),
     // T1036.003 Rename System Utility when it is one, else plain T1036 Masquerading. A row that
