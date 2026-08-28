@@ -520,7 +520,7 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
   it("MFT detection: object verdict with explicit Criticality wins; nested $SI timestamp resolved", () => {
     const row = {
       Detection: { Name: "BAU Cloud Data Transfer", KeywordRegex: "OneDrive\\.exe", Criticality: "Low" },
-      OSPath: "\\\\.\\C:\\Users\\vagrant\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
+      OSPath: "\\\\.\\C:\\Users\\labuser\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
       SITimestamps: { Created0x10: "2021-12-09T17:28:24Z", LastModified0x10: "2026-06-03T08:29:42Z" },
     };
     const r = parseVelociraptorJson(JSON.stringify([row]));
@@ -592,7 +592,7 @@ describe("parseVelociraptorJson — Chainsaw rows shelled out via a Velociraptor
         Provider_attributes: { Name: "Microsoft-Windows-Eventlog" },
         Computer: "WIN-UK1GV882OK6",
       },
-      EventData: { SubjectUserName: "vagrant", SubjectDomainName: "DESKTOP-MNNUHHU" },
+      EventData: { SubjectUserName: "labuser", SubjectDomainName: "DESKTOP-MNNUHHU" },
       Authors: ["frack113"],
     };
   }
@@ -934,6 +934,57 @@ describe("parseVelociraptorJson — download rows (Zone.Identifier / BrowserDown
     expect(r.events[0].timestamp).toContain("2026-06-03");
   });
 
+  // The mark is often the only surviving record of how an intrusion started, so the zone and the
+  // file type have to reach the analyst. Grading every row Info kept fifteen ZoneId=3 rows — the
+  // whole attack toolkit — off the forensic timeline on a benchmark collection.
+  it("grades an Internet-zone script download Medium with T1204.002", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        downloadRow({
+          DownloadedFilePath: "\\\\.\\C:\\Users\\v\\Downloads\\Stage1-InitialAccess.ps1",
+          HostUrl: "",
+          ReferrerUrl: "",
+        }),
+      ]),
+    );
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].mitreTechniques).toContain("T1204.002");
+    expect(r.events[0].description).toContain("Internet zone");
+  });
+
+  it("grades an Internet-zone .iso Medium — mounting one strips the mark from what is inside", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([downloadRow({ DownloadedFilePath: "C:\\Users\\v\\Downloads\\invoice.iso" })]),
+    );
+    expect(r.events[0].severity).toBe("Medium");
+  });
+
+  it("leaves an ordinary Internet-zone archive at Info", () => {
+    const r = parseVelociraptorJson(JSON.stringify([downloadRow()]));
+    expect(r.events[0].severity).toBe("Info");
+    expect(r.events[0].mitreTechniques ?? []).toHaveLength(0);
+  });
+
+  it("leaves a trusted-zone executable at Info — the zone is what makes it a lead", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        downloadRow({ ZoneId: "2", DownloadedFilePath: "C:\\Users\\v\\Downloads\\setup.exe" }),
+      ]),
+    );
+    expect(r.events[0].severity).toBe("Info");
+  });
+
+  // The Zone.Identifier stream is NUL-terminated. Left in, that NUL rides into the URL indicator,
+  // where it silently defeats every later comparison against the same URL from another source.
+  it("strips the ADS terminator from the URL it records", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([downloadRow({ HostUrl: "https://evil.example.com/a.zip\u0000" })]),
+    );
+    expect(r.events[0].description).not.toContain("\u0000");
+    const url = r.iocs.find((i) => i.type === "url" && i.value.includes("evil.example.com"));
+    expect(url?.value).toBe("https://evil.example.com/a.zip");
+  });
+
   it("includes filename and HostUrl in description", () => {
     const desc = parseVelociraptorJson(JSON.stringify([downloadRow()])).events[0].description;
     expect(desc).toContain("$RHQQSXA.zip");
@@ -1087,7 +1138,7 @@ describe("parseVelociraptorJson — taskscheduler rows (Windows.System.TaskSched
       Mtime: "2026-06-03T08:41:08.5250412Z",
       Command: "regsvr32.exe",
       Arguments: "/s /u /i:C:\\TrigonaSim\\payloads\\icedid_artifact.bin scrobj.dll",
-      UserId: "WIN11\\vagrant",
+      UserId: "WIN11\\labuser",
       RunLevel: "LeastPrivilege",
       OSPath: "C:\\Windows\\System32\\Tasks\\SystemUpdate_BK24XM32",
       Authenticode: null,
@@ -1113,7 +1164,7 @@ describe("parseVelociraptorJson — taskscheduler rows (Windows.System.TaskSched
 
   it("surfaces the UserId in description; maps well-known SIDs to readable labels", () => {
     const domainDesc = parseVelociraptorJson(JSON.stringify([taskRow()])).events[0].description;
-    expect(domainDesc).toContain("WIN11\\vagrant");
+    expect(domainDesc).toContain("WIN11\\labuser");
 
     const systemDesc = parseVelociraptorJson(JSON.stringify([taskRow({ UserId: "S-1-5-18" })])).events[0]
       .description;
@@ -1154,7 +1205,7 @@ describe("parseVelociraptorJson — PersistenceSniper rows (Windows.Forensics.Pe
   function sniperRow(overrides: Record<string, unknown> = {}): object {
     return {
       _Source: "Windows.Forensics.PersistenceSniper",
-      Hostname: "DESKTOP-9RNKFB0",
+      Hostname: "DESKTOP-LAB01",
       Technique: "Scheduled Task",
       Classification: "MITRE ATT&CK T1053.005",
       Path: "\\MicrosoftEdgeUpdateTaskMachineCore{BDCC8C3F-6BAE-41A3-8C40-C1742ACC916B}",
@@ -3027,58 +3078,6 @@ describe("parseVelociraptorJson — flat Windows EventID rows", () => {
   it("never lowers a grade the row already earned", () => {
     const e = parse({ EventID: 4624, Detection: "Mimikatz credential dump", Criticality: "High" }).events[0];
     expect(["High", "Critical"]).toContain(e.severity);
-  });
-});
-
-// Windows.Analysis.EvidenceOfDownload reads the Zone.Identifier ADS verbatim, so its HostUrl keeps
-// the stream's NUL terminator ("https://github.com/\u0000"). A NUL in a stored IOC makes the value
-// unmatchable, blinds grep over any export, and can truncate the value in a C-string consumer.
-describe("parseVelociraptorJson — Zone.Identifier downloads", () => {
-  function downloadRow(o: Record<string, unknown> = {}): object {
-    return {
-      DownloadedFilePath: "\\\\.\\C:\\$Recycle.Bin\\S-1-5-21-1-2-3-1001\\$RIXCQPC.ps1",
-      Mtime: "2026-08-18T16:11:11.4578055Z",
-      FileHash: { SHA256: "4".repeat(64) },
-      ZoneId: "3",
-      HostUrl: "https://github.com/\u0000",
-      ReferrerUrl: null,
-      ...o,
-    };
-  }
-  const parse = (o: Record<string, unknown> = {}): ReturnType<typeof parseVelociraptorJson> =>
-    parseVelociraptorJson(JSON.stringify([downloadRow(o)]), {
-      artifact: "Windows.Analysis.EvidenceOfDownload",
-    });
-
-  it("strips the Zone.Identifier NUL terminator from every stored IOC", () => {
-    const r = parse();
-    expect(r.iocs.length).toBeGreaterThan(0);
-    for (const ioc of r.iocs) expect(ioc.value).not.toContain("\u0000");
-    expect(r.iocs.some((i) => i.value === "https://github.com/")).toBe(true);
-  });
-
-  it("keeps the NUL out of the description too", () => {
-    expect(parse().events[0].description).not.toContain("\u0000");
-  });
-
-  it("grades an executable or script downloaded from the Internet zone above Info", () => {
-    const e = parse().events[0];
-    expect(e.severity).toBe("Medium");
-    expect(e.mitreTechniques).toContain("T1105");
-  });
-
-  it("leaves a downloaded document at Info — the zone alone is not a finding", () => {
-    const e = parse({ DownloadedFilePath: "C:\\Users\\v\\Downloads\\invoice.pdf" }).events[0];
-    expect(e.severity).toBe("Info");
-    expect(e.mitreTechniques ?? []).not.toContain("T1105");
-  });
-
-  it("leaves an intranet-zone executable at Info — only zones 3 and 4 are remote", () => {
-    expect(parse({ ZoneId: "1" }).events[0].severity).toBe("Info");
-  });
-
-  it("escalates the restricted zone as well as the Internet zone", () => {
-    expect(parse({ ZoneId: 4 }).events[0].severity).toBe("Medium");
   });
 });
 
