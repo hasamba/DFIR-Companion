@@ -15,6 +15,11 @@
 #   contains: 'x'  |  ['a','b']     # case-insensitive substring; a list is OR
 #   equals:   'x'  |  ['a','b']     # case-insensitive exact match (per array element for list fields)
 #   regex:    'pat'   flags: 'i'    # JS regex against the field text
+#
+# BACKSLASHES: single-quoted YAML does not process escapes, so what you type is what the matcher
+# gets. In `contains` write the path exactly — '\system32\config\sam'. Double it ONLY inside
+# `regex`, where the REGEX needs the escape — '\\currentversion\\run'. Getting this backwards is
+# silent: the condition compiles, matches nothing, and reads as "not present in this case".
 #   exists:   true | false          # field present-and-non-empty / absent
 #
 # Matchable fields are the real ForensicEvent fields — an UNKNOWN field is a load error, never a
@@ -81,20 +86,34 @@ win_run_key:
 # gave.
 
 # ─────────────────────────── Credential access / LSASS ───────────────────────────
+# DUMP ARTIFACTS ONLY — deliberately not Sysmon 10 ACCESS. The built-in grader already decides an
+# EID 10 against lsass.exe, and it decides it correctly because it can see the SOURCE process: it
+# holds Defender / core-OS / EDR accessors at Low and grades everything else High. A tagger rule
+# cannot see that list, so re-grading access here can only overrule it in one direction — severity
+# is raise-only. This rule previously matched the bare strings 'lsass.exe' and 'GrantedAccess',
+# which every EID 10 carries, so it pushed every routine Defender scan of LSASS back to High and
+# undid that grading. Real dumpers also use routine-looking masks (Defender itself opens LSASS with
+# 0x1410), so no mask list separates them either. A dump FILE, by contrast, is unambiguous evidence
+# and is exactly the artifact/filename shape this ruleset is meant to add.
 win_lsass_access:
-  description: LSASS process access / dump indicators (Sysmon 10, dump filenames)
+  description: LSASS credential-dump artifact (a dump file named or written)
   any:
-    - { field: message, contains: ['lsass.exe', 'lsass.dmp', 'GrantedAccess', 'TargetImage: C:\\Windows\\System32\\lsass.exe'] }
-    - { field: path, contains: ['lsass.dmp'] }
+    - { field: message, contains: ['lsass.dmp', 'lsass.dump', 'lsass_dump'] }
+    - { field: description, contains: ['lsass.dmp', 'lsass.dump', 'lsass_dump'] }
+    - { field: path, contains: ['lsass.dmp', 'lsass.dump'] }
   tags: ['lsass', 'credential-access']
   mitre: ['T1003.001']
   severity: High
-  view: 'LSASS access'
+  view: 'LSASS dump artifacts'
 
 win_ntds_shadow:
   description: NTDS.dit / SAM / SYSTEM hive theft or shadow-copy staging
+  # NOT bare 'HarddiskVolumeShadowCopy': every backup product and every VSS writer logs that string
+  # on an ordinary snapshot, so it graded routine backups as credential-store theft. A shadow copy
+  # used to STEAL the hive still matches, because the path it reads names ntds.dit or config\sam.
   any:
-    - { field: message, contains: ['ntds.dit', 'ntdsutil', 'HarddiskVolumeShadowCopy', '\\system32\\config\\sam'] }
+    - { field: message, contains: ['ntds.dit', 'ntdsutil', '\system32\config\sam'] }
+    - { field: description, contains: ['ntds.dit', 'ntdsutil', '\system32\config\sam'] }
     - { field: path, contains: ['ntds.dit'] }
   tags: ['ntds', 'credential-access']
   mitre: ['T1003.003']
@@ -104,10 +123,13 @@ win_ntds_shadow:
 # ─────────────────────────── Lateral movement / remote access ───────────────────────────
 win_remote_logon:
   description: Remote interactive / network logon (Security 4624 type 3/10)
+  # Anchored on the DESCRIPTION, which the Windows mapper always renders. The rendered event message
+  # does not contain the string "4624" at all (the id lives in the System block, not the prose), and
+  # the tab literals this rule used to match on were never tabs — YAML single quotes do not process
+  # \t — so both halves of the old condition were unmatchable and the rule never fired once.
   all:
-    - { field: message, contains: ['4624'] }
-  any:
-    - { field: message, contains: ['Logon Type:		3', 'Logon Type:		10', 'LogonType 10', 'LogonType 3'] }
+    - { field: description, contains: ['(EID 4624)'] }
+    - { field: description, regex: 'LogonType=(?:3|10)\b', flags: 'i' }
   tags: ['remote-logon', 'lateral-movement']
   mitre: ['T1021']
   severity: Low
@@ -126,7 +148,8 @@ win_rdp:
 win_smb_admin_share:
   description: Admin share / PsExec-style service execution (ADMIN$, PSEXESVC)
   any:
-    - { field: message, contains: ['ADMIN$', 'PSEXESVC', '\\\\*\\C$', 'psexec'] }
+    - { field: message, contains: ['ADMIN$', 'PSEXESVC', '\\*\C$', 'psexec'] }
+    - { field: description, contains: ['ADMIN$', 'PSEXESVC', '\\*\C$', 'psexec'] }
     - { field: processName, contains: ['psexec', 'psexesvc'] }
   tags: ['smb-admin-share', 'lateral-movement']
   mitre: ['T1021.002', 'T1570']
@@ -157,8 +180,11 @@ win_suspicious_child:
 # ─────────────────────────── Impact — ransomware precursors ───────────────────────────
 win_shadow_copy_delete:
   description: Volume shadow copy / backup deletion (recovery inhibition)
+  # NOT bare 'bcdedit': `bcdedit /enum` is a routine admin query and graded High. The two bcdedit
+  # forms that actually inhibit recovery are named in full instead.
   any:
-    - { field: message, contains: ['vssadmin delete shadows', 'wmic shadowcopy delete', 'wbadmin delete', 'bcdedit', 'Delete Catalog'] }
+    - { field: message, contains: ['vssadmin delete shadows', 'wmic shadowcopy delete', 'wbadmin delete', 'Delete Catalog', 'recoveryenabled no', 'bootstatuspolicy ignoreallfailures'] }
+    - { field: description, contains: ['vssadmin delete shadows', 'wmic shadowcopy delete', 'wbadmin delete', 'Delete Catalog', 'recoveryenabled no', 'bootstatuspolicy ignoreallfailures'] }
   tags: ['shadow-copy-delete', 'impact']
   mitre: ['T1490']
   severity: High

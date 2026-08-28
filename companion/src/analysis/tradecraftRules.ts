@@ -1,7 +1,7 @@
 // Deterministic "attacker tradecraft" grading for Windows process command lines, harvested from a
 // corpus of real intrusions (The DFIR Report public reports 2020–2026, and Huntress "Rapid
-// Response" reports). This COMPLEMENTS
-// `isSuspiciousCmd` (siemImport) — which grades the classic credential-dump / log-clear patterns and
+// Response" reports). This COMPLEMENTS `isSuspiciousCmd` (siemImport, over the STRONG_CMD/SUSP_CMD
+// tables below) — which grades the classic credential-dump / log-clear patterns and
 // hardcodes a T1003 tag on a strong hit — by covering the OTHER high-confidence behaviours seen
 // across dozens of intrusions (Defender/AV tampering, recovery inhibition, reverse-tunnel C2,
 // Impacket-style lateral movement, cloud exfil, RMM/C2 tooling) AND carrying the CORRECT ATT&CK
@@ -20,6 +20,9 @@
 //
 // Pure + table-driven + unit-tested; reused by the Windows/Sysmon/EVTX/Chainsaw/Velociraptor path
 // (siemImport), the ECAR EDR feed and the memory-forensics importer. No AI.
+
+import { secretSpillSignal } from "./secretSpillRules.js";
+import { reconTechniques } from "./reconTechniques.js";
 
 export interface TradecraftRule {
   re: RegExp;
@@ -423,6 +426,20 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   { re: /\brm\b[^\n]*\.(?:tgz|tar\.gz|tar|zip|7z|rar|sql|dump)\b/i, weight: "weak", ids: ["T1070.004"] },
 ];
 
+// ───────────────────────────── Command-line pattern tables ─────────────────────────────
+// The two command-line markers, beside the rule table they belong with. They grade the same thing
+// TRADECRAFT_RULES grades — an executable payload — and living in the Windows-event importer put
+// them out of reach of every non-importer caller, `scriptBlockSignal` below included, which cannot
+// import siemImport without a cycle. The ORDINARY-vs-tradecraft split still holds: what a normal
+// host looks like (LOLBINS, NOISY_LOLBINS, SUSP_PATH, the benign actors) lives in
+// winProcessBaseline.ts. siemImport imports both.
+
+// Command-line markers strongly associated with attacker tradecraft → stronger bump.
+export const STRONG_CMD =
+  /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
+export const SUSP_CMD =
+  /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
+
 // The weight + ATT&CK techniques a process command line indicates, or null. Strong wins over weak;
 // techniques across all matching rules are unioned. `image` and `cmd` are concatenated so a rule can
 // anchor on either the binary or its arguments.
@@ -442,4 +459,42 @@ export function tradecraftSignal(
   }
   if (!strong && !weak) return null;
   return { weight: strong ? "strong" : "weak", mitre: [...mitre] };
+}
+
+// Grade a logged PowerShell SCRIPT BLOCK (Windows PowerShell/Operational EID 4104) the way the
+// tables above grade a command line. A script block arrives at Info because script-block logging is
+// telemetry, not a verdict — and Info sits below the forensic floor, so the AI never reads it. That
+// is right for the bulk of them and wrong for the ones carrying the intrusion: an IEX download
+// cradle or an in-memory `Invoke-Mimikatz` was the one executable payload in a case that NOTHING
+// adjudicated, while the command line beside it went through three tables. Runs the same three here.
+//
+// `weight` is null when only recon matched — discovery is tagged, never promoted on its own, exactly
+// as the process branch treats it. T1059.001 is stamped only on a block that EARNED a promotion:
+// every 4104 is PowerShell execution, so tagging them all would say nothing.
+//
+// Deliberately NOT given the LOLBIN or SUSP_PATH check: both test an IMAGE path, and a script block
+// has no image. Pure — no I/O, no mutation.
+export function scriptBlockSignal(
+  text: string,
+): { weight: "strong" | "weak" | null; mitre: string[] } | null {
+  const script = String(text ?? "").trim();
+  if (!script) return null;
+  const mitre = new Set<string>(reconTechniques("", script));
+  let weight: "strong" | "weak" | null = null;
+  if (STRONG_CMD.test(script)) {
+    weight = "strong";
+    mitre.add("T1003");
+  } else if (SUSP_CMD.test(script)) weight = "weak";
+  const tc = tradecraftSignal("", script);
+  if (tc) {
+    if (tc.weight === "strong" || !weight) weight = tc.weight;
+    for (const t of tc.mitre) mitre.add(t);
+  }
+  const spill = secretSpillSignal(script);
+  if (spill) {
+    weight ??= "weak";
+    for (const t of spill.mitre) mitre.add(t);
+  }
+  if (weight) mitre.add("T1059.001");
+  return weight === null && mitre.size === 0 ? null : { weight, mitre: [...mitre] };
 }

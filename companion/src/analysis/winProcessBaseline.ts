@@ -126,6 +126,39 @@ export const BENIGN_LSASS_ACCESSORS = new Set([
 export const SUSP_PATH =
   /\\(?:appdata|temp|downloads)\\|\\users\\public\\|\\programdata\\(?!microsoft\\windows defender\\)|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
+// Third-party EDR / AV agents that legitimately read LSASS (Sysmon 10) and inject inspection
+// threads (Sysmon 8) — the same behaviours Defender performs, from vendors Defender's own allowlist
+// naturally omits. On a CrowdStrike or SentinelOne estate EVERY endpoint produces this telemetry
+// continuously, so without them the highest-volume events in the case are graded credential access
+// and process injection. Keyed to an install directory each: the name alone is not the evidence.
+export const EDR_AGENTS: { name: string; dir: RegExp }[] = [
+  { name: "csfalconservice.exe", dir: /\\crowdstrike\\/i },
+  { name: "csfalconcontainer.exe", dir: /\\crowdstrike\\/i },
+  { name: "csagent.exe", dir: /\\crowdstrike\\/i },
+  { name: "sentinelagent.exe", dir: /\\sentinel\s?one\\/i },
+  { name: "sentinelstaticengine.exe", dir: /\\sentinel\s?one\\/i },
+  { name: "sentinelstaticenginescanner.exe", dir: /\\sentinel\s?one\\/i },
+  { name: "sophosedr.exe", dir: /\\sophos\b/i },
+  { name: "sophosfilescanner.exe", dir: /\\sophos\b/i },
+  { name: "ssphealthcheck.exe", dir: /\\sophos\b/i },
+  { name: "taniumclient.exe", dir: /\\tanium\b/i },
+  { name: "taniumdetectengine.exe", dir: /\\tanium\b/i },
+  { name: "cb.exe", dir: /\\(?:carbonblack|confer)\b/i },
+  { name: "repmgr.exe", dir: /\\(?:carbonblack|confer)\b/i },
+  { name: "repux.exe", dir: /\\(?:carbonblack|confer)\b/i },
+  { name: "cyserver.exe", dir: /\\(?:palo\s?alto|cortex|traps)\b/i },
+  { name: "cytray.exe", dir: /\\(?:palo\s?alto|cortex|traps)\b/i },
+  { name: "mfeesp.exe", dir: /\\(?:mcafee|trellix)\b/i },
+  { name: "mfemactl.exe", dir: /\\(?:mcafee|trellix)\b/i },
+  { name: "masvc.exe", dir: /\\(?:mcafee|trellix)\b/i },
+  { name: "elastic-agent.exe", dir: /\\elastic\b/i },
+  { name: "elastic-endpoint.exe", dir: /\\elastic\b/i },
+  { name: "qualysagent.exe", dir: /\\qualys\b/i },
+  { name: "rtvscan.exe", dir: /\\symantec\b/i },
+  { name: "ccsvchst.exe", dir: /\\symantec\b/i },
+  { name: "wdatpagent.exe", dir: /\\windows defender advanced threat protection\\/i },
+];
+
 // Where a trusted Windows binary actually lives. The benign sets above are keyed on the image
 // BASENAME, and a basename is the one thing an attacker controls for free: dropping a DLL-hijack
 // payload named svchost.exe into a directory SUSP_PATH does not cover (C:\Windows\, a subdirectory
@@ -150,4 +183,37 @@ export function isTrustedSystemImage(image: string): boolean {
   // where a masquerade at `C:/Users/Public/` slipped past SUSP_PATH for the very same reason.
   const win = p.replace(/\//g, "\\");
   return !SUSP_PATH.test(win) && SYSTEM_IMAGE_PATH.test(win);
+}
+
+// A third-party agent is trusted on name + system path + ITS OWN vendor directory. The vendor
+// directory is the part that cannot be borrowed: an attacker can name a file CSFalconService.exe
+// and can make a folder called CrowdStrike, but not inside Program Files or System32. Separator
+// folded first, for the same SIEM normalizations isTrustedSystemImage folds it for.
+function isBenignAgent(image: string): boolean {
+  const agent = EDR_AGENTS.find((a) => a.name === baseName(image).toLowerCase());
+  if (!agent) return false;
+  if (!/[\\/]/.test(image.trim())) return true; // basename-only feed — same trade as above
+  return isTrustedSystemImage(image) && agent.dir.test(image.replace(/\//g, "\\"));
+}
+
+function baseName(p: string): string {
+  return (
+    String(p ?? "")
+      .split(/[\\/]/)
+      .pop() ?? ""
+  ).trim();
+}
+
+/** A Sysmon 10 ProcessAccess to lsass.exe from this source is routine, not credential dumping. */
+export function isBenignLsassAccessor(image: string): boolean {
+  return BENIGN_LSASS_ACCESSORS.has(baseName(image).toLowerCase())
+    ? isTrustedSystemImage(image)
+    : isBenignAgent(image);
+}
+
+/** A Sysmon 8 CreateRemoteThread from this source is routine, not injection. */
+export function isBenignThreadSource(image: string): boolean {
+  return BENIGN_THREAD_SOURCES.has(baseName(image).toLowerCase())
+    ? isTrustedSystemImage(image)
+    : isBenignAgent(image);
 }
