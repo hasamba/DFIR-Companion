@@ -64,6 +64,7 @@ import {
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
+import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
@@ -351,7 +352,7 @@ function pickTime(row: Row): string {
   return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
 }
 
-const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "System.Computer", "Host", "ClientName"];
+const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "ComputerName", "System.Computer", "Host", "ClientName"];
 function pickHost(row: Row): string {
   for (const k of HOST_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
@@ -1668,6 +1669,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       if (isDetectionArtifact(artifact)) {
         for (const m of ms) if (m && m.severity === "Info") m.severity = "Medium";
       }
+      // A FLAT Windows row (bare EventID, no wrapper) also lands here — see overlayFlatWindowsEid.
+      for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
     }
 
     // A 4104 script block that is generated or signed module scaffolding is detection content, not
