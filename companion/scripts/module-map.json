@@ -129,6 +129,7 @@
     }
   },
   "flatAnalysisFiles": {
+    "accountUsageImport.ts": "analysis/ingest",
     "activityLog.ts": "analysis/workflow",
     "activityWaves.ts": "analysis/detect",
     "adversaryEmulation.ts": "analysis/intel",
@@ -330,6 +331,7 @@
     "mitreTactics.ts": "analysis/intel",
     "mobileLeappImport.ts": "analysis/ingest",
     "mobileSummary.ts": "analysis/workflow",
+    "motwDownload.ts": "analysis/ingest",
     "networkImport.ts": "analysis/ingest",
     "networkTokens.ts": "analysis/ingest",
     "notebookStore.ts": "analysis/workflow",
