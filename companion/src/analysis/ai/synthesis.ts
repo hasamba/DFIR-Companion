@@ -471,6 +471,33 @@ async function resolveHostsOrThrow(
 }
 
 /**
+ * Stop here if this run has been superseded or cancelled.
+ *
+ * THE SIGNAL IS NOT THE PROVIDER'S ALONE. `exclusive: true` on the synthesis job means a newer kick
+ * aborts this run's signal, drops its row and frees the case's single concurrency slot so the newer
+ * run can start — see JobManager.dropForExclusiveRegistration. That only works if this run then
+ * stops. Handing `signal` to the model call is not enough: a provider that finishes the call anyway
+ * (the claude-code provider completed a six-minute call after its signal was aborted) used to carry
+ * on into the fold, the PERSIST — over the newer run's work — the run record and the second-look
+ * sweep, which is another full synthesis of its own. Two top-level runs then held the whole case
+ * state at once, state loads went from 0.6 s to 140 s, and neither reached its terminal `ai_status`,
+ * which is what left the header pill stuck on "AI: synthesizing…" with no job left to explain it.
+ *
+ * Called at the stage boundaries rather than inside the steps: a step that has begun should finish
+ * or throw on its own, and the boundaries are where nothing is half-written.
+ *
+ * Throws an `AbortError`, which is what both callers already classify a cancellation by (see
+ * captureAnalysis.settleSynthesisRejection and routes/analystGate.ts) — so a superseded run reports
+ * "cancelled", never "synthesis failed".
+ */
+function throwIfSuperseded(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const err = new Error("synthesis superseded by a newer run");
+  err.name = "AbortError";
+  throw err;
+}
+
+/**
  * ABOVE 50 LINES ON PURPOSE (#453). Everything here is a single named step and a hand-off of its
  * result to the next one: load, prepare, decide-to-run, prompt, call, fold, finalize, persist,
  * record, notify, sweep. Each step's DETAIL lives in its own function or module; what is left is the
@@ -498,6 +525,7 @@ export async function synthesize(
   const observationsBlock = opts.observationsBlock ?? "";
   const synthProvider = opts.provider ?? ctx.opts.synthesisProvider ?? ctx.requireProvider("synthesis");
   ctx.warnOnPromptDrift(); // once per process: a stale synthesis-prompt override silently drops shipped capabilities
+  throwIfSuperseded(opts.signal); // a run superseded before it started spends no state load and no prompt
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
   const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
@@ -521,8 +549,14 @@ export async function synthesize(
   });
 
   const synthStart = Date.now();
+  throwIfSuperseded(opts.signal); // building the prompt takes seconds on a large case
   const call = await callSynthesisModel(ctx, caseId, state, synthProvider, prompt.userPrompt, opts);
   const { delta } = call;
+
+  // THE ONE THAT MATTERS. Everything below writes: the fold grades findings, persistSynthesis saves
+  // the case, and recordSynthesisOutcome appends a run to the manifest chain. A superseded run that
+  // gets past here overwrites the run that replaced it.
+  throwIfSuperseded(opts.signal);
 
   const {
     next: folded,
@@ -609,7 +643,11 @@ async function sweepSecondLook(
     aliasIndex: HostAliasIndex;
   },
 ): Promise<InvestigationState | null> {
-  if (opts.skipSecondLook || !ctx.opts.superTimelineStore) return null;
+  // Superseded AFTER the write, so this run's conclusions stand and are returned — but the sweep
+  // itself is an unbounded super-timeline query plus a second full synthesis, and the run that
+  // replaced this one is already doing that work. Skip it rather than throw: nothing is half-written
+  // here, and a throw would only be swallowed by the catch below as a "sweep failed" warning.
+  if (opts.skipSecondLook || opts.signal?.aborted || !ctx.opts.superTimelineStore) return null;
   try {
     const outcome = await runSecondLook(ctx, caseId, {
       // The sweep treats anything not in `promptEvents` as a candidate to re-discover; events
