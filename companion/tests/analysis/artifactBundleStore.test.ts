@@ -264,18 +264,22 @@ describe("ArtifactBundleStore", () => {
     expect(bigHogs?.filters?.["DetectRaptor.Generic.Detection.YaraFile"]).toContain("pagefile");
   });
 
-  it("ships Best Practice - Big Hogs with the slow artifacts and the shared bundle timeout", async () => {
+  it("ships Best Practice - Big Hogs with the slow artifacts and its own longer timeout", async () => {
     const bigHogs = await store.get("best-practice-big-hogs");
     expect(bigHogs).not.toBeNull();
     expect(bigHogs?.builtIn).toBe(true);
     expect(bigHogs?.artifacts).toEqual([
       "DetectRaptor.Generic.Detection.YaraFile",
+      "DetectRaptor.Generic.Detection.YaraWebshell",
+      "DetectRaptor.Windows.Detection.MFT",
       "Generic.Scanner.ThorZIP",
     ]);
-    expect(bigHogs?.timeoutSeconds).toBe(6000);
+    expect(bigHogs?.timeoutSeconds).toBe(7200);
     const bp = await store.get("best-practice");
     expect(bp?.artifacts).not.toContain("DetectRaptor.Generic.Detection.YaraFile");
     expect(bp?.artifacts).not.toContain("Generic.Scanner.ThorZIP");
+    expect(bp?.artifacts).not.toContain("DetectRaptor.Generic.Detection.YaraWebshell");
+    expect(bp?.artifacts).not.toContain("DetectRaptor.Windows.Detection.MFT");
   });
 
   it("sanitizes params — drops nested objects and coerces values to strings", async () => {

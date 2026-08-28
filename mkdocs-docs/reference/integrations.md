@@ -35,7 +35,7 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 
 ### Triage Bundles
 
-Settings → Velociraptor. Four bundles ship built-in — **Best Practice** (the quick-wins detection sweep), **Best Practice - Big Hogs** (the DetectRaptor YARA file scan and THOR, split out because both walk the whole disk and run far longer than the rest of Best Practice; same 6000s default timeout as the other bundles), **Super-Timeline Triage** (raw host artifacts; results go to the super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results. See [Step 3a of the walkthrough](../walkthrough.md) for the run procedure.
+Settings → Velociraptor. Four bundles ship built-in — **Best Practice** (the quick-wins detection sweep), **Best Practice - Big Hogs** (the DetectRaptor YARA file and webshell scans, the DetectRaptor MFT keyword scan, and THOR, split out because they all walk the whole disk and run far longer than the rest of Best Practice; 7200s default timeout, longer than the other bundles' 6000s), **Super-Timeline Triage** (raw host artifacts; results go to the super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results. See [Step 3a of the walkthrough](../walkthrough.md) for the run procedure.
 
 #### Third-party tools
 
