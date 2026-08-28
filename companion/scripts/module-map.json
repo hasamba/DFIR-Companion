@@ -129,6 +129,7 @@
     }
   },
   "flatAnalysisFiles": {
+    "accountUsageImport.ts": "analysis/ingest",
     "activityLog.ts": "analysis/workflow",
     "activityWaves.ts": "analysis/detect",
     "adversaryEmulation.ts": "analysis/intel",
@@ -214,6 +215,7 @@
     "deepPass.ts": "analysis/ai",
     "deepPassExecution.ts": "analysis/ai",
     "deobfuscate.ts": "analysis/privacy",
+    "detectionContent.ts": "analysis/ingest",
     "diagnostics.ts": "analysis/case",
     "diskWarn.ts": "analysis/case",
     "dropLog.ts": "analysis/case",
@@ -329,6 +331,7 @@
     "mitreTactics.ts": "analysis/intel",
     "mobileLeappImport.ts": "analysis/ingest",
     "mobileSummary.ts": "analysis/workflow",
+    "motwDownload.ts": "analysis/ingest",
     "networkImport.ts": "analysis/ingest",
     "networkTokens.ts": "analysis/ingest",
     "notebookStore.ts": "analysis/workflow",

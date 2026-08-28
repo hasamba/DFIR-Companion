@@ -66,6 +66,9 @@ import { mapPersistenceSniper } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
+import { gradeMotwDownload, zoneText } from "./motwDownload.js";
+import { isRuleFilePath, isDetectionContentHit } from "./detectionContent.js";
+import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
@@ -380,16 +383,18 @@ function vrHashes(row: Row): { sha256?: string; md5?: string } {
   return { sha256, md5 };
 }
 
-// A compiled Sigma signature file (Velociraptor's ".yms" convention) — never an observed
-// indicator, since a hit naming one is a match against the RULE's own content, not evidence.
-const isYmsPath = (v: string): boolean => /\.yms$/i.test(v.trim());
-
-// Extract IOCs from every column of a row (used by generic + YARA rows).
-function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string; md5?: string } {
+// Extract IOCs from every column of a row (used by generic + YARA rows). `alsoSkip` lets a caller
+// that has already read the row's VERDICT exclude the values that verdict shows are rule-pack
+// content — a judgement this function cannot make from a value alone.
+function collectRowIocs(
+  row: Row,
+  sink: Map<string, SiemIoc>,
+  alsoSkip?: (v: string) => boolean,
+): { sha256?: string; md5?: string } {
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   genericIocs(
-    pairs.filter(([, v]) => !isYmsPath(v)),
+    pairs.filter(([, v]) => !isRuleFilePath(v) && !alsoSkip?.(v)),
     sink,
   );
   const { sha256, md5 } = vrHashes(row);
@@ -468,6 +473,7 @@ type Kind =
   | "taskscheduler"
   | "persistenceSniper"
   | "binaryRename"
+  | "accountUsage"
   | "usn"
   | "mft"
   | "browser"
@@ -496,6 +502,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/taskscheduler/i.test(a)) return "taskscheduler";
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
   if (/binaryrename/i.test(a)) return "binaryRename";
+  if (/condensedaccountusage/i.test(a)) return "accountUsage";
 
   const rule = getCI(row, "Rule");
   if (
@@ -532,6 +539,10 @@ function classify(row: Row, artifact: string): Kind {
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
     return "taskscheduler";
+  // Windows.EventLogs.CondensedAccountUsage — an authentication event already condensed to flat
+  // columns, with no System/EventData to reach the eventlog branch. Checked BEFORE that branch's
+  // column fallbacks so it never lands in the generic mapper, which drops every column but the verb.
+  if (isAccountUsageRow(row)) return "accountUsage";
   // Windows.Forensics.PersistenceSniper wraps the PersistenceSniper PowerShell module verbatim —
   // Technique + Classification + "Access Gained" is that module's own column set and isn't reused
   // by any other artifact, so it's a safe signature even without a recognisable _Source.
@@ -605,7 +616,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"]);
   const procName = firstStr(row, ["Exe", "ProcessName", "ImageName"]);
   const pid = firstStr(row, ["Pid", "ProcessId"]);
-  if (path && !isYmsPath(path)) addIoc(sink, "file", path);
+  if (path && !isRuleFilePath(path)) addIoc(sink, "file", path);
   if (procName) addIoc(sink, "process", baseName(procName));
 
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
@@ -730,7 +741,6 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   // detection whose event sits only in the rendered Message).
   const inUse = getCI(row, "InUse");
   const fileDeleted = inUse === false || str(inUse).toLowerCase() === "false";
-  const { sha256, md5 } = collectRowIocs(row, sink);
   const message = rowMessage(row);
   const salient = salientFromMessage(message); // LOLBIN + command line out of a 4688-style message
   // The triggering FILE: include the Amcache/driver/registry path fields (EntryPath/EntryName/
@@ -750,12 +760,21 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ]) ||
     str(getPath(row, "FileInfo.OSPath")).trim() ||
     str(getPath(row, "Detection.PathName"));
-  // The matched file is itself a Sigma rule (.yms — Velociraptor's compiled Sigma signature
-  // format): the "hit" is a keyword match against the RULE's own text (tool names, MITRE ids,
-  // etc. embedded in the signature), not against attacker-controlled content. Treat as Info
-  // regardless of what keyword tripped detectionSeverity, so shipping/updating detection content
-  // doesn't itself read as a Critical/High finding.
-  if (isYmsPath(path)) severity = "Info";
+  // The matched file is DETECTION CONTENT — a Sigma/YARA rule, or a sample log bundled with one —
+  // and the rule that fired matched its NAME, not its location: the "hit" is a match against the
+  // rule pack's own text, not against attacker-controlled content. Treat as Info regardless of what
+  // the verdict claimed, so shipping or updating detection content doesn't itself read as a
+  // Critical/High finding. On one benchmark collection this was 54 of 111 MFT rows, 37 graded High.
+  const ruleContent = isDetectionContentHit(row, path);
+  if (ruleContent) severity = "Info";
+  // Scraped only now that the verdict has been read: on a rule-content row the matched path is the
+  // signature's own filename, and letting genericIocs harvest it hands the case 44 bogus file
+  // indicators named after the tools the rules hunt.
+  const { sha256, md5 } = collectRowIocs(
+    row,
+    sink,
+    ruleContent ? (v) => v.trim() === path.trim() : undefined,
+  );
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). Track the source field name so
   // it can be shown as a label (Line: / Content: / CommandLine: / etc.). NOT Detection.Regex /
@@ -785,7 +804,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
-  if (path && !isYmsPath(path)) addIoc(sink, "file", path);
+  if (path && !isRuleFilePath(path) && !ruleContent) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
   // over structured process/path, which win over the matched content/line. Every field is labeled
@@ -813,7 +832,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
-    titleTag = processName || pipe || (path && !isYmsPath(path) ? baseName(path) : "");
+    titleTag = processName || pipe || (path && !isRuleFilePath(path) && !ruleContent ? baseName(path) : "");
     subject = parts.join(" - ");
   }
 
@@ -1371,9 +1390,14 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   // Velociraptor renders NTFS device paths with a leading \\.\  — strip it for readability.
   const raw = str(getCI(row, "DownloadedFilePath"));
   const rawPath = (raw.startsWith("\\\\.\\") ? raw.slice(4) : raw).trim();
-  const hostUrl = str(getCI(row, "HostUrl")).trim();
-  const referrerUrl = str(getCI(row, "ReferrerUrl")).trim();
+  // The Zone.Identifier ADS is NUL-terminated — zoneText strips that (and any other control
+  // character) so the URL reaching the description AND the url indicator is comparable to the same
+  // URL seen in a proxy log or browser history. Left raw, the trailing NUL breaks every match.
+  const hostUrl = zoneText(str(getCI(row, "HostUrl")));
+  const referrerUrl = zoneText(str(getCI(row, "ReferrerUrl")));
   const name = rawPath ? baseName(rawPath) : "";
+  // The mark's whole point: which zone the file came from, and whether it is runnable.
+  const grade = gradeMotwDownload(str(getCI(row, "ZoneId")), name || rawPath);
 
   if (hostUrl && /^https?:\/\//i.test(hostUrl)) addIoc(sink, "url", hostUrl.slice(0, 300));
   if (referrerUrl && /^https?:\/\//i.test(referrerUrl)) addIoc(sink, "url", referrerUrl.slice(0, 300));
@@ -1385,10 +1409,13 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   if (sha256) addIoc(sink, "hash", sha256);
   else if (md5) addIoc(sink, "hash", md5);
 
-  const urlDisplay = hostUrl || "unknown source";
+  // A Zone.Identifier stream routinely records the zone with no URL (the browser wrote only
+  // ZoneId). Naming the zone beats "unknown source", which reads as "we know nothing".
+  const urlDisplay = hostUrl || (grade.zoneLabel ? `the ${grade.zoneLabel}` : "unknown source");
   // Prefix with "Velociraptor:" so the artifact-name injection in the main loop can insert
   // [_Source] right after "Velociraptor" (consistent with every other mapper).
   let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
+  if (hostUrl && grade.zoneLabel) description += ` (${grade.zoneLabel})`;
   description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-download|${name.toLowerCase()}|${urlDisplay.toLowerCase()}|${host.toLowerCase()}`
@@ -1398,8 +1425,8 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return {
     timestamp: pickTime(row),
     description,
-    severity: "Info",
-    mitre: [],
+    severity: grade.severity,
+    mitre: grade.mitre,
     aggKey,
     sources: ["Velociraptor"],
     ...(sha256 ? { sha256 } : {}),
@@ -1609,6 +1636,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapPersistenceSniper(row, host, rowSink, pickTime(row))];
     } else if (kind === "binaryRename") {
       ms = [mapBinaryRename(row, host, rowSink, pickTime(row))];
+    } else if (kind === "accountUsage") {
+      ms = [mapAccountUsage(row, artifact, host, rowSink)];
     } else if (kind === "usn") {
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {
