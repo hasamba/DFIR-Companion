@@ -427,62 +427,18 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
 ];
 
 // ───────────────────────────── Command-line pattern tables ─────────────────────────────
-// Moved here from siemImport (#385 file-size ratchet): these grade the same thing TRADECRAFT_RULES
-// grades — an executable payload — and living in the Windows-event importer put them out of reach of
-// every non-importer caller, `scriptBlockSignal` below included. siemImport imports them back.
-
-// LOLBins whose appearance as the image (Sysmon 1 / 4688) bumps a benign process-create.
-export const LOLBINS = new Set([
-  "powershell.exe",
-  "pwsh.exe",
-  "cmd.exe",
-  "wscript.exe",
-  "cscript.exe",
-  "mshta.exe",
-  "rundll32.exe",
-  "regsvr32.exe",
-  "wmic.exe",
-  "certutil.exe",
-  "bitsadmin.exe",
-  "msiexec.exe",
-  "installutil.exe",
-  "regasm.exe",
-  "regsvcs.exe",
-  "msbuild.exe",
-  "cmstp.exe",
-  "schtasks.exe",
-  "at.exe",
-  "sc.exe",
-  "net.exe",
-  "net1.exe",
-  "psexec.exe",
-  "psexesvc.exe",
-  "vssadmin.exe",
-  "bcdedit.exe",
-  "wevtutil.exe",
-  "reg.exe",
-  "curl.exe",
-  "ftp.exe",
-  "hh.exe",
-  "odbcconf.exe",
-]);
+// The two command-line markers, beside the rule table they belong with. They grade the same thing
+// TRADECRAFT_RULES grades — an executable payload — and living in the Windows-event importer put
+// them out of reach of every non-importer caller, `scriptBlockSignal` below included, which cannot
+// import siemImport without a cycle. The ORDINARY-vs-tradecraft split still holds: what a normal
+// host looks like (LOLBINS, NOISY_LOLBINS, SUSP_PATH, the benign actors) lives in
+// winProcessBaseline.ts. siemImport imports both.
 
 // Command-line markers strongly associated with attacker tradecraft → stronger bump.
 export const STRONG_CMD =
   /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
 export const SUSP_CMD =
   /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
-// Execution from a user-writable / staging directory is itself a weak masquerade/tradecraft signal
-// (#199) — a non-system binary launched from Temp / AppData / Downloads / Public / ProgramData, or
-// /tmp,/dev/shm,/var/tmp on *nix. Tested against the IMAGE path (not the whole command) to avoid
-// matching a path that merely appears as an argument. ProgramData recurs across the DFIR Report and
-// Huntress corpora as ransomware/dropper staging ground (msidxsvc.exe, locker.exe, sc-created
-// payloads, renamed PowerShell) — same Medium-bump tier as the other user-writable paths, not High.
-// EXCEPTION: `\ProgramData\Microsoft\Windows Defender\` is Defender's own legitimate install path
-// (MsMpEng.exe et al. really live there), so it's carved out — otherwise every benign Defender
-// EID 8/10 event would trip the masquerade override in BENIGN_THREAD_SOURCES/BENIGN_LSASS_ACCESSORS.
-export const SUSP_PATH =
-  /\\(?:appdata|temp|downloads)\\|\\users\\public\\|\\programdata\\(?!microsoft\\windows defender\\)|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
 // The weight + ATT&CK techniques a process command line indicates, or null. Strong wins over weak;
 // techniques across all matching rules are unioned. `image` and `cmd` are concatenated so a rule can

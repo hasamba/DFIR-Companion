@@ -41,6 +41,26 @@ describe("buildAttackPhases", () => {
     expect(phases[1].eventIds).toEqual(["e4", "e5"]);
   });
 
+  it("does not fragment an ordinary, evenly-paced work session into spurious phases", () => {
+    // A normal shift: one event every 2 minutes for 3 hours (90 events), never once exceeding
+    // the default 5-minute gap. This has no attack shape at all — it is one continuous stretch
+    // of routine activity — so buildAttackPhases must report it as ONE phase, not fragment it
+    // just because it ran a long time or carries no inferrable tactic. This is the false-positive
+    // counterpart to the "groups a dense burst" test above: a burst detector is only useful if it
+    // also stays quiet on the common case.
+    const events: ForensicEvent[] = Array.from({ length: 90 }, (_, i) => {
+      const minutes = i * 2;
+      const hh = String(9 + Math.floor(minutes / 60)).padStart(2, "0");
+      const mm = String(minutes % 60).padStart(2, "0");
+      return ev(`e${i}`, `2026-05-20T${hh}:${mm}:00Z`, { description: "routine file access" });
+    });
+    const phases = buildAttackPhases(events);
+    expect(phases).toHaveLength(1);
+    expect(phases[0].eventCount).toBe(90);
+    expect(phases[0].eventIds[0]).toBe("e0");
+    expect(phases[0].eventIds[89]).toBe("e89");
+  });
+
   it("sorts unordered input chronologically before clustering", () => {
     const phases = buildAttackPhases([
       ev("e3", "2026-05-20T14:03:00Z"),

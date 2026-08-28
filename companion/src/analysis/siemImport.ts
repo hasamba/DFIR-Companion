@@ -31,16 +31,15 @@ import {
 } from "./canonicalEvent.js";
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
-import {
-  tradecraftSignal,
-  scriptBlockSignal,
-  LOLBINS,
-  STRONG_CMD,
-  SUSP_CMD,
-  SUSP_PATH,
-} from "./tradecraftRules.js";
+import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
-import { isBenignLsassAccessor, isBenignThreadSource } from "./benignSources.js";
+import {
+  LOLBINS,
+  NOISY_LOLBINS,
+  SUSP_PATH,
+  isBenignLsassAccessor,
+  isBenignThreadSource,
+} from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 
 // Re-exported for the sibling importers, which already source their shared helpers
@@ -689,14 +688,18 @@ function winAccounts(ed: Row): string[] {
 }
 
 // Grade a process image + command line for attacker tradecraft: "strong" (mimikatz / lsadump /
-// log-clearing), "weak" (a LOLBin or an encoded / hidden / download command), or null. Exported so
-// the memory-forensics importer can bump a Volatility `cmdline` row the same way.
+// log-clearing), "weak" (an encoded / hidden / download command, a user-writable image path, or an
+// UNCOMMON LOLBin image), or null. Exported so the memory-forensics importer can bump a Volatility
+// `cmdline` row the same way.
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   const blob = `${image} ${cmd}`;
   if (STRONG_CMD.test(blob)) return "strong";
-  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob) || SUSP_PATH.test(image))
-    return "weak";
-  return null;
+  if (SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
+  // A LOLBin IMAGE on its own grades only when the binary is not itself an everyday one: cmd.exe and
+  // powershell.exe spawn continuously on a healthy endpoint, so the name proves nothing without a
+  // command-line or path signal to go with it, and grading it Medium buried the rare real one.
+  const base = baseName(image).toLowerCase();
+  return LOLBINS.has(base) && !NOISY_LOLBINS.has(base) ? "weak" : null;
 }
 
 export interface MappedEvent {

