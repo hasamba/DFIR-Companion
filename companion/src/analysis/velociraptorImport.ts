@@ -48,7 +48,6 @@ import {
   isObject,
   getCI,
   getPath,
-  normalizeTime,
   mitreFromText,
   type MappedEvent,
   type SiemEvent,
@@ -73,6 +72,9 @@ import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTit
 import { isDetectionContentPath, isGeneratedModuleScript } from "./veloDetectionNoise.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
+import { MAX_TIME_MS, MIN_TIME_MS, pickTime, vrTime } from "./veloRowTime.js";
+import { prefetchSignal } from "./prefetchExecution.js";
+import { isSamAccountRow, mapSamAccount } from "./samAccountImport.js";
 
 type Row = Record<string, unknown>;
 
@@ -234,123 +236,8 @@ function detectionSeverity({ title, critWord }: Verdict): Severity {
   return "Medium";
 }
 
-// ───────────────────────────── timestamps ─────────────────────────────
-
-// Velociraptor times arrive as RFC3339 strings, epoch numbers (`_ts` is collection-time
-// epoch seconds), or `{ SystemTime }` objects. Normalize any of them to UTC ISO.
-function vrTime(v: unknown): string {
-  if (v == null) return "";
-  if (typeof v === "number") {
-    if (!Number.isFinite(v) || v <= 0) return "";
-    const d = new Date(v > 1e12 ? v : v * 1000); // >1e12 ⇒ already ms
-    return Number.isNaN(d.getTime()) ? "" : d.toISOString();
-  }
-  if (isObject(v)) {
-    const st = getCI(v, "SystemTime") ?? getPath(v, "#attributes.SystemTime");
-    return st != null ? vrTime(st) : "";
-  }
-  return normalizeTime(str(v));
-}
-
-// The artifact's OWN time first; `_ts` (collection time) only as a last resort. Includes a few
-// nested forensic containers (MFT $SI/$FN, file-info, hit-context) and registry/app keys so the
-// detection artifacts that bury their time one level down still get a real timestamp.
-const TIME_KEYS = [
-  "System.TimeCreated.SystemTime",
-  "System.TimeCreated",
-  "EventTime",
-  "EventTimestamp",
-  "Mtime",
-  "Btime",
-  "Ctime",
-  "Created",
-  "CreationTime",
-  "LastWriteTime",
-  "KeyLastWriteTimestamp",
-  "KeyMTime",
-  "TimeGenerated",
-  "Timestamp",
-  "timestamp",
-  "time",
-  "StartTime",
-  "SITimestamps.LastModified0x10",
-  "SITimestamps.LastRecordChange0x10",
-  "SITimestamps.Created0x10",
-  "FNTimestamps.Created0x30",
-  // Bare NTFS $FILE_NAME / $STANDARD_INFO timestamps: Windows.NTFS.MFT (and USN) emit these as TOP-LEVEL
-  // columns on many server versions (not nested under SITimestamps/FNTimestamps), so an MFT row would
-  // otherwise land with NO time. Prefer $FN Created (0x30 — harder to timestomp) per analyst preference,
-  // then $SI Created, then last-modified / record-change / access.
-  "Created0x30",
-  "Created0x10",
-  "LastModified0x10",
-  "LastModified0x30",
-  "LastRecordChange0x10",
-  "LastAccess0x10",
-  // Windows.Forensics.Lnk buries the target's birth time under OSPath (the stat object), so the shortcut
-  // lands dated at its target's creation. Browser-history (visit) + registry (UserAssist/Shellbags) time
-  // columns whose exact names vary by version.
-  "OSPath.Btime",
-  "visit_time",
-  "last_visit_time",
-  "LastVisited",
-  "LastExecution",
-  "LastExecutionTime",
-  "last_run",
-  // Nested file-stat blocks: FileInfo.* (DetectRaptor PSReadline), Stat.* (the Generic PSReadline /
-  // QuickWins shape), so history-line + Amcache/LolDrivers (KeyMTime) rows land dated, not at epoch 0.
-  "FileInfo.Mtime",
-  "FileInfo.Ctime",
-  "FileInfo.Btime",
-  "Stat.Mtime",
-  "Stat.Ctime",
-  "Stat.Btime",
-  "HitContext.Mtime",
-  "@timestamp", // Elasticsearch-indexed rows (Kibana push) carry the event time here
-];
-
-// A column whose NAME denotes an event time — used by the fallback scan when no explicit TIME_KEY matched.
-const TIME_NAME_RE =
-  /(?:time|date|created|modif|written|changed|access|visit|execut|last.?run|last.?used|btime|mtime|ctime|atime|\bborn\b)/i;
-// Plausibility window for the fallback: skip FILETIME (1601) / Unix (1970) / epoch-0 "unset" sentinels
-// and absurd far-future values, so a blank timestamp field can't date an event to the year 1601.
-const MIN_TIME_MS = Date.parse("2000-01-01T00:00:00Z");
-const MAX_TIME_MS = Date.parse("2100-01-01T00:00:00Z");
-
-function pickTime(row: Row): string {
-  for (const k of TIME_KEYS) {
-    const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
-    const t = vrTime(v);
-    if (t) return t;
-  }
-  // Fallback: no known column matched (browser history, shellbags, userassist, and other raw artifacts
-  // whose time column varies by Velociraptor version). Scan every time-NAMED column (incl. one nesting
-  // level) for the EARLIEST plausible timestamp — a real artifact time beats the `_ts` collection time
-  // below, and a blank/sentinel field can't win.
-  let best = "",
-    bestMs = Infinity;
-  const scan = (obj: Row, prefix: string, depth: number): void => {
-    for (const [k, v] of Object.entries(obj)) {
-      if (v == null) continue;
-      if (isObject(v)) {
-        if (depth < 1) scan(v, `${prefix}${k}.`, depth + 1);
-        continue;
-      }
-      if (Array.isArray(v)) continue;
-      if (!TIME_NAME_RE.test(prefix + k)) continue;
-      const t = vrTime(v);
-      if (!t) continue;
-      const ms = Date.parse(t);
-      if (ms >= MIN_TIME_MS && ms <= MAX_TIME_MS && ms < bestMs) {
-        bestMs = ms;
-        best = t;
-      }
-    }
-  };
-  scan(row, "", 0);
-  if (best) return best;
-  return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
-}
+// ───────────────────────────── host ─────────────────────────────
+// Row TIMES live in veloRowTime.ts (pickTime / vrTime) — imported above.
 
 const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "ComputerName", "System.Computer", "Host", "ClientName"];
 function pickHost(row: Row): string {
@@ -479,6 +366,7 @@ type Kind =
   | "shimcache"
   | "shellbags"
   | "amcacheApp"
+  | "samAccount"
   | "amcacheFile"
   | "lnk"
   | "generic";
@@ -500,6 +388,17 @@ function classify(row: Row, artifact: string): Kind {
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
   if (/binaryrename/i.test(a)) return "binaryRename";
   if (/condensedaccountusage/i.test(a)) return "accountUsage";
+  // Both prefetch artifacts by name: Windows.Forensics.Prefetch AND Windows.Timeline.Prefetch.
+  // Improved, whose per-run-time rows do not always carry the Executable+RunCount pair the
+  // column fallback below looks for — so half the execution evidence reached the generic mapper.
+  // Excludes a DETECTION pack's own prefetch rules (DetectRaptor.…Detection.Prefetch): those rows
+  // carry a verdict, and the verdict must lead — the fast paths here all run before rowVerdict().
+  if (/prefetch/i.test(a) && !isDetectionArtifact(a)) return "prefetch";
+  // Generic.Forensic.SQLiteHunter collects every SQLite store on the box under ONE artifact name
+  // with a per-source suffix ("…/Chromium Browser History_Visits", "…/IE or Edge WebCacheV01_All
+  // Data"). Its browsing sources carry the same visited-URL columns Chrome/Edge.History does, so
+  // route them to the same mapper instead of letting a visit render as a key=value dump.
+  if (/sqlitehunter/i.test(a) && /histor|webcache|visit|urls?\b/i.test(a)) return "browser";
 
   const rule = getCI(row, "Rule");
   if (
@@ -540,6 +439,9 @@ function classify(row: Row, artifact: string): Kind {
   // columns, with no System/EventData to reach the eventlog branch. Checked BEFORE that branch's
   // column fallbacks so it never lands in the generic mapper, which drops every column but the verb.
   if (isAccountUsageRow(row)) return "accountUsage";
+  // Windows.Forensics.SAM — the local account database. Checked before the generic fallthrough so
+  // the account (and its RID) leads, instead of the decoded ParsedV hash blob the flattener emits.
+  if (isSamAccountRow(row)) return "samAccount";
   // Windows.Forensics.PersistenceSniper wraps the PersistenceSniper PowerShell module verbatim —
   // Technique + Classification + "Access Gained" is that module's own column set and isn't reused
   // by any other artifact, so it's a safe signature even without a recognisable _Source.
@@ -1160,8 +1062,10 @@ function mapBrowserHistory(
   sink: Map<string, SiemIoc>,
 ): MappedEvent {
   collectRowIocs(row, sink);
-  const url = firstStr(row, ["visited_url", "url", "URL", "Url"]);
-  const title = str(getCI(row, "title")).trim();
+  // SQLiteHunter names the same two fields differently per source (Chromium visits, the Edge/IE
+  // WebCacheV01 container, the Windows Activities cache), so every spelling is accepted here.
+  const url = firstStr(row, ["visited_url", "url", "URL", "Url", "EntryURL", "Uri", "AccessedURL"]);
+  const title = firstStr(row, ["title", "Title", "page_title", "PageTitle", "DisplayText"]);
   if (url) addIoc(sink, "url", url.slice(0, 300));
   const subject = title ? `"${title}" — ${url}` : url;
   return actionEvent({
@@ -1170,8 +1074,10 @@ function mapBrowserHistory(
     action: "Visited",
     subject: subject || "(url)",
     aggSubject: url,
-    time: firstTime(row, ["visit_time", "last_visit_time"]) || pickTime(row),
-    count: getCI(row, "visit_count"),
+    time:
+      firstTime(row, ["visit_time", "last_visit_time", "VisitTime", "AccessedTime", "LastAccessTime"]) ||
+      pickTime(row),
+    count: getCI(row, "visit_count") ?? getCI(row, "AccessCount"),
   });
 }
 
@@ -1263,7 +1169,7 @@ function mapPrefetch(row: Row, artifact: string, host: string): MappedEvent {
   const exe = firstStr(row, ["Executable"]);
   const exePath = firstStr(row, ["ExecutablePath", "ExecutableDosPath"]);
   const subject = exePath && exe ? `${exe} (${exePath})` : exe || exePath || firstStr(row, ["OSPath"]);
-  return actionEvent({
+  const event = actionEvent({
     artifact,
     host,
     action: "Executed (prefetch)",
@@ -1274,6 +1180,15 @@ function mapPrefetch(row: Row, artifact: string, host: string): MappedEvent {
     processName: exe || undefined,
     aggSubject: exe || exePath,
   });
+  // Prefetch carries no command line, so the binary's NAME is the only thing there is to grade — and
+  // ungraded it stays at Info, below the forensic floor, where synthesis never reads it. See
+  // prefetchExecution.ts for what earns Medium (dual-use) versus High (named offensive tooling).
+  const signal = prefetchSignal(exe, exePath);
+  if (signal) {
+    event.severity = signal.severity;
+    event.mitre = signal.mitre;
+  }
+  return event;
 }
 
 // Windows.Forensics.Lnk — a shortcut whose existence is evidence a TARGET was opened. The generic
@@ -1651,6 +1566,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapShimcache(row, artifact, host)];
     } else if (kind === "shellbags") {
       ms = [mapShellbag(row, artifact, host)];
+    } else if (kind === "samAccount") {
+      ms = [mapSamAccount(row, artifact, host)];
     } else if (kind === "amcacheApp") {
       ms = [mapAmcacheApp(row, artifact, host)];
     } else if (kind === "amcacheFile") {

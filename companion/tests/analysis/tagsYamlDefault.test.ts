@@ -204,3 +204,75 @@ describe("bundled data/tags.yaml — over real mapped Windows events", () => {
     expect(r.severity).toBe("High");
   });
 });
+
+// The two privilege-escalation rules added for WinPwn / RogueWinRM. The command-line grader already
+// covers these when a 4688/Sysmon 1 carries the arguments; these rules cover the shapes that do not
+// — a script-block or detection verdict naming the framework, and a tool found sitting on disk.
+describe("bundled data/tags.yaml — privilege escalation", () => {
+  const RULES = compileText(
+    readFileSync(fileURLToPath(new URL("../../data/tags.yaml", import.meta.url)), "utf8"),
+  );
+
+  function tag(p: Partial<ForensicEvent>): { severity: string; ruleIds: string[]; mitre: string[] } {
+    const event = {
+      id: "e1",
+      timestamp: "2026-07-02T12:00:00Z",
+      description: "d",
+      severity: "Info",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      ...p,
+    } as unknown as ForensicEvent;
+    const proposal = runTagger([event], RULES).perEvent[0];
+    const after = proposal ? applyToForensicEvent(event, proposal) : event;
+    return {
+      severity: after.severity,
+      ruleIds: proposal?.ruleIds ?? [],
+      mitre: after.mitreTechniques ?? [],
+    };
+  }
+
+  it("grades WinPwn's Add-Type AdjPriv token helper High with T1134.001", () => {
+    const r = tag({
+      description:
+        "PowerShell script block: Add-Type -MemberDefinition $signature -Name AdjPriv -Namespace AdjPri",
+    });
+    expect(r.ruleIds).toContain("privesc_token_manipulation");
+    expect(r.severity).toBe("High");
+    expect(r.mitre).toContain("T1134.001");
+  });
+
+  it("grades RogueWinRM found on disk High with T1068", () => {
+    const r = tag({
+      description: "File present: C:\\Users\\IEUser\\Tools\\PrivEsc\\RogueWinRM.exe",
+      path: "C:\\Users\\IEUser\\Tools\\PrivEsc\\RogueWinRM.exe",
+    });
+    expect(r.ruleIds).toContain("privesc_coercion_tooling");
+    expect(r.severity).toBe("High");
+    expect(r.mitre).toContain("T1068");
+  });
+
+  it("does NOT fire on a 4672 admin logon, which names the same privileges", () => {
+    const r = tag({
+      description:
+        "Special privileges assigned to new logon (EID 4672) - CORP\\admin - SeDebugPrivilege SeImpersonatePrivilege SeTcbPrivilege",
+      message:
+        "Special privileges assigned to new logon.\n\nPrivileges: SeDebugPrivilege\n SeImpersonatePrivilege\n SeTcbPrivilege",
+    });
+    expect(r.ruleIds).not.toContain("privesc_token_manipulation");
+    expect(r.severity).toBe("Info");
+  });
+
+  it("does NOT fire on ordinary WinRM configuration or a plain Add-Type", () => {
+    for (const description of [
+      "Process create: winrm.cmd quickconfig -q",
+      "PowerShell script block: Add-Type -AssemblyName System.Windows.Forms",
+      "File present: C:\\Program Files\\PotatoTracker\\tracker.exe",
+    ]) {
+      const r = tag({ description });
+      expect(r.ruleIds, description).not.toContain("privesc_token_manipulation");
+      expect(r.ruleIds, description).not.toContain("privesc_coercion_tooling");
+    }
+  });
+});

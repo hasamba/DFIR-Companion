@@ -366,6 +366,36 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
     ids: ["T1068"],
   },
 
+  // ───────────── Privilege Escalation: access-token manipulation (T1134) ─────────────
+  // WinPwn's privilege helper: a P/Invoke signature for AdjustTokenPrivileges compiled in memory
+  // with `Add-Type -MemberDefinition $signature -Name AdjPriv`, then called to switch on
+  // SeDebugPrivilege / SeImpersonatePrivilege before an LSASS read or a token theft. Compiling the
+  // token API at runtime is the tell; no administrative script has a reason to do it.
+  {
+    re: /\badd-type\b[^\n]*\b(?:adjpriv|adjusttokenprivileges|token_adjust_privileges)\b/i,
+    weight: "strong",
+    ids: ["T1134.001"],
+  },
+  { re: /\bwinpwn\b|@?\blast0x00\b/i, weight: "strong", ids: ["T1134.001", "T1059.001"] },
+  // The escalation privileges themselves, named in a command line or script block. Weak, not strong:
+  // a backup or debugging tool legitimately enables these, and the four listed are only the ones that
+  // ARE escalation primitives — SeBackupPrivilege / SeRestorePrivilege are deliberately absent
+  // because ordinary backup software turns them on. Never matched against an event MESSAGE: Security
+  // 4672 lists these same names on every administrator logon.
+  {
+    re: /\b(?:sedebugprivilege|seimpersonateprivilege|seassignprimarytokenprivilege|setcbprivilege)\b/i,
+    weight: "weak",
+    ids: ["T1134.001"],
+  },
+  // Service account → SYSTEM via an authentication-coercion trick. RogueWinRM binds the WinRM port
+  // (5985) and coerces the BITS service into authenticating to it; the Potato family and PrintSpoofer
+  // coerce DCOM and the print spooler the same way. Named tools with no legitimate use → strong.
+  {
+    re: /\b(?:roguewinrm|rogue_winrm|juicypotato|juicy_potato|sweetpotato|godpotato|badpotato|rottenpotato|hotpotato|localpotato|efspotato|printspoofer)\b/i,
+    weight: "strong",
+    ids: ["T1068", "T1134.002"],
+  },
+
   // ───────────── Linux / Unix tradecraft ─────────────
   // These rules existed only in bashHistoryImport's own CMD_RULES, so the SAME attacker command
   // graded Medium when it arrived via shell history and Info when the EDR (ECAR) reported it —
