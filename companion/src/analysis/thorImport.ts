@@ -10,6 +10,7 @@
 
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { maxEventsDefault } from "./siemImport.js";
+import { isDetectionToolLocation } from "./veloDetectionNoise.js";
 
 // Modules that report scan lifecycle / app status, not host findings — dropped by default.
 const LIFECYCLE_MODULES = new Set(["Init", "Startup", "Control", "ThorDB", "Report"]);
@@ -207,7 +208,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
       continue;
     }
 
-    const severity = LEVEL_SEVERITY[level] ?? "Medium";
+    let severity = LEVEL_SEVERITY[level] ?? "Medium";
     const timestamp = pickTimestamp(row);
     const description = describe(row);
     const sig = [
@@ -232,6 +233,19 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
       ? baseName(firstStr(row, ["process_name", "image_name"]))
       : undefined;
     const parentName = firstStr(row, ["parent"]) ? baseName(firstStr(row, ["parent"])) : undefined;
+
+    // Self-scan protection. THOR scans the whole disk, so it flags the DFIR collector itself
+    // (`Velociraptor.exe` → "Malicious process, YARA rule PSAttack_EXE"), the rule trees and
+    // EVTX-ATTACK sample corpus the collector unpacked into its Tools dir, and a cached copy of the
+    // simulation repo — all as Critical/High. None is the intrusion. Demote to Info when the FLAGGED
+    // artifact's own path or process is a detection-tooling LOCATION (never a bare filename — see
+    // isDetectionToolLocation). Reuses the same predicate the Velociraptor YARA path uses.
+    const flaggedLoc =
+      firstStr(row, ["process_name", "image_name", "image_path", "image_file", "file", "path"]) ||
+      (path ?? "");
+    if (severity !== "Info" && (isDetectionToolLocation(flaggedLoc) || isDetectionToolLocation(path ?? ""))) {
+      severity = "Info";
+    }
 
     const host = str(row.hostname).trim() || hostname;
 

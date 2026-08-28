@@ -69,7 +69,15 @@ import { networkTokens } from "./networkTokens.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
-import { isDetectionContentPath, isGeneratedModuleScript } from "./veloDetectionNoise.js";
+import {
+  isDetectionContentPath,
+  isGeneratedModuleScript,
+  isDetectionToolLocation,
+  isDetectionSampleHost,
+} from "./veloDetectionNoise.js";
+import { gradeYaraHit } from "./yaraGrade.js";
+import { ransomwareSignal } from "./ransomwareDetect.js";
+import { mapHijackLib } from "./hijackLibImport.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
 import { MAX_TIME_MS, MIN_TIME_MS, pickTime, vrTime } from "./veloRowTime.js";
@@ -99,7 +107,11 @@ export interface VelociraptorParseResult {
   hostname: string;
 }
 
-const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+// A field whose NAME marks its value as a software / assembly / schema version, not a network
+// address. `FileVersion:"11.0.49.0"` and `ProductVersion:"8.0.0.1"` are valid dotted quads, so octet
+// validation alone cannot reject them — the key is the only signal that they are not IOCs.
+const VERSION_KEY = /version|\bbuild\b|revision|assembly/i;
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 
 const SIGMA_LEVEL: Record<string, Severity> = {
@@ -287,7 +299,10 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
   for (const [k, v] of pairs) {
     const val = v.trim();
     const ip = cleanIp(val);
-    if (ip && (/ip|addr/i.test(k) || IPV4.test(val))) addIoc(sink, "ip", ip);
+    // Treat a bare dotted-quad as an IP only when the KEY is network-ish (ip/addr) or the value is a
+    // valid address AND the key is not a version field — otherwise `FileVersion:"11.0.49.0"` becomes
+    // a fake IP IOC (it did, in every eval case).
+    if (ip && (/ip|addr/i.test(k) || (IPV4.test(val) && !VERSION_KEY.test(k)))) addIoc(sink, "ip", ip);
     if (HEX_HASH.test(val)) addIoc(sink, "hash", val.toLowerCase());
   }
   return { sha256, md5 };
@@ -369,6 +384,7 @@ type Kind =
   | "samAccount"
   | "amcacheFile"
   | "lnk"
+  | "hijacklib"
   | "generic";
 
 function artifactName(row: Row): string {
@@ -399,6 +415,10 @@ function classify(row: Row, artifact: string): Kind {
   // Data"). Its browsing sources carry the same visited-URL columns Chrome/Edge.History does, so
   // route them to the same mapper instead of letting a visit render as a key=value dump.
   if (/sqlitehunter/i.test(a) && /histor|webcache|visit|urls?\b/i.test(a)) return "browser";
+  // DetectRaptor.Windows.Detection.HijackLibsMFT: a hijackable DLL located on disk. Distinctive
+  // `HijackLibInfo` shape, no `Detection` verdict — so rowVerdict skips it and, before this, it fell
+  // to the generic mapper (a flat file dump graded Medium by the detection floor, no T1574 mapping).
+  if (isObject(getCI(row, "HijackLibInfo"))) return "hijacklib";
 
   const rule = getCI(row, "Rule");
   if (
@@ -515,29 +535,49 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"]);
   const procName = firstStr(row, ["Exe", "ProcessName", "ImageName"]);
   const pid = firstStr(row, ["Pid", "ProcessId"]);
-  if (path && !isDetectionContentPath(path)) addIoc(sink, "file", path);
-  if (procName) addIoc(sink, "process", baseName(procName));
+
+  // Grade by context, not a flat High (self-scan → Info, volatile string → Low, heuristic → Medium,
+  // named malware on a real path → High). See yaraGrade.ts.
+  const grade = gradeYaraHit(ruleName, path, procName);
+
+  // The matched file is a real IOC only when it is a real dropped file — never the collector's own
+  // tooling, a rule-content file, or a volatile container (a page-file hit names no file to block).
+  if (path && !isDetectionContentPath(path) && grade.reason !== "self-scan" && !grade.volatile)
+    addIoc(sink, "file", path);
+  if (procName && grade.reason !== "self-scan") addIoc(sink, "process", baseName(procName));
 
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
 
   let description = `Velociraptor YARA: ${titleSafe(ruleName)}`;
-  if (procName) description += ` - ${baseName(procName)}${pid ? ` (pid ${pid})` : ""}`;
-  else if (path) description += ` - ${path}`;
-  // WHY the rule fired. Description only, never the IOC sink — see yaraHitContext.
-  const hit = decodeHitContext(str(getCI(row, "HitContext")));
-  if (hit) description += ` [Hit: ${hit}]`;
+  if (grade.volatile) {
+    // A string in a volatile container is not tied to one file — collapse every such hit on a host
+    // into ONE aggregated row so hundreds of page-file matches never crowd the timeline.
+    description += ` in a volatile memory container (page file / crash dump — string present, not proof of execution)`;
+  } else {
+    if (procName) description += ` - ${baseName(procName)}${pid ? ` (pid ${pid})` : ""}`;
+    else if (path) description += ` - ${path}`;
+    // WHY the rule fired. Description only, never the IOC sink — see yaraHitContext.
+    const hit = decodeHitContext(str(getCI(row, "HitContext")));
+    if (hit) description += ` [Hit: ${hit}]`;
+  }
+  if (grade.reason === "self-scan") description += ` [detection tooling / sample corpus]`;
+  else if (grade.reason === "heuristic-trusted") description += ` [heuristic rule on a signed OS binary]`;
+  else if (grade.reason === "heuristic") description += ` [heuristic rule — needs corroboration]`;
   description = withHostSuffix(description, host).slice(0, 600);
+
+  const aggKey = grade.volatile
+    ? `vr-yara|volatile-container|${host.toLowerCase()}`
+    : `vr-yara|${ruleName.toLowerCase()}|${(path || procName).toLowerCase()}|${host.toLowerCase()}`.slice(
+        0,
+        400,
+      );
 
   return {
     timestamp: pickTime(row),
     description,
-    severity: "High", // a YARA hit is a real detection verdict
+    severity: grade.severity,
     mitre,
-    aggKey:
-      `vr-yara|${ruleName.toLowerCase()}|${(path || procName).toLowerCase()}|${host.toLowerCase()}`.slice(
-        0,
-        400,
-      ),
+    aggKey,
     sources: ["Velociraptor"],
     ...(sha256 ? { sha256 } : {}),
     ...(md5 && !sha256 ? { md5 } : {}),
@@ -835,7 +875,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
         .join(" - ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
-  const severity: Severity = thor?.severity ?? SEV_WORDS[sevWord] ?? "Info";
+  let severity: Severity = thor?.severity ?? SEV_WORDS[sevWord] ?? "Info";
 
   const procName = thor?.processName || firstStr(row, ["Exe", "Image", "ProcessName"]);
   const parentName =
@@ -846,8 +886,23 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   // the collapse straight back.
   const path = thor ? (thor.path ?? "") : firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
 
+  // Self-scan: a THOR finding streamed through Velociraptor (the ThorZIP artifact) flags the
+  // collector binary itself and the cached simulation corpus, exactly as the standalone THOR importer
+  // does — demote on a detection-tooling LOCATION (never a bare filename). Same predicate as mapYara
+  // and thorImport, so the three ingest paths agree on what "the tool found itself" means.
+  if (severity !== "Info" && (isDetectionToolLocation(procName) || isDetectionToolLocation(path))) {
+    severity = "Info";
+  }
+
+  // Ransomware impact (T1486): a file encrypted to a family extension, or a ransom note. A raise
+  // only, and only when not already self-scan-demoted, so it never rescues a tool-tree hit.
+  const genRansom = severity !== "Info" || !isDetectionToolLocation(path) ? ransomwareSignal(path) : null;
+  const ransomMitre = genRansom ? genRansom.mitre : [];
+  if (genRansom) severity = worst(severity, genRansom.severity);
+
   // A THOR row names its own finding; the generic form would name the artifact plumbing instead.
   let description = thor?.description ?? `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`;
+  if (genRansom) description = `${description} — ${genRansom.note} (T1486)`.slice(0, 600);
   description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
   const aggKey =
@@ -877,6 +932,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
     ...(thor?.detail ? { message: thor.detail } : {}), // the dashboard's [details] panel body
   };
   if (thor?.mitre.length) m.mitre = [...thor.mitre];
+  for (const id of ransomMitre) if (!m.mitre.includes(id)) m.mitre.push(id);
   applyTimestomp(row, m); // MFT rows: flag $SI/$FN timestomping (T1070.006, → Medium)
   return m;
 }
@@ -908,14 +964,23 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
     600,
   );
   description = withHostSuffix(description, host).slice(0, 600);
-  const aggKey = `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  // Ransomware impact hides in the USN journal: files renamed to a family extension, and the ransom
+  // note created. Grade those High + T1486 so they survive the most-severe-first cap that otherwise
+  // buries them under hundreds of thousands of Info change records. See ransomwareDetect.
+  const ransom = ransomwareSignal(path);
+  // Mass encryption is ONE impact, not N: collapse every "file encrypted with .X" row on a host into
+  // a single counted High finding by the signal note (which names the extension / the note, not the
+  // file), so the timeline reads "encrypted with .trigona ×1240" instead of 1240 separate Highs.
+  const aggKey = ransom
+    ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
+    : `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
+        .replace(/\d+/g, "#")
+        .slice(0, 400);
   return {
     timestamp: pickTime(row),
-    description,
-    severity: "Info",
-    mitre: [],
+    description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
+    severity: ransom ? ransom.severity : "Info",
+    mitre: ransom ? [...ransom.mitre] : [],
     aggKey,
     sources: ["Velociraptor"],
     ...(path ? { path } : {}),
@@ -954,6 +1019,9 @@ function macbToken(present: Set<string>): string {
 function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
   const path =
     firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "FileName")).trim();
+  // Ransomware impact (T1486): an encrypted file (family extension) or a ransom note recorded in the
+  // MFT. Graded High so it survives the most-severe-first cap over hundreds of thousands of Info rows.
+  const ransom = ransomwareSignal(path);
   // distinct timestamp value → { si: letters, fn: letters }
   const byTime = new Map<string, { si: Set<string>; fn: Set<string> }>();
   const add = (stream: "si" | "fn", letter: string, key: string): void => {
@@ -979,14 +1047,18 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
       600,
     );
     description = withHostSuffix(description, host).slice(0, 600);
-    const aggKey = `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+    // A ransomware sweep touches thousands of MFT records — collapse them into one counted High per
+    // host + impact type (see mapUsn) instead of flooding the timeline with a High per encrypted file.
+    const aggKey = ransom
+      ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
+      : `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
+          .replace(/\d+/g, "#")
+          .slice(0, 400);
     events.push({
       timestamp: t,
-      description,
-      severity: "Info",
-      mitre: [],
+      description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
+      severity: ransom ? ransom.severity : "Info",
+      mitre: ransom ? [...ransom.mitre] : [],
       aggKey,
       sources: ["Velociraptor"],
       ...(path ? { path } : {}),
@@ -1556,6 +1628,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {
       ms = mapMft(row, artifact, host);
+    } else if (kind === "hijacklib") {
+      ms = [mapHijackLib(row, artifact, host, rowSink)];
     } else if (kind === "browser") {
       ms = [mapBrowserHistory(row, artifact, host, rowSink)];
     } else if (kind === "prefetch") {
@@ -1663,6 +1737,15 @@ function finalizeVrParse(
   opts: VelociraptorImportOptions,
 ): VelociraptorParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
+  // Self-scan: Sigma/Hayabusa run through Velociraptor also scan the bundled EVTX-ATTACK-SAMPLES
+  // corpus, whose events carry the sample author's computer name — demote to Info. See chainsawImport.
+  for (const ev of mapped) {
+    if (ev.severity !== "Info" && isDetectionSampleHost(ev.asset ?? "")) {
+      ev.severity = "Info";
+      ev.description =
+        `${ev.description} [detection sample corpus — ${ev.asset} not in this collection]`.slice(0, 600);
+    }
+  }
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,

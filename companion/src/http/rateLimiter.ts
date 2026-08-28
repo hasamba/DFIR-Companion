@@ -153,6 +153,8 @@ let _unlockLimiter: AttemptLimiter | null = null;
 let _aiLimiter: SlidingWindowLimiter | null = null;
 let _importLimiter: AttemptLimiter | null = null;
 let _importIpLimiter: SlidingWindowLimiter | null = null;
+let _detImportLimiter: SlidingWindowLimiter | null = null;
+let _detImportSweepTimer: NodeJS.Timeout | null = null;
 let _unlockSweepTimer: NodeJS.Timeout | null = null;
 let _aiSweepTimer: NodeJS.Timeout | null = null;
 let _importSweepTimer: NodeJS.Timeout | null = null;
@@ -182,6 +184,24 @@ export function getAiLimiter(): SlidingWindowLimiter {
     _aiSweepTimer.unref?.();
   }
   return _aiLimiter;
+}
+
+/** Per-case budget for the DETERMINISTIC import routes (/import, /import-file). These parse and
+ *  grade evidence with no LLM call — the 20/min AI limiter blocked bulk folder imports (a real
+ *  Velociraptor collection is 20-60 files; a replay of these four cases lost 44 of 124 files to
+ *  HTTP 429). Kept SEPARATE and generous so a folder import completes, while still bounding a
+ *  runaway loop. The AI cost an import can trigger (a background re-synthesis) is not metered here
+ *  because it is already bounded elsewhere: synthesis is an EXCLUSIVE per-case job that coalesces,
+ *  so N rapid imports never buy N LLM calls. Default 300/min, override with DFIR_IMPORT_RATE_MAX. */
+export function getDeterministicImportLimiter(): SlidingWindowLimiter {
+  if (!_detImportLimiter) {
+    const max = Math.max(1, Number(process.env.DFIR_IMPORT_RATE_MAX) || 300);
+    const limiter = new SlidingWindowLimiter(max, 60_000);
+    _detImportLimiter = limiter;
+    _detImportSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _detImportSweepTimer.unref?.();
+  }
+  return _detImportLimiter;
 }
 
 /** Failed-decrypt limiter for POST /cases/import/encrypted. Separate from the unlock limiter
@@ -271,6 +291,7 @@ export function resetLimiters(): void {
   if (_aiSweepTimer) clearInterval(_aiSweepTimer);
   if (_importSweepTimer) clearInterval(_importSweepTimer);
   if (_importIpSweepTimer) clearInterval(_importIpSweepTimer);
+  if (_detImportSweepTimer) clearInterval(_detImportSweepTimer);
   if (_loginSweepTimer) clearInterval(_loginSweepTimer);
   if (_loginIpSweepTimer) clearInterval(_loginIpSweepTimer);
   if (_oidcStartSweepTimer) clearInterval(_oidcStartSweepTimer);
@@ -278,10 +299,12 @@ export function resetLimiters(): void {
   _aiSweepTimer = null;
   _importSweepTimer = null;
   _importIpSweepTimer = null;
+  _detImportSweepTimer = null;
   _unlockLimiter = null;
   _aiLimiter = null;
   _importLimiter = null;
   _importIpLimiter = null;
+  _detImportLimiter = null;
   _loginSweepTimer = null;
   _loginIpSweepTimer = null;
   _loginLimiter = null;

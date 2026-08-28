@@ -584,13 +584,13 @@ describe("parseVelociraptorJson — Chainsaw rows shelled out via a Velociraptor
       Severity: "critical",
       Status: "stable",
       "Rule Group": "Log Tampering",
-      Computer: "WIN-UK1GV882OK6",
+      Computer: "WIN-CASEHOST7",
       Channel: "Security",
       EventID: 1102,
       SystemData: {
         EventID: 1102,
         Provider_attributes: { Name: "Microsoft-Windows-Eventlog" },
-        Computer: "WIN-UK1GV882OK6",
+        Computer: "WIN-CASEHOST7",
       },
       EventData: { SubjectUserName: "labuser", SubjectDomainName: "DESKTOP-MNNUHHU" },
       Authors: ["frack113"],
@@ -605,7 +605,7 @@ describe("parseVelociraptorJson — Chainsaw rows shelled out via a Velociraptor
     // Cleared" and default to Medium — this MUST come from the row's own "critical".
     expect(e.severity).toBe("Critical");
     expect(e.description).toContain("Chainsaw/Log Tampering: Security Audit Logs Cleared");
-    expect(e.asset).toBe("WIN-UK1GV882OK6");
+    expect(e.asset).toBe("WIN-CASEHOST7");
     expect(e.sources).toEqual(["Chainsaw"]); // corroboration stays keyed to the real tool, not "Velociraptor"
   });
 
@@ -625,7 +625,7 @@ describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () =>
   it("a YARA hit extracts only the matched file — NOT the rule's Meta references / HitContext bytes", () => {
     const row = {
       _Source: "DetectRaptor.Generic.Detection.YaraFile",
-      OSPath: "C:\\pagefile.sys",
+      OSPath: "C:\\ProgramData\\Adobe\\arm.exe",
       Mtime: "2026-06-12T11:12:41Z",
       Rule: "SUSP_Download_Temp_Rundll",
       Tags: ["POWERSHELL", "DOWNLOAD"],
@@ -639,7 +639,7 @@ describe("parseVelociraptorJson — IOC hygiene & extra time keys (#102)", () =>
     };
     const r = parseVelociraptorJson(JSON.stringify([row]));
     expect(r.iocs.filter((i) => i.type === "file")).toHaveLength(1);
-    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("pagefile.sys"))).toBe(true);
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("arm.exe"))).toBe(true);
     expect(r.iocs.some((i) => i.type === "hash")).toBe(false); // no Meta/HitContext hashes
     expect(r.iocs.some((i) => i.type === "url")).toBe(false); // no Meta reference URLs
   });
@@ -3431,11 +3431,12 @@ describe("parseVelociraptorJson — generated PowerShell module bodies", () => {
 //
 // Velociraptor base64-encodes the bytes surrounding the match into `HitContext`. Scraping the whole
 // row for IOCs is wrong and stays wrong (#102) — but the matched string itself is the one thing that
-// tells an analyst WHY the rule fired, and on a pagefile scan it is the only evidence there is.
+// tells an analyst WHY the rule fired. (A hit inside a volatile container — pagefile / crash dump —
+// is graded and aggregated separately by yaraGrade; these cases use a normal dropped-file path.)
 describe("parseVelociraptorJson — YARA HitContext", () => {
   const yaraRow = (hitContext: string) => ({
     _Source: "DetectRaptor.Generic.Detection.YaraFile",
-    OSPath: "C:\\pagefile.sys",
+    OSPath: "C:\\Users\\v\\Downloads\\cradle.bin",
     Mtime: "2026-08-26T13:52:04Z",
     Rule: "SIGNATURE_BASE_SUSP_Powershell_IEX_Download_Cradle",
     Meta: { author: "Florian Roth", source_url: "https://github.test/rules/x.yar" },
@@ -3469,7 +3470,37 @@ describe("parseVelociraptorJson — YARA HitContext", () => {
   it("adds no hit marker when HitContext decodes to nothing readable", () => {
     const r = parseVelociraptorJson(JSON.stringify([yaraRow("AAECAwQF")]));
     expect(r.events[0].description).not.toContain("[Hit:");
-    expect(r.events[0].description).toContain("C:\\pagefile.sys");
+    expect(r.events[0].description).toContain("cradle.bin");
+  });
+});
+
+// A YARA string match inside a volatile memory container (page file / crash dump) is graded Low and
+// collapsed into ONE row per host — a swapped-out string is not proof a named file executed. Before
+// this, every such hit was a separate High, and 60-75% of a case's High findings were page-file noise.
+describe("parseVelociraptorJson — YARA volatile-container grading", () => {
+  const pagefileHit = (rule: string) => ({
+    _Source: "DetectRaptor.Generic.Detection.YaraFile",
+    OSPath: "C:\\pagefile.sys",
+    Mtime: "2026-08-26T13:52:04Z",
+    Rule: rule,
+  });
+
+  it("grades a page-file hit Low and never High", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pagefileHit("RANSOM_Akira")]));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.events[0].description).toMatch(/volatile memory container/i);
+  });
+
+  it("collapses many page-file hits on one host into a single row", () => {
+    const rows = ["RANSOM_Akira", "MALWARE_Cobalt", "SUSP_X"].map(pagefileHit);
+    const r = parseVelociraptorJson(JSON.stringify(rows));
+    const volatile = r.events.filter((e) => /volatile memory container/i.test(e.description));
+    expect(volatile).toHaveLength(1);
+  });
+
+  it("does not extract the page file as a threat file IOC", () => {
+    const r = parseVelociraptorJson(JSON.stringify([pagefileHit("MALWARE_X")]));
+    expect(r.iocs.some((i) => i.type === "file" && i.value.includes("pagefile"))).toBe(false);
   });
 });
 

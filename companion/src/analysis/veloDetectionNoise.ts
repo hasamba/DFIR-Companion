@@ -60,6 +60,72 @@ export function isDetectionContentPath(value: string): boolean {
   return SHARED_CONTENT_EXT.test(path) && DETECTION_CONTENT_LOCATION.test(path);
 }
 
+// A file or process that lives inside the DETECTION TOOLING itself, matched regardless of extension.
+// isDetectionContentPath is deliberately narrow — it only demotes rule-CONTENT files (.yml/.evtx …)
+// so a real payload dropped in an odd place is never lost. This one is broader on purpose, for a
+// different caller: a YARA/THOR SCAN that walks the collector's own working tree, its unpacked
+// sample corpus, the collector binary itself, or a cached copy of a simulation repo, and reports
+// them as host findings. Every marker is a location the tooling creates or the analyst supplies —
+// never a name an intruder picks on the victim host — and the only effect is to drop a hit to Info.
+//
+//   [/\]Velociraptor[/\]  the collector's own install / unpacked-tool tree
+//                          (`C:\Program Files\Velociraptor\…`, incl. `\Tools\tmp*\chainsaw\…`)
+//   EVTX-ATTACK-SAMPLES    the Sigma test corpus bundled with those tools
+//   Digital-Forensic-      the eval / training simulation corpus, downloaded to the host as a repo
+//     Artifacts               (its cached copy is not the intrusion under investigation)
+//
+// CAUTION (why this is narrow): every marker must be a signal the ATTACKER CANNOT CHOOSE. A bare
+// `velociraptor.exe`, or a lone `\sigma\` / `\chainsaw\` / `\signatures\` / `\Tools\tmp` directory
+// component, is attacker-controllable — a real payload dropped in `C:\Users\x\sigma\evil.dll` would
+// be hidden from the forensic view. So we require the collector ROOT context (`\Velociraptor\`,
+// which the real THOR row carries as `image_file: C:\Program Files\Velociraptor\Velociraptor.exe`),
+// the published sample-corpus name, or the named repo — never a component that can appear anywhere.
+const DETECTION_TOOL_LOCATION = /[/\\]Velociraptor[/\\]|EVTX-ATTACK|Digital-Forensic-Artifacts/i;
+
+export function isDetectionToolLocation(value: string): boolean {
+  const v = (value || "").trim();
+  if (!v) return false;
+  return DETECTION_TOOL_LOCATION.test(v);
+}
+
+// A volatile memory-backed container: the page/hibernation/swap files, a crash or process memory
+// dump, or the NTFS metadata streams a full-volume YARA scan walks. A rule string found HERE proves
+// only that the bytes existed in memory or metadata once — not that a named file executed. Kept
+// (Low, and aggregated by the caller) rather than dropped, because a family's strings in the page
+// file can still corroborate a finding built on stronger evidence.
+const VOLATILE_CONTAINER =
+  /\\pagefile\.sys$|\\hiberfil\.sys$|\\swapfile\.sys$|MEMORY\.DMP$|\.dmp$|\\\$(?:MFT|MFTMirr|LogFile|UsnJrnl|Extend|Secure|BadClus)\b|\bunallocated\b/i;
+
+export function isVolatileContainer(value: string): boolean {
+  const v = (value || "").trim();
+  if (!v) return false;
+  return VOLATILE_CONTAINER.test(v);
+}
+
+// Hostnames that belong to a public detection SAMPLE corpus, not to any real endpoint. When a
+// Velociraptor artifact shells out to Chainsaw/Hayabusa, the tool scans the EVTX-ATTACK-SAMPLES set
+// it unpacked next to its own binaries alongside the host's real logs — and those sample events
+// carry the sample author's computer name, not the collection host's. Across the four eval
+// collections this one host supplied ~110 detections per case (22-76% of all Chainsaw hits),
+// including a Critical "Security Audit Logs Cleared", every one of them on a machine that was never
+// part of the investigation.
+//
+// WIN-UK1GV882OK6 is the canonical EVTX-ATTACK-SAMPLES computer name — a fixed, published identifier,
+// so matching it is not a demotion on a signal an intruder picks (renaming a victim host to the
+// public sample name would be self-defeating). Kept as a set so the list is easy to extend as other
+// well-known sample hosts surface; the value can be widened by DFIR_SAMPLE_HOSTS (comma-separated).
+const KNOWN_SAMPLE_HOSTS = new Set(
+  ["WIN-UK1GV882OK6", ...(process.env.DFIR_SAMPLE_HOSTS ?? "").split(",")]
+    .map((h) => h.trim().toUpperCase())
+    .filter(Boolean),
+);
+
+export function isDetectionSampleHost(host: string): boolean {
+  const h = (host || "").trim().toUpperCase();
+  if (!h) return false;
+  return KNOWN_SAMPLE_HOSTS.has(h);
+}
+
 // Windows compiles a cdxml module (NetSecurity, NetTCPIP, DnsClient, Defender, …) into PowerShell
 // when it is imported, and logs the generated body to EID 4104 like any other script. The generated
 // code is dense with the punctuation, dynamic invocation and alias forms that broad "suspicious

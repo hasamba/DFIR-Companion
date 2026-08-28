@@ -47,6 +47,7 @@ import {
   isScriptBlockTextKey,
   type HayabusaRecord,
 } from "./scriptBlockFragments.js";
+import { isDetectionSampleHost } from "./veloDetectionNoise.js";
 
 type Row = Record<string, unknown>;
 
@@ -310,6 +311,15 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
     const r = mapRecord(rec, details, iocSink, fullMessage);
     if (!r) continue;
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
+    // Self-scan: when Hayabusa is run through a Velociraptor artifact it also scans the bundled
+    // EVTX-ATTACK-SAMPLES corpus, whose events carry the sample author's computer name (85% of the
+    // rows in one eval file). Demote them to Info so the sample corpus does not reappear as findings
+    // now that this file routes here natively instead of through the Velociraptor importer.
+    if (r.mapped.severity !== "Info" && isDetectionSampleHost(r.host)) {
+      r.mapped.severity = "Info";
+      r.mapped.description =
+        `${r.mapped.description} [detection sample corpus — ${r.host} not in this collection]`.slice(0, 600);
+    }
     mapped.push(r.mapped);
   }
 

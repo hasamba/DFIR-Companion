@@ -122,4 +122,17 @@ describe("AI rate limiter coverage", () => {
     const statuses = await fireManyGet("/cases/nosuch/synth-meta", 30);
     expect(statuses.filter((s) => s === 429).length).toBe(0);
   });
+
+  // A real Velociraptor collection is 20-60 files. The deterministic import routes must NOT hit the
+  // 20/min AI cap — that lost 44 of 124 files in a full-corpus replay. They have their own generous
+  // limiter (getDeterministicImportLimiter, default 300/min), so 25 rapid imports never 429.
+  it("does NOT 429 POST /cases/:id/import at the old 20/min AI cap (bulk folder import)", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/import", 25, { filename: "x.json", text: "[]" });
+    expect(statuses.filter((s) => s === 429).length).toBe(0);
+  });
+
+  it("does NOT 429 POST /cases/:id/import-file at the old 20/min AI cap", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/import-file", 25, { path: "/nonexistent.json" });
+    expect(statuses.filter((s) => s === 429).length).toBe(0);
+  });
 });

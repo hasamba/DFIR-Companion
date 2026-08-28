@@ -191,7 +191,7 @@ function flatSigmaFirewallRule(): object {
     Severity: "medium",
     Status: "experimental",
     "Rule Group": "Sigma",
-    Computer: "WIN-UK1GV882OK6",
+    Computer: "WIN-CASEHOST7",
     Channel: "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
     EventID: 2097,
     SystemData: {
@@ -201,7 +201,7 @@ function flatSigmaFirewallRule(): object {
       TimeCreated_attributes: { SystemTime: "2025-12-05T02:43:41.735285Z" },
       EventRecordID: 229,
       Channel: "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
-      Computer: "WIN-UK1GV882OK6",
+      Computer: "WIN-CASEHOST7",
     },
     EventData: { RuleName: "SSHD Port OpenSSH (chocolatey package: openssh)", LocalPorts: "22" },
     Authors: ["frack113"],
@@ -216,14 +216,14 @@ function flatInfoRdsEvent(): object {
     Severity: "info",
     Status: "stable",
     "Rule Group": "Microsoft RDS Events - User Profile Disk",
-    Computer: "WIN-UK1GV882OK6",
+    Computer: "WIN-CASEHOST7",
     Channel: "Microsoft-Windows-User Profile Service/Operational",
     EventID: 5,
     SystemData: {
       EventID: 5,
       Provider_attributes: { Name: "Microsoft-Windows-User Profiles Service" },
       TimeCreated_attributes: { SystemTime: "2025-12-05T02:41:39.012742Z" },
-      Computer: "WIN-UK1GV882OK6",
+      Computer: "WIN-CASEHOST7",
     },
     EventData: { File: "C:\\Users\\defaultuser0\\ntuser.dat" },
     Authors: ["Catarina de Faria"],
@@ -241,7 +241,7 @@ describe("parseChainsawReport — flat Chainsaw/Sigma JSON (Velociraptor-shelled
       "Chainsaw/Sigma: Uncommon New Firewall Rule Added In Windows Firewall Exception List",
     );
     expect(e.severity).toBe("Medium");
-    expect(e.asset).toBe("WIN-UK1GV882OK6");
+    expect(e.asset).toBe("WIN-CASEHOST7");
     expect(e.sources).toEqual(["Chainsaw"]);
     expect(e.timestamp).toBe("2025-12-05T02:43:41.735285Z"); // the event's own EventTime
   });
@@ -260,7 +260,7 @@ describe("parseChainsawReport — flat Chainsaw/Sigma JSON (Velociraptor-shelled
     const r = parseChainsawReport(text);
     expect(r.detections).toBe(2);
     expect(r.events).toHaveLength(2);
-    expect(r.hostname).toBe("WIN-UK1GV882OK6");
+    expect(r.hostname).toBe("WIN-CASEHOST7");
   });
 
   it("does not mistake a nested-document Chainsaw record for the flat shape", () => {

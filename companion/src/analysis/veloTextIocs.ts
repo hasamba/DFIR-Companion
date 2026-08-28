@@ -20,6 +20,11 @@ export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
   for (const m of text.matchAll(TEXT_IPV4)) {
+    // A dotted quad written right after a version marker is a version string, not an address:
+    // `choco install openssh --version 8.0.0.1`, `$script:ModuleVersion = '1.0.0.0'`. Octet bounds
+    // alone cannot tell these apart (their octets are all ≤ 255), so read the ~14 chars before it.
+    const pre = text.slice(Math.max(0, (m.index ?? 0) - 14), m.index ?? 0).toLowerCase();
+    if (/version\s*['"=:\s]*$/.test(pre)) continue;
     const ip = cleanIp(m[0]);
     if (ip) addIoc(sink, "ip", ip);
   }

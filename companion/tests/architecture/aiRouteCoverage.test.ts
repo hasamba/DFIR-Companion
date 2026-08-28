@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AI_LIMIT_PATHS, AI_LIMIT_PATTERNS } from "../../src/composition/aiRateLimit.js";
+import { AI_LIMIT_PATHS, AI_LIMIT_PATTERNS, IMPORT_LIMIT_PATHS } from "../../src/composition/aiRateLimit.js";
 
 /**
  * composition/aiRateLimit.ts claims its path set "covers EVERY route that issues an LLM call".
@@ -67,10 +67,23 @@ describe("AI rate limiter ↔ the routes that spend AI budget", () => {
     expect(AI_LIMIT_PATTERNS.some((re) => re.test("/events/ev1/explain"))).toBe(true);
   });
 
+  it("meters the deterministic bulk-import routes on their own limiter, not the AI cap", () => {
+    expect(IMPORT_LIMIT_PATHS.has("/import")).toBe(true);
+    expect(IMPORT_LIMIT_PATHS.has("/import-file")).toBe(true);
+    // …and they are NOT double-counted on the AI limiter.
+    expect(AI_LIMIT_PATHS.has("/import")).toBe(false);
+    expect(AI_LIMIT_PATHS.has("/import-file")).toBe(false);
+  });
+
   it("covers or explicitly excludes every AI-gated POST route", () => {
     const uncovered = aiGatedRoutes().filter((suffix) => {
       if (EXCLUDED.has(suffix)) return false;
       const rel = concrete(suffix);
+      // The deterministic bulk-import routes are covered too — by their own generous per-case
+      // limiter (see IMPORT_LIMIT_PATHS) rather than the AI cap. They reference hasSynthesisProvider
+      // only to 501 a CSV/log file with no provider; the AI cost they can trigger is bounded by the
+      // exclusive per-case synthesis job, so a 20/min cap on a 60-file collection was pure loss.
+      if (IMPORT_LIMIT_PATHS.has(rel)) return false;
       return !AI_LIMIT_PATHS.has(rel) && !AI_LIMIT_PATTERNS.some((re) => re.test(rel));
     });
 
