@@ -14,6 +14,18 @@ export function worstSeverity(a: Severity, b: Severity): Severity {
   return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
 }
 export type FindingStatus = "open" | "confirmed" | "dismissed";
+
+// A dismissed finding (e.g. a confirmed false positive) keeps its ORIGINAL `severity` as an audit
+// trail of what the AI/backfill pass first claimed — see the comment on Finding.severity's sibling
+// grounding fields. But every severity-sorted or severity-filtered surface (dashboard panel, Markdown
+// report, presentation deck, CSV export…) must stop treating a dismissed Critical as an open Critical,
+// or triage-by-severity keeps surfacing resolved noise ahead of genuine open findings (INC-2026-018:
+// f8, a confirmed Velociraptor.exe self-signature-collision FP, stayed severity="Critical" after
+// dismissal). Call this everywhere severity drives sort order, a filter threshold, a badge, or a
+// count — never read `finding.severity` directly for those purposes.
+export function getEffectiveSeverity(finding: Pick<Finding, "severity" | "status">): Severity {
+  return finding.status === "dismissed" ? "Info" : finding.severity;
+}
 export type ThreadStatus = "open" | "closed";
 
 // One threat-intel lookup result for an IOC (VirusTotal, MalwareBazaar, AbuseIPDB…).

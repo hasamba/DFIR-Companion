@@ -1,5 +1,6 @@
 import {
   SEVERITY_RANK,
+  getEffectiveSeverity,
   type InvestigationState,
   type ForensicEvent,
   type Uncertainty,
@@ -747,7 +748,12 @@ function investigation(
   if (state.findings.length === 0) {
     lines.push("_No findings yet._", "");
   } else {
-    const sorted = [...state.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
+    // Sort by EFFECTIVE severity so a dismissed false positive (e.g. a confirmed self-signature
+    // collision) doesn't outrank a genuine open finding just because it was originally raised
+    // Critical — the raw `severity` field is still shown per-finding below as an audit trail.
+    const sorted = [...state.findings].sort(
+      (a, b) => SEVERITY_RANK[getEffectiveSeverity(a)] - SEVERITY_RANK[getEffectiveSeverity(b)],
+    );
     // Citations (#222): which events each finding cites as its supporting evidence. Prefer the
     // finding's own relatedEventIds (set by synthesis); fall back to the reverse relatedFindingIds
     // link on the events themselves for findings persisted before that field existed.

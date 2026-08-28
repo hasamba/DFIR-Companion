@@ -20,8 +20,31 @@ describe("CSV renderers", () => {
     });
     const csv = findingsCsv(state);
     const rows = csv.trim().split("\n");
-    expect(rows[0]).toContain("id,severity,confidence,title");
+    expect(rows[0]).toContain("id,severity,effectiveSeverity,confidence,title");
     expect(rows[1]).toContain('"PS, ""encoded"""'); // escaped
+  });
+
+  it("findingsCsv's effectiveSeverity column downgrades a dismissed finding, leaving severity untouched", () => {
+    // Regression for INC-2026-018 f8: a dismissed Critical false positive must not sort/filter
+    // ahead of genuine open findings in a spreadsheet, but the original assessed severity is kept
+    // as an audit trail in the `severity` column.
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f8",
+      severity: "Critical",
+      title: "Velociraptor.exe flagged as malicious (false positive)",
+      description: "d",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "t0",
+      lastUpdated: "t1",
+      status: "dismissed",
+    });
+    const rows = findingsCsv(state).trim().split("\n");
+    const cols = rows[1].split(",").map((c) => c.replace(/^"|"$/g, ""));
+    expect(cols[1]).toBe("Critical"); // severity: unchanged
+    expect(cols[2]).toBe("Info"); // effectiveSeverity: downgraded
   });
 
   it("iocsCsv guards formula-injection values with a leading single quote", () => {
