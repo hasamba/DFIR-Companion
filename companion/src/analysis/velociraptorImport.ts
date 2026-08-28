@@ -66,6 +66,8 @@ import { mapPersistenceSniper } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
 import { networkTokens } from "./networkTokens.js";
+import { gradeMotwDownload, zoneText } from "./motwDownload.js";
+import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
 import { isDetectionContentPath, isGeneratedModuleScript } from "./veloDetectionNoise.js";
 import { decodeHitContext } from "./yaraHitContext.js";
@@ -467,6 +469,7 @@ type Kind =
   | "taskscheduler"
   | "persistenceSniper"
   | "binaryRename"
+  | "accountUsage"
   | "usn"
   | "mft"
   | "browser"
@@ -495,6 +498,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/taskscheduler/i.test(a)) return "taskscheduler";
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
   if (/binaryrename/i.test(a)) return "binaryRename";
+  if (/condensedaccountusage/i.test(a)) return "accountUsage";
 
   const rule = getCI(row, "Rule");
   if (
@@ -531,6 +535,10 @@ function classify(row: Row, artifact: string): Kind {
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
     return "taskscheduler";
+  // Windows.EventLogs.CondensedAccountUsage — an authentication event already condensed to flat
+  // columns, with no System/EventData to reach the eventlog branch. Checked BEFORE that branch's
+  // column fallbacks so it never lands in the generic mapper, which drops every column but the verb.
+  if (isAccountUsageRow(row)) return "accountUsage";
   // Windows.Forensics.PersistenceSniper wraps the PersistenceSniper PowerShell module verbatim —
   // Technique + Classification + "Access Gained" is that module's own column set and isn't reused
   // by any other artifact, so it's a safe signature even without a recognisable _Source.
@@ -1380,9 +1388,14 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   // Velociraptor renders NTFS device paths with a leading \\.\  — strip it for readability.
   const raw = str(getCI(row, "DownloadedFilePath"));
   const rawPath = (raw.startsWith("\\\\.\\") ? raw.slice(4) : raw).trim();
-  const hostUrl = str(getCI(row, "HostUrl")).trim();
-  const referrerUrl = str(getCI(row, "ReferrerUrl")).trim();
+  // The Zone.Identifier ADS is NUL-terminated — zoneText strips that (and any other control
+  // character) so the URL reaching the description AND the url indicator is comparable to the same
+  // URL seen in a proxy log or browser history. Left raw, the trailing NUL breaks every match.
+  const hostUrl = zoneText(str(getCI(row, "HostUrl")));
+  const referrerUrl = zoneText(str(getCI(row, "ReferrerUrl")));
   const name = rawPath ? baseName(rawPath) : "";
+  // The mark's whole point: which zone the file came from, and whether it is runnable.
+  const grade = gradeMotwDownload(str(getCI(row, "ZoneId")), name || rawPath);
 
   if (hostUrl && /^https?:\/\//i.test(hostUrl)) addIoc(sink, "url", hostUrl.slice(0, 300));
   if (referrerUrl && /^https?:\/\//i.test(referrerUrl)) addIoc(sink, "url", referrerUrl.slice(0, 300));
@@ -1394,10 +1407,13 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   if (sha256) addIoc(sink, "hash", sha256);
   else if (md5) addIoc(sink, "hash", md5);
 
-  const urlDisplay = hostUrl || "unknown source";
+  // A Zone.Identifier stream routinely records the zone with no URL (the browser wrote only
+  // ZoneId). Naming the zone beats "unknown source", which reads as "we know nothing".
+  const urlDisplay = hostUrl || (grade.zoneLabel ? `the ${grade.zoneLabel}` : "unknown source");
   // Prefix with "Velociraptor:" so the artifact-name injection in the main loop can insert
   // [_Source] right after "Velociraptor" (consistent with every other mapper).
   let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
+  if (hostUrl && grade.zoneLabel) description += ` (${grade.zoneLabel})`;
   description = withHostSuffix(description, host).slice(0, 600);
 
   const aggKey = `vr-download|${name.toLowerCase()}|${urlDisplay.toLowerCase()}|${host.toLowerCase()}`
@@ -1407,8 +1423,8 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   return {
     timestamp: pickTime(row),
     description,
-    severity: "Info",
-    mitre: [],
+    severity: grade.severity,
+    mitre: grade.mitre,
     aggKey,
     sources: ["Velociraptor"],
     ...(sha256 ? { sha256 } : {}),
@@ -1618,6 +1634,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapPersistenceSniper(row, host, rowSink, pickTime(row))];
     } else if (kind === "binaryRename") {
       ms = [mapBinaryRename(row, host, rowSink, pickTime(row))];
+    } else if (kind === "accountUsage") {
+      ms = [mapAccountUsage(row, artifact, host, rowSink)];
     } else if (kind === "usn") {
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {

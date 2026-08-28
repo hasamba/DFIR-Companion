@@ -330,7 +330,7 @@ export function extractRecords(text: string): { records: Row[]; format: string }
 
 // ───────────────────────────── Windows / Sysmon tables ─────────────────────────────
 
-interface WinEventDef {
+export interface WinEventDef {
   label: string;
   severity: Severity;
   mitre?: string[];
@@ -343,8 +343,10 @@ interface WinEventDef {
 const PRIVILEGED_GROUP =
   /\b(?:domain admins|enterprise admins|schema admins|administrators|account operators|server operators|backup operators|print operators|dnsadmins|group policy creator owners|domain controllers|enterprise key admins|key admins)\b/i;
 
-// Security + System channel events keyed by Event ID.
-const WIN_EVENTS: Record<number, WinEventDef> = {
+// Security + System channel events keyed by Event ID. Exported so a CONDENSED summary artifact
+// (one that reports an EID without the parsed record) reads its label and base grade from the same
+// table as a parsed event, instead of growing a second, drifting copy of the same knowledge.
+export const WIN_EVENTS: Record<number, WinEventDef> = {
   // Authentication / logon
   4624: { label: "Successful logon", severity: "Low" },
   4625: { label: "Failed logon", severity: "Medium", mitre: ["T1110"] },
