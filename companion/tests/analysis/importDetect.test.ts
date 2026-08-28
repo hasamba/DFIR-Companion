@@ -626,6 +626,32 @@ describe("detectImportKind — CSV formats", () => {
   it("csv: a generic comma table → AI CSV importer", () => {
     expect(detectImportKind("data.csv", "colA,colB,colC\n1,2,3\n4,5,6")).toBe("csv");
   });
+
+  it("routes a single-column CSV with real depth to the CSV importer, not line-triage", () => {
+    // The common shape is an IOC list: one header plus a run of hashes. As `log` it went to AI
+    // line-triage and lost the header that says what the values ARE.
+    const hashes = ["sha256", ...Array.from({ length: 12 }, (_, i) => `${i}`.repeat(64))].join("\n");
+    expect(detectImportKind("iocs.csv", hashes)).toBe("csv");
+  });
+
+  it("does NOT claim a deep comma-less LOG as a single-column CSV", () => {
+    // detectCsv is the last fallback, so every unrecognized text file reaches it and a comma-less
+    // line parses as a one-column row. Depth alone claimed these and ate the first line as a header.
+    const stack = Array.from(
+      { length: 14 },
+      (_, i) => `    at frame${i} (/srv/app/lib/mod${i}.js:${i}:3)`,
+    ).join("\n");
+    expect(detectImportKind("crash.txt", stack)).toBe("log");
+    const tokens = Array.from({ length: 14 }, (_, i) => `worker-${i}-started`).join("\n");
+    expect(detectImportKind("worker.log", tokens)).toBe("log"); // whitespace-free, but not a .csv
+    const prose = ["Event", ...Array.from({ length: 14 }, (_, i) => `the worker restarted at ${i}:00`)];
+    expect(detectImportKind("notes.csv", prose.join("\n"))).toBe("log"); // .csv, but values are prose
+  });
+
+  it("leaves a shallow single-column file as 'log'", () => {
+    // The row floor is what keeps a scrap of prose out — an accidental single column has no depth.
+    expect(detectImportKind("note.csv", "Subject\nthe host was rebuilt on Tuesday")).toBe("log");
+  });
 });
 
 describe("detectImportKind — email", () => {
@@ -716,6 +742,19 @@ describe("detectImportKind — Linux evidence sources (#62)", () => {
       ),
     ).toBe("sysdig");
   });
+  it("auditd: the first record sits past the old 8 KB sniff window", () => {
+    // A real audit.log opens with a boot banner and a run of records the regex does not match; a
+    // file whose first `type=… msg=audit(…)` landed past 8 KB sniffed as a plain log and went to
+    // AI line-triage instead of the auditd importer.
+    const preamble = Array.from(
+      { length: 400 },
+      (_, i) => `node=host.example kernel: [${i}.000000] systemd: Starting user session ${i}`,
+    ).join("\n");
+    expect(preamble.length).toBeGreaterThan(8000);
+    const log = `${preamble}\ntype=SYSCALL msg=audit(1490451217.272:270): arch=c000003e syscall=59 comm="cat"`;
+    expect(detectImportKind("audit.log", log)).toBe("auditd");
+  });
+
   it("not auditd: a plain syslog with no audit records stays 'log'", () => {
     expect(detectImportKind("auth.log", "Jan  1 00:00:01 host sshd[1]: Failed password for root")).toBe(
       "log",

@@ -33,6 +33,14 @@ import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import {
+  LOLBINS,
+  NOISY_LOLBINS,
+  SUSP_PATH,
+  BENIGN_THREAD_SOURCES,
+  BENIGN_LSASS_ACCESSORS,
+  isTrustedSystemImage,
+} from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 
 // Re-exported for the sibling importers, which already source their shared helpers
@@ -431,108 +439,11 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   26: { label: "File delete logged", severity: "Low", mitre: ["T1070.004"] },
 };
 
-// LOLBins whose appearance as the image (Sysmon 1 / 4688) bumps a benign process-create.
-const LOLBINS = new Set([
-  "powershell.exe",
-  "pwsh.exe",
-  "cmd.exe",
-  "wscript.exe",
-  "cscript.exe",
-  "mshta.exe",
-  "rundll32.exe",
-  "regsvr32.exe",
-  "wmic.exe",
-  "certutil.exe",
-  "bitsadmin.exe",
-  "msiexec.exe",
-  "installutil.exe",
-  "regasm.exe",
-  "regsvcs.exe",
-  "msbuild.exe",
-  "cmstp.exe",
-  "schtasks.exe",
-  "at.exe",
-  "sc.exe",
-  "net.exe",
-  "net1.exe",
-  "psexec.exe",
-  "psexesvc.exe",
-  "vssadmin.exe",
-  "bcdedit.exe",
-  "wevtutil.exe",
-  "reg.exe",
-  "curl.exe",
-  "ftp.exe",
-  "hh.exe",
-  "odbcconf.exe",
-]);
-// Core OS processes that legitimately call CreateRemoteThread (Sysmon EID 8) during normal
-// session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
-// from the default High (they stay in the timeline; synthesis/legit-marking can still act).
-// Core OS processes that legitimately CreateRemoteThread as routine session/service setup, PLUS
-// Windows Defender / Defender-for-Endpoint, which inject monitoring threads into user processes as
-// part of behavioral scanning — a benign EID 8 source, not injection tradecraft. Also the desktop/
-// shell brokers that routinely inject as part of ordinary UI plumbing: Windows Search indexing its
-// own protocol host, dllhost.exe (COM Surrogate) loading shell-extension/COM objects, and the UWP
-// app-model brokers taskhostw/RuntimeBroker — all fire constantly on a stock, uncompromised desktop
-// and otherwise drown real injection signal in noise (see the fairhaven-rdp-takeover benchmark,
-// where this exact pairing on unrelated hosts got escalated into a fabricated finding).
-const BENIGN_THREAD_SOURCES = new Set([
-  "csrss.exe",
-  "wininit.exe",
-  "services.exe",
-  "smss.exe",
-  "svchost.exe",
-  "wmiprvse.exe",
-  "lsm.exe",
-  "winlogon.exe",
-  "msmpeng.exe",
-  "mpdefendercoreservice.exe",
-  "mssense.exe",
-  "sensendr.exe",
-  "mpcmdrun.exe", // Defender / MDE
-  "searchindexer.exe",
-  "searchprotocolhost.exe",
-  "dllhost.exe",
-  "taskhostw.exe",
-  "runtimebroker.exe", // shell/UI brokers
-]);
-// Windows-native processes that access LSASS constantly as part of normal operation (#198). A
-// Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /
-// Defender-for-Endpoint scan it on every boot, and core OS processes open it routinely. Keyed on the
-// SourceImage basename; still graded High when the source runs from a SUSPICIOUS path (a masqueraded
-// "svchost.exe" in \Temp\ is not benign), and a non-listed accessor (e.g. a renamed dumper) stays High.
-const BENIGN_LSASS_ACCESSORS = new Set([
-  "msmpeng.exe",
-  "mpdefendercoreservice.exe",
-  "mssense.exe",
-  "sensendr.exe",
-  "mpcmdrun.exe", // Defender / MDE
-  "svchost.exe",
-  "services.exe",
-  "csrss.exe",
-  "wininit.exe",
-  "lsass.exe",
-  "wmiprvse.exe",
-  "smss.exe",
-  "lsm.exe",
-]);
 // Command-line markers strongly associated with attacker tradecraft → stronger bump.
 const STRONG_CMD =
   /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
 const SUSP_CMD =
   /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
-// Execution from a user-writable / staging directory is itself a weak masquerade/tradecraft signal
-// (#199) — a non-system binary launched from Temp / AppData / Downloads / Public / ProgramData, or
-// /tmp,/dev/shm,/var/tmp on *nix. Tested against the IMAGE path (not the whole command) to avoid
-// matching a path that merely appears as an argument. ProgramData recurs across the DFIR Report and
-// Huntress corpora as ransomware/dropper staging ground (msidxsvc.exe, locker.exe, sc-created
-// payloads, renamed PowerShell) — same Medium-bump tier as the other user-writable paths, not High.
-// EXCEPTION: `\ProgramData\Microsoft\Windows Defender\` is Defender's own legitimate install path
-// (MsMpEng.exe et al. really live there), so it's carved out — otherwise every benign Defender
-// EID 8/10 event would trip the masquerade override in BENIGN_THREAD_SOURCES/BENIGN_LSASS_ACCESSORS.
-const SUSP_PATH =
-  /\\(?:appdata|temp|downloads)\\|\\users\\public\\|\\programdata\\(?!microsoft\\windows defender\\)|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
 // Channel → short tool label for the description and source tag.
 function channelLabel(channel: string): string {
@@ -759,14 +670,18 @@ function winAccounts(ed: Row): string[] {
 }
 
 // Grade a process image + command line for attacker tradecraft: "strong" (mimikatz / lsadump /
-// log-clearing), "weak" (a LOLBin or an encoded / hidden / download command), or null. Exported so
-// the memory-forensics importer can bump a Volatility `cmdline` row the same way.
+// log-clearing), "weak" (an encoded / hidden / download command, a user-writable image path, or an
+// UNCOMMON LOLBin image), or null. Exported so the memory-forensics importer can bump a Volatility
+// `cmdline` row the same way.
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
   const blob = `${image} ${cmd}`;
   if (STRONG_CMD.test(blob)) return "strong";
-  if (LOLBINS.has(baseName(image).toLowerCase()) || SUSP_CMD.test(blob) || SUSP_PATH.test(image))
-    return "weak";
-  return null;
+  if (SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
+  // A LOLBin IMAGE on its own grades only when the binary is not itself an everyday one: cmd.exe and
+  // powershell.exe spawn continuously on a healthy endpoint, so the name proves nothing without a
+  // command-line or path signal to go with it, and grading it Medium buried the rare real one.
+  const base = baseName(image).toLowerCase();
+  return LOLBINS.has(base) && !NOISY_LOLBINS.has(base) ? "weak" : null;
 }
 
 export interface MappedEvent {
@@ -962,7 +877,7 @@ export function mapWindows(
   }
   if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
     const srcImg = str(getCI(ed, "SourceImage"));
-    const benign = BENIGN_LSASS_ACCESSORS.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg);
+    const benign = BENIGN_LSASS_ACCESSORS.has(baseName(srcImg).toLowerCase()) && isTrustedSystemImage(srcImg);
     if (benign) {
       // Routine OS / Defender LSASS access — keep as Low evidence, NOT a credential-dump finding (#198).
       severity = "Low";
@@ -977,7 +892,7 @@ export function mapWindows(
   // masqueraded svchost.exe in \Temp\) is NOT benign and keeps High + T1055.
   if (isSysmon && eid === 8) {
     const srcImg = str(getCI(ed, "SourceImage"));
-    if (BENIGN_THREAD_SOURCES.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg)) {
+    if (BENIGN_THREAD_SOURCES.has(baseName(srcImg).toLowerCase()) && isTrustedSystemImage(srcImg)) {
       severity = "Low";
       const i = mitre.indexOf("T1055");
       if (i >= 0) mitre.splice(i, 1);

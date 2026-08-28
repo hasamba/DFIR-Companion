@@ -158,11 +158,24 @@ describe("parseEvtxXml — reuses the SIEM Windows mapping", () => {
   });
 
   it("honors the severity floor", () => {
+    // The sample's own process-create is `cmd.exe /c echo` — benign, and Low. The LOLBin NAME on
+    // its own no longer bumps it (see NOISY_LOLBINS), so the floor needs an event that genuinely
+    // earns Medium before it has anything to keep. An encoded, hidden-window PowerShell does.
+    const graded = SAMPLE.replace(
+      "cmd.exe /c echo a &amp; echo b &lt;nul&gt;",
+      "powershell.exe -nop -w hidden -enc SQBFAFgAIAA=",
+    );
+    const r = parseEvtxXml(graded, { minSeverity: "Medium" });
+    expect(r.events.every((e) => !/Successful logon/i.test(e.description))).toBe(true); // 4624 is Low
+    expect(r.events.some((e) => /Process create/i.test(e.description))).toBe(true); // graded Medium
+  });
+
+  it("leaves an ordinary cmd.exe process-create below that same floor", () => {
+    // The other half of the change: an everyday LOLBin running an everyday command is telemetry.
+    // It used to clear a Medium floor on the strength of its name alone.
     const r = parseEvtxXml(SAMPLE, { minSeverity: "Medium" });
-    // 4624 (Low) drops; the Sysmon process-create survives because cmd.exe is a LOLBin and the
-    // shared mapWindows bumps it to Medium.
-    expect(r.events.every((e) => !/Successful logon/i.test(e.description))).toBe(true);
-    expect(r.events.some((e) => /Process create/i.test(e.description))).toBe(true);
+    expect(r.events).toHaveLength(0);
+    expect(parseEvtxXml(SAMPLE).events.some((e) => /Process create/i.test(e.description))).toBe(true);
   });
 
   it("yields and honors cancellation during the expensive record-mapping phase", async () => {

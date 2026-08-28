@@ -4,8 +4,14 @@
 import { z } from "zod";
 import { checkRegexSafety } from "./regexSafety.js";
 
-// The built-in ImportKind values a custom id must NOT shadow (kept in sync with importDetect.ts).
-export const BUILTIN_KINDS: ReadonlySet<string> = new Set([
+// Every kind the detector can return. This array is the single source of truth: importDetect.ts
+// derives its `ImportKind` union from it, and BUILTIN_KINDS below is built from it, so the list
+// that DEFINES a kind and the list that FORBIDS a custom importer from shadowing it cannot differ.
+// They were two hand-maintained copies and they drifted: okta, gws, hindsight, macos, leapp and
+// yara were detector kinds absent from BUILTIN_KINDS, so a custom spec could claim one of those ids
+// and displace the built-in importer for every file that detected as it — silently, because the
+// shadow check passed. Add a kind HERE and both halves move together.
+export const IMPORT_KINDS = [
   "thor",
   "siem",
   "evtxxml",
@@ -19,6 +25,11 @@ export const BUILTIN_KINDS: ReadonlySet<string> = new Set([
   "kape",
   "cybertriage",
   "m365",
+  "okta",
+  "gws",
+  "hindsight",
+  "macos",
+  "leapp",
   "aws",
   "cloud",
   "k8s",
@@ -34,13 +45,17 @@ export const BUILTIN_KINDS: ReadonlySet<string> = new Set([
   "thehive",
   "bashhistory",
   "snort",
+  "yara",
   "combinedlog",
   "asa",
   "syslog",
   "csv",
   "log",
   "unknown",
-]);
+] as const;
+
+// The built-in kinds a custom importer id must NOT shadow — every kind, by construction.
+export const BUILTIN_KINDS: ReadonlySet<string> = new Set(IMPORT_KINDS);
 
 const severityEnum = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 const transformEnum = z.enum(["trim", "lowercase", "basename", "cleanIp", "defang", "refang"]);
