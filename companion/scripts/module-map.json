@@ -161,6 +161,7 @@
     "awsImport.ts": "analysis/ingest",
     "bashHistoryImport.ts": "analysis/ingest",
     "beaconDetect.ts": "analysis/detect",
+    "benignSources.ts": "analysis/detect",
     "binaryRenameImport.ts": "analysis/ingest",
     "bsdTime.ts": "analysis/ingest",
     "burstDetect.ts": "analysis/detect",
