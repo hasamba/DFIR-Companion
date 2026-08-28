@@ -467,6 +467,7 @@
     "winProcessBaseline.ts": "analysis/ingest",
     "workLogFilter.ts": "analysis/workflow",
     "yaraHitContext.ts": "analysis/ingest",
+    "zoneIdentifier.ts": "analysis/ingest",
     "yaraImport.ts": "analysis/ingest",
     "zipArchive.ts": "analysis/ingest",
     "zipCrypto.ts": "analysis/ingest",

@@ -3143,6 +3143,9 @@ describe("parseVelociraptorJson — flat EventID overlay is scoped to its own lo
   it("reads the log from LogName as well as Channel", () => {
     expect(parse({ EventID: 7045, LogName: "System" }).events[0].severity).toBe("High");
     expect(parse({ EventID: 7045 }).events[0].severity).toBe("Info");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Detection CONTENT matched as if it were attacker content.
 //

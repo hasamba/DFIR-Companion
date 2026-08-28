@@ -72,6 +72,7 @@ import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTit
 import { isDetectionContentPath, isGeneratedModuleScript } from "./veloDetectionNoise.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
+import { isRemotePayloadDownload } from "./zoneIdentifier.js";
 
 type Row = Record<string, unknown>;
 
@@ -1380,22 +1381,6 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   };
 }
 
-// Zone.Identifier zones: 3 = Internet, 4 = Restricted sites. Both mean the file crossed a network
-// boundary onto this host. 0-2 (local machine / intranet / trusted) did not, and stay Info.
-const REMOTE_ZONES = new Set(["3", "4"]);
-// Extensions that RUN, or that mount something that runs. A document arriving from the Internet is
-// ordinary; an executable, a script, or a mountable container is how a payload lands — so the zone
-// becomes a finding only for these, never for the zone alone.
-const PAYLOAD_EXT =
-  /\.(exe|dll|sys|scr|com|cpl|ocx|msi|msp|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|jar|py|pyw|lnk|reg|inf|chm|iso|img|vhd|vhdx)$/i;
-
-// The parsed ZoneId column, else the raw ADS text the artifact also carries ("[ZoneTransfer]…ZoneId=3").
-function downloadZone(row: Row): string {
-  const direct = str(getCI(row, "ZoneId")).trim();
-  if (direct) return direct;
-  return /zoneid\s*=\s*(\d+)/i.exec(str(getCI(row, "_ZoneIdentifierContent")))?.[1] ?? "";
-}
-
 function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   // Velociraptor renders NTFS device paths with a leading \\.\  — strip it for readability.
   const raw = str(getCI(row, "DownloadedFilePath"));
@@ -1417,7 +1402,7 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   const urlDisplay = hostUrl || "unknown source";
   // Prefix with "Velociraptor:" so the artifact-name injection in the main loop can insert
   // [_Source] right after "Velociraptor" (consistent with every other mapper).
-  const remotePayload = REMOTE_ZONES.has(downloadZone(row)) && PAYLOAD_EXT.test(rawPath);
+  const remotePayload = isRemotePayloadDownload(row, rawPath);
   let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
   if (remotePayload) description += " [executable content from a remote zone]";
   description = withHostSuffix(description, host).slice(0, 600);
