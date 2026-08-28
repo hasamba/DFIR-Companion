@@ -1,4 +1,4 @@
-import type { InvestigationState } from "../analysis/stateTypes.js";
+import { getEffectiveSeverity, type InvestigationState } from "../analysis/stateTypes.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
@@ -13,12 +13,16 @@ function row(values: string[]): string {
 }
 
 export function findingsCsv(state: InvestigationState): string {
+  // effectiveSeverity lets a spreadsheet sort/filter without a dismissed Critical (e.g. a confirmed
+  // false positive) outranking genuine open findings — `severity` stays the original, unmodified
+  // claim as an audit trail; `effectiveSeverity` is "Info" once status is "dismissed".
   const header =
-    "id,severity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status";
+    "id,severity,effectiveSeverity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status";
   const rows = state.findings.map((f) =>
     row([
       f.id,
       f.severity,
+      getEffectiveSeverity(f),
       f.confidence !== undefined ? String(f.confidence) : "",
       f.title,
       f.description,

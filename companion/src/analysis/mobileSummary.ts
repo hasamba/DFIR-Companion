@@ -9,7 +9,7 @@
 // with the desktop view.
 
 import type { Finding, ForensicEvent, IOC, InvestigationState, Severity } from "./stateTypes.js";
-import { SEVERITY_RANK } from "./stateTypes.js";
+import { SEVERITY_RANK, getEffectiveSeverity } from "./stateTypes.js";
 
 export type IocVerdict = "malicious" | "suspicious" | "harmless" | "unknown";
 
@@ -102,9 +102,10 @@ function eventTime(e: Pick<ForensicEvent, "timestamp">): number {
   return Date.parse(e.timestamp);
 }
 
-// Order findings worst-first: by severity, then most-recently-updated, then newest first-seen.
+// Order findings worst-first by EFFECTIVE severity (a dismissed finding sinks to the bottom
+// regardless of its original severity), then most-recently-updated, then newest first-seen.
 function compareFindings(a: Finding, b: Finding): number {
-  const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+  const sev = SEVERITY_RANK[getEffectiveSeverity(a)] - SEVERITY_RANK[getEffectiveSeverity(b)];
   if (sev !== 0) return sev;
   const lu = (b.lastUpdated || "").localeCompare(a.lastUpdated || "");
   if (lu !== 0) return lu;
@@ -143,7 +144,9 @@ function emptySeverityCounts(): Record<Severity, number> {
 function toMobileFinding(f: Finding): MobileFinding {
   return {
     id: f.id,
-    severity: f.severity,
+    // Effective severity — a dismissed finding must not read as its original Critical/High to a
+    // phone-glance summary; `status` (below) is still carried for anything that wants the raw claim.
+    severity: getEffectiveSeverity(f),
     title: f.title,
     confidence: f.confidence,
     status: f.status,
@@ -193,7 +196,8 @@ export function buildMobileSummary(
 
   const severityCounts = emptySeverityCounts();
   for (const f of findings) {
-    if (f.severity in severityCounts) severityCounts[f.severity] += 1;
+    const eff = getEffectiveSeverity(f);
+    if (eff in severityCounts) severityCounts[eff] += 1;
   }
 
   const flaggedIocs = iocs.reduce((n, i) => (isFlagged(worstVerdict(i)) ? n + 1 : n), 0);

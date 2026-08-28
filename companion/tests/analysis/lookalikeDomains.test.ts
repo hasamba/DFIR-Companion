@@ -4,6 +4,7 @@ import {
   registrable,
   skeleton,
   lookalikeBrands,
+  lookalikeAllowedHosts,
 } from "../../src/analysis/lookalikeDomains.js";
 
 describe("registrable", () => {
@@ -96,6 +97,46 @@ describe("detectLookalike — no false positives on legitimate domains", () => {
   it("returns null for non-domain / empty input", () => {
     expect(detectLookalike("")).toBeNull();
     expect(detectLookalike("notadomain")).toBeNull();
+  });
+});
+
+describe("detectLookalike — known security-reference hosts are never flagged", () => {
+  it("does not flag lolbas-project.github.io as impersonating github.com", () => {
+    // Regression for INC-2026-018: registrable("lolbas-project.github.io") falls back to the
+    // 2-label "github.io" (not a recognised multipart suffix), so without an explicit allowlist
+    // the "github" brand token still matches with a boundary and this reads as impersonation.
+    expect(detectLookalike("lolbas-project.github.io")).toBeNull();
+  });
+  it("does not flag other bundled reference hosts", () => {
+    expect(detectLookalike("gtfobins.github.io")).toBeNull();
+    expect(detectLookalike("attack.mitre.org")).toBeNull();
+  });
+  it("still flags an unrelated site that embeds a brand token", () => {
+    const v = detectLookalike("paypal-support-verify.info");
+    expect(v?.kind).toBe("impersonation");
+    expect(v?.brand).toBe("paypal.com");
+  });
+  it("does not exempt a github.io host outside the allowlist", () => {
+    // Confirms the fix is a narrow, exact-hostname allowlist, not a blanket "*.github.io" carve-out.
+    const v = detectLookalike("not-a-real-lolbas-project.github.io");
+    expect(v?.kind).toBe("impersonation");
+    expect(v?.brand).toBe("github.com");
+  });
+});
+
+describe("lookalikeAllowedHosts — env extension", () => {
+  afterEach(() => {
+    delete process.env.DFIR_LOOKALIKE_ALLOW_DOMAINS;
+  });
+
+  it("includes the bundled reference hosts by default", () => {
+    expect(lookalikeAllowedHosts().has("lolbas-project.github.io")).toBe(true);
+  });
+
+  it("adds the analyst's own hosts from DFIR_LOOKALIKE_ALLOW_DOMAINS", () => {
+    process.env.DFIR_LOOKALIKE_ALLOW_DOMAINS = "internal-wiki.github.io, Docs.Acme.Com";
+    expect(lookalikeAllowedHosts().has("internal-wiki.github.io")).toBe(true);
+    expect(lookalikeAllowedHosts().has("docs.acme.com")).toBe(true);
   });
 });
 

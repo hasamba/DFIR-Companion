@@ -87,6 +87,29 @@ const DEFAULT_BRAND_DOMAINS = [
   "ledger.com",
 ];
 
+// Well-known security/infosec reference sites hosted on multi-tenant domains (github.io, etc.), so
+// they can't be allowlisted at the registrable-domain level like DEFAULT_BRAND_DOMAINS above without
+// exempting every other *.github.io site too. Matched as EXACT full hostnames. Without this,
+// lolbas-project.github.io reads as "impersonation" of github.com (registrable() falls back to
+// "github.io" for a 2-label multi-tenant host, and the brand token "github" still appears with a
+// boundary) — a guaranteed false positive on any investigation that references these sites. The
+// analyst can extend this via DFIR_LOOKALIKE_ALLOW_DOMAINS (comma-separated), same precedent as
+// DFIR_LOOKALIKE_EXTRA_DOMAINS below.
+const KNOWN_SECURITY_REFERENCE_HOSTS = [
+  "lolbas-project.github.io",
+  "gtfobins.github.io",
+  "loobins.io",
+  "attack.mitre.org",
+  "car.mitre.org",
+  "d3fend.mitre.org",
+  "sigmahq.io",
+  "sigmahq.github.io",
+  "yara-rules.github.io",
+  "otx.alienvault.com",
+  "virustotal.com",
+  "urlscan.io",
+];
+
 // Multi-part public suffixes we recognise so registrable(host) takes 3 labels not 2 (barclays.co.uk,
 // not co.uk). Small practical set — not a full PSL; unknown TLDs fall back to the last two labels.
 const MULTIPART_SUFFIXES = new Set([
@@ -270,6 +293,17 @@ function isBrandOrSub(reg: string, brand: string): boolean {
   return reg === brand;
 }
 
+// The effective known-reference-host allowlist: bundled defaults + DFIR_LOOKALIKE_ALLOW_DOMAINS
+// (comma-separated), matched as exact full hostnames (see KNOWN_SECURITY_REFERENCE_HOSTS above for
+// why registrable-domain matching can't be used here). Read at call time so tests can set the env var.
+export function lookalikeAllowedHosts(): Set<string> {
+  const envExtra = (process.env.DFIR_LOOKALIKE_ALLOW_DOMAINS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set([...KNOWN_SECURITY_REFERENCE_HOSTS, ...envExtra]);
+}
+
 // Decide whether an observed domain is a lookalike of any watched brand. Returns the strongest match
 // (homoglyph > impersonation > typosquat) or null. `host` is a raw domain (may include subdomains).
 export function detectLookalike(host: string, opts: LookalikeOptions = {}): LookalikeVerdict | null {
@@ -280,6 +314,7 @@ export function detectLookalike(host: string, opts: LookalikeOptions = {}): Look
       .replace(/\.$/, ""),
   );
   if (!cleaned || !cleaned.includes(".")) return null;
+  if (lookalikeAllowedHosts().has(cleaned)) return null;
   const reg = registrable(cleaned);
   const brands = opts.brands ? opts.brands.map((d) => registrable(d)) : lookalikeBrands();
   const brandSet = new Set(brands);

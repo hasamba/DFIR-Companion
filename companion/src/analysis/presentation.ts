@@ -10,7 +10,7 @@
 // the standalone-HTML export both render the SAME deck.
 
 import type { Finding, ForensicEvent, IOC, InvestigationState, Severity } from "./stateTypes.js";
-import { SEVERITY_RANK } from "./stateTypes.js";
+import { SEVERITY_RANK, getEffectiveSeverity } from "./stateTypes.js";
 
 export type IocVerdict = "malicious" | "suspicious" | "harmless" | "unknown";
 
@@ -115,9 +115,11 @@ function eventTime(e: Pick<ForensicEvent, "timestamp">): number {
   return Date.parse(e.timestamp);
 }
 
-// Findings worst-first (by severity, then most-recently-updated, then newest first-seen).
+// Findings worst-first (by EFFECTIVE severity — a dismissed finding sinks toward the bottom of the
+// deck regardless of the severity it was originally raised at — then most-recently-updated, then
+// newest first-seen).
 function compareFindings(a: Finding, b: Finding): number {
-  const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+  const sev = SEVERITY_RANK[getEffectiveSeverity(a)] - SEVERITY_RANK[getEffectiveSeverity(b)];
   if (sev !== 0) return sev;
   const lu = (b.lastUpdated || "").localeCompare(a.lastUpdated || "");
   if (lu !== 0) return lu;
@@ -194,7 +196,11 @@ function findingSlide(f: Finding, iocById: Map<string, IOC>, cap: number): Prese
   return {
     kind: "finding",
     title: f.title,
-    severity: f.severity,
+    // EFFECTIVE severity: the cover slide's severityCounts tally already treats a dismissed finding
+    // as Info (see buildPresentationDeck above) — the finding's own dedicated slide must agree, or a
+    // dismissed false positive still gets its own slide badged "Critical" with nothing on it to say
+    // it was resolved.
+    severity: getEffectiveSeverity(f),
     description: f.description,
     confidence: f.confidence,
     mitreTechniques: f.mitreTechniques ?? [],
@@ -237,7 +243,11 @@ export function buildPresentationDeck(
   const allEvents = state.forensicTimeline ?? [];
   const iocs = state.iocs ?? [];
 
-  const findings = atOrAbove([...allFindings], minSeverity)
+  // Findings are floored on EFFECTIVE severity, not raw: a dismissed finding whose original
+  // severity was Critical must not survive a "Critical and above" deck filter, and must not inflate
+  // the title slide's severity tally below.
+  const findings = [...allFindings]
+    .filter((f) => !minSeverity || SEVERITY_RANK[getEffectiveSeverity(f)] <= SEVERITY_RANK[minSeverity])
     .sort(compareFindings)
     .slice(0, maxFindings);
   const events = atOrAbove([...allEvents], minSeverity)
@@ -248,7 +258,10 @@ export function buildPresentationDeck(
   const valueIndex = indexIocs(iocs);
 
   const severityCounts = emptySeverityCounts();
-  for (const f of findings) if (f.severity in severityCounts) severityCounts[f.severity] += 1;
+  for (const f of findings) {
+    const eff = getEffectiveSeverity(f);
+    if (eff in severityCounts) severityCounts[eff] += 1;
+  }
 
   const counts: PresentationCounts = { findings: findings.length, events: events.length, iocs: iocs.length };
   const caseName = opts.caseName?.trim() || state.caseId;

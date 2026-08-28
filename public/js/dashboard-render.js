@@ -16,6 +16,15 @@
 (function () {
   "use strict";
 
+  // A dismissed finding (e.g. a confirmed false positive) keeps its ORIGINAL severity as an audit
+  // trail — see the matching getEffectiveSeverity() in companion/src/analysis/stateTypes.ts, which
+  // this mirrors for the browser (a plain <script>, so it can't import the TS module directly). Sort
+  // order and the min-severity floor must use this, never f.severity directly, or a dismissed
+  // Critical false positive keeps outranking genuine open findings in a "Critical and above" view.
+  function effectiveSev(f) {
+    return f.status === "dismissed" ? "Info" : f.severity;
+  }
+
   function render(rawState) {
     // Ignore a state response/WS push for a case the analyst has already left (#174) — otherwise
     // a slow response for an abandoned case load can silently overwrite the case now on screen.
@@ -262,7 +271,7 @@
     const sorted = [...notFp].sort(
       (a, b) =>
         relRank(a) - relRank(b) ||
-        SEV.indexOf(a.severity) - SEV.indexOf(b.severity),
+        SEV.indexOf(effectiveSev(a)) - SEV.indexOf(effectiveSev(b)),
     );
     const minConf =
       parseInt(document.getElementById("confFilter").value, 10) || 0;
@@ -291,8 +300,9 @@
         ) &&
         _findingCorrob(f) &&
         findingPassesOriginLens(f, hideAuto, hideGap) &&
-        viewMeetsMinSev(f.severity),
-    ); // dashboard-view severity floor (#142)
+        viewMeetsMinSev(effectiveSev(f)),
+    ); // dashboard-view severity floor (#142), on EFFECTIVE severity — a dismissed Critical false
+    // positive must not survive a "Critical and above" view.
     const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered; // view top-N cap
     // Findings count in the title bar — mirrors the timeline's count: total in scope, "N of M" when filtered.
     const findingsCountEl = document.getElementById("findingsCount");
