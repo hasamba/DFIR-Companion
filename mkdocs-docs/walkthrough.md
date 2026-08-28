@@ -43,13 +43,13 @@ Open **Settings → Velociraptor**. Four bundles ship built-in:
 | Bundle | What it collects | Where results land |
 |--------|------------------|--------------------|
 | **Best Practice** | The quick-wins detection sweep — DetectRaptor rules, Hayabusa, Chainsaw, condensed account usage, process and network state, persistence, scheduled tasks | Forensic timeline (the AI sees them) |
-| **Best Practice - Big Hogs** *(optional)* | The two slow full-disk/file scans split out of Best Practice — the DetectRaptor YARA file scan and THOR. Same 6000s default timeout as the other bundles | Forensic timeline (the AI sees them) |
+| **Best Practice - Big Hogs** *(optional)* | The slow full-disk/file scans split out of Best Practice — the DetectRaptor YARA file and webshell scans, the DetectRaptor MFT keyword scan, and THOR. 7200s default timeout — longer than the other bundles' 6000s | Forensic timeline (the AI sees them) |
 | **Super-Timeline Triage** *(optional)* | Raw host artifacts — MFT, USN journal, prefetch, amcache, shellbags, SRUM, jump lists, registry, event logs | **Super-timeline only** |
 | **Linux Triage** | Linux host triage — users, persistence, network, packages, detection artifacts | Forensic timeline |
 
 **Run Best Practice on every case.** It is the fastest path from "a case exists" to "the dashboard has findings".
 
-**Best Practice - Big Hogs is optional.** The YARA file scan and THOR both walk the whole disk, so they run far longer than the rest of Best Practice. Run this bundle separately when you have time for a deeper sweep, rather than holding up the quick-wins pass.
+**Best Practice - Big Hogs is optional.** The YARA scans, the MFT keyword scan, and THOR all walk the whole disk, so they run far longer than the rest of Best Practice. Run this bundle separately when you have time for a deeper sweep, rather than holding up the quick-wins pass.
 
 **Super-Timeline Triage is optional.** Its artifacts hold hundreds of thousands of rows, so its results go to the super-timeline and never to the forensic timeline — they would drown synthesis. Run it when you need file-level or execution-level detail, then promote the rows that matter up from the [Super-Timeline panel](reference/dashboard.md). Skip it on a first pass.
 

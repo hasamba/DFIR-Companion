@@ -110,7 +110,6 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.EventLogs.Chainsaw",
       "Windows.EventLogs.CondensedAccountUsage",
       "DetectRaptor.Generic.Detection.BrowserExtensions",
-      "DetectRaptor.Generic.Detection.YaraWebshell",
       "DetectRaptor.Linux.Detection.YaraProcessLinux",
       "DetectRaptor.Macos.Detection.YaraProcessMacos",
       "DetectRaptor.Windows.Detection.Amcache",
@@ -124,7 +123,6 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "DetectRaptor.Windows.Detection.LolDriversMalicious",
       "DetectRaptor.Windows.Detection.LolDriversVulnerable",
       "DetectRaptor.Windows.Detection.LolRMM",
-      "DetectRaptor.Windows.Detection.MFT",
       "DetectRaptor.Windows.Detection.NamedPipes",
       "DetectRaptor.Windows.Detection.Powershell.ISEAutoSave",
       "DetectRaptor.Windows.Detection.Powershell.PSReadline",
@@ -171,11 +169,17 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
   {
     id: "best-practice-big-hogs",
     name: "Best Practice - Big Hogs",
-    description: "Slow full-disk/file scans split out of Best Practice (YaraFile, THOR ZIP)",
+    description:
+      "Slow full-disk/file scans split out of Best Practice (YaraFile, YaraWebshell, MFT, THOR ZIP)",
     builtIn: true,
-    artifacts: ["DetectRaptor.Generic.Detection.YaraFile", "Generic.Scanner.ThorZIP"],
+    artifacts: [
+      "DetectRaptor.Generic.Detection.YaraFile",
+      "DetectRaptor.Generic.Detection.YaraWebshell",
+      "DetectRaptor.Windows.Detection.MFT",
+      "Generic.Scanner.ThorZIP",
+    ],
     defaultWaitMinutes: 60, // these scan the whole disk — the 10-min Best Practice default collects too early
-    timeoutSeconds: 6000, // matches the other bundles' default, well past the 600s Velociraptor default
+    timeoutSeconds: 7200, // longer than the other bundles' 6000s — these four walk the whole disk
     // Drop known-noisy rows at the source: YaraFile pagefile hits.
     filters: {
       "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'",
