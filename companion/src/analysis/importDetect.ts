@@ -19,6 +19,7 @@ import { looksLikeYara } from "./yaraImport.js";
 import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { looksLikeSyslog } from "./syslogImport.js";
+import { IMPORT_KINDS } from "./importerSpec.js";
 import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
 // Newer-source detectors live in importDetectSources.ts — this file is at the 800-line limit.
 import {
@@ -30,47 +31,9 @@ import {
   hindsightCsvSig,
 } from "./importDetectSources.js";
 
-export type ImportKind =
-  | "thor"
-  | "siem"
-  | "evtxxml"
-  | "chainsaw"
-  | "hayabusa"
-  | "ecar"
-  | "velociraptor"
-  | "securityonion"
-  | "socrates"
-  | "network"
-  | "kape"
-  | "cybertriage"
-  | "m365"
-  | "okta"
-  | "gws"
-  | "hindsight"
-  | "macos"
-  | "leapp"
-  | "aws"
-  | "cloud"
-  | "k8s"
-  | "osquery"
-  | "plaso"
-  | "sandbox"
-  | "memory"
-  | "email"
-  | "auditd"
-  | "journald"
-  | "sysdig"
-  | "wazuh"
-  | "thehive"
-  | "bashhistory"
-  | "snort"
-  | "yara"
-  | "combinedlog"
-  | "asa"
-  | "syslog"
-  | "csv"
-  | "log"
-  | "unknown";
+// The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
+// against it — one array, so the union and the shadow-guard can never drift apart again.
+export type ImportKind = (typeof IMPORT_KINDS)[number];
 
 type Row = Record<string, unknown>;
 
@@ -543,7 +506,7 @@ function kapeSig(h: Set<string>): boolean {
   );
 }
 
-function detectCsv(text: string): ImportKind {
+function detectCsv(text: string, filename: string): ImportKind {
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
@@ -560,6 +523,18 @@ function detectCsv(text: string): ImportKind {
   if (velociraptorElasticCsvSig(h)) return "velociraptor";
   // A comma-delimited table with data rows → the generic (AI) CSV importer.
   if (headers.length >= 2 && rows.length > 0) return "csv";
+  // One column is still a table — but ONLY when the file says so on three counts at once. This is
+  // the last fallback before `log`, so every unrecognized text file lands here, and a comma-less
+  // log line parses as a one-column row: depth alone would have claimed stack traces and plain
+  // application logs as CSV, then eaten their first line as a header. So require the .csv/.tsv
+  // extension the author chose, the depth a real export has, AND values that look like values —
+  // whitespace-free single tokens, which is the IOC-list shape this exists for (a header plus a
+  // run of hashes, IPs or domains) and which no prose or log line survives.
+  if (headers.length === 1 && rows.length >= 10 && /\.(?:csv|tsv)$/i.test(filename)) {
+    const token = (v: string): boolean => v !== "" && !/\s/.test(v);
+    // 50 rows is enough to tell a value list from a log; scanning all of a 500k-line file is not.
+    if (token(headers[0]) && rows.slice(0, 50).every((r) => r.length === 1 && token(r[0]))) return "csv";
+  }
   return "log";
 }
 
@@ -622,8 +597,12 @@ function looksLikeVelociraptorFile(filename: string): boolean {
 // `ausearch` format. The `type=… msg=audit(secs.millis:serial)` shape is unique to auditd, so one
 // matching line anywhere in the head is enough to claim it ahead of the generic log fallback.
 const RE_AUDITD = /(?:^|\n)\s*type=\w+\s+msg=audit\(\d+\.\d+:\d+\)/;
+// 8 KB was not enough: a real audit.log opens with a boot banner and a run of SYSCALL-less noise,
+// and a file whose first `type=… msg=audit(…)` sat past that window sniffed as a plain log and went
+// to AI line-triage. 256 KB clears any realistic preamble while still being a cheap slice — the
+// regex is anchored per line, so a bigger window costs a scan, not a backtrack.
 function isAuditd(text: string): boolean {
-  return RE_AUDITD.test(text.slice(0, 8000));
+  return RE_AUDITD.test(text.slice(0, 256_000));
 }
 
 // ───────────────────────────── top-level ─────────────────────────────
@@ -715,7 +694,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   if (looksLikeYara(t)) return "yara";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
-  const csvKind = detectCsv(t);
+  const csvKind = detectCsv(t, filename);
   if (csvKind !== "unknown" && csvKind !== "log") return csvKind;
   // No CSV signature and no comma-table → treat as a generic log (AI line triage).
   return "log";
