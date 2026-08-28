@@ -115,7 +115,12 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       if (held) await options.jobManager?.cancel(job.jobId);
       else await options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
     }
-    if (!held && errorPhase) recordAiError(caseId, errorPhase, err);
+    // A SUPERSEDE IS NOT AN AI ERROR EITHER, for the same reason a gate is not. The registry
+    // REMOVES a superseded row rather than marking it cancelled — it is a queue entry that was
+    // replaced, not a result — and synthesize() now stops such a run at its next stage boundary
+    // (analysis/ai/synthesis.ts). Recording that abort here lit the dashboard's AI-error badge over
+    // a case whose synthesis was proceeding normally in the run that replaced it.
+    if (!held && !aborted && errorPhase) recordAiError(caseId, errorPhase, err);
     if (held) {
       // Reported even when a newer run is queued, unlike the supersede guard below: superseding
       // changes nothing about a gate. The newer run reads the same case and stops at the same

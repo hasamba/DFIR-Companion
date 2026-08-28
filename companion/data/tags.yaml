@@ -214,3 +214,39 @@ removable_media_mount:
   mitre: ['T1091', 'T1052.001']
   severity: Low
   view: 'Removable media'
+
+# ─────────────────────────── Privilege escalation — token manipulation / coercion ───────────────────────────
+# The command-line grader (analysis/tradecraftRules.ts) covers these patterns when they arrive as a
+# process command line or a 4104 script block. These rules cover the OTHER shapes the same tradecraft
+# arrives in — a DetectRaptor/Sigma verdict whose rendered text names the framework, a tool sitting on
+# disk found by a file scan, an execution artifact naming the binary — which carry no command line at
+# all and would otherwise reach the timeline ungraded.
+privesc_token_manipulation:
+  description: Access-token privilege manipulation (WinPwn AdjPriv / AdjustTokenPrivileges compiled in memory)
+  # Anchored on the API and framework NAMES, never on the privilege names alone: Security 4672
+  # ("Special privileges assigned to new logon") lists SeDebugPrivilege and SeImpersonatePrivilege on
+  # every administrator logon, so a bare privilege-name match would grade routine admin sign-ins High.
+  any:
+    - { field: message, regex: 'add-type[^\n]{0,200}(?:adjpriv|adjusttokenprivileges|token_adjust_privileges)', flags: 'i' }
+    - { field: description, regex: 'add-type[^\n]{0,200}(?:adjpriv|adjusttokenprivileges|token_adjust_privileges)', flags: 'i' }
+    - { field: message, contains: ['AdjustTokenPrivileges', 'WinPwn'] }
+    - { field: description, contains: ['AdjustTokenPrivileges', 'WinPwn'] }
+  tags: ['token-manipulation', 'privilege-escalation']
+  mitre: ['T1134.001', 'T1059.001']
+  severity: High
+  view: 'Token manipulation'
+
+privesc_coercion_tooling:
+  description: Local privilege-escalation tooling (RogueWinRM / Potato family / PrintSpoofer) present or executed
+  # RogueWinRM binds the WinRM port (5985) and coerces the BITS service into authenticating to it,
+  # elevating a service account to SYSTEM; the Potato family and PrintSpoofer coerce DCOM and the
+  # print spooler the same way. Named tools with no legitimate use, so the name alone is the finding.
+  any:
+    - { field: path, regex: '(?:roguewinrm|rogue_winrm|juicypotato|sweetpotato|godpotato|badpotato|rottenpotato|hotpotato|localpotato|efspotato|printspoofer)', flags: 'i' }
+    - { field: processName, regex: '(?:roguewinrm|rogue_winrm|juicypotato|sweetpotato|godpotato|badpotato|rottenpotato|hotpotato|localpotato|efspotato|printspoofer)', flags: 'i' }
+    - { field: message, regex: '(?:roguewinrm|rogue_winrm|juicypotato|sweetpotato|godpotato|badpotato|rottenpotato|hotpotato|localpotato|efspotato|printspoofer)', flags: 'i' }
+    - { field: description, regex: '(?:roguewinrm|rogue_winrm|juicypotato|sweetpotato|godpotato|badpotato|rottenpotato|hotpotato|localpotato|efspotato|printspoofer)', flags: 'i' }
+  tags: ['privilege-escalation', 'offensive-tool']
+  mitre: ['T1068', 'T1134.002']
+  severity: High
+  view: 'Privilege escalation tooling'

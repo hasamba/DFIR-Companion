@@ -17,6 +17,12 @@
   // clicking it opens a popover to view recent jobs and cancel a long/stuck one. Fed by GET
   // /api/jobs and refreshed on the job_changed WS event.
   let _jobsCache = [];
+  // WHICH CASE _jobsCache DESCRIBES. A job id only means anything inside its own case, and every
+  // Cancel button in the popover POSTs one — so a cache drawn under the wrong case offers to kill
+  // work in a case the analyst has already left. Nothing needed this while a failed read emptied
+  // the cache; now that a failed read KEEPS it (see loadJobs), the cache outlives a case switch and
+  // has to say whose it is.
+  let _jobsCacheCaseId = "";
   let _jobsMenuShape = "";
   let _jobsLoadPromise = null;
   let _jobsLoadCaseId = "";
@@ -33,19 +39,40 @@
     const el = document.getElementById("caseId");
     return el && typeof el.value === "string" ? el.value.trim() : "";
   }
+  // The cache, but only when it belongs to the case on screen. THE ONE READ EVERY CONSUMER USES —
+  // the badge, the popover, the deep-pass lock and runningJob() — because a stale-case answer is
+  // wrong for all four in the same way, and one of them can cancel the wrong job.
+  function jobsForCurrentCase() {
+    return _jobsCacheCaseId && _jobsCacheCaseId === jobsCaseId() ? _jobsCache : [];
+  }
   function loadJobs() {
     const cid = jobsCaseId();
     if (!cid) return Promise.resolve();
     if (_jobsLoadPromise && _jobsLoadCaseId === cid) return _jobsLoadPromise;
     _jobsLoadCaseId = cid;
+    // THROW, don't substitute an empty list. A non-ok answer — an expired session's 401, a 500, a
+    // request the server dropped while it was overloaded — used to be mapped to `{ jobs: [] }`,
+    // which emptied the cache and hid the badge: the case was drawn as idle at the exact moment the
+    // analyst needed to see (and cancel) the run the header pill was claiming. Reported as "the AI
+    // chip still shows running, no jobs chip at all". A failed read means we learned nothing, so
+    // fall through to the catch and keep the last known answer — the same rule refreshAiState
+    // follows in js/dashboard-ai-status.js. Only a real answer may empty the badge.
+    //
+    // "The last known answer" is scoped to the case it was read for. jobsForCurrentCase() enforces
+    // that on every read; the render in the catch is what repaints a badge still showing the case
+    // the analyst just left.
     const request = fetch(`/api/jobs?caseId=${encodeURIComponent(cid)}`)
-      .then((r) => (r.ok ? r.json() : { jobs: [] }))
+      .then((r) => {
+        if (!r.ok) throw new Error("jobs HTTP " + r.status);
+        return r.json();
+      })
       .then((d) => {
         if (cid !== jobsCaseId()) return;
         _jobsCache = Array.isArray(d.jobs) ? d.jobs : [];
+        _jobsCacheCaseId = cid;
         renderJobs();
       })
-      .catch(() => {})
+      .catch(() => renderJobs())
       .finally(() => {
         if (_jobsLoadPromise === request) {
           _jobsLoadPromise = null;
@@ -102,10 +129,11 @@
     const badge = document.getElementById("jobsBadge");
     const menu = document.getElementById("jobsMenu");
     if (!badge || !menu) return;
-    const running = _jobsCache.filter(
+    const cached = jobsForCurrentCase();
+    const running = cached.filter(
       (j) => j.status === "running" || j.status === "queued",
     );
-    const attention = _jobsCache.filter(
+    const attention = cached.filter(
       (j) =>
         j.resumable &&
         (j.status === "interrupted" ||
@@ -119,13 +147,13 @@
     } else if (attention.length) {
       badge.style.display = "";
       badgeText = `⚠ ${attention.length} job${attention.length > 1 ? "s" : ""} need attention`;
-    } else if (menuOpen && _jobsCache.length) {
+    } else if (menuOpen && cached.length) {
       badge.style.display = "";
       badgeText = "⚙ jobs";
     } // keep it clickable while the popover is open so it can't vanish under the cursor
     else {
       badge.style.display = "none";
-      if (menuOpen && !_jobsCache.length) menu.style.display = "none";
+      if (menuOpen && !cached.length) menu.style.display = "none";
     }
     if (badgeText && badge.textContent !== badgeText)
       badge.textContent = badgeText;
@@ -134,11 +162,11 @@
     // work the badge was counting off the end — "⚙ 3 jobs" over a list with no queued row in it.
     // Order is preserved (newest first): this only chooses WHICH rows fit, never reorders them.
     const shown = new Set(running.concat(attention).map((j) => j.id));
-    for (const j of _jobsCache) {
+    for (const j of cached) {
       if (shown.size >= JOBS_MENU_ROWS) break;
       shown.add(j.id);
     }
-    const views = _jobsCache.filter((j) => shown.has(j.id)).map(jobMenuView);
+    const views = cached.filter((j) => shown.has(j.id)).map(jobMenuView);
     const shape = JSON.stringify(
       views.map((v) => [v.job.id, v.cancel, v.resume]),
     );
@@ -189,7 +217,7 @@
   // Nothing server-side prevents that, so the buttons lock each other out here.
   function applyHeavyAiJobLock() {
     const dp = deepPassBusy();
-    const synth = _jobsCache.some(
+    const synth = jobsForCurrentCase().some(
       (j) =>
         j.kind === "synthesis" &&
         (j.status === "running" || j.status === "queued"),
@@ -277,7 +305,7 @@
 
   // What dashboard-deep-pass.js asks: the running/queued job of a kind, if any.
   function runningJob(kind) {
-    return _jobsCache.find(
+    return jobsForCurrentCase().find(
       (j) =>
         j.kind === kind && (j.status === "running" || j.status === "queued"),
     );
