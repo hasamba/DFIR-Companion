@@ -142,6 +142,13 @@ const VERSION_MAX_BYTES = 64 * 1024;
  * The tool's own version string, or "" when it cannot be obtained. Never throws: a binary that has
  * no version flag, prints its banner to stderr, or refuses to launch must not fail the analyst's run
  * — it just leaves the version blank in the record.
+ *
+ * ONLY A SUCCESSFUL PROBE IS READ. A binary that does not recognise the configured flag usually
+ * writes something like "error: unexpected argument '--version'" and exits non-zero WITHOUT the
+ * runner rejecting — so reading its output regardless would stamp that error text into the chain of
+ * custody as the parser's version. A custody record is worse for saying the wrong thing than for
+ * saying nothing, so a failed probe records nothing. Every tool the Companion ships a definition for
+ * exits 0 on its version flag; a custom tool that does not simply has a blank version.
  */
 export async function probeToolVersion(cfg: ToolConfig, runner: ToolRunner): Promise<string> {
   if (!cfg.binary) return "";
@@ -150,6 +157,7 @@ export async function probeToolVersion(cfg: ToolConfig, runner: ToolRunner): Pro
       timeoutMs: VERSION_TIMEOUT_MS,
       maxOutputBytes: VERSION_MAX_BYTES,
     });
+    if (res.code !== 0 || res.signal) return "";
     // Several tools print the banner to stderr, so read both. cleanToolOutput keeps the TAIL, and a
     // version banner leads — so take the first line of the cleaned whole.
     const cleaned = cleanToolOutput(`${res.stdout}\n${res.stderr}`, 40);

@@ -98,6 +98,30 @@ describe("probeToolVersion", () => {
     expect(seenArgs).toEqual(["-V"]);
   });
 
+  it("records nothing when the binary rejects the flag instead of rejecting the promise", async () => {
+    // The common shape: the tool does not know the flag, complains on stderr and exits non-zero. The
+    // runner resolves normally, so without an exit-code check that complaint becomes the "version"
+    // stamped into the chain of custody.
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    const runner: ToolRunner = async () => ({
+      stdout: "",
+      stderr: "error: unexpected argument '--version' found",
+      code: 2,
+    });
+    expect(await probeToolVersion(cfg, runner)).toBe("");
+  });
+
+  it("records nothing when the version probe is killed by a signal", async () => {
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    const runner: ToolRunner = async () => ({
+      stdout: "Hayabusa v3.2.0",
+      stderr: "",
+      code: -1,
+      signal: "SIGKILL",
+    });
+    expect(await probeToolVersion(cfg, runner)).toBe("");
+  });
+
   it("never throws — a binary with no version flag just records nothing", async () => {
     const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara" })!;
     const runner: ToolRunner = async () => {
