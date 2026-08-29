@@ -83,6 +83,29 @@ async function existingCase(cases: CaseStore, caseId: string, res: Response): Pr
   return false;
 }
 
+/**
+ * The paths registerTeamAuthRoutes mounts below, as a predicate.
+ *
+ * These routes are registered BEFORE teamAuth.middleware(), so the request policy never applies to
+ * them — POST /auth/local/login and POST /auth/bootstrap are unauthenticated by definition, because
+ * they are how a caller GETS a credential. The pre-parse gate in composition/httpStack.ts has to
+ * know the same list: a path it lets through with no credential is a path whose body it must parse
+ * itself, at the small unauthenticated limit (#681). Add a route here when you add one below.
+ *
+ * Express routing is neither case-sensitive nor strict, so /AUTH/local/login and /auth/local/login/
+ * both reach the handler. Match the way the router matches, or the gate would 401 a spelling the
+ * router still serves.
+ */
+export function isTeamAuthRoutePath(path: string): boolean {
+  const normalized = (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
+  return (
+    normalized === "/login" ||
+    normalized === "/admin" ||
+    normalized === "/auth" ||
+    normalized.startsWith("/auth/")
+  );
+}
+
 export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: CaseStore): void {
   app.use("/auth", (_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");

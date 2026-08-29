@@ -223,6 +223,24 @@ export class TeamAuth {
     return safeStringEqual(supplied, auth.session.csrfToken);
   }
 
+  /**
+   * The answer to a request that carries no usable credential: a login redirect for a browser
+   * navigation, a 401 for everything else.
+   *
+   * Exported as a method because TWO layers now send it. composition/httpStack.ts runs a pre-parse
+   * gate BEFORE the body parsers so an unauthenticated caller cannot make the process inflate,
+   * allocate and JSON-parse hundreds of MB on its way to this same 401 (#681). The two must answer
+   * identically — a client that used to be redirected to /login must still be redirected — so the
+   * answer lives here once instead of being copied there.
+   */
+  rejectUnauthenticated(req: Request, res: Response): void {
+    if (acceptsHtml(req)) {
+      res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
+      return;
+    }
+    res.status(401).json({ error: "authentication required" });
+  }
+
   middleware(): RequestHandler {
     return (req: Request, res: Response, next: NextFunction): void => {
       const policy = resolveRequestPolicy(req.method, req.path);
@@ -232,11 +250,7 @@ export class TeamAuth {
       }
       const auth = this.authenticateRequest(req);
       if (!auth) {
-        if (acceptsHtml(req)) {
-          res.redirect(`/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
-          return;
-        }
-        res.status(401).json({ error: "authentication required" });
+        this.rejectUnauthenticated(req, res);
         return;
       }
       if (!this.authorized(auth, policy, req)) {
