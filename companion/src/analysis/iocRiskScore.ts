@@ -36,7 +36,16 @@ export type IocRiskTier = "critical" | "high" | "medium" | "low" | "benign";
 export interface IocRisk {
   score: IocRiskTier;
   factors: string[]; // human-readable reasons, strongest first
+  // Whether this value is a THREAT INDICATOR or merely an OBSERVATION. An import scrapes every file
+  // path and hash it sees — 5,000+ on a single collection — and presenting them all as "indicators"
+  // drowns the handful that matter. An indicator earned a signal (reputation verdict, a Medium+
+  // event, corroboration, KEV); an observation is a value that appeared in the evidence with none.
+  // Both stay searchable; only the count / panel / export should treat them differently. Set by
+  // scoreIocs (which has the IOC's enrichments); a bare scoreIoc call leaves it undefined.
+  role?: IocRole;
 }
+
+export type IocRole = "indicator" | "observation";
 
 /** The pre-derived signals scoreIoc grades. Kept explicit so the core rubric is unit-testable. */
 export interface IocRiskSignals {
@@ -150,7 +159,7 @@ export function scoreIocs(
     const kevMatch = extractCveIds(ioc.value).some(
       (cve) => ctx.kevCveIds?.has(cve) || (ctx.kevCatalog ? ctx.kevCatalog.has(cve) : false),
     );
-    out[ioc.id] = scoreIoc({
+    const risk = scoreIoc({
       verdictClass,
       distinctTools: sources[ioc.id]?.length ?? 0,
       maxSeverityRank: sevRank[ioc.id] ?? -1,
@@ -159,8 +168,39 @@ export function scoreIocs(
       whitelisted,
       suspiciousDomain: (ioc.type === "domain" || ioc.type === "url") && looksSuspiciousDomain(ioc.value),
     });
+    risk.role = iocRole(ioc, risk.score);
+    out[ioc.id] = risk;
   }
   return out;
+}
+
+/**
+ * Is this value a THREAT INDICATOR or just an OBSERVATION? An indicator earned a signal; a bare file
+ * path or hash that appeared in the evidence with no reputation verdict, no Medium+ event, and no
+ * corroboration is an observation. The risk tier already folds severity, corroboration, intel and KEV
+ * together, so tier ≥ medium is the behavioural gate; a reputation HIT on an otherwise-quiet value
+ * still counts (a low-risk hash MalwareBazaar flagged is worth surfacing).
+ */
+export function iocRole(ioc: IOC, tier: IocRiskTier): IocRole {
+  if (RISK_TIER_RANK[tier] >= RISK_TIER_RANK.medium) return "indicator";
+  const flagged = (ioc.enrichments ?? []).some(
+    (e) => e.verdict === "malicious" || e.verdict === "suspicious",
+  );
+  return flagged ? "indicator" : "observation";
+}
+
+/** Split a scored IOC set into indicator / observation counts. */
+export function summarizeIocRoles(risks: Record<string, IocRisk>): {
+  indicators: number;
+  observations: number;
+} {
+  let indicators = 0;
+  let observations = 0;
+  for (const r of Object.values(risks)) {
+    if (r.role === "indicator") indicators++;
+    else observations++;
+  }
+  return { indicators, observations };
 }
 
 /** Rank ordering for sorting / filtering (higher = riskier). */

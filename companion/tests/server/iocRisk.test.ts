@@ -69,6 +69,9 @@ describe("GET /cases/:id/ioc-risk", () => {
     expect(["critical", "high"]).toContain(res.body["i-bad"].score);
     expect(res.body["i-bad"].factors.length).toBeGreaterThan(0);
     expect(res.body["i-wl"].score).toBe("benign");
+    // Each risk now carries a role so the dashboard's risk filter can separate a real indicator from
+    // an ordinary observation (a scraped file path / hash with no signal).
+    expect(res.body["i-bad"].role).toBe("indicator");
   });
 
   it("404s for an unknown case", async () => {

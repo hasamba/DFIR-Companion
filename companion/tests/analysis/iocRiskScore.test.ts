@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { scoreIoc, scoreIocs, type IocRiskSignals } from "../../src/analysis/iocRiskScore.js";
+import {
+  scoreIoc,
+  scoreIocs,
+  iocRole,
+  summarizeIocRoles,
+  type IocRiskSignals,
+} from "../../src/analysis/iocRiskScore.js";
 import type { IOC, ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Minimal signal set (nothing risky) that individual tests override.
@@ -135,5 +141,51 @@ describe("scoreIocs — batch orchestration over real IOCs/events", () => {
     });
     expect(out["i1"].score).toBe("benign"); // NSRL known-good beats the malicious verdict
     expect(out["i2"].score).toBe("benign"); // whitelisted
+  });
+});
+
+describe("iocRole — indicator vs observation (the 5,000-file-path problem)", () => {
+  const mk = (p: Partial<IOC> & { id: string; value: string; type: IOC["type"] }): IOC => ({
+    firstSeen: "",
+    ...p,
+  });
+
+  it("a bare file path with no signal is an observation", () => {
+    expect(iocRole(mk({ id: "f1", type: "file", value: "C:\\Windows\\notepad.exe" }), "low")).toBe(
+      "observation",
+    );
+  });
+
+  it("a hash a reputation source flagged is an indicator even at low risk", () => {
+    const ioc = mk({
+      id: "h1",
+      type: "hash",
+      value: "a".repeat(64),
+      enrichments: [{ source: "MalwareBazaar", verdict: "malicious", fetchedAt: "" }],
+    });
+    expect(iocRole(ioc, "low")).toBe("indicator");
+  });
+
+  it("any Medium+ risk tier is an indicator, whatever the type", () => {
+    expect(iocRole(mk({ id: "x", type: "file", value: "x" }), "medium")).toBe("indicator");
+    expect(iocRole(mk({ id: "y", type: "ip", value: "1.2.3.4" }), "high")).toBe("indicator");
+  });
+
+  it("scoreIocs stamps role, and summarizeIocRoles splits the set", () => {
+    const iocs: IOC[] = [
+      mk({ id: "obs1", type: "file", value: "C:\\Program Files\\app\\a.dll" }),
+      mk({ id: "obs2", type: "hash", value: "b".repeat(64) }),
+      mk({
+        id: "ind1",
+        type: "domain",
+        value: "evil.test",
+        enrichments: [{ source: "VT", verdict: "malicious", fetchedAt: "" }],
+      }),
+    ];
+    const risks = scoreIocs(iocs, [], { hostNames: new Set() });
+    expect(risks["obs1"].role).toBe("observation");
+    expect(risks["obs2"].role).toBe("observation");
+    expect(risks["ind1"].role).toBe("indicator");
+    expect(summarizeIocRoles(risks)).toEqual({ indicators: 1, observations: 2 });
   });
 });
