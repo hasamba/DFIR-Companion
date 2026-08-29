@@ -2,6 +2,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import { normalizeHash, parseNsrlText } from "./nsrl.js";
 
 // Persists the NSRL known-good hash set (issue #63). GLOBAL — shared across cases, like the IOC
@@ -12,6 +13,12 @@ import { normalizeHash, parseNsrlText } from "./nsrl.js";
 //
 // The in-memory Set is cached after first load and invalidated on every mutation, so the per-import
 // auto-apply sweep doesn't re-read (and re-parse) the file each time.
+// Serializes the load->union->persist section on the known-good hash set (follow-up to #682). Two
+// RDS imports running together keep only one, so hashes the operator believes are suppressed are
+// not — the failure direction is extra noise rather than a missed detection, but it is silent.
+// GLOBAL store, keyed by the file path.
+const nsrlLock = new StateLock();
+
 export class NsrlStore {
   private cache: Set<string> | null = null;
 
@@ -50,18 +57,20 @@ export class NsrlStore {
 
   // Union new hashes into the set. Normalizes + dedups; only valid hashes are kept. Returns how many
   // were NEW and the resulting total. No-op write when nothing new (keeps re-imports cheap).
-  async addMany(hashes: readonly string[]): Promise<{ added: number; total: number }> {
-    const set = new Set(await this.load());
-    let added = 0;
-    for (const h of hashes) {
-      const n = normalizeHash(h);
-      if (n && !set.has(n)) {
-        set.add(n);
-        added++;
+  addMany(hashes: readonly string[]): Promise<{ added: number; total: number }> {
+    return nsrlLock.runExclusive(this.file, async () => {
+      const set = new Set(await this.load());
+      let added = 0;
+      for (const h of hashes) {
+        const n = normalizeHash(h);
+        if (n && !set.has(n)) {
+          set.add(n);
+          added++;
+        }
       }
-    }
-    if (added > 0) await this.persist(set);
-    return { added, total: set.size };
+      if (added > 0) await this.persist(set);
+      return { added, total: set.size };
+    });
   }
 
   // Wipe the set (e.g. to swap in a different RDS release).

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import type { FindingsDiff } from "./findingsDiff.js";
 
 // Lightweight per-case record of the LAST synthesis run: when it actually ran (the AI call, not a
@@ -209,6 +210,16 @@ export function modelPerfLabel(m: ModelPerfSnapshot): string | null {
   return parts.length ? parts.join(" ") : null;
 }
 
+// Serializes every write to a case's synth-meta (follow-up to #682). record() REPLACES the document
+// while recordSecondLook/recordSecondOpinionPerf load-merge-save onto it, and those two are ordered
+// by comment ("called AFTER the sweep... so it merges onto the latest record() write") rather than
+// by anything enforcing it. A record() landing between a merge method's load and its save is
+// silently undone. That is not just a stale timestamp: reportWriter.ts reads secondLook.leads and
+// coverage straight out of this file, so a lost merge drops second-look leads from the REPORT.
+// MODULE-level: the app builds this store twice (runtimeStores.ts and aiProviders.ts), and the two
+// paths that collide here are exactly synthesis and an on-demand route.
+const synthMetaLock = new StateLock();
+
 export class SynthMetaStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -227,34 +238,40 @@ export class SynthMetaStore {
 
   // Record a completed synthesis run: stamp the time, store the findings diff, and
   // optionally store performance metrics (duration, event/IOC counts).
-  async record(
+  record(
     caseId: string,
     diff: FindingsDiff,
     at: string = new Date().toISOString(),
     perf?: SynthPerfMetrics,
   ): Promise<SynthMeta> {
-    const meta: SynthMeta = { lastSynthesizedAt: at, lastDiff: diff, ...perf };
-    await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
-    return meta;
+    return synthMetaLock.runExclusive(caseId, async () => {
+      const meta: SynthMeta = { lastSynthesizedAt: at, lastDiff: diff, ...perf };
+      await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+      return meta;
+    });
   }
 
   // Stamp the second-look sweep result onto the CURRENT synth-meta (#11). Called AFTER the sweep and its
   // (optional) re-synthesis, so it merges onto the latest record() write instead of being clobbered by
   // it. Load-merge-save so the rest of the meta (time/diff/perf) is preserved. `null` clears it.
-  async recordSecondLook(caseId: string, secondLook: SecondLookMeta | null): Promise<SynthMeta> {
-    const cur = await this.load(caseId);
-    const meta: SynthMeta = { ...cur, secondLook };
-    await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
-    return meta;
+  recordSecondLook(caseId: string, secondLook: SecondLookMeta | null): Promise<SynthMeta> {
+    return synthMetaLock.runExclusive(caseId, async () => {
+      const cur = await this.load(caseId);
+      const meta: SynthMeta = { ...cur, secondLook };
+      await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+      return meta;
+    });
   }
 
   // Stamp a second-opinion agreement snapshot onto the CURRENT synth-meta (#74). Same load-merge-save
   // shape as recordSecondLook: secondOpinion() runs on demand (not as part of every synthesize() call),
   // so this must merge onto whatever the last record() wrote rather than replace it. `null` clears it.
-  async recordSecondOpinionPerf(caseId: string, perf: SecondOpinionPerf | null): Promise<SynthMeta> {
-    const cur = await this.load(caseId);
-    const meta: SynthMeta = { ...cur, secondOpinionPerf: perf };
-    await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
-    return meta;
+  recordSecondOpinionPerf(caseId: string, perf: SecondOpinionPerf | null): Promise<SynthMeta> {
+    return synthMetaLock.runExclusive(caseId, async () => {
+      const cur = await this.load(caseId);
+      const meta: SynthMeta = { ...cur, secondOpinionPerf: perf };
+      await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+      return meta;
+    });
   }
 }

@@ -15,7 +15,9 @@ import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDis
 import { IocAliasStore } from "../../src/analysis/iocAlias.js";
 import { LateralPathDismissStore } from "../../src/analysis/lateralPathDismiss.js";
 import { LearnedPatternStore } from "../../src/analysis/learnedPatternStore.js";
+import { NsrlStore } from "../../src/analysis/nsrlStore.js";
 import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
+import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { VeloMonitorStore } from "../../src/analysis/veloMonitorStore.js";
 import { ClickUpExportStore } from "../../src/integrations/clickup/clickupExportStore.js";
@@ -653,6 +655,78 @@ describe("side store concurrency (#682)", () => {
         store.bind("slack:KEPT", "case-new", "2026-08-29T00:00:00.000Z"),
       ]);
       expect(Object.keys(await store.loadAll())).toEqual(["slack:KEPT"]);
+    });
+  });
+
+  describe("SynthMetaStore", () => {
+    const diff = { added: [], removed: [], changed: [] } as never;
+
+    // The two stamp methods each load-merge-save the whole document, so run together the second
+    // save drops the first one's field. reportWriter.ts reads secondLook.leads straight out of this
+    // file, so the lost stamp takes second-look leads out of the REPORT — not just the dashboard.
+    it("keeps both stamps when they are written at the same moment", async () => {
+      const store = new SynthMetaStore(cases);
+      await store.record(CASE, diff, "2026-08-29T00:00:00.000Z");
+      await Promise.all([
+        store.recordSecondLook(CASE, {
+          at: "2026-08-29T00:00:00.000Z",
+          summary: "sweep",
+          promoted: 3,
+          requests: 5,
+          matched: 4,
+          leads: ["missed persistence"],
+        }),
+        store.recordSecondOpinionPerf(CASE, {
+          modelA: "a",
+          modelB: "b",
+          agreementCount: 8,
+          deltaCount: 2,
+          agreementRate: 0.8,
+          at: "2026-08-29T00:00:00.000Z",
+        }),
+      ]);
+      const meta = await store.load(CASE);
+      expect(meta.secondLook?.leads).toHaveLength(1);
+      expect(meta.secondOpinionPerf?.agreementCount).toBe(8);
+    });
+
+    // Synthesis holds one instance (aiProviders.ts) and the on-demand routes another
+    // (runtimeStores.ts) — the two paths that actually collide here.
+    it("serializes two store instances over the same case", async () => {
+      const routes = new SynthMetaStore(cases);
+      const synthesis = new SynthMetaStore(cases);
+      await routes.record(CASE, diff, "2026-08-29T00:00:00.000Z");
+      await Promise.all([
+        routes.recordSecondLook(CASE, {
+          at: "2026-08-29T00:00:00.000Z",
+          summary: "sweep",
+          promoted: 1,
+          requests: 2,
+          matched: 1,
+          leads: ["from routes"],
+        }),
+        synthesis.recordSecondOpinionPerf(CASE, {
+          modelA: "a",
+          modelB: "b",
+          agreementCount: 91,
+          deltaCount: 9,
+          agreementRate: 0.91,
+          at: "2026-08-29T00:00:00.000Z",
+        }),
+      ]);
+      const meta = await routes.load(CASE);
+      expect(meta.secondLook?.leads).toHaveLength(1);
+      expect(meta.secondOpinionPerf?.agreementCount).toBe(91);
+    });
+  });
+
+  describe("NsrlStore", () => {
+    it("keeps every hash when several imports land at once", async () => {
+      const store = new NsrlStore(join(root, "nsrl", "hashes.txt"));
+      const batch = (n: number) =>
+        Array.from({ length: 5 }, (_, i) => `${n}${i}`.padStart(32, "a").slice(0, 32));
+      await Promise.all(Array.from({ length: 6 }, (_, n) => store.addMany(batch(n))));
+      expect(await store.load()).toHaveLength(30);
     });
   });
 
