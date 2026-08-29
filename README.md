@@ -300,6 +300,10 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **SSH brute-force-success detection** (T1110.001) — flags a successful login following a burst of failed attempts from the same source IP → Medium
 - **Windows logon-type risk grading** — decodes 4624 logon types and grades risky shapes (external RDP, network-cleartext, `runas /netonly`) → Medium
 - **NTFS timestomp detection** (T1070.006) — flags MFT `$SI`/`$FN` timestamp mismatches as likely timestomping → Medium
+- **Ransomware note / renamed-file detection** (T1486) — flags ransom-note filenames and known family extensions, aggregated per host, above Info so the cap can't bury it
+- **RDP lateral-movement detection** (T1021.001) — grades explicit-credential RDP logons to a genuinely remote target as Medium; local session-manager noise stays Info
+- **Drive-by download and cloud-exfil tool detection** (T1189 / T1567.002) — internet-zone runnable downloads and `rclone`/`restic`/`megasync`/`megacmd` execution in Prefetch
+- **Contextual YARA severity** — grades a hit by where and what it matched (self-scan → Info, page-file string → Low, named malware on a real path → High) instead of a flat High
 
 ### AI analysis
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave

@@ -853,6 +853,18 @@
           <p>Turn on sign-in when more than one analyst works the case: OIDC or an audited local account, per-case reader/investigator/reviewer/administrator roles, scoped service identities, and analyst attribution signed into the record. Two people can no longer overwrite each other. Localhost stays zero-config — none of it is required to run alone.</p>
           <span class="tag">v0.35.0 — roles, attribution, no lost writes</span>
         </div>
+        <div class="feature-card animate">
+          <div class="feature-icon red">🧬</div>
+          <h3>Contextual YARA Grading</h3>
+          <p>A YARA hit is graded by where and what it matched, not a flat High: a self-scan reads as Info, a page-file or memory-dump string as Low, a broad heuristic as Medium — only a named malware family on a real path stays High. Measured across four real intrusion scenarios: High+Critical findings cut 74–86%, zero new false positives.</p>
+          <span class="tag">v0.36.0 — signal over noise</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">🔒</div>
+          <h3>Ransomware Detection</h3>
+          <p>A ransom-note filename or a file renamed with a known family's extension is flagged as T1486, aggregated per host so a mass-renamed share reads as one finding, and graded above Info so it survives the event cap instead of drowning in MFT/USN noise.</p>
+          <span class="tag">v0.36.0 — the note doesn't get buried</span>
+        </div>
       </div>
     </div>
   </section>

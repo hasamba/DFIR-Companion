@@ -1220,6 +1220,9 @@
           <div class="sfield"><label>Atomic-save retries<span class="sfield-hint">DFIR_ATOMIC_WRITE_RETRIES — retries on a transient Windows lock (AV/indexer/sync client) during the state save's final rename (default 20)</span></label><input id="env-DFIR_ATOMIC_WRITE_RETRIES" placeholder="20" /></div>
           <div class="sfield"><label>SIEM/EDR import event cap<span class="sfield-hint">DFIR_MAX_EVENTS — safety cap on events emitted by a single SIEM/EDR JSON import (default 2000)</span></label><input id="env-DFIR_MAX_EVENTS" placeholder="2000" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Deterministic-import rate limit<span class="sfield-hint">DFIR_IMPORT_RATE_MAX — requests/min for Velociraptor/THOR/Chainsaw/Hayabusa imports, drawn from a separate pool than the AI request budget (default 300)</span></label><input id="env-DFIR_IMPORT_RATE_MAX" placeholder="300" /></div>
+        </div>
         <div class="settings-group-head">Evidence drop folder (auto-import inbox)</div>
         <div class="sfield-row3">
           <div class="sfield"><label>Enabled<span class="sfield-hint">DFIR_DROP_ENABLED — set "off" to disable the per-case drop/ folder watcher entirely</span></label><input id="env-DFIR_DROP_ENABLED" placeholder="on" /></div>
@@ -1275,6 +1278,14 @@
         <div class="settings-group-head">NTFS timestomp detection (T1070.006)</div>
         <div class="sfield-row">
           <div class="sfield"><label>Backdating threshold (min)<span class="sfield-hint">DFIR_TIMESTOMP_THRESHOLD_MINUTES — how far $SI creation must precede $FN creation to flag (default 10, matches Timesketch)</span></label><input id="env-DFIR_TIMESTOMP_THRESHOLD_MINUTES" placeholder="10" /></div>
+        </div>
+        <div class="settings-group-head">Ransomware note / renamed-file detection (T1486)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Extra family extensions<span class="sfield-hint">DFIR_RANSOM_EXTS — comma-separated, in addition to the built-in list, e.g. .lockbit</span></label><input id="env-DFIR_RANSOM_EXTS" placeholder=".lockbit" /></div>
+        </div>
+        <div class="settings-group-head">Detection-noise suppression (collector tools &amp; sample data)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Extra sample/demo hostnames<span class="sfield-hint">DFIR_SAMPLE_HOSTS — comma-separated, in addition to the built-in list, so a foreign sample corpus a tool unpacks (e.g. EVTX-ATTACK-SAMPLES) is demoted instead of read as case-host evidence</span></label><input id="env-DFIR_SAMPLE_HOSTS" placeholder="" /></div>
         </div>
         <div class="settings-group-head">Lookalike-domain detection</div>
         <div class="sfield-row">
