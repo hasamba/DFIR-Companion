@@ -13,6 +13,14 @@ describe("prefetchExecution — the dual-use binaries a Prefetch entry can name"
     expect(prefetchSignal("MSBUILD.EXE")?.mitre).toContain("T1127.001");
   });
 
+  it("grades a cloud/bulk exfil tool execution Medium with T1567.002 (name alone, no command line)", () => {
+    for (const exe of ["rclone.exe", "RCLONE.EXE", "restic.exe", "megasync.exe", "megacmd.exe"]) {
+      const s = prefetchSignal(exe);
+      expect(s?.severity, exe).toBe("Medium");
+      expect(s?.mitre, exe).toContain("T1567.002");
+    }
+  });
+
   it("grades the defense-tampering and anti-forensics utilities with their own technique", () => {
     expect(prefetchSignal("WEVTUTIL.EXE")?.mitre).toEqual(["T1070.001"]);
     expect(prefetchSignal("TASKKILL.EXE")?.mitre).toEqual(["T1562.001"]);

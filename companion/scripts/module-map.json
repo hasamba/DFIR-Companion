@@ -375,6 +375,7 @@
     "pushPayload.ts": "analysis/notify",
     "pushTokenStore.ts": "analysis/notify",
     "queryTranslate.ts": "analysis/ai",
+    "rdpLateralDetect.ts": "analysis/ingest",
     "reconTechniques.ts": "analysis/intel",
     "redactPaths.ts": "analysis/privacy",
     "redactedExport.ts": "analysis/privacy",

@@ -111,6 +111,13 @@ const DUAL_USE: Record<string, string[]> = {
   "psexesvc.exe": ["T1569.002"],
   "paexec.exe": ["T1569.002"],
   "at.exe": ["T1053.002"],
+  // Cloud/bulk exfil tools (T1567.002). tradecraftRules maps these from a COMMAND LINE, but on a
+  // prefetch/amcache row there is no command line — the execution name is all there is, and rclone
+  // running on a workstation at all is worth a Medium. (A renamed rclone is caught by BinaryRename.)
+  "rclone.exe": ["T1567.002"],
+  "restic.exe": ["T1567.002"],
+  "megasync.exe": ["T1567.002"],
+  "megacmd.exe": ["T1567.002"],
 };
 
 // A binary that ships INSIDE a browser and is only itself there. Both are ordinary Edge/Chromium
