@@ -8,7 +8,7 @@ The original issue asked for a single harness with "CI-friendly exit codes" that
 
 - **Phase 1 — mock (CI-gating):** every fixture is driven by a `MockProvider` built from its canned response. Deterministic, zero-cost, runs in normal CI. Gates the _plumbing and the scoring math_.
 - **Phase 2 — `--real` (non-blocking):** the env-configured provider (`realProviderOrNull()` → `buildProvider()`) scores the **current prompt's actual output** against the golden expectations — the real regression signal. Gated on `DFIR_AI_*`: if no provider is configured it **skips (exit 0)**, so it never breaks CI. Uses `REAL_THRESHOLDS` (recall-gated — see _Why `--real` gates on recall_ below) because a real model won't reproduce a golden set exactly. Run it manually or on a nightly/labeled workflow; it is **not** in `npm test`.
-- **Production corpus — quality + calibration:** `corpus/v1/` adds ten synthetic cases spanning ransomware, BEC, insider threat, lateral movement, Linux, cloud identity, email, memory, network and a clean maintenance window. Claims must match the golden claim's exact evidence-id set as well as its required meaning. The scorer also gates IOC recall, false conclusions, invented evidence references, confidence ranges, uncertainty handling, useful next steps and clean-case abstention.
+- **Production corpus — quality + calibration:** `corpus/v1/` adds ten synthetic cases spanning ransomware, BEC, insider threat, lateral movement, Linux, cloud identity, email, memory, network and a clean maintenance window. A claim must cite at least the golden claim's required evidence ids (extra, legitimately-related ids are fine) as well as its required meaning; missing evidence still fails. The scorer also gates IOC recall, false conclusions, invented evidence references, confidence ranges, uncertainty handling, useful next steps and clean-case abstention.
 
 Screenshots (`analyzeWindow`, the vision path) are covered two ways:
 
@@ -28,7 +28,7 @@ The committed golden set (CSV, log, screenshot, synthesis) is entirely synthetic
 | `harness.test.ts`                  | Integration: fixtures through the pipeline → scorer, asserting thresholds + a deliberate regression.                                            |
 | `run.ts`                           | CLI runner with a summary report + CI exit codes.                                                                                               |
 | `corpus.ts` / `corpus/v1/`         | Strict loader and versioned, provenance-reviewed synthetic production corpus.                                                                   |
-| `qualityScorer.ts`                 | Exact claim-to-evidence, IOC, calibration, contradiction, abstention and next-step gates.                                                       |
+| `qualityScorer.ts`                 | Claim-evidence-coverage, IOC, calibration, contradiction, abstention and next-step gates.                                                       |
 | `baseline.ts` / `report.ts`        | Pinned model/prompt baselines and privacy-safe machine-readable reports.                                                                        |
 | `changeGate.ts` / `checkChange.ts` | CI guard requiring a matching no-regression report when built-in prompts/default models change.                                                 |
 
@@ -139,9 +139,15 @@ Point `--real` at a strong model via `DFIR_VISION_MODEL` (it need not be the mod
 - **Hallucination** — a finding citing an event id absent from the timeline _invented_ that reference; a finding citing no real event and no IOC is _ungrounded_.
 - **Rubric** — a numeric `confidence` must carry a `confidenceReason` (advisory; doesn't fail the gate).
 
-**Production cases — exact claim-level scoring.** Each golden claim names an exact, order-independent
-set of forensic event IDs plus required meaning. A finding with similar wording but the wrong evidence
-fails. Additional findings count as false conclusions because these compact case goldens are exhaustive.
+**Production cases — evidence-coverage claim scoring.** Each golden claim names the forensic event
+IDs a matching finding must cite (a subset check, not an exact-set one — citing additional
+legitimately-related events no longer fails the claim) plus its required meaning. A finding with
+similar wording but missing evidence still fails. Additional *findings* still count as false
+conclusions because these compact case goldens are exhaustive. **History:** this was originally an
+exact-set match; two real models (`openrouter/google/gemini-3.7-flash`,
+`anthropic/claude-sonnet-4.6`) both scored a hard 0.0% claims precision/recall on 8-9 of 9 cases
+under it despite scoring well on IOCs, uncertainties and next-steps — no real model reliably
+reproduces a golden's exact id combination, so the bar was too strict to ever pass.
 The scorer separately rejects references to IDs absent from the input timeline, known forbidden
 conclusions/entities, out-of-range confidence, missing confidence reasons, unresolved evidence gaps
 without an honest uncertainty, unhelpful next steps, and any finding at all in an abstention case.

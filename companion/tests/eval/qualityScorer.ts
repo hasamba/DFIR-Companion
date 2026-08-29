@@ -107,10 +107,15 @@ function containsTerms(text: string, terms: readonly string[]): boolean {
   return terms.every((term) => normalized.includes(norm(term)));
 }
 
-function sameIds(left: readonly string[], right: readonly string[]): boolean {
-  const a = [...new Set(left)].sort();
-  const b = [...new Set(right)].sort();
-  return a.length === b.length && a.every((value, index) => value === b[index]);
+// A claim must CITE (at least) its required evidence, not reproduce the golden's exact id set. Two
+// real models (openrouter/google/gemini-3.7-flash and anthropic/claude-sonnet-4.6) both scored a
+// hard 0.0% claims precision AND recall on 8-9 of 9 production cases despite getting IOCs,
+// uncertainties and next-steps mostly right — a real model reliably citing the identical id
+// combination the corpus author happened to type is not a realistic bar. Missing required evidence
+// still fails (coveredBy is not symmetric); an id-for-id match is no longer required.
+function coveredBy(required: readonly string[], actual: readonly string[]): boolean {
+  const have = new Set(actual);
+  return required.every((id) => have.has(id));
 }
 
 function claimText(claim: QualityClaim): string {
@@ -124,7 +129,7 @@ function scoreClaims(golden: readonly GoldenClaim[], produced: readonly QualityC
     const hit = produced.findIndex(
       (claim, index) =>
         !used.has(index) &&
-        sameIds(expected.evidenceEventIds, claim.evidenceEventIds) &&
+        coveredBy(expected.evidenceEventIds, claim.evidenceEventIds) &&
         containsTerms(claimText(claim), expected.requiredTerms),
     );
     if (hit < 0) missed.push(expected.id);

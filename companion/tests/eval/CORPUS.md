@@ -42,7 +42,7 @@ Before adding a case:
 1. Write fictional evidence; never sanitize a real case and call it synthetic.
 2. Use reserved domains/IP ranges and generic identities.
 3. Make the golden exhaustive enough that every additional finding is genuinely a false conclusion.
-4. Tie each expected claim to the exact supporting evidence IDs.
+4. Tie each expected claim to the supporting evidence IDs a correct finding must cite (citing extra, legitimately-related events beyond these no longer fails the claim — see `qualityScorer.ts`).
 5. Add an explicit forbidden conclusion where the scenario tempts causal overreach.
 6. Add uncertainty and a concrete next step when evidence is incomplete or contradictory.
 7. Run the deterministic corpus tests and the repository's full seven-gate suite.
