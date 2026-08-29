@@ -13,7 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **A failed OIDC sign-in no longer shows the identity provider's error text** — the login page gets one sentence and a reference; the full detail goes to the server log under that reference. (closes #674)
+- **Case unlock tokens carry a payload version** — a token signed under an older payload shape now stops verifying instead of being read under today's rules. Unlock cookies issued before this release stop working, so each password-protected case asks for its password once more. (closes #671)
+
 ### Fixed
+- **Expired team-mode sessions are swept every six hours** instead of accumulating in the auth database for the life of the deployment. (closes #676)
+- **The timer-lifecycle test suite no longer flakes** — a poll still in flight when its test ended re-armed into the next test's fake-timer queue. (closes #685)
 - **Concurrent edits to dwell windows, playbook tasks, the collection plan, the IOC whitelist, notification channels and report versions no longer overwrite each other** in team mode. (closes #682)
 - **Switching a webhook channel to another provider requires the new provider's URL** — a blank field no longer reuses the old service's endpoint. (closes #683)
 - **`"false"` disables a notification channel or event toggle** instead of enabling it; anything that is not a boolean or `"true"`/`"false"` is now a 400. (closes #684)

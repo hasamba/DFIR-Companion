@@ -1,15 +1,16 @@
 /**
- * The maintenance timers a real server run arms at startup: automatic state backup, and periodic
- * evidence re-verification. Lifted out of startServer by #416.
+ * The maintenance timers a real server run arms at startup: expired-session cleanup, automatic state
+ * backup, and periodic evidence re-verification. Lifted out of startServer by #416.
  *
  * THEY REUSE A PATTERN, NOT A CONCERN. The integrity sweep is scheduled beside the backup timer
  * rather than inside BackupManager on purpose: state backups and custody verification are unrelated,
- * and folding one into the other would only couple them. What they share is the shape — an interval,
- * `.unref()`d so it never blocks process exit, doing best-effort work that must never throw into
- * the request path.
+ * and folding one into the other would only couple them. The session sweep (#676) sits here for the
+ * same reason. What they share is the shape — an interval, `.unref()`d so it never blocks process
+ * exit, doing best-effort work that must never throw into the request path.
  *
- * Both are OPT-OUT by interval: a zero interval arms nothing, which is what createApp-only tests and
- * the scripts/* pipelines get, since they never call this.
+ * They are OPT-OUT by absence: a zero interval arms no timer, and no authStore arms no session
+ * sweep. That is what createApp-only tests and the scripts/* pipelines get, since they never call
+ * this at all.
  */
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
@@ -24,6 +25,7 @@ import { seedDemoCase } from "../analysis/seedDemoCase.js";
 import { resolveUpdateMode, UPDATE_CHECK_THROTTLE_MS } from "../analysis/updateCheck.js";
 import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
+import type { AuthStore } from "../auth/authStore.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 
@@ -34,12 +36,24 @@ import type { VelociraptorClientStore } from "../analysis/velociraptorClientStor
  */
 const INITIAL_INTEGRITY_SWEEP_DELAY_MS = 60_000;
 
+/**
+ * How often to delete expired team-mode sessions (#676).
+ *
+ * Six hours, not minutes: an expired session is already unusable — listSessions filters it out and
+ * authenticateSession refuses and deletes it — so this sweep buys disk, never security, and there is
+ * nothing to race. A lapsed row therefore waits up to one interval before it goes, which even at the
+ * shortest TTL the server accepts (15 minutes) is a handful of rows per signed-in analyst.
+ */
+const SESSION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
 export interface MaintenanceDeps {
   store: CaseStore;
   custodyStore: CustodyStore;
   notifier: Notifier;
   /** Used to deep-link an integrity alert back to the affected case. */
   dashboardBaseUrl: string;
+  /** Team mode only. Absent in solo mode, where there is no session table to sweep. */
+  authStore?: AuthStore;
 }
 
 export interface MaintenanceTasks {
@@ -53,7 +67,26 @@ export function startMaintenanceTasks({
   custodyStore,
   notifier,
   dashboardBaseUrl,
+  authStore,
 }: MaintenanceDeps): MaintenanceTasks {
+  // Expired team-mode sessions (#676). Same shape as the two timers below — an interval, .unref()'d,
+  // best-effort — and armed only in team mode. Swept once at startup too, because a restart is the
+  // one moment a deployment is certain to have accumulated lapsed sessions since the last sweep.
+  if (authStore) {
+    const sweepSessions = (): void => {
+      try {
+        const removed = authStore.deleteExpiredSessions();
+        if (removed > 0) logLine(`[auth] swept ${removed} expired session(s)`);
+      } catch (e) {
+        // A sweep failure must never reach the request path: the rows stay, nothing else breaks.
+        warnLine(`[auth] expired-session sweep failed: ${(e as Error).message}`);
+      }
+    };
+    sweepSessions();
+    const sessionTimer = setInterval(sweepSessions, SESSION_SWEEP_INTERVAL_MS);
+    sessionTimer.unref();
+  }
+
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
   const backupManager = new BackupManager(store, backupConfig);
