@@ -12,8 +12,6 @@
 //
 // Kept as its own module rather than inlined into velociraptorImport.ts, which is frozen at its
 // current size by the file-size ledger (#384) — see check-file-size.mjs.
-import { createHash } from "node:crypto";
-
 import {
   str,
   getCI,
@@ -26,6 +24,7 @@ import {
   type SiemIoc,
 } from "./siemImport.js";
 import { type Severity } from "./stateTypes.js";
+import { boundedAggKey } from "./aggKey.js";
 import { isStagedPath } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
@@ -192,18 +191,15 @@ function describeRename(f: RenameFacts): string {
 // arriving again by a different route. Host first puts every short discriminator inside the bound
 // by construction.
 //
-// The path is then the only field that can realistically exhaust what is left, and when it does the
-// tail carries a digest of the FULL key, so two deep paths sharing a 400-character prefix stay two
-// rows. A key short enough to fit is untouched, so nothing that already aggregates correctly starts
-// aggregating differently.
-const AGG_KEY_MAX = 400;
-const AGG_KEY_DIGEST = 16; // 64 bits of hex — collision-free at any case's row count
-
+// The path is then the only field that can realistically exhaust what is left, and when it does
+// boundedAggKey puts a digest of the FULL key in the tail, so two deep paths sharing a 400-character
+// prefix stay two rows. A key short enough to fit is untouched, so nothing that already aggregates
+// correctly starts aggregating differently. That bound is shared — the YARA mappers reach it the same
+// way — and lives with its reasoning in aggKey.ts.
 function renameAggKey(f: RenameFacts, host: string): string {
-  const key = `vr-rename|${host.toLowerCase()}|${leafName(f.onDisk)}|${leafName(f.original)}|${f.path.toLowerCase()}`;
-  if (key.length <= AGG_KEY_MAX) return key;
-  const digest = createHash("sha256").update(key).digest("hex").slice(0, AGG_KEY_DIGEST);
-  return `${key.slice(0, AGG_KEY_MAX - AGG_KEY_DIGEST - 1)}#${digest}`;
+  return boundedAggKey(
+    `vr-rename|${host.toLowerCase()}|${leafName(f.onDisk)}|${leafName(f.original)}|${f.path.toLowerCase()}`,
+  );
 }
 
 // A masquerading binary is a COPY of the tool it impersonates. A copy carries the SOURCE file's

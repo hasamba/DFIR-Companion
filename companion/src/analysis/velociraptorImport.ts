@@ -76,6 +76,13 @@ import {
   isDetectionSampleHost,
 } from "./veloDetectionNoise.js";
 import { gradeYaraHit } from "./yaraGrade.js";
+import {
+  sigmaAggKey,
+  detectionAggKey,
+  detectionOverlayAggKey,
+  downloadAggKey,
+  taskAggKey,
+} from "./veloAggKeys.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
 import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
@@ -627,7 +634,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
     description: description.slice(0, 600),
     severity: sev ?? "Medium",
     mitre: tags,
-    aggKey: `vr-sigma|${title.toLowerCase()}|${host.toLowerCase()}`.slice(0, 400),
+    aggKey: sigmaAggKey(host, title),
     sources: ["Velociraptor"],
     ...(host ? { asset: host } : {}),
   };
@@ -680,7 +687,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     const winTag = baseName(winImage);
     win.description =
       `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - ${win.description}`.slice(0, 600);
-    win.aggKey = `vr-det|${v.title.toLowerCase()}|${win.aggKey}`.slice(0, 400);
+    win.aggKey = detectionOverlayAggKey(win.aggKey, v.title);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
     return win;
@@ -784,11 +791,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (fileDeleted) description += ` [deleted]`;
   description = withHostSuffix(description, host).slice(0, 4000);
 
-  const aggKey =
-    `vr-det|${v.title.toLowerCase()}|${(path || processName || pipe || subject).toLowerCase()}|${host.toLowerCase()}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  const aggKey = detectionAggKey(host, v.title, path || processName || pipe || subject);
 
   return {
     timestamp: pickTime(row),
@@ -1404,9 +1407,7 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   if (hostUrl && grade.zoneLabel) description += ` (${grade.zoneLabel})`;
   description = withHostSuffix(description, host).slice(0, 600);
 
-  const aggKey = `vr-download|${name.toLowerCase()}|${urlDisplay.toLowerCase()}|${host.toLowerCase()}`
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey = downloadAggKey(host, name, urlDisplay);
 
   return {
     timestamp: pickTime(row),
@@ -1484,7 +1485,7 @@ function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): M
   if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
   description = withHostSuffix(description, host).slice(0, 600);
 
-  const aggKey = `vr-task|${taskName.toLowerCase()}|${host.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
+  const aggKey = taskAggKey(host, taskName);
 
   return {
     timestamp: pickTime(row),
