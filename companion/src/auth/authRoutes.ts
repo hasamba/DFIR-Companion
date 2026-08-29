@@ -1,5 +1,7 @@
+import { randomBytes } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { getLoginLimiter, getLoginIpLimiter, getOidcStartLimiter } from "../http/rateLimiter.js";
+import { warnLine } from "../logging/serverLogger.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { readPublicAsset } from "../serverAssets.js";
 import type { TeamAuth } from "./teamAuth.js";
@@ -15,6 +17,62 @@ function bodyObject(req: Request): Record<string, unknown> {
 
 function bodyString(body: Record<string, unknown>, key: string): string {
   return typeof body[key] === "string" ? body[key].trim() : "";
+}
+
+/**
+ * Longest provider error this server will write to its log, before the escaping below expands it.
+ * Long enough to carry a real message from an identity provider, short enough that a caller cannot
+ * push anything else out of a scrolled log by sending a megabyte of it.
+ */
+const LOGGED_DETAIL_MAX = 300;
+
+/**
+ * Control characters, matching the class analysis/motwDownload.ts already uses: C0, DEL and C1.
+ */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * Make one line of untrusted text safe to write to a log.
+ *
+ * Moving the provider's error out of the browser and into the server log is only a fix if the log
+ * is not itself a rendering surface, and it is two of them. The log sink appends `line + "\n"`
+ * verbatim, so ONE newline inside the detail ends the entry and starts a second one the caller
+ * wrote — a forged audit line in the operator's own session log. The same line goes to the console,
+ * where an ANSI escape repaints whatever terminal is tailing it. The `?error=` on the OIDC callback
+ * is public, unauthenticated, and handed over already percent-decoded by Express, so `%0a` is all
+ * it takes.
+ *
+ * Escaped, not stripped: an operator diagnosing a real provider failure should still see that the
+ * message contained a newline, rather than read a silently reflowed version of it.
+ */
+function logSafe(detail: string): string {
+  const capped = detail.length > LOGGED_DETAIL_MAX ? `${detail.slice(0, LOGGED_DETAIL_MAX)}…` : detail;
+  return capped.replace(CONTROL_CHARS, (c) => `\\x${(c.codePointAt(0) ?? 0).toString(16).padStart(2, "0")}`);
+}
+
+/**
+ * Send a failed OIDC sign-in back to /login WITHOUT the underlying error text (#674).
+ *
+ * The three OIDC failure paths used to URL-encode the raw message straight into the redirect, and
+ * login.html prints whatever arrives in `?error=` verbatim. Two of those messages are written by
+ * the identity provider, not by us: discovery and token-exchange errors carry internal host names,
+ * endpoint paths and configuration detail, and the `?error=` the provider hands to the callback is
+ * attacker-reachable text reflected back into the page. None of it helps the person signing in —
+ * they cannot act on it — while all of it helps someone mapping a team deployment.
+ *
+ * So the browser gets one fixed sentence plus a short random REFERENCE, and the full detail goes to
+ * the server log under that same reference. The operator keeps everything they had for diagnosis;
+ * they just have to look in the log, where only they can see it.
+ *
+ * `stage` is written as a completed failure ("callback failed"), because it is the subject of the
+ * log line rather than a label appended to one. `detail` is untrusted on all three paths — two of
+ * them carry the provider's own words — so it goes through {@link logSafe} on the way out.
+ */
+function oidcFailureRedirect(res: Response, stage: string, detail: string): void {
+  const reference = randomBytes(4).toString("hex").toUpperCase();
+  warnLine(`[oidc] ${stage} (reference ${reference}): ${logSafe(detail)}`);
+  const message = `Sign-in with your identity provider failed (reference ${reference}). Ask your administrator to check the server log.`;
+  res.redirect(`/login?error=${encodeURIComponent(message)}`);
 }
 
 function setSessionCookie(res: Response, auth: TeamAuth, token: string): void {
@@ -160,7 +218,7 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
       res.setHeader("Cache-Control", "no-store");
       return res.redirect(started.authorizationUrl);
     } catch (err) {
-      return res.redirect(`/login?error=${encodeURIComponent((err as Error).message)}`);
+      return oidcFailureRedirect(res, "provider discovery failed", (err as Error).message);
     }
   });
 
@@ -170,9 +228,7 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
     res.setHeader("Cache-Control", "no-store");
     const providerError = typeof req.query.error === "string" ? req.query.error : "";
     if (providerError) {
-      return res.redirect(
-        `/login?error=${encodeURIComponent(`identity provider refused sign-in: ${providerError}`)}`,
-      );
+      return oidcFailureRedirect(res, "identity provider refused sign-in", providerError);
     }
     const state = typeof req.query.state === "string" ? req.query.state : "";
     const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -199,7 +255,7 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
       auth.store.addAudit(identity, "oidc-login", identity.id, undefined, "");
       return auth.withIdentity(identity, () => res.redirect(completed.returnTo));
     } catch (err) {
-      return res.redirect(`/login?error=${encodeURIComponent((err as Error).message)}`);
+      return oidcFailureRedirect(res, "callback failed", (err as Error).message);
     }
   });
 

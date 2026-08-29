@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import {
   hashCasePassword,
   verifyCasePassword,
@@ -83,6 +83,30 @@ describe("signUnlockToken / verifyUnlockToken", () => {
   it("rejects garbage input without throwing", () => {
     expect(verifyUnlockToken("not-a-token", "c1", "salt-a", secret)).toBe(false);
     expect(verifyUnlockToken("", "c1", "salt-a", secret)).toBe(false);
+  });
+
+  /**
+   * #671: the HMAC covers the ENCODED BYTES, not the payload schema.
+   *
+   * So the attack this pins is not tampering — it is a token that was legitimately signed under a
+   * DIFFERENT payload shape. The forge below builds exactly that: a real signature, made with the
+   * real secret, over a payload today's code never writes. Every field it does carry still passes
+   * the caseId/salt/expiry checks, so without the version test it unlocks the case under semantics
+   * it was never signed for. `v` is what makes the shape part of what is verified.
+   */
+  it("rejects a validly-signed token whose payload is not the current version", () => {
+    const forge = (payload: Record<string, unknown>): string => {
+      const b64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+      return `${b64}.${createHmac("sha256", secret).update(b64).digest("base64url")}`;
+    };
+    const fields = { caseId: "c1", salt: "salt-a", exp: Date.now() + 60_000, remember: true };
+
+    expect(verifyUnlockToken(forge({ ...fields, v: 1 }), "c1", "salt-a", secret)).toBe(true); // control
+    expect(verifyUnlockToken(forge(fields), "c1", "salt-a", secret)).toBe(false); // pre-version shape
+    expect(verifyUnlockToken(forge({ ...fields, v: 2 }), "c1", "salt-a", secret)).toBe(false); // newer
+    expect(verifyUnlockToken(forge({ ...fields, v: "1" }), "c1", "salt-a", secret)).toBe(false); // string
+    // The remember flag rides in the same payload, so it must be refused on the same grounds.
+    expect(isRememberedUnlockToken(forge(fields), "c1", "salt-a", secret)).toBe(false);
   });
 });
 
