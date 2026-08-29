@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import type { Severity } from "./stateTypes.js";
 import type { HuntTarget, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 
@@ -127,6 +128,11 @@ export function superOnlyHunt(job: VeloHuntJob, bundleFlag: boolean | undefined)
 // Cap retained jobs per case (newest first) so the side file stays small — old terminal jobs drop off.
 const MAX_JOBS = 12;
 
+// Serializes a case's list->modify->save section on the hunt-job file (follow-up to #682). Two
+// hunts launched together both read the same list and the second save drops the first, so a hunt
+// that IS running on the fleet has no record here — the analyst cannot see or collect it.
+const veloHuntLock = new StateLock();
+
 export class VeloHuntStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -154,11 +160,13 @@ export class VeloHuntStore {
   }
 
   // Add a new job (prepended) or update an existing one IN PLACE (matched by huntId), capping history.
-  async upsert(caseId: string, job: VeloHuntJob): Promise<VeloHuntJob> {
-    const jobs = await this.list(caseId);
-    const idx = jobs.findIndex((j) => j.huntId === job.huntId);
-    const next = idx >= 0 ? jobs.map((j, i) => (i === idx ? job : j)) : [job, ...jobs].slice(0, MAX_JOBS);
-    await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-    return job;
+  upsert(caseId: string, job: VeloHuntJob): Promise<VeloHuntJob> {
+    return veloHuntLock.runExclusive(caseId, async () => {
+      const jobs = await this.list(caseId);
+      const idx = jobs.findIndex((j) => j.huntId === job.huntId);
+      const next = idx >= 0 ? jobs.map((j, i) => (i === idx ? job : j)) : [job, ...jobs].slice(0, MAX_JOBS);
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return job;
+    });
   }
 }

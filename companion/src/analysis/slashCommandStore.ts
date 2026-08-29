@@ -2,6 +2,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 
 // Per-channel case binding store for the war-room slash-command bot (#235). A channel can bind
 // to a default case (`/dfir bind <caseId>`) so subsequent commands omit the caseId. Stored in a
@@ -18,6 +19,12 @@ const bindingSchema = z.object({
 const bindingsFileSchema = z.record(z.string(), bindingSchema).catch({});
 
 export type ChannelBindingMap = Record<string, { caseId: string; boundAt: string }>;
+
+// Serializes the loadAll->modify->write section on the chat-binding file (follow-up to #682). The
+// bindings are one JSON object, so two chats bound at the same moment lose one — and the war-room
+// bot then answers that chat about the wrong case, or about no case at all. GLOBAL store, so the
+// lock is keyed by the file path.
+const slashCommandLock = new StateLock();
 
 export class SlashCommandChannelStore {
   constructor(private readonly file: string) {}
@@ -44,24 +51,28 @@ export class SlashCommandChannelStore {
     await atomicWrite(this.file, JSON.stringify(map, null, 2));
   }
 
-  async bind(
+  bind(
     key: string,
     caseId: string,
     at: string = new Date().toISOString(),
   ): Promise<{ caseId: string; boundAt: string }> {
-    const all = await this.loadAll();
-    const next = { ...all, [key]: { caseId, boundAt: at } };
-    await this.write(next);
-    return next[key];
+    return slashCommandLock.runExclusive(this.file, async () => {
+      const all = await this.loadAll();
+      const next = { ...all, [key]: { caseId, boundAt: at } };
+      await this.write(next);
+      return next[key];
+    });
   }
 
-  async unbind(key: string): Promise<boolean> {
-    const all = await this.loadAll();
-    if (!(key in all)) return false;
-    const next = { ...all };
-    delete next[key];
-    await this.write(next);
-    return true;
+  unbind(key: string): Promise<boolean> {
+    return slashCommandLock.runExclusive(this.file, async () => {
+      const all = await this.loadAll();
+      if (!(key in all)) return false;
+      const next = { ...all };
+      delete next[key];
+      await this.write(next);
+      return true;
+    });
   }
 }
 

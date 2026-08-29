@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { LateralPath } from "./evidenceGraph.js";
 
@@ -87,6 +88,12 @@ export function buildDismissal(
 }
 
 // Per-case persistence, mirroring FalsePositiveStore: one JSON file in the case's state dir.
+// Serializes a case's load->modify->save section on lateral-path-dismissals.json (follow-up to
+// #682). Two analysts ruling out two different lateral-movement chains at the same moment both read
+// the same list and the second save discards the first — the dismissed chain returns to the graph
+// and the record shows nobody ruled it out. Keyed by case id, private to this file.
+const lateralDismissLock = new StateLock();
+
 export class LateralPathDismissStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -117,17 +124,21 @@ export class LateralPathDismissStore {
   async add(caseId: string, hostIds: readonly string[], note: string): Promise<LateralPathDismissal | null> {
     const record = buildDismissal(hostIds, note);
     if (!record) return null;
-    const existing = await this.load(caseId);
-    await this.save(caseId, [...existing.filter((d) => lateralPathKey(d.hostIds) !== record.key), record]);
-    return record;
+    return lateralDismissLock.runExclusive(caseId, async () => {
+      const existing = await this.load(caseId);
+      await this.save(caseId, [...existing.filter((d) => lateralPathKey(d.hostIds) !== record.key), record]);
+      return record;
+    });
   }
 
   // Restore a route by its key. Returns true when something was actually removed.
-  async remove(caseId: string, key: string): Promise<boolean> {
-    const existing = await this.load(caseId);
-    const remaining = existing.filter((d) => lateralPathKey(d.hostIds) !== key.trim().toLowerCase());
-    if (remaining.length === existing.length) return false;
-    await this.save(caseId, remaining);
-    return true;
+  remove(caseId: string, key: string): Promise<boolean> {
+    return lateralDismissLock.runExclusive(caseId, async () => {
+      const existing = await this.load(caseId);
+      const remaining = existing.filter((d) => lateralPathKey(d.hostIds) !== key.trim().toLowerCase());
+      if (remaining.length === existing.length) return false;
+      await this.save(caseId, remaining);
+      return true;
+    });
   }
 }

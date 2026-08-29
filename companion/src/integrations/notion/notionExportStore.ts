@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../storage/caseStore.js";
 import { atomicWrite } from "../../storage/atomicWrite.js";
+import { StateLock } from "../../analysis/stateLock.js";
 
 // Per-case memory of the LAST Notion export: which page we wrote to and the id of the single
 // managed container block we own on it. Unlike IRIS/Timesketch (which we can find-by-name on
@@ -35,6 +36,13 @@ const EMPTY: NotionExport = {
   lastMode: "",
 };
 
+// Serializes a case's load->merge->save section on the export pointer file (follow-up to #682). The
+// ticket references live in one map, so two exports of the same case running together drop one
+// side's refs — and because a missing ref is how this store says "no ticket exists yet", the NEXT
+// export opens a DUPLICATE ticket in somebody else's queue. That is the rare one in this class with
+// a consequence outside the tool.
+const notionExportLock = new StateLock();
+
 export class NotionExportStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -52,10 +60,12 @@ export class NotionExportStore {
   }
 
   // Persist the latest export pointer (merged over whatever was there before).
-  async record(caseId: string, patch: Partial<NotionExport>): Promise<NotionExport> {
-    const prev = await this.load(caseId);
-    const next: NotionExport = { ...prev, ...patch };
-    await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-    return next;
+  record(caseId: string, patch: Partial<NotionExport>): Promise<NotionExport> {
+    return notionExportLock.runExclusive(caseId, async () => {
+      const prev = await this.load(caseId);
+      const next: NotionExport = { ...prev, ...patch };
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return next;
+    });
   }
 }

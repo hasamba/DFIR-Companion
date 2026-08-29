@@ -15,6 +15,7 @@
  *   demoModeReadOnlyGate blocks writes on the public demo before any route can act on them
  *   requestLogger        so even a rejected request is logged
  *   operationalMetrics   counts what the logger logged
+ *   preAuthBodyGate      team mode only: 401 before the generous parsers can read a stranger's body
  *   json/text parsers    the body limit; generous because imports arrive as request bodies
  *   bodyParserErrorHandler  4-arg, immediately after the parsers so it catches THEIR errors
  *   errorPathRedactor    wraps res.json ONCE for every route, present and future
@@ -40,12 +41,47 @@ import {
   unlockCookieName,
   parseCookieHeader,
 } from "../analysis/casePassword.js";
-import { registerTeamAuthRoutes } from "../auth/authRoutes.js";
+import { isTeamAuthRoutePath, registerTeamAuthRoutes } from "../auth/authRoutes.js";
+import { resolveRequestPolicy } from "../auth/policy.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import { registerStaticAssets } from "../http/staticAssets.js";
 import { CaseNotFoundError } from "../ingest/captureIngest.js";
 import { ZodError } from "zod";
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
+
+/**
+ * Ceiling on a body this server reads from a caller it has not authenticated yet, in MB (#681).
+ *
+ * The generous DFIR_MAX_BODY_MB limit exists for bulk evidence imports, and every import route
+ * requires a credential. Count what is left — what a stranger may still POST a body to in team
+ * mode — and it is a login form, a user/role edit, and three chat webhooks. None of them is bulk
+ * anything; the largest is a Telegram Update. 1 MB is the same cap routes/slashCommand.ts already
+ * puts on Slack's own urlencoded parser.
+ *
+ * Not a separate env knob on purpose: it is a floor under DFIR_MAX_BODY_MB, so lowering that knob
+ * lowers this too and the 413 still names the one variable an operator has to change.
+ */
+const PRE_AUTH_BODY_MB = 1;
+
+/**
+ * Set on a request whose body the pre-auth parsers read, so bodyParserErrorHandler can tell which
+ * of the two limits rejected it. The two need DIFFERENT advice: "raise DFIR_MAX_BODY_MB" is sound
+ * for an import and a dead end for a webhook, because the pre-auth cap is a floor and raising the
+ * knob above 1 cannot lift it. An operator who followed that advice would restart and get the same
+ * 413. Comparing byte counts instead would be ambiguous the moment the two limits coincide.
+ */
+type PreAuthBodyRequest = Request & { dfirPreAuthBody?: boolean };
+
+/**
+ * Bytes → the MB figure an operator actually typed. `DFIR_MAX_BODY_MB=0.25` is a number Node
+ * accepts and body-parser honours, so rounding the reported limit to whole MB would answer a
+ * 262,144-byte refusal with "exceeds the 0 MB limit" — a message that reads as a bug in the server
+ * rather than a cap on the caller. toFixed(3) then Number() drops the trailing zeros an exact
+ * value would otherwise grow (1 → "1", not "1.000").
+ */
+function megabytes(bytes: number): string {
+  return String(Number((bytes / (1024 * 1024)).toFixed(3)));
+}
 
 export interface HttpStackDeps {
   store: CaseStore;
@@ -111,29 +147,83 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
   // JSON body limit. Bulk evidence imports (CSV / log / THOR / SIEM-EDR JSON exports) wrap the
   // whole file in the request body, and SIEM/EDR exports in particular are routinely tens to
   // hundreds of MB — so the cap is generous and configurable via DFIR_MAX_BODY_MB (default
-  // 256 MB). Localhost-only single-user tool, so a large limit is not a DoS concern. Files
-  // beyond a few hundred MB approach V8's max string length; for those, split the export.
+  // 256 MB). Files beyond a few hundred MB approach V8's max string length; for those, split the
+  // export. WHO may spend that budget is the gate below, not this limit.
   const maxBodyMb = Number(process.env.DFIR_MAX_BODY_MB) || 256;
+  // Text types are listed once: the pre-auth parser below has to match exactly the same set, or a
+  // body it was supposed to cap would fall through to the generous parser instead.
+  const textBodyTypes = ["text/*", "application/x-ndjson", "application/jsonl"];
+
+  // ── Authenticate BEFORE the generous parsers, in team mode (#681) ─────────────────────
+  // This limit used to be justified by "localhost-only single-user tool, so a large limit is not a
+  // DoS concern". That is true of DFIR_AUTH_MODE=single. It is false of DFIR_AUTH_MODE=team behind
+  // a DFIR_HOST that answers the network: the parsers sat ABOVE teamAuth.middleware(), so a
+  // stranger's 256 MB body was received, inflated, allocated, decoded and JSON-parsed in full, and
+  // only THEN answered 401. A few concurrent requests exhaust the heap or stall the event loop.
+  //
+  // So resolve the policy — which is a pure function of method and path — and demand a credential
+  // first. This layer only ever answers "no credential"; teamAuth.middleware() below still does the
+  // whole authorization decision, on the parsed body, exactly as before. A request that gets past
+  // here has proven it is someone, and only then is the generous limit its to spend.
+  if (options.teamAuth) {
+    const teamAuth = options.teamAuth;
+    const preAuthLimit = `${Math.min(maxBodyMb, PRE_AUTH_BODY_MB)}mb`;
+    const preAuthJson = express.json({ limit: preAuthLimit });
+    const preAuthText = express.text({ limit: preAuthLimit, type: textBodyTypes });
+    app.use(function preAuthBodyGate(req: Request, res: Response, next: NextFunction) {
+      const policy = resolveRequestPolicy(req.method, req.path);
+      // Two kinds of request legitimately arrive with no credential. The public routes — /health,
+      // the login page, and the slash-command webhooks, which authenticate themselves against a
+      // per-platform HMAC or shared secret inside the handler. And the /auth routes, because
+      // logging in is HOW a caller gets a credential. Both parse right here, at the small limit;
+      // body-parser then marks the request consumed, so the generous parsers below do nothing.
+      //
+      // POST /captures is NOT in this set even though its policy is decided by the caseId in its
+      // body. Read middleware() again: the body picks WHICH case the caller may write to, but a
+      // caller with no credential at all is turned away before that, by the same 401 this gate
+      // sends. So a capture already had to be somebody, and its body is still parsed at the
+      // generous limit — the extension's screenshots are unaffected by this change.
+      if (policy.kind === "public" || isTeamAuthRoutePath(req.path)) {
+        (req as PreAuthBodyRequest).dfirPreAuthBody = true;
+        preAuthJson(req, res, (err) => (err ? next(err) : preAuthText(req, res, next)));
+        return;
+      }
+      // Header- and cookie-only: nothing here touches the body, which is the entire point.
+      if (teamAuth.authenticateRequest(req)) {
+        next();
+        return;
+      }
+      teamAuth.rejectUnauthenticated(req, res);
+    });
+  }
+
   app.use(express.json({ limit: `${maxBodyMb}mb` }));
   // Also accept text/plain + NDJSON bodies so the generic push endpoint (#84) can take a raw blob
   // (a Velociraptor monitor dump, an NDJSON alert stream) without forcing every caller to wrap it in
   // a JSON envelope. JSON bodies still parse via express.json above; this only catches non-JSON types.
-  app.use(
-    express.text({ limit: `${maxBodyMb}mb`, type: ["text/*", "application/x-ndjson", "application/jsonl"] }),
-  );
+  app.use(express.text({ limit: `${maxBodyMb}mb`, type: textBodyTypes }));
 
   // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
   // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
   // after the parser so it catches its errors; normal requests skip it (4-arg = error-only).
   app.use(function bodyParserErrorHandler(
-    err: Error & { type?: string; status?: number },
-    _req: Request,
+    err: Error & { type?: string; status?: number; limit?: number },
+    req: Request,
     res: Response,
     next: NextFunction,
   ) {
     if (err?.type === "entity.too.large") {
+      // Name the limit that actually fired, and give advice that works on it. Telling a webhook
+      // its payload exceeded "the 256 MB limit" would be a puzzle; telling it to raise
+      // DFIR_MAX_BODY_MB would be worse, because that knob cannot lift the pre-auth floor.
+      const limitMb = megabytes(err.limit ?? maxBodyMb * 1024 * 1024);
+      if ((req as PreAuthBodyRequest).dfirPreAuthBody) {
+        return res.status(413).json({
+          error: `request exceeds the ${limitMb} MB limit that applies before a caller is authenticated — this cap is fixed and DFIR_MAX_BODY_MB does not raise it; send a smaller payload, or authenticate and use an import route`,
+        });
+      }
       return res.status(413).json({
-        error: `upload exceeds the ${maxBodyMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files`,
+        error: `upload exceeds the ${limitMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files`,
       });
     }
     if (err?.type === "entity.parse.failed") {

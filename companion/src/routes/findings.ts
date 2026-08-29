@@ -201,7 +201,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       .filter((i) => i.text.trim().length > 0);
     if (!inputs.length) return;
     try {
-      for (const input of inputs) await options.learnedPatternStore.record(caseId, input);
+      await options.learnedPatternStore.recordMany(caseId, inputs);
       options.onLearnedPatterns?.(caseId);
     } catch (err) {
       console.warn(`[DFIR] learned-pattern record failed for case ${caseId}: ${(err as Error).message}`);
@@ -731,11 +731,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       } else if ((FINDING_WORKFLOW_STATUSES as readonly string[]).includes(String(raw))) {
         patch.status = String(raw) as FindingWorkflowStatus;
       } else {
-        return res
-          .status(400)
-          .json({
-            error: `status must be one of ${FINDING_WORKFLOW_STATUSES.join(", ")} (or empty to clear)`,
-          });
+        return res.status(400).json({
+          error: `status must be one of ${FINDING_WORKFLOW_STATUSES.join(", ")} (or empty to clear)`,
+        });
       }
     }
     if (typeof req.body?.updatedBy === "string") patch.updatedBy = req.body.updatedBy;
