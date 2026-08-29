@@ -3536,6 +3536,53 @@ describe("parseVelociraptorJson — YARA volatile-container grading", () => {
   });
 });
 
+// The YARA key is length-capped like the BinaryRename key above, and the cap cost the same
+// discriminator: the host sat LAST, so a deep scanned path pushed it out of the key and the same
+// rule hitting the same path on two machines came back as one finding on one machine. That is the
+// cross-host merge #659 fixed for Windows events, arriving again through the YARA mapper.
+describe("parseVelociraptorJson — YARA key cap must not cost a discriminator", () => {
+  const DEEP = "C:\\Users\\bob\\" + "subdirectory\\".repeat(30);
+  const yaraHit = (over: Record<string, unknown>) => ({
+    _Source: "Windows.Detection.Yara.Glob",
+    Rule: "APT_Malware_Foo",
+    Namespace: "default",
+    Meta: { author: "x" },
+    ...over,
+  });
+
+  it("keeps the same deep-path hit on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "evil.exe" }),
+        yaraHit({ Hostname: "HOST-B", OSPath: DEEP + "evil.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps two deep paths that share a long prefix as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "alpha.exe" }),
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "bravo.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still collapses the same rule and path on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "evil.exe" }),
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "evil.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Amcache: the name on disk versus the name in the version resource.
 //
@@ -3630,5 +3677,246 @@ describe("parseVelociraptorJson — truncation is counted, not silent", () => {
     const r = parseVelociraptorJson(JSON.stringify(rows), { minSeverity: "High" });
     expect(r.kept).toBe(0);
     expect(r.groups).not.toBeGreaterThan(r.kept); // cap was never the cause
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Aggregation keys: the length cap must never cost the HOST.
+//
+// #659 fixed the cross-host merge for Windows events. #670 and the YARA fix found it arriving again
+// through mappers whose key put an UNBOUNDED field (a rule title, a path, a URL, a task name) BEFORE
+// the host and then truncated the whole key at 400 characters — so the host was the first field
+// truncation threw away. Every mapper below reached the cap the same way.
+//
+// A collision does not merely miscount: applyEventIdentity overwrites the survivor's path, hash and
+// description with whichever row landed last, so two hosts sharing a key DELETE one host's evidence.
+describe("parseVelociraptorJson — aggregation key cap must not cost the host", () => {
+  const LONG = "x".repeat(500);
+
+  // ── Sigma with no parsed event underneath (Rule object, no System/EventData). The rule TITLE is
+  //    the unbounded field: a verbose Sigma title alone reaches the cap.
+  const sigmaFallbackRow = (host: string, title: string) => ({
+    _Source: "Windows.Detection.Sigma",
+    Timestamp: "2026-06-03T08:15:40Z",
+    Fqdn: host,
+    Rule: { Title: title, Level: "high" },
+    Details: "Suspicious activity observed",
+  });
+
+  it("keeps a long-titled Sigma rule firing on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([sigmaFallbackRow("HOST-A", LONG), sigmaFallbackRow("HOST-B", LONG)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps two long Sigma titles that share a 400-character prefix as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        sigmaFallbackRow("HOST-A", LONG + "alpha"),
+        sigmaFallbackRow("HOST-A", LONG + "bravo"),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still collapses the same Sigma rule on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([sigmaFallbackRow("HOST-A", LONG), sigmaFallbackRow("HOST-A", LONG)]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  // ── DetectRaptor detection, no Windows event underneath. The matched PATH is unbounded.
+  const DEEP = "C:\\" + "deep\\".repeat(80);
+  const detRow = (host: string, path: string) => ({
+    EventTime: "2025-03-14T21:25:03Z",
+    Computer: host,
+    Detection: "Cobalt Strike: trick_ryuk.profile",
+    OSPath: path,
+    Type: "SysmonCreated",
+  });
+
+  it("keeps the same deep-path detection on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([detRow("HOST-A", DEEP + "evil.exe"), detRow("HOST-B", DEEP + "evil.exe")]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  // The key digit-strips so volatile ids fold. That normalisation must not reach the HOST — WS01 and
+  // WS02 are two machines, and folding them is the very merge this key ordering exists to prevent.
+  it("keeps a detection on two numerically-named hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([detRow("WS01", DEEP + "evil.exe"), detRow("WS02", DEEP + "evil.exe")]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS01", "WS02"]);
+  });
+
+  it("still collapses the same deep-path detection on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([detRow("HOST-A", DEEP + "evil.exe"), detRow("HOST-A", DEEP + "evil.exe")]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  // ── DetectRaptor detection WITH a parsed Windows event underneath. The verdict title is prefixed
+  //    to the Windows key, which is where the host lives — so a long title truncated the host away.
+  const detEvtxRow = (host: string, title: string) => ({
+    EventTime: "2025-04-22T11:53:50Z",
+    Computer: host,
+    Detection: title,
+    Channel: "Security",
+    EventID: 4688,
+    EventData: {
+      NewProcessName: "C:\\Windows\\Temp\\rclone.exe",
+      CommandLine: "rclone copy C:\\data remote:exfil",
+    },
+    Message: "A new process has been created.",
+  });
+
+  it("keeps a long-titled Evtx detection on two hosts as two events", () => {
+    const r = parseVelociraptorJson(JSON.stringify([detEvtxRow("HOST-A", LONG), detEvtxRow("HOST-B", LONG)]));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  // ── Download (Zone.Identifier). The source URL is unbounded — a real download URL carries query
+  //    strings and tracking parameters that reach 400 characters routinely.
+  const LONG_URL = "https://cdn.example.test/download?token=" + "q".repeat(420);
+  const downloadRow2 = (host: string, url: string, file = "setup.exe") => ({
+    Computer: host,
+    DownloadedFilePath: `C:\\Users\\v\\Downloads\\${file}`,
+    Mtime: "2026-06-03T08:38:22Z",
+    ZoneId: "3",
+    HostUrl: url,
+    ReferrerUrl: "",
+  });
+
+  it("keeps the same long-URL download on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([downloadRow2("HOST-A", LONG_URL), downloadRow2("HOST-B", LONG_URL)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps a download on two numerically-named hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([downloadRow2("WS01", LONG_URL), downloadRow2("WS02", LONG_URL)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS01", "WS02"]);
+  });
+
+  it("keeps two long URLs that share a 400-character prefix as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        downloadRow2("HOST-A", LONG_URL + "alpha"),
+        downloadRow2("HOST-A", LONG_URL + "bravo"),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still collapses the same long-URL download on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([downloadRow2("HOST-A", LONG_URL), downloadRow2("HOST-A", LONG_URL)]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  // ── Scheduled task. The task NAME is unbounded — a nested Microsoft task path plus a GUID reaches
+  //    the cap without help.
+  const taskRow2 = (host: string, name: string) => ({
+    _Source: "Windows.System.TaskScheduler/Analysis",
+    Computer: host,
+    TaskName: name,
+    Mtime: "2026-06-03T08:41:08Z",
+    Command: "regsvr32.exe",
+    Arguments: "/s /u scrobj.dll",
+    UserId: "S-1-5-18",
+    OSPath: "C:\\Windows\\System32\\Tasks\\t",
+  });
+  const LONG_TASK = "\\Microsoft\\Windows\\" + "Nested\\".repeat(70) + "Updater";
+
+  it("keeps the same long-named scheduled task on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([taskRow2("HOST-A", LONG_TASK), taskRow2("HOST-B", LONG_TASK)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps a scheduled task on two numerically-named hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([taskRow2("WS01", LONG_TASK), taskRow2("WS02", LONG_TASK)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS01", "WS02"]);
+  });
+
+  it("still collapses the same scheduled task on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([taskRow2("HOST-A", LONG_TASK), taskRow2("HOST-A", LONG_TASK)]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  // ── PersistenceSniper. The Value is the persistence command line — unbounded, and the field that
+  //    actually distinguishes one autostart from another.
+  const LONG_VALUE = "C:\\Program Files\\Vendor\\app.exe " + "--flag=value ".repeat(40);
+  const sniperRow2 = (host: string, value: string) => ({
+    _Source: "Windows.Forensics.PersistenceSniper",
+    Hostname: host,
+    Technique: "Scheduled Task",
+    Classification: "MITRE ATT&CK T1053.005",
+    Path: "\\VendorUpdateTask",
+    Value: value,
+    "Access Gained": "User",
+    Signature: "Status = Valid, Subject = CN=Vendor",
+    IsBuiltinBinary: "False",
+    IsLolbin: "False",
+  });
+
+  it("keeps the same long-value persistence entry on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([sniperRow2("HOST-A", LONG_VALUE), sniperRow2("HOST-B", LONG_VALUE)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps a persistence entry on two numerically-named hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([sniperRow2("WS01", LONG_VALUE), sniperRow2("WS02", LONG_VALUE)]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS01", "WS02"]);
+  });
+
+  it("keeps two long persistence values that share a 400-character prefix as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        sniperRow2("HOST-A", LONG_VALUE + "alpha"),
+        sniperRow2("HOST-A", LONG_VALUE + "bravo"),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still collapses the same persistence entry on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([sniperRow2("HOST-A", LONG_VALUE), sniperRow2("HOST-A", LONG_VALUE)]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
   });
 });

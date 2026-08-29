@@ -75,3 +75,32 @@ describe("parseYaraOutput", () => {
     expect(detectImportKind("scan.txt", "EvilRule /tmp/a.bin\n0x10:$s: hit")).toBe("yara");
   });
 });
+
+// The aggregation key is length-capped, and a collision is not a miscount: aggregateEvents keeps ONE
+// row and applyEventIdentity overwrites its path, hash and description with whichever row landed
+// last, so two rows sharing a key DELETE one match's evidence.
+//
+// YARA CLI output carries no host field, so unlike the Velociraptor YARA path there is no host to
+// lose here. The scanned path is the whole discriminator, it is the only field that can exhaust the
+// cap, and a recursive scan of a deep tree reaches the cap on the directory alone.
+describe("parseYaraOutput — the key cap must not cost a discriminator", () => {
+  const DEEP = "C:\\Users\\investigator\\" + "subdirectory\\".repeat(30);
+
+  it("keeps two files under one deep directory as two events", () => {
+    const r = parseYaraOutput(`EvilRule ${DEEP}alpha.dll\nEvilRule ${DEEP}bravo.dll`, { aggregate: true });
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("keeps the same deep path under two rules as two events", () => {
+    const long = "R".repeat(200);
+    const r = parseYaraOutput(`${long}A ${DEEP}x.dll\n${long}B ${DEEP}x.dll`, { aggregate: true });
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("keeps a UNC target on two hosts as two events", () => {
+    // The one host-bearing form the format can carry, and it diverges long before the cap.
+    const t =
+      "EvilRule \\\\HOST-A\\C$\\Windows\\Temp\\evil.dll\nEvilRule \\\\HOST-B\\C$\\Windows\\Temp\\evil.dll";
+    expect(parseYaraOutput(t, { aggregate: true }).events).toHaveLength(2);
+  });
+});
