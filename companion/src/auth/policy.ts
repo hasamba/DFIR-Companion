@@ -202,6 +202,14 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     return casePolicy(normalizedMethod, path, caseId);
   }
   if (normalizedMethod === "GET" && path === "/cases") return { kind: "case-list" };
+  // The cross-case IOC pivot (#679). It names cases, exactly like GET /cases, and it is gated
+  // exactly like GET /cases: the route filters its own answer through visibleCaseIds(), so a
+  // reader on one case learns nothing about a case they hold no role on. Without this line it
+  // would fall through to the global-admin default and be useless to every non-admin — the one
+  // role the feature exists for. GET only; any other method on /global/* stays global-admin.
+  if (normalizedMethod === "GET" && collectionPath(path) === "/global/iocs") {
+    return { kind: "case-list" };
+  }
   if (
     path === "/cases" ||
     path === "/captures/recent" ||

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Related Cases** — a new dashboard panel and two routes (`GET /cases/:id/related`, `GET /global/iocs?q=`) that surface the other investigations sharing an indicator with this one. Ranked so a flagged hash outweighs a private address; scoped to the cases your account may already read. (closes #679)
+
 ### Security
 - **A failed OIDC sign-in no longer shows the identity provider's error text** — the login page gets one sentence and a reference; the full detail goes to the server log under that reference. (closes #674)
 - **Case unlock tokens carry a payload version** — a token signed under an older payload shape now stops verifying instead of being read under today's rules. Unlock cookies issued before this release stop working, so each password-protected case asks for its password once more. (closes #671)
