@@ -15,6 +15,16 @@ import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDis
 import { IocAliasStore } from "../../src/analysis/iocAlias.js";
 import { LateralPathDismissStore } from "../../src/analysis/lateralPathDismiss.js";
 import { LearnedPatternStore } from "../../src/analysis/learnedPatternStore.js";
+import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
+import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
+import { VeloMonitorStore } from "../../src/analysis/veloMonitorStore.js";
+import { ClickUpExportStore } from "../../src/integrations/clickup/clickupExportStore.js";
+import { JiraExportStore } from "../../src/integrations/jira/jiraExportStore.js";
+import { NotionExportStore } from "../../src/integrations/notion/notionExportStore.js";
+import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
+import { ServiceNowExportStore } from "../../src/integrations/servicenow/servicenowExportStore.js";
+import { SocratesJobStore } from "../../src/integrations/socrates/socratesJobStore.js";
+import { CustomToolStore } from "../../src/integrations/tools/customToolStore.js";
 import { ReportVersionStore } from "../../src/reports/reportVersionStore.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 
@@ -481,6 +491,168 @@ describe("side store concurrency (#682)", () => {
         ),
       ]);
       expect(await routes.load(CASE)).toHaveLength(16);
+    });
+  });
+
+  // ── Integration + config stores (follow-up to #682) ────────────────────────────────────────────
+  // Lower stakes than the decision stores — nothing here is evidence — but two of them reach outside
+  // the tool, which is worth more than the tidiness of the file they live in.
+
+  describe("export pointer stores", () => {
+    // A missing ticket ref is how these stores say "no ticket exists yet", so losing one does not
+    // just forget a pointer — the next export opens a DUPLICATE ticket in somebody else's queue.
+    it("keeps every Jira issue ref when exports overlap", async () => {
+      const store = new JiraExportStore(cases);
+      await Promise.all(
+        Array.from({ length: CONCURRENT }, (_, i) =>
+          store.record(CASE, { [`f${i}`]: { id: `${i}`, key: `SOC-${i}` } }),
+        ),
+      );
+      expect(Object.keys((await store.load(CASE)).issueRefs)).toHaveLength(CONCURRENT);
+    });
+
+    it("keeps every ServiceNow incident ref when exports overlap", async () => {
+      const store = new ServiceNowExportStore(cases);
+      await Promise.all(
+        Array.from({ length: CONCURRENT }, (_, i) =>
+          store.record(CASE, { [`f${i}`]: { id: `sys-${i}`, number: `INC${i}` } }),
+        ),
+      );
+      expect(Object.keys((await store.load(CASE)).incidentRefs)).toHaveLength(CONCURRENT);
+    });
+
+    it("keeps every ClickUp task id when exports overlap", async () => {
+      const store = new ClickUpExportStore(cases);
+      await Promise.all(
+        Array.from({ length: CONCURRENT }, (_, i) => store.record(CASE, { taskIds: { [`f${i}`]: `t${i}` } })),
+      );
+      expect(Object.keys((await store.load(CASE)).taskIds)).toHaveLength(CONCURRENT);
+    });
+
+    it("does not lose a Notion field written beside another", async () => {
+      const store = new NotionExportStore(cases);
+      await Promise.all([
+        store.record(CASE, { pageId: "page-1" }),
+        store.record(CASE, { lastBlocksAppended: 42 }),
+      ]);
+      const stored = await store.load(CASE);
+      expect(stored.pageId).toBe("page-1");
+      expect(stored.lastBlocksAppended).toBe(42);
+    });
+  });
+
+  describe("VeloHuntStore / VeloMonitorStore / SocratesJobStore", () => {
+    const hunt = (i: number) => ({
+      bundleId: `b${i}`,
+      bundleName: `Bundle ${i}`,
+      artifacts: ["Windows.KapeFiles.Targets"],
+      huntId: `H.${i}`,
+      launchedAt: "2026-08-29T00:00:00.000Z",
+      waitMinutes: 10,
+      collectAt: "2026-08-29T00:10:00.000Z",
+      status: "running" as const,
+    });
+
+    // A lost hunt record leaves a hunt RUNNING on the fleet that the analyst can neither see nor
+    // collect.
+    it("keeps every hunt when several are launched at once", async () => {
+      const store = new VeloHuntStore(cases);
+      await Promise.all(Array.from({ length: 12 }, (_, i) => store.upsert(CASE, hunt(i))));
+      expect(await store.list(CASE)).toHaveLength(12);
+    });
+
+    it("updates a hunt in place rather than duplicating it", async () => {
+      const store = new VeloHuntStore(cases);
+      await store.upsert(CASE, hunt(1));
+      await Promise.all([
+        store.upsert(CASE, { ...hunt(1), status: "imported" }),
+        store.upsert(CASE, hunt(2)),
+      ]);
+      const jobs = await store.list(CASE);
+      expect(jobs).toHaveLength(2);
+      expect(jobs.find((j) => j.huntId === "H.1")?.status).toBe("imported");
+    });
+
+    it("keeps every monitor, and a concurrent removal only removes its own", async () => {
+      const store = new VeloMonitorStore(cases);
+      const monitor = (i: number) => ({
+        id: `C.${i}__Windows.Events.ProcessCreation`,
+        clientId: `C.${i}`,
+        artifact: "Windows.Events.ProcessCreation",
+        pollSeconds: 60,
+        cursor: 0,
+        status: "active" as const,
+        createdAt: "2026-08-29T00:00:00.000Z",
+      });
+      await Promise.all(Array.from({ length: 10 }, (_, i) => store.upsert(CASE, monitor(i))));
+      expect(await store.list(CASE)).toHaveLength(10);
+      await Promise.all([store.remove(CASE, monitor(0).id), store.upsert(CASE, monitor(10))]);
+      const left = await store.list(CASE);
+      expect(left).toHaveLength(10);
+      expect(left.some((m) => m.id === monitor(0).id)).toBe(false);
+      expect(left.some((m) => m.id === monitor(10).id)).toBe(true);
+    });
+
+    it("keeps every SO-CRATES job when several are submitted at once", async () => {
+      const store = new SocratesJobStore(cases);
+      await Promise.all(
+        Array.from({ length: 12 }, (_, i) =>
+          store.upsert(CASE, {
+            jobId: `j${i}`,
+            md5: `${i}`.padStart(32, "0"),
+            sourceName: `sample-${i}.exe`,
+            status: "processing" as const,
+            startedAt: "2026-08-29T00:00:00.000Z",
+          }),
+        ),
+      );
+      expect(await store.list(CASE)).toHaveLength(12);
+    });
+  });
+
+  describe("global config stores", () => {
+    it("keeps every MCP server when many are added at once", async () => {
+      const store = new McpServerStore(join(root, "mcp", "servers.json"));
+      await Promise.all(
+        Array.from({ length: 12 }, (_, i) => store.add({ id: `server-${i}`, label: `Server ${i}` })),
+      );
+      expect(await store.load()).toHaveLength(12);
+    });
+
+    it("does not lose an MCP add while another server is removed", async () => {
+      const store = new McpServerStore(join(root, "mcp", "servers.json"));
+      await store.add({ id: "doomed", label: "Doomed" });
+      await Promise.all([store.remove("doomed"), store.add({ id: "kept", label: "Kept" })]);
+      expect((await store.load()).map((s) => s.id)).toEqual(["kept"]);
+    });
+
+    it("keeps every custom tool when many are added at once", async () => {
+      const store = new CustomToolStore(join(root, "tools", "tools.json"));
+      await Promise.all(
+        Array.from({ length: 12 }, (_, i) => store.add({ name: `Tool ${i}`, binary: `/usr/bin/tool${i}` })),
+      );
+      expect(await store.load()).toHaveLength(12);
+    });
+
+    // A lost binding makes the war-room bot answer a chat about the wrong case, or about none.
+    it("keeps every chat binding when many are bound at once", async () => {
+      const store = new SlashCommandChannelStore(join(root, "notifications", "bindings.json"));
+      await Promise.all(
+        Array.from({ length: 12 }, (_, i) =>
+          store.bind(`slack:C${i}`, `case-${i}`, "2026-08-29T00:00:00.000Z"),
+        ),
+      );
+      expect(Object.keys(await store.loadAll())).toHaveLength(12);
+    });
+
+    it("does not lose a binding while another is unbound", async () => {
+      const store = new SlashCommandChannelStore(join(root, "notifications", "bindings.json"));
+      await store.bind("slack:GONE", "case-old", "2026-08-29T00:00:00.000Z");
+      await Promise.all([
+        store.unbind("slack:GONE"),
+        store.bind("slack:KEPT", "case-new", "2026-08-29T00:00:00.000Z"),
+      ]);
+      expect(Object.keys(await store.loadAll())).toEqual(["slack:KEPT"]);
     });
   });
 

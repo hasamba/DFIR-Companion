@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import type { Severity } from "./stateTypes.js";
 
 // Per-case record of live Velociraptor CLIENT_EVENT monitors (#84). Each monitor watches one client
@@ -40,6 +41,10 @@ export function monitorId(clientId: string, artifact: string): string {
   return `${clientId}__${artifact}`;
 }
 
+// Serializes a case's list->modify->save section on the monitor file (follow-up to #682). A lost
+// upsert leaves a monitor armed on the server with no local record, so nothing can later stop it.
+const veloMonitorLock = new StateLock();
+
 export class VeloMonitorStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -65,22 +70,26 @@ export class VeloMonitorStore {
   }
 
   // Add a new monitor (appended) or update an existing one in place (matched by id), capping history.
-  async upsert(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor> {
-    const monitors = await this.list(caseId);
-    const idx = monitors.findIndex((m) => m.id === monitor.id);
-    const next =
-      idx >= 0
-        ? monitors.map((m, i) => (i === idx ? monitor : m))
-        : [...monitors, monitor].slice(-MAX_MONITORS);
-    await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-    return monitor;
+  upsert(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor> {
+    return veloMonitorLock.runExclusive(caseId, async () => {
+      const monitors = await this.list(caseId);
+      const idx = monitors.findIndex((m) => m.id === monitor.id);
+      const next =
+        idx >= 0
+          ? monitors.map((m, i) => (i === idx ? monitor : m))
+          : [...monitors, monitor].slice(-MAX_MONITORS);
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return monitor;
+    });
   }
 
-  async remove(caseId: string, id: string): Promise<void> {
-    const monitors = await this.list(caseId);
-    const next = monitors.filter((m) => m.id !== id);
-    if (next.length !== monitors.length) {
-      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-    }
+  remove(caseId: string, id: string): Promise<void> {
+    return veloMonitorLock.runExclusive(caseId, async () => {
+      const monitors = await this.list(caseId);
+      const next = monitors.filter((m) => m.id !== id);
+      if (next.length !== monitors.length) {
+        await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      }
+    });
   }
 }

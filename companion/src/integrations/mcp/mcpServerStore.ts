@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import { z } from "zod";
 import { atomicWrite } from "../../storage/atomicWrite.js";
+import { StateLock } from "../../analysis/stateLock.js";
 
 // POLICY for the MCP servers Claude Code is configured with (#296).
 //
@@ -173,6 +174,11 @@ function fromInput(input: McpServerInput, id: string): McpServer {
   };
 }
 
+// Serializes the load->modify->save section on the server list (follow-up to #682). The list is one
+// JSON array, so adding a server while another is being removed drops one of the two edits — and a
+// server the operator believes is configured simply is not. GLOBAL store, keyed by the file path.
+const mcpServerLock = new StateLock();
+
 export class McpServerStore {
   constructor(private readonly file: string) {}
 
@@ -212,43 +218,49 @@ export class McpServerStore {
     const deliveryError = validateDelivery(server.delivery);
     if (deliveryError) throw new Error(deliveryError);
 
-    const list = await this.load();
-    const next = list.some((s) => s.id === id)
-      ? list.map((s) => (s.id === id ? server : s))
-      : [...list, server];
-    await this.save(next);
-    return server;
+    return mcpServerLock.runExclusive(this.file, async () => {
+      const list = await this.load();
+      const next = list.some((s) => s.id === id)
+        ? list.map((s) => (s.id === id ? server : s))
+        : [...list, server];
+      await this.save(next);
+      return server;
+    });
   }
 
   async update(id: string, patch: Partial<McpServerInput>): Promise<McpServer | null> {
-    const list = await this.load();
-    const cur = list.find((s) => s.id === id);
-    if (!cur) return null;
-    const merged = fromInput(
-      {
+    return mcpServerLock.runExclusive(this.file, async () => {
+      const list = await this.load();
+      const cur = list.find((s) => s.id === id);
+      if (!cur) return null;
+      const merged = fromInput(
+        {
+          id,
+          label: patch.label ?? cur.label,
+          enabled: patch.enabled ?? cur.enabled,
+          allowedTools: patch.allowedTools ?? cur.allowedTools,
+          allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
+          agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
+          timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
+          // Merged field-wise so changing one delivery setting does not reset the rest to defaults.
+          delivery: { ...cur.delivery, ...(patch.delivery ?? {}) },
+        },
         id,
-        label: patch.label ?? cur.label,
-        enabled: patch.enabled ?? cur.enabled,
-        allowedTools: patch.allowedTools ?? cur.allowedTools,
-        allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
-        agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
-        timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
-        // Merged field-wise so changing one delivery setting does not reset the rest to defaults.
-        delivery: { ...cur.delivery, ...(patch.delivery ?? {}) },
-      },
-      id,
-    );
-    const deliveryError = validateDelivery(merged.delivery);
-    if (deliveryError) throw new Error(deliveryError);
-    await this.save(list.map((s) => (s.id === id ? merged : s)));
-    return merged;
+      );
+      const deliveryError = validateDelivery(merged.delivery);
+      if (deliveryError) throw new Error(deliveryError);
+      await this.save(list.map((s) => (s.id === id ? merged : s)));
+      return merged;
+    });
   }
 
   async remove(id: string): Promise<boolean> {
-    const list = await this.load();
-    const next = list.filter((s) => s.id !== id);
-    if (next.length === list.length) return false;
-    await this.save(next);
-    return true;
+    return mcpServerLock.runExclusive(this.file, async () => {
+      const list = await this.load();
+      const next = list.filter((s) => s.id !== id);
+      if (next.length === list.length) return false;
+      await this.save(next);
+      return true;
+    });
   }
 }

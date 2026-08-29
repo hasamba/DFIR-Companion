@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { atomicWrite } from "../../storage/atomicWrite.js";
+import { StateLock } from "../../analysis/stateLock.js";
 import type { ToolConfig } from "./toolConfig.js";
 
 // User-defined external tools (#211) — the extensible counterpart to the built-in Hayabusa/Velociraptor
@@ -110,6 +111,11 @@ function fromInput(input: CustomToolInput, id: string): CustomTool {
   };
 }
 
+// Serializes the load->modify->save section on the tool list (follow-up to #682). Same shape as
+// McpServerStore: one JSON array, so two edits at once keep only the later one and a registered
+// tool quietly is not. GLOBAL store, keyed by the file path.
+const customToolLock = new StateLock();
+
 export class CustomToolStore {
   constructor(private readonly file: string) {}
 
@@ -145,38 +151,46 @@ export class CustomToolStore {
     if (!binary) throw new Error("a binary path is required");
     const id = slugifyToolName(name);
     const tool = fromInput(input, id);
-    const list = await this.load();
-    const next = list.some((t) => t.id === id) ? list.map((t) => (t.id === id ? tool : t)) : [...list, tool];
-    await this.save(next);
-    return tool;
+    return customToolLock.runExclusive(this.file, async () => {
+      const list = await this.load();
+      const next = list.some((t) => t.id === id)
+        ? list.map((t) => (t.id === id ? tool : t))
+        : [...list, tool];
+      await this.save(next);
+      return tool;
+    });
   }
 
   async update(id: string, patch: Partial<CustomToolInput>): Promise<CustomTool | null> {
-    const list = await this.load();
-    const cur = list.find((t) => t.id === id);
-    if (!cur) return null;
-    const merged = fromInput(
-      {
-        name: patch.name ?? cur.name,
-        binary: patch.binary ?? cur.binary,
-        runArgs: patch.runArgs ?? cur.runArgs,
-        updateCommand: patch.updateCommand ?? cur.updateCommand,
-        extensions: patch.extensions ?? cur.extensions,
-        autoRun: patch.autoRun ?? cur.autoRun,
-        timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
-        maxOutputBytes: patch.maxOutputBytes ?? cur.maxOutputBytes,
-      },
-      id,
-    ); // keep the same id (name change does not re-slug an existing tool)
-    await this.save(list.map((t) => (t.id === id ? merged : t)));
-    return merged;
+    return customToolLock.runExclusive(this.file, async () => {
+      const list = await this.load();
+      const cur = list.find((t) => t.id === id);
+      if (!cur) return null;
+      const merged = fromInput(
+        {
+          name: patch.name ?? cur.name,
+          binary: patch.binary ?? cur.binary,
+          runArgs: patch.runArgs ?? cur.runArgs,
+          updateCommand: patch.updateCommand ?? cur.updateCommand,
+          extensions: patch.extensions ?? cur.extensions,
+          autoRun: patch.autoRun ?? cur.autoRun,
+          timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
+          maxOutputBytes: patch.maxOutputBytes ?? cur.maxOutputBytes,
+        },
+        id,
+      ); // keep the same id (name change does not re-slug an existing tool)
+      await this.save(list.map((t) => (t.id === id ? merged : t)));
+      return merged;
+    });
   }
 
   async remove(id: string): Promise<boolean> {
-    const list = await this.load();
-    const next = list.filter((t) => t.id !== id);
-    if (next.length === list.length) return false;
-    await this.save(next);
-    return true;
+    return customToolLock.runExclusive(this.file, async () => {
+      const list = await this.load();
+      const next = list.filter((t) => t.id !== id);
+      if (next.length === list.length) return false;
+      await this.save(next);
+      return true;
+    });
   }
 }
