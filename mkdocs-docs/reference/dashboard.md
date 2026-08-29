@@ -416,6 +416,42 @@ the investigation log.
 
 ---
 
+## Related Cases
+
+The other investigations on this server that share an indicator with this case, strongest overlap
+first. One campaign is often split across several cases — the same C2 domain in last month's
+phishing case and in today's ransomware case — and every other panel stops at the case boundary.
+Each row names the case, links straight to it, and lists what the two have in common. Fully
+deterministic; no AI, no network.
+
+The panel stays hidden until this case actually overlaps with another one you may read. It
+refreshes when you connect to a case, and again whenever an import settles — so a newly imported
+domain that another case already holds surfaces the link straight away.
+
+**Read a row as a lead, not a conclusion.** Two cases in one estate share a DNS resolver and a
+domain controller; that is not a shared adversary. The ranking says so numerically: an indicator
+carrying a threat-intel verdict counts for more than one without, a file hash counts for more than
+a domain or an address, and a private address inside the estate counts for a quarter of an
+external one.
+Chips marked ⚠ carry a malicious or suspicious verdict; dimmed chips are internal addresses.
+
+Only IPs, domains, URLs and hashes are compared. Process names, file paths and SIDs are deliberately
+left out — `powershell.exe` and `S-1-5-18` appear in nearly every Windows investigation, so
+including them would link every case to every other one and bury the single domain that matters.
+
+**What you can see is what your account can already read.** In team mode the panel reports only
+cases you hold a role on — a reader on case A learns nothing about case B. A password-protected case
+contributes nothing until you have unlocked it in the same browser session, whichever case you are
+looking at.
+
+Two routes back it, scoped the same way:
+
+- `GET /cases/<id>/related` — the panel's own data.
+- `GET /global/iocs?q=<value>` — search one indicator across every case you may read. Optional
+  `type=ip,domain,url,hash`, `minCases=<n>` (only values held by at least N cases), `limit=<n>`.
+
+---
+
 ## Corroboration Filter (Lens)
 
 **Forensic Timeline**, **IOCs**, and **Findings** each have an independent corroboration lens in their title bar: show only items observed by **2+** or **3+** distinct tools, cutting single-source noise (internet scanners, benign per-tool telemetry) so the multi-source attack path stands out.

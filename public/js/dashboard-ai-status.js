@@ -64,6 +64,11 @@
       // but loadHostDuplicates is a cheap GET and this is the only reliable "import settled" signal
       // available client-side, including when AI is off.
       loadHostDuplicates(activeCaseId);
+      // Same signal, same reason (#679): an import that lands a C2 domain already sitting in
+      // another case is exactly when the analyst should be told, and the Related Cases panel is
+      // otherwise only loaded on case connect — so the link would stay invisible until the next
+      // page load.
+      loadRelatedCases(activeCaseId);
     } else if (evt.status === "blocked") {
       // A GATE, not a failure: the pipeline stopped on purpose and is waiting for a decision (a
       // Presidio approval, a duplicate-host merge). Both used to arrive as "error", which painted

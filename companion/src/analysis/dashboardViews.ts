@@ -83,6 +83,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-anomalies",
   "sec-geomap",
   "sec-iocs",
+  "sec-related-cases",
   "sec-exposure",
   "sec-questions",
   "sec-uncertainties",

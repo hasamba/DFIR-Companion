@@ -61,6 +61,7 @@ import {
 import { registerComplianceRoutes } from "../routes/compliance.js";
 import { registerCoachRoutes } from "../routes/coach.js";
 import { registerCockpitRoutes } from "../routes/cockpit.js";
+import { registerCrossCaseRoutes } from "../routes/crossCase.js";
 
 /**
  * Handles for the opt-in outbound command transports (#235). Returned rather than written onto
@@ -163,6 +164,10 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
   registerCockpitRoutes(app, ctx);
+  // Cross-case IOC pivot (#679). Registered after the per-case families because
+  // GET /cases/:id/related must sit behind the same case gates they do — the lock gate in
+  // httpStack.ts covers it by prefix, and the team policy resolves it to case "read".
+  registerCrossCaseRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
   registerSlashCommandRoutes(app, ctx);
   // Outbound command transports (#235) are opt-in. Started here, after the slash-command routes they
