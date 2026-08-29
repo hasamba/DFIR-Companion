@@ -18,6 +18,7 @@
 // hash meta → hash IOC. Pure, no AI. Reuses siemImport's helpers.
 
 import type { Severity } from "./stateTypes.js";
+import { boundedAggKey } from "./aggKey.js";
 import {
   aggregateEvents,
   addIoc,
@@ -145,6 +146,20 @@ function mitreFromYara(tags: string[], meta: Record<string, string>): string[] {
   return [...out];
 }
 
+// The scanned path is this key's whole discriminator, and it is the only field that can exhaust the
+// length bound — a recursive scan of a deep tree reaches 400 characters on the directory alone, and
+// two files under it then collapse into ONE row whose path, hash and description come from whichever
+// match was applied last. boundedAggKey keeps a digest of the full key in that case, so they stay two
+// findings. See aggKey.ts for the rule this follows (#670).
+//
+// Unlike the Velociraptor YARA path there is no host to lead with: YARA CLI output has no host field,
+// and the import seam hands this module text and nothing else. The one host-bearing form the format
+// can carry is a UNC target (\\HOST\C$\…), which is already inside the path and diverges long
+// before the bound.
+function yaraAggKey(rule: string, file: string): string {
+  return boundedAggKey(`yara|${rule.toLowerCase()}|${file.toLowerCase()}`);
+}
+
 // Parse YARA scan output into the shared SIEM result shape (aggregated + capped). Pure.
 export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): SiemParseResult {
   const matches: YaraMatch[] = [];
@@ -187,7 +202,7 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
       description: oneLine(desc).slice(0, 600),
       severity: severityFromMeta(ev.meta),
       mitre: mitreFromYara(ev.tags, ev.meta),
-      aggKey: `yara|${ev.rule.toLowerCase()}|${ev.file.toLowerCase()}`.slice(0, 400),
+      aggKey: yaraAggKey(ev.rule, ev.file),
       sources: [YARA_SOURCE],
       path: ev.file.slice(0, 300),
       ...(sha ? { sha256: sha } : {}),
