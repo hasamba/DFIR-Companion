@@ -13,7 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Chainsaw runs on raw `.evtx` from inside the Companion** — a sixth built-in tool alongside Hayabusa and the Velociraptor CLI (binary, Sigma rule directory and mapping file in Settings → Tools). The importer already existed; only the runner was missing. (#688)
+- **A parser run is now recorded in the chain of custody** — the tool output's custody entry states the parser's version, the exact arguments, the rule-set hash, the exit code, a stderr tail and the output hash, instead of a bare "companion". (#688)
+- **A raw file uploaded to a parser is kept byte-for-byte** as evidence beside the parser's output, and it survives a failed parse. It used to be deleted once parsed. (#688)
+- **One Windows record read by two parsers is one timeline row** — a Hayabusa run and a Chainsaw run over the same EVTX now merge on the record's own identity (channel + EventRecordID + host) and carry both tools as sources, instead of doubling the timeline. Two detections from the *same* parser on one record stay distinct. (#688)
+
 ### Security
+- **The EVTX parsers fail closed** — a non-zero exit from Hayabusa, Chainsaw or the Velociraptor CLI rejects the run instead of importing a partial parse, and Chainsaw refuses to start when its Sigma rule directory is missing or empty rather than reporting a false all-clear. (#688)
 - **A failed OIDC sign-in no longer shows the identity provider's error text** — the login page gets one sentence and a reference; the full detail goes to the server log under that reference. (closes #674)
 - **Case unlock tokens carry a payload version** — a token signed under an older payload shape now stops verifying instead of being read under today's rules. Unlock cookies issued before this release stop working, so each password-protected case asks for its password once more. (closes #671)
 

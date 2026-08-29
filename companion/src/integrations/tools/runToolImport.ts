@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, copyFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { ToolConfig } from "./toolConfig.js";
 import { substituteArgs, tokenizeArgs, stripAnsi, cleanToolOutput, type ToolRunner } from "./toolRunner.js";
+import { hashOutputText, hashRuleset, probeToolVersion, type ToolRunProvenance } from "./toolProvenance.js";
 
 // Orchestrates "run the analyst's tool against a raw file on disk → hand its TEXT output to the existing
 // importer". Pure of any server/HTTP concern; the ToolRunner is injected so tests never spawn. Security
@@ -25,6 +26,9 @@ export interface RunToolResult {
   outputText: string; // the tool's output (stdout, or the read-back result file), fed to the importer
   importKind: string; // the fixed downstream importer kind for this tool
   stderr: string; // captured stderr (for surfacing warnings/errors to the analyst)
+  // The full account of the run — binary, version, argv, exit code, rule set, output hash (#688).
+  // Written into the stored output's chain-of-custody record so a parse can be defended later.
+  provenance: ToolRunProvenance;
 }
 
 // Run `cfg` against `targetPath` and return the tool's output text + its importKind. `workDir` is a
@@ -50,6 +54,18 @@ export async function runToolAgainstFile(opts: {
   if (cfg.runArgs.includes("<definitions>") && !definitions) {
     throw new Error(
       `${cfg.id}: a definitions path is required — set it in Settings → Tools (DFIR_TOOL_${cfg.id.toUpperCase()}_DEFINITIONS)`,
+    );
+  }
+
+  // The rule set behind the verdicts, reduced to one hash for the custody record (#688). Resolved
+  // BEFORE the tool is spawned so a fail-closed parser refuses to run at all rather than reporting a
+  // confident "no detections" over rules it never loaded — which is indistinguishable, in the output,
+  // from a genuinely clean log.
+  const ruleset = rules ? await hashRuleset(rules) : null;
+  if (cfg.requireRuleset && !ruleset) {
+    throw new Error(
+      `${cfg.id}: the rule set at "${rules}" could not be identified — the path must exist and hold at least one readable rule file. ` +
+        `Refusing to run: a parser with no rules loaded reports "no detections" over evidence it never examined.`,
     );
   }
 
@@ -98,11 +114,26 @@ export async function runToolAgainstFile(opts: {
       definitions: definitions || undefined,
     });
 
+    // Best effort, and deliberately before the run so a version probe that hangs is bounded by its
+    // own short timeout rather than eating into the parse. A blank version never fails the run.
+    const version = await probeToolVersion(cfg, runner);
+
     const res = await runner(cfg.binary, argv, {
       timeoutMs: cfg.timeoutMs,
       maxOutputBytes: cfg.maxOutputBytes,
       stdoutFile,
     });
+
+    // FAIL CLOSED (#688). A parser that died halfway still leaves the rows it managed to write, and
+    // importing those puts a silently partial view of the evidence into the case with nothing saying
+    // so. For a tool whose exit code is meaningful this rejects the whole run. YARA and Snort are not
+    // flagged: they exit non-zero to mean "matches found", which is a successful run.
+    if (cfg.failOnNonZeroExit && res.code !== 0) {
+      const detail = cleanToolOutput(res.stderr, 4);
+      throw new Error(
+        `${cfg.id} exited with code ${res.code} — refusing to import a partial parse${detail ? `: ${detail.slice(0, 400)}` : ""}`,
+      );
+    }
 
     // Redirected/file/dir output → read the file. Pure stdout tools (YARA/Snort) → strip ANSI so a
     // colour-forcing CLI can't break the importer parser.
@@ -116,7 +147,22 @@ export async function runToolAgainstFile(opts: {
       const detail = cleanErr ? `: ${cleanErr.slice(0, 400)}` : res.code ? ` (exit ${res.code})` : "";
       throw new Error(`${cfg.id} produced no output${detail}`);
     }
-    return { outputText, importKind: cfg.importKind, stderr: stripAnsi(res.stderr) };
+    const stderr = stripAnsi(res.stderr);
+    return {
+      outputText,
+      importKind: cfg.importKind,
+      stderr,
+      provenance: {
+        toolId: cfg.id,
+        binary: cfg.binary,
+        version,
+        argv,
+        exitCode: res.code,
+        stderr: cleanToolOutput(stderr, 20),
+        outputSha256: hashOutputText(outputText),
+        ruleset,
+      },
+    };
   } finally {
     await rm(runDir, { recursive: true, force: true }).catch(() => {});
     if (inputDir) await rm(inputDir, { recursive: true, force: true }).catch(() => {});

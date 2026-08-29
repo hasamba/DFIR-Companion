@@ -21,7 +21,7 @@
  * counts what actually entered the forensic timeline, not what was parsed.
  */
 import { Buffer } from "node:buffer";
-import type { CaseStore } from "../storage/caseStore.js";
+import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImportBase } from "../routes/context.js";
@@ -68,6 +68,18 @@ export interface ImportIngest {
     caseId: string,
     originalName: string,
     text: string,
+    provenance?: ArtifactProvenance,
+  ): Promise<{ storedName: string; importedAt: string; seq: number }>;
+  /**
+   * The same evidence-first persist for BYTES rather than text — a raw .evtx, a PCAP, any original
+   * an external parser was run against. saveImport re-encodes as UTF-8, which mangles a binary, so
+   * preserving an original byte-for-byte (#688) needs its own path. Returns the stored name.
+   */
+  persistRawEvidence(
+    caseId: string,
+    originalName: string,
+    bytes: Buffer,
+    provenance?: ArtifactProvenance,
   ): Promise<{ storedName: string; importedAt: string; seq: number }>;
   /** Move sub-threshold events out of the forensic timeline (they live on in the super-timeline). */
   demoteForensicForCase(caseId: string): Promise<InvestigationState>;
@@ -77,6 +89,7 @@ export interface ImportIngest {
     text: string,
     originalName: string,
     minSeverity?: Severity,
+    provenance?: ArtifactProvenance,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
 }
 
@@ -251,12 +264,13 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     caseId: string,
     originalName: string,
     text: string,
+    provenance?: ArtifactProvenance,
   ): Promise<{ storedName: string; importedAt: string; seq: number }> {
     const seq = await store.nextImportSeq(caseId);
     const safe = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
     const storedName = `${String(seq).padStart(4, "0")}_${safe}`;
     const importedAt = new Date().toISOString();
-    await store.saveImport(caseId, storedName, text);
+    await store.saveImport(caseId, storedName, text, provenance);
     await store.appendImport(caseId, {
       caseId,
       sequenceNumber: seq,
@@ -265,6 +279,32 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       originalName,
       rows: 0,
       bytes: Buffer.byteLength(text, "utf8"),
+    });
+    return { storedName, importedAt, seq };
+  }
+
+  // The bytes-in twin of persistEvidence. Same sequence allocation, same audit line, same custody
+  // announcement — it differs only in writing a Buffer verbatim instead of a UTF-8 string, which is
+  // what "preserve the original byte-for-byte" (#688) requires of a .evtx or a PCAP.
+  async function persistRawEvidence(
+    caseId: string,
+    originalName: string,
+    bytes: Buffer,
+    provenance?: ArtifactProvenance,
+  ): Promise<{ storedName: string; importedAt: string; seq: number }> {
+    const seq = await store.nextImportSeq(caseId);
+    const safe = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "evidence.bin";
+    const storedName = `${String(seq).padStart(4, "0")}_${safe}`;
+    const importedAt = new Date().toISOString();
+    await store.saveRawImport(caseId, storedName, bytes, provenance);
+    await store.appendImport(caseId, {
+      caseId,
+      sequenceNumber: seq,
+      importedAt,
+      filename: storedName,
+      originalName,
+      rows: 0,
+      bytes: bytes.byteLength,
     });
     return { storedName, importedAt, seq };
   }
@@ -313,11 +353,15 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     text: string,
     originalName: string,
     minSeverity?: Severity,
+    provenance?: ArtifactProvenance,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     options.onImport?.(caseId); // cross-case signal (parity with /import + captures) for push/monitor ingest
-    const { storedName, importedAt, seq } = await persistEvidence(caseId, originalName, text);
+    // `provenance` is how an external tool's run reaches the chain of custody (#688): the stored
+    // output's custody record then carries the parser's version, argv, rule-set hash and stderr
+    // instead of a bare "companion".
+    const { storedName, importedAt, seq } = await persistEvidence(caseId, originalName, text, provenance);
 
     // CSV/log are themselves an LLM call → respect the per-case AI toggle exactly like /import: with
     // AI OFF the evidence is saved but not sent to the model. Deterministic importers proceed.
@@ -453,6 +497,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     resolveImportKind,
     dispatchImport,
     persistEvidence,
+    persistRawEvidence,
     demoteForensicForCase,
     ingestStreamed,
   };

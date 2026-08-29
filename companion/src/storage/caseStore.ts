@@ -391,6 +391,34 @@ export class CaseStore {
     return path;
   }
 
+  /**
+   * Persist a BINARY original verbatim as evidence — a raw .evtx or PCAP an external parser was run
+   * against (#688). saveImport above re-encodes its input as UTF-8, which silently corrupts binary
+   * bytes, so preserving an original byte-for-byte needs its own method rather than a flag.
+   *
+   * Identical to saveImport in every other respect: same directory, same create-exclusive write
+   * (#214), same artifact announcement, so the original lands in the chain of custody exactly like
+   * the tool output it produced.
+   */
+  async saveRawImport(
+    caseId: string,
+    filename: string,
+    bytes: Buffer,
+    provenance?: ArtifactProvenance,
+  ): Promise<string> {
+    await mkdir(this.importsDir(caseId), { recursive: true });
+    const path = join(this.importsDir(caseId), filename);
+    await writeFile(path, bytes, { flag: "wx" });
+    await this.announceArtifact({
+      caseId,
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      kind: "import",
+      provenance,
+    });
+    return path;
+  }
+
   async appendImport(caseId: string, metadata: ImportMetadata): Promise<ImportMetadata> {
     await mkdir(this.metadataDir(caseId), { recursive: true });
     await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");

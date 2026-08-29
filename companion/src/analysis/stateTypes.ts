@@ -192,6 +192,12 @@ export interface ForensicEvent {
   // used by the super-timeline's origin filter (analysis/superTimeline.ts) so a raw artifact
   // row and the detection built from it can be told apart and filtered independently.
   artifactName?: string;
+  // Identity of the ONE underlying log record this event was mapped from, when the importer knew
+  // it: `evtx:<channel>:<EventRecordID>` for a Windows event log. Two DIFFERENT parsers reading the
+  // same EVTX file mint the same value, so correlate.ts can recognise a Hayabusa row and a Chainsaw
+  // row as one observation and merge them instead of doubling the timeline (#688). Never set on an
+  // aggregated event — a collapsed group stands for many records, not one.
+  sourceRecordId?: string;
   // Full, untruncated event message/detail (e.g. the raw EVTX rendered Message or ScriptBlock
   // text). `description` is a truncated title/summary; `message` carries the complete text so the
   // super-timeline row can reveal it expandably. Set by importers that have the extra text

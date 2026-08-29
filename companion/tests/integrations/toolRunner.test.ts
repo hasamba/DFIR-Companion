@@ -276,6 +276,10 @@ describe("runToolAgainstFile", () => {
     await writeFile(join(caseDir, "a.evtx"), "binary-evtx");
     const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
     const runner: ToolRunner = async (_binary, args) => {
+      // Every run also asks the binary its version for the custody record (#688), and that call
+      // carries no -o. Answer it first: without this the stub would index past the end of argv and
+      // write the "output" to a file named after the flag.
+      if (args.includes("--version")) return { stdout: "hayabusa 3.2.0", stderr: "", code: 0 };
       // The runner writes the tool's output to the server-owned <output> path (the arg after -o).
       const oi = args.indexOf("-o");
       const outPath = args[oi + 1];

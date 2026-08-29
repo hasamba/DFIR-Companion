@@ -48,6 +48,7 @@ import {
   type HayabusaRecord,
 } from "./scriptBlockFragments.js";
 import { isDetectionSampleHost } from "./veloDetectionNoise.js";
+import { evtxRecordIdentity } from "./evtxRecordId.js";
 
 type Row = Record<string, unknown>;
 
@@ -226,6 +227,14 @@ function mapRecord(
   description = description.slice(0, 600);
 
   const timestamp = hayaTime(firstStr(rec, ["Timestamp", "@timestamp", "datetime"]));
+  // Identity of the Windows record this detection fired on (#688), so the SAME record read later by
+  // Chainsaw (or by the native EVTX path) merges with this row instead of doubling the timeline.
+  // Hayabusa emits `RecordID` in its standard/verbose profiles; a profile without it simply mints
+  // nothing and behaves as before. A CONSOLIDATED script block is skipped on purpose: it reassembles
+  // several 4104 fragments, so it stands for many records and no single id describes it.
+  const recordIdentity = fullMessage
+    ? undefined
+    : evtxRecordIdentity(channel, firstStr(rec, ["RecordID", "Record ID", "RecordId", "EventRecordID"]));
   const aggKey =
     `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject}`
       .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
@@ -251,6 +260,7 @@ function mapRecord(
       ...(host ? { asset: host } : {}),
       ...(processName ? { processName } : {}),
       ...(parentName ? { parentName } : {}),
+      ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
     },
   };
 }

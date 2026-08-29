@@ -21,7 +21,7 @@
 // everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
 // with a conservative bump for LOLBin / suspicious command lines and LSASS access.
 
-import { SEVERITY_RANK, worstSeverity as worst, type Severity } from "./stateTypes.js";
+import { worstSeverity as worst, type Severity } from "./stateTypes.js";
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import {
@@ -33,6 +33,8 @@ import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
+import { evtxRecordIdentity } from "./evtxRecordId.js";
 import {
   LOLBINS,
   NOISY_LOLBINS,
@@ -83,6 +85,12 @@ export interface SiemEvent {
   port?: number;
   // The source artifact/rule that produced this event (e.g. a Velociraptor VQL artifact name).
   artifactName?: string;
+  // Identity of the ONE underlying log record this event was mapped from, when the parser reported
+  // it — `evtx:<channel>:<EventRecordID>` for a Windows event log. Two different parsers reading the
+  // same EVTX file mint the same value, which is what lets correlate.ts recognise a Hayabusa row and
+  // a Chainsaw row as one observation instead of two (#688). Never set on an AGGREGATED event: a
+  // collapsed group represents many records, so one record's id would misidentify it.
+  sourceRecordId?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when the mapper had it.
   message?: string;
   // The row's own aggKey, carried through unconditionally (independent of the `aggregate` option)
@@ -116,14 +124,14 @@ export interface SiemParseResult {
 
 type Row = Record<string, unknown>;
 
-// Safety cap on emitted events, shared by every importer. Overridable via DFIR_MAX_EVENTS
-// (must be a positive integer to take effect; unset/invalid/non-positive values keep the
-// default so a typo or DFIR_MAX_EVENTS=0 can't silently reintroduce the cap analysts meant to lift).
-const DEFAULT_MAX_EVENTS = 2000;
-export function maxEventsDefault(): number {
-  const n = Number(process.env.DFIR_MAX_EVENTS);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_EVENTS;
-}
+// Aggregation lives in eventAggregate.ts (siemImport is a ledgered oversized file, #385).
+// Re-exported here so the importers that have always taken it from this module still can.
+export {
+  maxEventsDefault,
+  createEventAggregator,
+  aggregateEvents,
+  type EventAggregator,
+} from "./eventAggregate.js";
 
 // ───────────────────────────── small value helpers ─────────────────────────────
 
@@ -727,6 +735,9 @@ export interface MappedEvent {
   port?: number;
   // The source artifact/rule that produced this event (carried through aggregation to SiemEvent).
   artifactName?: string;
+  // Identity of the single log record behind this row (see SiemEvent.sourceRecordId). Stripped
+  // again by the aggregator whenever rows collapse into a group.
+  sourceRecordId?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when available.
   message?: string;
 }
@@ -1209,6 +1220,8 @@ export function mapWindows(
   if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns))
     addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
 
+  const recordIdentity = evtxRecordIdentity(channel, getCI(rec, "EventRecordID"));
+
   return {
     timestamp: normalizedTimestamp,
     description,
@@ -1240,6 +1253,11 @@ export function mapWindows(
     // Command line on process-creation events → chainSignature for cross-tool correlation (#68).
     ...(commandLine ? { commandLine } : {}),
     ...(rawMessage ? { message: rawMessage } : {}),
+    // The record's own identity, when the export carried it. Lets a second parser's reading of the
+    // SAME Windows record merge with this one instead of doubling the timeline (#688). Every
+    // natively-parsed EVTX shape reaches this mapper — raw EVTX XML, Velociraptor eventlog rows,
+    // generic SIEM records — so one line here covers them all.
+    ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
   };
 }
 
@@ -1551,145 +1569,6 @@ export function resolveExtractedFrom(
     ];
     return ids.length ? { ...c, extractedFrom: ids } : c;
   });
-}
-
-// ───────────────────────────── aggregation (shared) ─────────────────────────────
-
-// Incremental accumulator behind aggregateEvents — collapse mapped events by aggKey into counted
-// rows, apply the severity floor, then sort + cap on finish(). Exposed as an accumulator (not just
-// the one-shot function) so a STREAMING caller (e.g. the Plaso file importer reading a 555 MB
-// super-timeline line-by-line) can feed events one at a time without ever materializing the full
-// mapped[] array — memory stays bounded by the distinct-key set, not the row count. Stateful.
-export interface EventAggregator {
-  add(m: MappedEvent): void;
-  finish(): { events: SiemEvent[]; groups: number };
-}
-
-// Copies the fields that identify and describe ONE underlying row — description, severity, and
-// every "which specific thing is this" field — onto `target`. Deliberately excludes the group-level
-// accumulator fields (id, timestamp/endTimestamp, count, aggKey, mitreTechniques, sources), which
-// the caller manages separately across a merge. A field absent on `m` is cleared, not left over
-// from whichever row `target` previously described — a stale path/hash from a DIFFERENT row would
-// misattribute it to the row actually being shown.
-function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
-  target.description = m.description;
-  target.severity = m.severity;
-  if (m.canonical) target.canonical = m.canonical;
-  else delete target.canonical;
-  if (m.sha256) target.sha256 = m.sha256;
-  else delete target.sha256;
-  if (m.md5) target.md5 = m.md5;
-  else delete target.md5;
-  if (m.path) target.path = m.path;
-  else delete target.path;
-  if (m.asset) target.asset = m.asset;
-  else delete target.asset;
-  if (m.processName) target.processName = m.processName;
-  else delete target.processName;
-  if (m.parentName) target.parentName = m.parentName;
-  else delete target.parentName;
-  if (m.pid !== undefined) target.pid = m.pid;
-  else delete target.pid;
-  if (m.commandLine) target.commandLine = m.commandLine;
-  else delete target.commandLine;
-  if (m.srcIp) target.srcIp = m.srcIp;
-  else delete target.srcIp;
-  if (m.dstIp) target.dstIp = m.dstIp;
-  else delete target.dstIp;
-  if (m.port) target.port = m.port;
-  else delete target.port;
-  if (m.artifactName) target.artifactName = m.artifactName;
-  else delete target.artifactName;
-  if (m.message) target.message = m.message;
-  else delete target.message;
-}
-
-export function createEventAggregator(
-  opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
-): EventAggregator {
-  const aggregate = opts.aggregate ?? true;
-  const maxEvents = opts.maxEvents ?? maxEventsDefault();
-  const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
-
-  const byKey = new Map<string, SiemEvent>();
-  const order: string[] = [];
-
-  return {
-    add(m: MappedEvent): void {
-      if (SEVERITY_RANK[m.severity] > floorRank) return; // below the severity floor
-      const key = aggregate ? m.aggKey : `${order.length}`; // no-agg ⇒ unique key per row
-      const existing = byKey.get(key);
-      if (existing) {
-        existing.count = (existing.count ?? 1) + 1;
-        const t = m.timestamp;
-        if (t) {
-          if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
-          if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
-        }
-        for (const mt of m.mitre)
-          if (!existing.mitreTechniques.includes(mt)) existing.mitreTechniques.push(mt);
-        if (m.sources)
-          for (const s of m.sources) {
-            existing.sources ??= [];
-            if (!existing.sources.includes(s)) existing.sources.push(s);
-          }
-        // Two rows can share an aggKey while differing meaningfully in risk (e.g. the same
-        // PersistenceSniper startup-item name across two user SIDs, one signed and ordinary, one
-        // an unsigned LOLBin — the digit-stripped key folds them together). worst()-ing only the
-        // severity NUMBER left description/path/hashes pinned to whichever row was seen first, so
-        // an analyst could see "High" attached to text that describes the benign twin, with
-        // nothing in the row explaining the grade. When the incoming row is STRICTLY more severe,
-        // promote the whole displayed record to it — never just the number.
-        if (SEVERITY_RANK[m.severity] < SEVERITY_RANK[existing.severity]) {
-          applyEventIdentity(existing, m);
-        }
-        // `count` records repeats; retaining one instance's identity avoids unbounded provenance arrays.
-      } else {
-        const e: SiemEvent = {
-          id: "",
-          timestamp: m.timestamp,
-          description: "",
-          severity: "Info",
-          mitreTechniques: [...m.mitre],
-          count: 1,
-          aggKey: m.aggKey,
-          ...(m.sources?.length ? { sources: [...m.sources] } : {}),
-        };
-        applyEventIdentity(e, m);
-        byKey.set(key, e);
-        order.push(key);
-      }
-    },
-    finish(): { events: SiemEvent[]; groups: number } {
-      // Drop the synthetic count:1 marker on un-aggregated singletons for a cleaner timeline.
-      const events = order.map((k) => byKey.get(k)!);
-      for (const e of events) if (e.count === 1) delete e.count;
-      const groups = events.length;
-
-      // Most-severe first, then noisiest, then earliest — then cap.
-      events.sort(
-        (a, b) =>
-          SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
-          (b.count ?? 1) - (a.count ?? 1) ||
-          (a.timestamp || "~").localeCompare(b.timestamp || "~"),
-      );
-
-      return { events: events.slice(0, maxEvents), groups };
-    },
-  };
-}
-
-// Collapse mapped events by their aggKey into counted rows, apply the severity floor,
-// sort (most-severe → noisiest → earliest) and cap. Shared by the SIEM and Chainsaw/EVTX
-// importers so both aggregate, sort, and cap identically. Returns the capped rows plus the
-// group count BEFORE the cap (so callers can report "N over the cap"). Pure.
-export function aggregateEvents(
-  mapped: Iterable<MappedEvent>,
-  opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
-): { events: SiemEvent[]; groups: number } {
-  const agg = createEventAggregator(opts);
-  for (const m of mapped) agg.add(m);
-  return agg.finish();
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────

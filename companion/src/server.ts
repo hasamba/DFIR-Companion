@@ -201,6 +201,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     options,
     resolveImportKind: imports.resolveImportKind,
     ingestStreamed: imports.ingestStreamed,
+    persistRawEvidence: imports.persistRawEvidence,
     pushImportCheckpoint: appliers.pushImportCheckpoint,
   });
   const drops = createDropFolder({
