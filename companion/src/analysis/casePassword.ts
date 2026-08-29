@@ -37,7 +37,22 @@ export function sanitizeCaseMeta(meta: CaseMeta): Omit<CaseMeta, "password"> & {
 
 const TOKEN_SEPARATOR = ".";
 
+/**
+ * Payload schema version, carried inside the signed bytes.
+ *
+ * The HMAC covers the encoded payload, not the SHAPE of it. Without a version, a later change to
+ * this interface — a renamed field, a new one, a field that stops being written — would leave old
+ * tokens still verifying, because a payload from the old code can deserialize into the new one and
+ * the missing field simply reads `undefined`. The token would then be judged under semantics it was
+ * never signed for. Bumping this constant is the one-line way to make that impossible: every token
+ * issued under the old shape stops verifying the moment the shape changes, and the analyst re-enters
+ * the case password once. Costing a single re-entry is the safe side of that trade (#671).
+ */
+const UNLOCK_TOKEN_VERSION = 1;
+
 interface UnlockPayload {
+  /** Always {@link UNLOCK_TOKEN_VERSION}. Bump it whenever any other field here changes. */
+  v: number;
   caseId: string;
   salt: string;
   exp: number;
@@ -56,7 +71,13 @@ export function signUnlockToken(
   ttlMs: number,
   remember: boolean,
 ): string {
-  const payload: UnlockPayload = { caseId, salt, exp: Date.now() + ttlMs, remember };
+  const payload: UnlockPayload = {
+    v: UNLOCK_TOKEN_VERSION,
+    caseId,
+    salt,
+    exp: Date.now() + ttlMs,
+    remember,
+  };
   const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   const sig = createHmac("sha256", secret).update(payloadB64).digest("base64url");
   return `${payloadB64}${TOKEN_SEPARATOR}${sig}`;
@@ -85,6 +106,9 @@ function decodeVerifiedPayload(
   } catch {
     return null;
   }
+  // Version FIRST: a token from a different payload shape is rejected before any of its fields
+  // are read, so no old-shape value ever reaches a comparison written for the new shape.
+  if (payload.v !== UNLOCK_TOKEN_VERSION) return null;
   if (payload.caseId !== caseId || payload.salt !== salt) return null;
   if (typeof payload.exp !== "number" || Date.now() > payload.exp) return null;
   return payload as UnlockPayload;

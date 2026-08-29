@@ -444,6 +444,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     custodyStore,
     notifier,
     dashboardBaseUrl,
+    authStore: teamAuth?.store,
   });
 
   // Model providers, the optional Presidio gate, the OCR runner and the pipeline that binds them to
