@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-08-29
+
 ### Added
 - **A YARA hit shows the string it matched, and an Amcache entry its real name** — a Velociraptor YARA finding now carries the decoded matched bytes (ASCII or UTF-16LE) in its description, so forty hits against one pagefile stop being interchangeable; and an Amcache row whose filename disagrees with the name compiled into the binary is graded up and tagged T1036.005, naming both spellings.
 - **A bundle hunt's label filter is a picker, not a text box** — the include and exclude filters on the run form list the labels your cached client inventory really holds and let you tick several at once, instead of asking you to type them comma-separated. A typed label that no client carries never failed: Velociraptor matched nobody, so the hunt launched, reported success and collected from nowhere. The client snapshot now records each client's labels, so **↻ Refresh client list** is what picks up a label added in Velociraptor since the last snapshot; with no snapshot yet, the filter says so and the hunt runs across the whole fleet as before.
@@ -858,7 +860,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.1...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.1...v0.36.0
 [0.35.1]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.0...v0.35.1
 [0.35.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.33.0...v0.34.0

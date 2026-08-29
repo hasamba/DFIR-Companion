@@ -20,7 +20,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/hasamba/dfir-companion:0.35.1
+    image: ghcr.io/hasamba/dfir-companion:0.36.0
     container_name: dfir-companion
     restart: unless-stopped
     # HOST:CONTAINER — bound to 127.0.0.1 on the host so the dashboard is localhost-only.

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DFIR Companion — Evidence Capture & Push",
-  "version": "0.35.1",
+  "version": "0.36.0",
   "description": "Connects to the DFIR Companion you configure, local by default. Captures screenshots and pushes detections from DFIR consoles.",
   "icons": {
     "16": "icons/icon16.png",
@@ -9,10 +9,26 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["activeTab", "webNavigation", "storage", "alarms", "scripting", "contextMenus"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "options_ui": { "page": "options.html", "open_in_tab": true },
-  "background": { "service_worker": "serviceWorker.js", "type": "module" },
+  "permissions": [
+    "activeTab",
+    "webNavigation",
+    "storage",
+    "alarms",
+    "scripting",
+    "contextMenus"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "serviceWorker.js",
+    "type": "module"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -24,7 +40,10 @@
   },
   "commands": {
     "toggle-capture": {
-      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
       "description": "Toggle DFIR screenshot capture on/off"
     },
     "_execute_action": {
