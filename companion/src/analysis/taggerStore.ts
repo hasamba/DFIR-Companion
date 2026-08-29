@@ -10,6 +10,7 @@
 // error; the auto-run pipeline hook catches it and skips (a broken hand-edit must not break imports).
 
 import { readFile, access, rm, mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,12 +19,31 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import { compileRuleset, type CompiledRuleset } from "./taggerRules.js";
 
+// Thrown when a whole-document save carries a revision that no longer matches the file on disk —
+// somebody else changed the rules while this editor was open. A distinct type so the route can
+// answer 409 (you are out of date, reload) instead of 400 (your YAML is wrong), which are very
+// different instructions to give an analyst.
+export class TaggerRulesConflictError extends Error {
+  constructor(readonly currentRevision: string) {
+    super("the rules changed since this editor was opened; reload before saving");
+    this.name = "TaggerRulesConflictError";
+  }
+}
+
+// A revision is just a digest of the active rule text. It needs to change whenever the file does and
+// be cheap to compare — not to be unguessable — so a truncated sha256 is enough.
+export function rulesRevision(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
 export type RulesSource = "env" | "user" | "default";
 
 export interface ActiveRules {
   text: string;
   source: RulesSource;
   path: string;
+  /** Digest of `text`. The editor sends it back on save so a stale submission can be rejected. */
+  revision: string;
 }
 
 // Candidate locations of the bundled default, most-likely first (mirrors countryCentroids.ts):
@@ -95,6 +115,11 @@ export class TaggerStore {
 
   /** The active rule file's raw YAML text + where it came from. Empty ruleset when none is found. */
   async readActive(): Promise<ActiveRules> {
+    const active = await this.readActiveText();
+    return { ...active, revision: rulesRevision(active.text) };
+  }
+
+  private async readActiveText(): Promise<Omit<ActiveRules, "revision">> {
     const env = this.envPath();
     if (env) return { text: await readFile(env, "utf8"), source: "env", path: env };
     if (await exists(this.userRulesPath)) {
@@ -117,15 +142,28 @@ export class TaggerStore {
    * "never a bare writeFile" invariant). Throws BEFORE writing if the YAML or ruleset is invalid,
    * so a bad edit never overwrites a working file. Returns the compiled ruleset.
    */
-  // NOTE the limit of this lock. It makes a whole-document PUT atomic with respect to the structural
-  // edits, so neither can land inside the other's critical section. It does NOT make the PUT
-  // conflict-aware: a full-document submission REPLACES the file, so an editor save that goes second
-  // still discards a rule added while the analyst was typing. That is what last-write-wins means and
-  // is unchanged from before; closing it needs the editor to send a revision the server can reject as
-  // stale, which is an API and UI change rather than a locking one. Pinned by
-  // "still lets a whole-document save replace an edit that landed first" in taggerStore.test.ts.
-  async save(yamlText: string): Promise<CompiledRuleset> {
-    return rulesLock.runExclusive(this.userRulesPath, () => this.persist(yamlText));
+  // A whole-document save REPLACES the file, so on its own it is last-write-wins: an editor
+  // submission that lands after somebody else added a rule silently deletes that rule. The lock
+  // alone could never fix that — it makes the two writes atomic with respect to each other, which is
+  // a different problem. `expectedRevision` is what fixes it: the editor sends back the revision it
+  // loaded, and a mismatch is refused rather than applied.
+  //
+  // The comparison happens INSIDE the lock, which is the whole point. Checking outside would leave
+  // exactly the race it is meant to close — read the current revision, another writer lands, then
+  // overwrite anyway.
+  //
+  // Omitting `expectedRevision` keeps the old last-write-wins behaviour. That is deliberate: a
+  // script or curl caller with the full ruleset in hand is stating intent, and the dashboard editor
+  // (the client that can actually be stale) always sends one.
+  async save(yamlText: string, expectedRevision?: string): Promise<CompiledRuleset & { revision: string }> {
+    return rulesLock.runExclusive(this.userRulesPath, async () => {
+      if (expectedRevision !== undefined) {
+        const current = rulesRevision((await this.readActiveText()).text);
+        if (current !== expectedRevision) throw new TaggerRulesConflictError(current);
+      }
+      const compiled = await this.persist(yamlText);
+      return { ...compiled, revision: rulesRevision(yamlText) };
+    });
   }
 
   // The unlocked body of save(). StateLock is NOT reentrant — a runExclusive nested inside another
