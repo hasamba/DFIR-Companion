@@ -221,6 +221,13 @@ async function clearTaggerTags() {
   } catch (e) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "Clear failed: " + e.message; }
 }
 
+// The revision of the text currently sitting in the editor box. Sent back on save so the server can
+// refuse a submission that would delete a rule somebody else added while this editor was open. Set
+// ONLY when the box is filled from the server — never after a structural add/remove/reset, because
+// the box still holds the pre-edit text at that point and silently freshening this would hand back
+// exactly the overwrite it exists to prevent. The 409 is the safety net for that case.
+let taggerRulesRevision = "";
+
 async function toggleTaggerRules() {
   const pane = document.getElementById("taggerRulesPane");
   if (!pane.hidden) { pane.hidden = true; return; }
@@ -231,6 +238,7 @@ async function toggleTaggerRules() {
     const r = await fetch(`/tagger/rules`);
     const d = await r.json();
     document.getElementById("taggerRulesText").value = d.text || "";
+    taggerRulesRevision = d.revision || "";
     document.getElementById("taggerRulesSource").textContent =
       (d.source || "default") + (d.error ? ` (current file invalid: ${d.error})` : ` — ${d.ruleCount} rule(s)`);
   } catch (e) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "Failed to load rules: " + e.message; }
@@ -243,9 +251,21 @@ async function saveTaggerRules() {
   msg.style.color = "var(--text-muted)";
   msg.textContent = "Saving…";
   try {
-    const r = await fetch(`/tagger/rules`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+    const r = await fetch(`/tagger/rules`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, revision: taggerRulesRevision }),
+    });
     const d = await r.json();
+    if (r.status === 409) {
+      // Somebody else changed the rules while this box was open. Saving would delete their change,
+      // so say what happened and what to do rather than reporting a generic rejection.
+      msg.style.color = "var(--badge-danger-text)";
+      msg.textContent = "Not saved — the rules changed since you opened the editor. Close and reopen it to pick up the current rules, then reapply your edit.";
+      return;
+    }
     if (!r.ok) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "Rejected: " + (d.error || r.status); return; }
+    taggerRulesRevision = d.revision || "";
     msg.style.color = "#6bcB77";
     msg.textContent = `Saved — ${d.ruleCount} rule(s). Run tagger to apply.`;
     document.getElementById("taggerRulesSource").textContent = `user — ${d.ruleCount} rule(s)`;
