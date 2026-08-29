@@ -381,6 +381,8 @@ above). Every indicator extracted from all evidence:
 
 **Composite risk score** — every indicator gets one `critical` / `high` / `medium` / `low` / `benign` tier from a transparent weighted rubric (verdict, corroborating source count, CISA-KEV, an own-infrastructure guard, NSRL/whitelist status), shown as a colour-keyed badge, a risk filter lens, and a Risk column in the CSV/markdown reports.
 
+**Indicator vs. observation** — a value that earned a signal (a Medium+ risk tier, or a reputation verdict) is a threat *indicator*; a bare file path or hash scraped from evidence with no signal is an *observation*. Both stay in the list, but the IOC count badge breaks out observations separately (e.g. "1,204 IOCs · 3 flagged · 980 observations") so the panel header doesn't read as 1,204 things worth chasing when most are untriaged file-system noise.
+
 **Pagination** — the IOC list pages client-side like the timelines (default 100 per page, selectable 50/100/250/500/All) with Prev/Next controls and a "page X of Y" badge, so cases with thousands of IOCs stay responsive. Filters and imports reset to the first page; select-all is page-scoped while selections persist across pages.
 
 **IOC exclude list** — the panel's title bar has a control to permanently remove matching indicators

@@ -195,6 +195,10 @@ const WRITABLE_ENV_PREFIXES = [
   // The global opt-in that lets a DFIR_*_INSECURE=1 knob apply to a non-loopback host (the
   // per-integration _INSECURE keys are already writable through their family prefixes).
   "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+  // Ransomware/sample-host detection-tuning lists (#700) — rendered as Settings fields but, like
+  // the #240 knobs above, never added to this allowlist, so a save silently dropped them.
+  "DFIR_RANSOM_EXTS",
+  "DFIR_SAMPLE_HOSTS",
 ];
 
 /**
