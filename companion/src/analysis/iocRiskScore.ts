@@ -183,6 +183,10 @@ export function scoreIocs(
  * with no signal at all. Both stay searchable; only the count / panel / export treat them differently.
  */
 export function iocRole(ioc: IOC, tier: IocRiskTier): IocRole {
+  // Known-good overrides everything (the same invariant scoreIoc enforces): a whitelisted or
+  // NSRL-known value is `benign` and is never a threat indicator, even a network value or one with a
+  // stale malicious enrichment. Checked FIRST, before the network / flagged branches below.
+  if (tier === "benign") return "observation";
   if (RISK_TIER_RANK[tier] >= RISK_TIER_RANK.medium) return "indicator";
   if (ioc.type === "ip" || ioc.type === "domain" || ioc.type === "url") return "indicator";
   const flagged = (ioc.enrichments ?? []).some(

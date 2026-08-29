@@ -162,6 +162,24 @@ describe("iocRole — indicator vs observation (the 5,000-file-path problem)", (
     expect(iocRole(mk({ id: "n3", type: "url", value: "http://c2.example/x" }), "low")).toBe("indicator");
   });
 
+  it("a benign (whitelisted / NSRL known-good) value is never an indicator — even a network value or a stale verdict", () => {
+    // known-good overrides everything, so the network and flagged branches must not fire.
+    expect(iocRole(mk({ id: "b1", type: "domain", value: "safe.example.com" }), "benign")).toBe(
+      "observation",
+    );
+    expect(
+      iocRole(
+        mk({
+          id: "b2",
+          type: "hash",
+          value: "a".repeat(64),
+          enrichments: [{ source: "old", verdict: "malicious", fetchedAt: "" }],
+        }),
+        "benign",
+      ),
+    ).toBe("observation");
+  });
+
   it("a hash a reputation source flagged is an indicator even at low risk", () => {
     const ioc = mk({
       id: "h1",

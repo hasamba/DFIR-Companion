@@ -52,14 +52,18 @@ export function rdpLateralSignal(artifact: string, row: Row): RdpLateralSignal |
   if (!/rdplateralmovement/i.test(artifact)) return null;
   if (toEid(getCI(row, "EventID")) !== 4648) return null;
 
-  const target = str(getCI(row, "TargetServer"));
-  const computer = str(getCI(row, "ComputerName"));
+  // The destination host. The Custom.DFIR.RDPLateralMovementDetection artifact writes `TargetServer`;
+  // a native EID 4648 record calls the same field `TargetServerName`. Read both so the detector works
+  // on the artifact AND a raw 4648 export.
+  const target = str(getCI(row, "TargetServer")) || str(getCI(row, "TargetServerName"));
+  const computer = str(getCI(row, "ComputerName")) || str(getCI(row, "Computer"));
   if (isLocalTarget(target, computer)) return null;
 
-  const initiator = str(getCI(row, "InitiatingUser"));
+  // The operator. The artifact uses `InitiatingUser`; a native 4648 uses `SubjectUserName`.
+  const initiator = str(getCI(row, "InitiatingUser")) || str(getCI(row, "SubjectUserName"));
   if (isMachineOrNoiseUser(initiator)) return null;
 
-  const srcIp = str(getCI(row, "SourceIP")).trim();
+  const srcIp = str(getCI(row, "SourceIP") ?? getCI(row, "IpAddress")).trim();
   const who = initiator || "a user";
   return {
     severity: "Medium",

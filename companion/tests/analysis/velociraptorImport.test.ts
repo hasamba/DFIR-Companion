@@ -3154,8 +3154,9 @@ describe("parseVelociraptorJson — BinaryRename drop time", () => {
 
 // Custom VQL artifacts SELECT the columns they want, so a Windows event arrives as a flat row: a
 // bare EventID with no System/EventData wrapper and no Channel. classify() sends it to the generic
-// key=value dump, which grades Info — and Info never reaches the forensic timeline. The benchmark's
-// explicit-credential logons (EID 4648) were invisible to synthesis for exactly this reason.
+// key=value dump, which grades Info — and Info never reaches the forensic timeline. The flat-EID
+// overlay grades it from the per-EID table instead. (The RDP-lateral artifact is the ONE exception —
+// it is graded authoritatively by rdpLateralDetect and exempt from this overlay; see evalFollowups.)
 describe("parseVelociraptorJson — flat Windows EventID rows", () => {
   function logonRow(o: Record<string, unknown> = {}): object {
     return {
@@ -3172,7 +3173,7 @@ describe("parseVelociraptorJson — flat Windows EventID rows", () => {
   }
   const parse = (o: Record<string, unknown> = {}): ReturnType<typeof parseVelociraptorJson> =>
     parseVelociraptorJson(JSON.stringify([logonRow(o)]), {
-      artifact: "Custom.DFIR.RDPLateralMovementDetection/ExplicitCredentialLogons",
+      artifact: "Custom.Windows.EventLogs.ExplicitCredentialLogons",
     });
 
   it("grades a known EventID from the Windows event table instead of Info", () => {
@@ -3577,5 +3578,26 @@ describe("parseVelociraptorJson — truncation is counted, not silent", () => {
     expect(r.kept).toBe(10);
     expect(r.total).toBe(50);
     expect(r.dropped).toBe(40);
+    // groups > kept confirms the CAP truncated (not a severity-floor/unparseable drop) — the import
+    // note only claims "omitted at the event cap" under exactly this condition.
+    expect(r.groups).toBeGreaterThan(r.kept);
+  });
+
+  it("does not overstate cap truncation when the drop is a severity floor, not the cap", () => {
+    // 5 Low rows dropped by a High floor, well under the cap → groups do NOT exceed kept, so the
+    // import note must not attribute the loss to the event cap.
+    const rows = Array.from({ length: 5 }, (_, i) => ({
+      _Source: "Windows.EventLogs.Evtx",
+      System: {
+        EventID: 4624,
+        Channel: "Security",
+        Computer: "H",
+        TimeCreated: "2026-08-26T03:00:0" + i + "Z",
+      },
+      EventData: { LogonType: "3" },
+    }));
+    const r = parseVelociraptorJson(JSON.stringify(rows), { minSeverity: "High" });
+    expect(r.kept).toBe(0);
+    expect(r.groups).not.toBeGreaterThan(r.kept); // cap was never the cause
   });
 });

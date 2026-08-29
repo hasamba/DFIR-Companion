@@ -1650,18 +1650,17 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapLnk(row, artifact, host)];
     } else {
       ms = [mapGeneric(row, artifact, host, rowSink)];
-      // A row from a DETECTION rule pack that matched no signature still lands in the generic
-      // key=value dump at Info — and Info never reaches the forensic timeline, so the detection the
-      // pack fired is invisible to synthesis. BinaryRename was one such artifact (it ships no
-      // `Detection` column, so rowVerdict() returns null and classify() falls through); it now has a
-      // mapper of its own, but the next pack with that shape should not be silently discarded while
-      // it waits for one. Floor the grade to Medium — the same "a named rule fired" baseline
-      // detectionSeverity() uses — and only ever raise it.
-      if (isDetectionArtifact(artifact)) {
+      // mapGeneric graded the RDP-lateral artifact authoritatively (remote 4648 → T1021, boot → Info);
+      // its name ends in "Detection" and its rows are bare 4648s, so the floor + flat-EID overlay below
+      // would re-raise the SUPPRESSED boot rows to Medium/T1078. Skip both for it. (#codex)
+      const rdpArt = /rdplateralmovement/i.test(artifact);
+      // A DETECTION rule pack row that matched no signature lands in the generic key=value dump at
+      // Info, invisible to synthesis; floor it to Medium ("a named rule fired"), only ever raising.
+      if (!rdpArt && isDetectionArtifact(artifact)) {
         for (const m of ms) if (m && m.severity === "Info") m.severity = "Medium";
       }
       // A FLAT Windows row (bare EventID, no wrapper) also lands here — see overlayFlatWindowsEid.
-      for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
+      if (!rdpArt) for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
     }
 
     // A 4104 script block that is generated or signed module scaffolding is detection content, not
