@@ -54,8 +54,18 @@ const OUTPUT: QualityOutput = {
 };
 
 describe("scoreCaseQuality (#378 production quality gates)", () => {
-  it("passes claims only when their exact evidence-id set and required terms match", () => {
+  it("passes a claim that covers its required evidence and terms, even if it cites more", () => {
     expect(passesCaseQuality(scoreCaseQuality(GOLDEN, OUTPUT))).toBe(true);
+
+    // Citing an extra, legitimately-related event alongside the required two still counts — a real
+    // model is not expected to reproduce the golden's exact id combination (#eval-claims-evidence-coverage).
+    // "e3" is added to the evidence pool too so it isn't itself flagged as a dangling reference.
+    const extraEvidence: QualityOutput = {
+      ...OUTPUT,
+      evidenceEventIds: ["e1", "e2", "e3"],
+      claims: [{ ...OUTPUT.claims[0], evidenceEventIds: ["e1", "e2", "e3"] }],
+    };
+    expect(passesCaseQuality(scoreCaseQuality(GOLDEN, extraEvidence))).toBe(true);
 
     const wrongEvidence: QualityOutput = {
       ...OUTPUT,
