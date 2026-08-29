@@ -19,15 +19,24 @@
 // CASE IS SIGNIFICANT. Velociraptor label matching is case-sensitive, so DMZ and dmz are two
 // different filters and both stay offerable; they sort next to each other (lowercased key, raw
 // string as the tiebreak) so it is visible that there are two rather than looking like a duplicate.
+//
+// The dedup uses a Set, not `out.includes()`. Nothing caps the cached inventory — it is the whole
+// enrolled fleet — so the scan runs once per client label, and a linear re-scan of the distinct set
+// on each one is the picker stalling the toolbar on a large deployment. The array is still what
+// gets returned, because the order below is the product.
 function veloFleetLabels(clients) {
-  const seen = [];
+  const seen = new Set();
+  const out = [];
   for (const c of clients || []) {
     for (const raw of (c && c.labels) || []) {
       const label = String(raw == null ? "" : raw).trim();
-      if (label && !seen.includes(label)) seen.push(label);
+      if (label && !seen.has(label)) {
+        seen.add(label);
+        out.push(label);
+      }
     }
   }
-  return seen.sort((a, b) => {
+  return out.sort((a, b) => {
     const la = a.toLowerCase(),
       lb = b.toLowerCase();
     if (la !== lb) return la < lb ? -1 : 1;
