@@ -4,6 +4,7 @@ import { z } from "zod";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { CollectionOverride } from "./collectionPlan.js";
+import { StateLock } from "./stateLock.js";
 
 // Per-case collection-plan overrides (#347), in state/collection-plan.json. A stateless wrapper
 // over CaseStore (mirrors IncidentTypeStore / ClockSkewStore). Only the analyst's assertions live
@@ -23,6 +24,11 @@ const recordSchema = z.object({
 export type CollectionOverrides = Record<string, CollectionOverride>;
 
 export class CollectionPlanStore {
+  // Serializes this case's load->modify->save section (#682). The overrides live in ONE JSON object,
+  // so two analysts ticking two different steps at the same moment both read the same snapshot and
+  // the second save dropped the first analyst's assertion. A PRIVATE lock, like CommentsStore's.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -56,14 +62,18 @@ export class CollectionPlanStore {
   }
 
   async set(caseId: string, stepId: string, override: CollectionOverride): Promise<CollectionOverrides> {
-    const current = await this.load(caseId);
-    return this.save(caseId, { ...current, [stepId]: override });
+    return this.lock.runExclusive(caseId, async () => {
+      const current = await this.load(caseId);
+      return this.save(caseId, { ...current, [stepId]: override });
+    });
   }
 
   async clear(caseId: string, stepId: string): Promise<CollectionOverrides> {
-    const current = await this.load(caseId);
-    if (!(stepId in current)) return current;
-    const { [stepId]: _removed, ...rest } = current;
-    return this.save(caseId, rest);
+    return this.lock.runExclusive(caseId, async () => {
+      const current = await this.load(caseId);
+      if (!(stepId in current)) return current;
+      const { [stepId]: _removed, ...rest } = current;
+      return this.save(caseId, rest);
+    });
   }
 }

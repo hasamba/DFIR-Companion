@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import { sanitizeRuleInput, type IocWhitelistRule, type WhitelistRuleInput } from "./iocWhitelist.js";
 
 // Persists the IOC whitelist. GLOBAL (shared across cases, like TemplateStore / ArtifactBundleStore):
@@ -10,6 +11,13 @@ import { sanitizeRuleInput, type IocWhitelistRule, type WhitelistRuleInput } fro
 // investigations. A single JSON file next to `cases/`. Auto-marking writes per-case legitimate
 // markers, so the whitelist itself stays case-agnostic.
 export class IocWhitelistStore {
+  // Serializes the load->modify->save section (#682). atomicWrite stops a TORN file, not a LOST one:
+  // two analysts whitelisting two different indicators at the same moment both read the same
+  // snapshot and the second save discarded the first — the rule silently never existed, and the
+  // indicator it was meant to suppress keeps firing. The store is GLOBAL, so the lock is keyed by
+  // the file path rather than a case id.
+  private readonly lock = new StateLock();
+
   constructor(private readonly file: string) {}
 
   async load(): Promise<IocWhitelistRule[]> {
@@ -47,37 +55,43 @@ export class IocWhitelistStore {
 
   // Add one rule (server-assigned id + addedAt). Idempotent: an identical rule (same match +
   // pattern + type) returns the existing one instead of duplicating.
-  async add(input: WhitelistRuleInput): Promise<IocWhitelistRule> {
-    const rules = await this.load();
-    const dup = rules.find((r) => this.key(r) === this.key(input));
-    if (dup) return dup;
-    const rule: IocWhitelistRule = { id: randomUUID(), addedAt: new Date().toISOString(), ...input };
-    await this.save([...rules, rule]);
-    return rule;
+  add(input: WhitelistRuleInput): Promise<IocWhitelistRule> {
+    return this.lock.runExclusive(this.file, async () => {
+      const rules = await this.load();
+      const dup = rules.find((r) => this.key(r) === this.key(input));
+      if (dup) return dup;
+      const rule: IocWhitelistRule = { id: randomUUID(), addedAt: new Date().toISOString(), ...input };
+      await this.save([...rules, rule]);
+      return rule;
+    });
   }
 
   // Bulk add (CSV/JSON import). Skips entries that duplicate an existing rule or one earlier in the
   // same batch. Returns only the rules actually added.
-  async addMany(inputs: WhitelistRuleInput[]): Promise<IocWhitelistRule[]> {
-    const rules = await this.load();
-    const seen = new Set(rules.map((r) => this.key(r)));
-    const added: IocWhitelistRule[] = [];
-    for (const input of inputs) {
-      const k = this.key(input);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      added.push({ id: randomUUID(), addedAt: new Date().toISOString(), ...input });
-    }
-    if (added.length) await this.save([...rules, ...added]);
-    return added;
+  addMany(inputs: WhitelistRuleInput[]): Promise<IocWhitelistRule[]> {
+    return this.lock.runExclusive(this.file, async () => {
+      const rules = await this.load();
+      const seen = new Set(rules.map((r) => this.key(r)));
+      const added: IocWhitelistRule[] = [];
+      for (const input of inputs) {
+        const k = this.key(input);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        added.push({ id: randomUUID(), addedAt: new Date().toISOString(), ...input });
+      }
+      if (added.length) await this.save([...rules, ...added]);
+      return added;
+    });
   }
 
   // Remove one rule by id; returns true if it existed.
-  async remove(id: string): Promise<boolean> {
-    const rules = await this.load();
-    const next = rules.filter((r) => r.id !== id);
-    if (next.length === rules.length) return false;
-    await this.save(next);
-    return true;
+  remove(id: string): Promise<boolean> {
+    return this.lock.runExclusive(this.file, async () => {
+      const rules = await this.load();
+      const next = rules.filter((r) => r.id !== id);
+      if (next.length === rules.length) return false;
+      await this.save(next);
+      return true;
+    });
   }
 }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import { type DwellWindow, type DwellWindowInput, sanitizeDwellWindowInput } from "./dwellWindow.js";
 
 // Per-case dwell-time-window store (state/dwell-windows.json). Mirrors HypothesisStore: a thin
@@ -11,6 +12,12 @@ import { type DwellWindow, type DwellWindowInput, sanitizeDwellWindowInput } fro
 // InvestigationState (so synthesis never wipes it), and IS in SNAPSHOT_STATE_FILES.
 
 export class DwellWindowStore {
+  // Serializes this case's list->modify->save section (#682). atomicWrite stops a TORN file, not a
+  // LOST one: two windows added at the same moment both read the same snapshot and the second save
+  // discarded the first. A PRIVATE lock, like CommentsStore's — it guards dwell-windows.json only,
+  // so it can never contend with (or deadlock against) the pipeline's investigation-state lock.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -40,8 +47,10 @@ export class DwellWindowStore {
   async add(caseId: string, input: DwellWindowInput): Promise<DwellWindow> {
     const clean = sanitizeDwellWindowInput(input);
     const window: DwellWindow = { id: randomUUID(), ...clean, createdAt: new Date().toISOString() };
-    await this.save(caseId, [...(await this.list(caseId)), window]);
-    return window;
+    return this.lock.runExclusive(caseId, async () => {
+      await this.save(caseId, [...(await this.list(caseId)), window]);
+      return window;
+    });
   }
 
   // Update a window's fields (merged onto the existing record, then re-sanitized as a whole) —
@@ -49,22 +58,26 @@ export class DwellWindowStore {
   // start/end rather than failing sanitizeDwellWindowInput's "must be a valid date" check on the
   // missing fields. Returns the updated window, or null if no window with that id exists.
   async update(caseId: string, id: string, input: Partial<DwellWindowInput>): Promise<DwellWindow | null> {
-    const windows = await this.list(caseId);
-    const existing = windows.find((w) => w.id === id);
-    if (!existing) return null;
-    const clean = sanitizeDwellWindowInput({ ...existing, ...input });
-    const updated: DwellWindow = { ...existing, ...clean };
-    const next = windows.map((w) => (w.id === id ? updated : w));
-    await this.save(caseId, next);
-    return updated;
+    return this.lock.runExclusive(caseId, async () => {
+      const windows = await this.list(caseId);
+      const existing = windows.find((w) => w.id === id);
+      if (!existing) return null;
+      const clean = sanitizeDwellWindowInput({ ...existing, ...input });
+      const updated: DwellWindow = { ...existing, ...clean };
+      const next = windows.map((w) => (w.id === id ? updated : w));
+      await this.save(caseId, next);
+      return updated;
+    });
   }
 
   // Remove one window by id; returns true if it existed.
   async remove(caseId: string, id: string): Promise<boolean> {
-    const windows = await this.list(caseId);
-    const next = windows.filter((w) => w.id !== id);
-    if (next.length === windows.length) return false;
-    await this.save(caseId, next);
-    return true;
+    return this.lock.runExclusive(caseId, async () => {
+      const windows = await this.list(caseId);
+      const next = windows.filter((w) => w.id !== id);
+      if (next.length === windows.length) return false;
+      await this.save(caseId, next);
+      return true;
+    });
   }
 }

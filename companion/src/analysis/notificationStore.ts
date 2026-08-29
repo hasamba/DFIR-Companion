@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import {
   NOTIFICATION_CHANNEL_TYPES,
   SEVERITIES,
@@ -70,6 +71,13 @@ const channelSchema = z.object({
 });
 
 export class NotificationConfigStore {
+  // Serializes the load->modify->save section (#682). atomicWrite stops a TORN file, not a LOST one:
+  // adding a channel while another request disables one dropped whichever save landed first. On this
+  // file that costs more than a lost record — a channel the analyst turned OFF comes back ON, and
+  // keeps pushing case detail to an external destination. The store is GLOBAL, so the lock is keyed
+  // by the file path rather than a case id.
+  private readonly lock = new StateLock();
+
   constructor(private readonly file: string) {}
 
   async load(): Promise<NotificationChannel[]> {
@@ -100,44 +108,50 @@ export class NotificationConfigStore {
   }
 
   // Create a channel from a validated draft (server-assigned id + timestamps).
-  async add(draft: ChannelDraft, at: string = new Date().toISOString()): Promise<NotificationChannel> {
-    const channels = await this.load();
-    const base: NotificationChannel = {
-      id: randomUUID(),
-      type: draft.type,
-      name: draft.name,
-      enabled: draft.enabled,
-      minSeverity: draft.minSeverity,
-      events: draft.events,
-      createdAt: at,
-      updatedAt: at,
-    };
-    const channel = applyChannelPatch(base, draft, at);
-    await this.persist([...channels, channel]);
-    return channel;
+  add(draft: ChannelDraft, at: string = new Date().toISOString()): Promise<NotificationChannel> {
+    return this.lock.runExclusive(this.file, async () => {
+      const channels = await this.load();
+      const base: NotificationChannel = {
+        id: randomUUID(),
+        type: draft.type,
+        name: draft.name,
+        enabled: draft.enabled,
+        minSeverity: draft.minSeverity,
+        events: draft.events,
+        createdAt: at,
+        updatedAt: at,
+      };
+      const channel = applyChannelPatch(base, draft, at);
+      await this.persist([...channels, channel]);
+      return channel;
+    });
   }
 
   // Update a channel, preserving secrets the edit left blank (applyChannelPatch). Returns null when
   // the id is unknown.
-  async update(
+  update(
     id: string,
     draft: ChannelDraft,
     at: string = new Date().toISOString(),
   ): Promise<NotificationChannel | null> {
-    const channels = await this.load();
-    const idx = channels.findIndex((c) => c.id === id);
-    if (idx === -1) return null;
-    const next = applyChannelPatch(channels[idx], draft, at);
-    const updated = channels.map((c, i) => (i === idx ? next : c));
-    await this.persist(updated);
-    return next;
+    return this.lock.runExclusive(this.file, async () => {
+      const channels = await this.load();
+      const idx = channels.findIndex((c) => c.id === id);
+      if (idx === -1) return null;
+      const next = applyChannelPatch(channels[idx], draft, at);
+      const updated = channels.map((c, i) => (i === idx ? next : c));
+      await this.persist(updated);
+      return next;
+    });
   }
 
-  async remove(id: string): Promise<boolean> {
-    const channels = await this.load();
-    const next = channels.filter((c) => c.id !== id);
-    if (next.length === channels.length) return false;
-    await this.persist(next);
-    return true;
+  remove(id: string): Promise<boolean> {
+    return this.lock.runExclusive(this.file, async () => {
+      const channels = await this.load();
+      const next = channels.filter((c) => c.id !== id);
+      if (next.length === channels.length) return false;
+      await this.persist(next);
+      return true;
+    });
   }
 }

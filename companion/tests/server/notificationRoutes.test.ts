@@ -118,6 +118,102 @@ describe("notification channel CRUD routes", () => {
     expect((await request(app).delete("/notifications/ghost")).status).toBe(404);
   });
 
+  // #684. The channel form is the OPSEC boundary: whatever the caller says here decides whether case
+  // detail leaves the machine. z.coerce.boolean() applied JavaScript truthiness, so a client sending
+  // the string "false" — an HTML form, a curl one-liner, any non-JSON caller — turned a channel and
+  // its `critical_finding` toggle ON while asking for them OFF. These assert the wire contract, not
+  // just the parser.
+  describe("boolean toggles over the wire (#684)", () => {
+    const base = { type: "slack", webhookUrl: "https://hooks.slack.com/services/x" };
+
+    it("takes JSON booleans at face value", async () => {
+      const { app, notificationStore } = await harness();
+      const r = await request(app)
+        .post("/notifications")
+        .send({ ...base, enabled: false, events: { critical_finding: false } });
+      expect(r.status).toBe(201);
+      const [stored] = await notificationStore.load();
+      expect(stored.enabled).toBe(false);
+      expect(stored.events.critical_finding).toBe(false);
+    });
+
+    it('stores the string "false" as OFF, not as ON', async () => {
+      const { app, notificationStore } = await harness();
+      const r = await request(app)
+        .post("/notifications")
+        .send({ ...base, enabled: "false", events: { critical_finding: "false" } });
+      expect(r.status).toBe(201);
+      const [stored] = await notificationStore.load();
+      expect(stored.enabled).toBe(false);
+      expect(stored.events.critical_finding).toBe(false);
+    });
+
+    it('stores the string "true" as ON', async () => {
+      const { app, notificationStore } = await harness();
+      const r = await request(app)
+        .post("/notifications")
+        .send({ ...base, enabled: "true", events: { critical_finding: "true" } });
+      expect(r.status).toBe(201);
+      const [stored] = await notificationStore.load();
+      expect(stored.enabled).toBe(true);
+      expect(stored.events.critical_finding).toBe(true);
+    });
+
+    it("answers 400 for a number or a null instead of guessing", async () => {
+      const { app, notificationStore } = await harness();
+      for (const bad of [0, 1, null, "yes"]) {
+        const r = await request(app)
+          .post("/notifications")
+          .send({ ...base, enabled: bad });
+        expect(r.status, `enabled: ${JSON.stringify(bad)}`).toBe(400);
+      }
+      expect(await notificationStore.load()).toEqual([]);
+    });
+
+    it("applies the documented defaults when the toggles are omitted", async () => {
+      const { app, notificationStore } = await harness();
+      expect((await request(app).post("/notifications").send(base)).status).toBe(201);
+      const [stored] = await notificationStore.load();
+      expect(stored.enabled).toBe(true);
+      expect(stored.events.critical_finding).toBe(true);
+    });
+
+    it('turns a saved channel OFF when an update sends "false"', async () => {
+      const { app, notificationStore } = await harness();
+      const add = await request(app).post("/notifications").send(base);
+      const upd = await request(app)
+        .put(`/notifications/${add.body.id}`)
+        .send({ ...base, webhookUrl: "", enabled: "false" });
+      expect(upd.status).toBe(200);
+      const [stored] = await notificationStore.load();
+      expect(stored.enabled).toBe(false);
+      expect(stored.webhookUrl).toBe(base.webhookUrl); // same type, so the secret round-trips
+    });
+  });
+
+  // #683. The webhook family shares a field, not an endpoint.
+  it("refuses a provider-type change that leaves the webhook URL blank", async () => {
+    const { app, notificationStore } = await harness();
+    const add = await request(app)
+      .post("/notifications")
+      .send({ type: "slack", webhookUrl: "https://hooks.slack.com/services/secret" });
+    const bad = await request(app)
+      .put(`/notifications/${add.body.id}`)
+      .send({ type: "discord", webhookUrl: "" });
+    expect(bad.status).toBe(400);
+    const [unchanged] = await notificationStore.load();
+    expect(unchanged.type).toBe("slack");
+    expect(unchanged.webhookUrl).toBe("https://hooks.slack.com/services/secret");
+
+    const ok = await request(app)
+      .put(`/notifications/${add.body.id}`)
+      .send({ type: "discord", webhookUrl: "https://discord.com/api/webhooks/1/new" });
+    expect(ok.status).toBe(200);
+    const [switched] = await notificationStore.load();
+    expect(switched.type).toBe("discord");
+    expect(switched.webhookUrl).toBe("https://discord.com/api/webhooks/1/new");
+  });
+
   it("test route sends to a channel via the notifier", async () => {
     const { app, sent } = await harness();
     const add = await request(app)

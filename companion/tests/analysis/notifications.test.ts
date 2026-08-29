@@ -12,6 +12,7 @@ import {
   applyChannelPatch,
   redactChannel,
   resolveTelegramBotToken,
+  WEBHOOK_CHANNEL_TYPES,
   severityForPriority,
   SEVERITY_RANK,
   type NotificationChannel,
@@ -282,6 +283,141 @@ describe("parseChannelInput", () => {
 
   it("rejects an unknown type", () => {
     expect(parseChannelInput({ type: "sms" }).ok).toBe(false);
+  });
+
+  // #683. Slack/Teams/Mattermost/Discord share one `webhookUrl` FIELD, never one endpoint. The
+  // blank-URL fallback used to test only "is the old channel in the webhook family", so switching a
+  // saved Slack channel to Discord and leaving the redacted box blank inherited the SLACK endpoint —
+  // and the dispatcher then posted Discord's payload shape to Slack.
+  describe("changing a webhook channel's provider type (#683)", () => {
+    for (const from of WEBHOOK_CHANNEL_TYPES) {
+      for (const to of WEBHOOK_CHANNEL_TYPES) {
+        if (from === to) continue;
+        it(`refuses a blank URL when switching ${from} to ${to}`, () => {
+          const existing = channel({ type: from, webhookUrl: `https://${from}.example/saved` });
+          const r = parseChannelInput({ type: to, webhookUrl: "" }, existing);
+          expect(r.ok).toBe(false);
+          expect(r.draft).toBeUndefined();
+          expect(r.error).toContain(to);
+        });
+
+        it(`uses the newly typed URL when switching ${from} to ${to}`, () => {
+          const existing = channel({ type: from, webhookUrl: `https://${from}.example/saved` });
+          const r = parseChannelInput({ type: to, webhookUrl: `https://${to}.example/new` }, existing);
+          expect(r.ok).toBe(true);
+          expect(r.draft?.webhookUrl).toBe(`https://${to}.example/new`);
+        });
+      }
+
+      it(`still preserves a blank ${from} URL when the type is unchanged`, () => {
+        const existing = channel({ type: from, webhookUrl: `https://${from}.example/saved` });
+        const r = parseChannelInput({ type: from, webhookUrl: "" }, existing);
+        expect(r.ok).toBe(true);
+        expect(r.draft?.webhookUrl).toBe(`https://${from}.example/saved`);
+      });
+    }
+
+    it("does not hand a webhook URL to a telegram or email channel", () => {
+      const existing = channel({ type: "slack", webhookUrl: "https://hooks.slack.com/services/x" });
+      expect(parseChannelInput({ type: "telegram", telegram: { chatId: "-100" } }, existing).ok).toBe(false);
+      const email = parseChannelInput(
+        { type: "email", smtp: { host: "mx", port: 587, from: "a@b.c", to: "x@y.z" } },
+        existing,
+      );
+      expect(email.ok).toBe(true);
+      expect(email.draft?.webhookUrl).toBeUndefined();
+    });
+
+    it("refuses to inherit across a type change in applyChannelPatch too", () => {
+      // Defence in depth: even a draft built by hand cannot carry the old provider's endpoint over.
+      const existing = channel({ type: "slack", webhookUrl: "https://hooks.slack.com/services/x" });
+      const draft = parseChannelInput({
+        type: "discord",
+        webhookUrl: "https://discord.com/api/webhooks/1/new",
+      }).draft!;
+      const next = applyChannelPatch(existing, { ...draft, webhookUrl: "" }, NOW);
+      expect(next.webhookUrl).toBe("");
+    });
+
+    it("keeps the saved URL through a same-type patch", () => {
+      const existing = channel({ type: "slack", webhookUrl: "https://hooks.slack.com/services/x" });
+      const draft = parseChannelInput({
+        type: "slack",
+        webhookUrl: "https://hooks.slack.com/services/x",
+      }).draft!;
+      const next = applyChannelPatch(existing, { ...draft, webhookUrl: "" }, NOW);
+      expect(next.webhookUrl).toBe("https://hooks.slack.com/services/x");
+    });
+  });
+
+  // #684. z.coerce.boolean() is JavaScript truthiness, so the string "false" — what an HTML form and
+  // most non-JSON clients send for an unchecked box — used to arrive as TRUE. A caller disabling a
+  // channel enabled it instead, and kept pushing case detail to an external destination.
+  describe("boolean toggles (#684)", () => {
+    const url = "https://hooks.slack.com/services/x";
+
+    it("honours real JSON booleans", () => {
+      const off = parseChannelInput({
+        type: "slack",
+        webhookUrl: url,
+        enabled: false,
+        events: { critical_finding: false },
+      });
+      expect(off.draft?.enabled).toBe(false);
+      expect(off.draft?.events.critical_finding).toBe(false);
+      const on = parseChannelInput({ type: "slack", webhookUrl: url, enabled: true });
+      expect(on.draft?.enabled).toBe(true);
+    });
+
+    it('reads the string "false" as false, not as truthy', () => {
+      const r = parseChannelInput({
+        type: "slack",
+        webhookUrl: url,
+        enabled: "false",
+        events: { critical_finding: "false", playbook_update: "FALSE", milestone: " false " },
+      });
+      expect(r.ok).toBe(true);
+      expect(r.draft?.enabled).toBe(false);
+      expect(r.draft?.events.critical_finding).toBe(false);
+      expect(r.draft?.events.playbook_update).toBe(false);
+      expect(r.draft?.events.milestone).toBe(false);
+    });
+
+    it('reads the string "true" as true', () => {
+      const r = parseChannelInput({
+        type: "slack",
+        webhookUrl: url,
+        enabled: "true",
+        events: { milestone: "True" },
+      });
+      expect(r.ok).toBe(true);
+      expect(r.draft?.enabled).toBe(true);
+      expect(r.draft?.events.milestone).toBe(true);
+    });
+
+    it("rejects anything else rather than guessing", () => {
+      for (const bad of [0, 1, "", "yes", "no", "0", "1", null, [], {}]) {
+        const r = parseChannelInput({ type: "slack", webhookUrl: url, enabled: bad });
+        expect(r.ok, `enabled: ${JSON.stringify(bad)}`).toBe(false);
+        const e = parseChannelInput({
+          type: "slack",
+          webhookUrl: url,
+          events: { critical_finding: bad },
+        });
+        expect(e.ok, `critical_finding: ${JSON.stringify(bad)}`).toBe(false);
+      }
+    });
+
+    it("falls back to the documented defaults when a toggle is omitted", () => {
+      const r = parseChannelInput({ type: "slack", webhookUrl: url });
+      expect(r.draft?.enabled).toBe(true);
+      expect(r.draft?.events).toEqual({
+        critical_finding: true,
+        playbook_update: true,
+        milestone: true,
+        mention: true,
+      });
+    });
   });
 });
 

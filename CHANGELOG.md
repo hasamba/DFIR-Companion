@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Concurrent edits to dwell windows, playbook tasks, the collection plan, the IOC whitelist, notification channels and report versions no longer overwrite each other** in team mode. (closes #682)
+- **Switching a webhook channel to another provider requires the new provider's URL** — a blank field no longer reuses the old service's endpoint. (closes #683)
+- **`"false"` disables a notification channel or event toggle** instead of enabling it; anything that is not a boolean or `"true"`/`"false"` is now a 400. (closes #684)
 - **A Sigma rule, detection, download, scheduled task or persistence entry seen on two machines is two findings again** — a long rule title, path, URL, task name or command line used to push the host out of the aggregation key, merging the hosts and discarding one machine's evidence. (same key defect as #670)
 - **A YARA hit found on two machines is two findings again** — a deep scanned path used to push the host out of the aggregation key, merging the hosts; two files under one deep directory collapsed the same way. (same key defect as #670)
 - **A renamed binary found on two machines is two findings again** — a deep path used to push the host out of the aggregation key, merging the hosts and discarding one machine's path and hash. (closes #670)
