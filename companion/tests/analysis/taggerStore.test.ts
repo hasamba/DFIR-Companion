@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm, readFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaggerStore, compileText } from "../../src/analysis/taggerStore.js";
+import { TaggerStore, TaggerRulesConflictError, compileText } from "../../src/analysis/taggerStore.js";
 
 const VALID = `svc:
   any:
@@ -248,17 +248,63 @@ describe("TaggerStore concurrency (follow-up to #682)", () => {
     expect(ids).toContain("from-add");
   });
 
-  // The other ordering, asserted rather than avoided. A whole-document PUT REPLACES the file, so an
-  // editor submission that went second discards a structural edit that landed while the analyst was
-  // typing. The lock does not change that and was never going to: it makes the two writes atomic
-  // with respect to each other, and last-write-wins is what a full-document PUT means. Closing this
-  // needs the editor to submit a revision the server can reject as stale, which is an API and UI
-  // change, not a locking one. Pinned here so the limitation is visible instead of implied.
-  it("still lets a whole-document save replace an edit that landed first (last-write-wins)", async () => {
+  // The other ordering. A whole-document save REPLACES the file, so on its own it still discards a
+  // structural edit that landed first — the lock makes the two writes atomic with respect to each
+  // other, which is a different problem. A caller that sends no revision is opting into that.
+  it("lets a revision-less save replace an edit that landed first (last-write-wins)", async () => {
     const store = new TaggerStore(userPath, [defaultPath]);
     await Promise.all([store.addRuleYaml(rule("from-add")), store.save(rule("from-editor"))]);
     const ids = (await store.load()).rules.map((r) => r.id);
     expect(ids).toEqual(["from-editor"]);
+  });
+
+  // …and the fix for it. The editor sends back the revision it loaded, so the same submission is
+  // REFUSED rather than applied, and the rule the other analyst added survives.
+  it("refuses a save whose revision went stale, keeping the other analyst's rule", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const opened = (await store.readActive()).revision; // what the editor loaded
+
+    await store.addRuleYaml(rule("from-add")); // somebody else edits while the box is open
+
+    await expect(store.save(rule("from-editor"), opened)).rejects.toBeInstanceOf(TaggerRulesConflictError);
+    const ids = (await store.load()).rules.map((r) => r.id);
+    expect(ids).toContain("from-add"); // not deleted
+    expect(ids).not.toContain("from-editor"); // not applied
+  });
+
+  it("accepts a save whose revision is current, and hands back the new one", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const opened = (await store.readActive()).revision;
+    const saved = await store.save(rule("from-editor"), opened);
+    expect(saved.revision).toBe((await store.readActive()).revision);
+    expect((await store.load()).rules.map((r) => r.id)).toEqual(["from-editor"]);
+    // The returned revision is immediately reusable, so a second save needs no reload.
+    await expect(store.save(rule("again"), saved.revision)).resolves.toBeDefined();
+  });
+
+  // The comparison has to happen INSIDE the lock. Outside it, this is the exact race it exists to
+  // close: read the current revision, another writer lands, overwrite anyway.
+  it("compares the revision inside the lock, not before it", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const opened = (await store.readActive()).revision;
+    const [addResult, saveResult] = await Promise.allSettled([
+      store.addRuleYaml(rule("from-add")),
+      store.save(rule("from-editor"), opened),
+    ]);
+    expect(addResult.status).toBe("fulfilled");
+    // The add went first and moved the revision on, so the save must be refused — even though it
+    // was issued before the add completed.
+    expect(saveResult.status).toBe("rejected");
+    expect((await store.load()).rules.map((r) => r.id)).toContain("from-add");
+  });
+
+  it("reports the current revision on the conflict, so a client can resync without a second call", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const opened = (await store.readActive()).revision;
+    await store.addRuleYaml(rule("from-add"));
+    await expect(store.save(rule("from-editor"), opened)).rejects.toMatchObject({
+      currentRevision: (await store.readActive()).revision,
+    });
   });
 
   it("still de-collides ids raced against each other", async () => {

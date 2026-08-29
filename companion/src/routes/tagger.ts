@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { runTagger, selectScopedEvents } from "../analysis/tagger.js";
-import { compileText } from "../analysis/taggerStore.js";
+import { compileText, TaggerRulesConflictError } from "../analysis/taggerStore.js";
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -57,30 +57,39 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       } catch (err) {
         error = (err as Error).message; // a hand-edited file can be invalid; report it, still return the text
       }
-      return res
-        .status(200)
-        .json({
-          text: active.text,
-          source: active.source,
-          ruleCount: ruleSummary.length,
-          rules: ruleSummary,
-          error,
-        });
+      return res.status(200).json({
+        text: active.text,
+        source: active.source,
+        // The editor sends this back on save; a mismatch means somebody else edited the rules in
+        // the meantime and the submission is refused instead of overwriting them.
+        revision: active.revision,
+        ruleCount: ruleSummary.length,
+        rules: ruleSummary,
+        error,
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
 
   // Validate + persist edited rule YAML. An invalid ruleset is rejected (400) BEFORE the file is
-  // written, so a bad edit never clobbers a working ruleset.
+  // written, so a bad edit never clobbers a working ruleset. A `revision` from GET /tagger/rules is
+  // refused with 409 when the file has changed since — a whole-document save would otherwise delete
+  // a rule somebody added while this editor was open. 409 and 400 are deliberately different: one
+  // says "reload, you are out of date", the other "your YAML is wrong".
   app.put("/tagger/rules", async (req: Request, res: Response) => {
     if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
     const text = typeof req.body?.text === "string" ? req.body.text : "";
+    const revision = typeof req.body?.revision === "string" ? req.body.revision : undefined;
     try {
-      const compiled = await options.taggerStore.save(text);
+      const compiled = await options.taggerStore.save(text, revision);
       logLine(`[tagger] rules updated — ${compiled.rules.length} rule(s)`);
-      return res.status(200).json({ ruleCount: compiled.rules.length });
+      return res.status(200).json({ ruleCount: compiled.rules.length, revision: compiled.revision });
     } catch (err) {
+      if (err instanceof TaggerRulesConflictError) {
+        logLine("[tagger] rules save refused — the editor was out of date");
+        return res.status(409).json({ error: err.message, revision: err.currentRevision });
+      }
       return res.status(400).json({ error: (err as Error).message });
     }
   });

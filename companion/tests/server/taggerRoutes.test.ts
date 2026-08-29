@@ -90,6 +90,15 @@ describe("GET /tagger/rules", () => {
     expect(res.body.rules[0]).toMatchObject({ id: "svc", severity: "High", view: "Service Installs" });
     expect(res.body.text).toContain("svc:");
   });
+
+  it("hands out a revision for the editor to send back", async () => {
+    const res = await request(app()).get("/tagger/rules");
+    expect(typeof res.body.revision).toBe("string");
+    expect(res.body.revision).not.toBe("");
+    // Stable while the file is unchanged — otherwise every save would look stale.
+    const again = await request(app()).get("/tagger/rules");
+    expect(again.body.revision).toBe(res.body.revision);
+  });
 });
 
 describe("PUT /tagger/rules", () => {
@@ -112,6 +121,66 @@ describe("PUT /tagger/rules", () => {
     const get = await request(app()).get("/tagger/rules");
     expect(get.body.source).toBe("user");
     expect(get.body.rules[0].id).toBe("logon");
+  });
+
+  // The wire contract the dashboard editor depends on. Two analysts, one rules file: one opens the
+  // editor, the other adds a rule, the first submits. Without this the submission REPLACES the file
+  // and the added rule is gone with no error shown to anyone.
+  describe("a stale editor submission", () => {
+    const RULE = "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n";
+    const ADDED = "extra:\n  any:\n    - { field: message, contains: 'extra' }\n  tags: ['extra']\n";
+
+    it("is refused with 409, and the other analyst's rule survives", async () => {
+      const opened = (await request(app()).get("/tagger/rules")).body.revision;
+      expect((await request(app()).post("/tagger/rules/add").send({ ruleYaml: ADDED })).status).toBe(200);
+
+      const put = await request(app()).put("/tagger/rules").send({ text: RULE, revision: opened });
+      expect(put.status).toBe(409);
+      expect(put.body.error).toMatch(/reload/i);
+
+      const get = await request(app()).get("/tagger/rules");
+      expect(get.body.rules.map((r: { id: string }) => r.id)).toContain("extra");
+    });
+
+    it("reports the current revision, so the client can resync from the 409 itself", async () => {
+      const opened = (await request(app()).get("/tagger/rules")).body.revision;
+      await request(app()).post("/tagger/rules/add").send({ ruleYaml: ADDED });
+      const put = await request(app()).put("/tagger/rules").send({ text: RULE, revision: opened });
+      const current = (await request(app()).get("/tagger/rules")).body.revision;
+      expect(put.body.revision).toBe(current);
+    });
+
+    it("succeeds once the editor resends with the current revision", async () => {
+      const opened = (await request(app()).get("/tagger/rules")).body.revision;
+      await request(app()).post("/tagger/rules/add").send({ ruleYaml: ADDED });
+      expect((await request(app()).put("/tagger/rules").send({ text: RULE, revision: opened })).status).toBe(
+        409,
+      );
+      const fresh = (await request(app()).get("/tagger/rules")).body.revision;
+      const retry = await request(app()).put("/tagger/rules").send({ text: RULE, revision: fresh });
+      expect(retry.status).toBe(200);
+      expect(retry.body.revision).toBe((await request(app()).get("/tagger/rules")).body.revision);
+    });
+
+    // 409 and 400 are different instructions to an analyst: one says reload, the other says fix
+    // your YAML. A stale revision must not be reported as a syntax problem.
+    it("is a 409, not the 400 an invalid ruleset gets", async () => {
+      const opened = (await request(app()).get("/tagger/rules")).body.revision;
+      await request(app()).post("/tagger/rules/add").send({ ruleYaml: ADDED });
+      const stale = await request(app()).put("/tagger/rules").send({ text: RULE, revision: opened });
+      const invalid = await request(app())
+        .put("/tagger/rules")
+        .send({ text: "bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n" });
+      expect(stale.status).toBe(409);
+      expect(invalid.status).toBe(400);
+    });
+
+    // A caller that sends no revision keeps the old behaviour, so scripts and curl are unaffected.
+    it("does not apply to a caller that sends no revision", async () => {
+      await request(app()).post("/tagger/rules/add").send({ ruleYaml: ADDED });
+      const put = await request(app()).put("/tagger/rules").send({ text: RULE });
+      expect(put.status).toBe(200);
+    });
   });
 });
 
@@ -259,11 +328,9 @@ describe("POST /tagger/rules/add", () => {
 
 describe("DELETE /tagger/rules/:ruleId", () => {
   it("removes a rule (200) and 404s for an unknown id", async () => {
-    await request(app())
-      .post("/tagger/rules/add")
-      .send({
-        ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n",
-      });
+    await request(app()).post("/tagger/rules/add").send({
+      ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n",
+    });
     const del = await request(app()).delete("/tagger/rules/svc");
     expect(del.status).toBe(200);
     expect(del.body.ruleCount).toBe(1);
