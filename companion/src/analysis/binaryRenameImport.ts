@@ -12,6 +12,8 @@
 //
 // Kept as its own module rather than inlined into velociraptorImport.ts, which is frozen at its
 // current size by the file-size ledger (#384) — see check-file-size.mjs.
+import { createHash } from "node:crypto";
+
 import {
   str,
   getCI,
@@ -178,11 +180,30 @@ function describeRename(f: RenameFacts): string {
 // persistenceSniperImport, where it collapses volatile GUIDs in task paths — folded svchost1.exe and
 // svchost2.exe together on top of that. A renamed binary is evidence of a specific file at a specific
 // place; nothing about it is volatile enough to normalise away.
+//
+// THE CAP MUST NOT COST A DISCRIMINATOR, which is why the host leads and the path trails. Two rows
+// sharing a key do not merely merge a count: aggregation keeps ONE row and applyEventIdentity
+// overwrites its path, hash and description with whichever row landed last, so a collision DELETES
+// one binary's evidence rather than miscounting it.
+//
+// The host used to sit LAST, so it was the first field truncation threw away — and a deep path
+// reaches 400 characters on its own. A renamed binary found at the same path on two machines came
+// back as one finding on one machine, which is the cross-host merge #659 fixed for Windows events
+// arriving again by a different route. Host first puts every short discriminator inside the bound
+// by construction.
+//
+// The path is then the only field that can realistically exhaust what is left, and when it does the
+// tail carries a digest of the FULL key, so two deep paths sharing a 400-character prefix stay two
+// rows. A key short enough to fit is untouched, so nothing that already aggregates correctly starts
+// aggregating differently.
+const AGG_KEY_MAX = 400;
+const AGG_KEY_DIGEST = 16; // 64 bits of hex — collision-free at any case's row count
+
 function renameAggKey(f: RenameFacts, host: string): string {
-  return `vr-rename|${leafName(f.onDisk)}|${leafName(f.original)}|${f.path.toLowerCase()}|${host.toLowerCase()}`.slice(
-    0,
-    400,
-  );
+  const key = `vr-rename|${host.toLowerCase()}|${leafName(f.onDisk)}|${leafName(f.original)}|${f.path.toLowerCase()}`;
+  if (key.length <= AGG_KEY_MAX) return key;
+  const digest = createHash("sha256").update(key).digest("hex").slice(0, AGG_KEY_DIGEST);
+  return `${key.slice(0, AGG_KEY_MAX - AGG_KEY_DIGEST - 1)}#${digest}`;
 }
 
 // A masquerading binary is a COPY of the tool it impersonates. A copy carries the SOURCE file's
