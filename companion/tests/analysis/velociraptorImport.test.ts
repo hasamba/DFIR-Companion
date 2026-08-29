@@ -3013,6 +3013,37 @@ describe("parseVelociraptorJson — BinaryRename edge cases", () => {
     expect(r.events).toHaveLength(2);
   });
 
+  // The aggregation key is length-capped, and the cap used to cost a discriminator. Two rows sharing
+  // a key do not merely merge a count — applyEventIdentity overwrites the survivor's path, hash and
+  // description with whichever row landed last, so a collision DELETES one binary's evidence.
+  //
+  // A deep path is enough to reach the cap on its own, and the host used to sit LAST in the key, so
+  // it was the first thing truncation threw away. That is the cross-host merge #659 fixed for
+  // Windows events, arriving again by a different route: one renamed binary found on two machines,
+  // reported as one machine.
+  const DEEP = "C:\\" + "deep\\".repeat(80);
+
+  it("keeps the same deep path on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        row({ Fqdn: "HOST-A", OSPath: DEEP + "java.exe" }),
+        row({ Fqdn: "HOST-B", OSPath: DEEP + "java.exe", Hash: { SHA256: "c".repeat(64) } }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps two deep paths that share a long prefix as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        row({ OSPath: DEEP + "alpha\\java.exe" }),
+        row({ OSPath: DEEP + "bravo\\java.exe", Hash: { SHA256: "c".repeat(64) } }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
   it("grades a renamed system utility in System32 High, not Medium", () => {
     // A legitimate cmd.exe in System32 is NAMED cmd.exe. A renamed one there needs admin rights to
     // place and is the classic blend-in location, so a vendor-root allowance must not cover it.
