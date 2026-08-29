@@ -295,27 +295,44 @@ function groupEvents(
   // The host is part of the key for the reason step 0 gives — every machine's own log has a record
   // 4711, and those are different records.
   //
-  // ONE representative per distinct tool signature is unioned, never every member. A single parser
+  // A row only ever merges with one that adds a parser it does not already carry. A single parser
   // legitimately emits several detections for one record (two Sigma rules matching the same 4688),
-  // and those are distinct findings; merging them would delete one. So same-tool siblings are left
-  // alone and only the cross-parser pairing merges.
+  // and those are distinct findings — merging them would delete one.
+  //
+  // The test is OVERLAP against the sources already gathered, not equality of the two source sets,
+  // because this step has to survive being run again. After the first pass the Hayabusa+Chainsaw row
+  // carries both tools while the second Hayabusa detection carries one; comparing whole source sets
+  // makes those two look like different parsers, and the next state merge would absorb the surviving
+  // detection and silently delete it. Overlap keeps the second pass a no-op.
+  //
+  // TIME IS PART OF THE MATCH. EventRecordID is a per-channel counter that RESTARTS when the log is
+  // cleared, so a capture taken before a clear and one taken after can hold the same host, channel
+  // and record number for entirely unrelated events — which is exactly the pair an analyst holds
+  // when investigating a log-clear. Two parsers reading one record both report that record's own
+  // TimeCreated, so requiring the times to agree (within the same window the other steps use) costs
+  // the real case nothing and refuses the reused-number case. An undated event is not merged here at
+  // all: nothing is left to tell the two apart.
   const byRecord = new Map<string, number[]>();
   evs.forEach((e, i) => {
     if (!e.sourceRecordId) return;
+    if (timeOf(e) === undefined) return;
+    // A row with no attributable parser cannot make a cross-parser claim.
+    if (!realSources([e]).length) return;
     const k = `${e.sourceRecordId} ${shortHost(e.asset)}`;
     (byRecord.get(k) ?? byRecord.set(k, []).get(k)!).push(i);
   });
-  const toolSignature = (e: ForensicEvent): string =>
-    [...new Set((e.sources ?? []).filter((s) => s && s !== "unknown source"))].sort().join("|");
   for (const idxs of byRecord.values()) {
     if (idxs.length < 2) continue;
-    const firstByTool = new Map<string, number>();
-    for (const i of idxs) {
-      const sig = toolSignature(evs[i]);
-      if (!firstByTool.has(sig)) firstByTool.set(sig, i);
+    const anchor = idxs[0];
+    const anchorTime = timeOf(evs[anchor]) as number;
+    const claimed = new Set(realSources([evs[anchor]]));
+    for (const i of idxs.slice(1)) {
+      const mine = realSources([evs[i]]);
+      if (mine.some((src) => claimed.has(src))) continue; // same parser → a second finding, not a duplicate
+      if (Math.abs((timeOf(evs[i]) as number) - anchorTime) > windowMs) continue; // a reused record number
+      dsu.union(anchor, i);
+      for (const src of mine) claimed.add(src);
     }
-    const reps = [...firstByTool.values()];
-    for (let k = 1; k < reps.length; k++) dsu.union(reps[0], reps[k]);
   }
 
   // 1) Same hash → union. Events with different `action` values (e.g. a write and an

@@ -416,6 +416,19 @@ describe("spawnToolRunner output decoding", () => {
     expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
   });
 
+  // A child the OS kills leaves `code` null and `signal` set. Reporting that null as 0 told the
+  // fail-closed check in runToolImport that an OOM-killed parser had exited cleanly (#688).
+  it("never reports a signal-killed child as a clean exit", async () => {
+    const r = await spawnToolRunner()(
+      process.execPath,
+      ["-e", "process.stdout.write('partial'); process.kill(process.pid, 'SIGKILL');"],
+      opts,
+    );
+    expect(r.code).not.toBe(0);
+    // POSIX reports the signal; Windows has no real signals and surfaces a non-zero code instead.
+    if (r.signal) expect(r.signal).toBe("SIGKILL");
+  });
+
   it("reassembles a character split across two stderr chunks", async () => {
     const r = await spawnToolRunner()(process.execPath, ["-e", splitUtf8Script({ stream: "stderr" })], opts);
     expect(r.stderr).toBe(SPLIT_UTF8_TEXT);

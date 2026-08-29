@@ -217,6 +217,28 @@ describe("runToolAgainstFile fails closed (#688)", () => {
     ).rejects.toThrow(/exited with code 2 — refusing to import a partial parse.*failed to parse chunk 4/is);
   });
 
+  it("rejects a parser the OS killed with a signal, which reports a null exit code", async () => {
+    // The OOM killer taking out a parser partway through a large EVTX is the likeliest real failure,
+    // and Node reports it as code null / signal SIGKILL. Reading that null as 0 said "clean exit"
+    // about a run that had written half a file.
+    const caseDir = await mkdtemp(join(tmpdir(), "case-"));
+    await writeFile(join(caseDir, "Security.evtx"), "evtx-bytes");
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    const runner: ToolRunner = async (_b, args) => {
+      if (args.includes("--version")) return { stdout: "Hayabusa v3.2.0", stderr: "", code: 0 };
+      await writeFile(args[args.indexOf("-o") + 1], "Timestamp,RuleTitle\n1,x\n", "utf8");
+      return { stdout: "", stderr: "", code: -1, signal: "SIGKILL" };
+    };
+    await expect(
+      runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, "Security.evtx"),
+        workDir: join(caseDir, ".toolwork"),
+      }),
+    ).rejects.toThrow(/was killed by SIGKILL — refusing to import a partial parse/i);
+  });
+
   it("still accepts a non-zero exit from YARA, where it means 'matches found'", async () => {
     const caseDir = await mkdtemp(join(tmpdir(), "case-"));
     await writeFile(join(caseDir, "a.bin"), "sample");

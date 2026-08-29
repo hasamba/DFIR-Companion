@@ -128,10 +128,15 @@ export async function runToolAgainstFile(opts: {
     // importing those puts a silently partial view of the evidence into the case with nothing saying
     // so. For a tool whose exit code is meaningful this rejects the whole run. YARA and Snort are not
     // flagged: they exit non-zero to mean "matches found", which is a successful run.
-    if (cfg.failOnNonZeroExit && res.code !== 0) {
+    //
+    // A SIGNAL kill counts too, and is the likeliest way a parser dies on real evidence: the OOM
+    // killer takes it out partway through a large EVTX, or it segfaults on a malformed chunk. Both
+    // leave a plausible-looking partial output file behind.
+    if (cfg.failOnNonZeroExit && (res.code !== 0 || res.signal)) {
       const detail = cleanToolOutput(res.stderr, 4);
+      const how = res.signal ? `was killed by ${res.signal}` : `exited with code ${res.code}`;
       throw new Error(
-        `${cfg.id} exited with code ${res.code} — refusing to import a partial parse${detail ? `: ${detail.slice(0, 400)}` : ""}`,
+        `${cfg.id} ${how} — refusing to import a partial parse${detail ? `: ${detail.slice(0, 400)}` : ""}`,
       );
     }
 

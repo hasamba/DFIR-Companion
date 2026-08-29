@@ -184,6 +184,75 @@ describe("correlateEvents folds one record read by two parsers into one row (#68
     expect(withBoth.sources?.sort()).toEqual(["Chainsaw", "Hayabusa"]);
   });
 
+  it("is idempotent — a second pass does not absorb the surviving same-parser detection", () => {
+    // The merged row carries [Hayabusa, Chainsaw] and the leftover detection carries [Hayabusa].
+    // Judged on whole source SETS those look like two different parsers, and the next state merge
+    // would union them and delete a real finding. Overlap is what keeps the second pass a no-op.
+    const evs = [
+      ev({
+        id: "h1",
+        description: "Hayabusa: LOLBin",
+        asset: HOST,
+        sources: ["Hayabusa"],
+        sourceRecordId: identity,
+      }),
+      ev({
+        id: "h2",
+        description: "Hayabusa: Suspicious parent",
+        asset: HOST,
+        sources: ["Hayabusa"],
+        sourceRecordId: identity,
+      }),
+      ev({
+        id: "c1",
+        description: "Sigma - LOLBin",
+        asset: HOST,
+        sources: ["Chainsaw"],
+        sourceRecordId: identity,
+      }),
+    ];
+    const once = correlateEvents(evs);
+    expect(once).toHaveLength(2);
+    const twice = correlateEvents(once);
+    expect(twice).toHaveLength(2);
+    expect(twice.map((e) => e.description).sort()).toEqual(once.map((e) => e.description).sort());
+  });
+
+  it("keeps a record NUMBER reused after a log clear apart", () => {
+    // EventRecordID is a per-channel counter that restarts when the log is cleared, so a capture
+    // from before the clear and one from after hold the same host + channel + number for unrelated
+    // events — precisely the pair an analyst holds when investigating the clear itself.
+    const before = ev({
+      id: "h1",
+      timestamp: "2024-01-02T03:04:05Z",
+      description: "Hayabusa: old logon",
+      asset: HOST,
+      sources: ["Hayabusa"],
+      sourceRecordId: "evtx:security:1",
+    });
+    const after = ev({
+      id: "c1",
+      timestamp: "2026-05-26T12:00:00Z",
+      description: "Sigma - fresh logon",
+      asset: HOST,
+      sources: ["Chainsaw"],
+      sourceRecordId: "evtx:security:1",
+    });
+    expect(correlateEvents([before, after])).toHaveLength(2);
+  });
+
+  it("does not merge on record identity alone when an event carries no time", () => {
+    const dated = ev({ id: "h1", asset: HOST, sources: ["Hayabusa"], sourceRecordId: identity });
+    const undated = ev({
+      id: "c1",
+      timestamp: "",
+      asset: HOST,
+      sources: ["Chainsaw"],
+      sourceRecordId: identity,
+    });
+    expect(correlateEvents([dated, undated])).toHaveLength(2);
+  });
+
   it("leaves events without a record identity to the existing correlation steps", () => {
     const a = ev({ id: "a1", description: "one thing", asset: HOST, sources: ["Hayabusa"] });
     const b = ev({ id: "b1", description: "another thing", asset: HOST, sources: ["Chainsaw"] });
