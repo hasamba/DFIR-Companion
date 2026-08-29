@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { describe, it, expect } from "vitest";
-import { PARSE_PROGRESS_KINDS, hasParseProgress } from "../../src/routes/importKinds.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import type { Response } from "express";
+import {
+  PARSE_PROGRESS_KINDS,
+  hasParseProgress,
+  rejectIfAiImportOverBudget,
+} from "../../src/routes/importKinds.js";
+import { resetLimiters } from "../../src/http/rateLimiter.js";
 
 // DUP2-4: the streaming-import kind predicate used to be five copied literals across the twin
 // /import + /import-file registrations and the resume handler — and missing only the resume copy
@@ -35,5 +41,56 @@ describe("importKinds — the streaming-import kind predicate", () => {
         /kind\s*===\s*"(?:evtxxml|syslog)"/,
       );
     }
+  });
+});
+
+// A CSV/log import is a direct LLM call, so it must be metered against the per-case AI budget even
+// though /import + /import-file ride the generous deterministic-import limiter. Without this a
+// caller could blow the 20/min AI cap by submitting CSV bodies to /import at 300/min.
+describe("rejectIfAiImportOverBudget — the AI-cost gate for CSV/log imports", () => {
+  beforeEach(() => resetLimiters());
+  afterEach(() => resetLimiters());
+
+  const mockRes = (): { res: Response; codes: number[] } => {
+    const codes: number[] = [];
+    const res = {
+      status(code: number) {
+        codes.push(code);
+        return this;
+      },
+      json() {
+        return this;
+      },
+    } as unknown as Response;
+    return { res, codes };
+  };
+
+  it("never meters a deterministic kind, however fast it is called", () => {
+    for (let i = 0; i < 100; i++) {
+      const { res, codes } = mockRes();
+      expect(rejectIfAiImportOverBudget("velociraptor", "case-a", res)).toBe(false);
+      expect(codes).toEqual([]);
+    }
+  });
+
+  it("caps CSV imports at the AI budget (20/min) and 429s past it", () => {
+    let rejected = 0;
+    let last429 = false;
+    for (let i = 0; i < 25; i++) {
+      const { res, codes } = mockRes();
+      const stop = rejectIfAiImportOverBudget("csv", "case-b", res);
+      if (stop) {
+        rejected++;
+        last429 = codes.includes(429);
+      }
+    }
+    expect(rejected).toBeGreaterThan(0); // the 21st+ CSV import is throttled
+    expect(last429).toBe(true);
+  });
+
+  it("meters per case — one case's CSV flood does not throttle another", () => {
+    for (let i = 0; i < 25; i++) rejectIfAiImportOverBudget("csv", "busy", mockRes().res);
+    const { res } = mockRes();
+    expect(rejectIfAiImportOverBudget("csv", "quiet", res)).toBe(false);
   });
 });

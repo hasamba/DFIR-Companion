@@ -151,6 +151,15 @@ export function extractDomains(text: string): string[] {
     if (TEXT_DOMAIN_SKIP_RE.test(d) || TEXT_FILE_EXT_RE.test(d)) continue;
     if (!hasPlausibleTld(d)) continue; // e.g. "artifacts.precondition", "system.net.webclient"
     if (isCodeNamespace(d.split("."))) continue; // e.g. "system.net", "microsoft.net", "java.io"
+    // Two-letter suffixes that on a Windows endpoint are overwhelmingly a code property, not a
+    // registrable domain. `.iv` and `.po` are not ccTLDs at all — reject them outright (aes.iv,
+    // Microsoft.Po…, zero real-domain loss). `.id` IS Indonesia's ccTLD, but far more often `$proc.Id`
+    // / `$decoy.Id` / `[System.…Id]` property access; reject only the 2-label or namespace-rooted
+    // shape so a real multi-label Indonesian domain (name.co.id) still comes through. Same trade the
+    // file-extension guard above already makes for `.md` / `.db`.
+    if (/\.(?:iv|po)$/i.test(d)) continue;
+    const labels = d.split(".");
+    if (d.endsWith(".id") && (labels.length === 2 || NS_ROOTS.has(labels[0]))) continue;
     out.add(d);
   }
   return [...out];

@@ -16,6 +16,19 @@
 import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 
 const MARKER = "[confirmed exfiltration:";
+
+// "Confirmed exfiltration" must name an actual OUTBOUND TRANSFER, not merely carry a T1041 tag.
+// T1041 is applied broadly by the mappers, so on a busy host the staging→window match was decorating
+// unrelated neighbours — port-scan output, a generic PowerShell module, a repeated Sigma hit — with a
+// High "confirmed exfiltration" label they did not earn. A real transfer leaves one of these marks:
+// a resolved destination IP, an upload URL, or an upload verb / tool on the command line.
+const OUTBOUND_TRANSFER_RE =
+  /https?:\/\/|invoke-(?:restmethod|webrequest)|-infile\b|-method\s+(?:put|post)|\bcurl\b|\bwget\b|\brclone\b|\bs?ftp\b|\bscp\b|bitsadmin|start-bitstransfer|uploadfile|net\.webclient|megatools|\bpscp\b/i;
+
+function hasOutboundTransfer(e: ForensicEvent): boolean {
+  if (e.dstIp) return true;
+  return OUTBOUND_TRANSFER_RE.test(e.description ?? "") || OUTBOUND_TRANSFER_RE.test(e.commandLine ?? "");
+}
 // Ransomware crews typically upload within minutes to a few hours of staging (the Meridian ground
 // truth: 16:15 stage -> 17:00 upload, 45 min); default generous enough for a slower manual actor
 // without spanning into unrelated later-day activity.
@@ -45,6 +58,9 @@ export function linkArchiveToExfil(
   return events.map((e) => {
     if (!e.asset || !(e.mitreTechniques ?? []).includes("T1041")) return e;
     if ((e.description ?? "").includes(MARKER)) return e; // idempotent
+    // A T1041 tag alone is not an exfil transfer — require an attributable outbound send, so a
+    // mis-tagged neighbour in the staging window is not escalated to "confirmed exfiltration".
+    if (!hasOutboundTransfer(e)) return e;
     const staged = stagedAt.get(e.asset);
     if (staged === undefined) return e;
     const t = Date.parse(e.timestamp ?? "");

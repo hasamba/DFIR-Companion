@@ -47,7 +47,7 @@ import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportCaseGuard } from "./importCaseGuard.js";
-import { hasParseProgress, isAiDependent } from "./importKinds.js";
+import { hasParseProgress, isAiDependent, rejectIfAiImportOverBudget } from "./importKinds.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 
@@ -282,6 +282,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
+    // A CSV/log import is an LLM call, so meter it against the per-case AI budget (see importKinds).
+    if (rejectIfAiImportOverBudget(kind, caseId, res)) return;
 
     // Cross-case signal: tell every dashboard an artifact import landed for THIS case, so one viewing
     // a different case warns "artifacts are arriving for another case" — parity with screenshots. The
@@ -576,6 +578,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
+    if (rejectIfAiImportOverBudget(kind, caseId, res)) return; // CSV/log = LLM call; meter AI budget
 
     // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines that can't be held as a
     // string at all); every other kind is read into one string and dispatched as usual. A non-Plaso

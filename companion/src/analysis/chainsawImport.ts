@@ -47,6 +47,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import { isDetectionSampleHost } from "./veloDetectionNoise.js";
 
 type Row = Record<string, unknown>;
 
@@ -223,7 +224,7 @@ function applySigma(mapped: MappedEvent, meta: SigmaMeta): MappedEvent {
 
 // A Chainsaw detection that carries no embedded EVTX event (e.g. a non-evtx source) still
 // becomes one event from its rule metadata alone, so the verdict is never lost.
-function genericDetection(meta: SigmaMeta): MappedEvent {
+function genericDetection(meta: SigmaMeta, host = ""): MappedEvent {
   const head = `Chainsaw${meta.group ? `/${meta.group}` : ""}: ${meta.ruleName}`;
   return {
     timestamp: meta.ts ? normalizeTime(meta.ts) : "",
@@ -232,6 +233,7 @@ function genericDetection(meta: SigmaMeta): MappedEvent {
     mitre: mitreFromTags(meta.tags),
     aggKey: `chainsaw|${meta.ruleName.toLowerCase()}|${meta.ts}`.toLowerCase(),
     sources: ["Chainsaw"],
+    ...(host ? { asset: host } : {}),
   };
 }
 
@@ -326,7 +328,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
     if (docs.length === 0) {
       // A detection with no embedded event → keep the verdict; a non-Windows/empty raw
       // record → nothing to map, counts toward `dropped`.
-      if (detection) mapped.push(genericDetection(readSigmaMeta(rec)));
+      if (detection) mapped.push(genericDetection(readSigmaMeta(rec), str(getCI(rec, "Computer")).trim()));
       continue;
     }
     const meta = detection ? readSigmaMeta(rec) : null;
@@ -335,7 +337,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);
       if (!win) {
-        if (meta) mapped.push(genericDetection(meta));
+        if (meta) mapped.push(genericDetection(meta, host));
         continue;
       }
       sawEvtx = true;
@@ -344,6 +346,22 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
         win.sources = ["EVTX"];
         mapped.push(win);
       }
+    }
+  }
+
+  // Self-scan: a Velociraptor artifact that shells out to Chainsaw scans the EVTX-ATTACK-SAMPLES
+  // corpus it unpacked next to its own binaries as well as the host's real logs. Those sample events
+  // carry the sample author's computer name (WIN-UK1GV882OK6), not the collection host — ~110 per
+  // case here, incl. a Critical "Security Audit Logs Cleared". Demote them to Info so they stay in
+  // the super-timeline for reference but leave the forensic view. See isDetectionSampleHost.
+  for (const ev of mapped) {
+    if (ev.severity !== "Info" && isDetectionSampleHost(ev.asset ?? "")) {
+      ev.severity = "Info";
+      ev.description =
+        `${ev.description} [detection sample corpus — ${ev.asset} is not a host in this collection]`.slice(
+          0,
+          600,
+        );
     }
   }
 

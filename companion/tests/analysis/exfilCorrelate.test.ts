@@ -62,6 +62,26 @@ describe("linkArchiveToExfil", () => {
     expect(out.find((e) => e.id === "u1")!.severity).toBe("Medium");
   });
 
+  it("does NOT label a T1041 neighbour that carries no outbound transfer (over-tag guard)", () => {
+    // Same host, in window, tagged T1041 — but it is a port scan, not a send. It must not be
+    // decorated with "confirmed exfiltration".
+    const portScan: ForensicEvent = {
+      id: "p1",
+      timestamp: "2024-03-12T17:00:21Z",
+      asset: "FS-01",
+      description: "Sysmon Process create (EID 1) - nmap.exe -sS 10.0.0.0/24",
+      severity: "Medium",
+      mitreTechniques: ["T1046", "T1041"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sources: ["Sysmon"],
+    };
+    const out = linkArchiveToExfil([stage("s1", "2024-03-12T16:15:02Z"), portScan]);
+    const p = out.find((e) => e.id === "p1")!;
+    expect(p.severity).toBe("Medium");
+    expect(p.description).not.toContain("confirmed exfiltration");
+  });
+
   it("does NOT raise an upload far outside the default window", () => {
     const out = linkArchiveToExfil([
       stage("s1", "2024-03-12T16:15:02Z"),

@@ -543,7 +543,7 @@ export function pickHost(rec: Row): string {
 
 // ───────────────────────────── IOC / hash helpers ─────────────────────────────
 
-const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/; // octet-validated: a version like 1.457.375.0 is not an IP
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
 // A real IPv6 shape check (full + every valid "::"-compressed form), NOT just "contains a colon" —

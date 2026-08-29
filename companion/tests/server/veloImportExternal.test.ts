@@ -427,7 +427,7 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
 const THOR_ROW = {
   Line: JSON.stringify({
     time: "2025-12-05T03:26:42Z",
-    hostname: "WIN-UK1GV882OK6",
+    hostname: "WIN-CASEHOST7",
     level: "Alert",
     module: "Filescan",
     message: "Malware file found",
@@ -472,7 +472,7 @@ async function makeRealClientApp() {
       };
     if (p.includes("FROM clients("))
       return {
-        rows: [{ client_id: "C.14f7b543888d1fbe", os_info: { hostname: "WIN-UK1GV882OK6" } }],
+        rows: [{ client_id: "C.14f7b543888d1fbe", os_info: { hostname: "WIN-CASEHOST7" } }],
         raw: "",
       };
     if (p.includes("FROM source(")) {
@@ -511,7 +511,7 @@ describe("POST /cases/:id/velociraptor/import-external — multi-source artifact
     expect(thor).toBeDefined();
     expect(thor?.severity).toBe("Critical"); // graded from THOR's own level: "Alert"
     expect(thor?.timestamp).toContain("2025-12-05"); // its own time, not the collection time
-    expect(thor?.asset).toBe("WIN-UK1GV882OK6");
+    expect(thor?.asset).toBe("WIN-CASEHOST7");
     expect(thor?.sha256).toBe("4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef");
     // …and the scanned path is extracted as evidence rather than left inside an opaque string.
     expect(state.iocs.some((i) => i.value === "C:\\Tools\\mimikatz.exe")).toBe(true);

@@ -615,6 +615,16 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.
   if (/\b[ia]leapp\b/i.test(filename) && /\.(tsv|csv|txt)$/i.test(filename)) return "leapp";
 
+  // A Velociraptor artifact that shells out to Hayabusa (Windows.Hayabusa.Rules) streams Hayabusa's
+  // own Level/Title/Details rows but stamps a Velociraptor `_Source` on each, so the generic
+  // Velociraptor signature claims the file first and grades most detections Info (4 High vs the 7 the
+  // native path surfaces, and Hayabusa's rule titles / EIDs are flattened). Route by name to the
+  // native Hayabusa importer, which keeps Hayabusa's severity levels and field semantics. Gated on a
+  // Hayabusa-shaped body (a Level or RuleTitle field) so a merely-misnamed file is not mis-routed.
+  if (/hayabusa/i.test(filename) && /"(?:Level|RuleTitle|Rule Title)"\s*:/.test(t.slice(0, 8192))) {
+    return "hayabusa";
+  }
+
   // A Velociraptor-named export that only matched the generic SIEM fallback is better served by
   // the Velociraptor importer (a more-specific content match — sandbox/hayabusa/… — always wins).
   const vrHint = (k: ImportKind): ImportKind =>
@@ -632,6 +642,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     // jsonSample finds no representative object — detect it from the root shape first.
     if (isRekallCommandList(root)) return "memory";
     if (sample) return vrHint(detectJson(root, sample));
+    // No representative object — but a Velociraptor-named file is still Velociraptor, so route it to
+    // that importer rather than rejecting the whole file. This is what saved DetectRaptor's
+    // HijackLibsMFT pack (a `{HijackLibInfo:{…}}` NDJSON shape jsonSample could not sample): the auto
+    // route returned "unknown" → HTTP 400 → the DLL-sideload detections were dropped outright.
+    if (looksLikeVelociraptorFile(filename)) return "velociraptor";
     return "unknown"; // looked like JSON but unparseable / not an object
   }
   // NDJSON that doesn't start with a brace is unusual; still try a first-line parse.

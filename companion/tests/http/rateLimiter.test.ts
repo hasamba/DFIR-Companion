@@ -5,6 +5,7 @@ import {
   resetLimiters,
   getUnlockLimiter,
   getAiLimiter,
+  getDeterministicImportLimiter,
 } from "../../src/http/rateLimiter.js";
 
 describe("AttemptLimiter", () => {
@@ -212,5 +213,23 @@ describe("limiter singletons", () => {
     resetLimiters();
     const b = getUnlockLimiter();
     expect(a).not.toBe(b);
+  });
+
+  it("getDeterministicImportLimiter returns a shared instance that resetLimiters clears", () => {
+    const a = getDeterministicImportLimiter();
+    expect(getDeterministicImportLimiter()).toBe(a);
+    resetLimiters();
+    expect(getDeterministicImportLimiter()).not.toBe(a); // reset drops the singleton + its sweep timer
+  });
+
+  it("resetLimiters clears the deterministic-import limiter's counts (no leak across cases)", () => {
+    const lim = getDeterministicImportLimiter();
+    // Exhaust a small custom window so the contract is deterministic regardless of the 300/min default.
+    const one = new SlidingWindowLimiter(1, 60_000);
+    expect(one.tryAcquire("case-x")).toBe(true);
+    expect(one.tryAcquire("case-x")).toBe(false);
+    // The real singleton is a fresh object after reset, so its request counts start over.
+    resetLimiters();
+    expect(getDeterministicImportLimiter()).not.toBe(lim);
   });
 });
