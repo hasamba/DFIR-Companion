@@ -25,6 +25,7 @@
 // dropped executable, whatever the rule's confidence.
 
 import type { Severity } from "./stateTypes.js";
+import { boundedAggKey } from "./aggKey.js";
 import { isDetectionToolLocation, isVolatileContainer } from "./veloDetectionNoise.js";
 
 export interface YaraGrade {
@@ -90,4 +91,19 @@ export function gradeYaraHit(ruleName: string, path: string, procName: string): 
 
   // 4. A named-malware rule on a normal path — the case mapYara was built for. Unchanged.
   return { severity: "High", volatile: false, reason: "" };
+}
+
+// The aggregation key for a graded hit. The HOST LEADS. It used to trail, and a deep scanned path
+// reaches the key's length bound on its own — so the host was the first field truncation threw away,
+// and the same rule hitting the same path on two machines came back as one finding on one machine.
+// That is the cross-host merge #659 fixed for Windows events, arriving again through the YARA mapper.
+// boundedAggKey then digests an over-long key, so two deep paths sharing a 400-character prefix stay
+// two rows rather than one row wearing whichever path was applied last. See aggKey.ts (#670).
+//
+// A volatile-container hit is the deliberate exception: it keys on the host alone, because a string
+// in swapped memory is not tied to one file and every such hit on a host collapses into ONE row.
+export function yaraHitAggKey(grade: YaraGrade, host: string, ruleName: string, subject: string): string {
+  const h = host.toLowerCase();
+  if (grade.volatile) return `vr-yara|volatile-container|${h}`;
+  return boundedAggKey(`vr-yara|${h}|${ruleName.toLowerCase()}|${subject.toLowerCase()}`);
 }

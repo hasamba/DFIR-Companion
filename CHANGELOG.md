@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A YARA hit found on two machines is two findings again** — a deep scanned path used to push the host out of the aggregation key, merging the hosts; two files under one deep directory collapsed the same way. (same key defect as #670)
 - **A renamed binary found on two machines is two findings again** — a deep path used to push the host out of the aggregation key, merging the hosts and discarding one machine's path and hash. (closes #670)
 - **The bundle hunt label picker stays responsive on a large fleet** — deduping the cached inventory's labels no longer slows down as the fleet grows. (closes #665)
 

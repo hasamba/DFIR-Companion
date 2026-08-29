@@ -3536,6 +3536,53 @@ describe("parseVelociraptorJson — YARA volatile-container grading", () => {
   });
 });
 
+// The YARA key is length-capped like the BinaryRename key above, and the cap cost the same
+// discriminator: the host sat LAST, so a deep scanned path pushed it out of the key and the same
+// rule hitting the same path on two machines came back as one finding on one machine. That is the
+// cross-host merge #659 fixed for Windows events, arriving again through the YARA mapper.
+describe("parseVelociraptorJson — YARA key cap must not cost a discriminator", () => {
+  const DEEP = "C:\\Users\\bob\\" + "subdirectory\\".repeat(30);
+  const yaraHit = (over: Record<string, unknown>) => ({
+    _Source: "Windows.Detection.Yara.Glob",
+    Rule: "APT_Malware_Foo",
+    Namespace: "default",
+    Meta: { author: "x" },
+    ...over,
+  });
+
+  it("keeps the same deep-path hit on two hosts as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "evil.exe" }),
+        yaraHit({ Hostname: "HOST-B", OSPath: DEEP + "evil.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("keeps two deep paths that share a long prefix as two events", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "alpha.exe" }),
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "bravo.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still collapses the same rule and path on one host", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "evil.exe" }),
+        yaraHit({ Hostname: "HOST-A", OSPath: DEEP + "evil.exe" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Amcache: the name on disk versus the name in the version resource.
 //
