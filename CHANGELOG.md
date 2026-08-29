@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The bundle hunt label picker stays responsive on a large fleet** — deduping the cached inventory's labels no longer slows down as the fleet grows. (closes #665)
+
 ## [0.36.0] - 2026-08-29
 
 ### Added

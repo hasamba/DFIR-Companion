@@ -9,12 +9,27 @@
 //
 // Pure, no I/O.
 
-// World-writable / transient locations malware commonly drops into. Kept as one alternation so the
-// two matchers below can never diverge on WHICH directories count.
+// World-writable / transient locations malware commonly drops into.
+//
+// THESE ARE LITERAL BACKSLASHES IN A WINDOWS COMMAND-LINE VALUE, not this file's own path
+// separators, so do not "fix" them to match the matcher below. `\\\\` in a TypeScript string
+// literal is `\\` in the compiled regex, which matches one backslash — the character that actually
+// appears inside "C:\ProgramData\x.dll".
 const STAGING_DIRS = "temp|tmp|appdata\\\\local\\\\temp|programdata|public|windows\\\\temp";
 
-// The same list with forward slashes allowed, for the bare-path matcher.
-const STAGING_DIRS_ANY_SEP = String.raw`temp|tmp|appdata[\\/]local[\\/]temp|programdata|public|windows[\\/]temp|perflogs|\$recycle\.bin`;
+// The same list for the bare-path matcher: either separator, plus two directories that only apply
+// there.
+//
+// DERIVED, NOT RETYPED. This was a second hand-written literal, and the two had already drifted —
+// perflogs and $Recycle.Bin were added here and never reached STAGING_DIRS, so the header comment's
+// promise that the lists could not diverge was false the moment it was written. Rewriting each `\\`
+// into `[\\/]` means a directory added above now reaches BOTH matchers by construction.
+//
+// The two extras stay bare-path-only on purpose. Teaching isStagedCommandValue about them widens
+// what persistenceSniperImport flags, which is a detection change to make deliberately with its own
+// test — not a side effect of removing a duplicated string.
+const STAGING_DIRS_ANY_SEP =
+  STAGING_DIRS.replace(/\\\\/g, String.raw`[\\/]`) + String.raw`|perflogs|\$recycle\.bin`;
 
 // Executable-ish extensions. An archive or a document in Temp is ordinary; a binary is not.
 export const STAGING_EXT =
