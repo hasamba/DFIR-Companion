@@ -306,12 +306,26 @@ const smtpInputSchema = z.object({
   rejectUnauthorized: z.boolean().optional(),
 });
 
+// z.coerce.boolean() applies JavaScript truthiness, so the string "false" — what an HTML form, a
+// curl one-liner and most non-JSON clients send for an unchecked box — coerces to TRUE (#684). A
+// caller switching a channel or a `critical_finding` toggle OFF would switch it ON instead, and
+// start pushing case detail to an external destination. Accept real booleans and the exact strings
+// "true"/"false" (trimmed, case-insensitive); reject everything else — numbers, null, "yes", "" —
+// with a 400 rather than guessing, because a wrong guess here leaks an investigation.
+const strictBoolean = z.preprocess((v) => {
+  if (typeof v !== "string") return v;
+  const s = v.trim().toLowerCase();
+  if (s === "true") return true;
+  if (s === "false") return false;
+  return v; // falls through to z.boolean(), which reports "expected boolean"
+}, z.boolean());
+
 const eventsInputSchema = z
   .object({
-    critical_finding: z.coerce.boolean().optional(),
-    playbook_update: z.coerce.boolean().optional(),
-    milestone: z.coerce.boolean().optional(),
-    mention: z.coerce.boolean().optional(),
+    critical_finding: strictBoolean.optional(),
+    playbook_update: strictBoolean.optional(),
+    milestone: strictBoolean.optional(),
+    mention: strictBoolean.optional(),
   })
   .optional();
 
@@ -320,7 +334,7 @@ const eventsInputSchema = z
 export const channelInputSchema = z.object({
   type: z.enum(NOTIFICATION_CHANNEL_TYPES),
   name: z.string().optional(),
-  enabled: z.coerce.boolean().optional(),
+  enabled: strictBoolean.optional(),
   minSeverity: z.enum(SEVERITIES).optional(),
   events: eventsInputSchema,
   webhookUrl: z.string().optional(),
@@ -395,13 +409,22 @@ export function parseChannelInput(
   };
 
   if (isWebhookChannelType(v.type)) {
-    // Blank URL on update → keep the saved one (only valid when the existing channel is also a
-    // webhook channel and already has a URL).
-    const sameTypeExisting =
-      existing && isWebhookChannelType(existing.type) ? existing.webhookUrl : undefined;
+    // Blank URL on update → keep the saved one, but ONLY when the provider type is unchanged
+    // (#683). Slack/Discord/Teams/Mattermost share one `webhookUrl` FIELD, never one endpoint: an
+    // edit that switches a saved Slack channel to Discord and leaves the redacted URL box blank
+    // used to inherit the Slack endpoint, and the dispatcher then posted Discord's payload shape
+    // to Slack. A provider change must carry the new provider's URL.
+    const sameTypeExisting = existing?.type === v.type ? existing.webhookUrl : undefined;
     const url = (v.webhookUrl ?? "").trim() || (sameTypeExisting ?? "");
-    if (!/^https?:\/\//i.test(url))
-      return { ok: false, error: `${v.type} channel requires an http(s) webhook URL` };
+    if (!/^https?:\/\//i.test(url)) {
+      const retyped = existing && existing.type !== v.type;
+      return {
+        ok: false,
+        error: retyped
+          ? `changing this channel from ${existing.type} to ${v.type} requires a new ${v.type} webhook URL`
+          : `${v.type} channel requires an http(s) webhook URL`,
+      };
+    }
     draft.webhookUrl = url;
   } else if (v.type === "telegram") {
     // Blank token on update → keep the saved one (same redacted-round-trip pattern as webhookUrl).
@@ -469,7 +492,10 @@ export function applyChannelPatch(
   };
 
   if (isWebhookChannelType(draft.type)) {
-    next.webhookUrl = draft.webhookUrl || existing.webhookUrl || "";
+    // Second gate on #683: parseChannelInput already refuses a blank URL across a provider change,
+    // and this fallback never inherits across one either — so no caller can reach the old endpoint.
+    const inherited = existing.type === draft.type ? existing.webhookUrl : undefined;
+    next.webhookUrl = draft.webhookUrl || inherited || "";
     delete next.smtp;
     delete next.telegram;
   } else if (draft.type === "telegram") {

@@ -5,6 +5,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { Finding, IOC, ForensicEvent } from "../analysis/stateTypes.js";
 import type { Uncertainty } from "../analysis/stateTypes.js";
+import { StateLock } from "../analysis/stateLock.js";
 import { authenticatedActorFields } from "../auth/identityContext.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { ReportTemplate } from "./reportTemplate.js";
@@ -92,6 +93,13 @@ function nextVersionLabel(existing: readonly ReportVersionSummary[]): string {
 export class ReportVersionStore {
   private readonly workflows: ReportWorkflowStore;
   private readonly releases: ReportReleaseStore;
+  // Serializes this case's index read -> record write -> index write section (#682). Two
+  // regenerations landing together both read the same index, both hand out the SAME "vN" label from
+  // nextVersionLabel(), and the second saveIndex() drops the first version's summary — its record
+  // file is then orphaned on disk and invisible to diff/restore, which is an audit-trail hole.
+  // PRIVATE and keyed by case id. The release and workflow stores carry their own locks already, and
+  // nothing under this one re-enters them, so the three can never deadlock.
+  private readonly lock = new StateLock();
 
   constructor(private readonly cases: CaseStore) {
     this.workflows = new ReportWorkflowStore(cases);
@@ -234,7 +242,7 @@ export class ReportVersionStore {
   // version — a re-generation with nothing changed shouldn't grow the history. Best-effort: callers
   // (ReportWriter.writeAll) should swallow errors from this so a version-store failure never breaks
   // report generation itself.
-  async snapshot(
+  snapshot(
     caseId: string,
     input: {
       markdown: string;
@@ -244,68 +252,70 @@ export class ReportVersionStore {
       template?: ReportTemplate;
     },
   ): Promise<ReportVersionSummary> {
-    const contentHash = createHash("sha256").update(input.markdown).digest("hex");
-    const existing = await this.list(caseId);
-    const latest = existing[0];
-    const analysisRunIds = input.analysisRunIds ?? [];
-    if (
-      latest &&
-      latest.contentHash === contentHash &&
-      JSON.stringify(latest.analysisRunIds ?? []) === JSON.stringify(analysisRunIds)
-    )
-      return latest;
+    return this.lock.runExclusive(caseId, async () => {
+      const contentHash = createHash("sha256").update(input.markdown).digest("hex");
+      const existing = await this.list(caseId);
+      const latest = existing[0];
+      const analysisRunIds = input.analysisRunIds ?? [];
+      if (
+        latest &&
+        latest.contentHash === contentHash &&
+        JSON.stringify(latest.analysisRunIds ?? []) === JSON.stringify(analysisRunIds)
+      )
+        return latest;
 
-    const createdAt = new Date().toISOString();
-    const id = `${createdAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
-    const manualVersion = input.meta.revisions.length
-      ? input.meta.revisions[input.meta.revisions.length - 1].version
-      : "";
-    const summary: ReportVersionSummary = {
-      id,
-      createdAt,
-      version: nextVersionLabel(existing),
-      manualVersion,
-      contentHash,
-      findingsCount: input.state.findings.length,
-      iocsCount: input.state.iocs.length,
-      eventsCount: input.state.forensicTimeline.length,
-      analysisRunIds,
-      createdBy: (() => {
-        const authenticated = authenticatedActorFields();
-        return authenticated
-          ? {
-              id: authenticated.actorId,
-              displayName: authenticated.actorDisplayName,
-              kind: authenticated.actorKind,
-            }
-          : { id: "solo", displayName: "Solo investigator", kind: "solo" };
-      })(),
-    };
-    const record: ReportVersionRecord = {
-      ...summary,
-      markdown: input.markdown,
-      meta: input.meta,
-      state: input.state,
-      ...(input.template ? { template: input.template } : {}),
-    };
+      const createdAt = new Date().toISOString();
+      const id = `${createdAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+      const manualVersion = input.meta.revisions.length
+        ? input.meta.revisions[input.meta.revisions.length - 1].version
+        : "";
+      const summary: ReportVersionSummary = {
+        id,
+        createdAt,
+        version: nextVersionLabel(existing),
+        manualVersion,
+        contentHash,
+        findingsCount: input.state.findings.length,
+        iocsCount: input.state.iocs.length,
+        eventsCount: input.state.forensicTimeline.length,
+        analysisRunIds,
+        createdBy: (() => {
+          const authenticated = authenticatedActorFields();
+          return authenticated
+            ? {
+                id: authenticated.actorId,
+                displayName: authenticated.actorDisplayName,
+                kind: authenticated.actorKind,
+              }
+            : { id: "solo", displayName: "Solo investigator", kind: "solo" };
+        })(),
+      };
+      const record: ReportVersionRecord = {
+        ...summary,
+        markdown: input.markdown,
+        meta: input.meta,
+        state: input.state,
+        ...(input.template ? { template: input.template } : {}),
+      };
 
-    await mkdir(this.dir(caseId), { recursive: true });
-    await atomicWrite(this.recordPath(caseId, id), JSON.stringify(record));
-    const updated = [summary, ...existing];
-    const cap = maxVersions();
-    const protectedIds = new Set(
-      (await this.releases.list(caseId)).map((release) => release.reportVersionId),
-    );
-    const retainedWorking = new Set(
-      updated
-        .filter((item) => !protectedIds.has(item.id))
-        .slice(0, cap)
-        .map((item) => item.id),
-    );
-    const kept = updated.filter((item) => protectedIds.has(item.id) || retainedWorking.has(item.id));
-    const pruned = updated.filter((item) => !kept.includes(item));
-    await this.saveIndex(caseId, kept);
-    await Promise.all(pruned.map((p) => unlink(this.recordPath(caseId, p.id)).catch(() => {})));
-    return summary;
+      await mkdir(this.dir(caseId), { recursive: true });
+      await atomicWrite(this.recordPath(caseId, id), JSON.stringify(record));
+      const updated = [summary, ...existing];
+      const cap = maxVersions();
+      const protectedIds = new Set(
+        (await this.releases.list(caseId)).map((release) => release.reportVersionId),
+      );
+      const retainedWorking = new Set(
+        updated
+          .filter((item) => !protectedIds.has(item.id))
+          .slice(0, cap)
+          .map((item) => item.id),
+      );
+      const kept = updated.filter((item) => protectedIds.has(item.id) || retainedWorking.has(item.id));
+      const pruned = updated.filter((item) => !kept.includes(item));
+      await this.saveIndex(caseId, kept);
+      await Promise.all(pruned.map((p) => unlink(this.recordPath(caseId, p.id)).catch(() => {})));
+      return summary;
+    });
   }
 }
