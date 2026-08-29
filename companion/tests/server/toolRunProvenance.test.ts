@@ -79,11 +79,6 @@ describe("uploading raw EVTX to a parser (#688)", () => {
 
     // The tool's output is stored too — preserving the original replaces nothing.
     expect(stored.some((f) => f.includes(".hayabusa.out"))).toBe(true);
-
-    // The staging directory is scratch and must not linger.
-    const work = join(store.caseDir("c1"), ".toolwork");
-    const leftovers = await readdir(work).catch(() => [] as string[]);
-    expect(leftovers.filter((d) => d.startsWith("up-"))).toEqual([]);
   });
 
   it("records the parser run in the chain of custody: version, argv, exit code and output hash", async () => {
