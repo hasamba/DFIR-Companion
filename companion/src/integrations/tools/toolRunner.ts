@@ -16,6 +16,12 @@ export interface ToolRunResult {
   stdout: string;
   stderr: string;
   code: number; // process exit code (0 on success; some tools exit non-zero yet still produce output)
+  // The POSIX signal that killed the child, when one did. Node reports a NULL exit code in that case,
+  // and reading that as 0 said "clean exit" about a parser the OOM killer had just terminated
+  // mid-file — the fail-closed check then imported its half-written output. `code` is -1 whenever
+  // this is set, so a caller that only looks at the code still sees a failure. Optional so the
+  // injected runners in tests need not supply it.
+  signal?: string | null;
 }
 
 // A runner spawns `binary` with the given argv and returns the captured output. The binary is a
@@ -217,12 +223,16 @@ function spawnToolOnce(
       clearTimeout(timer);
       launchFailed(e); // async spawn failure (e.g. ENOENT) — tagged so a transient one is retried
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (killed) return;
       clearTimeout(timer);
       closeFd();
       const { stdout, stderr } = output.text();
-      resolve({ stdout, stderr, code: code ?? 0 });
+      // Node sets exactly one of code/signal. A signal kill (SIGKILL from the OOM killer, SIGSEGV
+      // from a parser crash) leaves code null; report it as -1 rather than 0 so no caller can read a
+      // terminated process as a clean run. Our own timeout/output-cap kills reject above and never
+      // reach here.
+      resolve({ stdout, stderr, code: code ?? (signal ? -1 : 0), signal: signal ?? null });
     });
   });
 }

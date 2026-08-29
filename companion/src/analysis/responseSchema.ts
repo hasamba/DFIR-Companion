@@ -85,6 +85,10 @@ export const deltaSchema = z.object({
         asset: z.string().optional(), // host/computer/FQDN the event pertains to
         sources: z.array(z.string()).optional(),
         artifactName: z.string().optional(),
+        // Identity of the single source log record (`evtx:<channel>:<EventRecordID>`) — the key
+        // cross-parser correlation uses to fold one EVTX record reported by two parsers into one
+        // event (#688). Set by the EVTX-derived importers; absent everywhere else.
+        sourceRecordId: z.string().optional(),
         message: z.string().optional(),
         veloUrl: z.string().optional(),
         processName: z.string().optional(),

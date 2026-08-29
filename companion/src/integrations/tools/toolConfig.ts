@@ -5,11 +5,12 @@
 // `POST /tools/reconnect` (reloadEnvPrefix("DFIR_TOOL_")) applies saved settings without a restart.
 //
 // Each tool maps to a FIXED downstream importer kind (its `importKind`) — the tool's output flows into
-// the same importer the analyst would use if they ran it by hand: Hayabusa→hayabusa, Velociraptor
-// CLI→velociraptor, Suricata→network, Snort→snort, YARA→yara. The Companion runs the tool and ingests
-// its verdict; it does NOT re-implement detection (see CLAUDE.md).
+// the same importer the analyst would use if they ran it by hand: Hayabusa→hayabusa, Chainsaw→chainsaw,
+// Velociraptor CLI→velociraptor, Suricata→network, Snort→snort, YARA→yara. The Companion runs the tool
+// and ingests its verdict; it does NOT re-implement detection (see CLAUDE.md).
 
-export type ToolId = "hayabusa" | "velociraptor_cli" | "suricata" | "snort" | "yara" | "socrates";
+export type ToolId =
+  "hayabusa" | "chainsaw" | "velociraptor_cli" | "suricata" | "snort" | "yara" | "socrates";
 
 // How the Companion reaches the tool. "spawn" runs a local binary through the toolRunner; "http"
 // calls a service over the network and never touches the process spawner.
@@ -36,6 +37,19 @@ export interface ToolConfig {
   autoRun: boolean; // run automatically when a matching raw file lands in the drop folder
   timeoutMs: number;
   maxOutputBytes: number;
+  // FAIL CLOSED (#688). A parser that stops halfway still writes the rows it managed to emit, and
+  // importing those is worse than importing nothing: the case then holds a silently partial view of
+  // the evidence with nothing saying so. For a parser whose exit code is meaningful (Hayabusa,
+  // Chainsaw, the Velociraptor CLI) a non-zero exit therefore rejects the whole run. NOT set for
+  // YARA/Snort, which exit non-zero as a normal way of saying "matches found". Default false.
+  failOnNonZeroExit?: boolean;
+  // FAIL CLOSED (#688). The tool's detections are only as identifiable as the rules behind them, so
+  // a tool whose verdicts are meaningless without a named rule set refuses to run when the path is
+  // missing, empty or unreadable — rather than reporting "no detections" over rules that were never
+  // loaded. Default false (a rules path is still required to be SET when `<rules>` is templated).
+  requireRuleset?: boolean;
+  // How to ask this binary its version, for the run's custody record. Default ["--version"].
+  versionArgs?: string[];
 }
 
 interface ToolDef {
@@ -51,6 +65,9 @@ interface ToolDef {
   extensions: string[]; // raw file extensions this tool claims (drop-folder routing)
   defaultUpdateSubcommand?: string; // args appended to `binary` for the update button (Hayabusa: update-rules)
   defaultUpdateCommand?: string; // standalone update command line (Suricata: suricata-update)
+  strictExit?: boolean; // non-zero exit rejects the run (see ToolConfig.failOnNonZeroExit)
+  strictRuleset?: boolean; // the rule set must resolve to real content (see ToolConfig.requireRuleset)
+  versionArgs?: string[]; // how to ask the binary its version; default ["--version"]
 }
 
 // The extensions SO-CRATES claims. Explicit rather than a catch-all: SO-CRATES YARA-scans anything
@@ -108,6 +125,33 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     usesRules: false,
     extensions: [".evtx", ".evt"],
     defaultUpdateSubcommand: "update-rules",
+    strictExit: true,
+  },
+  // Chainsaw (WithSecure) — the second EVTX parser the Companion orchestrates (#688). Its importer
+  // has existed since the beginning; only the RUNNER was missing, so an analyst holding a raw .evtx
+  // had to run Chainsaw by hand and import the file. `hunt` takes a FOLDER, so it uses <targetdir>
+  // (the same original-name staging the Velociraptor CLI uses) rather than <target>.
+  //
+  // Chainsaw needs two paths, and both are fail-closed: <rules> is the Sigma rule directory, and
+  // <definitions> is the mapping file that tells Chainsaw how Sigma field names bind to EVTX fields
+  // (sigma-event-logs-all.yml in the Chainsaw release). Without the mapping Chainsaw hunts with
+  // nothing loaded and reports a clean run over evidence it never actually examined.
+  //
+  // No update command: Chainsaw has no update subcommand — its Sigma rules are a git checkout the
+  // analyst refreshes themselves, so a blank command correctly hides the button.
+  chainsaw: {
+    id: "chainsaw",
+    label: "Chainsaw",
+    repoUrl: "https://github.com/WithSecureLabs/chainsaw",
+    importKind: "chainsaw",
+    transport: "spawn",
+    defaultRunArgs: "hunt <targetdir> -s <rules> --mapping <definitions> --json --output <output>",
+    outputMode: "file",
+    defaultOutputFile: "chainsaw.json",
+    usesRules: true,
+    extensions: [".evtx", ".evt"],
+    strictExit: true,
+    strictRuleset: true,
   },
   velociraptor_cli: {
     id: "velociraptor_cli",
@@ -126,6 +170,8 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     defaultOutputFile: "output.json",
     usesRules: false,
     extensions: [".evtx", ".evt"],
+    strictExit: true,
+    versionArgs: ["version"],
   },
   suricata: {
     id: "suricata",
@@ -138,6 +184,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     defaultOutputFile: "eve.json",
     usesRules: false,
     extensions: [".pcap", ".pcapng"],
+    versionArgs: ["-V"],
     // No default update command: `suricata-update` is a Linux/pip tool that isn't present on a stock
     // Windows install. On Windows, download the ET Open ruleset (emerging-all.rules) manually and point
     // suricata.yaml at it — the dashboard links the ruleset + a setup guide. A user who has
@@ -153,6 +200,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     outputMode: "stdout",
     usesRules: true,
     extensions: [".pcap", ".pcapng"],
+    versionArgs: ["-V"],
   },
   yara: {
     id: "yara",
@@ -182,6 +230,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
 // Uppercase env id per tool (DFIR_TOOL_<ENV>_*).
 const ENV_ID: Record<ToolId, string> = {
   hayabusa: "HAYABUSA",
+  chainsaw: "CHAINSAW",
   velociraptor_cli: "VELOCIRAPTOR_CLI",
   suricata: "SURICATA",
   snort: "SNORT",
@@ -225,6 +274,7 @@ export function loadToolConfig(id: ToolId, env: NodeJS.ProcessEnv = process.env)
       autoRun: masterAuto && toolAuto,
       timeoutMs: Number(env[`${p}TIMEOUT_MS`]) || 1_200_000, // 20 min: Suricata over a large PCAP
       maxOutputBytes: Number(env[`${p}MAX_OUTPUT`]) || 100 * 1024 * 1024,
+      versionArgs: def.versionArgs ?? ["--version"],
     };
   }
 
@@ -254,6 +304,9 @@ export function loadToolConfig(id: ToolId, env: NodeJS.ProcessEnv = process.env)
     autoRun: masterAuto && toolAuto,
     timeoutMs: Number(env[`${p}TIMEOUT_MS`]) || 300_000,
     maxOutputBytes: Number(env[`${p}MAX_OUTPUT`]) || 100 * 1024 * 1024,
+    failOnNonZeroExit: def.strictExit === true,
+    requireRuleset: def.strictRuleset === true,
+    versionArgs: def.versionArgs ?? ["--version"],
   };
 }
 
@@ -273,7 +326,15 @@ export function toolPreferenceForExtension(ext: string): ToolId[] {
   const e = ext.toLowerCase();
   // Order matters: the first CONFIGURED tool wins for drop-folder auto-run. SO-CRATES is last so a
   // tuned local Suricata/Hayabusa keeps priority; the import banner offers every claimant instead.
-  const order: ToolId[] = ["hayabusa", "velociraptor_cli", "suricata", "snort", "yara", "socrates"];
+  const order: ToolId[] = [
+    "hayabusa",
+    "chainsaw",
+    "velociraptor_cli",
+    "suricata",
+    "snort",
+    "yara",
+    "socrates",
+  ];
   return order.filter((id) => TOOL_DEFS[id].extensions.includes(e));
 }
 

@@ -24,7 +24,7 @@ import { basename, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { Buffer } from "node:buffer";
-import type { CaseStore } from "../storage/caseStore.js";
+import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import { dropDirOf } from "./dropFolder.js";
 import {
@@ -34,6 +34,7 @@ import {
   type ToolConfig,
 } from "../integrations/tools/toolConfig.js";
 import { runToolAgainstFile, resolveContainedPath } from "../integrations/tools/runToolImport.js";
+import { describeToolRun } from "../integrations/tools/toolProvenance.js";
 import { customToolToConfig, type CustomTool } from "../integrations/tools/customToolStore.js";
 import { RAW_TOOL_EXTS } from "../analysis/dropScan.js";
 import { extractZipEntries } from "../analysis/zipExtract.js";
@@ -47,7 +48,7 @@ import {
 import { SocratesJobStore, type SocratesJob } from "../integrations/socrates/socratesJobStore.js";
 import { pollUntilImported } from "../integrations/socrates/socratesPoller.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
-import type { InvestigationState } from "../analysis/stateTypes.js";
+import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
 
 export interface ExternalToolsDeps {
@@ -59,7 +60,16 @@ export interface ExternalToolsDeps {
     kind: string,
     text: string,
     originalName: string,
+    minSeverity?: Severity,
+    provenance?: ArtifactProvenance,
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  /** Persist a binary original verbatim as evidence (see ImportIngest.persistRawEvidence). */
+  persistRawEvidence: (
+    caseId: string,
+    originalName: string,
+    bytes: Buffer,
+    provenance?: ArtifactProvenance,
+  ) => Promise<{ storedName: string; importedAt: string; seq: number }>;
   pushImportCheckpoint: (caseId: string, beforeState: InvestigationState, label: string) => Promise<void>;
 }
 
@@ -87,7 +97,7 @@ export interface ExternalTools {
     caseId: string,
     toolId: string,
     targetPath: string,
-    opts?: { undoLabel?: string },
+    opts?: { undoLabel?: string; preserveOriginal?: { bytes: Buffer; originalName: string } },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   startSocratesAnalysis(
     caseId: string,
@@ -96,7 +106,8 @@ export interface ExternalTools {
 }
 
 export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
-  const { store, options, resolveImportKind, ingestStreamed, pushImportCheckpoint } = deps;
+  const { store, options, resolveImportKind, ingestStreamed, persistRawEvidence, pushImportCheckpoint } =
+    deps;
 
   const socratesJobs = new SocratesJobStore(store);
 
@@ -197,7 +208,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     caseId: string,
     toolId: string,
     targetPath: string,
-    opts: { undoLabel?: string } = {},
+    opts: { undoLabel?: string; preserveOriginal?: { bytes: Buffer; originalName: string } } = {},
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
@@ -209,7 +220,29 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     if (!options.toolRunner) throw new Error("external tools not configured");
     const caseDir = store.caseDir(caseId);
     const contained = resolveContainedPath(caseDir, targetPath);
-    const { outputText, importKind } = await runToolAgainstFile({
+
+    // Keep the ORIGINAL, byte for byte, BEFORE the parser runs (#688). The Companion used to keep
+    // only the tool's output, so an uploaded .evtx existed just long enough to be parsed and was
+    // then deleted — leaving the case holding one tool's opinion of evidence nobody could re-examine
+    // or re-parse with a second tool. Preserving first also means a parser that fails still leaves
+    // the analyst their evidence. Only the upload path asks for this; the drop folder already keeps
+    // the original in _processed/, and a case-relative target is already inside the case.
+    let preservedName = "";
+    if (opts.preserveOriginal) {
+      const kept = await persistRawEvidence(
+        caseId,
+        opts.preserveOriginal.originalName,
+        opts.preserveOriginal.bytes,
+        {
+          collectedBy: "companion",
+          source: `original evidence preserved for ${toolId}`,
+          trigger: "raw-evidence",
+        },
+      );
+      preservedName = kept.storedName;
+    }
+
+    const { outputText, importKind, provenance } = await runToolAgainstFile({
       cfg,
       runner: options.toolRunner,
       targetPath: contained,
@@ -231,7 +264,13 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         /* keep null */
       }
     }
-    const r = await ingestStreamed(caseId, kind, outputText, outName);
+    // The stored output's custody record now states HOW it was produced — parser version, argv,
+    // rule-set hash, exit code, stderr tail, output hash — rather than a bare "companion" (#688).
+    const r = await ingestStreamed(caseId, kind, outputText, outName, undefined, {
+      collectedBy: "companion",
+      trigger: `tool:${toolId}`,
+      source: describeToolRun(provenance) + (preservedName ? ` | original ${preservedName}` : ""),
+    });
     if (before && opts.undoLabel && (r.addedEvents > 0 || r.addedIocs > 0)) {
       await pushImportCheckpoint(caseId, before, opts.undoLabel);
     }

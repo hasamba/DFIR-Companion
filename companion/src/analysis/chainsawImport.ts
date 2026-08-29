@@ -178,6 +178,10 @@ function toFlatRecord(event: Row): { rec: Row; host: string } {
   const rec: Row = {
     event_id: getCI(sys, "EventID"), // mapWindows unwraps a {#text} form
     channel,
+    // The record's own number, carried through so mapWindows can mint the cross-parser record
+    // identity (#688) — without it, the same Security.evtx read by Chainsaw and by Hayabusa
+    // produced two unrelatable timeline rows for one Windows record.
+    EventRecordID: getCI(sys, "EventRecordID"),
     event_data: normalizeEventData(getCI(event, "EventData")),
     "@timestamp": systemTime(sys),
     message: str(getPath(event, "RenderingInfo.Message")),

@@ -200,6 +200,10 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     // — a genuinely cross-tool correlation (e.g. a Chainsaw/Sigma detection + a Velociraptor Pstree
     // record sharing host+pid) — otherwise showed the WRONG artifact next to the detection's own text.
     artifactName: primary.artifactName,
+    // Same reasoning as artifactName: the record id belongs to the row whose text is shown. A group
+    // merged on hash/path can hold members from different records, and claiming a borrowed one
+    // would let a later import correlate onto a record this row never came from.
+    sourceRecordId: primary.sourceRecordId,
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
     sha256: events.find((e) => e.sha256)?.sha256,
@@ -280,6 +284,56 @@ function groupEvents(
     if (prev !== undefined) dsu.union(prev, i);
     else byExact.set(k, i);
   });
+
+  // 0b) SAME SOURCE LOG RECORD, seen by DIFFERENT parsers → union. `sourceRecordId` names one
+  // physical Windows event record (channel + EventRecordID), so a Hayabusa run and a Chainsaw run
+  // over the same Security.evtx are two readings of ONE observation and belong in one timeline row
+  // carrying both tools — not two rows that double the timeline every time the analyst re-parses
+  // the same evidence with a second tool (#688). Step 0 cannot catch this: the two parsers word
+  // their descriptions completely differently.
+  //
+  // The host is part of the key for the reason step 0 gives — every machine's own log has a record
+  // 4711, and those are different records.
+  //
+  // A row only ever merges with one that adds a parser it does not already carry. A single parser
+  // legitimately emits several detections for one record (two Sigma rules matching the same 4688),
+  // and those are distinct findings — merging them would delete one.
+  //
+  // The test is OVERLAP against the sources already gathered, not equality of the two source sets,
+  // because this step has to survive being run again. After the first pass the Hayabusa+Chainsaw row
+  // carries both tools while the second Hayabusa detection carries one; comparing whole source sets
+  // makes those two look like different parsers, and the next state merge would absorb the surviving
+  // detection and silently delete it. Overlap keeps the second pass a no-op.
+  //
+  // TIME IS PART OF THE MATCH. EventRecordID is a per-channel counter that RESTARTS when the log is
+  // cleared, so a capture taken before a clear and one taken after can hold the same host, channel
+  // and record number for entirely unrelated events — which is exactly the pair an analyst holds
+  // when investigating a log-clear. Two parsers reading one record both report that record's own
+  // TimeCreated, so requiring the times to agree (within the same window the other steps use) costs
+  // the real case nothing and refuses the reused-number case. An undated event is not merged here at
+  // all: nothing is left to tell the two apart.
+  const byRecord = new Map<string, number[]>();
+  evs.forEach((e, i) => {
+    if (!e.sourceRecordId) return;
+    if (timeOf(e) === undefined) return;
+    // A row with no attributable parser cannot make a cross-parser claim.
+    if (!realSources([e]).length) return;
+    const k = `${e.sourceRecordId} ${shortHost(e.asset)}`;
+    (byRecord.get(k) ?? byRecord.set(k, []).get(k)!).push(i);
+  });
+  for (const idxs of byRecord.values()) {
+    if (idxs.length < 2) continue;
+    const anchor = idxs[0];
+    const anchorTime = timeOf(evs[anchor]) as number;
+    const claimed = new Set(realSources([evs[anchor]]));
+    for (const i of idxs.slice(1)) {
+      const mine = realSources([evs[i]]);
+      if (mine.some((src) => claimed.has(src))) continue; // same parser → a second finding, not a duplicate
+      if (Math.abs((timeOf(evs[i]) as number) - anchorTime) > windowMs) continue; // a reused record number
+      dsu.union(anchor, i);
+      for (const src of mine) claimed.add(src);
+    }
+  }
 
   // 1) Same hash → union. Events with different `action` values (e.g. a write and an
   //    execute of the same binary) are keyed separately so they remain distinct events —

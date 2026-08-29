@@ -134,11 +134,12 @@ export interface RouteContext {
   //   runToolAndIngest — run a configured tool against a contained raw file and ingest its output
   //                      through the same chain as the Import button (with an optional undo checkpoint).
   //   reloadCustomTools — refresh the in-memory custom-tool list after a custom-tool CRUD mutation.
+  //                      An upload also asks it to PRESERVE the original bytes as evidence (#688).
   runToolAndIngest(
     caseId: string,
     toolId: string,
     targetPath: string,
-    opts?: { undoLabel?: string },
+    opts?: { undoLabel?: string; preserveOriginal?: { bytes: Buffer; originalName: string } },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   reloadCustomTools(): Promise<void>;
   // Submit a file to SO-CRATES and start background polling. Zips are extracted first (SO-CRATES

@@ -120,9 +120,14 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // Run a tool against a raw file UPLOADED from the dashboard Import dialog (the browser has the bytes
   // but the server can't read an arbitrary local path, and a binary can't go through the text /import
   // body). The bytes are staged into a server-owned dir INSIDE the case (so path-containment holds),
-  // the tool runs, its output is imported, and the staged raw file is deleted (the Companion keeps the
-  // tool OUTPUT as evidence, not the raw binary). For files too large for the body cap, the analyst uses
-  // the drop folder instead. 501 tools off / 400 bad tool or input. #211
+  // the ORIGINAL is preserved byte-for-byte as evidence, the tool runs, and its output is imported.
+  // The staging dir is scratch and is deleted either way.
+  //
+  // Preserving the original is #688. Before it, the raw upload was deleted after the parse and the
+  // case held only one tool's opinion of evidence that no longer existed — so the parse could never
+  // be reproduced, re-examined, or re-run through a second parser. For files too large for the body
+  // cap the analyst uses the drop folder instead, which has always kept the original in _processed/.
+  // 501 tools off / 400 bad tool or input. #211
   app.post("/cases/:id/tools/:toolId/run-upload", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     const toolId = req.params.toolId;
@@ -166,9 +171,11 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
       await mkdir(toolWork, { recursive: true });
       stageDir = await mkdtemp(join(toolWork, "up-"));
       const staged = join(stageDir, safe);
-      await writeFile(staged, Buffer.from(dataBase64, "base64"));
+      const bytes = Buffer.from(dataBase64, "base64");
+      await writeFile(staged, bytes);
       const r = await runToolAndIngest(caseId, toolId, staged, {
         undoLabel: `Tool: ${toolId} — ${basename(filename)}`,
+        preserveOriginal: { bytes, originalName: basename(filename) },
       });
       return res
         .status(200)

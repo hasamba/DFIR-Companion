@@ -276,6 +276,10 @@ describe("runToolAgainstFile", () => {
     await writeFile(join(caseDir, "a.evtx"), "binary-evtx");
     const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
     const runner: ToolRunner = async (_binary, args) => {
+      // Every run also asks the binary its version for the custody record (#688), and that call
+      // carries no -o. Answer it first: without this the stub would index past the end of argv and
+      // write the "output" to a file named after the flag.
+      if (args.includes("--version")) return { stdout: "hayabusa 3.2.0", stderr: "", code: 0 };
       // The runner writes the tool's output to the server-owned <output> path (the arg after -o).
       const oi = args.indexOf("-o");
       const outPath = args[oi + 1];
@@ -410,6 +414,19 @@ describe("spawnToolRunner output decoding", () => {
   it("reassembles a character split across two stdout chunks", async () => {
     const r = await spawnToolRunner()(process.execPath, ["-e", splitUtf8Script()], opts);
     expect(r.stdout).toBe(SPLIT_UTF8_TEXT);
+  });
+
+  // A child the OS kills leaves `code` null and `signal` set. Reporting that null as 0 told the
+  // fail-closed check in runToolImport that an OOM-killed parser had exited cleanly (#688).
+  it("never reports a signal-killed child as a clean exit", async () => {
+    const r = await spawnToolRunner()(
+      process.execPath,
+      ["-e", "process.stdout.write('partial'); process.kill(process.pid, 'SIGKILL');"],
+      opts,
+    );
+    expect(r.code).not.toBe(0);
+    // POSIX reports the signal; Windows has no real signals and surfaces a non-zero code instead.
+    if (r.signal) expect(r.signal).toBe("SIGKILL");
   });
 
   it("reassembles a character split across two stderr chunks", async () => {
