@@ -450,6 +450,24 @@ export class AuthStore {
     return Number(result.changes);
   }
 
+  /**
+   * Drop every session whose expiry has passed. Returns how many rows went.
+   *
+   * authenticateSession already deletes an expired session, but only the one it was just handed —
+   * a session whose owner never comes back with that cookie is never looked at again, so it sits in
+   * the table for the life of the deployment. listSessions filters on expires_at, so nothing reads
+   * stale rows; they simply accumulate, and the file grows with every sign-in that is not signed
+   * out. Sweeping on a timer bounds that (#676). Row-shaped, not VACUUM: reclaiming pages is a
+   * separate, far more expensive operation, and the point here is to stop the row count climbing.
+   *
+   * `expires_at` is a UTC ISO-8601 string, which sorts lexicographically in the same order it sorts
+   * chronologically — the same comparison listSessions already makes.
+   */
+  deleteExpiredSessions(now: Date = new Date()): number {
+    const result = this.db.prepare("DELETE FROM auth_sessions WHERE expires_at<=?").run(now.toISOString());
+    return Number(result.changes);
+  }
+
   listSessions(identityId: string): SessionRecord[] {
     return this.db
       .prepare(
