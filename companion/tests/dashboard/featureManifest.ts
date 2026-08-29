@@ -1469,6 +1469,15 @@ export const FEATURES: Feature[] = [
     private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
   },
   {
+    // Cross-case IOC pivot (#679). One piece of view state (the last fetched list), so it is an
+    // IIFE for the same reason dashboard-host-duplicates.js is. No initializer: the panel binds no
+    // listeners of its own — every link in it is a plain anchor — so the case-connect loader
+    // calling loadRelatedCases(caseId) is the whole entry point.
+    file: "dashboard-related-cases.js",
+    publish: ["loadRelatedCases", "renderRelatedCases"],
+    private: ["relatedCases", "relatedCasesFor"],
+  },
+  {
     // Near-duplicate host review — the pre-synthesis merge gate's UI surface. One piece of view
     // state (the pending pairs), so it is an IIFE for the same reason dashboard-host-scope.js is.
     // initHostDuplicates exists only to bind the header badge's click-to-scroll handler: the panel

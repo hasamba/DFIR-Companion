@@ -332,6 +332,7 @@
   <script src="/js/dashboard-ioc-quick-actions.js"></script>
   <script src="/js/dashboard-keyboard-nav.js"></script>
   <script src="/js/dashboard-host-duplicates.js"></script>
+  <script src="/js/dashboard-related-cases.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -3389,6 +3390,9 @@
       <div id="iocImportMeta" class="synth-meta" data-safe-style="display:none"></div>
       <div class="ioc-bulk-bar" id="iocBulkBar"><span id="iocBulkCount" data-safe-style="font-weight:600;color:var(--accent)"></span> <span>Actions:</span> <button class="ioc-bulk-btn" id="iocBulkEnrichBtn" title="Enrich selected IOCs against enabled threat-intel providers">🔬 Enrich</button> <button class="ioc-bulk-btn" id="iocBulkTagBtn" title="Add a tag to all selected IOCs">🏷 Tag</button> <button class="ioc-bulk-btn" id="iocBulkFpBtn" title="Mark selected IOCs as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ioc-bulk-btn" id="iocBulkExcludeBtn" title="Permanently exclude the selected IOC value(s) from this case — removed now, never re-imported or re-enriched (per-case, not reversible)">🗑 Exclude</button> <button class="ioc-bulk-btn" id="iocBulkCopyBtn" title="Copy selected IOC values to clipboard (one per line)">📋 Copy</button> <button class="ioc-bulk-btn" id="iocBulkClearBtn" data-safe-style="color:var(--text-muted)">✕ Clear</button></div>
       <div id="iocs">—</div></section>
+    <!-- Cross-case IOC pivot (#679). Data-gated: hidden until this case actually shares an
+         indicator with another case the analyst may read. -->
+    <section id="sec-related-cases" data-gate-open="" data-safe-style="grid-column: 1 / -1; display:none"><h2>Related Cases<span class="ev-sub">other investigations that share indicators with this one — a lead to check, not a proven link (derived, no AI)</span></h2><div id="relatedCasesBody"></div></section>
     <section id="sec-exposure" data-safe-style="grid-column: 1 / -1"><h2>Customer Exposure</h2>
       <div class="ce-body">
         <div data-safe-style="color:var(--text-muted);font-size:12px;margin:0 0 8px">Breach/leak check of the <strong>customer's own</strong> domains &amp; emails (not IOCs). Domains found in the case's own FQDN hosts are added automatically (dashed "auto" chips below), same as case emails under a customer domain. ⚠ sends the customer's domains/emails to third-party services.</div>
@@ -3871,7 +3875,7 @@
       { id: "sec-beacons",      label: "Beacon Candidates" },
       { id: "sec-anomalies",    label: "Timeline Anomalies" },
       { id: "sec-geomap",       label: "GeoIP Map" },
-      { id: "sec-iocs",         label: "IOCs" },
+      { id: "sec-iocs",         label: "IOCs" }, { id: "sec-related-cases", label: "Related Cases" },
       { id: "sec-exposure",     label: "Customer Exposure" },
       { id: "sec-questions",    label: "Key Investigative Questions" },
       { id: "sec-uncertainties", label: "Uncertainty Ledger" },

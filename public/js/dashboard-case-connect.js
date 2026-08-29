@@ -392,6 +392,7 @@
       ["iocProvenance", () => loadIocProvenance(caseId)],
       ["iocRisk", () => loadIocRisk(caseId)],
       ["iocProvenanceChains", () => loadIocProvenanceChains(caseId)],
+      ["relatedCases", () => loadRelatedCases(caseId)], // #679 cross-case IOC pivot
       ["comments", () => loadComments(caseId)],
       ["activityLog", () => loadActivityLog(caseId)],
       ["tags", () => loadTags(caseId)],

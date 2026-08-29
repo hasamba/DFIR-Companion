@@ -202,6 +202,7 @@
     "correlate.ts": "analysis/timeline",
     "correlationProfile.ts": "analysis/detect",
     "countryCentroids.ts": "analysis/intel",
+    "crossCaseIndex.ts": "analysis/findings",
     "csvImport.ts": "analysis/ingest",
     "custody.ts": "analysis/case",
     "custodyIntegrity.ts": "analysis/case",

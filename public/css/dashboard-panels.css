@@ -430,3 +430,30 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
   background: var(--bg-secondary); color: var(--text-primary);
   border: 1px solid var(--sev-medium);
 }
+
+/* Related Cases (#679) — the cross-case IOC pivot. Each chip is one indicator two cases hold in
+   common: a flagged chip already carries a threat-intel verdict, a dimmed one is a private address
+   that recurs across an estate for reasons that have nothing to do with an adversary. The rank is
+   the server's; nothing here re-sorts. */
+.rc-intro { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.rc-case { padding: 8px 0; border-top: 1px solid var(--border-color); }
+.rc-case:first-of-type { border-top: none; }
+.rc-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.rc-open { font-weight: 600; color: var(--text-bright); text-decoration: none; }
+.rc-open:hover { text-decoration: underline; }
+.rc-status {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px;
+  border-radius: 3px; background: var(--bg-tertiary); color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.rc-tally { font-size: 12px; color: var(--text-muted); }
+.rc-shared { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.rc-ioc {
+  font-size: 12px; padding: 2px 6px; border-radius: 3px; background: var(--bg-tertiary);
+  color: var(--text-primary); border: 1px solid var(--border-color); word-break: break-all;
+}
+/* The warning sign in the chip's own text carries the same meaning, so the border is redundant
+   colour rather than the only cue. */
+.rc-ioc-mal { border-color: var(--sev-high); }
+.rc-ioc-int { color: var(--text-muted); }
+.rc-more { font-size: 12px; color: var(--text-muted); align-self: center; }

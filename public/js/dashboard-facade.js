@@ -152,6 +152,10 @@
     // that call site has no try/catch of its own, unlike runPanelLoaders' entries.
     "loadHostDuplicates",
     "renderHostDuplicates",
+    // Related Cases (#679). Same reason as loadHostDuplicates directly above: dashboard-ai-status.js
+    // calls it bare on the ai_status "idle" branch — the only reliable "import settled" signal — and
+    // that call site has no try/catch of its own.
+    "loadRelatedCases",
     // NSRL (#63) and the Dashboard Views editor (#142). Their initializers are the sentinels.
     "loadNsrl",
     "nsrlImport",
