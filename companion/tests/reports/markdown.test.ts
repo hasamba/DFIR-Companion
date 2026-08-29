@@ -525,7 +525,15 @@ describe("renderMarkdownReport", () => {
         pointer: "collect 4624 logs on targets",
       },
     );
-    state.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "2026-05-20T09:00:00Z" });
+    state.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "10.0.0.5",
+      firstSeen: "2026-05-20T09:00:00Z",
+      // A verdict makes it a real INDICATOR — a bare, unenriched value is now an observation and
+      // reduced to a count, not listed in the indicators table.
+      enrichments: [{ source: "AbuseIPDB", verdict: "malicious", fetchedAt: "2026-05-20T09:00:00Z" }],
+    });
 
     const md = renderMarkdownReport(state);
     expect(md).toContain("### 4.7 Key investigative questions");
@@ -1062,5 +1070,30 @@ describe("renderMarkdownReport", () => {
       const md = renderMarkdownReport(emptyState("c1"));
       expect(md).not.toContain("### 3.5 Model performance");
     });
+  });
+});
+
+describe("renderMarkdownReport — IOC section leads with indicators (eval follow-up)", () => {
+  it("lists real indicators in the table and reduces observations to a count", () => {
+    const state = emptyState("c1");
+    state.iocs = [
+      {
+        id: "i-ind",
+        type: "domain",
+        value: "evil-c2.example",
+        firstSeen: "2026-01-01T00:00:00Z",
+        enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z" }],
+      },
+      {
+        id: "i-obs",
+        type: "file",
+        value: "C:\\Windows\\System32\\notepad.exe",
+        firstSeen: "2026-01-01T00:00:00Z",
+      },
+    ];
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("evil-c2.example"); // the indicator is in the table
+    expect(md).not.toContain("notepad.exe"); // the observation is not listed as an indicator
+    expect(md).toMatch(/Plus 1 observation\(s\)/); // …it is a count instead
   });
 });

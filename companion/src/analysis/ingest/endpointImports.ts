@@ -110,6 +110,9 @@ export async function importChainsaw(
       `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.detections > 0 ? `, ${parsed.detections} rule detection(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      (parsed.groups > parsed.kept && parsed.dropped > 0
+        ? `, ${parsed.dropped} record(s) omitted at the event cap`
+        : "") +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
   };
@@ -164,6 +167,9 @@ export async function importHayabusa(
     timelineNote:
       `Hayabusa import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      (parsed.groups > parsed.kept && parsed.dropped > 0
+        ? `, ${parsed.dropped} record(s) omitted at the event cap`
+        : "") +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
   };
@@ -250,6 +256,13 @@ export async function importVelociraptor(
       `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
       (parsed.detections > 0 ? `, ${parsed.detections} detection(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      // Make truncation explicit: a huge MFT/USN artifact (275k+ rows) is capped, and the analyst
+      // must know rows were omitted rather than read the kept count as the whole picture. The cap
+      // keeps the most-severe events first, so what is dropped is low-signal telemetry — raise
+      // DFIR_MAX_EVENTS to keep more.
+      (parsed.groups > parsed.kept && parsed.dropped > 0
+        ? `, ${parsed.dropped} row(s) omitted at the event cap`
+        : "") +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
   };

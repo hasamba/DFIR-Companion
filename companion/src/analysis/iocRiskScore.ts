@@ -36,7 +36,16 @@ export type IocRiskTier = "critical" | "high" | "medium" | "low" | "benign";
 export interface IocRisk {
   score: IocRiskTier;
   factors: string[]; // human-readable reasons, strongest first
+  // Whether this value is a THREAT INDICATOR or merely an OBSERVATION. An import scrapes every file
+  // path and hash it sees — 5,000+ on a single collection — and presenting them all as "indicators"
+  // drowns the handful that matter. An indicator earned a signal (reputation verdict, a Medium+
+  // event, corroboration, KEV); an observation is a value that appeared in the evidence with none.
+  // Both stay searchable; only the count / panel / export should treat them differently. Set by
+  // scoreIocs (which has the IOC's enrichments); a bare scoreIoc call leaves it undefined.
+  role?: IocRole;
 }
+
+export type IocRole = "indicator" | "observation";
 
 /** The pre-derived signals scoreIoc grades. Kept explicit so the core rubric is unit-testable. */
 export interface IocRiskSignals {
@@ -150,7 +159,7 @@ export function scoreIocs(
     const kevMatch = extractCveIds(ioc.value).some(
       (cve) => ctx.kevCveIds?.has(cve) || (ctx.kevCatalog ? ctx.kevCatalog.has(cve) : false),
     );
-    out[ioc.id] = scoreIoc({
+    const risk = scoreIoc({
       verdictClass,
       distinctTools: sources[ioc.id]?.length ?? 0,
       maxSeverityRank: sevRank[ioc.id] ?? -1,
@@ -159,8 +168,45 @@ export function scoreIocs(
       whitelisted,
       suspiciousDomain: (ioc.type === "domain" || ioc.type === "url") && looksSuspiciousDomain(ioc.value),
     });
+    risk.role = iocRole(ioc, risk.score);
+    out[ioc.id] = risk;
   }
   return out;
+}
+
+/**
+ * Is this value a THREAT INDICATOR or just an OBSERVATION? An indicator either earned a signal — a
+ * Medium+ risk tier (the tier already folds severity, corroboration, intel and KEV) or a reputation
+ * verdict — or it is a NETWORK indicator (ip / domain / url), which an analyst pivots on immediately
+ * and which enrichment reaches asynchronously, so it is surfaced even while quiet. An observation is
+ * the bulk that is neither: a scraped file path / hash / process an import records by the thousand
+ * with no signal at all. Both stay searchable; only the count / panel / export treat them differently.
+ */
+export function iocRole(ioc: IOC, tier: IocRiskTier): IocRole {
+  // Known-good overrides everything (the same invariant scoreIoc enforces): a whitelisted or
+  // NSRL-known value is `benign` and is never a threat indicator, even a network value or one with a
+  // stale malicious enrichment. Checked FIRST, before the network / flagged branches below.
+  if (tier === "benign") return "observation";
+  if (RISK_TIER_RANK[tier] >= RISK_TIER_RANK.medium) return "indicator";
+  if (ioc.type === "ip" || ioc.type === "domain" || ioc.type === "url") return "indicator";
+  const flagged = (ioc.enrichments ?? []).some(
+    (e) => e.verdict === "malicious" || e.verdict === "suspicious",
+  );
+  return flagged ? "indicator" : "observation";
+}
+
+/** Split a scored IOC set into indicator / observation counts. */
+export function summarizeIocRoles(risks: Record<string, IocRisk>): {
+  indicators: number;
+  observations: number;
+} {
+  let indicators = 0;
+  let observations = 0;
+  for (const r of Object.values(risks)) {
+    if (r.role === "indicator") indicators++;
+    else observations++;
+  }
+  return { indicators, observations };
 }
 
 /** Rank ordering for sorting / filtering (higher = riskier). */

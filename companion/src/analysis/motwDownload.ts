@@ -82,5 +82,10 @@ export function gradeMotwDownload(zoneId: string, fileName: string): MotwGrade {
   const dot = name.lastIndexOf(".");
   const ext = dot >= 0 ? name.slice(dot + 1) : "";
   if (!RUNNABLE_EXT.test(ext) && !CONTAINER_EXT.test(ext)) return { severity: "Info", mitre: [], zoneLabel };
-  return { severity: "Medium", mitre: ["T1204.002"], zoneLabel };
+  // A runnable/container pulled from the ORDINARY internet zone is the drive-by / malvertising entry
+  // vector (T1189) as well as user-execution of a downloaded file (T1204.002) — the initial-access
+  // half is what tied 004 (Bing SEO poisoning) and 008 (malvertising) to their reports. Zone 4
+  // (Restricted) keeps only T1204.002; the zone number does not identify a website compromise there.
+  const mitre = zone === "3" ? ["T1189", "T1204.002"] : ["T1204.002"];
+  return { severity: "Medium", mitre, zoneLabel };
 }

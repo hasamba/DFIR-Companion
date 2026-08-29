@@ -77,6 +77,7 @@ import {
 } from "./veloDetectionNoise.js";
 import { gradeYaraHit } from "./yaraGrade.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
+import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
@@ -894,15 +895,18 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
     severity = "Info";
   }
 
-  // Ransomware impact (T1486): a file encrypted to a family extension, or a ransom note. A raise
-  // only, and only when not already self-scan-demoted, so it never rescues a tool-tree hit.
+  // Raises on a generic row: ransomware impact (T1486 — encrypted file / ransom note, not a
+  // self-scan hit) and RDP lateral movement (T1021.001 — an explicit-cred 4648 to a remote host).
   const genRansom = severity !== "Info" || !isDetectionToolLocation(path) ? ransomwareSignal(path) : null;
-  const ransomMitre = genRansom ? genRansom.mitre : [];
+  const rdp = rdpLateralSignal(artifact, row);
+  const ransomMitre = [...(genRansom?.mitre ?? []), ...(rdp?.mitre ?? [])];
   if (genRansom) severity = worst(severity, genRansom.severity);
+  if (rdp) severity = worst(severity, rdp.severity);
 
   // A THOR row names its own finding; the generic form would name the artifact plumbing instead.
   let description = thor?.description ?? `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`;
   if (genRansom) description = `${description} — ${genRansom.note} (T1486)`.slice(0, 600);
+  else if (rdp) description = `${description} — ${rdp.note} (T1021.001)`.slice(0, 600);
   description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
   const aggKey =
@@ -964,13 +968,10 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
     600,
   );
   description = withHostSuffix(description, host).slice(0, 600);
-  // Ransomware impact hides in the USN journal: files renamed to a family extension, and the ransom
-  // note created. Grade those High + T1486 so they survive the most-severe-first cap that otherwise
-  // buries them under hundreds of thousands of Info change records. See ransomwareDetect.
+  // Ransomware impact (T1486) hides in the USN journal (encrypted-file renames + the ransom note):
+  // grade it High so it survives the most-severe-first cap, and collapse every "encrypted with .X"
+  // row on a host into ONE counted finding by the signal note. See ransomwareDetect.
   const ransom = ransomwareSignal(path);
-  // Mass encryption is ONE impact, not N: collapse every "file encrypted with .X" row on a host into
-  // a single counted High finding by the signal note (which names the extension / the note, not the
-  // file), so the timeline reads "encrypted with .trigona ×1240" instead of 1240 separate Highs.
   const aggKey = ransom
     ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
     : `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
@@ -1047,8 +1048,7 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
       600,
     );
     description = withHostSuffix(description, host).slice(0, 600);
-    // A ransomware sweep touches thousands of MFT records — collapse them into one counted High per
-    // host + impact type (see mapUsn) instead of flooding the timeline with a High per encrypted file.
+    // A ransomware sweep touches thousands of MFT records — collapse per host + impact type (see mapUsn).
     const aggKey = ransom
       ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
       : `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
@@ -1650,18 +1650,17 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapLnk(row, artifact, host)];
     } else {
       ms = [mapGeneric(row, artifact, host, rowSink)];
-      // A row from a DETECTION rule pack that matched no signature still lands in the generic
-      // key=value dump at Info — and Info never reaches the forensic timeline, so the detection the
-      // pack fired is invisible to synthesis. BinaryRename was one such artifact (it ships no
-      // `Detection` column, so rowVerdict() returns null and classify() falls through); it now has a
-      // mapper of its own, but the next pack with that shape should not be silently discarded while
-      // it waits for one. Floor the grade to Medium — the same "a named rule fired" baseline
-      // detectionSeverity() uses — and only ever raise it.
-      if (isDetectionArtifact(artifact)) {
+      // mapGeneric graded the RDP-lateral artifact authoritatively (remote 4648 → T1021, boot → Info);
+      // its name ends in "Detection" and its rows are bare 4648s, so the floor + flat-EID overlay below
+      // would re-raise the SUPPRESSED boot rows to Medium/T1078. Skip both for it. (#codex)
+      const rdpArt = /rdplateralmovement/i.test(artifact);
+      // A DETECTION rule pack row that matched no signature lands in the generic key=value dump at
+      // Info, invisible to synthesis; floor it to Medium ("a named rule fired"), only ever raising.
+      if (!rdpArt && isDetectionArtifact(artifact)) {
         for (const m of ms) if (m && m.severity === "Info") m.severity = "Medium";
       }
       // A FLAT Windows row (bare EventID, no wrapper) also lands here — see overlayFlatWindowsEid.
-      for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
+      if (!rdpArt) for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
     }
 
     // A 4104 script block that is generated or signed module scaffolding is detection content, not
