@@ -75,7 +75,7 @@ import {
   isDetectionToolLocation,
   isDetectionSampleHost,
 } from "./veloDetectionNoise.js";
-import { gradeYaraHit } from "./yaraGrade.js";
+import { gradeYaraHit, yaraHitAggKey } from "./yaraGrade.js";
 import {
   sigmaAggKey,
   detectionAggKey,
@@ -573,12 +573,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   else if (grade.reason === "heuristic") description += ` [heuristic rule — needs corroboration]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
-  const aggKey = grade.volatile
-    ? `vr-yara|volatile-container|${host.toLowerCase()}`
-    : `vr-yara|${ruleName.toLowerCase()}|${(path || procName).toLowerCase()}|${host.toLowerCase()}`.slice(
-        0,
-        400,
-      );
+  const aggKey = yaraHitAggKey(grade, host, ruleName, path || procName);
 
   return {
     timestamp: pickTime(row),
