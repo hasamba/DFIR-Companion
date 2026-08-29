@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import type { AssetType, AssetGraph, GraphAsset, GraphIoc, AssetGraphEdge } from "./assetGraph.js";
 import { SEVERITY_RANK, worstSeverity } from "./stateTypes.js";
 
@@ -162,6 +163,13 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
   return { assets, iocs, edges };
 }
 
+// Serializes a case's load->modify->save section on asset-overrides.json (follow-up to #682). Every
+// method here rewrites the WHOLE override document — renames, manual assets, suppressions, link
+// edits and merges all live in one object — so two analysts tidying two different corners of the
+// asset graph at the same time discard each other's work wholesale, not just the field they touched.
+// MODULE-level: the app builds this store twice (runtimeStores.ts and aiProviders.ts).
+const assetOverridesLock = new StateLock();
+
 export class AssetOverridesStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -178,20 +186,27 @@ export class AssetOverridesStore {
     }
   }
 
+  // Every mutation runs through here, so no method can forget the lock.
+  private mutate<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
+    return assetOverridesLock.runExclusive(caseId, fn);
+  }
+
   private async save(caseId: string, overrides: AssetOverrides): Promise<void> {
     await atomicWrite(this.path(caseId), JSON.stringify(overrides, null, 2));
   }
 
   // Set (or clear) a display-name override for an asset. An empty name clears the rename.
-  async rename(caseId: string, assetId: string, name: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    const trimmed = name.trim();
-    const renames = { ...ov.renames };
-    if (trimmed) renames[assetId] = trimmed;
-    else delete renames[assetId];
-    const next = { ...ov, renames };
-    await this.save(caseId, next);
-    return next;
+  rename(caseId: string, assetId: string, name: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const trimmed = name.trim();
+      const renames = { ...ov.renames };
+      if (trimmed) renames[assetId] = trimmed;
+      else delete renames[assetId];
+      const next = { ...ov, renames };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Add a manually created asset. Returns the created asset + updated overrides.
@@ -202,72 +217,85 @@ export class AssetOverridesStore {
   ): Promise<{ overrides: AssetOverrides; asset: ManualAsset }> {
     const name = input.name.trim();
     if (!name) throw new Error("name is required");
-    const ov = await this.load(caseId);
-    const asset: ManualAsset = { id: `manual:${randomUUID()}`, name, type: input.type };
-    const next = { ...ov, added: [...ov.added, asset] };
-    await this.save(caseId, next);
-    return { overrides: next, asset };
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const asset: ManualAsset = { id: `manual:${randomUUID()}`, name, type: input.type };
+      const next = { ...ov, added: [...ov.added, asset] };
+      await this.save(caseId, next);
+      return { overrides: next, asset };
+    });
   }
 
   // Remove an asset: deletes from `added` if manual (also pruning any now-orphaned rename entry
   // for it — a deleted manual asset's id can never come back, so the rename would sit dead in
   // storage forever otherwise); pushes to `removed` if auto-derived (its rename is kept — an
   // auto-derived id can reappear on a later synthesis, and the analyst's rename should still apply).
-  async removeAsset(caseId: string, assetId: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    if (assetId.startsWith("manual:")) {
-      const renames = { ...ov.renames };
-      delete renames[assetId];
-      const next = { ...ov, added: ov.added.filter((a) => a.id !== assetId), renames };
+  removeAsset(caseId: string, assetId: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      if (assetId.startsWith("manual:")) {
+        const renames = { ...ov.renames };
+        delete renames[assetId];
+        const next = { ...ov, added: ov.added.filter((a) => a.id !== assetId), renames };
+        await this.save(caseId, next);
+        return next;
+      }
+      const next = { ...ov, removed: [...new Set([...ov.removed, assetId])] };
       await this.save(caseId, next);
       return next;
-    }
-    const next = { ...ov, removed: [...new Set([...ov.removed, assetId])] };
-    await this.save(caseId, next);
-    return next;
+    });
   }
 
   // Restore a suppressed auto-derived asset (remove it from the `removed` list).
-  async restoreAsset(caseId: string, assetId: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    const next = { ...ov, removed: ov.removed.filter((id) => id !== assetId) };
-    await this.save(caseId, next);
-    return next;
+  restoreAsset(caseId: string, assetId: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const next = { ...ov, removed: ov.removed.filter((id) => id !== assetId) };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Add a manual link between an asset and an IoC. Idempotent; also un-suppresses the pair.
-  async addLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    const alreadyAdded = ov.addedLinks.some((l) => l.asset === asset && l.ioc === ioc);
-    const addedLinks = alreadyAdded ? ov.addedLinks : [...ov.addedLinks, { asset, ioc }];
-    const removedLinks = ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc));
-    const next = { ...ov, addedLinks, removedLinks };
-    await this.save(caseId, next);
-    return next;
+  addLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const alreadyAdded = ov.addedLinks.some((l) => l.asset === asset && l.ioc === ioc);
+      const addedLinks = alreadyAdded ? ov.addedLinks : [...ov.addedLinks, { asset, ioc }];
+      const removedLinks = ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc));
+      const next = { ...ov, addedLinks, removedLinks };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Suppress (or delete) a link. If it was a manual addition, removes from addedLinks;
   // otherwise adds to removedLinks so the auto-derived edge is hidden. Idempotent.
-  async removeLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    const wasManual = ov.addedLinks.some((l) => l.asset === asset && l.ioc === ioc);
-    const addedLinks = ov.addedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc));
-    const alreadyRemoved = ov.removedLinks.some((l) => l.asset === asset && l.ioc === ioc);
-    const removedLinks = wasManual || alreadyRemoved ? ov.removedLinks : [...ov.removedLinks, { asset, ioc }];
-    const next = { ...ov, addedLinks, removedLinks };
-    await this.save(caseId, next);
-    return next;
+  removeLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const wasManual = ov.addedLinks.some((l) => l.asset === asset && l.ioc === ioc);
+      const addedLinks = ov.addedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc));
+      const alreadyRemoved = ov.removedLinks.some((l) => l.asset === asset && l.ioc === ioc);
+      const removedLinks =
+        wasManual || alreadyRemoved ? ov.removedLinks : [...ov.removedLinks, { asset, ioc }];
+      const next = { ...ov, addedLinks, removedLinks };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Restore a suppressed auto-derived link (remove it from removedLinks).
-  async restoreLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    const next = {
-      ...ov,
-      removedLinks: ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc)),
-    };
-    await this.save(caseId, next);
-    return next;
+  restoreLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const next = {
+        ...ov,
+        removedLinks: ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc)),
+      };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Merge a duplicate asset onto a canonical one (#82): folds its IOC/finding/event links onto
@@ -276,20 +304,24 @@ export class AssetOverridesStore {
   // undefined, so the store refuses rather than silently corrupting it.
   async mergeAsset(caseId: string, fromId: string, intoId: string): Promise<AssetOverrides> {
     if (fromId === intoId) throw new Error("cannot merge an asset into itself");
-    const ov = await this.load(caseId);
-    if (resolveCanonical(intoId, ov.merges) === fromId) throw new Error("merge would create a cycle");
-    const next = { ...ov, merges: { ...ov.merges, [fromId]: intoId } };
-    await this.save(caseId, next);
-    return next;
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      if (resolveCanonical(intoId, ov.merges) === fromId) throw new Error("merge would create a cycle");
+      const next = { ...ov, merges: { ...ov.merges, [fromId]: intoId } };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Un-merge: remove a duplicate id from the merge map so it reappears as its own node.
-  async unmergeAsset(caseId: string, fromId: string): Promise<AssetOverrides> {
-    const ov = await this.load(caseId);
-    const merges = { ...ov.merges };
-    delete merges[fromId];
-    const next = { ...ov, merges };
-    await this.save(caseId, next);
-    return next;
+  unmergeAsset(caseId: string, fromId: string): Promise<AssetOverrides> {
+    return this.mutate(caseId, async () => {
+      const ov = await this.load(caseId);
+      const merges = { ...ov.merges };
+      delete merges[fromId];
+      const next = { ...ov, merges };
+      await this.save(caseId, next);
+      return next;
+    });
   }
 }

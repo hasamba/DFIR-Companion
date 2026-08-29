@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import { sanitizeCustomEntities } from "./anonEntities.js";
 import type { CustomEntity } from "./anonymize.js";
 
@@ -18,6 +19,24 @@ export interface AnonDiscovered {
 }
 
 const MAX_DISCOVERED = 2000;
+
+// Serializes a case's load->modify->save section on anon-discovered.json. atomicWrite stops a TORN
+// file, not a LOST one, and losing a write here is not a lost click — it is an unredacted value in
+// an exported screenshot.
+//
+// MODULE-level, and that is the whole point. This file has two writers that are not the same
+// object: the OCR pass writes through the store built in composition/aiProviders.ts, and the
+// analyst's suppress/unsuppress clicks write through the one built in routes/anonymization.ts. A
+// per-instance lock would leave the actual race completely unguarded.
+//
+// It is also the one store of its class a SOLO analyst can trip. Everywhere else this bug needs two
+// people or two tabs; here a background pass is the second writer, so one investigator on one
+// laptop is enough. The dangerous direction is losing the OCR write: the entity never enters
+// `discovered`, so it is never tokenized, and the real value ships in the redacted export.
+//
+// Keyed by case id, so a busy case never blocks another, and private to this file, so it can never
+// deadlock against the pipeline's investigation-state lock.
+const discoveredLock = new StateLock();
 
 export function emptyDiscovered(): AnonDiscovered {
   return { discovered: [], suppressed: [] };
@@ -88,26 +107,34 @@ export class DiscoveredEntitiesStore {
     }
   }
 
-  async save(caseId: string, data: AnonDiscovered): Promise<void> {
+  // PRIVATE, so the lock above cannot be walked around: a caller holding this store could otherwise
+  // load, mutate and save outside the critical section and reintroduce the exact race.
+  private async save(caseId: string, data: AnonDiscovered): Promise<void> {
     await atomicWrite(this.path(caseId), JSON.stringify(sanitizeDiscovered(data), null, 2));
   }
 
-  async addDiscovered(caseId: string, entities: CustomEntity[]): Promise<AnonDiscovered> {
+  addDiscovered(caseId: string, entities: CustomEntity[]): Promise<AnonDiscovered> {
     if (entities.length === 0) return this.load(caseId);
-    const next = mergeDiscovered(await this.load(caseId), entities);
-    await this.save(caseId, next);
-    return next;
+    return discoveredLock.runExclusive(caseId, async () => {
+      const next = mergeDiscovered(await this.load(caseId), entities);
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
-  async suppress(caseId: string, value: string): Promise<AnonDiscovered> {
-    const next = suppressValue(await this.load(caseId), value);
-    await this.save(caseId, next);
-    return next;
+  suppress(caseId: string, value: string): Promise<AnonDiscovered> {
+    return discoveredLock.runExclusive(caseId, async () => {
+      const next = suppressValue(await this.load(caseId), value);
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
-  async unsuppress(caseId: string, value: string): Promise<AnonDiscovered> {
-    const next = unsuppressValue(await this.load(caseId), value);
-    await this.save(caseId, next);
-    return next;
+  unsuppress(caseId: string, value: string): Promise<AnonDiscovered> {
+    return discoveredLock.runExclusive(caseId, async () => {
+      const next = unsuppressValue(await this.load(caseId), value);
+      await this.save(caseId, next);
+      return next;
+    });
   }
 }

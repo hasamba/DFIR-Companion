@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../storage/caseStore.js";
 import { atomicWrite } from "../../storage/atomicWrite.js";
+import { StateLock } from "../../analysis/stateLock.js";
 
 // Per-case memory of the LAST ClickUp export: the target list and the map from each playbook task
 // id → the ClickUp task id we created for it. On re-export this lets us UPDATE the existing ClickUp
@@ -21,6 +22,13 @@ export type ClickUpExport = z.infer<typeof clickupExportSchema>;
 
 const EMPTY: ClickUpExport = { listId: "", taskIds: {}, lastTaskUrl: "", lastExportedAt: "" };
 
+// Serializes a case's load->merge->save section on the export pointer file (follow-up to #682). The
+// ticket references live in one map, so two exports of the same case running together drop one
+// side's refs — and because a missing ref is how this store says "no ticket exists yet", the NEXT
+// export opens a DUPLICATE ticket in somebody else's queue. That is the rare one in this class with
+// a consequence outside the tool.
+const clickupExportLock = new StateLock();
+
 export class ClickUpExportStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -38,10 +46,16 @@ export class ClickUpExportStore {
   }
 
   // Persist the latest export pointer (merged over whatever was there before).
-  async record(caseId: string, patch: Partial<ClickUpExport>): Promise<ClickUpExport> {
-    const prev = await this.load(caseId);
-    const next: ClickUpExport = { ...prev, ...patch, taskIds: { ...prev.taskIds, ...(patch.taskIds ?? {}) } };
-    await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-    return next;
+  record(caseId: string, patch: Partial<ClickUpExport>): Promise<ClickUpExport> {
+    return clickupExportLock.runExclusive(caseId, async () => {
+      const prev = await this.load(caseId);
+      const next: ClickUpExport = {
+        ...prev,
+        ...patch,
+        taskIds: { ...prev.taskIds, ...(patch.taskIds ?? {}) },
+      };
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return next;
+    });
   }
 }

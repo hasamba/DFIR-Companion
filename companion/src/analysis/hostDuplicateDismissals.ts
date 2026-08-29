@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 import { canonicalHostName } from "./hostAlias.js";
 
 // Pairs the analyst has judged to be genuinely DIFFERENT machines, so the merge gate stops asking
@@ -31,6 +32,13 @@ export function dismissalKey(canonical: string, other: string): string {
   return `${canonicalHostName(canonical)}|${canonicalHostName(other)}`;
 }
 
+// Serializes a case's load->modify->save section on host-duplicate-dismissals.json (follow-up to
+// #682). Losing one of these re-arms the merge gate on a pair an analyst already judged to be two
+// genuinely different machines, and the gate blocks synthesis — so the lost write does not merely
+// forget a decision, it stalls the case until somebody makes the same call again. MODULE-level: the
+// app builds this store twice (runtimeStores.ts and aiProviders.ts).
+const hostDuplicateLock = new StateLock();
+
 export class HostDuplicateDismissalStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -49,17 +57,19 @@ export class HostDuplicateDismissalStore {
 
   // Idempotent: re-dismissing a pair keeps the FIRST decision, so the recorded timestamp and
   // analyst stay the ones who actually made the call.
-  async append(caseId: string, d: HostDuplicateDismissal): Promise<HostDuplicateDismissal[]> {
-    const existing = await this.load(caseId);
-    const normalized: HostDuplicateDismissal = {
-      ...d,
-      canonical: canonicalHostName(d.canonical),
-      other: canonicalHostName(d.other),
-    };
-    const key = dismissalKey(normalized.canonical, normalized.other);
-    if (existing.some((e) => dismissalKey(e.canonical, e.other) === key)) return existing;
-    const next = [...existing, normalized];
-    await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-    return next;
+  append(caseId: string, d: HostDuplicateDismissal): Promise<HostDuplicateDismissal[]> {
+    return hostDuplicateLock.runExclusive(caseId, async () => {
+      const existing = await this.load(caseId);
+      const normalized: HostDuplicateDismissal = {
+        ...d,
+        canonical: canonicalHostName(d.canonical),
+        other: canonicalHostName(d.other),
+      };
+      const key = dismissalKey(normalized.canonical, normalized.other);
+      if (existing.some((e) => dismissalKey(e.canonical, e.other) === key)) return existing;
+      const next = [...existing, normalized];
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return next;
+    });
   }
 }
