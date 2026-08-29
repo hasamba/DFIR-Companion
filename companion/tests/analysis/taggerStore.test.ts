@@ -192,3 +192,76 @@ describe("TaggerStore edits (add/remove/reset)", () => {
     await expect(store.resetToDefault()).rejects.toThrow(/operator override/i);
   });
 });
+
+// The rules file is GLOBAL and shared by every analyst on a team-mode deployment. Its methods
+// load-modify-write the whole YAML document, so two edits arriving together keep only one — a rule
+// the analyst watched get added is simply absent, and (per tagger semantics) nothing re-grades the
+// evidence it was written for. The store used to say the missing lock was a deliberate choice for a
+// single-analyst tool; team mode is what changed that.
+describe("TaggerStore concurrency (follow-up to #682)", () => {
+  let userPath: string;
+  let defaultPath: string;
+  let dir: string;
+
+  const rule = (id: string) =>
+    `${id}:\n  any:\n    - { field: message, contains: ['${id}'] }\n  tags: ['${id}']\n`;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "dfir-tagger-race-"));
+    userPath = join(dir, "user-tags.yaml");
+    defaultPath = join(dir, "default-tags.yaml");
+    await writeFile(defaultPath, VALID, "utf8");
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("keeps every rule when many are added at once", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    await Promise.all(Array.from({ length: 12 }, (_, i) => store.addRuleYaml(rule(`r${i}`))));
+    const ids = (await store.load()).rules.map((r) => r.id);
+    // The bundled default's own rule rides along, so 12 added + 1 default.
+    expect(ids).toHaveLength(13);
+    expect(new Set(ids).size).toBe(13);
+  });
+
+  it("does not lose a concurrent add while another rule is removed", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    await store.addRuleYaml(rule("doomed"));
+    await Promise.all([store.removeRule("doomed"), store.addRuleYaml(rule("kept"))]);
+    const ids = (await store.load()).rules.map((r) => r.id);
+    expect(ids).toContain("kept");
+    expect(ids).not.toContain("doomed");
+  });
+
+  // A whole-document PUT from the rules editor must not land inside another edit's critical
+  // section, so save() takes the same lock. save() is called from the route directly, and the
+  // three structural edits call an unlocked persist underneath — StateLock is not reentrant, so
+  // nesting the two would deadlock rather than serialize.
+  it("serializes a whole-document save against a structural add", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    await Promise.all([store.save(rule("from-editor")), store.addRuleYaml(rule("from-add"))]);
+    const ids = (await store.load()).rules.map((r) => r.id);
+    // Whichever order wins, the file must be one coherent document — never a torn mix.
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).toContain("from-add");
+  });
+
+  it("still de-collides ids raced against each other", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const results = await Promise.all(Array.from({ length: 5 }, () => store.addRuleYaml(rule("dupe"))));
+    // Every add gets its own id; none silently overwrites another.
+    expect(new Set(results.map((r) => r.id)).size).toBe(5);
+    expect((await store.load()).rules.filter((r) => r.id.startsWith("dupe"))).toHaveLength(5);
+  });
+
+  it("does not let a reset race an add into a half-reset file", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    await store.addRuleYaml(rule("before-reset"));
+    await Promise.all([store.resetToDefault(), store.addRuleYaml(rule("after-reset"))]);
+    // Either ordering is legitimate; the file must parse and reflect one of them cleanly.
+    const ids = (await store.load()).rules.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case unlock tokens carry a payload version** — a token signed under an older payload shape now stops verifying instead of being read under today's rules. Unlock cookies issued before this release stop working, so each password-protected case asks for its password once more. (closes #671)
 
 ### Fixed
+- **Tagger rule edits no longer overwrite each other** — the shared rules file is now serialized like every other side store. (follow-up to #682)
 - **A screenshot redaction found by OCR is no longer lost when the analyst clicks at the same moment** — the value stayed unmasked in redacted exports. The one store of its class a solo analyst could trip. (follow-up to #682)
 - **Analyst decisions no longer overwrite each other in team mode** — finding triage and assignment, asset-graph renames/merges/link edits, IOC merges, dismissed lateral-movement chains, host near-duplicate dismissals and learned dismissal patterns. (follow-up to #682)
 - **A bulk dismissal writes the learned-pattern ledger once instead of once per finding.** (follow-up to #682)
