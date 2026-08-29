@@ -459,6 +459,7 @@
     "updateCheck.ts": "analysis/case",
     "updateCheckRun.ts": "analysis/case",
     "updateCheckStore.ts": "analysis/case",
+    "veloAggKeys.ts": "analysis/ingest",
     "veloDetectionNoise.ts": "analysis/ingest",
     "veloHuntStore.ts": "analysis/case",
     "veloMessageFields.ts": "analysis/ingest",

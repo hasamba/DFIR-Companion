@@ -16,6 +16,7 @@ import {
   type MappedEvent,
   type SiemIoc,
 } from "./siemImport.js";
+import { persistenceAggKey } from "./veloAggKeys.js";
 import { isStagedCommandValue } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
@@ -176,10 +177,7 @@ export function mapPersistenceSniper(
   if (lolbinFlag) description += ` [lolbin]`;
   description = withHostSuffix(description, host).slice(0, 600);
 
-  const aggKey =
-    `vr-persist|${technique.toLowerCase()}|${(value || path).toLowerCase()}|${host.toLowerCase()}`
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  const aggKey = persistenceAggKey(host, technique, value || path);
 
   return {
     timestamp,
