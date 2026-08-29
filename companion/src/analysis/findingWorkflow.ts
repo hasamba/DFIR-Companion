@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 
 // Analyst assignment + workflow status for findings (#87). A finding carries an AI-set tri-state
 // `status` (open/confirmed/dismissed, `stateTypes.ts`) but no HUMAN owner and no analyst-editable
@@ -42,6 +43,13 @@ export interface FindingWorkflowPatch {
   updatedBy?: string;
 }
 
+// Serializes a case's load->modify->save section on finding-workflow.json (follow-up to #682). The
+// whole file is rewritten on every patch, so a lead assigning one finding while an analyst sets the
+// status of another discards whichever save landed first — and the triage board then shows a
+// finding as unowned that somebody has already taken. Two routes reach this (routes/findings.ts and
+// routes/cockpit.ts), which is exactly the traffic that collides. Keyed by case id.
+const workflowLock = new StateLock();
+
 export class FindingWorkflowStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -73,7 +81,14 @@ export class FindingWorkflowStore {
   ): Promise<FindingWorkflow | null> {
     const id = String(findingId ?? "").trim();
     if (!id) throw new Error("findingId is required");
+    return workflowLock.runExclusive(caseId, () => this.applyPatch(caseId, id, patch));
+  }
 
+  private async applyPatch(
+    caseId: string,
+    id: string,
+    patch: FindingWorkflowPatch,
+  ): Promise<FindingWorkflow | null> {
     const records = await this.load(caseId);
     const existing = records.find((r) => r.findingId === id);
 

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **A screenshot redaction found by OCR is no longer lost when the analyst clicks at the same moment** — the value stayed unmasked in redacted exports. The one store of its class a solo analyst could trip. (follow-up to #682)
+- **Analyst decisions no longer overwrite each other in team mode** — finding triage and assignment, asset-graph renames/merges/link edits, IOC merges, dismissed lateral-movement chains, host near-duplicate dismissals and learned dismissal patterns. (follow-up to #682)
+- **A bulk dismissal writes the learned-pattern ledger once instead of once per finding.** (follow-up to #682)
 - **Concurrent edits to dwell windows, playbook tasks, the collection plan, the IOC whitelist, notification channels and report versions no longer overwrite each other** in team mode. (closes #682)
 - **Switching a webhook channel to another provider requires the new provider's URL** — a blank field no longer reuses the old service's endpoint. (closes #683)
 - **`"false"` disables a notification channel or event toggle** instead of enabling it; anything that is not a boolean or `"true"`/`"false"` is now a 400. (closes #684)
