@@ -3561,3 +3561,21 @@ describe("parseVelociraptorJson — Amcache masquerade", () => {
     expect(e.severity).toBe("Medium");
   });
 });
+
+// The per-import event cap truncates a huge MFT/USN artifact; the parse result must report how many
+// rows were omitted (not just how many were kept) so the import note can make the loss visible.
+describe("parseVelociraptorJson — truncation is counted, not silent", () => {
+  it("reports dropped rows when the event cap truncates the import", () => {
+    // 50 distinct Info telemetry rows, capped to 10 → 40 omitted.
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      _Source: "Windows.Forensics.Usn",
+      OSPath: `C:\\Users\\v\\Documents\\file${i}.txt`,
+      Reason: "DATA_EXTEND|CLOSE",
+      Usn: i,
+    }));
+    const r = parseVelociraptorJson(JSON.stringify(rows), { maxEvents: 10, aggregate: false });
+    expect(r.kept).toBe(10);
+    expect(r.total).toBe(50);
+    expect(r.dropped).toBe(40);
+  });
+});
