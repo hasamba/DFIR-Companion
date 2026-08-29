@@ -813,13 +813,13 @@ function investigation(
   } else {
     // Corroboration: tools that observed each indicator (derived from the events' sources).
     const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
-    // Composite risk tier per indicator (#63) so the table is actionable at a glance.
-    const iocRisk = scoreIocsFromState(state);
+    const iocRisk = scoreIocsFromState(state); // composite risk (#63); role splits indicator vs observation
+    const indicators = state.iocs.filter((i) => iocRisk[i.id]?.role !== "observation");
     lines.push(
       "| ID | Type | Value | First seen | Sources | Risk |",
       "| --- | --- | --- | --- | --- | --- |",
     );
-    for (const i of state.iocs) {
+    for (const i of indicators) {
       const src = iocSrc[i.id];
       const srcCell =
         src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
@@ -829,6 +829,8 @@ function investigation(
         `| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`,
       );
     }
+    const obs = state.iocs.length - indicators.length;
+    if (obs) lines.push("", `_Plus ${obs} observation(s) with no threat signal (searchable in the case)._`);
     lines.push("");
   }
 

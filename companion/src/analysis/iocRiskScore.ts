@@ -175,14 +175,16 @@ export function scoreIocs(
 }
 
 /**
- * Is this value a THREAT INDICATOR or just an OBSERVATION? An indicator earned a signal; a bare file
- * path or hash that appeared in the evidence with no reputation verdict, no Medium+ event, and no
- * corroboration is an observation. The risk tier already folds severity, corroboration, intel and KEV
- * together, so tier ≥ medium is the behavioural gate; a reputation HIT on an otherwise-quiet value
- * still counts (a low-risk hash MalwareBazaar flagged is worth surfacing).
+ * Is this value a THREAT INDICATOR or just an OBSERVATION? An indicator either earned a signal — a
+ * Medium+ risk tier (the tier already folds severity, corroboration, intel and KEV) or a reputation
+ * verdict — or it is a NETWORK indicator (ip / domain / url), which an analyst pivots on immediately
+ * and which enrichment reaches asynchronously, so it is surfaced even while quiet. An observation is
+ * the bulk that is neither: a scraped file path / hash / process an import records by the thousand
+ * with no signal at all. Both stay searchable; only the count / panel / export treat them differently.
  */
 export function iocRole(ioc: IOC, tier: IocRiskTier): IocRole {
   if (RISK_TIER_RANK[tier] >= RISK_TIER_RANK.medium) return "indicator";
+  if (ioc.type === "ip" || ioc.type === "domain" || ioc.type === "url") return "indicator";
   const flagged = (ioc.enrichments ?? []).some(
     (e) => e.verdict === "malicious" || e.verdict === "suspicious",
   );

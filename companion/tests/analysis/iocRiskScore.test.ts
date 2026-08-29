@@ -156,6 +156,12 @@ describe("iocRole — indicator vs observation (the 5,000-file-path problem)", (
     );
   });
 
+  it("a network value (ip / domain / url) is an indicator even unenriched — a pivot point", () => {
+    expect(iocRole(mk({ id: "n1", type: "ip", value: "1.2.3.4" }), "low")).toBe("indicator");
+    expect(iocRole(mk({ id: "n2", type: "domain", value: "c2.example" }), "low")).toBe("indicator");
+    expect(iocRole(mk({ id: "n3", type: "url", value: "http://c2.example/x" }), "low")).toBe("indicator");
+  });
+
   it("a hash a reputation source flagged is an indicator even at low risk", () => {
     const ioc = mk({
       id: "h1",

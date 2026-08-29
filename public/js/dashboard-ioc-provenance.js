@@ -120,6 +120,12 @@
     const r = iocRisk[iocId];
     return r && r.score in RISK_RANK ? RISK_RANK[r.score] : -1; // -1 = not yet scored (excluded by a tier filter)
   }
+  // "indicator" (earned a signal, or a network pivot) vs "observation" (a scraped file/hash with no
+  // signal), from the server's IOC-risk scoring. null until /ioc-risk has loaded for the case.
+  function iocRoleOf(iocId) {
+    const r = iocRisk[iocId];
+    return r && r.role ? r.role : null;
+  }
   // Colored risk badge with the factors as a tooltip. Benign/low recede; medium+ signal.
   function iocRiskBadge(iocId) {
     const r = iocRisk[iocId];
@@ -474,6 +480,7 @@
   window.iocProvenanceOf = iocProvenanceOf;
   window.iocProvenanceBadge = iocProvenanceBadge;
   window.iocRiskRankOf = iocRiskRankOf;
+  window.iocRoleOf = iocRoleOf;
   window.iocRiskBadge = iocRiskBadge;
   window.iocCorroBadge = iocCorroBadge;
   window.iocChainChip = iocChainChip;

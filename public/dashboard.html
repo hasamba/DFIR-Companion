@@ -4441,7 +4441,7 @@
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       const iocTypeHidden = typeof renderIocTypeFilter === "function" && renderIocTypeFilter(iocs);   // effective count, so the chip below cannot claim a filter that is not there
       typeof renderIocExcludeRules === "function" && renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
-      const flaggedTotal = iocs.filter(iocFlagged).length;
+      const flaggedTotal = iocs.filter(iocFlagged).length, observationTotal = typeof iocRoleOf === "function" ? iocs.filter(i => iocRoleOf(i.id) === "observation").length : 0; // observationTotal = scraped file/hash, no signal
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (DfirTimelineView.search()) visible = visible.filter(i => _iocMatchesSearch(i, DfirTimelineView.search()));
       if (DfirTimelineView.excludeTerms().length) visible = visible.filter(i => !_iocMatchesExclude(i, DfirTimelineView.excludeTerms()));
@@ -4484,7 +4484,7 @@
       if (cnt) {
         const scope = visible.length === iocs.length ? `${iocs.length} IOC${iocs.length !== 1 ? "s" : ""}` : `${visible.length} of ${iocs.length} IOCs`;
         const pageSuffix = (iocPageSize > 0 && totalFiltered > iocPageSize) ? ` — page ${iocPage + 1} of ${iocTotalPages}` : "";
-        cnt.textContent = ` (${scope}${flaggedTotal ? ` · ${flaggedTotal} flagged` : ""}${pageSuffix})`;
+        cnt.textContent = ` (${scope}${flaggedTotal ? ` · ${flaggedTotal} flagged` : ""}${observationTotal ? ` · ${observationTotal} observation${observationTotal !== 1 ? "s" : ""}` : ""}${pageSuffix})`;
       }
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
