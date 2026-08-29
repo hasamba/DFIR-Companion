@@ -117,6 +117,13 @@ export class TaggerStore {
    * "never a bare writeFile" invariant). Throws BEFORE writing if the YAML or ruleset is invalid,
    * so a bad edit never overwrites a working file. Returns the compiled ruleset.
    */
+  // NOTE the limit of this lock. It makes a whole-document PUT atomic with respect to the structural
+  // edits, so neither can land inside the other's critical section. It does NOT make the PUT
+  // conflict-aware: a full-document submission REPLACES the file, so an editor save that goes second
+  // still discards a rule added while the analyst was typing. That is what last-write-wins means and
+  // is unchanged from before; closing it needs the editor to send a revision the server can reject as
+  // stale, which is an API and UI change rather than a locking one. Pinned by
+  // "still lets a whole-document save replace an edit that landed first" in taggerStore.test.ts.
   async save(yamlText: string): Promise<CompiledRuleset> {
     return rulesLock.runExclusive(this.userRulesPath, () => this.persist(yamlText));
   }

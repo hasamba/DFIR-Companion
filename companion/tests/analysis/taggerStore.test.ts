@@ -238,14 +238,27 @@ describe("TaggerStore concurrency (follow-up to #682)", () => {
   // A whole-document PUT from the rules editor must not land inside another edit's critical
   // section, so save() takes the same lock. save() is called from the route directly, and the
   // three structural edits call an unlocked persist underneath — StateLock is not reentrant, so
-  // nesting the two would deadlock rather than serialize.
-  it("serializes a whole-document save against a structural add", async () => {
+  // nesting the two would deadlock rather than serialize. The lock is FIFO by call order, so both
+  // orderings below are deterministic rather than racy.
+  it("lets a structural add merge onto a save that went first", async () => {
     const store = new TaggerStore(userPath, [defaultPath]);
     await Promise.all([store.save(rule("from-editor")), store.addRuleYaml(rule("from-add"))]);
     const ids = (await store.load()).rules.map((r) => r.id);
-    // Whichever order wins, the file must be one coherent document — never a torn mix.
-    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).toContain("from-editor");
     expect(ids).toContain("from-add");
+  });
+
+  // The other ordering, asserted rather than avoided. A whole-document PUT REPLACES the file, so an
+  // editor submission that went second discards a structural edit that landed while the analyst was
+  // typing. The lock does not change that and was never going to: it makes the two writes atomic
+  // with respect to each other, and last-write-wins is what a full-document PUT means. Closing this
+  // needs the editor to submit a revision the server can reject as stale, which is an API and UI
+  // change, not a locking one. Pinned here so the limitation is visible instead of implied.
+  it("still lets a whole-document save replace an edit that landed first (last-write-wins)", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    await Promise.all([store.addRuleYaml(rule("from-add")), store.save(rule("from-editor"))]);
+    const ids = (await store.load()).rules.map((r) => r.id);
+    expect(ids).toEqual(["from-editor"]);
   });
 
   it("still de-collides ids raced against each other", async () => {
