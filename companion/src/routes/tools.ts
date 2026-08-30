@@ -2,7 +2,12 @@ import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
 import { writeFile, rm, mkdir, mkdtemp } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
-import { TOOL_DEFS, type ToolId } from "../integrations/tools/toolConfig.js";
+import {
+  TOOL_DEFS,
+  uploadExtensionAccepted,
+  uploadExtensionOf,
+  type ToolId,
+} from "../integrations/tools/toolConfig.js";
 import { updateToolRules } from "../integrations/tools/runToolImport.js";
 import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { logActivity } from "../analysis/activityLog.js";
@@ -35,6 +40,13 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // tool like SO-CRATES must work on a machine with no local forensic binaries installed.
   const transportOf = (toolId: string): "spawn" | "http" =>
     toolId in TOOL_DEFS ? TOOL_DEFS[toolId as ToolId].transport : "spawn";
+
+  // The raw extensions this tool claims. Built-ins declare them statically; a custom tool carries the
+  // analyst's list. Empty for a tool that claims none (YARA) — see uploadExtensionAccepted.
+  const extensionsOf = (toolId: string): string[] =>
+    toolId in TOOL_DEFS
+      ? TOOL_DEFS[toolId as ToolId].extensions
+      : (ctx.customTools().find((t) => t.id === toolId)?.extensions ?? []);
 
   // ── External forensic tools (#211) ────────────────────────────────────────────────────────────
   // Per-tool configured/auto-run status for the Settings → Tools tab (no secret values). Derived LIVE
@@ -159,6 +171,25 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         return res.status(400).json({ ok: false, error: (err as Error).message });
       }
     }
+    // Refuse a file this parser does not claim, BEFORE anything touches disk (#673). These extensions
+    // already decide which tools the Import dialog offers for a file (dashboard-values.js
+    // `toolsForExt`), so until now the server was trusting a rule only the client enforced — a direct
+    // API caller could hand a .txt to Hayabusa and get a parser crash instead of an answer. Refusing
+    // first also means no evidence is preserved for a run that was never going to work.
+    //
+    // SPAWN ONLY, deliberately: the http branch above has already returned. SO-CRATES claims a long
+    // list but exists to YARA-scan whatever it is given, including the extensionless, hash-named
+    // samples its own toolConfig comment calls out — an extension gate there would reject its job.
+    const declared = extensionsOf(toolId);
+    if (!uploadExtensionAccepted(declared, filename)) {
+      const got = uploadExtensionOf(filename) || "no extension";
+      return res.status(400).json({
+        error:
+          `${toolId} does not accept "${basename(filename)}" (${got}) — it runs on ${declared.join(", ")}. ` +
+          `Choose a tool that claims this file type, or import the file directly.`,
+      });
+    }
+
     // Stage into a FRESH per-upload dir under the file's ORIGINAL basename (no collisions, so no need to
     // mangle the name) — folder-root tools (Velociraptor --ROOT) detect the EVTX channel from the filename.
     const toolWork = join(store.caseDir(caseId), ".toolwork");

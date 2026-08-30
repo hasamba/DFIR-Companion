@@ -58,6 +58,17 @@ function veloTimeScopeIncomplete(form) {
   return form.querySelector(".velo-timescope").value === "custom" && !form.querySelector(".velo-ts-start").value;
 }
 
+// The extension of a picked file, matching the server's `extname` exactly (see
+// integrations/tools/toolConfig.js `uploadExtensionOf`). "" when the name has no suffix: a bare
+// `evtx` is a file someone named after a format, and `.evtx` is a stemless dotfile — neither is an
+// EVTX file. The old `"." + name.split(".").pop()` read both as `.evtx` and offered Hayabusa for a
+// file the server then refused with a 400 (#673).
+function uploadExtOf(name) {
+  const s = String(name || "");
+  const dot = s.lastIndexOf(".");
+  return dot > 0 ? s.slice(dot).toLowerCase() : "";
+}
+
 // Resolve which CONFIGURED tool handles a file extension (server preference order), from /tools/status.
 function toolForExt(ext, status) {
   const t = (status && status.tools || []).find((x) => x.configured && (x.extensions || []).includes(ext));
@@ -216,6 +227,7 @@ window.DfirValues = {
   _workflowInitials,
   pbLocalStats,
   ticketLabel,
+  uploadExtOf,
   toolForExt,
   suggestToolForExt,
   toolsForExt,

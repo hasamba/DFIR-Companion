@@ -46,7 +46,7 @@
       // text import path. #211
       const rawExtSet = await fetchRawToolExts();
       const isRawTool = (f) =>
-        rawExtSet.has("." + (f.name.split(".").pop() || "").toLowerCase());
+        rawExtSet.has(uploadExtOf(f.name));
       const images = files.filter(isImage);
       const rawTool = files.filter((f) => !isImage(f) && isRawTool(f));
       const data = files.filter((f) => !isImage(f) && !isRawTool(f));

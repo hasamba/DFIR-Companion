@@ -180,6 +180,7 @@ export interface ValuesApi {
   ticketLabel(target: string | undefined): string;
   veloTimeScopeBody(form: ElementLike): { preset?: string; start?: string; end?: string } | undefined;
   veloTimeScopeIncomplete(form: ElementLike): boolean;
+  uploadExtOf(name: string): string;
   toolForExt(ext: string, status: unknown): string | null;
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
