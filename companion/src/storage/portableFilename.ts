@@ -44,14 +44,18 @@ export function portableZipSegment(segment: string): string {
 }
 
 /**
- * Rewrite a whole archive entry path, segment by segment.
+ * Rewrite a whole archive entry path, segment by segment. Empty segments are dropped so a doubled
+ * slash does not invent a directory.
  *
- * Backslashes fold to forward slashes first — an archive entry has exactly one path syntax — and
- * empty segments are dropped so a doubled slash does not invent a directory.
+ * A backslash is NOT treated as a separator. Every caller walks the case directory joining with
+ * "/" on every platform, so a backslash arriving here is part of a FILENAME — a file may legally be
+ * called "back\slash.bin" on Linux — and folding it would split one file into a directory and a
+ * child that the case never had. It is content, so portableZipSegment substitutes it like any other
+ * character Windows refuses, which also keeps this function's one-substitution-per-character
+ * promise (#675).
  */
 export function portableZipEntryPath(path: string): string {
   return path
-    .replace(/\\/g, "/")
     .split("/")
     .filter((seg) => seg !== "")
     .map(portableZipSegment)

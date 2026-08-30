@@ -202,6 +202,71 @@ describe("buildExportManifest", () => {
   });
 });
 
+describe("assembleRedactedEntries — screenshot name collisions (#675)", () => {
+  function shotEntries(names: string[]) {
+    const entries = assembleRedactedEntries({
+      contents: CONTENTS,
+      screenshots: names.map((name, i) => ({ name, data: Buffer.from([i + 1]) })),
+      notes: "NOTES",
+      options: DEFAULT_REDACTED_EXPORT_OPTIONS,
+      manifest: MANIFEST_META,
+    });
+    const manifest = JSON.parse(
+      entries.find((e) => e.path === "export-manifest.json")!.data.toString("utf8"),
+    ) as { files: Array<{ path: string; originalName?: string }> };
+    return { entries, manifest, shots: entries.filter((e) => e.path.startsWith("screenshots/")) };
+  }
+
+  // createZip accepts duplicate paths, so a collision here is silent: the extractor keeps whichever
+  // entry it unpacks last and an image the analyst chose to share is gone, with the manifest
+  // listing one name twice under two different hashes.
+  it("numbers a screenshot whose sanitized name another screenshot already took", () => {
+    const { shots } = shotEntries(["host:2026.png", "host_2026.png"]);
+    expect(shots.map((e) => e.path)).toEqual(["screenshots/host_2026.png", "screenshots/host_2026 (2).png"]);
+    // Both images survive, each with its own bytes — the point of numbering rather than colliding.
+    expect(shots.map((e) => e.data[0])).toEqual([1, 2]);
+  });
+
+  it("numbers names that differ only in case, which are one file on Windows", () => {
+    const { shots } = shotEntries(["Shot.png", "shot.png"]);
+    expect(shots.map((e) => e.path)).toEqual(["screenshots/Shot.png", "screenshots/shot (2).png"]);
+  });
+
+  it("keeps numbering past a second collision", () => {
+    const { shots } = shotEntries(["a:b.png", "a_b.png", "a|b.png"]);
+    expect(shots.map((e) => e.path)).toEqual([
+      "screenshots/a_b.png",
+      "screenshots/a_b (2).png",
+      "screenshots/a_b (3).png",
+    ]);
+  });
+
+  it("records the original name of every renamed screenshot, and no others", () => {
+    const { manifest } = shotEntries(["host:2026.png", "host_2026.png"]);
+    const renamed = manifest.files.filter((f) => f.originalName !== undefined);
+    expect(renamed).toEqual([
+      {
+        path: "screenshots/host_2026.png",
+        sha256: expect.any(String),
+        bytes: 1,
+        originalName: "host:2026.png",
+      },
+      {
+        path: "screenshots/host_2026 (2).png",
+        sha256: expect.any(String),
+        bytes: 1,
+        originalName: "host_2026.png",
+      },
+    ]);
+  });
+
+  it("leaves ordinary screenshot names, and the manifest, untouched", () => {
+    const { shots, manifest } = shotEntries(["shot-001.png", "shot-002.png"]);
+    expect(shots.map((e) => e.path)).toEqual(["screenshots/shot-001.png", "screenshots/shot-002.png"]);
+    expect(manifest.files.every((f) => f.originalName === undefined)).toBe(true);
+  });
+});
+
 describe("safeArchiveName", () => {
   it("strips directory components and traversal", () => {
     expect(safeArchiveName("../../etc/passwd")).toBe("passwd");
@@ -209,6 +274,17 @@ describe("safeArchiveName", () => {
     expect(safeArchiveName("..\\..\\evil.exe")).toBe("evil.exe");
     expect(safeArchiveName("shot-001.png")).toBe("shot-001.png");
     expect(safeArchiveName("")).toBe("file");
+  });
+
+  // This package is built to be shared, so it is opened on whatever machine the recipient has
+  // (#675). A screenshot named "host:2026.png" is an ordinary file on Linux and, extracted on
+  // Windows, an NTFS alternate data stream — the image disappears with no error anywhere.
+  it("rewrites names the recipient's platform cannot create", () => {
+    expect(safeArchiveName("host:2026.png")).toBe("host_2026.png");
+    expect(safeArchiveName("who?.png")).toBe("who_.png");
+    expect(safeArchiveName("NUL.png")).toBe("_NUL.png");
+    // Padded, not trimmed, so "shot." stays distinct from a sibling actually named "shot".
+    expect(safeArchiveName("shot.")).toBe("shot_");
   });
 });
 

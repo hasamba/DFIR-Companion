@@ -21,6 +21,10 @@ describe("portableZipSegment", () => {
     expect(portableZipSegment("notes")).toBe("notes");
   });
 
+  it("never returns an empty segment, which names no file", () => {
+    for (const input of ["", ":", "?"]) expect(portableZipSegment(input).length).toBeGreaterThan(0);
+  });
+
   it("escapes a reserved device name, with or without an extension", () => {
     expect(portableZipSegment("NUL")).toBe("_NUL");
     expect(portableZipSegment("con.txt")).toBe("_con.txt");
@@ -34,9 +38,35 @@ describe("portableZipEntryPath", () => {
     expect(portableZipEntryPath("drop/_processed/host:C.evtx")).toBe("drop/_processed/host_C.evtx");
   });
 
-  it("folds backslashes to forward slashes and drops empty segments", () => {
-    expect(portableZipEntryPath("state\\db\\case.sqlite")).toBe("state/db/case.sqlite");
+  // This asserted the opposite when it landed (#732): a backslash folded to a separator. Every
+  // caller walks the case directory joining with "/" on EVERY platform, so a backslash arriving
+  // here is part of a filename — "back\slash.bin" is a legal file on Linux — and folding it split
+  // one file into a directory and a child the case never had. caseExportArchive had the same fold
+  // in its READ path, where it was worse still: the read looked inside a directory that does not
+  // exist and the export died claiming the file had vanished mid-package (#675).
+  it("treats a backslash as filename content, not a separator", () => {
+    expect(portableZipEntryPath("drop/back\\slash.bin")).toBe("drop/back_slash.bin");
+    expect(portableZipEntryPath("state\\db.sqlite")).toBe("state_db.sqlite");
+  });
+
+  it("drops empty segments so a doubled slash does not invent a directory", () => {
     expect(portableZipEntryPath("state//db/case.sqlite")).toBe("state/db/case.sqlite");
+  });
+
+  it("leaves the paths a real export produces untouched", () => {
+    for (const path of [
+      "case.json",
+      "state/investigation.sqlite",
+      "metadata/captures.jsonl",
+      "screenshots/shot-001.webp",
+      "archive-manifest.json",
+    ]) {
+      expect(portableZipEntryPath(path)).toBe(path);
+    }
+  });
+
+  it("rewrites a hostile DIRECTORY name too, not only the filename", () => {
+    expect(portableZipEntryPath("host:1/con/notes.")).toBe("host_1/_con/notes_");
   });
 
   it("neutralizes a traversal segment", () => {
