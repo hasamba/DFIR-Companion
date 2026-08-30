@@ -47,6 +47,39 @@ export interface ToolRunProvenance {
   ruleset: RulesetIdentity | null;
 }
 
+/**
+ * Per-import-job memo for the two derivations every run repeats identically (#721).
+ *
+ * hashRuleset walks and SHA-256s the entire rules tree, and probeToolVersion spawns the binary —
+ * both on EVERY runToolAgainstFile call. A folder import runs the tool once per evidence file, and a
+ * real Velociraptor collection is 20-60 EVTX files, so one import re-derived the same identity 20-60
+ * times over a rules directory that is a git checkout of ~10k Sigma files.
+ *
+ * Scoped to ONE import job, deliberately never global. The ruleset hash is a custody claim about
+ * which rules produced these verdicts, so a cached value needs a boundary an analyst can state out
+ * loud; per job it reads "the rules as they stood when this import began". A global cache with a
+ * time-based expiry has no such sentence. Keying a global cache on the rules DIRECTORY's mtime would
+ * be worse than useless — editing a rule file's content does not touch its parent directory's mtime,
+ * so the identity would go stale silently, and a custody record that names the wrong rules is worse
+ * than one that cost a few seconds to recompute.
+ *
+ * PROMISES are memoized rather than settled values: a drop sweep processes several files
+ * concurrently, so caching only on completion would let every file in the first batch start its own
+ * walk before any of them finished.
+ *
+ * A null identity is cached like any other result. It means the path did not resolve, which for a
+ * requireRuleset tool is a refuse-to-run — the safe direction, and re-deriving it can be as
+ * expensive as the success case (an oversized tree is only known to be oversized after the walk).
+ */
+export interface ToolRunCache {
+  ruleset: Map<string, Promise<RulesetIdentity | null>>;
+  version: Map<string, Promise<string>>;
+}
+
+export function createToolRunCache(): ToolRunCache {
+  return { ruleset: new Map(), version: new Map() };
+}
+
 // A rule set is a git checkout of a few thousand small YAML files. These caps exist so a mistyped
 // path pointing at a home directory (or a checkout with its .git intact) cannot turn one tool run
 // into an unbounded disk walk. Exceeding either means "this is not a rule set" — the identity comes
@@ -77,9 +110,17 @@ async function hashOneFile(path: string): Promise<string> {
  * in, and it changes when a rule is added, removed, edited OR renamed. Two analysts on the same
  * Sigma commit get the same hash on Windows and on Linux (the separator is normalized to "/").
  */
-export async function hashRuleset(path: string): Promise<RulesetIdentity | null> {
+export async function hashRuleset(path: string, cache?: ToolRunCache): Promise<RulesetIdentity | null> {
   const target = path.trim();
   if (!target) return null;
+  const hit = cache?.ruleset.get(target);
+  if (hit) return hit;
+  const pending = hashRulesetUncached(target);
+  cache?.ruleset.set(target, pending);
+  return pending;
+}
+
+async function hashRulesetUncached(target: string): Promise<RulesetIdentity | null> {
   let info;
   try {
     info = await stat(target);
@@ -150,8 +191,23 @@ const VERSION_MAX_BYTES = 64 * 1024;
  * saying nothing, so a failed probe records nothing. Every tool the Companion ships a definition for
  * exits 0 on its version flag; a custom tool that does not simply has a blank version.
  */
-export async function probeToolVersion(cfg: ToolConfig, runner: ToolRunner): Promise<string> {
+export async function probeToolVersion(
+  cfg: ToolConfig,
+  runner: ToolRunner,
+  cache?: ToolRunCache,
+): Promise<string> {
   if (!cfg.binary) return "";
+  // Path + flags is enough of a key at job scope: a binary is not swapped mid-import. A GLOBAL cache
+  // would have to add the binary's mtime and size to stay honest across an upgrade (#721).
+  const key = `${cfg.binary} ${(cfg.versionArgs ?? ["--version"]).join(" ")}`;
+  const hit = cache?.version.get(key);
+  if (hit) return hit;
+  const pending = probeToolVersionUncached(cfg, runner);
+  cache?.version.set(key, pending);
+  return pending;
+}
+
+async function probeToolVersionUncached(cfg: ToolConfig, runner: ToolRunner): Promise<string> {
   try {
     const res = await runner(cfg.binary, cfg.versionArgs ?? ["--version"], {
       timeoutMs: VERSION_TIMEOUT_MS,
