@@ -85,12 +85,22 @@ export function withNonce(html: string, nonce: string): string {
  * stamp the matching value into the document. Per-response is the point: a nonce reused across
  * requests is worth no more than `'unsafe-inline'`, because an attacker who can read one page can
  * embed that value in the payload they inject into the next.
+ *
+ * `X-Content-Type-Options: nosniff` rides along (#728). It was previously set on ONE route, the
+ * geo-tile proxy, on the grounds that those bytes came from another server. Evidence has a better
+ * claim: `GET /cases/:id/evidence/:file` serves imported artifact content — hostile by assumption
+ * here — and answers an unrecognized suffix with `application/octet-stream`, which a sniffing
+ * browser is otherwise free to re-read as a document. The CSP above is what actually denies such a
+ * document its payload, so this is a second lock on a locked door; it is global rather than
+ * per-route for the same reason `caseLockGate` is, namely that a per-route opt-in leaves every new
+ * route one forgotten line away from shipping without it.
  */
 export function createSecurityHeaders(): RequestHandler {
   return function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
     const nonce = randomBytes(16).toString("base64");
     res.locals.cspNonce = nonce;
     res.setHeader("Content-Security-Policy", cspWithNonce(nonce));
+    res.setHeader("X-Content-Type-Options", "nosniff");
     next();
   };
 }

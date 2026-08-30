@@ -68,6 +68,37 @@ describe("createSecurityHeaders — CSP on every response", () => {
   });
 });
 
+/**
+ * X-Content-Type-Options (#728).
+ *
+ * Until this landed the header was set on exactly ONE route — the geo-tile proxy — because those
+ * bytes came from another server. Evidence deserves it more: GET /cases/:id/evidence/:file serves
+ * imported artifact content, which this project treats as adversary-controlled, and hands unknown
+ * suffixes back as application/octet-stream.
+ *
+ * The CSP is what actually blocks a payload today (no 'unsafe-inline', script-src pinned to 'self'),
+ * so this is a second lock on a locked door. It belongs in the global middleware for the same reason
+ * caseLockGate is mounted globally: a per-route opt-in leaves every new route one forgotten line
+ * away from shipping without it.
+ */
+describe("createSecurityHeaders — X-Content-Type-Options on every response", () => {
+  it("stops a browser second-guessing the type of a served document", async () => {
+    const res = await request(withHeaders()).get("/dashboard");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("sets it on API responses too", async () => {
+    const res = await request(withHeaders()).get("/cases/abc");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
+  // The value is the whole contract: any other token and browsers ignore the header entirely.
+  it("sends exactly the token browsers honour, not a variant", async () => {
+    const res = await request(withHeaders()).get("/nonce-echo");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+});
+
 describe("withNonce — stamping the served HTML", () => {
   it("replaces every placeholder occurrence, not just the first", () => {
     const html =
