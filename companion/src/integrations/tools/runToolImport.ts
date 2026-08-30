@@ -5,6 +5,7 @@ import { substituteArgs, tokenizeArgs, stripAnsi, cleanToolOutput, type ToolRunn
 import {
   hashOutputText,
   hashRuleset,
+  invalidateToolRunCaches,
   probeToolVersion,
   type ToolRunCache,
   type ToolRunProvenance,
@@ -200,6 +201,11 @@ export async function updateToolRules(cfg: ToolConfig, runner: ToolRunner): Prom
     timeoutMs: cfg.timeoutMs,
     maxOutputBytes: cfg.maxOutputBytes,
   });
+  // The rules on disk may have moved under any import running right now, so drop the job memos
+  // that would otherwise stamp the PREVIOUS rule set into those runs' custody records (#736).
+  // Done on any completion, not only exit 0: a failed update can still have written part of the
+  // tree. A command that never ran (no updateCommand, unparseable) threw above and leaves them.
+  invalidateToolRunCaches();
   // Strip ANSI colour codes + collapse CR progress redraws so the UI toast is readable, not garbage
   // (Hayabusa's update-rules forces colour). Keep the tail — the meaningful "N rules updated" summary.
   const text = cleanToolOutput(`${res.stdout}\n${res.stderr}`);
