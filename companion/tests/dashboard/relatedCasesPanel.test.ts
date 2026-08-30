@@ -106,7 +106,16 @@ describe("related cases panel reachability", () => {
   });
 
   it("registers the section so Settings can show and order it", () => {
-    expect(markup).toContain('{ id: "sec-related-cases", label: "Related Cases" }');
+    expect(markup).toContain('{ id: "sec-related-cases", label: "Related Cases", defaultHidden: true }');
+  });
+
+  // Off by default, not removed. A shared indicator across one estate is usually ordinary, so the
+  // panel does not earn a slot on every analyst's page unasked — but the routes, the data gate and
+  // the Settings checkbox all stay, and an explicit tick still wins (see SECTION_DEFS lookup in
+  // applySectionsVis).
+  it("is hidden by default until the analyst turns it on", () => {
+    const def = markup.match(/\{ id: "sec-related-cases",[^}]*\}/);
+    expect(def?.[0]).toContain("defaultHidden: true");
   });
 
   it("is loaded on case connect", () => {

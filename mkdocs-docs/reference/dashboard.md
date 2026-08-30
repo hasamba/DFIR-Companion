@@ -424,7 +424,11 @@ phishing case and in today's ransomware case — and every other panel stops at 
 Each row names the case, links straight to it, and lists what the two have in common. Fully
 deterministic; no AI, no network.
 
-The panel stays hidden until this case actually overlaps with another one you may read. It
+**The panel is off by default.** Turn it on in Settings → Dashboard sections. Across one estate a
+shared indicator is usually ordinary, so the panel earns its place only in the investigations where
+you go looking for a cross-case link.
+
+Once on, it stays hidden until this case actually overlaps with another one you may read. It
 refreshes when you connect to a case, and again whenever an import settles — so a newly imported
 domain that another case already holds surfaces the link straight away.
 
