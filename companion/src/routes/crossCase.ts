@@ -109,6 +109,27 @@ function parseTypes(raw: unknown): IocType[] | null | undefined {
 
 export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
+
+  // OFF unless asked for (#723). Across one estate a shared indicator is usually ordinary
+  // infrastructure — one resolver, one proxy, one patch server — and reading that overlap as a link
+  // between investigations is the mistake the feature invites; #730 already hid the panel that
+  // surfaced it. The ROUTES stayed live, though, and every answered request pins a slimmed copy of
+  // each visible case's IOCs in memory for the life of the process, with nothing evicting a case
+  // that has since been deleted. Off by default, that index is never built and nothing is pinned.
+  //
+  // Read ONCE at registration rather than per request: this is a deployment decision, and a value
+  // that could change mid-session would let two requests in one sitting disagree about whether the
+  // estate is searchable. Deliberately NOT on the Settings writable allowlist — envManager keeps
+  // security toggles out of the dashboard's reach, and this one decides whether a case may name
+  // other cases.
+  const enabled = (process.env.DFIR_CROSS_CASE ?? "off").trim().toLowerCase() === "on";
+
+  /** Refuse with the reason, so an operator meeting a 404 is not left guessing which. */
+  function disabled(res: Response): Response {
+    return res
+      .status(404)
+      .json({ error: "cross-case pivot is disabled — set DFIR_CROSS_CASE=on to enable it" });
+  }
   const snapshots = new Map<string, CachedSnapshot>();
   let indexCache: { key: string; index: CrossCaseIndex } | null = null;
 
@@ -197,6 +218,7 @@ export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
   // gated exactly like GET /cases (auth/policy.ts resolves it to the "case-list" bucket): any
   // session, and a service token holding "read" — which sees only its own case.
   app.get("/global/iocs", async (req: Request, res: Response) => {
+    if (!enabled) return disabled(res);
     const stateStore = options.stateStore;
     if (!stateStore) return res.status(501).json({ error: "state store not configured" });
     const q = typeof req.query.q === "string" ? req.query.q : "";
@@ -222,6 +244,7 @@ export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
   // the standard case-read policy plus the case-lock gate; every OTHER case in the answer went
   // through visibleCases() above.
   app.get("/cases/:id/related", async (req: Request, res: Response) => {
+    if (!enabled) return disabled(res);
     const stateStore = options.stateStore;
     if (!stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
