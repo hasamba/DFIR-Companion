@@ -14,6 +14,7 @@ import type { NsrlDb } from "../analysis/nsrlDb.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diagnostics.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
+import type { ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
 import type { SocratesJobStore } from "../integrations/socrates/socratesJobStore.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
@@ -159,8 +160,8 @@ export interface RouteContext {
     caseId: string,
     toolId: string,
     fullPath: string,
-    name: string,
-    dropRelpath?: string,
+    // `cache` is a per-import-job memo so a batch hashes the rule set once, not once per file (#721).
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
   ): Promise<boolean>;
   // Import machinery shared between routes/import.ts and the createApp import seams that stay
   // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,

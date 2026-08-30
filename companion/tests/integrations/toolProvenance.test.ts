@@ -7,6 +7,7 @@ import {
   probeToolVersion,
   describeToolRun,
   hashOutputText,
+  createToolRunCache,
 } from "../../src/integrations/tools/toolProvenance.js";
 import { loadToolConfig, TOOL_DEFS } from "../../src/integrations/tools/toolConfig.js";
 import { runToolAgainstFile } from "../../src/integrations/tools/runToolImport.js";
@@ -334,5 +335,85 @@ describe("runToolAgainstFile records what the run was (#688)", () => {
     expect(res.provenance.version).toBe("");
     expect(res.provenance.ruleset).toBeNull();
     expect(res.importKind).toBe("hayabusa");
+  });
+});
+
+// #721. hashRuleset walks and SHA-256s the whole rules tree and probeToolVersion spawns the binary,
+// both on EVERY run. A folder import runs the tool once per evidence file — 20-60 for a real
+// collection — so one import re-derived the same identity that many times.
+describe("ToolRunCache — one derivation per import job (#721)", () => {
+  it("hashes a rules tree once per cache, and re-derives without one", async () => {
+    const dir = await ruleDir({ "a.yml": "one", "b.yml": "two" });
+    const cache = createToolRunCache();
+    const first = (await hashRuleset(dir, cache))!;
+
+    // Change the CONTENT of a rule. The parent directory's mtime is untouched by this, which is
+    // exactly why a global cache must not key on it.
+    await writeFile(join(dir, "a.yml"), "one-edited", "utf8");
+
+    expect((await hashRuleset(dir, cache))!.sha256).toBe(first.sha256); // cached for this job
+    expect((await hashRuleset(dir))!.sha256).not.toBe(first.sha256); // uncached sees the edit
+  });
+
+  it("shares ONE walk between concurrent callers (memoizes the promise, not the result)", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const cache = createToolRunCache();
+    const [x, y] = await Promise.all([hashRuleset(dir, cache), hashRuleset(dir, cache)]);
+    expect(x!.sha256).toBe(y!.sha256);
+    expect(cache.ruleset.size).toBe(1);
+  });
+
+  it("keeps caches independent, so a later job re-derives", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const first = (await hashRuleset(dir, createToolRunCache()))!;
+    await writeFile(join(dir, "a.yml"), "changed", "utf8");
+    expect((await hashRuleset(dir, createToolRunCache()))!.sha256).not.toBe(first.sha256);
+  });
+
+  it("spawns the version probe once per cache", async () => {
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    let probes = 0;
+    const runner: ToolRunner = async () => {
+      probes++;
+      return { stdout: "hayabusa 3.2.0", stderr: "", code: 0 };
+    };
+    const cache = createToolRunCache();
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.0");
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.0");
+    expect(probes).toBe(1);
+    await probeToolVersion(cfg, runner); // no cache → probes again
+    expect(probes).toBe(2);
+  });
+
+  it("runToolAgainstFile threads the cache, so a 3-file batch derives once", async () => {
+    const caseDir = await mkdtemp(join(tmpdir(), "case-"));
+    const rules = await ruleDir({ "a.yar": "rule A {condition: true}" });
+    const cfg = loadToolConfig("yara", {
+      DFIR_TOOL_YARA_BINARY: "yara",
+      DFIR_TOOL_YARA_RULES: rules,
+    })!;
+    let probes = 0;
+    const runner: ToolRunner = async (_binary, args) => {
+      if (args.includes("--version")) {
+        probes++;
+        return { stdout: "YARA 4.5.0", stderr: "", code: 0 };
+      }
+      return { stdout: "EvilRule /x/a.bin", stderr: "", code: 0 };
+    };
+    const cache = createToolRunCache();
+    for (const name of ["a.bin", "b.bin", "c.bin"]) {
+      await writeFile(join(caseDir, name), "sample");
+      const res = await runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, name),
+        workDir: join(caseDir, ".toolwork"),
+        cache,
+      });
+      expect(res.provenance.ruleset?.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(res.provenance.version).toBe("YARA 4.5.0");
+    }
+    expect(probes).toBe(1);
+    expect(cache.ruleset.size).toBe(1);
   });
 });
