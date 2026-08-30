@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { AnonCategory, AnonPolicy } from "./anonymize.js";
 import { SECRET_PLACEHOLDER } from "./anonymize.js";
 import type { ZipEntry } from "./zipArchive.js";
+import { portableFilename } from "../storage/portableFilenames.js";
 import { CUSTODY_MANIFEST_FILENAME, type CustodyManifest } from "./custodyManifest.js";
 
 // Pure logic for the Redacted case export (#54): a shareable ZIP for external parties with internal
@@ -164,6 +165,11 @@ export interface ExportManifestFile {
   path: string;
   sha256: string;
   bytes: number;
+  /**
+   * The name this file had in the case, present only when the package could not keep it — see
+   * uniqueScreenshotPath. Its absence means the two are identical.
+   */
+  originalName?: string;
 }
 
 export interface ExportManifest extends ExportManifestMeta {
@@ -178,11 +184,18 @@ export interface ExportManifest extends ExportManifestMeta {
  * verify each artifact's integrity and enumerate the contents programmatically. Hashes every entry
  * passed in, so it lists every file EXCEPT itself (it is appended after this runs). Pure.
  */
-export function buildExportManifest(entries: readonly ZipEntry[], meta: ExportManifestMeta): ExportManifest {
+export function buildExportManifest(
+  entries: readonly ZipEntry[],
+  meta: ExportManifestMeta,
+  // Keyed by entry path, for the few entries the package had to rename. Empty for every caller
+  // that renames nothing, which leaves the manifest byte-identical to what it has always been.
+  originalNames: ReadonlyMap<string, string> = new Map(),
+): ExportManifest {
   const files: ExportManifestFile[] = entries.map((e) => ({
     path: e.path,
     sha256: createHash("sha256").update(e.data).digest("hex"),
     bytes: e.data.length,
+    ...(originalNames.has(e.path) ? { originalName: originalNames.get(e.path) } : {}),
   }));
   return {
     caseId: meta.caseId,
@@ -197,13 +210,48 @@ export function buildExportManifest(entries: readonly ZipEntry[], meta: ExportMa
 // Reduce a filename to a safe single archive path segment: strip any directory component and
 // collapse path-traversal characters. Defense-in-depth so a screenshot filename can never escape
 // the screenshots/ prefix in the ZIP (zip-slip), regardless of how it got onto disk.
+//
+// portableFilename then covers what the recipient's platform refuses (#675). This package is
+// built to be shared, so it is opened on whatever machine the recipient has: a screenshot named
+// "host:2026.png" is a legal file on Linux and, extracted on Windows, an NTFS alternate data
+// stream — the image vanishes from the extracted folder without an error anywhere.
 export function safeArchiveName(name: string): string {
-  const base = name.replace(/^.*[\\/]/, "");
-  const cleaned = base
+  const cleaned = name
+    .replace(/^.*[\\/]/, "")
     .replace(/[\\/]/g, "_")
     .replace(/\.{2,}/g, ".")
     .trim();
-  return cleaned.length > 0 ? cleaned : "file";
+  return cleaned.length > 0 ? portableFilename(cleaned) : "file";
+}
+
+/**
+ * Give one screenshot a name no other screenshot in this package already holds.
+ *
+ * Two things fold distinct screenshots onto one name. safeArchiveName above is one: `host:2026.png`
+ * and `host_2026.png` are separate files in the case and the same name afterwards. The recipient's
+ * filesystem is the other: `Shot.png` and `shot.png` are separate on Linux and one file on Windows,
+ * which is why the claim below is compared case-insensitively. createZip accepts duplicate paths,
+ * so either collision is silent — the extractor keeps whichever entry it unpacks last, the package
+ * manifest lists one name twice with two different hashes, and an image the analyst chose to share
+ * is simply gone.
+ *
+ * The whole-case export refuses in this situation, because there the analyst can rename the file in
+ * the case directory and because that archive is the evidence copy. Neither holds here: this
+ * package is DERIVED and shareable, its screenshot names are not the record, and refusing would
+ * cost the analyst the whole package over a filename. So the later file is numbered instead, and
+ * the manifest carries its original name so the recipient can still map it back.
+ */
+function uniqueScreenshotPath(name: string, claimed: Set<string>): string {
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  for (let n = 1; ; n++) {
+    const path = `${SCREENSHOT_DIR}/${n === 1 ? name : `${stem} (${n})${ext}`}`;
+    const key = path.toUpperCase();
+    if (claimed.has(key)) continue;
+    claimed.add(key);
+    return path;
+  }
 }
 
 // Config / secret-bearing files that are NEVER placed in the package — documented in the notes so
@@ -248,9 +296,15 @@ export function assembleRedactedEntries(input: {
   if (input.options.includeStateJson) {
     entries.push({ path: `${REPORT_DIR}/state-export.json`, data: enc(input.contents.stateJson) });
   }
+  // Renamed screenshots only: what each one was called in the case, so the rename never happens
+  // invisibly. Stays empty for a package whose screenshot names all survive intact.
+  const originalNames = new Map<string, string>();
   if (input.options.includeScreenshots) {
+    const claimed = new Set<string>();
     for (const shot of input.screenshots) {
-      entries.push({ path: `${SCREENSHOT_DIR}/${safeArchiveName(shot.name)}`, data: shot.data });
+      const path = uniqueScreenshotPath(safeArchiveName(shot.name), claimed);
+      if (path !== `${SCREENSHOT_DIR}/${shot.name}`) originalNames.set(path, shot.name);
+      entries.push({ path, data: shot.data });
     }
   }
   // The signed custody manifest for the redacted appendix. Placed before the package manifest below
@@ -263,7 +317,7 @@ export function assembleRedactedEntries(input: {
   }
   // Hashed manifest of every file assembled above, appended LAST so it enumerates the whole package
   // (but not itself). Gives the recipient chain-of-custody verification the human-readable notes can't.
-  const manifest = buildExportManifest(entries, input.manifest);
+  const manifest = buildExportManifest(entries, input.manifest, originalNames);
   entries.push({ path: MANIFEST_FILE, data: enc(JSON.stringify(manifest, null, 2)) });
   return entries;
 }

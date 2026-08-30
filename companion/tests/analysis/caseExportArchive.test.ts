@@ -223,6 +223,139 @@ describe("exportEncryptedCase — symlink/hardlink rejection (#247)", () => {
   });
 });
 
+// POSIX-only: every test in here has to CREATE a file whose name Windows cannot hold, which is
+// the whole point of the fix. On windows-latest — where ci.yml's companion-windows job runs this
+// suite as a gate — writeFile would refuse the name, or silently create a different one, and the
+// export assertions below would describe a case that was never seeded. The rules themselves are
+// covered platform-independently by the portableZipSegment tests in zipArchive.test.ts, which are
+// pure string functions and run everywhere.
+describe.skipIf(process.platform === "win32")("exportEncryptedCase — portable entry paths (#675)", () => {
+  // Every name below is a legal file on Linux and an impossible one on Windows, so a case
+  // directory can hold it — the drop folder keeps a dropped file's original name forever, under
+  // drop/_processed/. Each is also a name importEncryptedCase's own isSafeZipEntryPath rejects,
+  // which is what made this more than a Windows-extraction annoyance: the export reported success
+  // and produced an archive DFIR Companion could not restore, on any platform.
+  const HOSTILE_NAMES = [
+    "evidence:2026.evtx", // colon — an NTFS alternate data stream on extraction
+    "back\\slash.bin", // backslash — a path separator on Windows
+    "trailing.", // Windows strips a trailing dot
+    "NUL.txt", // a reserved device name, which resolves to no file at all
+    "con",
+    "pipe|star*.bin",
+    'quote".bin',
+    "less<greater>.bin",
+    "question?.bin",
+    "\x01ctrl.bin", // a control character, which is not a filename anywhere
+  ];
+
+  async function seedHostileNames(store: CaseStore, caseId: string, names: string[]) {
+    const dir = join(store.caseDir(caseId), "drop", "_processed");
+    await mkdir(dir, { recursive: true });
+    for (const name of names) await writeFile(join(dir, name), `body of ${name}`, "utf8");
+  }
+
+  // The contract this fix rests on: whatever the export packs, the import accepts. Driven end to
+  // end rather than asserted against the sanitizer in isolation, so tightening isSafeZipEntryPath
+  // without teaching portableZipEntryPath the new rule fails HERE.
+  it("re-imports a case whose files carry names Windows cannot hold", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-PORT");
+    await seedHostileNames(store, "INC-PORT", HOSTILE_NAMES);
+
+    const archive = await exportEncryptedCase(store, "INC-PORT", PASSWORD);
+    const result = await importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-PORT2" });
+
+    expect(result.meta.caseId).toBe("INC-PORT2");
+    const restored = await readdir(join(store.caseDir("INC-PORT2"), "drop", "_processed"));
+    expect(restored).toHaveLength(HOSTILE_NAMES.length);
+    for (const name of restored) expect(name).toMatch(/^[^<>:"/\\|?*\x00-\x1f]+$/);
+  });
+
+  it("records the original path of every renamed entry in the manifest, and no others", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-PORTM");
+    await seedHostileNames(store, "INC-PORTM", ["evidence:2026.evtx"]);
+
+    const archive = await exportEncryptedCase(store, "INC-PORTM", PASSWORD);
+    const files = new Map(readZip(decryptBuffer(archive, PASSWORD)).map((e) => [e.path, e.data]));
+    const manifest = JSON.parse((files.get("archive-manifest.json") as Buffer).toString("utf8"));
+
+    const renamed = manifest.files.filter((f: { originalPath?: string }) => f.originalPath);
+    expect(renamed).toEqual([
+      expect.objectContaining({
+        path: "drop/_processed/evidence_2026.evtx",
+        originalPath: "drop/_processed/evidence:2026.evtx",
+      }),
+    ]);
+    // The rename is recorded, and the bytes are still the file's own — the entry is renamed, not
+    // replaced. Every untouched entry stays free of the field, so its presence means what it says.
+    expect(files.get("drop/_processed/evidence_2026.evtx")?.toString("utf8")).toBe(
+      "body of evidence:2026.evtx",
+    );
+    expect(manifest.files.length).toBeGreaterThan(1);
+  });
+
+  it("refuses to export when two files would take the same name in the archive", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-PORTC");
+    // Windows strips a trailing dot AND a trailing space, so both of these become "notes" — one
+    // file where the case has two. Overwriting the first with the second is silent evidence loss,
+    // so the export names both files and stops instead.
+    await seedHostileNames(store, "INC-PORTC", ["notes.", "notes "]);
+
+    await expect(exportEncryptedCase(store, "INC-PORTC", PASSWORD)).rejects.toThrow(
+      /would both be named "drop\/_processed\/notes"/,
+    );
+  });
+
+  // The import creates an entry's parent folders with mkdir and then writes the file, so one name
+  // wanted as a file by one entry and as a folder by another is as fatal as two files sharing a
+  // name — whichever lands first, the second fails with EEXIST, EISDIR or ENOTDIR. Sanitizing
+  // creates exactly that shape: the file "notes" and the folder "notes." coexist on disk and
+  // become one name afterwards. readdir decides which of the two the walk reaches first, so the
+  // match below accepts either direction's message — the export has to refuse whichever order it
+  // is handed, which is why the check looks for a blocking file AND a blocking folder.
+  it("refuses to export when a renamed folder would take a file's name", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-PORTD");
+    const dir = join(store.caseDir("INC-PORTD"), "drop", "_processed");
+    await mkdir(join(dir, "notes."), { recursive: true });
+    await writeFile(join(dir, "notes"), "the file", "utf8");
+    await writeFile(join(dir, "notes.", "child.bin"), "inside the folder", "utf8");
+
+    await expect(exportEncryptedCase(store, "INC-PORTD", PASSWORD)).rejects.toThrow(
+      /"drop\/_processed\/notes" to be a folder|needs that same name to be a folder/,
+    );
+  });
+
+  it("refuses a file and a folder that differ only in case, which Windows cannot restore", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-PORTE");
+    const dir = join(store.caseDir("INC-PORTE"), "drop", "_processed");
+    await mkdir(join(dir, "data"), { recursive: true });
+    await writeFile(join(dir, "Data"), "the file", "utf8");
+    await writeFile(join(dir, "data", "child.bin"), "inside the folder", "utf8");
+
+    await expect(exportEncryptedCase(store, "INC-PORTE", PASSWORD)).rejects.toThrow(/folder|both be named/);
+  });
+});
+
+// Runs on every platform, Windows included: it seeds no hostile name, and what it guards is that
+// the sanitizer stays OFF for a case that needs none of it.
+describe("exportEncryptedCase — portable entry paths, ordinary case (#675)", () => {
+  it("leaves an ordinary case byte-identical — nothing is renamed that need not be", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-PORTN");
+    const archive = await exportEncryptedCase(store, "INC-PORTN", PASSWORD);
+    const manifest = JSON.parse(
+      readZip(decryptBuffer(archive, PASSWORD))
+        .find((e) => e.path === "archive-manifest.json")!
+        .data.toString("utf8"),
+    );
+    expect(manifest.files.every((f: { originalPath?: string }) => f.originalPath === undefined)).toBe(true);
+  });
+});
+
 // Re-wrap a decrypted archive in the v1 container the 0.31.0–0.33.0 writer produced. Nothing in
 // production writes v1 any more (#268), so a test that needs one has to build it, and the scrypt
 // parameters are spelled out here on purpose: they are an INDEPENDENT statement of what v1 is, so
