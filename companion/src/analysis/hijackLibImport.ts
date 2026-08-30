@@ -21,6 +21,7 @@ import {
 import { withHostSuffix } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
 import { isDetectionContentPath } from "./veloDetectionNoise.js";
+import { boundedAggKey } from "./aggKey.js";
 import type { Severity } from "./stateTypes.js";
 
 type Row = Record<string, unknown>;
@@ -73,7 +74,11 @@ export function mapHijackLib(
     description,
     severity,
     mitre,
-    aggKey: `vr|hijacklib|${host.toLowerCase()}|${dll.toLowerCase()}|${path.toLowerCase()}`.slice(0, 400),
+    // Host and DLL lead, the unbounded path trails, and boundedAggKey closes the key. A plain
+    // .slice(0, 400) collapsed two DLLs under one deep directory into a single row — and the
+    // aggregator does not merely miscount a collision, it overwrites the survivor's path and hash.
+    // A hijackable-DLL scan walks the whole disk, so a deep path is its normal input (#722).
+    aggKey: boundedAggKey(`vr|hijacklib|${host.toLowerCase()}|${dll.toLowerCase()}|${path.toLowerCase()}`),
     sources: ["Velociraptor"],
     ...(sha && /^[a-f0-9]{64}$/.test(sha) ? { sha256: sha } : {}),
     ...(path ? { path } : {}),
