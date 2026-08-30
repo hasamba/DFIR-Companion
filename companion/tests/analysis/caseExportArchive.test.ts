@@ -298,33 +298,32 @@ describe.skipIf(process.platform === "win32")("exportEncryptedCase — portable 
   it("refuses to export when two files would take the same name in the archive", async () => {
     const store = await harness();
     await seedCase(store, "INC-PORTC");
-    // Windows strips a trailing dot AND a trailing space, so both of these become "notes" — one
-    // file where the case has two. Overwriting the first with the second is silent evidence loss,
-    // so the export names both files and stops instead.
-    await seedHostileNames(store, "INC-PORTC", ["notes.", "notes "]);
+    // Two files the case holds separately, one name once the colon is substituted. Overwriting the
+    // first with the second is silent evidence loss, so the export names both files and stops.
+    await seedHostileNames(store, "INC-PORTC", ["a:b.bin", "a_b.bin"]);
 
     await expect(exportEncryptedCase(store, "INC-PORTC", PASSWORD)).rejects.toThrow(
-      /would both be named "drop\/_processed\/notes"/,
+      /would both be named "drop\/_processed\/a_b\.bin"/,
     );
   });
 
   // The import creates an entry's parent folders with mkdir and then writes the file, so one name
   // wanted as a file by one entry and as a folder by another is as fatal as two files sharing a
   // name — whichever lands first, the second fails with EEXIST, EISDIR or ENOTDIR. Sanitizing
-  // creates exactly that shape: the file "notes" and the folder "notes." coexist on disk and
-  // become one name afterwards. readdir decides which of the two the walk reaches first, so the
-  // match below accepts either direction's message — the export has to refuse whichever order it
-  // is handed, which is why the check looks for a blocking file AND a blocking folder.
+  // creates exactly that shape: the file "x_y" and the folder "x:y" coexist on disk and become one
+  // name afterwards. readdir decides which of the two the walk reaches first, so the match below
+  // accepts either direction's message — the export has to refuse whichever order it is handed,
+  // which is why the check looks for a blocking file AND a blocking folder.
   it("refuses to export when a renamed folder would take a file's name", async () => {
     const store = await harness();
     await seedCase(store, "INC-PORTD");
     const dir = join(store.caseDir("INC-PORTD"), "drop", "_processed");
-    await mkdir(join(dir, "notes."), { recursive: true });
-    await writeFile(join(dir, "notes"), "the file", "utf8");
-    await writeFile(join(dir, "notes.", "child.bin"), "inside the folder", "utf8");
+    await mkdir(join(dir, "x:y"), { recursive: true });
+    await writeFile(join(dir, "x_y"), "the file", "utf8");
+    await writeFile(join(dir, "x:y", "child.bin"), "inside the folder", "utf8");
 
     await expect(exportEncryptedCase(store, "INC-PORTD", PASSWORD)).rejects.toThrow(
-      /"drop\/_processed\/notes" to be a folder|needs that same name to be a folder/,
+      /"drop\/_processed\/x_y" to be a folder|needs that same name to be a folder/,
     );
   });
 

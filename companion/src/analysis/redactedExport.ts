@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { AnonCategory, AnonPolicy } from "./anonymize.js";
 import { SECRET_PLACEHOLDER } from "./anonymize.js";
 import type { ZipEntry } from "./zipArchive.js";
-import { portableFilename } from "../storage/portableFilenames.js";
+import { portableZipSegment } from "../storage/portableFilename.js";
 import { CUSTODY_MANIFEST_FILENAME, type CustodyManifest } from "./custodyManifest.js";
 
 // Pure logic for the Redacted case export (#54): a shareable ZIP for external parties with internal
@@ -211,7 +211,7 @@ export function buildExportManifest(
 // collapse path-traversal characters. Defense-in-depth so a screenshot filename can never escape
 // the screenshots/ prefix in the ZIP (zip-slip), regardless of how it got onto disk.
 //
-// portableFilename then covers what the recipient's platform refuses (#675). This package is
+// portableZipSegment then covers what the recipient's platform refuses (#675). This package is
 // built to be shared, so it is opened on whatever machine the recipient has: a screenshot named
 // "host:2026.png" is a legal file on Linux and, extracted on Windows, an NTFS alternate data
 // stream — the image vanishes from the extracted folder without an error anywhere.
@@ -221,7 +221,7 @@ export function safeArchiveName(name: string): string {
     .replace(/[\\/]/g, "_")
     .replace(/\.{2,}/g, ".")
     .trim();
-  return cleaned.length > 0 ? portableFilename(cleaned) : "file";
+  return cleaned.length > 0 ? portableZipSegment(cleaned) : "file";
 }
 
 /**

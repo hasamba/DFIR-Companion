@@ -17,6 +17,21 @@ function findEocd(buf: Buffer): number | null {
   return null;
 }
 
+// Walk the local file headers and collect the entry names. buildZip writes the sizes into every
+// local header (no data descriptor), so the next header sits at a computable offset.
+function zipEntryNames(buf: Buffer): string[] {
+  const names: string[] = [];
+  let ptr = 0;
+  while (ptr + 30 <= buf.length && readLe32(buf, ptr) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(ptr + 26);
+    const extraLen = buf.readUInt16LE(ptr + 28);
+    const compressedLen = readLe32(buf, ptr + 18);
+    names.push(buf.toString("utf8", ptr + 30, ptr + 30 + nameLen));
+    ptr += 30 + nameLen + extraLen + compressedLen;
+  }
+  return names;
+}
+
 describe("buildZip", () => {
   it("produces a buffer with a valid local file header signature", () => {
     const zip = buildZip([{ name: "hello.txt", data: Buffer.from("hello") }]);
@@ -194,6 +209,84 @@ describe("archiveCase", () => {
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
+    });
+  });
+
+  // A case directory routinely holds names Windows refuses. drop/_processed/ keeps a dropped file's
+  // original name forever, and analysts drop files straight out of Windows collections.
+  describe("entry names are safe to extract on Windows", () => {
+    it("rewrites a hostile name and records what it was", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "drop/_processed/host:C.evtx": "evtx",
+        "drop/_processed/NUL.txt": "device",
+        "drop/_processed/summary.": "trailing dot",
+      });
+      const result = await archiveCase("/cases", "c1", fs);
+
+      // The ZIP carries the rewritten names...
+      const names = zipEntryNames(fs.written!.data);
+      expect(names).toContain("c1/drop/_processed/host_C.evtx");
+      expect(names).toContain("c1/drop/_processed/_NUL.txt");
+      expect(names).toContain("c1/drop/_processed/summary_");
+      expect(names).not.toContain("c1/drop/_processed/host:C.evtx");
+
+      // ...and the manifest says what each one used to be. makeFs throws on a path it has no file
+      // for, so reaching this line at all proves the READ still used the real on-disk names.
+      const renamed = result.manifest.files.filter((f) => f.originalPath !== undefined);
+      expect(renamed).toEqual([
+        expect.objectContaining({
+          path: "drop/_processed/host_C.evtx",
+          originalPath: "drop/_processed/host:C.evtx",
+        }),
+        expect.objectContaining({
+          path: "drop/_processed/_NUL.txt",
+          originalPath: "drop/_processed/NUL.txt",
+        }),
+        expect.objectContaining({
+          path: "drop/_processed/summary_",
+          originalPath: "drop/_processed/summary.",
+        }),
+      ]);
+    });
+
+    it("refuses the archive when two files would take the same entry name", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "drop/_processed/a:b.bin": "from the Windows collection",
+        "drop/_processed/a_b.bin": "a different file entirely",
+      });
+
+      // Both names collapse to "a_b.bin". Writing the archive anyway would drop one file with no
+      // error at all, so the whole archive is refused and both files are named.
+      await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(
+        /"drop\/_processed\/a:b\.bin" and "drop\/_processed\/a_b\.bin"/,
+      );
+      expect(fs.written).toBeNull();
+    });
+
+    it("adds no originalPath to an ordinary case", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "state/investigation.json": "{}",
+        "evidence/rapport été.pdf": "accents are fine on Windows",
+      });
+      const result = await archiveCase("/cases", "c1", fs);
+
+      expect(result.manifest.files.map((f) => f.path)).toEqual([
+        "case.json",
+        "state/investigation.json",
+        "evidence/rapport été.pdf",
+      ]);
+      for (const file of result.manifest.files) {
+        expect(file).not.toHaveProperty("originalPath");
+      }
+      expect(zipEntryNames(fs.written!.data)).toEqual([
+        "c1/case.json",
+        "c1/state/investigation.json",
+        "c1/evidence/rapport été.pdf",
+        "c1/archive-manifest.json",
+      ]);
     });
   });
 });

@@ -283,7 +283,8 @@ describe("safeArchiveName", () => {
     expect(safeArchiveName("host:2026.png")).toBe("host_2026.png");
     expect(safeArchiveName("who?.png")).toBe("who_.png");
     expect(safeArchiveName("NUL.png")).toBe("_NUL.png");
-    expect(safeArchiveName("shot.")).toBe("shot");
+    // Padded, not trimmed, so "shot." stays distinct from a sibling actually named "shot".
+    expect(safeArchiveName("shot.")).toBe("shot_");
   });
 });
 

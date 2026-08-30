@@ -15,7 +15,7 @@ import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
 import type { CaseMeta } from "../types.js";
 import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
-import { portableFilePath } from "../storage/portableFilenames.js";
+import { portableZipEntryPath } from "../storage/portableFilename.js";
 import { encryptBuffer, decryptBuffer, readFormatVersion, CURRENT_FORMAT_VERSION } from "./caseEncryption.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
@@ -197,7 +197,7 @@ function portableArchivePaths(relPaths: string[], reserved: string[]): Map<strin
 
   for (const path of reserved) claim(path, path);
   for (const rel of relPaths) {
-    const archivePath = portableFilePath(rel);
+    const archivePath = portableZipEntryPath(rel);
     claim(rel, archivePath);
     byRel.set(rel, archivePath);
   }
