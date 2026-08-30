@@ -46,6 +46,28 @@ describe("ticketLabel", () => {
 
 // Three lookups over the same tool list with three different jobs: what IS configured for this
 // extension, what COULD be, and all of them.
+describe("uploadExtOf", () => {
+  // The dialog's answer decides which tools it OFFERS, and the server's extension gate then decides
+  // whether to accept the upload (#673). They read the same name, so they must read it the same way:
+  // this mirrors integrations/tools/toolConfig.ts `uploadExtensionOf`, which is node's extname.
+  it.each([
+    ["Security.evtx", ".evtx"],
+    ["Security.EVTX", ".evtx"],
+    ["x.tar.gz", ".gz"],
+    ["a.", "."],
+    ["evtx", ""], // named after a format, but has no suffix
+    [".evtx", ""], // a stemless dotfile, not an EVTX file
+    ["a3f9c2e1", ""],
+    ["", ""],
+  ])("%j -> %j", (name, expected) => expect(v.uploadExtOf(name)).toBe(expected));
+
+  it("no longer offers a tool for a suffix-less name", () => {
+    const status = { tools: [{ id: "hayabusa", configured: true, extensions: [".evtx"] }] };
+    expect(v.toolsForExt(v.uploadExtOf("evtx"), status)).toEqual([]);
+    expect(v.toolsForExt(v.uploadExtOf("Security.evtx"), status).map((t) => t.id)).toEqual(["hayabusa"]);
+  });
+});
+
 describe("toolForExt / suggestToolForExt / toolsForExt", () => {
   const status = {
     tools: [

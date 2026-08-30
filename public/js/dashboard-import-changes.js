@@ -152,7 +152,7 @@
       .then((r) => (r.ok ? r.json() : null))
       .then((status) => {
         const items = rawFiles.map((f, i) => {
-          const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
+          const ext = uploadExtOf(f.name);
           return {
             idx: i,
             file: f,

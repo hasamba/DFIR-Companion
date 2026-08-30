@@ -164,3 +164,48 @@ describe("a case-relative tool run (#688)", () => {
     expect(log).not.toContain("| original ");
   });
 });
+
+/**
+ * The upload path never checked the uploaded filename against the extensions the tool declares
+ * (#673). Those extensions already decide which tools the Import dialog OFFERS for a file
+ * (public/js/dashboard-values.js `toolsForExt`), so the server was trusting a rule only the client
+ * enforced: a direct API caller could hand a .txt to Hayabusa and get a parser crash instead of an
+ * answer. The check refuses first, so nothing is written and no evidence is preserved for a run
+ * that was never going to work.
+ */
+describe("refusing an upload the tool does not claim (#673)", () => {
+  it("refuses a file whose extension the tool does not declare, and preserves nothing", async () => {
+    const { app, store } = await harness();
+    const r = await request(app)
+      .post("/cases/c1/tools/hayabusa/run-upload")
+      .send({ filename: "notes.txt", dataBase64: Buffer.from("hello").toString("base64") });
+
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain(".txt");
+    expect(r.body.error).toContain(".evtx"); // says what it DOES accept
+
+    // The refusal comes before persistRawEvidence, so the case is untouched.
+    const importsDir = join(store.caseDir("c1"), "imports");
+    const stored = await readdir(importsDir).catch(() => [] as string[]);
+    expect(stored).toEqual([]);
+  });
+
+  it("refuses a file with no extension at all", async () => {
+    const { app } = await harness();
+    const r = await request(app)
+      .post("/cases/c1/tools/hayabusa/run-upload")
+      .send({ filename: "a3f9c2e1", dataBase64: RAW_EVTX.toString("base64") });
+
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain("hayabusa");
+  });
+
+  it("still accepts a file the tool does claim", async () => {
+    const { app } = await harness();
+    const r = await request(app)
+      .post("/cases/c1/tools/hayabusa/run-upload")
+      .send({ filename: "Security.EVTX", dataBase64: RAW_EVTX.toString("base64") });
+
+    expect(r.status).toBe(200); // and case-insensitively
+  });
+});

@@ -1,3 +1,5 @@
+import { extname } from "node:path";
+
 // Env-driven configuration for the analyst's external forensic tools. A tool is OFF until its
 // `DFIR_TOOL_<ID>_BINARY` key is set (mirrors DFIR_VELOCIRAPTOR_API_CONFIG gating loadVelociraptorConfig).
 // The Companion NEVER bundles or downloads a binary — TOOL_DEFS only links to each official repo; the
@@ -349,4 +351,28 @@ export function toolForExtension(ext: string, configured: Map<string, ToolConfig
 // banner). Null when the extension isn't a raw-tool input.
 export function suggestedToolForExtension(ext: string): ToolId | null {
   return toolPreferenceForExtension(ext)[0] ?? null;
+}
+
+// The extension of an uploaded filename. `extname` is the one definition of "extension" the rest of
+// the server already uses (analysis/dropScan.ts reads the drop folder with it), and the Import dialog
+// now matches it too (public/js/dashboard-values.js `uploadExtOf`). All three must agree, or the
+// dialog offers a tool the server then refuses.
+//
+// It answers "" for a name with no suffix — both a bare `evtx` and a stemless `.evtx`. Neither is an
+// EVTX file: the first is a file someone named after a format, the second a dotfile. Reading either
+// as an extension is how the dialog used to offer Hayabusa for a file it could not parse.
+export function uploadExtensionOf(filename: string): string {
+  return extname(String(filename ?? "")).toLowerCase();
+}
+
+// May this tool be handed this uploaded file? `declared` is the tool's claimed extensions —
+// TOOL_DEFS[id].extensions for a built-in, the analyst's list for a custom tool.
+//
+// An EMPTY list means "claims nothing in particular", not "claims nothing": YARA scans files and
+// directories on demand and declares none, and a custom tool may leave the field blank. Gating on an
+// empty list would put those tools out of reach of the upload route entirely, so it accepts anything.
+export function uploadExtensionAccepted(declared: readonly string[], filename: string): boolean {
+  if (!declared.length) return true;
+  const ext = uploadExtensionOf(filename);
+  return !!ext && declared.some((d) => d.toLowerCase() === ext);
 }

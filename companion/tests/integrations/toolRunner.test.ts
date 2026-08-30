@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import {
   tokenizeArgs,
   substituteArgs,
@@ -18,6 +18,8 @@ import {
   toolForExtension,
   toolPreferenceForExtension,
   suggestedToolForExtension,
+  uploadExtensionAccepted,
+  uploadExtensionOf,
   TOOL_DEFS,
   type ToolId,
 } from "../../src/integrations/tools/toolConfig.js";
@@ -454,5 +456,46 @@ describe("spawnToolRunner output decoding", () => {
       maxOutputBytes: 200,
     });
     expect(r.stdout).toBe(text);
+  });
+});
+
+describe("uploadExtensionAccepted (#673)", () => {
+  it("accepts a claimed extension, case-insensitively", () => {
+    expect(uploadExtensionAccepted([".evtx", ".evt"], "Security.evtx")).toBe(true);
+    expect(uploadExtensionAccepted([".evtx", ".evt"], "Security.EVTX")).toBe(true);
+    expect(uploadExtensionAccepted([".pcap", ".pcapng"], "capture.PcapNg")).toBe(true);
+  });
+
+  it("refuses an unclaimed extension and a bare name", () => {
+    expect(uploadExtensionAccepted([".evtx", ".evt"], "notes.txt")).toBe(false);
+    expect(uploadExtensionAccepted([".evtx", ".evt"], "a3f9c2e1")).toBe(false);
+    expect(uploadExtensionAccepted([".evtx"], "Security.evtx.bak")).toBe(false); // last suffix wins
+  });
+
+  // A name with no suffix has no extension, and that is BOTH a bare `evtx` and a stemless `.evtx`.
+  // Reading either as ".evtx" is the mismatch #673's first cut shipped: the Import dialog did read
+  // them that way, offered Hayabusa, and the server then answered 400 on the upload it had invited.
+  it("treats a suffix-less name as having no extension, both shapes", () => {
+    expect(uploadExtensionOf("evtx")).toBe("");
+    expect(uploadExtensionOf(".evtx")).toBe("");
+    expect(uploadExtensionAccepted([".evtx"], "evtx")).toBe(false);
+    expect(uploadExtensionAccepted([".evtx"], ".evtx")).toBe(false);
+  });
+
+  // extname is what analysis/dropScan.ts already reads the drop folder with, so the upload route and
+  // the drop route cannot disagree about what a file is.
+  it("reads an extension exactly as node:path extname does", () => {
+    for (const name of ["evtx", ".evtx", "Security.evtx", "a.", "x.tar.gz", "a3f9c2e1"]) {
+      expect(uploadExtensionOf(name)).toBe(extname(name).toLowerCase());
+    }
+  });
+
+  // YARA declares no extensions ("scans files/dirs on demand"), and so may a custom tool. An empty
+  // list is "claims nothing in particular", not "claims nothing" — gating on it would make those
+  // tools unreachable through the upload route entirely.
+  it("accepts anything when the tool declares no extensions", () => {
+    expect(TOOL_DEFS.yara.extensions).toEqual([]);
+    expect(uploadExtensionAccepted([], "a3f9c2e1")).toBe(true);
+    expect(uploadExtensionAccepted([], "notes.txt")).toBe(true);
   });
 });
