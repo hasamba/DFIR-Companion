@@ -40,11 +40,33 @@ const SCRYPT_V2 = { N: 1 << 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 } as const
 
 type ScryptParams = typeof SCRYPT_V1 | typeof SCRYPT_V2;
 
-const FORMATS: ReadonlyArray<{ magic: Buffer; scrypt: ScryptParams }> = [
-  { magic: Buffer.from("DFIRCZ01", "utf8"), scrypt: SCRYPT_V1 },
-  { magic: Buffer.from("DFIRCZ02", "utf8"), scrypt: SCRYPT_V2 },
+const FORMATS: ReadonlyArray<{ version: number; magic: Buffer; scrypt: ScryptParams }> = [
+  { version: 1, magic: Buffer.from("DFIRCZ01", "utf8"), scrypt: SCRYPT_V1 },
+  { version: 2, magic: Buffer.from("DFIRCZ02", "utf8"), scrypt: SCRYPT_V2 },
 ];
 const CURRENT_FORMAT = FORMATS[FORMATS.length - 1];
+
+/** The container version {@link encryptBuffer} writes. A version is only ever ADDED to raise the
+ * KDF cost (see the rule above), so a container whose version is BELOW this one was written under
+ * weaker parameters. That is what makes `version < CURRENT_FORMAT_VERSION` a sound weakness test,
+ * and it keeps working when a v3 arrives without any caller remembering to update a hardcoded 2. */
+export const CURRENT_FORMAT_VERSION = CURRENT_FORMAT.version;
+
+function findFormat(container: Buffer): (typeof FORMATS)[number] | undefined {
+  if (container.length < HEADER_LEN) return undefined;
+  return FORMATS.find((f) => container.subarray(0, MAGIC_LEN).equals(f.magic));
+}
+
+/** The container version of `container`, or undefined if it isn't a .dfircase archive this build
+ * reads (garbage, truncated, or written by a NEWER build).
+ *
+ * Reads the magic only — no password, no derivation — so it is cheap. That is exactly why the
+ * import route reports it only AFTER a successful decrypt (#672): an endpoint that answered this
+ * question without a password would let an unauthenticated caller sort a pile of archives by which
+ * ones are cheapest to crack offline. */
+export function readFormatVersion(container: Buffer): number | undefined {
+  return findFormat(container)?.version;
+}
 
 function deriveKey(password: string, salt: Buffer, params: ScryptParams): Buffer {
   return scryptSync(password, salt, KEY_LEN, params);
@@ -67,10 +89,7 @@ export function encryptBuffer(data: Buffer, password: string): Buffer {
  * isn't a .dfircase container (including one written by a NEWER build — an unknown version is
  * reported as such rather than as a wrong password). */
 export function decryptBuffer(container: Buffer, password: string): Buffer {
-  const format =
-    container.length >= HEADER_LEN
-      ? FORMATS.find((f) => container.subarray(0, MAGIC_LEN).equals(f.magic))
-      : undefined;
+  const format = findFormat(container);
   if (!format) throw new DecryptionError("not a valid .dfircase archive");
   let offset = MAGIC_LEN;
   const salt = container.subarray(offset, offset + SALT_LEN);

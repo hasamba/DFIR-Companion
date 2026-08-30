@@ -13,6 +13,31 @@
 // The two guard stanzas that earlier extractions left in this range — for the search/scope wiring
 // and for enrichment — did NOT come with it.
 (function () {
+  // The one thing in this file that is NOT DOM wiring, and so the one thing that lives in the
+  // module body rather than inside the initializer: it reads no element, so the reason the rest of
+  // the file has to wait does not apply to it.
+  //
+  // #672. A .dfircase written by 0.31.0-0.33.0 used the weaker v1 key derivation (scrypt N=2^14),
+  // and importing one used to say nothing about that. The import response now carries the
+  // archive's container version alongside the version this build writes, and this turns that pair
+  // into the sentence the analyst reads.
+  //
+  // It compares the two NUMBERS the server sent rather than testing `formatVersion < 2`. A
+  // hardcoded 2 would silently stop warning about v2 archives the day a v3 lands — the failure
+  // would be a warning that no longer appears, which nothing notices.
+  //
+  // Silence is the answer for every case it cannot judge: equal versions, an archive somehow
+  // NEWER than this build (where "your encryption is weak" would be backwards), and either field
+  // absent or non-numeric, which means an older companion answered rather than a weak archive.
+  function encryptionUpgradeNotice(formatVersion, currentFormatVersion) {
+    if (typeof formatVersion !== "number" || typeof currentFormatVersion !== "number") return "";
+    if (!(formatVersion < currentFormatVersion)) return "";
+    return (
+      "Imported, but this archive was encrypted with an older, weaker key derivation. " +
+      "Export the case again to upgrade the encryption."
+    );
+  }
+
   function initImportCase() {
     const importCaseOverlay = document.getElementById("importCaseOverlay");
     function closeImportCaseModal() {
@@ -44,6 +69,9 @@
       document.getElementById("ipFilename").textContent = file.name;
       document.getElementById("ipPassword").value = "";
       document.getElementById("ipMsg").textContent = "";
+      // Undo what a warning from the PREVIOUS import left behind (below).
+      document.getElementById("ipImport").hidden = false;
+      document.getElementById("ipCancel").textContent = "Cancel";
       document.getElementById("importPasswordOverlay").classList.add("open");
       document.getElementById("ipPassword").focus();
     };
@@ -118,10 +146,26 @@
         const body = await res.json().catch(() => ({}));
         if (res.status === 201) {
           const c = body.counts || {};
-          document
-            .getElementById("importPasswordOverlay")
-            .classList.remove("open");
           _pendingImportFile = null;
+          // WHERE the warning goes is the whole point, and #status is the one place it cannot go.
+          // connect() below opens a WebSocket whose onopen handler in js/dashboard-case-connect.js
+          // writes "connected (live)" into #status a few milliseconds later, so a security warning
+          // parked there flashes and is gone — possibly without ever painting. The same is true of
+          // showToast, which writes #status too and then fades itself after six seconds.
+          //
+          // So the modal the analyst is already looking at stays OPEN and carries the sentence,
+          // and the only control left is the one that closes it. Nothing else on the page writes
+          // to ipMsg, and dismissing it is a deliberate act rather than a race with the socket.
+          const upgrade = encryptionUpgradeNotice(body.formatVersion, body.currentFormatVersion);
+          if (upgrade) {
+            msg.textContent = upgrade;
+            document.getElementById("ipImport").hidden = true;
+            // The import already happened and cannot be undone, so "Cancel" would be a lie.
+            cancelBtn.textContent = "Close";
+          } else {
+            msg.textContent = "";
+            document.getElementById("importPasswordOverlay").classList.remove("open");
+          }
           status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
           document.getElementById("caseId").value = body.caseId;
           loadCaseList();
@@ -144,5 +188,6 @@
     };
   }
 
+  window.encryptionUpgradeNotice = encryptionUpgradeNotice;
   window.initImportCase = initImportCase;
 })();

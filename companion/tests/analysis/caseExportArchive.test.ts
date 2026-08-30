@@ -14,7 +14,7 @@ import {
 import { createZip, readZip } from "../../src/analysis/zipArchive.js";
 import { encryptBuffer, decryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
 import { atomicWrite } from "../../src/storage/atomicWrite.js";
-import { createHash } from "node:crypto";
+import { createHash, scryptSync, createCipheriv, randomBytes } from "node:crypto";
 import { StateStore, INVESTIGATION_DB_FILENAME } from "../../src/analysis/stateStore.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
 import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
@@ -222,6 +222,20 @@ describe("exportEncryptedCase — symlink/hardlink rejection (#247)", () => {
     expect(archive.length).toBeGreaterThan(0);
   });
 });
+
+// Re-wrap a decrypted archive in the v1 container the 0.31.0–0.33.0 writer produced. Nothing in
+// production writes v1 any more (#268), so a test that needs one has to build it, and the scrypt
+// parameters are spelled out here on purpose: they are an INDEPENDENT statement of what v1 is, so
+// this breaks loudly if v1's parameters are ever changed in the module (which would make every
+// archive already in an analyst's evidence store unopenable — see caseEncryption.ts).
+function encryptAsV1(plain: Buffer, password: string): Buffer {
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const key = scryptSync(password, salt, 32, { N: 1 << 14, r: 8, p: 1, maxmem: 32 * 1024 * 1024 });
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plain), cipher.final()]);
+  return Buffer.concat([Buffer.from("DFIRCZ01", "utf8"), salt, iv, cipher.getAuthTag(), ciphertext]);
+}
 
 describe("importEncryptedCase", () => {
   it("imports under a target id, preserving evidence bytes exactly", async () => {
@@ -529,6 +543,35 @@ describe("importEncryptedCase", () => {
       /duplicate entry path/,
     );
     expect(await store.caseExists("INC-DUP")).toBe(false);
+  });
+
+  // #672: the import result carries the container version so the caller can tell the analyst the
+  // archive was written under the weaker v1 derivation. Nothing re-keys the archive — v1 stays
+  // readable forever — the analyst is simply told, so they can re-export and get v2.
+  it("reports the container format version of the archive it opened", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-1");
+    const archive = await exportEncryptedCase(store, "INC-1", PASSWORD);
+
+    const { formatVersion } = await importEncryptedCase(store, archive, PASSWORD, {
+      targetCaseId: "INC-2",
+    });
+    expect(formatVersion).toBe(2);
+  });
+
+  it("reports version 1 for an archive written by the pre-#268 writer", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-1");
+    const v1Archive = encryptAsV1(
+      decryptBuffer(await exportEncryptedCase(store, "INC-1", PASSWORD), PASSWORD),
+      PASSWORD,
+    );
+
+    const { meta, formatVersion } = await importEncryptedCase(store, v1Archive, PASSWORD, {
+      targetCaseId: "INC-2",
+    });
+    expect(formatVersion).toBe(1);
+    expect(meta.caseId).toBe("INC-2"); // still imports — the weaker version is read-only, not refused
   });
 });
 
