@@ -65,8 +65,10 @@ export function isDetectionContentPath(value: string): boolean {
 // so a real payload dropped in an odd place is never lost. This one is broader on purpose, for a
 // different caller: a YARA/THOR SCAN that walks the collector's own working tree, its unpacked
 // sample corpus, the collector binary itself, or a cached copy of a simulation repo, and reports
-// them as host findings. Every marker is a location the tooling creates or the analyst supplies —
-// never a name an intruder picks on the victim host — and the only effect is to drop a hit to Info.
+// them as host findings. The markers are NOT equally trustworthy, so they do not carry equal weight:
+// only the collector's install tree is a location an intruder cannot supply, and only that one lets
+// a caller drop an IOC. A corpus directory name is a name anyone can create, so it drops the hit to
+// Info and stops there — see isCollectorOwnedLocation, and #720 for what the flat list cost.
 //
 //   [/\]Velociraptor[/\]  the collector's own install / unpacked-tool tree
 //                          (`C:\Program Files\Velociraptor\…`, incl. `\Tools\tmp*\chainsaw\…`)
@@ -79,13 +81,43 @@ export function isDetectionContentPath(value: string): boolean {
 // component, is attacker-controllable — a real payload dropped in `C:\Users\x\sigma\evil.dll` would
 // be hidden from the forensic view. So we require the collector ROOT context (`\Velociraptor\`,
 // which the real THOR row carries as `image_file: C:\Program Files\Velociraptor\Velociraptor.exe`),
-// the published sample-corpus name, or the named repo — never a component that can appear anywhere.
-const DETECTION_TOOL_LOCATION = /[/\\]Velociraptor[/\\]|EVTX-ATTACK|Digital-Forensic-Artifacts/i;
+// or the published corpus name as a WHOLE path component — never a substring that can appear
+// anywhere. Anchoring is not proof: a corpus name IS choosable, which is why it may not delete.
+
+// The collector's own tree. This is the one marker here the attacker cannot supply, so it is also
+// the only one that lets a caller DROP an indicator rather than merely lower a grade.
+const COLLECTOR_INSTALL_ROOT = /[/\\]Velociraptor[/\\]/i;
+
+// The two published corpus names, each as a WHOLE path component. They were bare substrings until
+// #720, which let `EVTX-ATTACK` match `C:\Users\public\EVTX-ATTACKER-kit\evil.exe` — a path any
+// intruder can create, and one that suppressed the finding. The trailing class admits the forms a
+// real download takes (a directory, the GitHub zip's `-master` suffix, an archive extension)
+// without admitting a longer word. Anchoring narrows the accident; it cannot stop a deliberately
+// named folder, which is why a corpus match now grades DOWN without deleting evidence — see
+// isCollectorOwnedLocation and mapYara.
+const SAMPLE_CORPUS_DIR = /[/\\](?:EVTX-ATTACK-SAMPLES|Digital-Forensic-Artifacts)(?:[-_./\\]|$)/i;
+
+const DETECTION_TOOL_LOCATION = new RegExp(
+  `${COLLECTOR_INSTALL_ROOT.source}|${SAMPLE_CORPUS_DIR.source}`,
+  "i",
+);
 
 export function isDetectionToolLocation(value: string): boolean {
   const v = (value || "").trim();
   if (!v) return false;
   return DETECTION_TOOL_LOCATION.test(v);
+}
+
+/**
+ * The subset of isDetectionToolLocation that is NOT a name an intruder can pick: the collector's own
+ * install tree. A hit here is not host evidence at all, so the caller may drop its IOCs. A hit in a
+ * sample-corpus directory only LOOKS like tooling — the directory name is attacker-choosable — so it
+ * leaves the timeline (Info) but keeps its indicators. See mapYara (#720).
+ */
+export function isCollectorOwnedLocation(value: string): boolean {
+  const v = (value || "").trim();
+  if (!v) return false;
+  return COLLECTOR_INSTALL_ROOT.test(v);
 }
 
 // A volatile memory-backed container: the page/hibernation/swap files, a crash or process memory

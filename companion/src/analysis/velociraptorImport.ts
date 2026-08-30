@@ -549,11 +549,11 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   // named malware on a real path → High). See yaraGrade.ts.
   const grade = gradeYaraHit(ruleName, path, procName);
 
-  // The matched file is a real IOC only when it is a real dropped file — never the collector's own
-  // tooling, a rule-content file, or a volatile container (a page-file hit names no file to block).
-  if (path && !isDetectionContentPath(path) && grade.reason !== "self-scan" && !grade.volatile)
+  // A real IOC unless it is the collector's OWN tooling, rule content, or a volatile container. Keyed
+  // on toolOwned, not the grade — a corpus folder is attacker-choosable, so it must not delete (#720).
+  if (path && !isDetectionContentPath(path) && !grade.toolOwned && !grade.volatile)
     addIoc(sink, "file", path);
-  if (procName && grade.reason !== "self-scan") addIoc(sink, "process", baseName(procName));
+  if (procName && !grade.toolOwned) addIoc(sink, "process", baseName(procName));
 
   const mitre = mitreFromText(flatStr(getCI(row, "Meta")), flatStr(getCI(row, "Tags")), ruleName);
 

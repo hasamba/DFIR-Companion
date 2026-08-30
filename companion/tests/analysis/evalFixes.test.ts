@@ -5,6 +5,7 @@ import { detectImportKind } from "../../src/analysis/importDetect.js";
 import { extractDomains } from "../../src/analysis/textDomains.js";
 import { scrapeText } from "../../src/analysis/veloTextIocs.js";
 import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js";
+import { mapHijackLib } from "../../src/analysis/hijackLibImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 
 describe("import routing — eval fixes", () => {
@@ -82,6 +83,25 @@ describe("HijackLibsMFT — DLL side-load (T1574) mapping", () => {
       JSON.stringify([hijackRow("C:\\Program Files\\Vendor\\log4net.dll", "\\\\Program Files\\\\Vendor")]),
     );
     expect(r.events[0].severity).toBe("Low");
+  });
+
+  // A hijackable-DLL scan walks the whole disk, so a deep path is its NORMAL input. The key used to
+  // be truncated with a plain .slice(0, 400): two DLLs under one deep directory collapsed to one
+  // key, and applyEventIdentity then overwrote the survivor's path and hash — deleting a row's
+  // evidence rather than miscounting it (#722). boundedAggKey digests the full key instead.
+  it("keeps the same DLL at two deep paths as two aggregation keys", () => {
+    const deepDir = `C:\\${"nested\\".repeat(70)}`;
+    const key = (leaf: string) =>
+      mapHijackLib(
+        { HijackLibInfo: { DllName: "log4net.dll" }, OSPath: `${deepDir}${leaf}\\log4net.dll` },
+        "DetectRaptor.Windows.Detection.HijackLibsMFT",
+        "HOST01",
+        new Map<string, SiemIoc>(),
+      ).aggKey;
+    const a = key("appOne");
+    const b = key("appTwo");
+    expect(a).not.toBe(b);
+    expect(a.length).toBeLessThanOrEqual(400);
   });
 });
 

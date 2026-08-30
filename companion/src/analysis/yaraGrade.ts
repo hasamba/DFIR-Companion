@@ -26,13 +26,21 @@
 
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
-import { isDetectionToolLocation, isVolatileContainer } from "./veloDetectionNoise.js";
+import {
+  isCollectorOwnedLocation,
+  isDetectionToolLocation,
+  isVolatileContainer,
+} from "./veloDetectionNoise.js";
 
 export interface YaraGrade {
   severity: Severity;
   /** true when the hit was inside a volatile memory container (pagefile / hiberfil / *.dmp). The
    *  caller aggregates these into one row per host so they never crowd the timeline. */
   volatile: boolean;
+  /** true when the self-scan match was the COLLECTOR'S OWN tree — the one demotion signal an intruder
+   *  cannot supply. A sample-corpus directory is a name anyone can create, so it earns the Info grade
+   *  but not this flag: only a tool-owned hit may have its IOCs dropped by the caller (#720). */
+  toolOwned: boolean;
   /** short machine tag for the demotion reason, appended to the description so the analyst sees WHY. */
   reason: "" | "self-scan" | "volatile-container" | "heuristic-trusted" | "heuristic";
 }
@@ -68,13 +76,14 @@ export function gradeYaraHit(ruleName: string, path: string, procName: string): 
   // 1. The detector found its own tooling, rule tree, sample corpus, or a cached simulation repo —
   //    or the matched "process" is the Velociraptor collector itself. Not host evidence.
   if (isDetectionToolLocation(where) || isDetectionToolLocation(proc)) {
-    return { severity: "Info", volatile: false, reason: "self-scan" };
+    const owned = isCollectorOwnedLocation(where) || isCollectorOwnedLocation(proc);
+    return { severity: "Info", volatile: false, toolOwned: owned, reason: "self-scan" };
   }
 
   // 2. A string inside a volatile memory container. It may mean the malware ran once, so it is kept
   //    (Low, and aggregated), but it is never proof on its own and never headlines the timeline.
   if (isVolatileContainer(where)) {
-    return { severity: "Low", volatile: true, reason: "volatile-container" };
+    return { severity: "Low", volatile: true, toolOwned: false, reason: "volatile-container" };
   }
 
   // 3. A broad heuristic / anomaly / test rule.
@@ -83,14 +92,14 @@ export function gradeYaraHit(ruleName: string, path: string, procName: string): 
     // Info: a System32/WinSxS path IS attacker-influenceable (a masqueraded DLL, a BYOVD driver), so
     // the hit stays in the forensic timeline for review — it just leaves the suspicious (Medium+) tier.
     if (TRUSTED_OS_LOCATION.test(where)) {
-      return { severity: "Low", volatile: false, reason: "heuristic-trusted" };
+      return { severity: "Low", volatile: false, toolOwned: false, reason: "heuristic-trusted" };
     }
     // …anywhere else is an anomaly worth a look, not a confirmed verdict.
-    return { severity: "Medium", volatile: false, reason: "heuristic" };
+    return { severity: "Medium", volatile: false, toolOwned: false, reason: "heuristic" };
   }
 
   // 4. A named-malware rule on a normal path — the case mapYara was built for. Unchanged.
-  return { severity: "High", volatile: false, reason: "" };
+  return { severity: "High", volatile: false, toolOwned: false, reason: "" };
 }
 
 // The aggregation key for a graded hit. The HOST LEADS. It used to trail, and a deep scanned path
