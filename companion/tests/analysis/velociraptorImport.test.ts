@@ -3996,6 +3996,17 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     ["the simulation-repo name as a folder", "C:\\Users\\v\\Digital-Forensic-Artifacts\\evil.ps1"],
     ["a lone sigma directory", "C:\\Users\\v\\sigma\\evil.ps1"],
     ["ProgramData, which is user-writable by default", "C:\\ProgramData\\Velociraptor\\Tools\\tmp1\\x.psm1"],
+    [
+      "a substituted drive, which needs no admin at all",
+      "Z:\\Program Files\\Velociraptor\\Tools\\tmp1\\x.psm1",
+    ],
+    ["a mapped network drive", "Y:\\Program Files\\Velociraptor\\Tools\\tmp1\\x.psm1"],
+    ["removable media", "E:\\Program Files\\Velociraptor\\Tools\\tmp1\\x.psm1"],
+    [
+      "a traversal back out of the tool tree",
+      "C:\\Program Files\\Velociraptor\\Tools\\..\\..\\..\\Users\\v\\evil.ps1",
+    ],
+    ["an extended-length prefix", "\\\\?\\C:\\Program Files\\Velociraptor\\Tools\\tmp1\\x.psm1"],
   ])("does not demote a High from %s", (_label, path) => {
     const row = pwshRow(path, "high", "Potential WinAPI Calls Via PowerShell Scripts");
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
@@ -4019,6 +4030,24 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
       "Potential WinAPI Calls Via PowerShell Scripts",
     );
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+
+  it("accepts the forward-slash spelling of the same install path", () => {
+    const row = pwshRow(
+      "C:/Program Files/Velociraptor/Tools/tmp1/PersistenceSniper/PersistenceSniper.psm1",
+      "high",
+      "Potential WinAPI Calls Via PowerShell Scripts",
+    );
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+  });
+
+  // A hard ceiling that does not depend on the path logic being perfect. A Critical is a rule that
+  // named a specific technique — the strongest verdict the pack produces — so no location argument
+  // may erase it. It also bounds the worst case if the path check is ever wrong again: an attacker
+  // who already holds admin on the collector's install path can quiet a High, never a Critical.
+  it("never lowers a Critical, even from the genuine collector tool tree", () => {
+    const row = pwshRow(COLLECTOR_PSM1, "critical", "Invoke-Mimikatz Execution");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Critical");
   });
 
   it("leaves a row with no script path alone", () => {

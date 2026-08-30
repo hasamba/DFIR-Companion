@@ -1671,7 +1671,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
 
     // A script block the COLLECTOR ran from its own tool tree. Demotes at ANY grade, because the signal
     // is an EventData.Path only an administrator can write, not a marker in the text — see isDetectionToolScript.
-    if (isDetectionToolScript(row)) for (const m of ms) if (m) m.severity = "Info";
+    if (isDetectionToolScript(row))
+      for (const m of ms) if (m && m.severity !== "Critical") m.severity = "Info";
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
     const realArtifact = artifactName(row);

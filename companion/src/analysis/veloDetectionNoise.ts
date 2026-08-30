@@ -242,18 +242,32 @@ function scriptPath(row: Row): string {
  * would let them suppress their own Critical by choosing a directory name — the same weakness #720
  * records for the EVTX-ATTACK / Digital-Forensic-Artifacts markers.
  *
- * COLLECTOR_TOOL_TREE demands what the demotion actually claims: the Program Files install root
- * (whose default ACL costs administrator rights to write, and whose filesystem spelling is invariant
- * across Windows display languages), plus the `\Tools\` subtree Velociraptor unpacks its PowerShell
- * modules into. A relocated install falls outside it and keeps its noise — the safe direction to
- * err, since the cost is a loud finding rather than a hidden one.
+ * COLLECTOR_TOOL_TREE demands what the demotion actually claims — a location the attacker had to
+ * hold administrator rights to write — and that takes three clauses, not one:
+ *
+ *   the SYSTEM drive   "Program Files" only carries an admin-only ACL where WINDOWS created it. Any
+ *                      other drive letter is a location the attacker can supply the ACL for:
+ *                      `subst Z: C:\Users\v\evil` needs no privilege whatsoever, nor does
+ *                      `net use Y: \\attacker\share`, nor writing to a USB stick. So the letter is
+ *                      pinned rather than accepted as `[a-z]:`. A machine whose system drive is not
+ *                      C: keeps its collector noise — the safe direction, since the cost is a loud
+ *                      finding rather than a hidden one, and the same trade a relocated install makes.
+ *   the install path   `\Program Files\Velociraptor\Tools\`, where the collector unpacks the
+ *                      PowerShell modules it runs. The filesystem spelling of Program Files is
+ *                      invariant across Windows display languages. Either separator, because
+ *                      PowerShell logs both and the ACL — not the slash — is doing the security work.
+ *   no traversal       a prefix match on a path holding `..` proves nothing about where the file
+ *                      actually is. PowerShell normally logs a resolved path; this does not rely on it.
  *
  * A claim about WHERE the script lives, never about what it contains: the identical body run from a
- * user's Desktop keeps whatever grade it earned.
+ * user's Desktop keeps whatever grade it earned. The call site adds the last bound, a ceiling that
+ * holds even if this reasoning is wrong again — it will not lower a Critical.
  */
-const COLLECTOR_TOOL_TREE = /^[a-z]:\\program files(?: \(x86\))?\\velociraptor\\tools\\/i;
+const COLLECTOR_TOOL_TREE = /^c:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/]/i;
+const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 
 export function isDetectionToolScript(row: Row): boolean {
   if (eventId(row) !== SCRIPT_BLOCK_EID) return false;
-  return COLLECTOR_TOOL_TREE.test(scriptPath(row));
+  const path = scriptPath(row);
+  return COLLECTOR_TOOL_TREE.test(path) && !PATH_TRAVERSAL.test(path);
 }
