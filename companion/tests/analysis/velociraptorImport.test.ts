@@ -3980,11 +3980,41 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
 
-  // A lone `\sigma\` or `\Tools\tmp` component is a directory anyone can create. Only the collector
-  // ROOT context demotes — the same bar isDetectionToolLocation already sets for THOR and YARA.
-  it("does not demote on a directory name an attacker can choose", () => {
+  // EVERY path below is one an UNPRIVILEGED user can create. isDetectionToolLocation — right for the
+  // THOR/YARA callers, whose hits come from scanning the real install — matches a bare `\Velociraptor\`
+  // component, so using it here would let an attacker suppress their own Critical by choosing a
+  // directory name (the weakness #720 records for the other markers). This call site lowers a High,
+  // so it demands the Program Files install root instead, which costs administrator rights to write.
+  it.each([
+    ["a Velociraptor directory under the user profile", "C:\\Users\\vagrant\\Velociraptor\\evil.ps1"],
+    [
+      "a tool tree forged under AppData",
+      "C:\\Users\\v\\AppData\\Local\\Temp\\Velociraptor\\Tools\\tmp1\\x.psm1",
+    ],
+    ["a Velociraptor share the attacker controls", "\\\\attacker\\Velociraptor\\Tools\\tmp1\\x.psm1"],
+    ["the sample-corpus name as a folder", "C:\\Users\\v\\EVTX-ATTACK-SAMPLES\\evil.ps1"],
+    ["the simulation-repo name as a folder", "C:\\Users\\v\\Digital-Forensic-Artifacts\\evil.ps1"],
+    ["a lone sigma directory", "C:\\Users\\v\\sigma\\evil.ps1"],
+    ["ProgramData, which is user-writable by default", "C:\\ProgramData\\Velociraptor\\Tools\\tmp1\\x.psm1"],
+  ])("does not demote a High from %s", (_label, path) => {
+    const row = pwshRow(path, "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+
+  it("demotes from the 32-bit install root as well", () => {
     const row = pwshRow(
-      "C:\\Users\\v\\sigma\\evil.ps1",
+      "C:\\Program Files (x86)\\Velociraptor\\Tools\\tmp1\\PersistenceSniper\\PersistenceSniper.psm1",
+      "high",
+      "Potential WinAPI Calls Via PowerShell Scripts",
+    );
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+  });
+
+  // Program Files alone is not enough: collector-run modules always land in the unpacked \Tools\
+  // subtree, so a script sitting beside the binary is not something the collector ran.
+  it("does not demote a script dropped beside the collector binary", () => {
+    const row = pwshRow(
+      "C:\\Program Files\\Velociraptor\\evil.ps1",
       "high",
       "Potential WinAPI Calls Via PowerShell Scripts",
     );

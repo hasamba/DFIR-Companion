@@ -1669,8 +1669,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     if (isGeneratedModuleScript(row))
       for (const m of ms) if (m && m.severity !== "High" && m.severity !== "Critical") m.severity = "Info";
 
-    // A script block the COLLECTOR ran from its own tool tree. Demotes at ANY grade, because the
-    // signal is EventData.Path under the collector root, not a marker in the text — isDetectionToolScript.
+    // A script block the COLLECTOR ran from its own tool tree. Demotes at ANY grade, because the signal
+    // is an EventData.Path only an administrator can write, not a marker in the text — see isDetectionToolScript.
     if (isDetectionToolScript(row)) for (const m of ms) if (m) m.severity = "Info";
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).

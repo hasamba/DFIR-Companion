@@ -235,17 +235,25 @@ function scriptPath(row: Row): string {
  * finding: the collector, reported as the intruder, ranked above the tool the analyst was hunting.
  *
  * Unlike isGeneratedModuleScript this one is allowed to lower a High or Critical, and it has to be —
- * the finding it exists to kill was High. What makes that safe is the signal, not the ceiling: the
- * grade turns on `EventData.Path` under isDetectionToolLocation, which requires the collector ROOT
- * context and not a directory component anyone can create. Writing a payload there means already
- * holding admin on the collector's own install path, and it is the same bar thorImport and yaraGrade
- * already demote High findings on.
+ * the finding it exists to kill was High. That is why it does NOT reuse isDetectionToolLocation.
+ * That predicate matches a bare `\Velociraptor\` component, which is right for the THOR and YARA
+ * callers (their hits come from sweeping the collector's actual install) and wrong here: a 4104
+ * EventData.Path is wherever the ATTACKER put their script, so `C:\Users\v\Velociraptor\evil.ps1`
+ * would let them suppress their own Critical by choosing a directory name — the same weakness #720
+ * records for the EVTX-ATTACK / Digital-Forensic-Artifacts markers.
+ *
+ * COLLECTOR_TOOL_TREE demands what the demotion actually claims: the Program Files install root
+ * (whose default ACL costs administrator rights to write, and whose filesystem spelling is invariant
+ * across Windows display languages), plus the `\Tools\` subtree Velociraptor unpacks its PowerShell
+ * modules into. A relocated install falls outside it and keeps its noise — the safe direction to
+ * err, since the cost is a loud finding rather than a hidden one.
  *
  * A claim about WHERE the script lives, never about what it contains: the identical body run from a
  * user's Desktop keeps whatever grade it earned.
  */
+const COLLECTOR_TOOL_TREE = /^[a-z]:\\program files(?: \(x86\))?\\velociraptor\\tools\\/i;
+
 export function isDetectionToolScript(row: Row): boolean {
   if (eventId(row) !== SCRIPT_BLOCK_EID) return false;
-  const path = scriptPath(row);
-  return path ? isDetectionToolLocation(path) : false;
+  return COLLECTOR_TOOL_TREE.test(scriptPath(row));
 }
