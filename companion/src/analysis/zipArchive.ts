@@ -20,6 +20,59 @@ export interface ZipEntry {
   data: Buffer;
 }
 
+// ── Portable entry names ───────────────────────────────────────────────────
+//
+// A ZIP entry name is written as a filename on extraction, so it has to survive the strictest
+// filesystem any recipient uses — which is Windows. A case directory routinely holds names Windows
+// refuses: the drop folder keeps a dropped file's original name forever under drop/_processed/, and
+// analysts drop files straight out of Windows collections. Extracting such an entry on Windows
+// either fails outright or, for a colon, silently writes an NTFS alternate data stream — the file
+// disappears from the extracted tree with no error at all.
+//
+// Only the NAME written into the archive is rewritten here. The path the bytes are read from is a
+// separate string and must keep the real on-disk spelling, or the read finds nothing.
+
+// Characters Windows refuses in a filename, plus the control range no platform wants. The forward
+// slash is in the set too: inside a single segment it is content, not a separator.
+const UNPORTABLE_SEGMENT_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
+
+// Reserved device names. With or without an extension, CON, NUL, LPT1 and friends do not resolve to
+// a file on Windows at all, so an entry named after one cannot be extracted.
+const WINDOWS_RESERVED_SEGMENT = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/**
+ * Rewrite one path segment so Windows can create a file with that name.
+ *
+ * Each substitution keeps the segment's length, so two names that differ before sanitizing usually
+ * still differ after. Where they do not, the caller must refuse the archive rather than let one
+ * file overwrite the other. An ordinary name comes back unchanged, non-ASCII included — Windows
+ * accepts those.
+ */
+export function portableZipSegment(segment: string): string {
+  if (!segment) return "_";
+  let out = segment.replace(UNPORTABLE_SEGMENT_CHARS, "_");
+  // Windows strips trailing dots and spaces, so "notes." and "notes" resolve to one file. Padding
+  // with "_" instead of trimming keeps the two names distinct, which the collision check needs.
+  out = out.replace(/[.\s]+$/, (run) => "_".repeat(run.length));
+  if (WINDOWS_RESERVED_SEGMENT.test(out)) out = `_${out}`;
+  return out;
+}
+
+/**
+ * Rewrite a whole entry path, segment by segment.
+ *
+ * Backslashes fold to forward slashes first — a ZIP entry has exactly one path syntax — and empty
+ * segments are dropped so a doubled slash does not invent a directory.
+ */
+export function portableZipEntryPath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((seg) => seg !== "")
+    .map(portableZipSegment)
+    .join("/");
+}
+
 // CRC-32 (IEEE 802.3) lookup table — the checksum every ZIP entry carries.
 const CRC_TABLE: Uint32Array = (() => {
   const table = new Uint32Array(256);
