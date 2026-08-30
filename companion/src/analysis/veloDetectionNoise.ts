@@ -242,32 +242,54 @@ function scriptPath(row: Row): string {
  * would let them suppress their own Critical by choosing a directory name — the same weakness #720
  * records for the EVTX-ATTACK / Digital-Forensic-Artifacts markers.
  *
- * COLLECTOR_TOOL_TREE demands what the demotion actually claims — a location the attacker had to
- * hold administrator rights to write — and that takes three clauses, not one:
+ * What makes that safe is NOT the path. Three review passes established that a path string cannot
+ * carry this claim: the attacker chooses where their script lives, and every attempt to price that
+ * in failed. `\Velociraptor\` is a directory anyone can create. Pinning a drive letter does not help
+ * either — `subst Z: C:\Users\v\evil` and `net use Y: \\attacker\share` cost no privilege, and no
+ * hard-coded letter can tell you the EVIDENCE host's system drive, so "Program Files is admin-only"
+ * is an assumption about a filesystem this process never sees.
  *
- *   the SYSTEM drive   "Program Files" only carries an admin-only ACL where WINDOWS created it. Any
- *                      other drive letter is a location the attacker can supply the ACL for:
- *                      `subst Z: C:\Users\v\evil` needs no privilege whatsoever, nor does
- *                      `net use Y: \\attacker\share`, nor writing to a USB stick. So the letter is
- *                      pinned rather than accepted as `[a-z]:`. A machine whose system drive is not
- *                      C: keeps its collector noise — the safe direction, since the cost is a loud
- *                      finding rather than a hidden one, and the same trade a relocated install makes.
- *   the install path   `\Program Files\Velociraptor\Tools\`, where the collector unpacks the
- *                      PowerShell modules it runs. The filesystem spelling of Program Files is
- *                      invariant across Windows display languages. Either separator, because
- *                      PowerShell logs both and the ACL — not the slash — is doing the security work.
- *   no traversal       a prefix match on a path holding `..` proves nothing about where the file
- *                      actually is. PowerShell normally logs a resolved path; this does not rely on it.
+ * The identity is the control. PowerShell records the account the ENGINE ran under, and a script is
+ * logged as SYSTEM only if it actually ran as SYSTEM — which the attacker must already have. It also
+ * closes the drive-letter hole without guessing anything: `subst` and `net use` mappings are
+ * per-logon-session, so a SYSTEM process never sees the volume an unprivileged user mapped. The
+ * collector tool tree is then corroboration, not the load-bearing part, and traversal is refused
+ * because a prefix match on a path holding `..` describes nothing.
  *
- * A claim about WHERE the script lives, never about what it contains: the identical body run from a
- * user's Desktop keeps whatever grade it earned. The call site adds the last bound, a ceiling that
- * holds even if this reasoning is wrong again — it will not lower a Critical.
+ * This is still evidence rather than proof — an attacker already at SYSTEM can satisfy both. The
+ * call site supplies the last bound for that case: it will not lower a Critical, so the most a
+ * bypass buys is quieting a High, which an attacker at SYSTEM has far better ways to achieve.
+ *
+ * A claim about WHO ran the script and WHERE it lived, never about what it contains: the identical
+ * body run from a user's Desktop keeps whatever grade it earned.
  */
-const COLLECTOR_TOOL_TREE = /^c:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/]/i;
+const COLLECTOR_TOOL_TREE = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/]/i;
 const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+const SYSTEM_SID = "S-1-5-18";
+
+// The account the PowerShell engine logged the script under, across the shapes this importer sees:
+// DetectRaptor Evtx's flat `UserSID`, Chainsaw's parsed `SystemData.Security_attributes.UserID`, and
+// the native EVTX `System.Security.UserID` with or without an Event wrapper.
+function logonSid(row: Row): string {
+  const flat = str(getCI(row, "UserSID")).trim();
+  if (flat) return flat;
+  const paths = [
+    "SystemData.Security_attributes.UserID",
+    "System.Security.UserID",
+    "System.Security_attributes.UserID",
+  ];
+  for (const w of ["", ...EVENT_WRAPPERS]) {
+    for (const path of paths) {
+      const v = str(getPath(row, w ? `${w}.${path}` : path)).trim();
+      if (v) return v;
+    }
+  }
+  return "";
+}
 
 export function isDetectionToolScript(row: Row): boolean {
   if (eventId(row) !== SCRIPT_BLOCK_EID) return false;
+  if (logonSid(row) !== SYSTEM_SID) return false;
   const path = scriptPath(row);
   return COLLECTOR_TOOL_TREE.test(path) && !PATH_TRAVERSAL.test(path);
 }

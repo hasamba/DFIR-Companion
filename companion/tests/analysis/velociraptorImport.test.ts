@@ -3931,6 +3931,7 @@ describe("parseVelociraptorJson — aggregation key cap must not cost the host",
 // those rows as a WinPwn/Mimikatz credential-access burst and made it the case's only Critical
 // finding — the collector reported as the intruder.
 describe("parseVelociraptorJson — script blocks run by the collector itself", () => {
+  const USER_SID = "S-1-5-21-908230818-3748298786-230204725-1001";
   const COLLECTOR_PSM1 =
     "C:\\Program Files\\Velociraptor\\Tools\\tmp1898735674\\PersistenceSniper\\PersistenceSniper.psm1";
   // PersistenceSniper's real body: a P/Invoke block Sigma reads as WinAPI abuse.
@@ -3938,7 +3939,7 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     "Add-Type -TypeDefinition @'\r\npublic class AdjPriv {\r\n" +
     '  [DllImport("advapi32.dll")] internal static extern bool AdjustTokenPrivileges(...);\r\n}\r\n\'@\r\n';
 
-  const pwshRow = (path: string, level: string, title: string) => ({
+  const pwshRow = (path: string, level: string, title: string, sid = "S-1-5-18") => ({
     _Source: "Windows.Sigma.Base",
     Timestamp: "2026-08-30T09:09:21Z",
     Computer: "DESKTOP-16OJFO6",
@@ -3952,7 +3953,7 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
         EventID: { Value: 4104 },
         Channel: "Microsoft-Windows-PowerShell/Operational",
         Computer: "DESKTOP-16OJFO6",
-        Security: { UserID: "S-1-5-18" },
+        Security: { UserID: sid },
         TimeCreated: { SystemTime: 1787130561 },
       },
       EventData: { MessageNumber: 1, MessageTotal: 8, Path: path, ScriptBlockText: SNIPER_BODY },
@@ -3980,11 +3981,13 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
 
-  // EVERY path below is one an UNPRIVILEGED user can create. isDetectionToolLocation — right for the
-  // THOR/YARA callers, whose hits come from scanning the real install — matches a bare `\Velociraptor\`
-  // component, so using it here would let an attacker suppress their own Critical by choosing a
-  // directory name (the weakness #720 records for the other markers). This call site lowers a High,
-  // so it demands the Program Files install root instead, which costs administrator rights to write.
+  // EVERY path below is one an UNPRIVILEGED user can create, and each runs under a NORMAL user SID.
+  // isDetectionToolLocation — right for the THOR/YARA callers, whose hits come from sweeping the real
+  // install — matches a bare `\Velociraptor\` component, so using it here would let an attacker
+  // suppress their own finding by choosing a directory name (the weakness #720 records for the other
+  // markers). Pinning a drive letter does not fix that: `subst Z: C:\Users\v\evil` and
+  // `net use Y: \\attacker\share` cost no privilege, and no letter tells you the EVIDENCE host's
+  // system drive. What the attacker cannot supply is the identity the PowerShell engine logged.
   it.each([
     ["a Velociraptor directory under the user profile", "C:\\Users\\vagrant\\Velociraptor\\evil.ps1"],
     [
@@ -4007,8 +4010,12 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
       "C:\\Program Files\\Velociraptor\\Tools\\..\\..\\..\\Users\\v\\evil.ps1",
     ],
     ["an extended-length prefix", "\\\\?\\C:\\Program Files\\Velociraptor\\Tools\\tmp1\\x.psm1"],
+    [
+      "the genuine install path itself",
+      "C:\\Program Files\\Velociraptor\\Tools\\tmp1\\PersistenceSniper.psm1",
+    ],
   ])("does not demote a High from %s", (_label, path) => {
-    const row = pwshRow(path, "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    const row = pwshRow(path, "high", "Potential WinAPI Calls Via PowerShell Scripts", USER_SID);
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
 
@@ -4030,6 +4037,23 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
       "Potential WinAPI Calls Via PowerShell Scripts",
     );
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+
+  // The control that actually holds. The attacker owns the path — every string above proves it — but
+  // cannot make the engine log their script under SYSTEM without already BEING SYSTEM. It closes the
+  // drive-letter hole without guessing a system drive: `subst` and `net use` mappings are
+  // per-logon-session, so a SYSTEM process never sees the volume an unprivileged user mapped.
+  it("does not demote a High that SYSTEM ran from outside the collector tree", () => {
+    const row = pwshRow("C:\\Users\\v\\evil.ps1", "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+
+  it("reads the SID from the flat UserSID column a DetectRaptor Evtx row carries", () => {
+    const row: Record<string, unknown> = {
+      ...pwshRow(COLLECTOR_PSM1, "high", "Potential WinAPI Calls Via PowerShell Scripts", USER_SID),
+      UserSID: "S-1-5-18",
+    };
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
   });
 
   it("accepts the forward-slash spelling of the same install path", () => {
