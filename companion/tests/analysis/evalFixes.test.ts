@@ -131,3 +131,75 @@ describe("IOC hygiene — code tokens are not domains", () => {
     expect(got).toContain("evil.com");
   });
 });
+
+// Identifiers a script block names in plain text and no scraper reads.
+//
+// From the Bissa-scanner eval: the whole campaign — both target CVEs, both Telegram bot handles,
+// the exfil bucket, the acquirer domains — arrived in ONE 4104 script block. The domain pass (#648)
+// caught the domains. The CVEs and the bot handles were read by the importer and dropped on the
+// floor, so no finding, no IOC, and no report ever named the vulnerability being exploited or the
+// channel the operator was alerted on.
+describe("IOC hygiene — identifiers named inside a script block", () => {
+  const values = (text: string) => {
+    const sink = new Map<string, SiemIoc>();
+    scrapeText(text, sink);
+    return [...sink.values()].map((i) => i.value);
+  };
+
+  it("extracts a CVE id the script names as its exploitation target", () => {
+    expect(values("react2shell module targeting CVE-2025-55182")).toContain("CVE-2025-55182");
+  });
+
+  it("extracts every CVE in a block that names more than one", () => {
+    const v = values("modules: CVE-2025-55182 (RCE) and CVE-2025-9501 (version-check only)");
+    expect(v).toContain("CVE-2025-55182");
+    expect(v).toContain("CVE-2025-9501");
+  });
+
+  it("normalizes a lowercase cve id to the canonical form", () => {
+    expect(values("cve-2025-55182")).toContain("CVE-2025-55182");
+  });
+
+  it("does not read a bare year-number pair as a CVE", () => {
+    expect(values("build 2025-55182 shipped")).not.toContain("CVE-2025-55182");
+  });
+
+  // Telegram requires a bot username to end in "bot", so the suffix is the platform's own rule and
+  // not a guess — an @mention that is not a bot never matches.
+  it("extracts a Telegram bot handle used for operator alerting", () => {
+    expect(values("AlertBotUsername = 'bissapwned_bot' -> @bissapwned_bot")).toContain("@bissapwned_bot");
+  });
+
+  it("extracts a second bot handle named in the same block", () => {
+    expect(values("alert bot @bissapwned_bot, ai-control bot @bissa_scan_bot")).toContain("@bissa_scan_bot");
+  });
+
+  // How the eval's script block actually wrote it: assigned to a key, no `@` anywhere in the file.
+  it("extracts a bot handle a script assigned to a bot-named key with no @", () => {
+    const v = values('    AlertBotUsername  = "bissapwned_bot"\n    AiControlBot      = "bissa_scan_bot"');
+    expect(v).toContain("@bissapwned_bot");
+    expect(v).toContain("@bissa_scan_bot");
+  });
+
+  it("counts the assigned and written-out spellings of one bot as a single indicator", () => {
+    expect(values('AlertBotUsername = "bissapwned_bot" alerts @bissapwned_bot')).toEqual(["@bissapwned_bot"]);
+  });
+
+  it("does not read a short word ending in bot as an assigned handle", () => {
+    expect(values('robot: "mybot"')).toEqual([]);
+  });
+
+  it("does not read an ordinary @mention as a bot handle", () => {
+    expect(values("operator handle @BonJoviGoesHard")).not.toContain("@BonJoviGoesHard");
+  });
+
+  it("does not read an email address as a bot handle", () => {
+    expect(values("contact abuse@robot.example.com")).not.toContain("@robot");
+  });
+
+  it("extracts an s3:// destination the script uploads to", () => {
+    expect(values("aws s3 cp results/*.zip s3://bissapromax/archives/")).toContain(
+      "s3://bissapromax/archives/",
+    );
+  });
+});
