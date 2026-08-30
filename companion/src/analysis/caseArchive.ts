@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
+import { portableZipEntryPath } from "../storage/portableFilename.js";
 
 // ── CRC-32 via lookup table ────────────────────────────────────────────────
 const CRC_TABLE = (() => {
@@ -125,7 +126,14 @@ export interface ArchiveManifest {
   caseId: string;
   archivedAt: string;
   format: "zip";
-  files: Array<{ path: string; sha256: string; bytes: number }>;
+  /**
+   * One entry per file in the archive. `path` is the entry's own path inside the archive (minus
+   * the `<caseId>/` prefix every entry carries), so a checksum here can be verified against the
+   * extracted file. `originalPath` is present ONLY when the two differ — when the on-disk name
+   * held something Windows refuses and the entry name had to be rewritten. Nothing is renamed
+   * invisibly.
+   */
+  files: Array<{ path: string; sha256: string; bytes: number; originalPath?: string }>;
   totalFiles: number;
   totalBytes: number;
 }
@@ -235,15 +243,47 @@ export async function archiveCase(
   const relPaths = await scan(caseDir);
 
   const zipFiles: Array<{ name: string; data: Buffer }> = [];
-  const manifestFiles: Array<{ path: string; sha256: string; bytes: number }> = [];
+  const manifestFiles: Array<{
+    path: string;
+    sha256: string;
+    bytes: number;
+    originalPath?: string;
+  }> = [];
   let totalBytes = 0;
 
+  // The caseId is filesystem-safe by construction (isValidCaseId), so this is a no-op for it; it
+  // runs anyway so the whole entry name goes through one rule.
+  const entryPrefix = portableZipEntryPath(caseId);
+  // Entry name → the on-disk path that took it. Two case files whose names differ only in a
+  // character Windows refuses ("a:b.bin" and "a_b.bin") land on ONE entry name once the name is
+  // made portable, and the second would silently overwrite the first inside the archive. Losing a
+  // file that way is evidence loss with no error, so the archive is refused and both files named.
+  const claimedBy = new Map<string, string>();
+
   for (const rel of relPaths) {
+    // The READ keeps the real on-disk name. Only the name written into the archive is rewritten.
     const data = await read(join(caseDir, rel));
     const sha256 = createHash("sha256").update(data).digest("hex");
-    const zipName = `${caseId}/${rel.replace(/\\/g, "/")}`;
+    const archivedRel = portableZipEntryPath(rel);
+    const zipName = `${entryPrefix}/${archivedRel}`;
+    const claimant = claimedBy.get(zipName);
+    if (claimant !== undefined) {
+      throw new Error(
+        `cannot archive case ${caseId}: "${claimant}" and "${rel}" both become "${zipName}" once ` +
+          `the entry name is made safe to extract on Windows. Archiving would drop one of them. ` +
+          `Rename one file and archive again.`,
+      );
+    }
+    claimedBy.set(zipName, rel);
     zipFiles.push({ name: zipName, data });
-    manifestFiles.push({ path: rel, sha256, bytes: data.length });
+    manifestFiles.push({
+      path: archivedRel,
+      sha256,
+      bytes: data.length,
+      // Omitted, not set to undefined: an ordinary case's manifest JSON stays byte-identical to
+      // the one this has always written.
+      ...(archivedRel === rel ? {} : { originalPath: rel }),
+    });
     totalBytes += data.length;
   }
 
@@ -258,7 +298,7 @@ export async function archiveCase(
 
   // Include the manifest inside the archive
   zipFiles.push({
-    name: `${caseId}/archive-manifest.json`,
+    name: `${entryPrefix}/archive-manifest.json`,
     data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"),
   });
 
