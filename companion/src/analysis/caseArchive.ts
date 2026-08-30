@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
-import { portableZipEntryPath } from "./zipArchive.js";
+import { portableZipEntryPath } from "../storage/portableFilename.js";
 
 // ── CRC-32 via lookup table ────────────────────────────────────────────────
 const CRC_TABLE = (() => {
