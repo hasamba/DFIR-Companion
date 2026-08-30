@@ -209,3 +209,43 @@ export function isGeneratedModuleScript(row: Row): boolean {
   if (!GENERATED_MARKERS.some((re) => re.test(text))) return false;
   return tradecraftSignal("", text)?.weight !== "strong";
 }
+
+// The script FILE a 4104 event was compiled from. PowerShell writes it into `EventData.Path` from
+// the engine's own view of what it loaded, so unlike the script text it is not a string the script
+// can talk about — a payload cannot claim to live somewhere it does not.
+function scriptPath(row: Row): string {
+  let ed = getCI(row, "EventData");
+  for (const w of EVENT_WRAPPERS) {
+    if (isObject(ed)) break;
+    ed = getPath(row, `${w}.EventData`);
+  }
+  return isObject(ed) ? str(getCI(ed, "Path")).trim() : "";
+}
+
+/**
+ * Is this a script block the COLLECTOR ran, out of its own tool tree?
+ *
+ * Velociraptor artifacts shell out to PowerShell modules unpacked under
+ * `\Program Files\Velociraptor\Tools\tmp*\` — Windows.Forensics.PersistenceSniper runs
+ * PersistenceSniper.psm1 there as SYSTEM. That module opens tokens via AdjustTokenPrivileges and
+ * sweeps local accounts because those are the persistence techniques it DETECTS, and broad Sigma
+ * rules grade it "Potential WinAPI Calls Via PowerShell Scripts" (High) and "Powershell LocalAccount
+ * Manipulation" (Medium) exactly as they would an intruder's. On a real eval collection synthesis
+ * read those rows as a WinPwn/Mimikatz credential-access burst and made it the case's only Critical
+ * finding: the collector, reported as the intruder, ranked above the tool the analyst was hunting.
+ *
+ * Unlike isGeneratedModuleScript this one is allowed to lower a High or Critical, and it has to be —
+ * the finding it exists to kill was High. What makes that safe is the signal, not the ceiling: the
+ * grade turns on `EventData.Path` under isDetectionToolLocation, which requires the collector ROOT
+ * context and not a directory component anyone can create. Writing a payload there means already
+ * holding admin on the collector's own install path, and it is the same bar thorImport and yaraGrade
+ * already demote High findings on.
+ *
+ * A claim about WHERE the script lives, never about what it contains: the identical body run from a
+ * user's Desktop keeps whatever grade it earned.
+ */
+export function isDetectionToolScript(row: Row): boolean {
+  if (eventId(row) !== SCRIPT_BLOCK_EID) return false;
+  const path = scriptPath(row);
+  return path ? isDetectionToolLocation(path) : false;
+}

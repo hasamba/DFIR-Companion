@@ -3920,3 +3920,79 @@ describe("parseVelociraptorJson — aggregation key cap must not cost the host",
     expect(r.events[0].count).toBe(2);
   });
 });
+
+// Script blocks the COLLECTOR ran, logged as 4104 like any other script.
+//
+// Velociraptor's own artifacts shell out to PowerShell modules it unpacks into its tool tree —
+// Windows.Forensics.PersistenceSniper runs PersistenceSniper.psm1 as SYSTEM. That module's
+// AdjustTokenPrivileges P/Invoke and its `net users` account sweep are DETECTION code, but Sigma
+// grades them "Potential WinAPI Calls Via PowerShell Scripts" (high) and "Powershell LocalAccount
+// Manipulation" (medium) exactly as it would an attacker's. On a real eval collection synthesis read
+// those rows as a WinPwn/Mimikatz credential-access burst and made it the case's only Critical
+// finding — the collector reported as the intruder.
+describe("parseVelociraptorJson — script blocks run by the collector itself", () => {
+  const COLLECTOR_PSM1 =
+    "C:\\Program Files\\Velociraptor\\Tools\\tmp1898735674\\PersistenceSniper\\PersistenceSniper.psm1";
+  // PersistenceSniper's real body: a P/Invoke block Sigma reads as WinAPI abuse.
+  const SNIPER_BODY =
+    "Add-Type -TypeDefinition @'\r\npublic class AdjPriv {\r\n" +
+    '  [DllImport("advapi32.dll")] internal static extern bool AdjustTokenPrivileges(...);\r\n}\r\n\'@\r\n';
+
+  const pwshRow = (path: string, level: string, title: string) => ({
+    _Source: "Windows.Sigma.Base",
+    Timestamp: "2026-08-30T09:09:21Z",
+    Computer: "DESKTOP-16OJFO6",
+    Channel: "Microsoft-Windows-PowerShell/Operational",
+    EID: 4104,
+    Level: level,
+    Title: title,
+    Details: `ScriptBlock: ${SNIPER_BODY}`,
+    _Event: {
+      System: {
+        EventID: { Value: 4104 },
+        Channel: "Microsoft-Windows-PowerShell/Operational",
+        Computer: "DESKTOP-16OJFO6",
+        Security: { UserID: "S-1-5-18" },
+        TimeCreated: { SystemTime: 1787130561 },
+      },
+      EventData: { MessageNumber: 1, MessageTotal: 8, Path: path, ScriptBlockText: SNIPER_BODY },
+    },
+  });
+
+  it("demotes a HIGH verdict on a script the collector ran out of its own tool tree", () => {
+    const row = pwshRow(COLLECTOR_PSM1, "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+  });
+
+  it("demotes the medium account-sweep verdict from the same module", () => {
+    const row = pwshRow(COLLECTOR_PSM1, "medium", "Powershell LocalAccount Manipulation");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+  });
+
+  // The demotion is a claim about WHERE the script lives, never about what it contains. The same
+  // body run from anywhere else is the intrusion this rule exists to catch.
+  it("keeps the grade when the identical script ran from a user path", () => {
+    const row = pwshRow(
+      "C:\\Users\\vagrant\\Desktop\\priv.ps1",
+      "high",
+      "Potential WinAPI Calls Via PowerShell Scripts",
+    );
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+
+  // A lone `\sigma\` or `\Tools\tmp` component is a directory anyone can create. Only the collector
+  // ROOT context demotes — the same bar isDetectionToolLocation already sets for THOR and YARA.
+  it("does not demote on a directory name an attacker can choose", () => {
+    const row = pwshRow(
+      "C:\\Users\\v\\sigma\\evil.ps1",
+      "high",
+      "Potential WinAPI Calls Via PowerShell Scripts",
+    );
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+
+  it("leaves a row with no script path alone", () => {
+    const row = pwshRow("", "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
+  });
+});
