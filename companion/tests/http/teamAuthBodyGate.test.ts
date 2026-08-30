@@ -1,4 +1,5 @@
 import { mkdtemp } from "node:fs/promises";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -34,12 +35,76 @@ import { CaseStore } from "../../src/storage/caseStore.js";
  *   1.5 MB  over the 1 MB pre-auth floor, under the configured limit — what a credential buys
  *   2.5 MB  over BOTH, so without the gate the parser reads it and answers 413
  * Mutation-proven on that second size: stub the gate out and the 401 assertions go back to 413.
+ *
+ * The concurrency test is the exception. It cannot use a full upload at all: refusing pre-parse
+ * means answering mid-upload and hanging up, so everything the client observes then — the status,
+ * and the bytes that reach the socket — is decided by the platform's TCP stack rather than by the
+ * server. So it announces a 2.5 MB body, sends 16 KB, and sends no more. An answer arriving while
+ * the body does not exist proves the same thing with nothing left to race.
  */
 
 const BOOTSTRAP_TOKEN = "body-gate-bootstrap-token-with-entropy";
 const TELEGRAM_SECRET = "telegram-webhook-secret-token";
 const OVER_THE_PRE_AUTH_CAP = "x".repeat(1_500_000);
 const OVER_EVERY_CAP = "x".repeat(2_500_000);
+const CONCURRENT_CALLERS = 8;
+/** What each concurrent caller ANNOUNCES it is about to upload, and then never sends. */
+const DECLARED_BODY_BYTES = 2_500_203;
+/** What it actually puts on the wire: a token prefix, then silence. */
+const PREFIX_BYTES = 16 * 1024;
+
+/** What one refused caller saw. */
+type Refusal =
+  | { kind: "answered"; status: number; body: string; sentBytes: number }
+  | { kind: "reset"; code: string; sentBytes: number };
+
+/**
+ * One unauthenticated caller that announces a large upload and then does not send it: request
+ * headers declaring DECLARED_BODY_BYTES, a PREFIX_BYTES prefix, and nothing more. Resolves once the
+ * server has answered in full, or once the socket dies.
+ *
+ * Raw sockets rather than supertest, because supertest always sends the whole body and the body
+ * that never arrives is the entire point.
+ */
+function announceAnUploadWithoutSendingIt(port: number): Promise<Refusal> {
+  return new Promise((resolve) => {
+    let received = "";
+    let sentBytes = 0;
+    let settled = false;
+    const settle = (outcome: Refusal): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(outcome);
+    };
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        "POST /cases/c1/import-siem HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Content-Type: application/json\r\n" +
+          `Content-Length: ${DECLARED_BODY_BYTES}\r\n\r\n`,
+      );
+      socket.write(Buffer.alloc(PREFIX_BYTES, 0x78));
+      sentBytes = PREFIX_BYTES;
+    });
+    socket.on("data", (chunk: Buffer) => {
+      received += chunk.toString("latin1");
+      const headerEnd = received.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = received.slice(0, headerEnd);
+      const status = /^HTTP\/1\.\d (\d{3})/.exec(head);
+      const length = /\r\ncontent-length: *(\d+)/i.exec(head);
+      const body = received.slice(headerEnd + 4);
+      // Wait for the answer's own body before settling, so reading it is never a race either.
+      if (length && body.length < Number(length[1])) return;
+      settle({ kind: "answered", status: Number(status?.[1] ?? 0), body, sentBytes });
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) =>
+      settle({ kind: "reset", code: err.code ?? String(err), sentBytes }),
+    );
+    socket.on("close", () => settle({ kind: "reset", code: "CLOSED WITHOUT ANSWERING", sentBytes }));
+  });
+}
 
 describe("team mode authenticates before it parses a body", () => {
   let cases: CaseStore;
@@ -122,12 +187,63 @@ describe("team mode authenticates before it parses a body", () => {
   });
 
   it("refuses concurrent oversized unauthenticated requests without parsing any of them", async () => {
-    const results = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        request(app).post("/cases/c1/import-siem").send({ filename: "big.json", json: OVER_EVERY_CAP }),
-      ),
-    );
-    expect(results.map((r) => r.status)).toEqual(Array(8).fill(401));
+    // Eight strangers each ANNOUNCE a 2.5 MB upload and then send 16 KB and stop. A final answer
+    // arriving while 2.48 MB of the declared body does not yet exist can only have come from above
+    // the parsers, because no parser can finish a body it has not received. That is the property,
+    // and it is proven by what this test refuses to send rather than by anything it measures.
+    //
+    // The earlier version of this test asserted the status code of a full 2.5 MB upload, and that
+    // could never be stable. Refusing pre-parse means answering mid-upload and hanging up, so
+    // whether the 401 or the RST reaches the client first is a TCP race the platform decides —
+    // Linux delivered the 401, Windows delivered ECONNRESET. Counting bytes off the wire instead
+    // was no better: Node calls req._dump() on the unread request BEFORE destroySoon(), so the
+    // socket keeps draining for a scheduling-dependent while, and Windows CI drained 2,097,152
+    // bytes of a body no parser ever saw. Both oracles measured the transport. This one does not
+    // touch it: bytes the client never wrote cannot be read, buffered, drained or raced.
+    //
+    // Mutation-checked, and the mutant is the bug itself rather than a status change — stub the
+    // gate out and all eight callers get NO answer at all, because express.json() is sitting on
+    // eight open connections waiting for bodies that will never arrive. The test then fails on
+    // vitest's own timeout, which is the right failure: that hang is what #681 exists to prevent.
+    const server = app.listen(0);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+      });
+      const port = (server.address() as AddressInfo).port;
+
+      const outcomes = await Promise.all(
+        Array.from({ length: CONCURRENT_CALLERS }, () => announceAnUploadWithoutSendingIt(port)),
+      );
+
+      for (const outcome of outcomes) {
+        // Nobody had to send more than the prefix to be turned away.
+        expect(outcome.sentBytes).toBe(PREFIX_BYTES);
+        if (outcome.kind === "answered") {
+          // 413 or 400 here would be the parser talking, which is the thing being refused.
+          expect(outcome.status).toBe(401);
+          expect(JSON.parse(outcome.body)).toEqual({ error: "authentication required" });
+        } else {
+          // The server refused and hung up on a socket still holding an unread prefix, which some
+          // platforms surface as a reset. Any other errno — and "closed without answering", which
+          // is the hang above — is a failure, so the accepted set is named rather than caught.
+          expect(["ECONNRESET", "EPIPE"]).toContain(outcome.code);
+        }
+      }
+
+      // And the server is still standing, so the refusals above were refusals and not a crash.
+      const stillServing = await request(`http://127.0.0.1:${port}`)
+        .post("/cases/c1/import-siem")
+        .send({ filename: "small.json", json: "small" });
+      expect(stillServing.status).toBe(401);
+      expect(stillServing.body.error).toBe("authentication required");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
   });
 
   it("redirects a browser navigation to the login page rather than 401-ing it", async () => {
