@@ -424,9 +424,18 @@ phishing case and in today's ransomware case — and every other panel stops at 
 Each row names the case, links straight to it, and lists what the two have in common. Fully
 deterministic; no AI, no network.
 
-**The panel is off by default.** Turn it on in Settings → Dashboard sections. Across one estate a
-shared indicator is usually ordinary, so the panel earns its place only in the investigations where
-you go looking for a cross-case link.
+**The whole feature is off by default, server-side.** Set `DFIR_CROSS_CASE=on` in the environment
+and restart; until then both routes answer 404 and say so. It is an environment setting rather than
+a Settings checkbox on purpose — it decides whether one case may name another, so it stays out of
+the dashboard's reach, like every other setting that governs what an account can see.
+
+Across one estate a shared indicator is usually ordinary, so the feature earns its place only where
+you actually go looking for a cross-case link. Leaving it off also costs nothing to run: each
+answered request holds a trimmed copy of every readable case's indicators in memory for as long as
+the server is up, and off means that index is never built.
+
+**The panel is off by default too**, separately, and stays so even once the routes are enabled —
+turn it on in Settings → Dashboard sections.
 
 Once on, it stays hidden until this case actually overlaps with another one you may read. It
 refreshes when you connect to a case, and again whenever an import settles — so a newly imported
@@ -448,7 +457,7 @@ cases you hold a role on — a reader on case A learns nothing about case B. A p
 contributes nothing until you have unlocked it in the same browser session, whichever case you are
 looking at.
 
-Two routes back it, scoped the same way:
+Two routes back it, scoped the same way (both 404 while `DFIR_CROSS_CASE` is unset):
 
 - `GET /cases/<id>/related` — the panel's own data.
 - `GET /global/iocs?q=<value>` — search one indicator across every case you may read. Optional

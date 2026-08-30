@@ -14,13 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Related Cases** — a new dashboard panel and two routes (`GET /cases/:id/related`, `GET /global/iocs?q=`) that surface the other investigations sharing an indicator with this one. Ranked so a flagged hash outweighs a private address; scoped to the cases your account may already read. Off by default — turn it on in Settings → Dashboard sections. (closes #679)
+- **Related Cases** — a new dashboard panel and two routes (`GET /cases/:id/related`, `GET /global/iocs?q=`) that surface the other investigations sharing an indicator with this one. Ranked so a flagged hash outweighs a private address; scoped to the cases your account may already read. Off by default — set `DFIR_CROSS_CASE=on` to enable the routes, then turn the panel on in Settings → Dashboard sections. (closes #679)
 - **Chainsaw runs on raw `.evtx` from inside the Companion** — a sixth built-in tool alongside Hayabusa and the Velociraptor CLI (binary, Sigma rule directory and mapping file in Settings → Tools). The importer already existed; only the runner was missing. (#688)
 - **A parser run is now recorded in the chain of custody** — the tool output's custody entry states the parser's version, the exact arguments, the rule-set hash, the exit code, a stderr tail and the output hash, instead of a bare "companion". (#688)
 - **A raw file uploaded to a parser is kept byte-for-byte** as evidence beside the parser's output, and it survives a failed parse. It used to be deleted once parsed. (#688)
 - **One Windows record read by two parsers is one timeline row** — a Hayabusa run and a Chainsaw run over the same EVTX now merge on the record's own identity (channel + EventRecordID + host) and carry both tools as sources, instead of doubling the timeline. Two detections from the *same* parser on one record stay distinct. (#688)
 
 ### Security
+- **The cross-case pivot is off unless a deployment asks for it** — `GET /cases/:id/related` and `GET /global/iocs` now answer 404 until `DFIR_CROSS_CASE=on`. The routes decide whether one case may name another, and every answered request pinned a trimmed copy of each readable case's indicators in memory for the process lifetime, with no eviction when a case was deleted. (closes #723)
 - **Importing an old `.dfircase` archive now warns that its encryption is weaker** — files exported by v0.31.0–v0.33.0 used scrypt `N=2^14`; v0.34.0 onward use `N=2^17`. The import reports the archive's format version and tells the analyst to re-export. v1 archives stay readable — nothing is refused or re-keyed. (closes #672)
 - **The EVTX parsers fail closed** — a non-zero exit from Hayabusa, Chainsaw or the Velociraptor CLI rejects the run instead of importing a partial parse, and Chainsaw refuses to start when its Sigma rule directory is missing or empty rather than reporting a false all-clear. (#688)
 - **A failed OIDC sign-in no longer shows the identity provider's error text** — the login page gets one sentence and a reference; the full detail goes to the server log under that reference. (closes #674)
