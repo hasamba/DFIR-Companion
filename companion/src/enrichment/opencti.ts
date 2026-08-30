@@ -1,4 +1,5 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface OpenCtiOptions {
   baseUrl: string; // your OpenCTI instance, e.g. https://opencti.example.org
@@ -90,7 +91,10 @@ export class OpenCtiProvider implements EnrichmentProvider {
     if (res.status === 401 || res.status === 403)
       throw new Error("OpenCTI auth failed (check DFIR_OPENCTI_KEY)");
     if (!res.ok) throw new Error(`OpenCTI HTTP ${res.status}`);
-    const json = (await res.json()) as GraphQlResponse<T>;
+    const json = await readBoundedJson<GraphQlResponse<T>>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "OpenCTI",
+    });
     if (json.errors && json.errors.length > 0) {
       throw new Error(`OpenCTI GraphQL error: ${json.errors[0]?.message ?? "unknown"}`);
     }

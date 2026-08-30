@@ -12,6 +12,7 @@ import {
   describeFetchError,
   TimesketchClient,
 } from "../../src/integrations/timesketch/timesketchClient.js";
+import { ResponseTooLargeError, RESPONSE_SIZE_LIMITS } from "../../src/providers/boundedResponse.js";
 import {
   pushCaseToTimesketch,
   pushSuperTimelineToTimesketch,
@@ -203,6 +204,26 @@ describe("TimesketchClient network failure", () => {
     expect(err?.message).toContain("DFIR_TIMESKETCH_CA");
     expect(err?.message).toContain("DFIR_TIMESKETCH_INSECURE=1");
     expect(err?.message).toContain("DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true");
+  });
+});
+
+describe("TimesketchClient bounded response (issue #686)", () => {
+  // Regression: readBoundedJson().catch(() => ({})) originally caught EVERY rejection, including
+  // ResponseTooLargeError — so an oversized-but-VALID sketches list silently looked like "no
+  // sketches on this page", findSketchByName returned null, and the push flow went on to create a
+  // duplicate sketch instead of reusing the existing one. It must now propagate.
+  it("findSketchByName propagates ResponseTooLargeError instead of treating an oversized page as empty", async () => {
+    const client = new TimesketchClient({
+      baseUrl: "https://timesketch.example.org",
+      username: "u",
+      password: "p",
+      fetchFn: async () =>
+        new Response("irrelevant — rejected on the declared Content-Length before this is read", {
+          status: 200,
+          headers: { "content-length": String(RESPONSE_SIZE_LIMITS.json + 1) },
+        }),
+    });
+    await expect(client.findSketchByName("existing-case-sketch")).rejects.toThrow(ResponseTooLargeError);
   });
 });
 

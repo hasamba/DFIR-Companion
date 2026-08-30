@@ -1,4 +1,5 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface YetiOptions {
   baseUrl: string; // your YETI instance, e.g. https://yeti.example.org
@@ -76,7 +77,12 @@ export class YetiProvider implements EnrichmentProvider {
     });
     if (res.status === 401 || res.status === 403) throw new Error("YETI auth failed (check DFIR_YETI_KEY)");
     if (!res.ok) throw new Error(`YETI auth HTTP ${res.status}`);
-    const token = ((await res.json()) as { access_token?: string }).access_token;
+    const token = (
+      await readBoundedJson<{ access_token?: string }>(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "YETI",
+      })
+    ).access_token;
     if (!token) throw new Error("YETI auth returned no access_token");
     this.token = token;
     return token;
@@ -100,7 +106,10 @@ export class YetiProvider implements EnrichmentProvider {
     if (res.status === 403) throw new Error("YETI access denied");
     if (!res.ok) throw new Error(`YETI HTTP ${res.status}`);
 
-    const json = (await res.json()) as { observables?: YetiObservable[]; total?: number };
+    const json = await readBoundedJson<{ observables?: YetiObservable[]; total?: number }>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "YETI",
+    });
     const obs = json.observables ?? [];
     if (obs.length === 0) return null; // not tracked in YETI
 

@@ -27,11 +27,10 @@ function mockFetch(responses: Array<{ status?: number; json?: unknown }>): {
       body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
     });
     const status = next.status ?? 200;
-    return {
-      ok: status >= 200 && status < 300,
+    return new Response(status === 204 ? null : JSON.stringify(next.json ?? {}), {
       status,
-      json: async () => next.json ?? {},
-    } as unknown as Response;
+      headers: { "content-type": "application/json" },
+    });
   };
   return { fetchFn, calls };
 }

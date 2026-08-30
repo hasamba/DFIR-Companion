@@ -6,6 +6,7 @@ import {
   type FetchFn,
   type IocKind,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 // Shodan host lookup for an IP IOC — "what is hosted on this address?". Surfaces the web
 // properties / services Shodan has seen: hostnames + domains, open ports, the running
@@ -68,7 +69,10 @@ export class ShodanProvider implements EnrichmentProvider {
       throw new RateLimitError("Shodan rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`Shodan HTTP ${res.status}`);
 
-    const h = (await res.json()) as ShodanHost;
+    const h = await readBoundedJson<ShodanHost>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "Shodan",
+    });
     const hostnames = uniq([...(h.hostnames ?? []), ...(h.domains ?? [])]);
     const ports = (h.ports ?? []).filter((p) => Number.isFinite(p));
     const vulns = uniq(h.vulns ?? []);

@@ -24,11 +24,10 @@ function stubFetch(handler: (call: Call) => { status?: number; json: unknown }) 
     };
     calls.push(call);
     const { status = 200, json } = handler(call);
-    return {
-      ok: status >= 200 && status < 300,
+    return new Response(JSON.stringify(json), {
       status,
-      json: async () => json,
-    } as Response;
+      headers: { "content-type": "application/json" },
+    });
   }) as unknown as typeof fetch;
   return { fetchFn, calls };
 }
@@ -255,13 +254,10 @@ describe("MispPushClient ping diagnostics (issue #179)", () => {
   it("diagnoses a 200 that isn't MISP JSON — the URL points at some other web app", async () => {
     // A reverse proxy or an unrelated app on that port answers 200 with an HTML page; parsing it
     // used to escape as a raw "Unexpected token '<'" with no hint that the URL was the problem.
-    const fetchFn = (async () => ({
-      ok: true,
-      status: 200,
-      json: async () => {
-        throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`);
-      },
-    })) as unknown as typeof fetch;
+    const fetchFn = (async () =>
+      new Response("<!DOCTYPE html><html><body>not MISP</body></html>", {
+        status: 200,
+      })) as unknown as typeof fetch;
     const msg = await client(fetchFn)
       .ping()
       .catch((e: Error) => e.message);

@@ -14,10 +14,16 @@ function mockFetch(routes: Array<[string, unknown]>, seen: string[] = []) {
     seen.push(url);
     for (const [needle, body] of routes) {
       if (url.includes(needle)) {
-        return { ok: true, status: 200, json: async () => body } as unknown as Response;
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
     }
-    return { ok: false, status: 404, json: async () => ({ error: "not found" }) } as unknown as Response;
+    return new Response(JSON.stringify({ error: "not found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
   }) as unknown as typeof fetch;
 }
 
@@ -95,7 +101,10 @@ describe("fetchVerdicts", () => {
       seen.push(url);
       let body: unknown = [];
       if (url.includes("type=alert")) body = alertCall++ === 0 ? full : [{ event_type: "alert", n: 1000 }];
-      return { ok: true, status: 200, json: async () => body } as unknown as Response;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }) as unknown as typeof fetch;
 
     const res = await fetchVerdicts("http://localhost:8000", "e".repeat(32), f);

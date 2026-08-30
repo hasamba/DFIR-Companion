@@ -4,6 +4,7 @@
 // integration pattern).
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS, rethrowIfTooLarge } from "../../providers/boundedResponse.js";
 
 export interface JiraClientOptions {
   baseUrl: string; // e.g. https://your-domain.atlassian.net
@@ -90,7 +91,9 @@ export class JiraClient {
     }
 
     if (!res.ok) {
-      const env = (await res.json().catch(() => ({}))) as JiraErrorEnvelope;
+      const env = (await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Jira" }).catch(
+        () => ({}),
+      )) as JiraErrorEnvelope;
       const detail = env.errorMessages?.join("; ") || Object.values(env.errors || {}).join("; ");
       const suffix = detail ? `: ${detail}` : "";
       if (res.status === 401)
@@ -105,7 +108,9 @@ export class JiraClient {
       if (res.status === 400) throw new JiraApiError(`Jira rejected the request${suffix}`, 400, "validation");
       throw new JiraApiError(`Jira HTTP ${res.status} on ${path}${suffix}`, res.status, "http");
     }
-    return (await res.json().catch(() => ({}))) as T;
+    return (await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Jira" }).catch(
+      (err) => rethrowIfTooLarge(err, {}),
+    )) as T;
   }
 
   async me(): Promise<{ id?: string; displayName?: string }> {

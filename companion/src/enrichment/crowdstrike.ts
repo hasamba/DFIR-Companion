@@ -7,6 +7,7 @@ import {
   type IocKind,
   type Verdict,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface CrowdStrikeOptions {
   clientId: string;
@@ -121,7 +122,10 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
       );
     }
     if (!res.ok) throw new Error(`CrowdStrike token HTTP ${res.status}`);
-    const json = (await res.json()) as { access_token?: string; expires_in?: number };
+    const json = await readBoundedJson<{ access_token?: string; expires_in?: number }>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "CrowdStrike",
+    });
     if (!json.access_token) throw new CsAuthError("CrowdStrike token response missing access_token");
     this.token = json.access_token;
     this.tokenExpiresAt = Date.now() + Math.max(0, (json.expires_in ?? 1799) - 60) * 1000; // 60s safety margin
@@ -143,7 +147,10 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
       throw new RateLimitError("CrowdStrike rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (res.status === 404) return {};
     if (!res.ok) throw new Error(`CrowdStrike HTTP ${res.status}`);
-    return (await res.json()) as Record<string, unknown>;
+    return readBoundedJson<Record<string, unknown>>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "CrowdStrike",
+    });
   }
 
   // Falcon Intelligence Indicators — adversary-attributed IOC intel.

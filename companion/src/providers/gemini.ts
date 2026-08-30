@@ -8,6 +8,7 @@ import {
   requestSignal,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
+import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "./boundedResponse.js";
 
 type FetchFn = typeof fetch;
 
@@ -65,17 +66,20 @@ export class GeminiProvider implements AIProvider {
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
+      const body = await readBoundedText(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.text,
+        context: "Gemini",
+      }).catch(() => "");
       throw new ProviderError(httpErrorMessage("Gemini", res.status, body), httpErrorKind(res.status));
     }
-    const json = (await res.json()) as {
+    const json = await readBoundedJson<{
       candidates?: { content?: { parts?: { text?: string }[] } }[];
       usageMetadata?: {
         promptTokenCount?: number;
         candidatesTokenCount?: number;
         cachedContentTokenCount?: number;
       };
-    };
+    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Gemini" });
     const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new ProviderError("Gemini returned no content", "other");
     // Google's Generative Language response includes usageMetadata (promptTokenCount,

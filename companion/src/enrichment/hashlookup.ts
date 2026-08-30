@@ -7,6 +7,7 @@ import {
   type IocKind,
   type Verdict,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 // CIRCL hashlookup (https://www.circl.lu/services/hashlookup/) — a large, free, keyless
 // KNOWN-FILE database (NSRL-derived corpus + Linux distro packages + more). For DFIR this is
@@ -86,7 +87,10 @@ export class HashlookupProvider implements EnrichmentProvider {
       throw new RateLimitError("Hashlookup rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`Hashlookup HTTP ${res.status}`);
 
-    const json = (await res.json()) as Record<string, unknown>;
+    const json = await readBoundedJson<Record<string, unknown>>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: this.name,
+    });
     if (!json || typeof json !== "object" || Array.isArray(json)) return null;
 
     const fileName = typeof json.FileName === "string" ? json.FileName.trim() : "";

@@ -4,6 +4,7 @@ import {
   mispPingStatusMessage,
   mispTransportMessage,
 } from "../integrations/misp/mispConnectivity.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface MispOptions {
   baseUrl: string; // your MISP instance, e.g. https://misp.example.org
@@ -90,7 +91,9 @@ export class MispProvider implements EnrichmentProvider {
     if (res.status === 401 || res.status === 403) throw new Error("MISP auth failed (check DFIR_MISP_KEY)");
     if (!res.ok) throw new Error(`MISP HTTP ${res.status}`);
 
-    const json = (await res.json()) as { response?: { Attribute?: MispAttribute[] } };
+    const json = await readBoundedJson<{
+      response?: { Attribute?: MispAttribute[] };
+    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "MISP" });
     const attrs = json.response?.Attribute ?? [];
     if (attrs.length === 0) return null; // not present on this instance
 

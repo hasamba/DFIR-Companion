@@ -10,6 +10,7 @@
 
 import { createHash } from "node:crypto";
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 
 export interface SocratesStatus {
   status: "ready" | "processing" | "error";
@@ -49,7 +50,7 @@ export function md5Buffer(data: Buffer): string {
 async function getJson(url: string, fetchFn: FetchFn): Promise<unknown> {
   const res = await fetchFn(url, { method: "GET" });
   if (!res.ok) throw new Error(`SO-CRATES GET ${new URL(url).pathname} failed: HTTP ${res.status}`);
-  return res.json();
+  return readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "SO-CRATES" });
 }
 
 async function postJson(url: string, body: unknown, fetchFn: FetchFn): Promise<unknown> {
@@ -59,7 +60,7 @@ async function postJson(url: string, body: unknown, fetchFn: FetchFn): Promise<u
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`SO-CRATES POST ${new URL(url).pathname} failed: HTTP ${res.status}`);
-  return res.json();
+  return readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "SO-CRATES" });
 }
 
 /**
@@ -93,11 +94,17 @@ export async function uploadBuffer(
   form.append("file", new Blob([new Uint8Array(data)]), filename);
   const res = await fetchFn(`${trimBase(baseUrl)}/api/upload`, { method: "POST", body: form });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
+    const detail = await readBoundedJson(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "SO-CRATES",
+    }).catch(() => ({}));
     const msg = (detail as { error?: string }).error ?? `HTTP ${res.status}`;
     throw new Error(`SO-CRATES upload of "${filename}" failed: ${msg}`);
   }
-  return (await res.json()) as SocratesUploadResult;
+  return readBoundedJson<SocratesUploadResult>(res, {
+    maxBytes: RESPONSE_SIZE_LIMITS.json,
+    context: "SO-CRATES",
+  });
 }
 
 /** Poll whether analysis has finished. */
