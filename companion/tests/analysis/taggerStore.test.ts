@@ -302,9 +302,15 @@ describe("TaggerStore concurrency (follow-up to #682)", () => {
     const store = new TaggerStore(userPath, [defaultPath]);
     const opened = (await store.readActive()).revision;
     await store.addRuleYaml(rule("from-add"));
-    await expect(store.save(rule("from-editor"), opened)).rejects.toMatchObject({
-      currentRevision: (await store.readActive()).revision,
-    });
+    // Read the expected revision BEFORE the save is issued, and keep every await out of the
+    // matcher argument. Arguments are evaluated after the promise exists but before .rejects
+    // attaches anything to it, so an await there is a window in which a rejected save has no
+    // handler — and both sides do file I/O, so which one lands first is a coin toss. It came up
+    // tails about once in eight runs, and vitest reports it as an unhandled rejection that fails
+    // the whole file while every test in it passes. The refused save cannot move the revision, so
+    // reading it early is the same value, read at a moment that cannot race.
+    const currentRevision = (await store.readActive()).revision;
+    await expect(store.save(rule("from-editor"), opened)).rejects.toMatchObject({ currentRevision });
   });
 
   it("still de-collides ids raced against each other", async () => {
