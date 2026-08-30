@@ -60,17 +60,28 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         return res.status(429).json({ error: "too many import attempts, try again later" });
       }
       const fileBuffer = Buffer.from(data, "base64");
-      const { meta, counts } = await importEncryptedCase(store, fileBuffer, password, {
-        targetCaseId:
-          typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
-      });
+      const { meta, counts, formatVersion, currentFormatVersion } = await importEncryptedCase(
+        store,
+        fileBuffer,
+        password,
+        {
+          targetCaseId:
+            typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
+        },
+      );
       options.teamAuth?.grantCreator(req, meta.caseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
       // the client, same as every other route that serializes a CaseMeta.
       limiter.clear(limiterKey);
-      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
+      // Both versions ride in the response so the dashboard can say "this archive used an older,
+      // weaker key derivation" without hardcoding which version is current — a client that
+      // hardcoded "warn below 2" would silently stop warning about v2 the day a v3 lands (#672).
+      // This is safe to return only because it is the SUCCESS path: the caller has already proven
+      // it holds the password. Never answer "what version is this archive?" before a decrypt, or
+      // an unauthenticated caller could sort a pile of archives by which are cheapest to crack.
+      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts, formatVersion, currentFormatVersion });
     } catch (err) {
       // A conflict means the archive DID open — a real analyst re-importing, not an attacker
       // burning CPU. Deliberately not counted as a failure; the per-request budget above is what

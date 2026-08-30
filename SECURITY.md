@@ -15,6 +15,34 @@ own auth/reverse proxy.
 Please report security issues privately via a **GitHub security advisory**
 (repo → Security → *Report a vulnerability*) rather than a public issue.
 
+## Encrypted case archives (`.dfircase`)
+
+An exported `.dfircase` file is AES-256-GCM encrypted under a key derived from your password
+with scrypt. The 8-byte magic at the front of the file is a **format version**, and the version
+selects the scrypt cost:
+
+| Version | Magic | scrypt `N` | Written by |
+| --- | --- | --- | --- |
+| v1 | `DFIRCZ01` | 2^14 (16,384) | v0.31.0 – v0.33.0 |
+| v2 | `DFIRCZ02` | 2^17 (131,072) | v0.34.0 onward |
+
+**v1 is weaker than it should be.** `N=2^14` is Node's `scryptSync` default. It is too low for a
+file an attacker holds with unlimited offline attempts, which is exactly the situation a
+`.dfircase` file is in. v2 raises it to OWASP's recommendation for sensitive data at rest.
+
+**If you hold a `.dfircase` file exported by v0.31.0, v0.32.0 or v0.33.0, re-export it.** Import
+it into a current build and export the case again — the new file is v2. Importing a v1 archive
+now prints a warning saying exactly this.
+
+Nothing refuses to open a v1 archive. It stays readable, so an archive that the
+delete-with-archive flow left as a case's only remaining copy is never stranded. This also means
+re-exporting is the only thing that upgrades a file you already hold; no build will silently
+re-key it.
+
+The parameters of an existing version are never changed. Raising the cost always means adding a
+new version, because re-keying an existing one would make every archive already written under it
+unopenable while reporting itself as a wrong password.
+
 ## Known dependency advisories (tracked, deferred)
 
 `npm audit` in `companion/` currently reports **5 advisories (4 moderate, 1 critical)**. They

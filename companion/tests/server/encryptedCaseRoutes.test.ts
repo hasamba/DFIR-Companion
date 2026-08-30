@@ -9,7 +9,8 @@ import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
-import { encryptBuffer } from "../../src/analysis/caseEncryption.js";
+import { encryptBuffer, decryptBuffer } from "../../src/analysis/caseEncryption.js";
+import { scryptSync, createCipheriv, randomBytes } from "node:crypto";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -170,6 +171,46 @@ describe("POST /cases/import/encrypted", () => {
     // evidence bytes travelled too — this is the whole point of replacing the JSON snapshot
     const evidence = await request(app).get("/cases/INC-2/evidence/shot.webp");
     expect(evidence.status).toBe(200);
+  });
+
+  // #672: an analyst importing a .dfircase written by 0.31.0-0.33.0 gets no signal that it was
+  // encrypted under the weaker v1 derivation. Both versions ride in the 201 body so the dashboard
+  // can compare them; the client never hardcodes "warn below 2", which would silently stop warning
+  // about v2 the day a v3 lands.
+  it("reports the archive's format version and the current one on a successful import", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2" });
+    expect(imp.status).toBe(201);
+    expect(imp.body.formatVersion).toBe(2);
+    expect(imp.body.currentFormatVersion).toBe(2);
+  });
+
+  it("reports formatVersion 1 below currentFormatVersion for a pre-#268 archive", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const plain = decryptBuffer(Buffer.from(await exportArchive(app, "INC-1"), "base64"), PASSWORD);
+
+    // Re-wrap in the v1 container 0.31.0 wrote. Nothing in production writes v1 any more, so a
+    // test that needs one has to build it; the parameters are spelled out as an independent
+    // statement of what v1 is.
+    const salt = randomBytes(16);
+    const iv = randomBytes(12);
+    const key = scryptSync(PASSWORD, salt, 32, { N: 1 << 14, r: 8, p: 1, maxmem: 32 * 1024 * 1024 });
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([cipher.update(plain), cipher.final()]);
+    const v1 = Buffer.concat([Buffer.from("DFIRCZ01", "utf8"), salt, iv, cipher.getAuthTag(), ciphertext]);
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data: v1.toString("base64"), password: PASSWORD, targetCaseId: "INC-2" });
+    expect(imp.status).toBe(201); // v1 stays readable — the analyst is warned, not refused
+    expect(imp.body.formatVersion).toBe(1);
+    expect(imp.body.formatVersion).toBeLessThan(imp.body.currentFormatVersion);
   });
 
   it("imports under the archive's own id when no target is given", async () => {

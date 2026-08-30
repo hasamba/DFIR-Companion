@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { encryptBuffer, decryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
+import {
+  encryptBuffer,
+  decryptBuffer,
+  readFormatVersion,
+  CURRENT_FORMAT_VERSION,
+  DecryptionError,
+} from "../../src/analysis/caseEncryption.js";
 
 describe("encryptBuffer / decryptBuffer", () => {
   it("round-trips arbitrary bytes", () => {
@@ -76,5 +82,45 @@ describe("container versioning", () => {
     const fromTheFuture = encryptBuffer(Buffer.from("written by a later build"), "pw12345678");
     Buffer.from("DFIRCZ99", "utf8").copy(fromTheFuture, 0);
     expect(() => decryptBuffer(fromTheFuture, "pw12345678")).toThrow(/not a valid \.dfircase archive/);
+  });
+  // readFormatVersion is what lets the import flow TELL the analyst the archive was written under
+  // the weaker v1 derivation (#672). It reads the magic only — no password, no derivation — so it
+  // must stay on the post-decryption path in the route; an endpoint that reported the version
+  // before decrypting would let an unauthenticated caller sort a pile of archives by which ones
+  // are cheapest to crack.
+  it("reports version 1 for a v1 archive", () => {
+    expect(readFormatVersion(Buffer.from(V1_CONTAINER_HEX, "hex"))).toBe(1);
+  });
+
+  it("reports version 2 for a freshly written archive", () => {
+    expect(readFormatVersion(encryptBuffer(Buffer.from("fresh export"), "pw12345678"))).toBe(2);
+  });
+
+  it("CURRENT_FORMAT_VERSION is the version encryptBuffer actually writes", () => {
+    const container = encryptBuffer(Buffer.from("fresh export"), "pw12345678");
+    expect(readFormatVersion(container)).toBe(CURRENT_FORMAT_VERSION);
+  });
+
+  // A version older than the current one is always the weaker one: the module's rule is that an
+  // existing version's parameters never change, so the ONLY way the cost is ever raised is by
+  // adding a version. That makes "version < CURRENT_FORMAT_VERSION" a sound weakness test, and it
+  // keeps working when a v3 arrives without anyone remembering to update the caller.
+  it("orders versions so an older one is the weaker one", () => {
+    expect(readFormatVersion(Buffer.from(V1_CONTAINER_HEX, "hex"))!).toBeLessThan(CURRENT_FORMAT_VERSION);
+  });
+
+  it("returns undefined for a buffer that isn't a .dfircase container", () => {
+    expect(readFormatVersion(Buffer.from("not a dfircase file"))).toBeUndefined();
+  });
+
+  it("returns undefined for a container written by a newer build", () => {
+    const fromTheFuture = encryptBuffer(Buffer.from("written by a later build"), "pw12345678");
+    Buffer.from("DFIRCZ99", "utf8").copy(fromTheFuture, 0);
+    expect(readFormatVersion(fromTheFuture)).toBeUndefined();
+  });
+
+  it("returns undefined for a truncated container", () => {
+    const container = encryptBuffer(Buffer.from("secret data"), "correct-password");
+    expect(readFormatVersion(container.subarray(0, 10))).toBeUndefined();
   });
 });

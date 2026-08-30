@@ -93,5 +93,7 @@ delete an already-archived case's live folder out from under its archive.
 
 **Import archive:** toolbar → **Import case → Encrypted case archive (.dfircase)**. Restores as a new case. If the Case ID already exists you get a conflict warning.
 
+**If the archive was exported by v0.31.0–v0.33.0**, the import warns you that it used an older, weaker key derivation. Export the case again afterwards to upgrade the file to the current encryption. See [SECURITY.md](https://github.com/hasamba/DFIR-Companion/blob/master/SECURITY.md) for the detail.
+
 !!! info "What's in the archive"
     Everything under the case directory travels with the export — screenshots, raw imported artifact files, and all analyst decisions. The AI configuration (keys) is never included — keys live in `.env` and never enter the case directory. The recipient's copy inherits settings like external-enrichment opt-in as they were on the exporting machine, since the archive is a verbatim copy.

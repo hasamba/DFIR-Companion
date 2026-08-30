@@ -15,7 +15,7 @@ import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
 import type { CaseMeta } from "../types.js";
 import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
-import { encryptBuffer, decryptBuffer } from "./caseEncryption.js";
+import { encryptBuffer, decryptBuffer, readFormatVersion, CURRENT_FORMAT_VERSION } from "./caseEncryption.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
@@ -476,6 +476,12 @@ export interface ImportEncryptedCaseOptions {
 export interface ImportEncryptedCaseResult {
   meta: CaseMeta;
   counts: CaseImportCounts;
+  /** The container version the archive was written in, and the version this build writes. An
+   * archive below the current version was encrypted under a weaker KDF (#672) — the caller shows
+   * that to the analyst so they can re-export and upgrade it. Nothing here re-keys the archive:
+   * v1 stays readable forever, by the rule in caseEncryption.ts. */
+  formatVersion: number;
+  currentFormatVersion: number;
 }
 
 /**
@@ -492,6 +498,10 @@ export async function importEncryptedCase(
   password: string,
   options: ImportEncryptedCaseOptions = {},
 ): Promise<ImportEncryptedCaseResult> {
+  // Read the version BEFORE decrypting so it comes from the same bytes the derivation used, then
+  // let decryptBuffer be the thing that rejects an unknown/short container. readFormatVersion
+  // cannot return undefined past that call — decryptBuffer would already have thrown.
+  const formatVersion = readFormatVersion(fileBuffer);
   const zip = decryptBuffer(fileBuffer, password);
   const archiveEntries = readZip(zip);
   const manifestCounts = countsFromManifest(
@@ -609,7 +619,13 @@ export async function importEncryptedCase(
 
   const meta = await store.getCaseMeta(targetCaseId);
   if (!meta) throw new Error("import failed: case.json missing after write");
-  return { meta, counts };
+  return {
+    meta,
+    counts,
+    // Non-null: decryptBuffer above already threw on any container this build cannot read.
+    formatVersion: formatVersion!,
+    currentFormatVersion: CURRENT_FORMAT_VERSION,
+  };
 }
 
 /**
