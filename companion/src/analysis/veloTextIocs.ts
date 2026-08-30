@@ -13,9 +13,35 @@ const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 
-// URLs, IPv4, SHA256/SHA1/MD5 hashes, and domains. The domain pass is the newest: a collected
-// script block names its C2 by name at least as often as by address, and until `extractDomains`
-// ran here those names were simply lost (#648).
+// The vulnerability a tool says it targets. A scanner names its own exploit module in the clear —
+// the Bissa eval's whole React2Shell/W3TC campaign said so in one script block — and until this ran
+// the CVE was read by the importer and dropped, so no report named what was being exploited.
+// The `CVE-` prefix carries the whole match; a bare `2025-55182` is a build number, not an id.
+const TEXT_CVE = /\bCVE-\d{4}-\d{4,7}\b/gi;
+
+// A Telegram BOT handle, in the two forms a script writes one. Telegram requires a bot username to
+// end in "bot", so that suffix is the platform's own rule rather than a guess, and an ordinary
+// @mention (`@BonJoviGoesHard`) never matches either form.
+//
+//   @-prefixed   the handle as a human writes it. The `@` identifies it on its own, so the name only
+//                has to be a legal username. The lookbehind keeps an email local-part out —
+//                `abuse@robot.example.com` is not a bot named `@robot`.
+//   assigned     the handle as a SCRIPT writes it: `AlertBotUsername = "bissapwned_bot"`. This is the
+//                form the Bissa eval's script block actually used, and the `@` never appeared. With
+//                no `@` to identify it the bar is higher on both sides — the KEY must name a bot too,
+//                and the value needs 9+ characters, so `robot: "mybot"` does not qualify.
+const TEXT_BOT_HANDLE = /(?<![A-Za-z0-9._%+-])@[A-Za-z][A-Za-z0-9_]{3,30}bot\b/gi;
+const TEXT_BOT_ASSIGNED = /\b\w*bot\w*\s*[:=]\s*["']([A-Za-z][A-Za-z0-9_]{5,30}bot)["']/gi;
+
+// An object-store destination written as a URI. TEXT_URL only reads http(s), so the `s3://` form an
+// exfil runner uses — `aws s3 cp results/*.zip s3://bucket/prefix/` — reached no scraper at all.
+const TEXT_S3_URI = /\bs3:\/\/[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9](?:\/[^\s"'<>)\]}]*)?/gi;
+
+// URLs, IPv4, SHA256/SHA1/MD5 hashes, domains, CVE ids, Telegram bot handles and s3:// URIs. The
+// domain pass came first: a collected script block names its C2 by name at least as often as by
+// address, and until `extractDomains` ran here those names were simply lost (#648). The last three
+// are the same lesson from the Bissa eval — a script block also names the vulnerability it exploits,
+// the channel it reports hits on, and the bucket it ships them to, all in plain text.
 export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
@@ -30,6 +56,13 @@ export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   }
   for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
   for (const d of extractDomains(text)) addIoc(sink, "domain", d);
+  // Canonical upper case, so `cve-2025-55182` and `CVE-2025-55182` are one indicator, not two.
+  for (const m of text.matchAll(TEXT_CVE)) addIoc(sink, "other", m[0].toUpperCase());
+  // Both forms normalize to `@handle`, so a script that names the same bot twice — once assigned,
+  // once written out — yields one indicator rather than two spellings of it.
+  for (const m of text.matchAll(TEXT_BOT_HANDLE)) addIoc(sink, "other", m[0]);
+  for (const m of text.matchAll(TEXT_BOT_ASSIGNED)) addIoc(sink, "other", `@${m[1]}`);
+  for (const m of text.matchAll(TEXT_S3_URI)) addIoc(sink, "other", m[0].slice(0, 300));
 }
 
 // The free-text fields that carry a detection's evidence (and its embedded IOCs). `ScriptBlockText`

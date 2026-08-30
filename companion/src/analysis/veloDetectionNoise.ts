@@ -209,3 +209,87 @@ export function isGeneratedModuleScript(row: Row): boolean {
   if (!GENERATED_MARKERS.some((re) => re.test(text))) return false;
   return tradecraftSignal("", text)?.weight !== "strong";
 }
+
+// The script FILE a 4104 event was compiled from. PowerShell writes it into `EventData.Path` from
+// the engine's own view of what it loaded, so unlike the script text it is not a string the script
+// can talk about — a payload cannot claim to live somewhere it does not.
+function scriptPath(row: Row): string {
+  let ed = getCI(row, "EventData");
+  for (const w of EVENT_WRAPPERS) {
+    if (isObject(ed)) break;
+    ed = getPath(row, `${w}.EventData`);
+  }
+  return isObject(ed) ? str(getCI(ed, "Path")).trim() : "";
+}
+
+/**
+ * Is this a script block the COLLECTOR ran, out of its own tool tree?
+ *
+ * Velociraptor artifacts shell out to PowerShell modules unpacked under
+ * `\Program Files\Velociraptor\Tools\tmp*\` — Windows.Forensics.PersistenceSniper runs
+ * PersistenceSniper.psm1 there as SYSTEM. That module opens tokens via AdjustTokenPrivileges and
+ * sweeps local accounts because those are the persistence techniques it DETECTS, and broad Sigma
+ * rules grade it "Potential WinAPI Calls Via PowerShell Scripts" (High) and "Powershell LocalAccount
+ * Manipulation" (Medium) exactly as they would an intruder's. On a real eval collection synthesis
+ * read those rows as a WinPwn/Mimikatz credential-access burst and made it the case's only Critical
+ * finding: the collector, reported as the intruder, ranked above the tool the analyst was hunting.
+ *
+ * Unlike isGeneratedModuleScript this one is allowed to lower a High or Critical, and it has to be —
+ * the finding it exists to kill was High. That is why it does NOT reuse isDetectionToolLocation.
+ * That predicate matches a bare `\Velociraptor\` component, which is right for the THOR and YARA
+ * callers (their hits come from sweeping the collector's actual install) and wrong here: a 4104
+ * EventData.Path is wherever the ATTACKER put their script, so `C:\Users\v\Velociraptor\evil.ps1`
+ * would let them suppress their own Critical by choosing a directory name — the same weakness #720
+ * records for the EVTX-ATTACK / Digital-Forensic-Artifacts markers.
+ *
+ * What makes that safe is NOT the path. Three review passes established that a path string cannot
+ * carry this claim: the attacker chooses where their script lives, and every attempt to price that
+ * in failed. `\Velociraptor\` is a directory anyone can create. Pinning a drive letter does not help
+ * either — `subst Z: C:\Users\v\evil` and `net use Y: \\attacker\share` cost no privilege, and no
+ * hard-coded letter can tell you the EVIDENCE host's system drive, so "Program Files is admin-only"
+ * is an assumption about a filesystem this process never sees.
+ *
+ * The identity is the control. PowerShell records the account the ENGINE ran under, and a script is
+ * logged as SYSTEM only if it actually ran as SYSTEM — which the attacker must already have. It also
+ * closes the drive-letter hole without guessing anything: `subst` and `net use` mappings are
+ * per-logon-session, so a SYSTEM process never sees the volume an unprivileged user mapped. The
+ * collector tool tree is then corroboration, not the load-bearing part, and traversal is refused
+ * because a prefix match on a path holding `..` describes nothing.
+ *
+ * This is still evidence rather than proof — an attacker already at SYSTEM can satisfy both. The
+ * call site supplies the last bound for that case: it will not lower a Critical, so the most a
+ * bypass buys is quieting a High, which an attacker at SYSTEM has far better ways to achieve.
+ *
+ * A claim about WHO ran the script and WHERE it lived, never about what it contains: the identical
+ * body run from a user's Desktop keeps whatever grade it earned.
+ */
+const COLLECTOR_TOOL_TREE = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/]/i;
+const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+const SYSTEM_SID = "S-1-5-18";
+
+// The account the PowerShell engine logged the script under, across the shapes this importer sees:
+// DetectRaptor Evtx's flat `UserSID`, Chainsaw's parsed `SystemData.Security_attributes.UserID`, and
+// the native EVTX `System.Security.UserID` with or without an Event wrapper.
+function logonSid(row: Row): string {
+  const flat = str(getCI(row, "UserSID")).trim();
+  if (flat) return flat;
+  const paths = [
+    "SystemData.Security_attributes.UserID",
+    "System.Security.UserID",
+    "System.Security_attributes.UserID",
+  ];
+  for (const w of ["", ...EVENT_WRAPPERS]) {
+    for (const path of paths) {
+      const v = str(getPath(row, w ? `${w}.${path}` : path)).trim();
+      if (v) return v;
+    }
+  }
+  return "";
+}
+
+export function isDetectionToolScript(row: Row): boolean {
+  if (eventId(row) !== SCRIPT_BLOCK_EID) return false;
+  if (logonSid(row) !== SYSTEM_SID) return false;
+  const path = scriptPath(row);
+  return COLLECTOR_TOOL_TREE.test(path) && !PATH_TRAVERSAL.test(path);
+}
