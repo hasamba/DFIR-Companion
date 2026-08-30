@@ -620,6 +620,13 @@ describe("server analysis wiring", () => {
     expect(csv.headers["content-type"]).toContain("text/plain");
     expect(csv.text).toContain("a,b");
 
+    // Evidence is imported artifact content, so it is hostile by assumption, and an unknown suffix
+    // comes back as application/octet-stream. nosniff denies the browser the chance to decide it is
+    // really HTML. Asserted on the REAL app, not just the middleware in isolation, because that is
+    // the claim worth holding: the header reaches the route that serves the hostile bytes (#728).
+    expect(shot.headers["x-content-type-options"]).toBe("nosniff");
+    expect(csv.headers["x-content-type-options"]).toBe("nosniff");
+
     expect((await request(evApp).get("/cases/c1/evidence/missing.png")).status).toBe(404);
     expect((await request(evApp).get("/cases/c1/evidence/bad@name.png")).status).toBe(400); // bad charset
     expect((await request(evApp).get("/cases/c1/evidence/a..b.png")).status).toBe(400); // traversal guard
