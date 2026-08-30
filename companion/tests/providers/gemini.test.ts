@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { GeminiProvider } from "../../src/providers/gemini.js";
 import { ProviderError, type AnalyzeResult } from "../../src/providers/provider.js";
+import { jsonResponse } from "../helpers/fetchMock.js";
 
 describe("GeminiProvider — base URL validation (#246)", () => {
   // validateBaseUrl() has its own unit tests (urlValidation.test.ts); these confirm it's actually
@@ -40,12 +41,7 @@ describe("GeminiProvider — API key placement (#516)", () => {
       fetchFn: async (input: RequestInfo | URL, init?: RequestInit) => {
         seenUrl = String(input);
         seenHeaders = (init?.headers ?? {}) as Record<string, string>;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }] }),
-          text: async () => "",
-        } as unknown as Response;
+        return jsonResponse({ candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }] });
       },
     });
     await provider.analyze({ systemPrompt: "s", userPrompt: "x", images: [] });
@@ -58,19 +54,14 @@ describe("GeminiProvider — API key placement (#516)", () => {
 
 describe("GeminiProvider — usageMetadata parsing (#3)", () => {
   it("reports input/output/cacheRead tokens from usageMetadata so the AI cost card is not always 0/0", async () => {
-    const fakeResponse = {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }],
-        usageMetadata: { promptTokenCount: 42, candidatesTokenCount: 7, cachedContentTokenCount: 3 },
-      }),
-      text: async () => "",
-    };
     const provider = new GeminiProvider({
       apiKey: "k",
       model: "gemini-2.5-pro",
-      fetchFn: async () => fakeResponse as unknown as Response,
+      fetchFn: async () =>
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }],
+          usageMetadata: { promptTokenCount: 42, candidatesTokenCount: 7, cachedContentTokenCount: 3 },
+        }),
     });
     const result: AnalyzeResult = await provider.analyze({ systemPrompt: "s", userPrompt: "x", images: [] });
     expect(result.usage).toBeDefined();
@@ -82,16 +73,11 @@ describe("GeminiProvider — usageMetadata parsing (#3)", () => {
   });
 
   it("omits usage when usageMetadata is absent (no regression)", async () => {
-    const fakeResponse = {
-      ok: true,
-      status: 200,
-      json: async () => ({ candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }] }),
-      text: async () => "",
-    };
     const provider = new GeminiProvider({
       apiKey: "k",
       model: "gemini-2.5-pro",
-      fetchFn: async () => fakeResponse as unknown as Response,
+      fetchFn: async () =>
+        jsonResponse({ candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }] }),
     });
     const result = await provider.analyze({ systemPrompt: "s", userPrompt: "x", images: [] });
     expect(result.usage).toBeUndefined();

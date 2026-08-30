@@ -1,4 +1,5 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface HuntingChOptions {
   apiKey: string; // unified abuse.ch Auth-Key (one key from https://auth.abuse.ch/)
@@ -46,7 +47,10 @@ class AbuseCtx {
     });
     if (res.status === 401 || res.status === 403) throw new AbuseAuthError(`${platform} auth ${res.status}`);
     if (!res.ok) throw new Error(`${platform} HTTP ${res.status}`);
-    return (await res.json()) as Record<string, unknown>;
+    return readBoundedJson<Record<string, unknown>>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: platform,
+    });
   }
 }
 

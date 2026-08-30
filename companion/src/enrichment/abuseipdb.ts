@@ -7,6 +7,7 @@ import {
   type IocKind,
   type Verdict,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface AbuseIpdbOptions {
   apiKey: string;
@@ -42,7 +43,7 @@ export class AbuseIpdbProvider implements EnrichmentProvider {
       throw new RateLimitError("AbuseIPDB rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`AbuseIPDB HTTP ${res.status}`);
 
-    const json = (await res.json()) as {
+    const json = await readBoundedJson<{
       data?: {
         abuseConfidenceScore?: number;
         totalReports?: number;
@@ -50,7 +51,7 @@ export class AbuseIpdbProvider implements EnrichmentProvider {
         isp?: string;
         domain?: string;
       };
-    };
+    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "AbuseIPDB" });
     const d = json.data;
     if (!d) return null;
     const score = d.abuseConfidenceScore ?? 0;
