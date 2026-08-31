@@ -2,7 +2,14 @@ import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
-import { hostKey, type ClockSkewResult, type ClockSkewReport, type SkewConfidence } from "./clockSkew.js";
+import {
+  DEFAULT_MAX_AUTO_ALIGN_MS,
+  hostKey,
+  type ClockSkewResult,
+  type ClockSkewReport,
+  type HostTimeGap,
+  type SkewConfidence,
+} from "./clockSkew.js";
 
 // Per-case clock-skew state (#228), in state/clock-skew.json. A stateless wrapper over CaseStore
 // (mirrors SourceTrustStore). Holds the alignment toggle, the last detection, and the analyst's
@@ -13,6 +20,10 @@ export interface ClockSkewRecord {
   // Analyst-set offsets keyed by normalized short hostname. Always win over a detected offset; an
   // explicit 0 means "this clock is right, leave it alone".
   overrides: Record<string, number>;
+  // Large timestamp splits found on single hosts (#740). Advisory only — nothing aligns on these,
+  // and unlike `results` they are REPLACED on every detection rather than accumulated, because they
+  // describe the whole current timeline rather than accumulating independent anchor evidence.
+  timeGaps: HostTimeGap[];
   detectedAt: string; // when `results` were measured ("" if never)
   anchorGroups: number; // anchors behind `results`, kept so a weaker re-run can be recognised
   referenceHost: string; // the clock `results` are expressed against (see detectClockSkew)
@@ -23,6 +34,7 @@ const EMPTY: ClockSkewRecord = {
   alignEnabled: false,
   results: [],
   overrides: {},
+  timeGaps: [],
   detectedAt: "",
   anchorGroups: 0,
   referenceHost: "",
@@ -46,16 +58,49 @@ function cleanResult(raw: unknown): ClockSkewResult | undefined {
   const confidence = CONFIDENCES.includes(r.confidence as SkewConfidence)
     ? (r.confidence as SkewConfidence)
     : "low";
+  const offsetMs = num(r.offsetMs);
+  const qualified = r.qualified === true;
   return {
     host: host || key,
     hostKey: key,
-    offsetMs: num(r.offsetMs),
+    offsetMs,
     anchorCount: num(r.anchorCount),
     dispersionMs: num(r.dispersionMs),
     confidence,
-    qualified: r.qualified === true,
+    qualified,
+    // Derived, not defaulted, when the field is absent: a record written before `alignable` existed
+    // has to keep aligning the hosts it was already aligning, and a bare `=== true` would silently
+    // switch every one of them off on the next read.
+    alignable:
+      typeof r.alignable === "boolean"
+        ? r.alignable
+        : qualified && Math.abs(offsetMs) <= DEFAULT_MAX_AUTO_ALIGN_MS,
     skewed: r.skewed === true,
     sources: Array.isArray(r.sources) ? r.sources.filter((s): s is string => typeof s === "string") : [],
+  };
+}
+
+// Same defensive rebuild as cleanResult, for an advisory gap. A malformed entry is dropped rather
+// than shown — a warning nobody can read is worse than no warning.
+function cleanGap(raw: unknown): HostTimeGap | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const g = raw as Record<string, unknown>;
+  const host = typeof g.host === "string" ? g.host : "";
+  const key = typeof g.hostKey === "string" && g.hostKey ? hostKey(g.hostKey) : hostKey(host);
+  if (!key) return undefined;
+  const iso = (v: unknown): string => (typeof v === "string" ? v : "");
+  return {
+    host: host || key,
+    hostKey: key,
+    gapMs: num(g.gapMs),
+    minorityCount: num(g.minorityCount),
+    totalCount: num(g.totalCount),
+    minorityStart: iso(g.minorityStart),
+    minorityEnd: iso(g.minorityEnd),
+    majorityStart: iso(g.majorityStart),
+    majorityEnd: iso(g.majorityEnd),
+    minoritySide: g.minoritySide === "after" ? "after" : "before",
+    sources: Array.isArray(g.sources) ? g.sources.filter((sc): sc is string => typeof sc === "string") : [],
   };
 }
 
@@ -87,6 +132,9 @@ export class ClockSkewStore {
               .filter((r): r is ClockSkewResult => r !== undefined)
           : [],
         overrides: cleanOverrides(parsed.overrides),
+        timeGaps: Array.isArray(parsed.timeGaps)
+          ? (parsed.timeGaps as unknown[]).map(cleanGap).filter((g): g is HostTimeGap => g !== undefined)
+          : [],
         detectedAt: typeof parsed.detectedAt === "string" ? parsed.detectedAt : "",
         anchorGroups: num(parsed.anchorGroups),
         referenceHost: typeof parsed.referenceHost === "string" ? parsed.referenceHost : "",
@@ -106,6 +154,9 @@ export class ClockSkewStore {
         .map(cleanResult)
         .filter((r): r is ClockSkewResult => r !== undefined),
       overrides: cleanOverrides(record.overrides),
+      timeGaps: (Array.isArray(record.timeGaps) ? record.timeGaps : [])
+        .map(cleanGap)
+        .filter((g): g is HostTimeGap => g !== undefined),
       detectedAt: typeof record.detectedAt === "string" ? record.detectedAt : "",
       anchorGroups: num(record.anchorGroups),
       referenceHost: typeof record.referenceHost === "string" ? record.referenceHost : "",
@@ -142,6 +193,9 @@ export class ClockSkewStore {
     return this.save(caseId, {
       ...current,
       results,
+      // Replaced, not merged: see the field comment. A report that measured no gaps (the caller did
+      // not compute them) leaves the stored ones alone rather than silently clearing a warning.
+      timeGaps: report.timeGaps ?? current.timeGaps,
       detectedAt: new Date().toISOString(),
       anchorGroups: opts.replace ? report.anchorGroups : Math.max(current.anchorGroups, report.anchorGroups),
       referenceHost: report.referenceHost || current.referenceHost,

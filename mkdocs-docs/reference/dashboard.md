@@ -219,6 +219,17 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
 
+!!! warning "The scope presets mean *of activity*, not *of wall-clock time*"
+    The Scope bar's `1h` / `24h` / `7d` / `30d` buttons measure back from the **newest event in the
+    case**, not from the current time — which is why the row is labelled *of activity*. Evidence is
+    historical: a case collected in March still ends in March however long ago you imported it, so a
+    wall-clock "last 24 hours" would select nothing at all.
+
+    To scope by real elapsed time instead, type the window into the **from** / **to** fields.
+
+    Do not confuse these with the Velociraptor collection presets on the Hunt Workbench — those
+    genuinely mean the last N hours from now, because a hunt collects going forward.
+
 ### Vim-Style Keyboard Navigation
 
 Toggle in **Settings → General** (default on). With the timeline focused:

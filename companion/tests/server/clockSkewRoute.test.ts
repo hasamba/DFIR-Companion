@@ -76,7 +76,13 @@ describe("clock-skew routes (#228)", () => {
     expect(res.body.results).toEqual([]);
     expect(res.body.overrides).toEqual({});
     expect(res.body.alignEnabled).toBe(false);
-    expect(res.body.thresholds).toEqual({ alertThresholdMs: 60_000, minAnchors: 3 });
+    // minTimeGapMs is the standalone gap warning's floor (#740) — advisory, not an alignment
+    // threshold, but it travels with the others so the panel can say what it measures against.
+    expect(res.body.thresholds).toEqual({
+      alertThresholdMs: 60_000,
+      minAnchors: 3,
+      minTimeGapMs: 30 * 24 * 3_600_000,
+    });
   });
 
   it("GET does not write to disk", async () => {

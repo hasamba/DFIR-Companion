@@ -91,6 +91,11 @@ export function createEventAggregator(
       const existing = byKey.get(key);
       if (existing) {
         existing.count = (existing.count ?? 1) + 1;
+        // STICKY, unlike every identity field below: a collapsed group whose rows disagree about
+        // whether the year was recorded is ambiguous as a whole, so one year-less row makes the
+        // group clamp-eligible and no later row can clear it. Deliberately NOT in
+        // applyEventIdentity, which clears a field the incoming row lacks (#739).
+        if (m.yearInferred) existing.yearInferred = true;
         const t = m.timestamp;
         if (t) {
           if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
@@ -124,6 +129,7 @@ export function createEventAggregator(
           count: 1,
           aggKey: m.aggKey,
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
+          ...(m.yearInferred ? { yearInferred: true } : {}),
         };
         applyEventIdentity(e, m);
         byKey.set(key, e);

@@ -897,3 +897,60 @@ describe("mergeDelta — forensic timeline dedup by id (map-indexed, O(n))", () 
     expect(state.forensicTimeline).toHaveLength(2);
   });
 });
+
+// #739 — the merge is where the year-clamp runs, so the mark that decides what it may touch has to
+// survive the merge in both directions: onto a newly-created event and onto one being updated.
+describe("mergeDelta year-clamp eligibility (#739)", () => {
+  const ctx = { windowSequence: -1, timestamp: "2026-08-30T10:00:00.000Z", sourceScreenshots: [] };
+
+  function guessed(i: number, timestamp: string) {
+    return {
+      id: `e${i}`,
+      timestamp,
+      description: `syslog line ${i}`,
+      severity: "Info" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      yearInferred: true,
+    };
+  }
+
+  function recorded(i: number, timestamp: string) {
+    const { yearInferred: _drop, ...rest } = guessed(i, timestamp);
+    return { ...rest, description: `velociraptor row ${i}` };
+  }
+
+  it("re-anchors a guessed-year stray and keeps what it was imported as", () => {
+    const events = [
+      ...Array.from({ length: 20 }, (_, i) => guessed(i, `2026-08-30T10:${String(i).padStart(2, "0")}:00Z`)),
+      guessed(99, "2023-08-30T11:00:00Z"),
+    ];
+    const next = mergeDelta(emptyState("c1"), { ...baseDelta, forensicEvents: events }, ctx);
+    const stray = next.forensicTimeline.find((e) => e.id === "e99")!;
+    expect(stray.timestamp).toBe("2026-08-30T11:00:00.000Z");
+    expect(stray.yearClampedFrom).toBe("2023-08-30T11:00:00Z");
+  });
+
+  it("leaves a recorded-year minority alone — the INC-2026-020 shape", () => {
+    const events = [
+      ...Array.from({ length: 20 }, (_, i) => recorded(i, `2026-08-30T10:${String(i).padStart(2, "0")}:00Z`)),
+      recorded(99, "2025-12-05T03:27:07.801Z"),
+    ];
+    const next = mergeDelta(emptyState("c1"), { ...baseDelta, forensicEvents: events }, ctx);
+    const real = next.forensicTimeline.find((e) => e.id === "e99")!;
+    expect(real.timestamp).toBe("2025-12-05T03:27:07.801Z");
+    expect(real.yearClampedFrom).toBeUndefined();
+  });
+
+  it("carries the mark onto an event a later delta updates", () => {
+    let state = mergeDelta(
+      emptyState("c1"),
+      { ...baseDelta, forensicEvents: [guessed(1, "2026-08-30T10:00:00Z")] },
+      ctx,
+    );
+    expect(state.forensicTimeline[0].yearInferred).toBe(true);
+    // A second delta restating the same event id must not silently drop the mark.
+    state = mergeDelta(state, { ...baseDelta, forensicEvents: [guessed(1, "2026-08-30T10:00:00Z")] }, ctx);
+    expect(state.forensicTimeline[0].yearInferred).toBe(true);
+  });
+});

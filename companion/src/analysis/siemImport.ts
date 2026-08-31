@@ -93,6 +93,11 @@ export interface SiemEvent {
   sourceRecordId?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when the mapper had it.
   message?: string;
+  // The YEAR in `timestamp` was supplied by the parser, not read from the record (a year-less RFC
+  // 3164 / Cisco ASA / Snort line). Forwarded to ForensicEvent.yearInferred, which is the only thing
+  // the merge's year-clamp is allowed to re-anchor (#739). STICKY across aggregation: a group that
+  // collapsed even one year-less row is year-ambiguous as a whole.
+  yearInferred?: boolean;
   // The row's own aggKey, carried through unconditionally (independent of the `aggregate` option)
   // so IOC provenance linkage (mergeRowIocs/resolveExtractedFrom) always has a stable key to
   // resolve against — not persisted on ForensicEvent, stripped before it reaches case state.
@@ -740,6 +745,9 @@ export interface MappedEvent {
   sourceRecordId?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when available.
   message?: string;
+  // See SiemEvent.yearInferred. Set per PARSED LINE, so one export may carry both dated (RFC 5424)
+  // and year-less (RFC 3164) rows and only the latter become clamp-eligible.
+  yearInferred?: boolean;
 }
 
 // Parse a Windows pid that may be decimal ("5292") or hex ("0x14ac", as 4688 renders it). Returns a
