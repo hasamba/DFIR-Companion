@@ -26,7 +26,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
-import { trimSentencePunctuation } from "./textUriTrim.js";
+import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import {
   extractRecords,
   aggregateEvents,

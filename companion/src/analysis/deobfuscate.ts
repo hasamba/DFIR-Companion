@@ -9,6 +9,7 @@
 // The result is attached to the ForensicEvent as `event.deobfuscated` by applyDeobfuscation.ts.
 
 import type { IOC } from "./stateTypes.js";
+import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 
 export type DeobfuscationMethod = "powershell-enc" | "base64";
 
@@ -58,7 +59,10 @@ function extractIocsFromText(text: string): RawIoc[] {
   };
 
   for (const m of text.matchAll(URL_RE)) {
-    const url = m[0].replace(/[.,;:)'">]+$/, "").slice(0, 300);
+    // The same rule the importers apply, so a decoded payload and a collected script block that
+    // name one URL produce one indicator. The private copy this replaces missed "]", which URL_RE
+    // — unlike the importers' patterns — does not exclude, so a bracket really could end a match.
+    const url = trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300);
     if (url.length > 10) add("url", url);
   }
   for (const m of text.matchAll(IPV4_RE)) {

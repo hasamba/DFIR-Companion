@@ -1,9 +1,14 @@
 // Where a URI found in free text actually ENDS, shared by every importer that scrapes one.
 //
 // Its own module for the same reason textDomains.ts is: one copy is the point. A C2 URL must
-// become the same indicator whether a Velociraptor script block, a SIEM message or a Cyber Triage
-// row carried it. Three importers each kept their own copy of this rule, and they had already
-// drifted — #744 was filed because two of them disagreed about a single destination.
+// become the same indicator whether a Velociraptor script block, a SIEM message, a Cyber Triage row
+// or a decoded PowerShell payload carried it. Four scrapers each kept their own copy of this rule,
+// and they had already drifted — #744 was filed because two of them disagreed about a destination.
+//
+// It sits in the PLATFORM layer rather than beside any caller because its callers are not all in
+// one analysis domain: deobfuscate.ts is analysis/privacy (tier 1) and the importers are
+// analysis/ingest (tier 3). An import may go down a tier or sideways, never up, so no home inside
+// analysis/ can serve both. Platform is below every domain, so all four reach it.
 
 // Punctuation that ends a URI written into prose rather than the URI itself. A trailing SLASH is
 // absent from the class on purpose: it is part of a bucket prefix or a directory URL, not the
