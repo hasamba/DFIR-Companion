@@ -7,6 +7,7 @@ import {
   type IocKind,
   type Verdict,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface VirusTotalOptions {
   apiKey: string;
@@ -81,7 +82,13 @@ export class VirusTotalProvider implements EnrichmentProvider {
       );
     if (!res.ok) throw new Error(`VirusTotal HTTP ${res.status}`);
 
-    const json = (await res.json()) as { data?: { id?: string; attributes?: Record<string, unknown> } };
+    const json = await readBoundedJson<{ data?: { id?: string; attributes?: Record<string, unknown> } }>(
+      res,
+      {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "VirusTotal",
+      },
+    );
     const attrs = json.data?.attributes ?? {};
     const stats = (attrs.last_analysis_stats as VtStats) ?? {};
     const { verdict, detections, total } = verdictFromStats(stats);

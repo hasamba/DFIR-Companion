@@ -10,6 +10,12 @@
 // https://github.com/google/timesketch/tree/master/api_client/python
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import {
+  readBoundedJson,
+  readBoundedText,
+  RESPONSE_SIZE_LIMITS,
+  rethrowIfTooLarge,
+} from "../../providers/boundedResponse.js";
 import { tlsTrustHint } from "../tlsTrustHint.js";
 
 export interface TimesketchClientOptions {
@@ -162,7 +168,10 @@ export class TimesketchClient {
 
   private async errorFor(res: Response, what: string): Promise<TimesketchApiError> {
     let detail = `HTTP ${res.status}`;
-    const text = await res.text().catch(() => "");
+    const text = await readBoundedText(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.text,
+      context: "Timesketch",
+    }).catch(() => "");
     const m = text.match(/"message"\s*:\s*"([^"]+)"/);
     if (m) detail = m[1];
     const kind = res.status === 401 || res.status === 403 ? "auth" : res.status === 404 ? "notfound" : "http";
@@ -178,7 +187,11 @@ export class TimesketchClient {
     const loginUrl = `${this.base}/login/?local_auth=1`;
 
     const page = await this.send("GET", loginUrl, { sendCsrf: false });
-    this.csrf = scrapeCsrfToken(await page.text().catch(() => ""));
+    this.csrf = scrapeCsrfToken(
+      await readBoundedText(page, { maxBytes: RESPONSE_SIZE_LIMITS.text, context: "Timesketch" }).catch(
+        () => "",
+      ),
+    );
     if (!this.csrf) {
       throw new TimesketchApiError(
         "Timesketch login: no CSRF token on the login page (check DFIR_TIMESKETCH_URL and that local auth is enabled)",
@@ -223,7 +236,11 @@ export class TimesketchClient {
     for (let page = 1; page <= 50; page += 1) {
       const res = await this.send("GET", `${this.apiRoot}/sketches/?per_page=100&page=${page}`);
       if (!res.ok) throw await this.errorFor(res, "list sketches");
-      const rows = objectList(await res.json().catch(() => ({})));
+      const rows = objectList(
+        await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Timesketch" }).catch(
+          (err) => rethrowIfTooLarge(err, {}),
+        ),
+      );
       const hit = rows.find(
         (r) =>
           String(r.name ?? "")
@@ -239,7 +256,11 @@ export class TimesketchClient {
   async createSketch(name: string, description: string): Promise<TimesketchSketchRef> {
     const res = await this.send("POST", `${this.apiRoot}/sketches/`, { json: { name, description } });
     if (!res.ok) throw await this.errorFor(res, "create sketch");
-    const obj = firstObject(await res.json().catch(() => ({})));
+    const obj = firstObject(
+      await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Timesketch" }).catch(
+        (err) => rethrowIfTooLarge(err, {}),
+      ),
+    );
     const id = Number(obj?.id);
     if (!Number.isFinite(id))
       throw new TimesketchApiError("Timesketch create sketch: no sketch id in response", res.status, "http");
@@ -252,7 +273,11 @@ export class TimesketchClient {
   async listTimelines(sketchId: number): Promise<TimesketchTimelineRef[]> {
     const res = await this.send("GET", `${this.apiRoot}/sketches/${sketchId}/`);
     if (!res.ok) throw await this.errorFor(res, "get sketch");
-    const sketch = firstObject(await res.json().catch(() => ({})));
+    const sketch = firstObject(
+      await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Timesketch" }).catch(
+        (err) => rethrowIfTooLarge(err, {}),
+      ),
+    );
     const timelines = Array.isArray(sketch?.timelines)
       ? (sketch.timelines as Array<Record<string, unknown>>)
       : [];

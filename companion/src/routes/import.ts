@@ -39,6 +39,7 @@ import {
   suggestedToolForExtension,
   type ToolConfig,
 } from "../integrations/tools/toolConfig.js";
+import { createToolRunCache } from "../integrations/tools/toolProvenance.js";
 import { summarizeUndoStack, applyUndo, applyRedo } from "../analysis/importUndo.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
@@ -165,6 +166,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         skipped = 0;
       const stillPending: PendingRawInput[] = [];
       const resolvedEntries: DropLogEntry[] = [];
+      const runCache = createToolRunCache();
       for (const p of pending) {
         const toolId = resolveToolForExt(p.ext, configured);
         if (!toolId) {
@@ -175,13 +177,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         try {
           // Dispatch by transport: a spawn tool runs and imports inline; SO-CRATES hands off to its
           // background poller and the verdicts land when the analysis finishes.
-          const async_ = await ctx.runDropToolAndIngest(
-            caseId,
-            toolId,
-            join(dropDir, p.relpath),
-            basename(p.relpath),
-            p.relpath,
-          );
+          const async_ = await ctx.runDropToolAndIngest(caseId, toolId, join(dropDir, p.relpath), {
+            name: basename(p.relpath),
+            dropRelpath: p.relpath,
+            cache: runCache,
+          });
           await moveDropFile(dropDir, p.relpath, true).catch(() => {
             /* best-effort */
           });

@@ -133,6 +133,18 @@ function lowSignalChip(e) {
   return `<span class="prev-chip lowsig-chip" title="Info-severity telemetry with no finding link, structured identity, ATT&amp;CK tag, or multi-source corroboration — likely low signal">🐇 low signal</span>`;
 }
 
+// Year-clamp (#739): the merge re-anchored this event's GUESSED year onto the case's dominant year.
+// Sits under the timestamp, next to the clock-skew note, and says what the source actually carried.
+//
+// The skew note beside it is a READ-PATH projection the analyst can switch off; this one is
+// PERSISTED, which is why it is warning-coloured rather than dim. Silence here is the #739 defect:
+// on INC-2026-020 seventeen real 2025 timestamps were rewritten to 2026 with nothing on screen to
+// say so, and the adjusted times went on to set the case's scope window.
+function yearClampChip(e) {
+  if (!e || !e.yearClampedFrom || e.yearClampedFrom === e.timestamp) return "";
+  return `<div class="ev-yearclamp" title="This source carries no year of its own, so the import guessed one and the merge re-anchored it onto the case's dominant year. Imported as: ${escAttr(e.yearClampedFrom)}">📅 year adjusted from ${esc(e.yearClampedFrom)}</div>`;
+}
+
 // Non-AI finding origins. Two DETERMINISTIC backfill passes run after AI synthesis and mint
 // findings of their own, each with a prefixed, idempotent id minted in exactly one place:
 //
@@ -178,6 +190,7 @@ function findingPassesOriginLens(f, hideAuto, hideGap) {
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
 window.DfirFilters = {
   realSourceCount,
+  yearClampChip,
   _evMatchesSearch,
   _iocMatchesSearch,
   _findingMatchesSearch,

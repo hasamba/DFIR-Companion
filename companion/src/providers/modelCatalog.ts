@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CodexRunner, defaultCodexRunner } from "./codexRunner.js";
 import { validateBaseUrl } from "./urlValidation.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS, ResponseTooLargeError } from "./boundedResponse.js";
 
 type FetchFn = typeof fetch;
 
@@ -139,8 +140,12 @@ async function fetchJson(
   }
   if (!response.ok) throw requestError(response.status);
   try {
-    return await response.json();
-  } catch {
+    return await readBoundedJson(response, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: `${opts.provider} model list`,
+    });
+  } catch (err) {
+    if (err instanceof ResponseTooLargeError) throw new ModelCatalogError(err.message, "upstream");
     throw new ModelCatalogError("Provider model list returned invalid JSON.", "upstream");
   }
 }

@@ -270,6 +270,9 @@ export function mergeDelta(
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
       if (incoming.commandLine) existing.commandLine = incoming.commandLine;
       if (incoming.chainSignature) existing.chainSignature = incoming.chainSignature;
+      // A re-import may restate whether this source guesses its year; nothing else may clear the
+      // mark, because it describes the SOURCE, not this particular merge (#739).
+      if (incoming.yearInferred !== undefined) existing.yearInferred = incoming.yearInferred;
       existing.canonical = mergeCanonicalEvents(existing.canonical, incoming.canonical);
       if (incoming.action) existing.action = incoming.action;
       if (incoming.srcIp) existing.srcIp = incoming.srcIp;
@@ -300,6 +303,7 @@ export function mergeDelta(
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
         ...(incoming.commandLine ? { commandLine: incoming.commandLine } : {}),
         ...(incoming.chainSignature ? { chainSignature: incoming.chainSignature } : {}),
+        ...(incoming.yearInferred ? { yearInferred: true } : {}),
         ...(incoming.canonical ? { canonical: incoming.canonical } : {}),
         ...(incoming.action ? { action: incoming.action } : {}),
         ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
@@ -313,7 +317,8 @@ export function mergeDelta(
   // Re-anchor mis-dated stray events (a year-less syslog/CSV line the AI import guessed into the wrong
   // year) onto the timeline's dominant year BEFORE correlation, so they sort/correlate in the right
   // place instead of corrupting the chronology. Conservative + idempotent (no-op unless one year clearly
-  // dominates). See timeYearClamp.ts.
+  // dominates), and it only ever moves an event whose importer marked the year as a GUESS — a recorded
+  // year is evidence (#739). See timeYearClamp.ts.
   const dated = clampOutlierYears(forensicTimeline);
   // Stitch a phishing email to the host activity it caused: when a host later contacts a domain a
   // phishing email linked to, tag the contact as initial access (T1566.002 → T1204.002). Runs

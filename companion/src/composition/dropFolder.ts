@@ -34,6 +34,7 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import { suggestedToolForExtension } from "../integrations/tools/toolConfig.js";
+import { createToolRunCache, type ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import { ingestCapture } from "../ingest/captureIngest.js";
 import {
   selectReadyFiles,
@@ -97,8 +98,7 @@ export interface DropFolderDeps {
     caseId: string,
     toolId: string,
     fullPath: string,
-    name: string,
-    dropRelpath?: string,
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
   ) => Promise<boolean>;
   // A dropped image joins the SAME capture + vision path as POST /captures.
   indexCaptureText: (metadata: CaptureMetadata) => void;
@@ -287,6 +287,10 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     caseId: string,
     dropDir: string,
     file: DropFileStat,
+    // One memo per SWEEP, so a folder of 40 EVTX hashes the Sigma tree once rather than 40 times
+    // (#721). It never outlives the sweep, so the custody record it feeds says "the rules as they
+    // stood when this sweep began" — a boundary an analyst can state.
+    cache: ToolRunCache,
   ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
@@ -339,7 +343,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
             },
           };
         }
-        const async_ = await runDropToolAndIngest(caseId, toolId, full, name, file.relpath);
+        const async_ = await runDropToolAndIngest(caseId, toolId, full, {
+          name,
+          dropRelpath: file.relpath,
+          cache,
+        });
         // An HTTP tool has only been HANDED the file here; its verdicts land later (or the analysis
         // fails), so the sweep logs SUBMITTED and the job appends the outcome when it resolves.
         return async_
@@ -403,6 +411,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       });
       if (job) await job.ready;
 
+      const runCache = createToolRunCache();
       const imported: string[] = [];
       // Handed to an asynchronous tool this sweep — logged SUBMITTED, with the outcome appended by the
       // job itself when the analysis resolves.
@@ -415,7 +424,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await Promise.all(
           batch.map(async (file) => {
             try {
-              const res = await processDropFile(caseId, dropDir, file);
+              const res = await processDropFile(caseId, dropDir, file, runCache);
               if (res.pending) {
                 // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
                 // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.

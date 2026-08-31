@@ -34,6 +34,7 @@ import {
   type ToolConfig,
 } from "../integrations/tools/toolConfig.js";
 import { runToolAgainstFile, resolveContainedPath } from "../integrations/tools/runToolImport.js";
+import type { ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import { describeToolRun } from "../integrations/tools/toolProvenance.js";
 import { customToolToConfig, type CustomTool } from "../integrations/tools/customToolStore.js";
 import { RAW_TOOL_EXTS } from "../analysis/dropScan.js";
@@ -90,14 +91,17 @@ export interface ExternalTools {
     caseId: string,
     toolId: string,
     fullPath: string,
-    name: string,
-    dropRelpath?: string,
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
   ): Promise<boolean>;
   runToolAndIngest(
     caseId: string,
     toolId: string,
     targetPath: string,
-    opts?: { undoLabel?: string; preserveOriginal?: { bytes: Buffer; originalName: string } },
+    opts?: {
+      undoLabel?: string;
+      preserveOriginal?: { bytes: Buffer; originalName: string };
+      cache?: ToolRunCache;
+    },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   startSocratesAnalysis(
     caseId: string,
@@ -184,16 +188,16 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     caseId: string,
     toolId: string,
     fullPath: string,
-    name: string,
-    dropRelpath?: string,
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
   ): Promise<boolean> {
+    const { name, dropRelpath, cache } = opts;
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
     if (cfg.transport === "http") {
       await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name, dropRelpath });
       return true;
     }
-    const r = await runToolAndIngest(caseId, toolId, fullPath);
+    const r = await runToolAndIngest(caseId, toolId, fullPath, { cache });
     if (!r.analyzed)
       throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
     return false;
@@ -208,7 +212,11 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     caseId: string,
     toolId: string,
     targetPath: string,
-    opts: { undoLabel?: string; preserveOriginal?: { bytes: Buffer; originalName: string } } = {},
+    opts: {
+      undoLabel?: string;
+      preserveOriginal?: { bytes: Buffer; originalName: string };
+      cache?: ToolRunCache;
+    } = {},
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
@@ -247,6 +255,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       runner: options.toolRunner,
       targetPath: contained,
       workDir: join(caseDir, ".toolwork"),
+      cache: opts.cache,
     });
     const outName = `${basename(contained)}.${toolId}.out`;
     // Custom tools declare no fixed importer — detect the kind from the tool's output.

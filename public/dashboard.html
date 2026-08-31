@@ -505,10 +505,11 @@
     </span>
     <div class="scope-group">
       <span data-safe-style="color:var(--text-primary);">Scope:</span>
-      <button class="scope-preset" data-hours="1" title="Last hour of activity">1h</button>
-      <button class="scope-preset" data-hours="24" title="Last 24 hours of activity">24h</button>
-      <button class="scope-preset" data-hours="168" title="Last 7 days of activity">7d</button>
-      <button class="scope-preset" data-hours="720" title="Last 30 days of activity">30d</button>
+      <button class="scope-preset" data-hours="1" title="Last hour of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">1h</button>
+      <button class="scope-preset" data-hours="24" title="Last 24 hours of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">24h</button>
+      <button class="scope-preset" data-hours="168" title="Last 7 days of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">7d</button>
+      <button class="scope-preset" data-hours="720" title="Last 30 days of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">30d</button>
+      <span class="scope-preset-note" title="The presets above measure back from the NEWEST EVENT in this case, not from the current time. To scope by wall-clock time, type the window into the two fields.">of activity</span>
       <label>from <input id="scopeStart" type="datetime-local" title="UTC" /></label>
       <label>to <input id="scopeEnd" type="datetime-local" title="UTC" /></label>
       <span data-safe-style="color:var(--text-muted);">(UTC)</span>
@@ -4753,8 +4754,8 @@
         const isNew = typeof isNewEvent === "function" && isNewEvent(e); // last import (see #importMeta)
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
 
-        let span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
-          ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
+        let span = ((e.endTimestamp && e.endTimestamp !== e.timestamp)
+          ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)")) + yearClampChip(e);
         // Clock-skew alignment (#228): this row's time has been corrected for its host's clock. The
         // RECORDED time is the evidence, so it stays on screen underneath rather than being replaced.
         if (e.originalTimestamp) {

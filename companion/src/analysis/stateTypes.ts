@@ -179,6 +179,17 @@ export interface ForensicEvent {
   // only the former is evidence.
   originalTimestamp?: string;
   skewOffsetMs?: number; // correction applied: recorded − aligned
+  // TRUE when the YEAR in `timestamp` was GUESSED by the importer rather than read out of the
+  // record. An RFC 3164 syslog / Cisco ASA / Snort line carries no year at all, and the AI log/CSV
+  // imports infer one from context; every other importer reads an explicit year (EVTX, RFC 3339,
+  // a Velociraptor artifact field). Only events marked here may be re-anchored by clampOutlierYears
+  // (#739) — a real minority-year event whose year came out of the record is EVIDENCE, and rewriting
+  // it to match the import's majority year silently destroys it.
+  yearInferred?: boolean;
+  // What `timestamp` said BEFORE clampOutlierYears re-anchored its year. Set only on events the
+  // clamp actually rewrote, and never overwritten once set, so the adjustment stays auditable and
+  // the UI can show the analyst which times are machine-adjusted rather than recorded (#739).
+  yearClampedFrom?: string;
   // Structured identifiers used to CORRELATE the same real-world artifact across tools
   // (e.g. a Velociraptor alert and a THOR alert about the same downloaded file).
   sha256?: string;

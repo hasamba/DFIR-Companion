@@ -1387,6 +1387,75 @@ describe("AnalysisPipeline", () => {
     expect(durableProgress).toEqual([1, 2]);
   });
 
+  // #739, per EVENT. The model must emit a full timestamp whatever it read, so its output alone
+  // cannot say whether the year was recorded or invented — the SOURCE can. A year the file never
+  // mentions was invented; a year the file does mention is treated as recorded, so the year-clamp
+  // can never rewrite a real RFC 3339 row that happens to be a minority year.
+  describe("analyzeCsv year provenance (#739)", () => {
+    function pipelineReturning(timestamp: string) {
+      return new AnalysisPipeline({
+        provider: {
+          name: "spy",
+          model: "mock-model",
+          analyze: async () => ({
+            rawText: JSON.stringify({
+              findings: [],
+              iocs: [],
+              mitreTechniques: [],
+              threadsOpened: [],
+              threadsClosed: [],
+              timelineNote: "read rows",
+              summary: "",
+              forensicEvents: [
+                {
+                  id: "e1",
+                  timestamp,
+                  description: "row event",
+                  severity: "High",
+                  mitreTechniques: [],
+                  relatedFindingIds: [],
+                },
+              ],
+            }),
+          }),
+        },
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      });
+    }
+
+    const opts = { label: "0001_results.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z" };
+
+    it("marks the year inferred when the source names no year at all", async () => {
+      // A bare time column: whatever year comes back was supplied by the model.
+      const state = await pipelineReturning("2026-05-20T09:00:00Z").analyzeCsv(
+        "c1",
+        "Time,Process\n09:00,a.exe\n09:01,b.exe\n",
+        opts,
+      );
+      expect(state.forensicTimeline[0].yearInferred).toBe(true);
+    });
+
+    it("leaves an RFC 3339 row recorded, so the clamp can never rewrite it", async () => {
+      const state = await pipelineReturning("2025-12-05T03:27:07Z").analyzeCsv(
+        "c1",
+        "Time,Process\n2025-12-05T03:27:07Z,a.exe\n2025-12-05T03:28:00Z,b.exe\n",
+        opts,
+      );
+      expect(state.forensicTimeline[0].yearInferred).toBeUndefined();
+    });
+
+    it("judges each event against the source, not the import as a whole", async () => {
+      // The file talks about 2025; an event the model dates to 2026 was not read out of it.
+      const state = await pipelineReturning("2026-05-20T09:00:00Z").analyzeCsv(
+        "c1",
+        "Time,Process\n2025-12-05T03:27:07Z,a.exe\n2025-12-05T03:28:00Z,b.exe\n",
+        opts,
+      );
+      expect(state.forensicTimeline[0].yearInferred).toBe(true);
+    });
+  });
+
   it("analyzeCsv re-reads DFIR_AI_CSV_PROMPT_FILE for every batch, not once per import", async () => {
     // DFIR_AI_*_PROMPT_FILE is documented as "re-read on each AI call". A multi-batch import makes
     // one call per batch, so an operator who corrects the prompt file while a long import is

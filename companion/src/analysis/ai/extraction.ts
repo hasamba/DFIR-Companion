@@ -224,6 +224,30 @@ async function extractBatch<T>(
 }
 
 /**
+ * Every 4-digit year that literally appears in an import's raw text.
+ *
+ * This is how an AI-extracted event's year is judged RECORDED or GUESSED (#739). The model must emit
+ * a full timestamp whichever kind of source it read, so its output alone says nothing; the source
+ * does. A year the file never mentions cannot have been read out of it — a BSD syslog line or a bare
+ * `12:00:48` CSV cell dated by the model is exactly that case, and it is the one the year-clamp
+ * exists for.
+ *
+ * The test is deliberately ASYMMETRIC. A year present in the file is treated as recorded even if the
+ * match was really a port number or an id, so the failure mode is a stray the clamp declines to fix —
+ * never a real timestamp the clamp silently rewrites. Under-clamping is recoverable; overwriting
+ * evidence is not.
+ */
+function yearsPresentIn(text: string): Set<string> {
+  return new Set(text.match(/\b(?:19|20)\d{2}\b/g) ?? []);
+}
+
+/** The UTC year of an ISO timestamp as a bare string, or "" when it does not parse. */
+function yearStringOf(timestamp: string): string {
+  const ms = Date.parse(timestamp);
+  return Number.isNaN(ms) ? "" : String(new Date(ms).getUTCFullYear());
+}
+
+/**
  * The shared import shape: hold the state lock across the whole batch loop, pre-scan once, then for
  * each batch call the model, renumber the events it returned, merge and persist.
  *
@@ -240,6 +264,9 @@ async function runBatchedImport<T>(
   return ctx.withStateLock(caseId, async () => {
     let state = await ctx.opts.stateStore.load(caseId);
     let evSeq = lastImportEventSequence(state.forensicTimeline, opts.idPrefix);
+    // Scanned once for the whole payload, not per batch: the question is whether the SOURCE names a
+    // year anywhere, and a batch boundary is an artifact of the token budget, not of the evidence.
+    const sourceYears = yearsPresentIn(spec.payloadText);
     await preScanWholeImport(ctx, caseId, state, spec.payloadText);
     const batches = spec.planBatches(state);
 
@@ -263,6 +290,10 @@ async function runBatchedImport<T>(
           ...e,
           id: `${opts.idPrefix}e${++evSeq}`,
           sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? spec.defaultSource],
+          // Per EVENT, not per import: a CSV of RFC 3339 rows is recorded evidence and marking the
+          // whole file would let the merge's year-clamp rewrite a real minority year — the #739
+          // defect itself. Only a year the source never mentions was invented here (#739).
+          ...(sourceYears.has(yearStringOf(e.timestamp)) ? {} : { yearInferred: true }),
         })),
       };
 

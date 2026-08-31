@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,10 @@ import type { IOC } from "../../src/analysis/stateTypes.js";
 // case-lock gate nor the per-case team policy covers those.
 
 const BOOTSTRAP_TOKEN = "test-bootstrap-token-with-enough-entropy";
+
+afterEach(() => {
+  delete process.env.DFIR_CROSS_CASE;
+});
 
 function ioc(id: string, type: IOC["type"], value: string, flagged = false): IOC {
   return {
@@ -45,6 +49,7 @@ describe("cross-case pivot — single-user mode", () => {
   let stateStore: StateStore;
 
   beforeEach(async () => {
+    process.env.DFIR_CROSS_CASE = "on"; // the pivot is off by default (#723)
     const root = await mkdtemp(join(tmpdir(), "dfir-crosscase-"));
     store = new CaseStore(root);
     stateStore = new StateStore(store);
@@ -146,6 +151,7 @@ describe("cross-case pivot — a password-protected case stays out", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(async () => {
+    process.env.DFIR_CROSS_CASE = "on"; // the pivot is off by default (#723)
     const root = await mkdtemp(join(tmpdir(), "dfir-crosscase-pw-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -192,6 +198,7 @@ describe("cross-case pivot — team mode respects case roles", () => {
   }
 
   beforeEach(async () => {
+    process.env.DFIR_CROSS_CASE = "on"; // the pivot is off by default (#723)
     const root = await mkdtemp(join(tmpdir(), "dfir-crosscase-team-"));
     const store = new CaseStore(join(root, "cases"));
     const stateStore = new StateStore(store);
@@ -252,5 +259,61 @@ describe("cross-case pivot — team mode respects case roles", () => {
   it("shows a global administrator both cases", async () => {
     const res = await admin.agent.get("/cases/c1/related");
     expect(res.body.related.map((r: { caseId: string }) => r.caseId)).toEqual(["c2"]);
+  });
+});
+
+// The pivot names cases OTHER than the one the analyst is looking at, and each answered request
+// pins a slimmed copy of every visible case's IOCs for the life of the process. It stays off until
+// a deployment asks for it (#723).
+describe("cross-case pivot — off by default", () => {
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(async () => {
+    delete process.env.DFIR_CROSS_CASE;
+    const root = await mkdtemp(join(tmpdir(), "dfir-crosscase-off-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    await seed(store, stateStore, "c1", [ioc("i1", "domain", "evil.com")]);
+    await seed(store, stateStore, "c2", [ioc("i9", "domain", "evil.com")]);
+    app = createApp(store, { stateStore });
+  });
+
+  it("refuses the estate-wide search, and says why", async () => {
+    const res = await request(app).get("/global/iocs?q=evil.com");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/DFIR_CROSS_CASE/);
+  });
+
+  it("refuses the related-cases lookup for a case that really exists", async () => {
+    // Not a 404 about a missing case — c1 is there. The 404 is the feature being off.
+    const res = await request(app).get("/cases/c1/related");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/DFIR_CROSS_CASE/);
+  });
+
+  it.each([["off"], [""], ["  "], ["true"], ["1"], ["yes"]])(
+    'stays off for DFIR_CROSS_CASE=%j — only an explicit "on" enables it',
+    async (value) => {
+      process.env.DFIR_CROSS_CASE = value;
+      const root = await mkdtemp(join(tmpdir(), "dfir-crosscase-val-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      await seed(store, stateStore, "c1", [ioc("i1", "domain", "evil.com")]);
+      const scoped = createApp(store, { stateStore });
+      expect((await request(scoped).get("/global/iocs?q=evil.com")).status).toBe(404);
+    },
+  );
+
+  it("enables on an explicit ON, whatever the case and spacing", async () => {
+    process.env.DFIR_CROSS_CASE = "  ON  ";
+    const root = await mkdtemp(join(tmpdir(), "dfir-crosscase-on-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    await seed(store, stateStore, "c1", [ioc("i1", "domain", "evil.com")]);
+    await seed(store, stateStore, "c2", [ioc("i9", "domain", "evil.com")]);
+    const scoped = createApp(store, { stateStore });
+    const res = await request(scoped).get("/global/iocs?q=evil.com");
+    expect(res.status).toBe(200);
+    expect(res.body.entries[0].caseIds).toEqual(["c1", "c2"]);
   });
 });

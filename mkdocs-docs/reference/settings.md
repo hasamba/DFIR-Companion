@@ -400,6 +400,22 @@ comparing releases.
   display, alongside the corrected one. An analyst can manually override any host's offset; an
   explicit `0` pins that host's clock as already correct.
 
+    A **large** offset — beyond about two days — is measured and flagged but never applied on its
+    own. A VM restored from an old snapshot can be months out, and a fictional offset that size
+    would move a whole host's timeline, so the panel shows it as *measured but not applied* and
+    waits for you to confirm the host's clock and type the offset in yourself.
+
+    The panel also warns about a host whose **own** timestamps split across a huge gap — say 17 of
+    214 events dated nine months before the rest. That check needs no second clock, so it still
+    fires on a case with a single evidence source, where no offset can be measured at all. It is a
+    warning only: nothing is corrected, and it is usually the first sign of a wrong VM clock.
+
+    Finally, a timeline row whose **year** was adjusted at import says so under its timestamp, with
+    the time it was imported as. Some sources (BSD syslog, Cisco ASA, Snort, a bare time column in a
+    CSV) carry no year at all, so the import has to supply one and the merge re-anchors an obvious
+    stray onto the case's dominant year. Only a guessed year is ever moved — a year read out of the
+    record is evidence and is left exactly as recorded.
+
 ### Evidence integrity environment variables
 
 | Variable | Default | Effect |

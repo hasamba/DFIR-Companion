@@ -9,6 +9,12 @@ import {
   requestSignal,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
+import {
+  readBoundedJson,
+  readBoundedText,
+  RESPONSE_SIZE_LIMITS,
+  ResponseTooLargeError,
+} from "./boundedResponse.js";
 
 type FetchFn = typeof fetch;
 
@@ -95,10 +101,13 @@ export class AnthropicProvider implements AIProvider {
     if (!res.ok) {
       // 529 = Anthropic overloaded — treat as rate limit so the caller can retry/wait
       const kind = res.status === 529 ? "rate_limit" : httpErrorKind(res.status);
-      const body = await res.text().catch(() => "");
+      const body = await readBoundedText(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.text,
+        context: "Anthropic",
+      }).catch(() => "");
       throw new ProviderError(httpErrorMessage("Anthropic", res.status, body), kind);
     }
-    const json = (await res.json()) as {
+    type AnthropicMessageResponse = {
       content?: { type: string; text?: string }[];
       usage?: {
         input_tokens?: number;
@@ -107,6 +116,16 @@ export class AnthropicProvider implements AIProvider {
         cache_read_input_tokens?: number;
       };
     };
+    let json: AnthropicMessageResponse;
+    try {
+      json = await readBoundedJson<AnthropicMessageResponse>(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "Anthropic",
+      });
+    } catch (err) {
+      const kind = err instanceof ResponseTooLargeError ? "transport" : "other";
+      throw new ProviderError(`Anthropic response error: ${(err as Error).message}`, kind);
+    }
     const text = json.content?.find((b) => b.type === "text")?.text;
     if (!text) throw new ProviderError("Anthropic returned no content", "other");
     const u = json.usage;

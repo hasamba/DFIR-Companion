@@ -8,6 +8,7 @@
 // orchestration and transforms can be unit-tested with no network.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 
 export type LeakCheckType = "auto" | "email" | "domain" | "username" | "phone" | "hash" | "keyword";
 
@@ -86,7 +87,10 @@ export class LeakCheckClient {
     // ambiguous on their own (e.g. a 403 is "Active plan required" OR "Limit reached", never a
     // per-query-type thing), so the reason must come from `error`, not a guessed message.
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const body = await readBoundedJson<{ error?: string }>(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "LeakCheck",
+      }).catch((): { error?: string } => ({}));
       const reason = body.error ? ` — ${body.error}` : "";
       if (res.status === 401)
         throw new LeakCheckError(`LeakCheck 401 (auth)${reason} — check DFIR_LEAKCHECK_KEY`, 401, "auth");
@@ -113,7 +117,10 @@ export class LeakCheckClient {
       throw new LeakCheckError(`LeakCheck HTTP ${res.status}${reason}`, res.status, "http");
     }
 
-    const json = (await res.json()) as Partial<LeakCheckResult>;
+    const json = await readBoundedJson<Partial<LeakCheckResult>>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "LeakCheck",
+    });
     // A genuine "no breaches" answer is success:true / found:0; success:false is an API-level error.
     if (json.success === false)
       throw new LeakCheckError(`LeakCheck: ${json.error ?? "query failed"}`, 200, "api");

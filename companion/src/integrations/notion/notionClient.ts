@@ -11,6 +11,7 @@
 // own notes/screenshots — see notionPush.ts.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS, rethrowIfTooLarge } from "../../providers/boundedResponse.js";
 import type { NotionBlock } from "./notionBlocks.js";
 
 // Notion's API version is pinned — Notion is explicit that the header selects the request/
@@ -134,7 +135,10 @@ export class NotionClient {
     }
 
     if (!res.ok) {
-      const env = (await res.json().catch(() => ({}))) as NotionErrorEnvelope;
+      const env = (await readBoundedJson(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "Notion",
+      }).catch(() => ({}))) as NotionErrorEnvelope;
       const detail = env.message ? `: ${env.message}` : "";
       if (res.status === 401)
         throw new NotionApiError(`Notion auth failed (check DFIR_NOTION_TOKEN)${detail}`, 401, "auth");
@@ -155,7 +159,10 @@ export class NotionClient {
         throw new NotionApiError(`Notion rejected the request${detail}`, 400, "validation");
       throw new NotionApiError(`Notion HTTP ${res.status} on ${path}${detail}`, res.status, "http");
     }
-    return (await res.json().catch(() => ({}))) as T;
+    return (await readBoundedJson(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "Notion",
+    }).catch((err) => rethrowIfTooLarge(err, {}))) as T;
   }
 
   // ---- connectivity --------------------------------------------------------

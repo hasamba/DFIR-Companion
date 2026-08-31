@@ -54,6 +54,9 @@ export async function importSnort(
       ...e,
       id: `${opts.idPrefix}e${i + 1}`,
       sources: e.sources?.length ? e.sources : [SNORT_SOURCE],
+      // A Snort fast-alert line carries no year, so `assumeYear` above supplied one — mark it a
+      // guess so the merge's year-clamp may re-anchor it (#739).
+      yearInferred: true,
     })),
     threadsOpened: [],
     threadsClosed: [],

@@ -313,6 +313,69 @@ describe("runToolAgainstFile", () => {
     ).rejects.toThrow(/rules file is required/i);
   });
 
+  // #719. failOnNonZeroExit is unset for YARA and Snort because a non-zero EXIT CODE means "matches
+  // found" for them. The signal half of the check rode on the same flag, so a YARA scan killed by the
+  // OOM killer imported its half-written stdout as a completed scan — the exact "silently partial
+  // view of the evidence" the fail-closed design refuses. No tool signals "matches found".
+  it("refuses a signal-killed run even for a tool whose exit code is not fail-closed", async () => {
+    const caseDir = await mkdtemp(join(tmpdir(), "case-"));
+    await writeFile(join(caseDir, "a.bin"), "sample");
+    const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara", DFIR_TOOL_YARA_RULES: "/r.yar" })!;
+    expect(cfg.failOnNonZeroExit).toBeFalsy();
+    const runner: ToolRunner = async (_binary, args) => {
+      if (args.includes("--version")) return { stdout: "YARA 4.5.0", stderr: "", code: 0 };
+      // The OOM killer takes the scan out partway through; plausible-looking partial stdout remains.
+      return { stdout: "EvilRule /x/a.bin", stderr: "", code: -1, signal: "SIGKILL" };
+    };
+    await expect(
+      runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, "a.bin"),
+        workDir: join(caseDir, ".toolwork"),
+      }),
+    ).rejects.toThrow(/killed by SIGKILL.*refusing to import a partial parse/i);
+  });
+
+  // The other half of the flag's purpose must survive: a non-zero exit with output is a NORMAL YARA
+  // run, and splitting the condition must not start rejecting it.
+  it("still imports a non-zero exit from a tool that uses it to mean 'matches found'", async () => {
+    const caseDir = await mkdtemp(join(tmpdir(), "case-"));
+    await writeFile(join(caseDir, "a.bin"), "sample");
+    const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara", DFIR_TOOL_YARA_RULES: "/r.yar" })!;
+    const runner: ToolRunner = async (_binary, args) =>
+      args.includes("--version")
+        ? { stdout: "YARA 4.5.0", stderr: "", code: 0 }
+        : { stdout: "EvilRule /x/a.bin", stderr: "", code: 1, signal: null };
+    const res = await runToolAgainstFile({
+      cfg,
+      runner,
+      targetPath: join(caseDir, "a.bin"),
+      workDir: join(caseDir, ".toolwork"),
+    });
+    expect(res.outputText).toBe("EvilRule /x/a.bin");
+    expect(res.provenance.exitCode).toBe(1);
+  });
+
+  it("still refuses a signal-killed run for a fail-closed tool", async () => {
+    const caseDir = await mkdtemp(join(tmpdir(), "case-"));
+    await writeFile(join(caseDir, "a.evtx"), "binary-evtx");
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    expect(cfg.failOnNonZeroExit).toBe(true);
+    const runner: ToolRunner = async (_binary, args) =>
+      args.includes("--version")
+        ? { stdout: "hayabusa 3.2.0", stderr: "", code: 0 }
+        : { stdout: "", stderr: "", code: -1, signal: "SIGSEGV" };
+    await expect(
+      runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, "a.evtx"),
+        workDir: join(caseDir, ".toolwork"),
+      }),
+    ).rejects.toThrow(/killed by SIGSEGV/i);
+  });
+
   it("throws with stderr detail when the tool produces no output", async () => {
     const caseDir = await mkdtemp(join(tmpdir(), "case-"));
     await writeFile(join(caseDir, "a.bin"), "x");

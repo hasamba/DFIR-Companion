@@ -9,6 +9,7 @@ import {
   requestSignal,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
+import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "./boundedResponse.js";
 
 type FetchFn = typeof fetch;
 
@@ -135,13 +136,16 @@ export class OpenAIProvider implements AIProvider {
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
+      const body = await readBoundedText(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.text,
+        context: this.label,
+      }).catch(() => "");
       throw new ProviderError(httpErrorMessage(this.label, res.status, body), httpErrorKind(res.status));
     }
-    const json = (await res.json()) as {
+    const json = await readBoundedJson<{
       choices?: { message?: { content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
-    };
+    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: this.label });
     const text = json.choices?.[0]?.message?.content;
     if (!text) throw new ProviderError(`${this.label} returned no content`, "other");
     const u = json.usage;

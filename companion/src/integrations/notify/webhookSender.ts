@@ -1,4 +1,5 @@
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedText, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 
 // POST a JSON payload to a Slack/Teams incoming webhook. Injectable `fetchFn` (tests pass a mock —
 // no real network), bounded by a timeout. Slack replies "ok" / Teams replies "1" on success; we
@@ -8,6 +9,17 @@ export interface WebhookResult {
   ok: boolean;
   status: number;
   error?: string;
+}
+
+// Best-effort host for the bounded-read context (e.g. an error message reading "webhook
+// (hooks.slack.com) response too large"). Never throws — an unparsable url falls back to a
+// generic label rather than blowing up the already-in-progress error handling.
+function safeHost(url: string): string {
+  try {
+    return `webhook (${new URL(url).host})`;
+  } catch {
+    return "webhook";
+  }
 }
 
 export async function postWebhook(
@@ -29,7 +41,10 @@ export async function postWebhook(
   }
 
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
+    const body = await readBoundedText(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.text,
+      context: safeHost(url),
+    }).catch(() => "");
     const detail = body ? `: ${body.slice(0, 200)}` : "";
     return { ok: false, status: res.status, error: `webhook HTTP ${res.status}${detail}` };
   }

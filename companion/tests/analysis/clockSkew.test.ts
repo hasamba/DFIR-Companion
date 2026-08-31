@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   detectClockSkew,
   detectClockSkewFromTimeline,
+  detectHostTimeGaps,
+  hostKey,
   alignTimestamps,
   effectiveOffsets,
   stripAlignment,
@@ -210,9 +212,40 @@ describe("detectClockSkew", () => {
     expect(results.find((r) => r.hostKey === "file-bo-01")!.anchorCount).toBe(3);
   });
 
+  // The cap is a sanity bound on "these two records describe one real-world event", not a bound on
+  // how wrong a clock may be — a 60-day offset used to be rejected here, which is what made #740's
+  // multi-month VM skew undetectable by construction. Consistency across anchors is the real
+  // discriminator, so the cap now sits at a year and 60 days is measured like any other offset.
   it("ignores an anchor group whose members sit implausibly far apart", () => {
-    const events = [0, 1, 2].flatMap((i) => anchorPair(i, "hostOld", 60 * 24 * 3600));
+    const events = [0, 1, 2].flatMap((i) => anchorPair(i, "hostOld", 500 * 24 * 3600));
     expect(detectClockSkew(groupsOf(events)).results).toEqual([]);
+  });
+
+  it("measures a two-month offset that the old 48-hour cap threw away", () => {
+    const events = [0, 1, 2].flatMap((i) => anchorPair(i, "hostOld", 60 * 24 * 3600));
+    const old = detectClockSkew(groupsOf(events)).results.find((r) => r.hostKey === "hostold")!;
+    expect(old.qualified).toBe(true);
+    expect(Math.round(old.offsetMs / 86_400_000)).toBe(60);
+  });
+
+  // Codex review of #740: three files deployed in bulk and re-observed by a second tool months
+  // later produce one anchor group each, and those propagation intervals can agree well inside the
+  // 5s dispersion ceiling. Consistency alone therefore cannot license a year-scale correction, so a
+  // large offset is measured and flagged but never aligned on without the analyst saying so.
+  it("reports a months-large offset but refuses to align on it unattended", () => {
+    const events = [0, 1, 2].flatMap((i) => anchorPair(i, "hostOld", 60 * 24 * 3600));
+    const old = detectClockSkew(groupsOf(events)).results.find((r) => r.hostKey === "hostold")!;
+    expect(old.qualified).toBe(true);
+    expect(old.skewed).toBe(true);
+    expect(old.alignable).toBe(false);
+    expect(effectiveOffsets([old]).size).toBe(0);
+  });
+
+  it("still aligns on an ordinary offset inside the auto-align ceiling", () => {
+    const events = [0, 1, 2].flatMap((i) => anchorPair(i, "hostA", 120));
+    const a = detectClockSkew(groupsOf(events)).results.find((r) => r.hostKey === "hosta")!;
+    expect(a.alignable).toBe(true);
+    expect(effectiveOffsets([a]).get("hosta")).toBe(120_000);
   });
 
   it("reports how much evidence it had", () => {
@@ -241,6 +274,7 @@ describe("effectiveOffsets", () => {
     dispersionMs: 0,
     confidence: "medium" as const,
     qualified: true,
+    alignable: true,
     skewed: false,
     sources: ["THOR"],
   };
@@ -262,7 +296,16 @@ describe("effectiveOffsets", () => {
   });
 
   it("ignores unqualified detections", () => {
-    expect(effectiveOffsets([{ ...detected, qualified: false }]).size).toBe(0);
+    expect(effectiveOffsets([{ ...detected, qualified: false, alignable: false }]).size).toBe(0);
+  });
+
+  // A months-wrong clock is measured and flagged, but applying it rewrites every timestamp on the
+  // host — too consequential to do unasked when consistency alone cannot rule out a propagation
+  // pattern that merely looks consistent. The analyst turns it on with an override.
+  it("does not auto-apply a qualified offset that is too large to align on", () => {
+    const huge = { ...detected, offsetMs: 268 * 86_400_000, skewed: true, alignable: false };
+    expect(effectiveOffsets([huge]).size).toBe(0);
+    expect(effectiveOffsets([huge], { hostB: 268 * 86_400_000 }).get("hostb")).toBe(268 * 86_400_000);
   });
 });
 
@@ -308,5 +351,112 @@ describe("alignTimestamps", () => {
       expect(e.originalTimestamp).toBeUndefined();
       expect(e.skewOffsetMs).toBeUndefined();
     }
+  });
+});
+
+describe("detectHostTimeGaps (#740)", () => {
+  // A host's own distribution, no second clock involved: 17 of 214 events dated ~9 months early,
+  // the shape of the lab VM on case INC-2026-020.
+  function host(name: string, iso: string, count: number, startId: number): ForensicEvent[] {
+    const at = Date.parse(iso);
+    return Array.from({ length: count }, (_, i) =>
+      ev(`${name}-${startId + i}`, new Date(at + i * 60_000).toISOString(), {
+        asset: name,
+        sources: ["Velociraptor"],
+      }),
+    );
+  }
+
+  it("warns when a small minority of a host's events sits months from the rest", () => {
+    const events = [
+      ...host("WIN-UK1GV882OK6", "2026-08-30T09:00:00Z", 197, 0),
+      ...host("WIN-UK1GV882OK6", "2025-12-05T03:27:00Z", 17, 500),
+    ];
+    const [gap] = detectHostTimeGaps(events);
+    expect(gap.hostKey).toBe("win-uk1gv882ok6");
+    expect(gap.minorityCount).toBe(17);
+    expect(gap.totalCount).toBe(214);
+    expect(gap.minoritySide).toBe("before");
+    expect(Math.round(gap.gapMs / 86_400_000)).toBe(268);
+    expect(gap.sources).toEqual(["Velociraptor"]);
+  });
+
+  it("stays silent on a host whose evidence legitimately spans years", () => {
+    // An MFT or registry collection always splits wide. Half the evidence on each side is normal.
+    const events = [
+      ...host("FILE01", "2024-01-01T00:00:00Z", 30, 0),
+      ...host("FILE01", "2026-01-01T00:00:00Z", 30, 500),
+    ];
+    expect(detectHostTimeGaps(events)).toEqual([]);
+  });
+
+  it("stays silent below the gap and event-count thresholds", () => {
+    const tight = [
+      ...host("WS01", "2026-08-30T09:00:00Z", 40, 0),
+      ...host("WS01", "2026-08-25T09:00:00Z", 4, 500),
+    ];
+    expect(detectHostTimeGaps(tight)).toEqual([]); // 5 days apart — under the 30-day floor
+    const tiny = [
+      ...host("WS02", "2026-08-30T09:00:00Z", 8, 0),
+      ...host("WS02", "2025-01-01T09:00:00Z", 1, 500),
+    ];
+    expect(detectHostTimeGaps(tiny)).toEqual([]); // 9 dated events — under the min-events floor
+  });
+
+  it("ignores events with no asset or no parseable time", () => {
+    const events = [
+      ...host("WS03", "2026-08-30T09:00:00Z", 20, 0),
+      ...host("WS03", "2025-01-01T09:00:00Z", 3, 500),
+      ev("noasset", "2020-01-01T00:00:00Z"),
+      ev("undated", "", { asset: "WS03" }),
+    ];
+    const [gap] = detectHostTimeGaps(events);
+    expect(gap.totalCount).toBe(23);
+    expect(gap.minorityCount).toBe(3);
+  });
+
+  it("reports the widest gap first", () => {
+    const events = [
+      ...host("A", "2026-08-30T09:00:00Z", 20, 0),
+      ...host("A", "2026-05-01T09:00:00Z", 3, 500),
+      ...host("B", "2026-08-30T09:00:00Z", 20, 0),
+      ...host("B", "2024-01-01T09:00:00Z", 3, 500),
+    ];
+    expect(detectHostTimeGaps(events).map((g) => g.hostKey)).toEqual(["b", "a"]);
+  });
+});
+
+// Codex review of #740: hostKey truncated at the first dot, so every address on a /8 collapsed onto
+// the key "10" — one machine's offsets and gaps reported under another machine's name, and (through
+// correlate's shortHost, the same rule) two hosts merged where the split IS the lateral movement.
+describe("hostKey on IP-literal assets", () => {
+  it("keeps distinct IPv4 assets distinct", () => {
+    expect(hostKey("10.1.1.5")).toBe("10.1.1.5");
+    expect(hostKey("10.2.2.6")).toBe("10.2.2.6");
+    expect(hostKey("10.1.1.5")).not.toBe(hostKey("10.2.2.6"));
+  });
+
+  it("keeps IPv6 literals whole, dotted-quad tail included", () => {
+    expect(hostKey("FE80::1")).toBe("fe80::1");
+    expect(hostKey("::ffff:10.0.0.1")).toBe("::ffff:10.0.0.1");
+  });
+
+  it("still folds an FQDN onto its short hostname", () => {
+    expect(hostKey("FILE-BO-01.corp.local")).toBe("file-bo-01");
+    expect(hostKey("  WS-01  ")).toBe("ws-01");
+  });
+
+  it("does not fold two hosts on one subnet into a single gap warning", () => {
+    const rows = (asset: string, iso: string, n: number, seed: number) =>
+      Array.from({ length: n }, (_, i) =>
+        ev(`${seed + i}`, new Date(Date.parse(iso) + i * 60_000).toISOString(), { asset }),
+      );
+    // Two DIFFERENT machines, each internally consistent. Folded onto "10" their combined rows
+    // straddle a nine-month gap and manufacture a warning about a clock that is perfectly fine.
+    const events = [
+      ...rows("10.1.1.5", "2026-08-30T09:00:00Z", 20, 0),
+      ...rows("10.2.2.6", "2025-12-05T03:27:00Z", 3, 500),
+    ];
+    expect(detectHostTimeGaps(events)).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@ import {
   type IocKind,
   type Verdict,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 export interface RockyRaccoonOptions {
   apiKey: string; // et_live_… (Authorization: Bearer)
@@ -85,7 +86,10 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
       );
     if (!res.ok) throw new Error(`RockyRaccoon HTTP ${res.status}`);
 
-    const p = (await res.json()) as ProcessProfile;
+    const p = await readBoundedJson<ProcessProfile>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "RockyRaccoon",
+    });
     const cls = p.classification ?? {};
     const risk = (cls.risk_level ?? "").toLowerCase();
     // A process PROFILE describes the process TYPE, not whether this instance is evil:
@@ -136,11 +140,11 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
       );
     if (!res.ok) throw new Error(`RockyRaccoon HTTP ${res.status}`);
 
-    const j = (await res.json()) as {
+    const j = await readBoundedJson<{
       observed?: boolean;
       percentage?: number;
       common_parents?: Array<{ parent?: string; percentage?: number }>;
-    };
+    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "RockyRaccoon" });
     if (j.observed) {
       return {
         observed: true,

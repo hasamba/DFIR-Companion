@@ -7,9 +7,11 @@ import {
   probeToolVersion,
   describeToolRun,
   hashOutputText,
+  createToolRunCache,
+  invalidateToolRunCaches,
 } from "../../src/integrations/tools/toolProvenance.js";
 import { loadToolConfig, TOOL_DEFS } from "../../src/integrations/tools/toolConfig.js";
-import { runToolAgainstFile } from "../../src/integrations/tools/runToolImport.js";
+import { runToolAgainstFile, updateToolRules } from "../../src/integrations/tools/runToolImport.js";
 import type { ToolRunner } from "../../src/integrations/tools/toolRunner.js";
 
 async function ruleDir(files: Record<string, string>): Promise<string> {
@@ -334,5 +336,162 @@ describe("runToolAgainstFile records what the run was (#688)", () => {
     expect(res.provenance.version).toBe("");
     expect(res.provenance.ruleset).toBeNull();
     expect(res.importKind).toBe("hayabusa");
+  });
+});
+
+// #721. hashRuleset walks and SHA-256s the whole rules tree and probeToolVersion spawns the binary,
+// both on EVERY run. A folder import runs the tool once per evidence file — 20-60 for a real
+// collection — so one import re-derived the same identity that many times.
+describe("ToolRunCache — one derivation per import job (#721)", () => {
+  it("hashes a rules tree once per cache, and re-derives without one", async () => {
+    const dir = await ruleDir({ "a.yml": "one", "b.yml": "two" });
+    const cache = createToolRunCache();
+    const first = (await hashRuleset(dir, cache))!;
+
+    // Change the CONTENT of a rule. The parent directory's mtime is untouched by this, which is
+    // exactly why a global cache must not key on it.
+    await writeFile(join(dir, "a.yml"), "one-edited", "utf8");
+
+    expect((await hashRuleset(dir, cache))!.sha256).toBe(first.sha256); // cached for this job
+    expect((await hashRuleset(dir))!.sha256).not.toBe(first.sha256); // uncached sees the edit
+  });
+
+  it("shares ONE walk between concurrent callers (memoizes the promise, not the result)", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const cache = createToolRunCache();
+    const [x, y] = await Promise.all([hashRuleset(dir, cache), hashRuleset(dir, cache)]);
+    expect(x!.sha256).toBe(y!.sha256);
+    expect(cache.ruleset.size).toBe(1);
+  });
+
+  it("keeps caches independent, so a later job re-derives", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const first = (await hashRuleset(dir, createToolRunCache()))!;
+    await writeFile(join(dir, "a.yml"), "changed", "utf8");
+    expect((await hashRuleset(dir, createToolRunCache()))!.sha256).not.toBe(first.sha256);
+  });
+
+  it("spawns the version probe once per cache", async () => {
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    let probes = 0;
+    const runner: ToolRunner = async () => {
+      probes++;
+      return { stdout: "hayabusa 3.2.0", stderr: "", code: 0 };
+    };
+    const cache = createToolRunCache();
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.0");
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.0");
+    expect(probes).toBe(1);
+    await probeToolVersion(cfg, runner); // no cache → probes again
+    expect(probes).toBe(2);
+  });
+
+  it("runToolAgainstFile threads the cache, so a 3-file batch derives once", async () => {
+    const caseDir = await mkdtemp(join(tmpdir(), "case-"));
+    const rules = await ruleDir({ "a.yar": "rule A {condition: true}" });
+    const cfg = loadToolConfig("yara", {
+      DFIR_TOOL_YARA_BINARY: "yara",
+      DFIR_TOOL_YARA_RULES: rules,
+    })!;
+    let probes = 0;
+    const runner: ToolRunner = async (_binary, args) => {
+      if (args.includes("--version")) {
+        probes++;
+        return { stdout: "YARA 4.5.0", stderr: "", code: 0 };
+      }
+      return { stdout: "EvilRule /x/a.bin", stderr: "", code: 0 };
+    };
+    const cache = createToolRunCache();
+    for (const name of ["a.bin", "b.bin", "c.bin"]) {
+      await writeFile(join(caseDir, name), "sample");
+      const res = await runToolAgainstFile({
+        cfg,
+        runner,
+        targetPath: join(caseDir, name),
+        workDir: join(caseDir, ".toolwork"),
+        cache,
+      });
+      expect(res.provenance.ruleset?.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(res.provenance.version).toBe("YARA 4.5.0");
+    }
+    expect(probes).toBe(1);
+    expect(cache.ruleset.size).toBe(1);
+  });
+});
+
+// The one leg of the staleness window the Companion CONTROLS: a rules update it performs itself,
+// mid-batch. An external `git pull` on the rules tree stays outside our knowledge, but
+// `POST /tools/:id/update-rules` runs in this process, so a job memo must not survive it.
+describe("rules-update invalidation (#736)", () => {
+  it("re-derives a cached ruleset after an update is announced", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const cache = createToolRunCache();
+    const before = (await hashRuleset(dir, cache))!;
+    await writeFile(join(dir, "a.yml"), "updated", "utf8");
+
+    expect((await hashRuleset(dir, cache))!.sha256).toBe(before.sha256); // still memoized
+    invalidateToolRunCaches();
+    expect((await hashRuleset(dir, cache))!.sha256).not.toBe(before.sha256);
+  });
+
+  it("re-probes the version too, since a custom update command may replace the binary", async () => {
+    const cfg = loadToolConfig("hayabusa", { DFIR_TOOL_HAYABUSA_BINARY: "hayabusa" })!;
+    let probes = 0;
+    const runner: ToolRunner = async () => {
+      probes++;
+      return { stdout: `hayabusa 3.2.${probes}`, stderr: "", code: 0 };
+    };
+    const cache = createToolRunCache();
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.1");
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.1");
+    invalidateToolRunCaches();
+    expect(await probeToolVersion(cfg, runner, cache)).toBe("hayabusa 3.2.2");
+  });
+
+  it("updateToolRules invalidates on its own — no caller has to remember", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const cache = createToolRunCache();
+    const before = (await hashRuleset(dir, cache))!;
+    await writeFile(join(dir, "a.yml"), "updated", "utf8");
+
+    const cfg = loadToolConfig("suricata", {
+      DFIR_TOOL_SURICATA_BINARY: "suricata",
+      DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update",
+    })!;
+    const runner: ToolRunner = async () => ({ stdout: "12 rules updated", stderr: "", code: 0 });
+    await updateToolRules(cfg, runner);
+
+    expect((await hashRuleset(dir, cache))!.sha256).not.toBe(before.sha256);
+  });
+
+  // A non-zero exit does not mean nothing was written — a partial rules update still changed the
+  // tree, so the memo goes either way. Only a command that never ran leaves the memo intact.
+  it("invalidates even when the update command exits non-zero", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const cache = createToolRunCache();
+    const before = (await hashRuleset(dir, cache))!;
+    await writeFile(join(dir, "a.yml"), "half-written", "utf8");
+
+    const cfg = loadToolConfig("suricata", {
+      DFIR_TOOL_SURICATA_BINARY: "suricata",
+      DFIR_TOOL_SURICATA_UPDATE_CMD: "suricata-update",
+    })!;
+    const runner: ToolRunner = async () => ({ stdout: "partial", stderr: "warn", code: 3 });
+    await updateToolRules(cfg, runner);
+
+    expect((await hashRuleset(dir, cache))!.sha256).not.toBe(before.sha256);
+  });
+
+  it("leaves the memo alone when the update command never ran", async () => {
+    const dir = await ruleDir({ "a.yml": "one" });
+    const cache = createToolRunCache();
+    const before = (await hashRuleset(dir, cache))!;
+    await writeFile(join(dir, "a.yml"), "edited", "utf8");
+
+    const cfg = loadToolConfig("yara", { DFIR_TOOL_YARA_BINARY: "yara" })!;
+    const runner: ToolRunner = async () => ({ stdout: "", stderr: "", code: 0 });
+    await expect(updateToolRules(cfg, runner)).rejects.toThrow(/no update command/i);
+
+    expect((await hashRuleset(dir, cache))!.sha256).toBe(before.sha256);
   });
 });

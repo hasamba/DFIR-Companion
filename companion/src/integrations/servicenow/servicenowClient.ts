@@ -2,6 +2,7 @@
 // password. Creates incidents by default; the table name can be overridden via options.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS, rethrowIfTooLarge } from "../../providers/boundedResponse.js";
 
 export interface ServiceNowClientOptions {
   baseUrl: string; // e.g. https://instance.service-now.com
@@ -93,7 +94,10 @@ export class ServiceNowClient {
     }
 
     if (!res.ok) {
-      const env = (await res.json().catch(() => ({}))) as ServiceNowErrorEnvelope;
+      const env = (await readBoundedJson(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "ServiceNow",
+      }).catch(() => ({}))) as ServiceNowErrorEnvelope;
       const detail = env.error?.message || env.error?.detail;
       const suffix = detail ? `: ${detail}` : "";
       if (res.status === 401)
@@ -112,7 +116,10 @@ export class ServiceNowClient {
         throw new ServiceNowApiError(`ServiceNow rejected the request${suffix}`, 400, "validation");
       throw new ServiceNowApiError(`ServiceNow HTTP ${res.status} on ${path}${suffix}`, res.status, "http");
     }
-    return (await res.json().catch(() => ({}))) as T;
+    return (await readBoundedJson(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "ServiceNow",
+    }).catch((err) => rethrowIfTooLarge(err, {}))) as T;
   }
 
   async me(): Promise<{ userId?: string; userName?: string }> {

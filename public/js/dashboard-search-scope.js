@@ -233,6 +233,12 @@
       applyScope();
     };
     // Relative presets: window = [latest activity − N hours, latest activity].
+    //
+    // The anchor is the newest EVENT in the case, never Date.now() (#738). DFIR evidence is
+    // historical, so a case imported today routinely ends months ago and a wall-clock "last 24h"
+    // would select nothing at all. The buttons are labelled "of activity" for that reason — the
+    // Velociraptor collection presets in analysis/veloTimeScope.ts genuinely mean wall-clock time,
+    // and the two must not be read as the same control.
     document.querySelectorAll(".scope-preset").forEach((btn) => {
       btn.onclick = () => {
         const hours = Number(btn.dataset.hours);

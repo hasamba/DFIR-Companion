@@ -291,6 +291,55 @@
         el.innerHTML = `<span data-safe-style="color:#ff9f9f">Could not load case stats: ${esc(e.message)}</span>`;
       });
   }
+  // Round a millisecond span to the coarsest unit that still reads honestly. A ~9-month clock error
+  // is "268 days", not "23155200 seconds" — the analyst has to recognise the size at a glance.
+  function skewSpanLabel(ms) {
+    const days = Math.round(Math.abs(ms) / 86400000);
+    if (days >= 2) return `${days} days`;
+    const hours = Math.round(Math.abs(ms) / 3600000);
+    return hours >= 2 ? `${hours} hours` : `${Math.round(Math.abs(ms) / 60000)} minutes`;
+  }
+
+  // Timeline-integrity warnings (#739, #740). Neither of these is a correction — they exist so a
+  // wrong clock or a machine-adjusted year can never pass through the case in silence, which is
+  // precisely how a ~9-month VM skew reached synthesis unremarked on INC-2026-020.
+  function timelineIntegrityWarnings(j) {
+    const out = [];
+    // A host whose own events split across a huge gap. Needs no second clock, so it fires on the
+    // single-source case where no offset can be measured at all.
+    for (const g of j.timeGaps || []) {
+      const src = (g.sources || []).length
+        ? ` Reported by ${esc((g.sources || []).join(", "))}.`
+        : "";
+      out.push(`<div data-safe-style="color:#ffcf8f;padding:5px 0;border-bottom:1px solid var(--border-color)">
+        &#9888; <strong>${esc(g.host)}</strong> — ${esc(g.minorityCount)} of ${esc(g.totalCount)} events are dated
+        ${esc(skewSpanLabel(g.gapMs))} ${g.minoritySide === "before" ? "before" : "after"} the rest
+        (${esc(String(g.minorityStart).slice(0, 10))} &rarr; ${esc(String(g.minorityEnd).slice(0, 10))} vs
+        ${esc(String(g.majorityStart).slice(0, 10))} &rarr; ${esc(String(g.majorityEnd).slice(0, 10))}).
+        Check this host for clock skew before trusting its ordering or the case's scope window.${src}</div>`);
+    }
+    // Years the merge re-anchored. Read off the events themselves — a clamped event keeps what it
+    // was imported as, so the count needs no extra endpoint.
+    const events =
+      (window.DfirState && window.DfirState.lastState() && window.DfirState.lastState().forensicTimeline) || [];
+    const byPair = new Map();
+    for (const e of events) {
+      const from = e.yearClampedFrom ? new Date(e.yearClampedFrom).getUTCFullYear() : NaN;
+      const to = e.timestamp ? new Date(e.timestamp).getUTCFullYear() : NaN;
+      if (isNaN(from) || isNaN(to) || from === to) continue;
+      const key = `${from}>${to}`;
+      byPair.set(key, (byPair.get(key) || 0) + 1);
+    }
+    for (const [key, count] of [...byPair.entries()].sort((a, b) => b[1] - a[1])) {
+      const [from, to] = key.split(">");
+      out.push(`<div data-safe-style="color:#ffcf8f;padding:5px 0;border-bottom:1px solid var(--border-color)">
+        &#9888; ${esc(count)} event${count === 1 ? "" : "s"} had the year adjusted from ${esc(from)} to ${esc(to)}.
+        Those sources carry no year of their own, so the import guessed one and the merge re-anchored it onto the
+        case's dominant year. Each row shows the time it was imported as.</div>`);
+    }
+    return out.join("");
+  }
+
   function renderClockSkew(j) {
     const el = document.getElementById("clockSkewPanel");
     if (!el) return;
@@ -299,12 +348,15 @@
     const alertMs = (j.thresholds && j.thresholds.alertThresholdMs) || 60000;
     const align = document.getElementById("clockSkewAlign");
     if (align) align.checked = j.alignEnabled === true;
+    const warnings = timelineIntegrityWarnings(j);
     // A host can carry an override with no detection behind it, so union the two key sets.
     const keys = [
       ...new Set([...results.map((r) => r.hostKey), ...Object.keys(overrides)]),
     ].sort();
     if (!keys.length) {
-      el.innerHTML = `<div data-safe-style="color:#7e8aa0">No clock-skew anchors yet. Offsets are measured during
+      el.innerHTML =
+        warnings +
+        `<div data-safe-style="color:#7e8aa0">No clock-skew anchors yet. Offsets are measured during
         synthesis, from events that two different tools recorded for the same artifact — a case with a
         single evidence source, or one not yet synthesized, has nothing to compare.</div>`;
       return;
@@ -316,16 +368,21 @@
         const ov = Object.prototype.hasOwnProperty.call(overrides, key)
           ? overrides[key]
           : null;
-        const effective = ov !== null ? ov : r && r.qualified ? r.offsetMs : 0;
+        const effective = ov !== null ? ov : r && r.alignable ? r.offsetMs : 0;
         const flagged = Math.abs(effective) > alertMs;
         const name = esc(r ? r.host : key);
         const measured = r
           ? `${skewOffsetLabel(r.offsetMs)} · ${r.anchorCount} anchor${r.anchorCount === 1 ? "" : "s"} · ±${skewOffsetLabel(r.dispersionMs)} · ${esc(r.confidence)}`
           : "not measured";
+        // Three distinct reasons a host is not aligned, and they are not interchangeable: too little
+        // evidence, evidence that disagrees, or a sound measurement too large to apply unattended
+        // (#740). The last one is the only one the analyst can act on, so it says how.
         const why =
           r && !r.qualified
             ? `<div data-safe-style="color:#7e8aa0;font-size:11px">not aligned — ${r.anchorCount < 3 ? "too few anchors" : "offsets disagree across anchors (looks like propagation delay, not a clock)"}</div>`
-            : "";
+            : r && !r.alignable
+              ? `<div data-safe-style="color:#ffcf8f;font-size:11px">measured but NOT applied — an offset this large is never aligned automatically. Confirm the host's clock, then type the offset in seconds to apply it.</div>`
+              : "";
         const src =
           r && r.sources.length
             ? `<div data-safe-style="color:#7e8aa0;font-size:11px">from ${esc(r.sources.join(", "))}</div>`
@@ -351,9 +408,10 @@
         ? overrides[k]
         : null;
       const r = byKey.get(k);
-      return ov !== null ? ov !== 0 : !!(r && r.qualified && r.offsetMs !== 0);
+      return ov !== null ? ov !== 0 : !!(r && r.alignable && r.offsetMs !== 0);
     }).length;
     el.innerHTML =
+      warnings +
       rows +
       `<div data-safe-style="color:#7e8aa0;margin-top:6px">
       ${shifted} host${shifted === 1 ? "" : "s"} would shift when alignment is on${j.detectedAt ? " · measured " + esc(j.detectedAt.slice(0, 19).replace("T", " ")) + "Z" : ""}</div>`;

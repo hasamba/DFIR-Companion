@@ -2,7 +2,14 @@ import { mkdtemp, mkdir, readFile, rm, copyFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { ToolConfig } from "./toolConfig.js";
 import { substituteArgs, tokenizeArgs, stripAnsi, cleanToolOutput, type ToolRunner } from "./toolRunner.js";
-import { hashOutputText, hashRuleset, probeToolVersion, type ToolRunProvenance } from "./toolProvenance.js";
+import {
+  hashOutputText,
+  hashRuleset,
+  invalidateToolRunCaches,
+  probeToolVersion,
+  type ToolRunCache,
+  type ToolRunProvenance,
+} from "./toolProvenance.js";
 
 // Orchestrates "run the analyst's tool against a raw file on disk → hand its TEXT output to the existing
 // importer". Pure of any server/HTTP concern; the ToolRunner is injected so tests never spawn. Security
@@ -42,6 +49,8 @@ export async function runToolAgainstFile(opts: {
   workDir: string; // e.g. cases/<id>/.toolwork
   rulesPath?: string; // overrides cfg.rulesPath when provided
   definitions?: string; // overrides cfg.definitions when provided
+  // Per-import-job memo for the ruleset hash + version probe. Omit for a one-off run (#721).
+  cache?: ToolRunCache;
 }): Promise<RunToolResult> {
   const { cfg, runner, targetPath, workDir } = opts;
   const rules = (opts.rulesPath ?? cfg.rulesPath ?? "").trim();
@@ -61,7 +70,7 @@ export async function runToolAgainstFile(opts: {
   // BEFORE the tool is spawned so a fail-closed parser refuses to run at all rather than reporting a
   // confident "no detections" over rules it never loaded — which is indistinguishable, in the output,
   // from a genuinely clean log.
-  const ruleset = rules ? await hashRuleset(rules) : null;
+  const ruleset = rules ? await hashRuleset(rules, opts.cache) : null;
   if (cfg.requireRuleset && !ruleset) {
     throw new Error(
       `${cfg.id}: the rule set at "${rules}" could not be identified — the path must exist and hold at least one readable rule file. ` +
@@ -116,7 +125,7 @@ export async function runToolAgainstFile(opts: {
 
     // Best effort, and deliberately before the run so a version probe that hangs is bounded by its
     // own short timeout rather than eating into the parse. A blank version never fails the run.
-    const version = await probeToolVersion(cfg, runner);
+    const version = await probeToolVersion(cfg, runner, opts.cache);
 
     const res = await runner(cfg.binary, argv, {
       timeoutMs: cfg.timeoutMs,
@@ -132,7 +141,13 @@ export async function runToolAgainstFile(opts: {
     // A SIGNAL kill counts too, and is the likeliest way a parser dies on real evidence: the OOM
     // killer takes it out partway through a large EVTX, or it segfaults on a malformed chunk. Both
     // leave a plausible-looking partial output file behind.
-    if (cfg.failOnNonZeroExit && (res.code !== 0 || res.signal)) {
+    //
+    // The two halves are gated SEPARATELY (#719). Only the exit CODE is tool-specific — the flag is
+    // unset for YARA and Snort because they exit non-zero to mean "matches found". A signal is not a
+    // return value: no tool uses one to report matches, so a killed process is a partial parse for
+    // EVERY tool, flag or no flag. Riding both halves on the flag meant a YARA scan the OOM killer
+    // took out imported its half-written stdout as a completed scan.
+    if (res.signal || (cfg.failOnNonZeroExit && res.code !== 0)) {
       const detail = cleanToolOutput(res.stderr, 4);
       const how = res.signal ? `was killed by ${res.signal}` : `exited with code ${res.code}`;
       throw new Error(
@@ -186,6 +201,11 @@ export async function updateToolRules(cfg: ToolConfig, runner: ToolRunner): Prom
     timeoutMs: cfg.timeoutMs,
     maxOutputBytes: cfg.maxOutputBytes,
   });
+  // The rules on disk may have moved under any import running right now, so drop the job memos
+  // that would otherwise stamp the PREVIOUS rule set into those runs' custody records (#736).
+  // Done on any completion, not only exit 0: a failed update can still have written part of the
+  // tree. A command that never ran (no updateCommand, unparseable) threw above and leaves them.
+  invalidateToolRunCaches();
   // Strip ANSI colour codes + collapse CR progress redraws so the UI toast is readable, not garbage
   // (Hayabusa's update-rules forces colour). Keep the tail — the meaningful "N rules updated" summary.
   const text = cleanToolOutput(`${res.stdout}\n${res.stderr}`);

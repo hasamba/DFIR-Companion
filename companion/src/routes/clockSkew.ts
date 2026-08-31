@@ -1,10 +1,12 @@
 import type { Express, Request, Response } from "express";
 import {
   detectClockSkew,
+  detectHostTimeGaps,
   effectiveOffsets,
   hostKey,
   DEFAULT_SKEW_ALERT_MS,
   DEFAULT_MIN_ANCHORS,
+  DEFAULT_MIN_TIME_GAP_MS,
 } from "../analysis/clockSkew.js";
 import { correlationGroups } from "../analysis/correlate.js";
 import { logActivity } from "../analysis/activityLog.js";
@@ -24,7 +26,11 @@ import type { RouteContext } from "./context.js";
 export function registerClockSkewRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
 
-  const thresholds = { alertThresholdMs: DEFAULT_SKEW_ALERT_MS, minAnchors: DEFAULT_MIN_ANCHORS };
+  // What detectClockSkew is tuned with, and separately what the dashboard is told it was measured
+  // against. minTimeGapMs belongs only to the second: it is the standalone gap WARNING's floor
+  // (#740), which the offset detector knows nothing about.
+  const detectOpts = { alertThresholdMs: DEFAULT_SKEW_ALERT_MS, minAnchors: DEFAULT_MIN_ANCHORS };
+  const thresholds = { ...detectOpts, minTimeGapMs: DEFAULT_MIN_TIME_GAP_MS };
 
   app.get("/cases/:id/clock-skew", async (req: Request, res: Response) => {
     if (!options.clockSkewStore) return res.status(501).json({ error: "clock-skew store not configured" });
@@ -44,10 +50,13 @@ export function registerClockSkewRoutes(app: Express, ctx: RouteContext): void {
     if (!options.clockSkewStore) return res.status(501).json({ error: "clock-skew store not configured" });
     try {
       const state = await options.stateStore.load(req.params.id);
-      const report = detectClockSkew(
+      const skew = detectClockSkew(
         correlationGroups(state.forensicTimeline, { crossHostArtifacts: true }),
-        thresholds,
+        detectOpts,
       );
+      // The gap warning reads the host's own distribution, so unlike the anchors it survives the
+      // merge intact and is just as good here as it is during synthesis (#740).
+      const report = { ...skew, timeGaps: detectHostTimeGaps(state.forensicTimeline) };
       const record = await options.clockSkewStore.recordDetection(req.params.id, report, {
         replace: req.body?.replace === true,
       });
