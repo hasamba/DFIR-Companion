@@ -232,23 +232,28 @@
       document.getElementById("scopeEnd").value = "";
       applyScope();
     };
-    // Relative presets: window = [latest activity − N hours, latest activity].
+    // Relative presets: window = [now − N hours, now]. WALL-CLOCK, and only wall-clock.
     //
-    // The anchor is the newest EVENT in the case, never Date.now() (#738). DFIR evidence is
-    // historical, so a case imported today routinely ends months ago and a wall-clock "last 24h"
-    // would select nothing at all. The buttons are labelled "of activity" for that reason — the
-    // Velociraptor collection presets in analysis/veloTimeScope.ts genuinely mean wall-clock time,
-    // and the two must not be read as the same control.
+    // These used to anchor on the newest EVENT in the case instead, on the reasoning that DFIR
+    // evidence is historical and a real "last 24 hours" would usually select nothing. That reasoning
+    // is sound and it still lost: "24h" has one ordinary meaning, an analyst reads it that way, and
+    // a button that quietly means something else is a trap however carefully it is labelled — the
+    // label was tried first (#738) and the surprise survived it. So the presets now agree with the
+    // Velociraptor collection presets in analysis/veloTimeScope.ts, which have always meant the last
+    // N hours from now, and the app has one definition of "24h" rather than two.
+    //
+    // The cost is real and deliberate: on a case whose evidence predates the window, a preset selects
+    // nothing and the panels empty out. That is the honest answer to "show me the last 24 hours" for
+    // a case where nothing happened in the last 24 hours. Type a window into the two date fields to
+    // scope to when the evidence actually is.
     document.querySelectorAll(".scope-preset").forEach((btn) => {
       btn.onclick = () => {
         const hours = Number(btn.dataset.hours);
-        const anchor = latestEventMs();
+        const now = Date.now();
         document.getElementById("scopeStart").value = isoToUtcInput(
-          new Date(anchor - hours * 3600_000).toISOString(),
+          new Date(now - hours * 3600_000).toISOString(),
         );
-        document.getElementById("scopeEnd").value = isoToUtcInput(
-          new Date(anchor).toISOString(),
-        );
+        document.getElementById("scopeEnd").value = isoToUtcInput(new Date(now).toISOString());
         applyScope();
       };
     });

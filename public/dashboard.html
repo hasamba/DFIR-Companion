@@ -505,11 +505,10 @@
     </span>
     <div class="scope-group">
       <span data-safe-style="color:var(--text-primary);">Scope:</span>
-      <button class="scope-preset" data-hours="1" title="Last hour of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">1h</button>
-      <button class="scope-preset" data-hours="24" title="Last 24 hours of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">24h</button>
-      <button class="scope-preset" data-hours="168" title="Last 7 days of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">7d</button>
-      <button class="scope-preset" data-hours="720" title="Last 30 days of recorded ACTIVITY. The window ends at the newest event in this case, not at the current time — evidence is historical, so &quot;now&quot; is usually outside it entirely.">30d</button>
-      <span class="scope-preset-note" title="The presets above measure back from the NEWEST EVENT in this case, not from the current time. To scope by wall-clock time, type the window into the two fields.">of activity</span>
+      <button class="scope-preset" data-hours="1" title="The last hour, ending now. Evidence older than that is outside the window — type dates into the two fields to scope to when it actually is.">1h</button>
+      <button class="scope-preset" data-hours="24" title="The last 24 hours, ending now. Evidence older than that is outside the window — type dates into the two fields to scope to when it actually is.">24h</button>
+      <button class="scope-preset" data-hours="168" title="The last 7 days, ending now. Evidence older than that is outside the window — type dates into the two fields to scope to when it actually is.">7d</button>
+      <button class="scope-preset" data-hours="720" title="The last 30 days, ending now. Evidence older than that is outside the window — type dates into the two fields to scope to when it actually is.">30d</button>
       <label>from <input id="scopeStart" type="datetime-local" title="UTC" /></label>
       <label>to <input id="scopeEnd" type="datetime-local" title="UTC" /></label>
       <span data-safe-style="color:var(--text-muted);">(UTC)</span>
@@ -4099,15 +4098,6 @@
     // of (window, state), and moving them with the value is what leaves `scope` with no readers
     // outside its owner. DfirScope.project() is the same function; a parity suite now checks it
     // against companion/src/analysis/scopeProject.ts, the server copy it has always mirrored.
-
-    // The latest forensic event time anchors the relative-scope presets (DFIR data
-    // is historical, so "last 24h" means the last 24h of ACTIVITY, not of wall-clock).
-    function latestEventMs() {
-      const events = (DfirState.lastState() && DfirState.lastState().forensicTimeline) || [];
-      let max = NaN;
-      for (const e of events) { const t = Date.parse(e.timestamp); if (!isNaN(t)) max = isNaN(max) ? t : Math.max(max, t); }
-      return isNaN(max) ? Date.now() : max;
-    }
 
     // renderScopeInfo() moved into js/dashboard-scope.js: its three call sites were exactly the
     // three writers, so an owner that could be written without repainting its own indicator was a

@@ -171,8 +171,10 @@ describe("every name the page calls resolves to something", () => {
     //
     // The inline floor is deliberately low. It exists to catch "the parse produced nothing", and
     // #415 drives this number DOWN on purpose — a floor set near the current count is a treadmill
-    // that has to be edited every extraction, and one edited that often stops being read.
-    expect(declared.size, "no top-level bindings found in the inline scripts").toBeGreaterThan(100);
+    // that has to be edited every extraction, and one edited that often stops being read. It was
+    // 100 and the count reached exactly 100 when latestEventMs was deleted (the scope presets stopped
+    // needing an anchor), proving the point: give it real headroom instead of nudging it each time.
+    expect(declared.size, "no top-level bindings found in the inline scripts").toBeGreaterThan(50);
     expect(published.size, "no module publications found").toBeGreaterThan(100);
     expect(inline.length, "no inline scripts found").toBeGreaterThan(0);
     // The invariant that DOES hold across extraction: the world is conserved. Every name that
