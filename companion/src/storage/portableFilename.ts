@@ -68,12 +68,27 @@ export function portableZipEntryPath(path: string): string {
  * not only Windows: an archive whose entries collide is malformed wherever it is opened, and an
  * import that quietly succeeds on Linux and loses a file on Windows is the harder bug to find.
  *
- * Upper-cased because that is the direction Windows' own comparison folds. JS case mapping is
- * locale-independent here (toUpperCase, not toLocaleUpperCase), so this does not shift under a
- * Turkish locale.
+ * Upper-cased because that is the direction Windows' own comparison folds, but CHARACTER BY
+ * CHARACTER, which is how the filesystem does it. A whole-string toUpperCase() is not the same
+ * operation: it applies Unicode's full case mappings, which expand one character into several —
+ * "ß" becomes "SS", the ligature "ﬀ" becomes "FF". Windows does no such expansion, so under a
+ * whole-string fold `straße.txt` and `strasse.txt` looked like one destination and an archive
+ * holding both was refused. Over-refusing is not the safe direction here: in the
+ * delete-with-archive flow a refused archive is a case that cannot be preserved at all. A mapping
+ * that changes the code-point count is therefore discarded and the original character kept.
+ *
+ * JS case mapping is locale-independent here (toUpperCase, not toLocaleUpperCase), so this does
+ * not shift under a Turkish locale.
  */
 export function destinationKey(path: string): string {
-  return path.toUpperCase();
+  let out = "";
+  // Iterating with for...of walks code POINTS, so an astral character is folded whole rather than
+  // one surrogate half at a time.
+  for (const ch of path) {
+    const upper = ch.toUpperCase();
+    out += upper.length === ch.length ? upper : ch;
+  }
+  return out;
 }
 
 /**

@@ -335,6 +335,30 @@ describe("archiveCase", () => {
       expect(fs.written).toBeNull();
     });
 
+    // Windows folds case character by character. JS toUpperCase() does not: it expands "ß" to "SS"
+    // and "ﬀ" to "FF", so two genuinely distinct filenames looked like one destination and the
+    // archive was refused. A refused archive in the delete-with-archive flow is a case that cannot
+    // be preserved at all, so over-refusing costs as much here as under-refusing.
+    it("archives distinct names that only a multi-character case expansion would merge", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "evidence/straße.txt": "german street",
+        "evidence/strasse.txt": "a different file entirely",
+        "evidence/ﬀ.bin": "ligature",
+        "evidence/ff.bin": "two letters",
+      });
+      const result = await archiveCase("/cases", "c1", fs);
+
+      expect(result.manifest.files.map((f) => f.path)).toEqual([
+        "case.json",
+        "evidence/straße.txt",
+        "evidence/strasse.txt",
+        "evidence/ﬀ.bin",
+        "evidence/ff.bin",
+      ]);
+      expect(fs.written).not.toBeNull();
+    });
+
     it("adds no originalPath to an ordinary case", async () => {
       const fs = makeFs({
         "case.json": '{"caseId":"c1"}',
