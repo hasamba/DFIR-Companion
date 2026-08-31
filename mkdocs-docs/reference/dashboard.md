@@ -219,16 +219,15 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
 
-!!! warning "The scope presets mean *of activity*, not *of wall-clock time*"
-    The Scope bar's `1h` / `24h` / `7d` / `30d` buttons measure back from the **newest event in the
-    case**, not from the current time — which is why the row is labelled *of activity*. Evidence is
-    historical: a case collected in March still ends in March however long ago you imported it, so a
-    wall-clock "last 24 hours" would select nothing at all.
+!!! warning "The scope presets end at *now*"
+    The Scope bar's `1h` / `24h` / `7d` / `30d` buttons mean exactly what they say: the last N hours
+    of real time, ending at the current moment. They match the Velociraptor collection presets on the
+    Hunt Workbench, so the app has one meaning of "24h" rather than two.
 
-    To scope by real elapsed time instead, type the window into the **from** / **to** fields.
-
-    Do not confuse these with the Velociraptor collection presets on the Hunt Workbench — those
-    genuinely mean the last N hours from now, because a hunt collects going forward.
+    Evidence is usually historical, so on a case collected more than a day ago **`24h` selects
+    nothing and the panels empty out**. That is the honest answer for a case where nothing happened
+    in the last 24 hours. To scope to when the evidence actually is, type the window into the
+    **from** / **to** fields, or drag a range on the Timeline Swimlane.
 
 ### Vim-Style Keyboard Navigation
 
