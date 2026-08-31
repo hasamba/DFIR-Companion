@@ -180,7 +180,30 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
     ],
     defaultWaitMinutes: 60, // these scan the whole disk — the 10-min Best Practice default collects too early
     timeoutSeconds: 7200, // longer than the other bundles' 6000s — these four walk the whole disk
-    // Drop known-noisy rows at the source: YaraFile pagefile hits.
+    // YaraFile defaults to `**/*` — every file on the disk, read end to end through the full
+    // Yara-Forge set. Measured on one host: 53% of all hit rows came from C:\pagefile.sys alone, and
+    // the Windows + Program Files trees produced ~98% noise for zero true positives.
+    //
+    // This glob keeps the whole disk EXCEPT C:\Windows and C:\Program Files*, then adds back the
+    // subtrees attackers actually use. Velociraptor's glob cannot negate a NAME (no `!(Windows)`) —
+    // only a character class (`[!W]`) — so "not Windows" is spelled out as prefix divergence: one
+    // branch per position where a folder name can differ. `W[!i]*` keeps C:\worker, `Windows?*`
+    // keeps C:\Windows.old, `Program[! ]*` keeps C:\ProgramData, and only the exact names fall
+    // through. Root-level FILES need a directory component to match, so pagefile.sys drops out free.
+    //
+    // Keep the branches in sync with the trailing add-backs: Windows/{Temp,Tasks,debug,Panther},
+    // System32/{Tasks,spool,wbem,drivers} (DLL sideload + BYOVD targets) and a depth-limited
+    // `Program Files/*/*` (an RMM or archiver planted in an app's own folder) — without recursing
+    // into WinSxS or Edge, where a single msedge.dll is 326 MB.
+    params: {
+      "DetectRaptor.Generic.Detection.YaraFile": {
+        PathGlob:
+          "C:/{[!WP]*/**,W[!i]*/**,Wi[!n]*/**,Win[!d]*/**,Wind[!o]*/**,Windo[!w]*/**,Window[!s]*/**,Windows?*/**,P[!r]*/**,Pr[!o]*/**,Pro[!g]*/**,Prog[!r]*/**,Progr[!a]*/**,Progra[!m]*/**,Program[! ]*/**,Windows/Temp/**,Windows/Tasks/**,Windows/System32/Tasks/**,Windows/System32/spool/**,Windows/System32/wbem/**,Windows/System32/drivers/**,Windows/debug/**,Windows/Panther/**,Program?Files/*/*,Program?Files?(x86)/*/*}",
+      },
+    },
+    // Drop known-noisy rows at the source: YaraFile pagefile hits. (Redundant with the glob above,
+    // which cannot reach root-level files at all — kept as a belt-and-braces default for anyone who
+    // widens PathGlob back out in the bundle editor.)
     filters: {
       "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'",
     },
