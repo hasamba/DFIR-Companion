@@ -4079,3 +4079,61 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
 });
+
+// INC-2026-020 — a lab intrusion built from a published Play / RansomHub / DragonForce report — put
+// six malware-family names in the evidence verbatim, and not one of them escalated a verdict:
+// CRIT_KEYWORDS knew lockbit/conti/emotet but none of the families this campaign actually used. A
+// rule pack that names the family it matched has already done the attribution work, so the grade
+// should read it rather than fall back to the generic "a rule fired" Medium.
+//
+// "RansomHub" needed no new entry — the list's existing `ransom` alternative already covers it — so
+// it is asserted here to pin that, not because anything was added for it.
+//
+// A bare "play" is deliberately NOT in the list. The family name reads as an ordinary English word
+// ("Google Play"), and ransomwareDetect.ts already excludes `.play` from RANSOM_EXTS for exactly
+// that reason; only the unambiguous "PlayCrypt" spelling escalates.
+describe("parseVelociraptorJson — a malware-family name in a verdict title escalates to Critical", () => {
+  function detectionRow(name: string): object {
+    return {
+      Detection: { Name: name, KeywordRegex: "GT_NET\\.exe" },
+      OSPath: "C:\\Users\\Public\\Music\\GT_NET.exe",
+      SITimestamps: { LastModified0x10: "2026-08-30T15:03:17Z" },
+    };
+  }
+  const severityOf = (name: string): string =>
+    parseVelociraptorJson(JSON.stringify([detectionRow(name)])).events[0].severity;
+
+  // Each title avoids the word "ransom" so the new alternative is the ONLY reason it escalates.
+  it.each([
+    ["Grixba Malware Reconnaissance Activity 2", "grixba"],
+    ["DragonForce Encryptor Execution", "dragonforce"],
+    ["Dragon Force Affiliate Tooling", "dragonforce, spelled as two words"],
+    ["PlayCrypt Shadow Copy Deletion", "playcrypt"],
+    ["SystemBC Proxy Implant", "systembc"],
+    ["Betruger Backdoor Service Install", "betruger"],
+    ["SectopRAT Remote Access Activity", "sectoprat"],
+  ])("%s → Critical (%s)", (title) => {
+    expect(severityOf(title)).toBe("Critical");
+  });
+
+  it("RansomHub is already covered by the existing `ransom` alternative", () => {
+    expect(severityOf("RansomHub Affiliate Tooling")).toBe("Critical");
+  });
+
+  it("a bare 'play' does not escalate — the family name is an ordinary English word", () => {
+    expect(severityOf("Google Play Services Update Detected")).toBe("Medium");
+  });
+
+  // Review follow-up. The first version of these alternatives was unbounded, so a family name
+  // buried mid-word escalated an unrelated rule to Critical — "DisplayCryptographic" contains
+  // "playcrypt", and "IntersectOpRating" contains "sectop" + "rat". Each name is now \b-bounded on
+  // both sides, which also stops a longer word that merely STARTS with the family ("Dragon Forces").
+  it.each([
+    "DisplayCryptographic Provider Activity",
+    "Dragon Forces Service Activity",
+    "IntersectOpRating Service Started",
+    "Filesystembc Handle Leak",
+  ])("%s stays Medium — the family name is only an incidental substring", (title) => {
+    expect(severityOf(title)).toBe("Medium");
+  });
+});
