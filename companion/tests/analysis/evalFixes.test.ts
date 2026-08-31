@@ -209,6 +209,28 @@ describe("IOC hygiene — identifiers named inside a script block", () => {
     expect(values('robot: "mybot"')).toEqual([]);
   });
 
+  // #743: the key only had to CONTAIN "bot", so "robot" qualified and a home-automation or config
+  // line minted a Telegram-bot IOC. "bot" must start the key, follow an underscore, or be a
+  // camelCase hump — the shapes a key that actually names a bot field takes.
+  it("does not read a key that merely contains bot as a bot-named key", () => {
+    expect(values('$robot = "vacuum_bot"')).toEqual([]);
+    expect(values('robot_name: "placeholderbot"')).toEqual([]);
+  });
+
+  it("extracts a handle assigned to a key that starts with bot", () => {
+    expect(values('botname: "acmealertbot"')).toEqual(["@acmealertbot"]);
+  });
+
+  it("extracts a handle assigned to a key whose bot follows an underscore", () => {
+    expect(values('alert_bot = "acmealertbot"')).toEqual(["@acmealertbot"]);
+  });
+
+  // Telegram usernames are case-insensitive, so a script may write the suffix as "Bot". Tightening
+  // the KEY must not make the VALUE case-sensitive.
+  it("extracts a handle whose value capitalizes the bot suffix", () => {
+    expect(values('AlertBotUsername = "BissaPwned_Bot"')).toEqual(["@BissaPwned_Bot"]);
+  });
+
   it("does not read an ordinary @mention as a bot handle", () => {
     expect(values("operator handle @BonJoviGoesHard")).not.toContain("@BonJoviGoesHard");
   });
@@ -221,5 +243,25 @@ describe("IOC hygiene — identifiers named inside a script block", () => {
     expect(values("aws s3 cp results/*.zip s3://bissapromax/archives/")).toContain(
       "s3://bissapromax/archives/",
     );
+  });
+
+  // #744: the URL pass beside this one already strips trailing sentence punctuation. Without the
+  // same strip, one bucket written mid-sentence and the same bucket written as an https URL become
+  // two indicators, and the s3 one is not a usable URI.
+  it("drops trailing sentence punctuation from an s3:// destination", () => {
+    expect(values("staged to s3://bissapromax/loot.")).toEqual(["s3://bissapromax/loot"]);
+    expect(values("staged to s3://bissapromax/loot,")).toEqual(["s3://bissapromax/loot"]);
+    expect(values("staged to s3://bissapromax/loot;")).toEqual(["s3://bissapromax/loot"]);
+  });
+
+  it("counts one bucket written with and without trailing punctuation as a single indicator", () => {
+    expect(values("copied s3://bissapromax/loot, then verified s3://bissapromax/loot")).toEqual([
+      "s3://bissapromax/loot",
+    ]);
+  });
+
+  // A trailing slash is part of the prefix, not sentence punctuation, so it must survive.
+  it("keeps a trailing slash on an s3:// prefix", () => {
+    expect(values("aws s3 cp x s3://bissapromax/archives/.")).toEqual(["s3://bissapromax/archives/"]);
   });
 });
