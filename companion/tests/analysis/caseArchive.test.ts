@@ -258,11 +258,105 @@ describe("archiveCase", () => {
       });
 
       // Both names collapse to "a_b.bin". Writing the archive anyway would drop one file with no
-      // error at all, so the whole archive is refused and both files are named.
+      // error at all, so the whole archive is refused and both files are named. The message names
+      // the entry that arrived second first, because both writers now share one check (#742).
       await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(
-        /"drop\/_processed\/a:b\.bin" and "drop\/_processed\/a_b\.bin"/,
+        /"drop\/_processed\/a_b\.bin" and "drop\/_processed\/a:b\.bin"/,
       );
       expect(fs.written).toBeNull();
+    });
+
+    // #742: the plain-ZIP writer guarded file-vs-file collisions only, while the encrypted export
+    // beside it refused three more shapes for the same reason. This archive is the case's ONLY copy
+    // in the delete-with-archive flow, so a name it drops silently is evidence lost outright. Both
+    // writers now run their entries through one check.
+    it("refuses the archive when a name is needed as a file AND as a folder", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        no_tes: "a file",
+        "no:tes/x.bin": "inside a folder that sanitizes to the same name",
+      });
+
+      await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(
+        /needs "no_tes" to be a folder inside the archive, but "no_tes" is a file of that name/,
+      );
+      expect(fs.written).toBeNull();
+    });
+
+    it("refuses the file-vs-folder collision in the other entry order too", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "no:tes/x.bin": "inside a folder",
+        no_tes: "a file that wants the folder's name",
+      });
+
+      // Entry order must not decide whether the archive notices.
+      await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(/needs that same name to be a folder/);
+      expect(fs.written).toBeNull();
+    });
+
+    it("refuses a case file that would land on the generated archive-manifest.json", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "archive-manifest.json": "the case's own file, not the one this writer generates",
+      });
+
+      // buildZip writes duplicate entry names without complaint, so the generated manifest would
+      // shadow the case's own file inside the archive with no error at all.
+      await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(
+        /the archive writes its own "archive-manifest\.json" there/,
+      );
+      expect(fs.written).toBeNull();
+    });
+
+    it("refuses two names that differ only in case (#426)", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "imports/Data.bin": "restores on Linux",
+        "imports/data.bin": "and overwrites the other one on Windows",
+      });
+
+      await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(
+        /"imports\/data\.bin" and "imports\/Data\.bin"/,
+      );
+      expect(fs.written).toBeNull();
+    });
+
+    it("refuses a file whose name a folder needs, differing only in case", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "imports/Data": "a file",
+        "imports/data/x.bin": "a folder of the same name on Windows",
+      });
+
+      await expect(archiveCase("/cases", "c1", fs)).rejects.toThrow(
+        /needs "imports\/data" to be a folder inside the archive/,
+      );
+      expect(fs.written).toBeNull();
+    });
+
+    // Windows folds case character by character. JS toUpperCase() does not: it expands "ß" to "SS"
+    // and "ﬀ" to "FF", so two genuinely distinct filenames looked like one destination and the
+    // archive was refused. A refused archive in the delete-with-archive flow is a case that cannot
+    // be preserved at all, so over-refusing costs as much here as under-refusing.
+    it("archives distinct names that only a multi-character case expansion would merge", async () => {
+      const fs = makeFs({
+        "case.json": '{"caseId":"c1"}',
+        "evidence/straße.txt": "german street",
+        "evidence/strasse.txt": "a different file entirely",
+        "evidence/ﬀ.bin": "ligature",
+        "evidence/ff.bin": "two letters",
+      });
+      const result = await archiveCase("/cases", "c1", fs);
+
+      expect(result.manifest.files.map((f) => f.path)).toEqual([
+        "case.json",
+        "evidence/straße.txt",
+        "evidence/strasse.txt",
+        "evidence/ﬀ.bin",
+        "evidence/ff.bin",
+      ]);
+      expect(fs.written).not.toBeNull();
     });
 
     it("adds no originalPath to an ordinary case", async () => {
