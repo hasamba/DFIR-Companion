@@ -446,6 +446,7 @@
     "telegramPoller.ts": "analysis/notify",
     "templateStore.ts": "analysis/workflow",
     "textDomains.ts": "analysis/ingest",
+    "textUriTrim.ts": "analysis/ingest",
     "theHiveImport.ts": "analysis/ingest",
     "thorImport.ts": "analysis/ingest",
     "thorRowMap.ts": "analysis/ingest",
