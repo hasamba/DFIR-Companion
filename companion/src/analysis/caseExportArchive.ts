@@ -15,7 +15,7 @@ import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
 import type { CaseMeta } from "../types.js";
 import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
-import { portableZipEntryPath } from "../storage/portableFilename.js";
+import { portableArchivePaths, destinationKey } from "../storage/portableFilename.js";
 import { encryptBuffer, decryptBuffer, readFormatVersion, CURRENT_FORMAT_VERSION } from "./caseEncryption.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
@@ -119,89 +119,6 @@ function rethrowVanished(rel: string): (err: unknown) => never {
     }
     throw err;
   };
-}
-
-/**
- * Map each case-relative path to the path it will carry inside the archive (#675).
- *
- * A case directory is written under the host's naming rules, and on Linux those admit names that
- * Windows — and this tool's own importer — both refuse: a colon, a backslash, a trailing dot, a
- * reserved device name. Analysts produce them routinely by copying a Windows collection into the
- * drop folder, where the imported file keeps its original name under `drop/_processed/`. Packed
- * verbatim, such a name made an archive DFIR Companion could not restore: `isSafeZipEntryPath`
- * rejects the entry and the whole import fails. The export still reported success, so the failure
- * surfaced at restore time, when the case it came from may be long gone.
- *
- * Renaming is the lesser evil, but only while it stays visible and lossless. Every changed entry
- * keeps its original path in the manifest, and two files whose portable names collide abort the
- * export by name: sanitizing is what CREATES that collision — `a:b.bin` and `a_b.bin` are one file
- * afterwards — and letting the second entry overwrite the first is silent evidence loss, which an
- * export must never produce. Resolved before a single file is read, so a case that cannot be
- * packaged says so immediately instead of after hashing every byte.
- *
- * A collision is not only two entries landing on one name. The import creates each entry's parent
- * folders with mkdir and then writes the file, so a name claimed as a FILE by one entry and as a
- * FOLDER on the way to another is equally fatal — whichever lands first, the second fails with
- * EEXIST, EISDIR or ENOTDIR. Sanitizing creates that shape too: a file `drop/notes` beside a
- * folder `drop/notes.` coexist on disk and become one name afterwards. Both directions are
- * checked, so entry order cannot decide whether the export notices.
- *
- * Keys are compared case-INSENSITIVELY, by the same destinationKey the import uses, for the reason
- * #426 gives: an archive that restores on Linux and loses a file on Windows is the harder bug to
- * find. That also refuses a case holding a file `imports/Data` beside a folder `imports/data`,
- * which no rename of ours created — it has never been restorable on Windows, and saying so at
- * export time is the only point where the analyst can still fix it.
- *
- * `reserved` holds the paths of entries this archive generates rather than reads from the case
- * (the custody manifest, archive-manifest.json). They are in the collision namespace too, so a
- * rename cannot land on top of one.
- */
-function portableArchivePaths(relPaths: string[], reserved: string[]): Map<string, string> {
-  const byRel = new Map<string, string>();
-  // What each destination has to BE, and which case file needs it that way.
-  const fileAt = new Map<string, string>();
-  const folderAt = new Map<string, string>();
-
-  const claim = (source: string, archivePath: string): void => {
-    const key = destinationKey(archivePath);
-    const twin = fileAt.get(key);
-    if (twin !== undefined) {
-      throw new Error(
-        `"${source}" and "${twin}" would both be named "${archivePath}" inside the archive — ` +
-          `rename one of them in the case directory and export again.`,
-      );
-    }
-    const asFolder = folderAt.get(key);
-    if (asFolder !== undefined) {
-      throw new Error(
-        `"${source}" would be the file "${archivePath}" inside the archive, but "${asFolder}" ` +
-          `needs that same name to be a folder — rename one of them in the case directory and ` +
-          `export again.`,
-      );
-    }
-    const segments = archivePath.split("/");
-    for (let i = 1; i < segments.length; i++) {
-      const ancestor = segments.slice(0, i).join("/");
-      const ancestorKey = destinationKey(ancestor);
-      const blocking = fileAt.get(ancestorKey);
-      if (blocking !== undefined) {
-        throw new Error(
-          `"${source}" needs "${ancestor}" to be a folder inside the archive, but "${blocking}" ` +
-            `is a file of that name — rename one of them in the case directory and export again.`,
-        );
-      }
-      if (!folderAt.has(ancestorKey)) folderAt.set(ancestorKey, source);
-    }
-    fileAt.set(key, source);
-  };
-
-  for (const path of reserved) claim(path, path);
-  for (const rel of relPaths) {
-    const archivePath = portableZipEntryPath(rel);
-    claim(rel, archivePath);
-    byRel.set(rel, archivePath);
-  }
-  return byRel;
 }
 
 async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
@@ -357,10 +274,11 @@ async function archiveGeneration(
   // entry name unchanged — see portableArchivePaths. Its absence means the two are identical.
   const manifestFiles: Array<{ path: string; sha256: string; bytes: number; originalPath?: string }> = [];
   let totalBytes = 0;
-  const archivePathByRel = portableArchivePaths(relPaths, [
-    ...extraEntries.map((e) => e.path),
-    "archive-manifest.json",
-  ]);
+  const archivePathByRel = portableArchivePaths(
+    relPaths,
+    [...extraEntries.map((e) => e.path), "archive-manifest.json"],
+    "export",
+  );
   const recordFile = (rel: string, data: Buffer): string => {
     const archivePath = archivePathByRel.get(rel) ?? rel;
     manifestFiles.push({
@@ -469,20 +387,6 @@ function isSafeZipEntryPath(path: string): boolean {
       !/[\x00-\x1f]/.test(seg) && // control characters are not filenames anywhere
       !WINDOWS_RESERVED_SEGMENT.test(seg),
   );
-}
-
-/**
- * The key two entry paths collide on, under the most collision-prone rules any supported platform
- * applies — which is Windows, where the filesystem is case-insensitive. Compared on EVERY platform,
- * not only Windows: an archive whose entries collide is malformed wherever it is opened, and an
- * import that quietly succeeds on Linux and loses a file on Windows is the harder bug to find.
- *
- * Upper-cased because that is the direction Windows' own comparison folds. JS case mapping is
- * locale-independent here (toUpperCase, not toLocaleUpperCase), so this does not shift under a
- * Turkish locale.
- */
-function destinationKey(path: string): string {
-  return path.toUpperCase();
 }
 
 function rewriteCaseIdInJson(data: Buffer, targetCaseId: string, indent: number | undefined): Buffer {
