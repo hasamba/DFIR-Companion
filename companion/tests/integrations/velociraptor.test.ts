@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { BUILT_IN_BUNDLES } from "../../src/analysis/artifactBundleStore.js";
 import {
   ARTIFACT_CATALOG_TTL_MS,
   parseVqlOutput,
@@ -1179,6 +1180,34 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
       "spec=dict(`Windows.Hayabusa.Rules`=dict(RuleLevel='Critical, High, and Medium'))",
     );
     expect(program).not.toContain("Not.In.Hunt"); // params for an artifact not in the hunt are dropped
+  });
+
+  // A targeting glob is ~400 chars and the value sanitizer used to cap every param at 200. Truncating
+  // this one lands mid-branch and leaves an unbalanced `{`, which globs to NOTHING — a whole-disk YARA
+  // scan that reports zero files and no error. Assert the SHIPPED bundle value survives byte for byte.
+  it("carries a long PathGlob into the spec without truncating it", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [{ Hunt: { HuntId: "H.SP3", state: "RUNNING" } }], raw: "" };
+    };
+    const artifact = "DetectRaptor.Generic.Detection.YaraFile";
+    const glob = BUILT_IN_BUNDLES.find((b) => b.id === "best-practice-big-hogs")?.params?.[artifact]
+      ?.PathGlob;
+    expect(glob, "Big Hogs must ship a YaraFile PathGlob").toBeTruthy();
+    expect(glob!.length).toBeGreaterThan(200); // the case this test exists for
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(
+      [artifact],
+      "x",
+      {},
+      {
+        params: { [artifact]: { PathGlob: glob! } },
+      },
+    );
+    expect(program).toContain(`PathGlob='${glob}'`);
+    // Balanced braces in what actually reached the wire — the truncation symptom, checked directly.
+    const sent = program.match(/PathGlob='([^']*)'/)![1];
+    expect(sent.split("{").length).toBe(sent.split("}").length);
   });
 
   it("omits the spec clause when there are no params", async () => {

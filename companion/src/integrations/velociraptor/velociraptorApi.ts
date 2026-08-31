@@ -462,12 +462,15 @@ function slugify(s: string): string {
 // Sanitize free text (e.g. an event label with a `\\.\C:\…` path) for embedding in BOTH a YAML
 // double-quoted scalar and a VQL single-quoted string: collapse to one ASCII line and strip
 // backslashes and quotes (YAML treats `\` as an escape and a stray quote terminates the literal).
-function oneLine(s: string): string {
+// `max` defaults to a description-sized cap; parameter VALUES pass a larger one — a targeting glob
+// runs to several hundred characters, and truncating one mid-branch leaves an unbalanced `{` that
+// matches nothing, i.e. a scan that silently finds zero files instead of failing loudly.
+function oneLine(s: string, max = 200): string {
   return String(s || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[^\x20-\x7E]/g, "")
     .replace(/[\\'"]/g, "")
-    .slice(0, 200);
+    .slice(0, max);
 }
 
 // Sanitize Velociraptor client labels for embedding in a single-quoted VQL string list: keep only a
@@ -518,7 +521,7 @@ function buildHuntSpec(names: string[], params?: Record<string, Record<string, s
     if (!ARTIFACT_RE.test(artifact) || !inHunt.has(artifact) || !kv || typeof kv !== "object") continue;
     const pairs = Object.entries(kv)
       .filter(([k]) => PARAM_RE.test(k))
-      .map(([k, v]) => `${k}='${oneLine(String(v))}'`);
+      .map(([k, v]) => `${k}='${oneLine(String(v), 2000)}'`);
     if (pairs.length) entries.push(`\`${artifact}\`=dict(${pairs.join(", ")})`);
   }
   return entries.length ? `spec=dict(${entries.join(", ")})` : undefined;
