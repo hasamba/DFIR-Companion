@@ -252,4 +252,29 @@ describe("deobfuscateText — URL punctuation", () => {
       "http://evil.example.com/stage2",
     );
   });
+
+  // A "]" is only prose when the match does not open it. In an IPv6 authority the bracket is
+  // REQUIRED syntax — dropping it emits a URL that cannot be resolved or pivoted on.
+  it("keeps the closing bracket of a bare IPv6 authority", () => {
+    expect(urls("Write-Host $c = http://[2001:db8::1]")).toContain("http://[2001:db8::1]");
+  });
+
+  it("keeps an IPv6 authority that carries a port and path", () => {
+    expect(urls("Write-Host $c = http://[2001:db8::1]:8080/stage2")).toContain(
+      "http://[2001:db8::1]:8080/stage2",
+    );
+  });
+
+  // Balanced parentheses are part of the path, not the sentence.
+  it("keeps balanced parentheses inside the path", () => {
+    expect(urls("Write-Host $c = http://evil.example.com/a(foo)")).toContain(
+      "http://evil.example.com/a(foo)",
+    );
+  });
+
+  it("still strips an unbalanced closing parenthesis the sentence added", () => {
+    const v = urls("Write-Host (grab it from http://evil.example.com/stage2)");
+    expect(v).toContain("http://evil.example.com/stage2");
+    expect(v).not.toContain("http://evil.example.com/stage2)");
+  });
 });

@@ -161,7 +161,8 @@ function classify(rec: Row): Kind {
 
 // ───────────────────────────── IOC harvesting ─────────────────────────────
 
-const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
+// Admits brackets and parens; trimSentencePunctuation decides which are the URI's (see there).
+const TEXT_URL = /\bhttps?:\/\/[^\s"'<>}]+/gi;
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 

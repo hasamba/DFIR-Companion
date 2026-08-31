@@ -221,4 +221,14 @@ describe("parseCybertriage — URL punctuation", () => {
     expect(v).toContain("http://evil.test/a");
     expect(v).not.toContain("http://evil.test/a.");
   });
+
+  // Cross-source agreement is the whole point: these two must match what deobfuscate.ts and the
+  // Velociraptor scraper produce for the very same URL.
+  it("reads a whole IPv6 URL the way the other scrapers do", () => {
+    expect(urls("beacon to http://[2001:db8::1]:8080/x")).toContain("http://[2001:db8::1]:8080/x");
+  });
+
+  it("keeps balanced parentheses in a URL path the way the other scrapers do", () => {
+    expect(urls("staged at http://evil.test/a(foo)")).toContain("http://evil.test/a(foo)");
+  });
 });
