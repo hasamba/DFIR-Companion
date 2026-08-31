@@ -7,8 +7,12 @@
 // the exact thing the rule fired on — is otherwise missed entirely.
 import { addIoc, cleanIp, str, getCI, type SiemIoc } from "./siemImport.js";
 import { extractDomains } from "./textDomains.js";
+import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 
-const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
+// Brackets and parentheses are ADMITTED, then resolved by trimSentencePunctuation, which can
+// tell `http://[2001:db8::1]` from `[http://host/a]`. Refusing them here instead cut an IPv6
+// authority at the bracket and threw away the port and path behind it.
+const TEXT_URL = /\bhttps?:\/\/[^\s"'<>}]+/gi;
 // Octet-bounded, so a "10.0.22000" version string is not read as an address.
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
@@ -49,34 +53,7 @@ const TEXT_BOT_ASSIGNED =
 
 // An object-store destination written as a URI. TEXT_URL only reads http(s), so the `s3://` form an
 // exfil runner uses — `aws s3 cp results/*.zip s3://bucket/prefix/` — reached no scraper at all.
-const TEXT_S3_URI = /\bs3:\/\/[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9](?:\/[^\s"'<>)\]}]*)?/gi;
-
-// Punctuation that ends a URI written into prose rather than the URI itself. A trailing SLASH is
-// absent from the class on purpose: it is part of a bucket prefix, not the sentence.
-const TRAILING_SENTENCE_PUNCTUATION = /[.,;:)\]]+$/;
-
-/**
- * Drop the sentence's punctuation from the end of a matched URI — unless a quote proves the
- * punctuation belongs to the URI.
- *
- * `upload to s3://bucket/loot.` ends a sentence, so the period is the writer's, and keeping it
- * stores a destination that is not a usable URI and duplicates the same bucket written without it.
- *
- * `aws s3 cp x 's3://bucket/evidence.'` is the opposite case. An S3 object key may legally end in a
- * dot, and the closing quote says where the value ends — no sentence is being punctuated inside it.
- * Stripping there records a destination the script never used. The URI counts as quote-delimited
- * only when the character immediately before it opens a quote AND the character immediately after
- * it closes the SAME one, so `he said "go to s3://bucket/evidence."` still strips: the quote wraps
- * the sentence, not the URI.
- *
- * Both scrapers call this, because #744 was filed about the two disagreeing over one destination.
- */
-function trimSentencePunctuation(match: string, text: string, index: number): string {
-  const opener = index > 0 ? text[index - 1] : "";
-  const closer = text[index + match.length] ?? "";
-  if ((opener === '"' || opener === "'") && closer === opener) return match;
-  return match.replace(TRAILING_SENTENCE_PUNCTUATION, "");
-}
+const TEXT_S3_URI = /\bs3:\/\/[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9](?:\/[^\s"'<>}]*)?/gi;
 
 // URLs, IPv4, SHA256/SHA1/MD5 hashes, domains, CVE ids, Telegram bot handles and s3:// URIs. The
 // domain pass came first: a collected script block names its C2 by name at least as often as by

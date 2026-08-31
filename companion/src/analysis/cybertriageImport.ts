@@ -26,6 +26,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
+import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -160,13 +161,17 @@ function classify(rec: Row): Kind {
 
 // ───────────────────────────── IOC harvesting ─────────────────────────────
 
-const TEXT_URL = /\bhttps?:\/\/[^\s"'<>)\]}]+/gi;
+// Admits brackets and parens; trimSentencePunctuation decides which are the URI's (see there).
+const TEXT_URL = /\bhttps?:\/\/[^\s"'<>}]+/gi;
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 
 function harvestText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
-  for (const m of text.matchAll(TEXT_URL)) addIoc(sink, "url", m[0].replace(/[.,;:)\]]+$/, "").slice(0, 300));
+  // Shared with the Velociraptor scraper, so one C2 URL is one indicator whichever importer
+  // read it — the disagreement #744 was filed about.
+  for (const m of text.matchAll(TEXT_URL))
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
   for (const m of text.matchAll(TEXT_IPV4)) {
     const ip = cleanIp(m[0]);
     if (ip && !ip.startsWith("127.")) addIoc(sink, "ip", ip);

