@@ -53,7 +53,7 @@ import {
   type SynthesisInputBlocks,
   type SynthesisInputContext,
 } from "./synthesisInputs.js";
-import { foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
+import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
 
 /**
@@ -584,6 +584,14 @@ export async function synthesize(
     sourceTrust,
     aliasIndex,
   });
+
+  // Scope is a lens, not a shredder (#751). This run rebuilt its conclusions from an empty base over
+  // the events inside the window, so a narrowed window would otherwise DELETE the deterministic
+  // findings a wider earlier run had persisted outside it — irreversibly, since widening again gives
+  // the backfills nothing to re-derive them from. Re-attach those, untouched and with their event
+  // links, and let projectScope hide them for as long as the narrow window is set. AFTER grading, so
+  // a carried finding keeps the confidence it was stored with; a no-op when no scope is set.
+  next = carryOutOfWindowFindings(next, { prior: state, inWindowEvents: run.inWindowEvents, markers });
 
   // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
   // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the

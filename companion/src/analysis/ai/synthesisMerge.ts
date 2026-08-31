@@ -1,7 +1,7 @@
 import { flagContradictedAnswers } from "../answerContradiction.js";
 import { buildAssetGraph } from "../assetGraph.js";
 import { buildEvidenceGraph } from "../evidenceGraph.js";
-import { applyFalsePositive, type FalsePositiveMarker } from "../falsePositive.js";
+import { applyFalsePositive, falsePositiveEventIds, type FalsePositiveMarker } from "../falsePositive.js";
 import {
   capIntelOnlyFindings,
   buildIntelCorroborationSteps,
@@ -42,6 +42,11 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
  *
  * Every one of them only ever LOWERS a claim. That is the invariant worth protecting here: the
  * deterministic passes can refuse to believe the model, never the other way round.
+ *
+ * `carryOutOfWindowFindings` is the one export that is NOT part of that sequence. It runs after
+ * grading, from `synthesize`, and it neither raises nor lowers anything: it re-attaches deterministic
+ * findings a WIDER earlier run persisted outside this run's window, byte for byte, so narrowing the
+ * scope hides them instead of deleting them (#751).
  */
 
 /** Keep analyst-pinned questions across a synthesis (it replaces keyQuestions wholesale). */
@@ -175,6 +180,122 @@ function linkEventsToFindings(
       ...e,
       relatedFindingIds: eventToFindings.get(e.id) ?? [],
     })),
+  };
+}
+
+/** Ids the DETERMINISTIC backfills mint. Everything else in a finding set came from the model. */
+function isDeterministicFindingId(id: string): boolean {
+  return id.startsWith("f-auto-") || id.startsWith("f-gap-") || id === "f-waves";
+}
+
+/**
+ * Every event that backs a finding — forward links and reverse links alike — that still exists and
+ * that the analyst has NOT confirmed benign.
+ *
+ * Dropping the false-positive events HERE is what makes both readers below correct at once: a
+ * finding left with no support at all is not carried, and a finding that is carried never gets a
+ * link back to an event the analyst rejected. `applyFalsePositive` cannot do this job — it matches
+ * finding titles and IOC values, and an `event` marker is deliberately not one of its cases (the raw
+ * event stays in state so un-marking restores it). Without this, an out-of-window finding backed
+ * only by rejected events would survive every narrow run and reappear the moment the window widened.
+ */
+function supportingEventIds(
+  prior: InvestigationState,
+  markers: FalsePositiveMarker[],
+): Map<string, Set<string>> {
+  const benign = falsePositiveEventIds(markers);
+  const known = new Set(
+    prior.forensicTimeline.filter((e) => !benign.has(e.id.trim().toLowerCase())).map((e) => e.id),
+  );
+  const byFinding = new Map<string, Set<string>>();
+  const add = (findingId: string, eventId: string): void => {
+    if (!known.has(eventId)) return; // a dangling id proves nothing about the window
+    const set = byFinding.get(findingId) ?? new Set<string>();
+    set.add(eventId);
+    byFinding.set(findingId, set);
+  };
+  for (const e of prior.forensicTimeline) for (const fid of e.relatedFindingIds) add(fid, e.id);
+  for (const f of prior.findings) for (const eid of f.relatedEventIds ?? []) add(f.id, eid);
+  return byFinding;
+}
+
+export interface CarryForwardInput {
+  /** The correlated pre-call snapshot: the prior findings and the event links that back them. */
+  prior: InvestigationState;
+  /** Events inside the analyst's window, BEFORE the false-positive filter. */
+  inWindowEvents: readonly ForensicEvent[];
+  markers: FalsePositiveMarker[];
+}
+
+/**
+ * Scope is a LENS, not a shredder (#751).
+ *
+ * `replaceConclusions` builds this run's findings from an EMPTY base, and the backfills only ever
+ * look at events inside the analyst's window. Together those two facts made narrowing the window
+ * DELETE every deterministic finding a wider earlier run had persisted: the rows were overwritten in
+ * SQLite, widening the window again did not bring them back, and a Critical detection the tool had
+ * already made simply vanished from the case.
+ *
+ * So, once this run's finding set is final, re-attach the deterministic findings the PRIOR state
+ * held whose supporting events all fall OUTSIDE this run's window — stored exactly as they were,
+ * with their event back-links restored. `projectScope` (and its client mirror) then drops them from
+ * every view for as long as the narrow window is set, which is the behaviour the analyst asked for,
+ * and widening the window brings them straight back.
+ *
+ * Deliberately narrow:
+ *   - MODEL findings are NOT carried. Synthesis replacing its own conclusions is the invariant this
+ *     module exists to protect; only the ids the deterministic backfills mint are preserved.
+ *   - A finding this run already produced is left alone — same id, and the run's version wins.
+ *   - A finding with ANY supporting event in the window is left alone: this run reassessed it.
+ *   - `inWindowEvents` is the PRE-false-positive set on purpose. A finding whose events the analyst
+ *     confirmed benign was excluded by that filter, not by the window, so it still goes away.
+ *   - An event the analyst confirmed benign backs nothing. It is dropped before the window test, so
+ *     a finding left with no other support is not carried and never gets a link back to it.
+ *   - What is carried still passes through the finding/IOC false-positive filter as well, so no
+ *     marker of any kind can be undone here.
+ *
+ * With no scope set every event is in-window, so nothing is ever carried and this is a no-op.
+ *
+ * Runs AFTER grading, so a carried finding keeps the confidence and severity it was stored with.
+ * Grading grounds findings against the IN-SCOPE events; it would read a deliberately out-of-window
+ * finding as ungrounded and cap it a little further on every narrow run.
+ */
+export function carryOutOfWindowFindings(
+  next: InvestigationState,
+  input: CarryForwardInput,
+): InvestigationState {
+  const { prior, inWindowEvents, markers } = input;
+  const inWindowIds = new Set(inWindowEvents.map((e) => e.id));
+  const alreadyPresent = new Set(next.findings.map((f) => f.id));
+  const backing = supportingEventIds(prior, markers);
+
+  const candidates = prior.findings.filter((f) => {
+    if (alreadyPresent.has(f.id)) return false;
+    if (!isDeterministicFindingId(f.id)) return false;
+    const events = backing.get(f.id);
+    if (!events?.size) return false; // unlinked: nothing proves it is outside the window
+    return [...events].every((id) => !inWindowIds.has(id));
+  });
+  if (candidates.length === 0) return next;
+
+  const carried = applyFalsePositive({ ...prior, findings: candidates }, markers).findings;
+  if (carried.length === 0) return next;
+
+  const relink = new Map<string, string[]>();
+  for (const f of carried) {
+    for (const eid of backing.get(f.id) ?? []) {
+      const arr = relink.get(eid) ?? [];
+      arr.push(f.id);
+      relink.set(eid, arr);
+    }
+  }
+  return {
+    ...next,
+    findings: [...next.findings, ...carried],
+    forensicTimeline: next.forensicTimeline.map((e) => {
+      const add = relink.get(e.id)?.filter((fid) => !e.relatedFindingIds.includes(fid));
+      return add?.length ? { ...e, relatedFindingIds: [...e.relatedFindingIds, ...add] } : e;
+    }),
   };
 }
 

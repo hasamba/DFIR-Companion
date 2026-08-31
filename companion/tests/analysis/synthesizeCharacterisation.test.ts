@@ -12,6 +12,7 @@ import { IncidentTypeStore } from "../../src/analysis/incidentTypeStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import type { AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import { projectScope } from "../../src/analysis/scopeProject.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 /**
@@ -348,6 +349,236 @@ describe("synthesize — the delta merge", () => {
     await pipeline.synthesize("c1"); // a real run still happens
     expect(analyze).toHaveBeenCalledTimes(2);
     expect((await stateStore.load("c1")).findings).toHaveLength(1);
+  });
+});
+
+describe("synthesize — narrowing the scope (#751)", () => {
+  // A wider run's deterministic findings used to be DELETED by a narrower one: the run rebuilds its
+  // findings from an empty base, the backfills only see in-window events, and StateStore.save
+  // overwrites the rows. Widening the window again did not bring them back. Scope has to be a lens.
+  const NARROW = { start: "2026-01-01T00:00:00.000Z", end: "2026-12-31T00:00:00.000Z" };
+
+  // Two Critical events far apart in time, neither covered by the model, so the backfill mints one
+  // f-auto finding per event. The 2024 one is what the narrow window later excludes.
+  async function seedTwoBackfilledFindings(): Promise<void> {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("old", "2024-06-01T00:00:00.000Z", "ransomware note dropped", "Critical"),
+      event("in", "2026-06-01T00:00:00.000Z", "shadow copies deleted", "Critical"),
+    );
+    await stateStore.save(seeded);
+  }
+
+  it("keeps the deterministic findings the new window excludes, and hides them by projection", async () => {
+    await seedTwoBackfilledFindings();
+    const scopeStore = new ScopeStore(caseStore);
+    const { provider } = spyProvider(delta({ findings: [] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      scopeStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    const wide = await pipeline.synthesize("c1");
+    expect(wide.findings.map((f) => f.id).sort()).toEqual(["f-auto-in", "f-auto-old"]);
+
+    await scopeStore.save("c1", NARROW);
+    const narrow = await pipeline.synthesize("c1"); // the scope change re-arms the skip hash
+
+    // Still PERSISTED — the whole point. f-auto-in is re-derived from the window, f-auto-old carried.
+    expect(narrow.findings.map((f) => f.id).sort()).toEqual(["f-auto-in", "f-auto-old"]);
+    // …and its back-link is restored, which is what lets the projection recognise it as out of window.
+    expect(narrow.forensicTimeline.find((e) => e.id === "old")!.relatedFindingIds).toEqual(["f-auto-old"]);
+
+    // HIDDEN, not deleted: every view runs the projection, and widening the window brings it back.
+    expect(projectScope(narrow, NARROW).findings.map((f) => f.id)).toEqual(["f-auto-in"]);
+    expect(
+      projectScope(narrow, { start: null, end: null })
+        .findings.map((f) => f.id)
+        .sort(),
+    ).toEqual(["f-auto-in", "f-auto-old"]);
+  });
+
+  it("still replaces a MODEL finding the new window no longer supports", async () => {
+    // The carry-forward is for the deterministic backfills only. Synthesis replacing its own
+    // conclusions wholesale is the invariant the fold exists to protect, so a model finding backed
+    // only by out-of-window events must still go.
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("old", "2024-06-01T00:00:00.000Z", "ancient event", "Medium", {
+        relatedFindingIds: ["f-model"],
+      }),
+      event("in", "2026-06-01T00:00:00.000Z", "in-window event"),
+    );
+    seeded.findings.push({
+      id: "f-model",
+      severity: "High",
+      title: "a previous run's conclusion",
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+      relatedEventIds: ["old"],
+    });
+    await stateStore.save(seeded);
+
+    const scopeStore = new ScopeStore(caseStore);
+    await scopeStore.save("c1", NARROW);
+    const { provider } = spyProvider(delta());
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      scopeStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    expect(state.findings.map((f) => f.id)).toEqual(["f1"]); // f-model dropped, this run's finding stands
+  });
+
+  it("does not bring back a finding whose events the analyst confirmed benign", async () => {
+    // The false-positive filter excludes events too, and its exclusions must stay exclusions. The
+    // carry-forward tests the PRE-false-positive in-window set for exactly this reason.
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("fp", "2026-06-01T00:00:00.000Z", "ransomware note dropped", "Critical"),
+      event("keep", "2026-06-02T00:00:00.000Z", "the real lead"),
+    );
+    await stateStore.save(seeded);
+
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    const { provider } = spyProvider(delta({ findings: [] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      falsePositiveStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    expect((await pipeline.synthesize("c1")).findings.map((f) => f.id)).toEqual(["f-auto-fp"]);
+
+    await falsePositiveStore.save("c1", [
+      {
+        id: markerId("event", "fp"),
+        kind: "event",
+        ref: "fp",
+        reason: "known-good-tool",
+        note: "",
+        markedAt: "2026-06-03T00:00:00.000Z",
+        markedBy: "analyst",
+      },
+    ]);
+
+    expect((await pipeline.synthesize("c1")).findings).toEqual([]);
+  });
+
+  it("does not carry a finding backed only by events the analyst confirmed benign", async () => {
+    // The false-positive EVENT marker is the case applyFalsePositive does not cover: it matches
+    // finding titles and IOC values, never event ids. Without dropping benign events from the
+    // backing set, an out-of-window finding built entirely on rejected events would survive every
+    // narrow run and reappear the moment the analyst widened the window again.
+    await seedTwoBackfilledFindings();
+    const scopeStore = new ScopeStore(caseStore);
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    const { provider } = spyProvider(delta({ findings: [] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      scopeStore,
+      falsePositiveStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    expect((await pipeline.synthesize("c1")).findings.map((f) => f.id).sort()).toEqual([
+      "f-auto-in",
+      "f-auto-old",
+    ]);
+
+    // Reject the 2024 event AND narrow past it, so the window can no longer do the rejecting.
+    await falsePositiveStore.save("c1", [
+      {
+        id: markerId("event", "old"),
+        kind: "event",
+        ref: "old",
+        reason: "known-good-tool",
+        note: "",
+        markedAt: "2026-07-01T00:00:00.000Z",
+        markedBy: "analyst",
+      },
+    ]);
+    await scopeStore.save("c1", NARROW);
+
+    const state = await pipeline.synthesize("c1");
+    expect(state.findings.map((f) => f.id)).toEqual(["f-auto-in"]);
+    expect(state.forensicTimeline.find((e) => e.id === "old")!.relatedFindingIds).toEqual([]);
+  });
+
+  it("carries an out-of-window finding on its remaining support when only SOME of it is benign", async () => {
+    // Same shortTitle, so the backfill groups both events under one finding. Rejecting one event is
+    // not rejecting the finding — the other still backs it, and the link to the rejected event goes.
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("old1", "2024-06-01T00:00:00.000Z", "ransomware note dropped", "Critical"),
+      event("old2", "2024-06-02T00:00:00.000Z", "ransomware note dropped", "Critical"),
+      event("in", "2026-06-01T00:00:00.000Z", "the real lead"),
+    );
+    await stateStore.save(seeded);
+
+    const scopeStore = new ScopeStore(caseStore);
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    const { provider } = spyProvider(delta({ findings: [] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      scopeStore,
+      falsePositiveStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    expect((await pipeline.synthesize("c1")).findings.map((f) => f.id)).toEqual(["f-auto-old1"]);
+
+    await falsePositiveStore.save("c1", [
+      {
+        id: markerId("event", "old2"),
+        kind: "event",
+        ref: "old2",
+        reason: "known-good-tool",
+        note: "",
+        markedAt: "2026-07-01T00:00:00.000Z",
+        markedBy: "analyst",
+      },
+    ]);
+    await scopeStore.save("c1", NARROW);
+
+    const state = await pipeline.synthesize("c1");
+    expect(state.findings.map((f) => f.id)).toEqual(["f-auto-old1"]);
+    expect(state.forensicTimeline.find((e) => e.id === "old1")!.relatedFindingIds).toEqual(["f-auto-old1"]);
+    expect(state.forensicTimeline.find((e) => e.id === "old2")!.relatedFindingIds).toEqual([]);
+  });
+
+  it("changes nothing when no scope is set", async () => {
+    // With no window every event is in-window, so no prior finding can qualify as out of it. A
+    // re-synthesis that drops a stale deterministic finding must keep dropping it.
+    await seedTwoBackfilledFindings();
+    const { provider } = spyProvider(delta({ findings: [] }));
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1");
+    // Remove the event behind f-auto-old; the finding it backed has to go with it.
+    const live = await stateStore.load("c1");
+    live.forensicTimeline = live.forensicTimeline.filter((e) => e.id !== "old");
+    await stateStore.save(live);
+
+    const state = await pipeline.synthesize("c1", { force: true });
+    expect(state.findings.map((f) => f.id)).toEqual(["f-auto-in"]);
   });
 });
 
