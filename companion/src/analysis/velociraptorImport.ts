@@ -240,7 +240,7 @@ function rowVerdict(row: Row): Verdict | null {
 // Known malware-family / offensive-tooling keywords in a verdict title → escalate. These read
 // the tool's OWN verdict wording, not the raw artifact, so it stays "consume, don't re-detect".
 const CRIT_KEYWORDS =
-  /ransom|lockbit|\bconti\b|wannacry|black\s*cat|\balphv\b|emotet|trickbot|qakbot|\bhive\b/i;
+  /ransom|lockbit|\bconti\b|wannacry|black\s*cat|\balphv\b|emotet|trickbot|qakbot|\bhive\b|\bdragon\s*force\b|\bplaycrypt\b|\bgrixba\b|\bsystembc\b|\bbetruger\b|\bsectop\s*rat\b/i;
 const HIGH_KEYWORDS =
   /cobalt\s*strike|mimikatz|web\s*shell|webshell|lazagne|rubeus|sharphound|bloodhound|meterpreter|\bbeacon\b|reverse\s*shell|secretsdump|psexec|\bsliver\b|brute\s*ratel|nanodump|seatbelt|\blsass\b|kerberoast|dcsync|impacket/i;
 
