@@ -9,6 +9,7 @@
 // supplied for a self-hosted IRIS with an internal-CA / self-signed cert.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS, rethrowIfTooLarge } from "../../providers/boundedResponse.js";
 
 export interface IrisClientOptions {
   baseUrl: string; // e.g. https://iris.example.org
@@ -117,7 +118,9 @@ export class IrisClient {
     if (res.status === 404) throw new IrisApiError(`IRIS endpoint not found: ${path}`, 404, "notfound");
     if (!res.ok) throw new IrisApiError(`IRIS HTTP ${res.status} on ${path}`, res.status, "http");
 
-    const json = (await res.json().catch(() => ({}))) as Envelope<T>;
+    const json = (await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "IRIS" }).catch(
+      (err) => rethrowIfTooLarge(err, {}),
+    )) as Envelope<T>;
     if (json.status && json.status !== "success") {
       throw new IrisApiError(`IRIS error on ${path}: ${json.message ?? "unknown"}`, res.status, "api");
     }

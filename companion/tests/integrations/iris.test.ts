@@ -583,11 +583,10 @@ import { IrisClient } from "../../src/integrations/iris/irisClient.js";
 function fakeFetch(payload: unknown, urls: string[]): typeof fetch {
   return (async (url: string) => {
     urls.push(String(url));
-    return {
+    return new Response(JSON.stringify({ status: "success", data: payload }), {
       status: 200,
-      ok: true,
-      json: async () => ({ status: "success", data: payload }),
-    } as Response;
+      headers: { "content-type": "application/json" },
+    });
   }) as unknown as typeof fetch;
 }
 

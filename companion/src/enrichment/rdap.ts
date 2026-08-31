@@ -6,6 +6,7 @@ import {
   type FetchFn,
   type IocKind,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 // WHOIS-equivalent registration lookup for an IP IOC, over RDAP (the modern, JSON-over-HTTPS
 // replacement for port-43 WHOIS). Resolves which network block owns the address: net name,
@@ -108,7 +109,10 @@ export class RdapProvider implements EnrichmentProvider {
       throw new RateLimitError("RDAP/WHOIS rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`RDAP/WHOIS HTTP ${res.status}`);
 
-    const json = (await res.json()) as RdapIpResponse;
+    const json = await readBoundedJson<RdapIpResponse>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "RDAP/WHOIS",
+    });
     const netname = json.name ?? json.handle;
     const range = cidrRange(json);
     const country = json.country;

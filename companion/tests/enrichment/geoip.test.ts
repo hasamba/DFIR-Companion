@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { GeoIpProvider } from "../../src/enrichment/geoip.js";
 
 function mockFetch(body: unknown) {
-  return async () => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+  return async () =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 }
 
 describe("GeoIpProvider coordinates (#133)", () => {

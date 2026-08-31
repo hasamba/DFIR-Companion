@@ -5,6 +5,7 @@
 // so the orchestrator can be unit-tested with no network.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 import {
   MISP_PING_PATH,
   mispCauseCode,
@@ -105,7 +106,11 @@ function saveFailureReason(data: unknown): string {
 // MISP's own explanation for a rejected request, when the body carries one.
 async function readErrorDetail(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { errors?: unknown; message?: unknown; name?: unknown };
+    const body = await readBoundedJson<{
+      errors?: unknown;
+      message?: unknown;
+      name?: unknown;
+    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "MISP" });
     return (
       flattenMispErrors(body.errors) ||
       (typeof body.message === "string" && body.message.trim()) ||
@@ -173,7 +178,7 @@ export class MispPushClient implements MispPushClientLike {
       );
     }
     if (!res.ok) throw new MispApiError(`MISP HTTP ${res.status} on ${path}`, res.status);
-    const data = (await res.json()) as T;
+    const data = await readBoundedJson<T>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "MISP" });
     // MISP reports several write failures as HTTP 200 with the error IN THE BODY —
     // `{"saved":false,"errors":"Invalid Tag."}` is the common one. Treating that as success made
     // every addTag silently no-op while still being counted, which left the idempotency tag off the

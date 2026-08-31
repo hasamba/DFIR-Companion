@@ -7,6 +7,7 @@
 // orchestrator (clickupPush.ts) is unit-testable with no network.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS, rethrowIfTooLarge } from "../../providers/boundedResponse.js";
 
 const CLICKUP_BASE = "https://api.clickup.com/api/v2";
 
@@ -77,7 +78,10 @@ export class ClickUpClient {
     }
 
     if (!res.ok) {
-      const env = (await res.json().catch(() => ({}))) as ClickUpErrorEnvelope;
+      const env = (await readBoundedJson(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.json,
+        context: "ClickUp",
+      }).catch(() => ({}))) as ClickUpErrorEnvelope;
       const detail = env.err ? `: ${env.err}` : "";
       if (res.status === 401)
         throw new ClickUpApiError(`ClickUp auth failed (check DFIR_CLICKUP_TOKEN)${detail}`, 401, "auth");
@@ -94,7 +98,10 @@ export class ClickUpClient {
         throw new ClickUpApiError(`ClickUp rejected the request${detail}`, 400, "validation");
       throw new ClickUpApiError(`ClickUp HTTP ${res.status} on ${path}${detail}`, res.status, "http");
     }
-    return (await res.json().catch(() => ({}))) as T;
+    return (await readBoundedJson(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "ClickUp",
+    }).catch((err) => rethrowIfTooLarge(err, {}))) as T;
   }
 
   // Auth check — the authorized user.

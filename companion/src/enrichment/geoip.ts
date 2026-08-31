@@ -6,6 +6,7 @@ import {
   type FetchFn,
   type IocKind,
 } from "./provider.js";
+import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 // Geo-IP lookup for an IP IOC — "what country (and city / ASN / hosting org) did this address
 // come from?". Answers the analyst's first question about any external IP. Pure geo/network
@@ -122,7 +123,10 @@ export class GeoIpProvider implements EnrichmentProvider {
       throw new RateLimitError("GeoIP rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`GeoIP HTTP ${res.status}`);
 
-    const json = (await res.json()) as GeoResponse;
+    const json = await readBoundedJson<GeoResponse>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "GeoIP",
+    });
     // Reserved / private / invalid IPs come back as a non-success body (HTTP 200) → miss.
     if (json.success === false || json.status === "fail" || json.error) return null;
 

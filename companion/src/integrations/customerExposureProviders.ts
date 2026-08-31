@@ -5,6 +5,7 @@ import type {
 } from "../analysis/customerExposure.js";
 import type { FetchFn } from "../enrichment/provider.js";
 import { LeakCheckClient, type LeakCheckRecord } from "./leakcheck/leakcheckClient.js";
+import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
 
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
@@ -117,7 +118,7 @@ export class HaveIBeenPwnedExposureProvider implements CustomerExposureProvider 
       throw new Error("HIBP auth failed or domain is not verified for this account");
     if (res.status === 429) throw new Error("HIBP rate limit");
     if (!res.ok) throw new Error(`HIBP HTTP ${res.status}`);
-    return res.json();
+    return readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "HIBP" });
   }
 
   async lookupEmail(email: string): Promise<CustomerExposureResult[]> {
@@ -193,7 +194,10 @@ export class DeHashedExposureProvider implements CustomerExposureProvider {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (res.status === 401 || res.status === 403) {
-      const body = await res.text().catch(() => "");
+      const body = await readBoundedText(res, {
+        maxBytes: RESPONSE_SIZE_LIMITS.text,
+        context: "DeHashed",
+      }).catch(() => "");
       throw new Error(
         `DeHashed auth failed (${res.status})${body ? `: ${body.slice(0, 200)}` : ""} — check DFIR_DEHASHED_KEY (v2 API key, sent as the DeHashed-Api-Key header)`,
       );
@@ -201,7 +205,10 @@ export class DeHashedExposureProvider implements CustomerExposureProvider {
     if (res.status === 429) throw new Error("DeHashed rate limit");
     if (res.status === 404) return [];
     if (!res.ok) throw new Error(`DeHashed HTTP ${res.status}`);
-    const json = (await res.json()) as Record<string, unknown>;
+    const json = await readBoundedJson<Record<string, unknown>>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "DeHashed",
+    });
     const rows = asArray(json.entries ?? json.data ?? json.results).filter(isObject);
     return rows.map((row) => {
       const data = unique(
@@ -281,7 +288,10 @@ export class ShodanExposureProvider implements CustomerExposureProvider {
       throw new Error("Shodan auth failed (check DFIR_SHODAN_KEY)");
     if (res.status === 429) throw new Error("Shodan rate limit / out of query credits");
     if (!res.ok) throw new Error(`Shodan HTTP ${res.status}`);
-    const json = (await res.json()) as { matches?: unknown };
+    const json = await readBoundedJson<{ matches?: unknown }>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "Shodan",
+    });
     return asArray(json.matches)
       .filter(isObject)
       .slice(0, this.maxMatches)
