@@ -1453,6 +1453,95 @@ describe("persistence and account events — High is earned, not assumed", () =>
     expect(sev(win(4728, { TargetUserName: "Domain Admins", MemberName: "CN=jsmith" }))).toBe("High");
     expect(sev(win(4732, { TargetUserName: "Administrators", MemberName: "CN=jsmith" }))).toBe("High");
   });
+
+  // AD localises built-in group names at domain creation, so TargetUserName on a French or German
+  // domain is never the English string PRIVILEGED_GROUP looks for — and a group add is the one
+  // event where a miss costs a High, and with it the deterministic finding backfill. TargetSid does
+  // not localise.
+  it("grades a localized privileged group add High from the group SID", () => {
+    expect(
+      sev(
+        win(4728, {
+          TargetUserName: "Admins du domaine",
+          TargetSid: "S-1-5-21-1004336348-1177238915-682003330-512",
+          MemberName: "CN=jsmith",
+        }),
+      ),
+    ).toBe("High");
+    expect(
+      sev(
+        win(4732, {
+          TargetUserName: "Administratoren",
+          TargetSid: "S-1-5-32-544",
+          MemberName: "CN=jsmith",
+        }),
+      ),
+    ).toBe("High");
+  });
+
+  // The SID check must not widen the net: Domain Users (-513) and Builtin\Users (-545) are where
+  // every routine account provisioning lands, so matching them would turn day-to-day user admin
+  // into a case full of High findings.
+  it("leaves a localized NON-privileged group add at Medium", () => {
+    expect(
+      sev(
+        win(4728, {
+          TargetUserName: "Utilisateurs du domaine",
+          TargetSid: "S-1-5-21-1004336348-1177238915-682003330-513",
+          MemberName: "CN=jsmith",
+        }),
+      ),
+    ).toBe("Medium");
+    expect(
+      sev(
+        win(4732, {
+          TargetUserName: "Benutzer",
+          TargetSid: "S-1-5-32-545",
+          MemberName: "CN=jsmith",
+        }),
+      ),
+    ).toBe("Medium");
+  });
+
+  // The two DC groups whose English names already earn High through the "domain controllers" name
+  // match, so the SID list has to cover them too or localisation quietly downgrades them: Enterprise
+  // Read-only Domain Controllers (498, universal -> 4756) and Cloneable Domain Controllers (522,
+  // global -> 4728).
+  it("grades the localized domain-controller groups High from the group SID", () => {
+    expect(
+      sev(
+        win(4756, {
+          TargetUserName: "Contrôleurs de domaine en lecture seule d'entreprise",
+          TargetSid: "S-1-5-21-1004336348-1177238915-682003330-498",
+          MemberName: "CN=RODC01",
+        }),
+      ),
+    ).toBe("High");
+    expect(
+      sev(
+        win(4728, {
+          TargetUserName: "Klonbare Domänencontroller",
+          TargetSid: "S-1-5-21-1004336348-1177238915-682003330-522",
+          MemberName: "CN=DC02",
+        }),
+      ),
+    ).toBe("High");
+  });
+
+  // DnsAdmins is created by the DNS Server role with a variable domain RID, not a well-known one,
+  // so the SID says nothing and only the name identifies it. Replacing the name check with SIDs
+  // would silently drop a known escalation path — hence both, not either.
+  it("keeps the name check for a privileged group that has no well-known SID", () => {
+    expect(
+      sev(
+        win(4732, {
+          TargetUserName: "DnsAdmins",
+          TargetSid: "S-1-5-21-1004336348-1177238915-682003330-1101",
+          MemberName: "CN=jsmith",
+        }),
+      ),
+    ).toBe("High");
+  });
 });
 
 // Defender was the only security product on the benign-actor lists, so on a CrowdStrike or
