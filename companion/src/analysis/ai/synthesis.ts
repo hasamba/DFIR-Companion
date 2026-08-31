@@ -6,7 +6,7 @@ import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
-import { alignedEpoch, detectClockSkew, effectiveOffsets } from "../clockSkew.js";
+import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
@@ -134,7 +134,10 @@ async function detectSkew(
   let record;
   try {
     const report = detectClockSkew(correlationGroups(preMerge, { ...opts, crossHostArtifacts: true }), opts);
-    record = await store.recordDetection(caseId, report);
+    // Measured offsets need a second clock; the gap warning does not (#740). Compute it from the
+    // same PRE-merge timeline so a host whose clock is months out is reported even when the case has
+    // no cross-host anchor at all — the silence that let INC-2026-020 through.
+    record = await store.recordDetection(caseId, { ...report, timeGaps: detectHostTimeGaps(preMerge) });
   } catch {
     try {
       record = await store.load(caseId);

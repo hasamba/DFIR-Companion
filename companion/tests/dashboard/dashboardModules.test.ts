@@ -154,9 +154,10 @@ describe("every moved function still resolves at its call sites", () => {
 
   // 99 at the extraction; 102 after the prose split (proseParagraphs / proseSentences / proseHtml)
   // joined the text and fragment helpers; 103 since uploadExtOf gave the two import entry points one
-  // shared reading of a filename's extension (#673). The number is a vacuity guard, not a budget.
-  it("moved 103 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(103);
+  // shared reading of a filename's extension (#673); 104 with yearClampChip, the timeline row's
+  // year-clamp note (#739). The number is a vacuity guard, not a budget.
+  it("moved 104 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(104);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

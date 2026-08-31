@@ -102,6 +102,11 @@ interface ParsedSyslog {
   host: string;
   app: string;
   message: string;
+  // TRUE only for RFC 3164, whose timestamp is `May 14 12:00:48` — no year, so `assumeYear` supplied
+  // one. RFC 5424 carries a full RFC 3339 stamp and is therefore RECORDED, and one export routinely
+  // mixes both framings. Tracking this per line rather than per file is what stops the merge's
+  // year-clamp rewriting a real RFC 5424 timestamp that happens to be a minority year (#739).
+  yearInferred: boolean;
 }
 
 // Parse one syslog line (RFC 5424 first, then RFC 3164). Returns null if neither framing matches.
@@ -116,6 +121,7 @@ export function parseSyslogLine(line: string, year: number): ParsedSyslog | null
       host: host === "-" ? "" : host,
       app: app === "-" ? "" : app,
       message: stripStructuredData(rest),
+      yearInferred: false, // RFC 5424 timestamps carry their own year
     };
   }
   const m3 = RFC3164_RE.exec(s);
@@ -127,6 +133,7 @@ export function parseSyslogLine(line: string, year: number): ParsedSyslog | null
       host: host === "-" ? "" : host,
       app: tag,
       message: msg ?? "",
+      yearInferred: true, // RFC 3164 is year-less; `year` above is the caller's guess
     };
   }
   return null;
@@ -196,6 +203,7 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
       .slice(0, 400),
     sources: [SYSLOG_SOURCE],
     ...(p.host ? { asset: p.host } : {}),
+    ...(p.yearInferred ? { yearInferred: true } : {}),
   };
 }
 

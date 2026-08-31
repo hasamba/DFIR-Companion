@@ -99,8 +99,20 @@ class DSU {
 // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
 // `FILE-BO-01.northstar-branch.local` for the same host — keying on the full string would never match.
 // "" when the event has no recorded host.
-function shortHost(asset: string | undefined): string {
-  return (asset ?? "").split(".")[0].trim().toLowerCase();
+//
+// AN IP LITERAL IS NOT AN FQDN and must survive whole. RFC 5424's HOSTNAME field explicitly permits
+// an address, and several importers put one in `asset`; truncating at the first dot collapsed every
+// host on a /8 onto the key "10", so two different machines read as one — which silently suppressed
+// the lateral-movement split this function exists to make (#345) and, in clockSkew.ts, attributed
+// one host's timestamps to another. IPv6 is returned whole for the same reason (`::ffff:1.2.3.4`
+// contains dots too).
+const IPV4_LITERAL = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+export function shortHost(asset: string | undefined): string {
+  const s = (asset ?? "").trim().toLowerCase();
+  if (!s) return "";
+  if (s.includes(":") || IPV4_LITERAL.test(s)) return s;
+  return s.split(".")[0].trim();
 }
 
 // Split one artifact bucket (same hash, or same path) into the sets that may actually merge.

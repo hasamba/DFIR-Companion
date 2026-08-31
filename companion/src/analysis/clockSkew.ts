@@ -1,5 +1,5 @@
 import type { ForensicEvent } from "./stateTypes.js";
-import { correlationGroups, type CorrelateOptions } from "./correlate.js";
+import { correlationGroups, shortHost, type CorrelateOptions } from "./correlate.js";
 
 // Clock-skew detection & cross-host timeline alignment (#228).
 //
@@ -34,15 +34,48 @@ export const DEFAULT_SKEW_ALERT_MS = 60_000;
 export const DEFAULT_MIN_ANCHORS = 3;
 // Ceiling on the samples' median absolute deviation — the skew-vs-propagation discriminator above.
 export const DEFAULT_MAX_DISPERSION_MS = 5_000;
-// Sanity cap on one anchor group's spread. Beyond this the "same" artifact on two hosts is far more
-// likely a re-use weeks apart than a clock offset, so the group is not treated as an anchor.
-export const DEFAULT_MAX_ANCHOR_SPREAD_MS = 48 * 3_600_000;
+// Sanity cap on one anchor group's spread. It exists to keep an absurd pairing out of the samples,
+// NOT to bound how wrong a clock may be: a VM restored from an old snapshot, or one whose RTC never
+// got set, is wrong by MONTHS, and the 48-hour cap this used to carry made that case undetectable by
+// construction (#740 — case INC-2026-020 ran ~268 days out and produced no signal at all). Nothing is
+// lost by widening it, because the spread was never the discriminator: a group only becomes a
+// measured offset once `minAnchors` independent groups agree to within `maxDispersionMs`, and an
+// artifact genuinely re-used weeks apart cannot reproduce the same offset to the second three times
+// over. A year is the practical ceiling for "these two records describe one real-world event".
+export const DEFAULT_MAX_ANCHOR_SPREAD_MS = 400 * 24 * 3_600_000;
+// Ceiling on an offset alignment will apply BY ITSELF. Widening the anchor cap above is what lets a
+// months-wrong clock be SEEN; it must not also make it silently applied. Consistency alone cannot
+// separate a year-scale clock error from a legitimate one: a batch of files deployed to a fleet and
+// re-observed by a second tool months later yields one anchor group per file, and those propagation
+// intervals can agree well inside `maxDispersionMs` — which would qualify a fictional multi-month
+// offset and, with alignment on, shift a whole host's timeline by months. So a large offset is
+// measured, reported and flagged, but never auto-applied: the analyst confirms it with an explicit
+// per-host override, which effectiveOffsets already honours above any detection. 48 hours is the
+// value the anchor cap itself used to carry — beyond two days a clock error stops being routine
+// drift or a timezone mistake and becomes a claim worth a human signing off on.
+export const DEFAULT_MAX_AUTO_ALIGN_MS = 48 * 3_600_000;
+// Standalone timestamp-gap warning (#740), independent of anchors and of any correction. A host
+// whose own events split into two clusters this far apart has almost certainly logged part of its
+// evidence under a wrong clock — worth saying out loud even when no anchor exists to measure it.
+export const DEFAULT_MIN_TIME_GAP_MS = 30 * 24 * 3_600_000;
+// Dated events a host needs before its distribution is worth splitting.
+export const DEFAULT_GAP_MIN_EVENTS = 12;
+// The far cluster must be a MINORITY this small. A host whose evidence genuinely spans years (an MFT
+// or registry collection always does) splits near the middle, and that is normal, not skew.
+export const DEFAULT_MAX_GAP_MINORITY_FRACTION = 0.25;
 
 export interface ClockSkewOptions extends CorrelateOptions {
   alertThresholdMs?: number;
   minAnchors?: number;
   maxDispersionMs?: number;
   maxAnchorSpreadMs?: number;
+  maxAutoAlignMs?: number;
+}
+
+export interface TimeGapOptions {
+  minGapMs?: number; // cluster separation worth warning about. Default 30 days.
+  minEvents?: number; // dated events a host needs before it is examined. Default 12.
+  maxMinorityFraction?: number; // how small the far cluster must be. Default 0.25.
 }
 
 export type SkewConfidence = "high" | "medium" | "low";
@@ -54,13 +87,42 @@ export interface ClockSkewResult {
   anchorCount: number; // samples behind the offset
   dispersionMs: number; // median absolute deviation of those samples
   confidence: SkewConfidence;
-  qualified: boolean; // enough consistent samples to align on
+  qualified: boolean; // enough consistent samples to trust the measurement
+  // Whether alignment may apply this offset on its own: qualified AND within `maxAutoAlignMs`. A
+  // qualified-but-large offset is real enough to show and to warn about, and too consequential to
+  // act on unasked — the analyst turns it on with a per-host override. See DEFAULT_MAX_AUTO_ALIGN_MS.
+  alignable: boolean;
   skewed: boolean; // qualified AND beyond the alert threshold
   sources: string[]; // tools that contributed anchors, for auditability
 }
 
+/**
+ * One host whose own dated events split into two clusters far apart in time (#740).
+ *
+ * This is a WARNING, never a correction. Unlike a measured offset it needs no cross-host anchor, so
+ * it still fires on the case that has one evidence source and no correlation groups at all — which
+ * is exactly the case where a wrong VM clock otherwise passes through the whole pipeline in silence.
+ */
+export interface HostTimeGap {
+  host: string; // display name (the first spelling seen)
+  hostKey: string; // normalized short hostname
+  gapMs: number; // distance between the two clusters
+  minorityCount: number; // events in the smaller (suspect) cluster
+  totalCount: number; // this host's dated events
+  minorityStart: string; // ISO bounds of the smaller cluster
+  minorityEnd: string;
+  majorityStart: string; // ISO bounds of the bulk
+  majorityEnd: string;
+  minoritySide: "before" | "after"; // where the suspect cluster sits relative to the bulk
+  sources: string[]; // tools that reported the suspect cluster, for auditability
+}
+
 export interface ClockSkewReport {
   results: ClockSkewResult[];
+  // Hosts whose timestamps split across a large gap. Present only when the caller measured them —
+  // detectClockSkew reads correlation GROUPS and cannot see a host's full distribution, so the
+  // gaps are computed from the timeline by detectHostTimeGaps and merged in by the caller.
+  timeGaps?: HostTimeGap[];
   // The clock every offset is expressed against — the best-anchored host, whose own offset is 0 by
   // construction. "" when nothing was measured.
   referenceHost: string;
@@ -83,9 +145,12 @@ function mad(values: number[], center: number): number {
 }
 
 // Match correlate.ts's host keying: an EDR reports `FILE-BO-01` while the Windows log records
-// `FILE-BO-01.corp.local` for the same machine, and both must land on one offset.
+// `FILE-BO-01.corp.local` for the same machine, and both must land on one offset. It DELEGATES
+// rather than restating the rule — the two drifted apart on IP-literal assets, where truncating at
+// the first dot folded every address on a /8 onto the key "10" and reported one machine's clock
+// under another machine's name.
 export function hostKey(asset: string): string {
-  return asset.split(".")[0].trim().toLowerCase();
+  return shortHost(asset);
 }
 
 function epoch(ts: string | undefined): number | undefined {
@@ -114,6 +179,7 @@ export function detectClockSkew(
   const maxDispersionMs = opts.maxDispersionMs ?? DEFAULT_MAX_DISPERSION_MS;
   const maxSpreadMs = opts.maxAnchorSpreadMs ?? DEFAULT_MAX_ANCHOR_SPREAD_MS;
   const alertMs = opts.alertThresholdMs ?? DEFAULT_SKEW_ALERT_MS;
+  const maxAutoAlignMs = opts.maxAutoAlignMs ?? DEFAULT_MAX_AUTO_ALIGN_MS;
 
   const samplesByHost = new Map<string, Sample[]>();
   const displayName = new Map<string, string>();
@@ -175,6 +241,7 @@ export function detectClockSkew(
       dispersionMs,
       confidence,
       qualified,
+      alignable: false, // decided after re-centering below, like `skewed`
       skewed: false, // decided after re-centering below
       sources: [...new Set(samples.flatMap((s) => s.sources))].sort(),
     });
@@ -198,7 +265,10 @@ export function detectClockSkew(
     const base = reference.offsetMs;
     for (const r of results) r.offsetMs -= base;
   }
-  for (const r of results) r.skewed = r.qualified && Math.abs(r.offsetMs) > alertMs;
+  for (const r of results) {
+    r.skewed = r.qualified && Math.abs(r.offsetMs) > alertMs;
+    r.alignable = r.qualified && Math.abs(r.offsetMs) <= maxAutoAlignMs;
+  }
 
   results.sort((a, b) => a.hostKey.localeCompare(b.hostKey));
   return { results, referenceHost: reference?.host ?? "", anchorGroups, groupsExamined: groups.length };
@@ -219,16 +289,104 @@ export function detectClockSkewFromTimeline(
 }
 
 /**
+ * Hosts whose own dated events split into two clusters far apart in time (#740).
+ *
+ * WHY THIS EXISTS SEPARATELY FROM detectClockSkew. An offset can only be MEASURED where two clocks
+ * stamped one real-world event, and a case can easily have no such pair — one evidence source, or a
+ * host nothing else observed. Case INC-2026-020 was exactly that: a lab VM ~268 days out, zero anchor
+ * groups, and therefore not one word of warning anywhere in the pipeline. This detector needs no
+ * second clock. It reads one host's own distribution and asks whether part of it sits implausibly far
+ * from the rest.
+ *
+ * It NEVER corrects anything, and it is deliberately quiet. A forensic timeline legitimately spans
+ * years (an MFT or a registry hive always does), so a warning needs BOTH a wide gap AND a far side
+ * small enough to be an anomaly rather than half the evidence. Pure and deterministic.
+ */
+export function detectHostTimeGaps(
+  events: readonly ForensicEvent[],
+  opts: TimeGapOptions = {},
+): HostTimeGap[] {
+  const minGapMs = opts.minGapMs ?? DEFAULT_MIN_TIME_GAP_MS;
+  const minEvents = opts.minEvents ?? DEFAULT_GAP_MIN_EVENTS;
+  const maxMinorityFraction = opts.maxMinorityFraction ?? DEFAULT_MAX_GAP_MINORITY_FRACTION;
+
+  interface Row {
+    t: number;
+    sources: string[];
+  }
+  const byHost = new Map<string, Row[]>();
+  const displayName = new Map<string, string>();
+  for (const e of events) {
+    if (!e.asset) continue;
+    const t = epoch(e.timestamp);
+    if (t === undefined) continue;
+    const key = hostKey(e.asset);
+    if (!key) continue;
+    if (!displayName.has(key)) displayName.set(key, e.asset);
+    (byHost.get(key) ?? byHost.set(key, []).get(key)!).push({
+      t,
+      sources: (e.sources ?? []).filter((sc) => sc && sc !== "unknown source"),
+    });
+  }
+
+  const out: HostTimeGap[] = [];
+  for (const [key, rowsRaw] of byHost) {
+    if (rowsRaw.length < minEvents) continue;
+    const rows = [...rowsRaw].sort((a, b) => a.t - b.t);
+
+    // Split at the host's WIDEST adjacent gap. One cut is enough: a clock that is wrong is wrong for
+    // a contiguous stretch of the collection, so the suspect events land on one side of one seam.
+    let cut = -1;
+    let gapMs = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const g = rows[i].t - rows[i - 1].t;
+      if (g > gapMs) {
+        gapMs = g;
+        cut = i;
+      }
+    }
+    if (cut < 0 || gapMs < minGapMs) continue;
+
+    const before = rows.slice(0, cut);
+    const after = rows.slice(cut);
+    const minoritySide: "before" | "after" = before.length <= after.length ? "before" : "after";
+    const minority = minoritySide === "before" ? before : after;
+    const majority = minoritySide === "before" ? after : before;
+    if (minority.length / rows.length > maxMinorityFraction) continue; // an evenly split host is normal
+
+    const iso = (ms: number): string => new Date(ms).toISOString();
+    out.push({
+      host: displayName.get(key) ?? key,
+      hostKey: key,
+      gapMs,
+      minorityCount: minority.length,
+      totalCount: rows.length,
+      minorityStart: iso(minority[0].t),
+      minorityEnd: iso(minority[minority.length - 1].t),
+      majorityStart: iso(majority[0].t),
+      majorityEnd: iso(majority[majority.length - 1].t),
+      minoritySide,
+      sources: [...new Set(minority.flatMap((r) => r.sources))].sort(),
+    });
+  }
+  // Widest gap first — the most likely wrong clock is the one the analyst should read first.
+  out.sort((a, b) => b.gapMs - a.gapMs || a.hostKey.localeCompare(b.hostKey));
+  return out;
+}
+
+/**
  * The offsets alignment should actually apply: analyst overrides first (a deliberate statement about
- * a host's clock), then detected offsets that cleared the confidence bar. Keyed by normalized short
- * hostname.
+ * a host's clock), then detected offsets that cleared the confidence bar AND are small enough to
+ * apply unattended. Keyed by normalized short hostname.
  */
 export function effectiveOffsets(
   results: readonly ClockSkewResult[],
   overrides: Readonly<Record<string, number>> = {},
 ): Map<string, number> {
   const out = new Map<string, number>();
-  for (const r of results) if (r.qualified && r.offsetMs !== 0) out.set(r.hostKey, r.offsetMs);
+  // `alignable`, not `qualified`: a measurement can be sound and still too large to apply without a
+  // human saying so (DEFAULT_MAX_AUTO_ALIGN_MS). The override loop below is how they say so.
+  for (const r of results) if (r.alignable && r.offsetMs !== 0) out.set(r.hostKey, r.offsetMs);
   for (const [host, offset] of Object.entries(overrides)) {
     const key = hostKey(host);
     if (!key || !Number.isFinite(offset)) continue;

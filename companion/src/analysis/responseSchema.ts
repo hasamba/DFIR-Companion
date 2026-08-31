@@ -78,6 +78,12 @@ export const deltaSchema = z.object({
         // of the last one. Absent/1 means a single discrete event.
         count: z.number().int().positive().optional(),
         endTimestamp: z.string().optional(),
+        // Set by the DETERMINISTIC importers whose source has no year of its own (RFC 3164 syslog,
+        // Cisco ASA, Snort) and by the AI log/CSV imports, which infer one. It marks the year in
+        // `timestamp` as a guess, and it is the ONLY thing clampOutlierYears is allowed to re-anchor
+        // (#739). Never emitted by the model — a synthesis delta that sets it is ignored downstream
+        // because synthesis does not carry forensic events into the merge's create path.
+        yearInferred: z.boolean().optional(),
         // Correlation identifiers (let the model tie an event to a concrete file/hash).
         sha256: z.string().optional(),
         md5: z.string().optional(),

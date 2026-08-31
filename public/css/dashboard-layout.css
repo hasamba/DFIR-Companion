@@ -66,6 +66,10 @@ header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex
 .scope-group button { padding: 4px 9px; font-size: 12px; }
 .scope-preset { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); }
 .scope-preset:hover { color: var(--sev-medium); border-color: var(--sev-medium); }
+/* #738: the presets measure back from the newest EVENT, never from wall-clock "now". The button
+   faces alone read as ordinary relative-time buttons, so the qualifier is part of the visible
+   control, not only of the tooltip. */
+.scope-preset-note { color: var(--text-dim); font-size: 11px; margin-left: -2px; }
 .toolbar-sep { width: 1px; height: 16px; background: var(--border-color); margin: 0 4px; flex-shrink: 0; }
 main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
 section { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }

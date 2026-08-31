@@ -15,6 +15,19 @@ import type { ForensicEvent } from "./stateTypes.js";
 // (≥ `dominantFraction`, default 0.9), so a genuine multi-year case (an incident spanning a New Year, a
 // super-timeline) is left untouched. Pure, immutable, idempotent (a second pass finds the dominant year
 // at ~100% and no off-year events, so it is a no-op).
+//
+// IT ONLY EVER TOUCHES A GUESSED YEAR (#739). The clamp used to rewrite ANY minority-year event, which
+// made it a silent evidence-destroyer the moment a real minority year showed up: on case INC-2026-020 a
+// Velociraptor hunt carried 197 events dated 2026 and 17 dated 2025 by a lab VM with a badly skewed
+// clock. Those 17 were fully-qualified RFC 3339 stamps read straight out of the artifact — real
+// evidence — and the clamp moved every one of them to 2026, which then became the case's "latest
+// event" and pushed the actual attack out of the dashboard's scope window. So an event is eligible
+// ONLY when its importer marked `yearInferred` (see stateTypes.ts): the year-less syslog/ASA/Snort
+// parsers and the AI log/CSV imports. A recorded year is evidence and is never overwritten; a host
+// whose clock is genuinely wrong is a CLOCK-SKEW finding (clockSkew.ts), not a rounding error.
+//
+// Every rewrite is auditable: the pre-clamp value is kept on `yearClampedFrom` (written once, never
+// overwritten by a later merge) so the UI and the report can show what was adjusted.
 
 export const DEFAULT_YEAR_CLAMP_DOMINANT_FRACTION = 0.9;
 // Below this many DATED events the dominant year isn't trustworthy — don't clamp a tiny timeline.
@@ -75,9 +88,10 @@ function modalYear(events: readonly ForensicEvent[]): { year: number; count: num
   return { year, count, dated };
 }
 
-// Re-anchor events whose year is an outlier onto the timeline's dominant year (see module header).
-// Returns a new array; events already on the dominant year (or undated) pass through unchanged. When no
-// year dominates, or the timeline is too small, the input is returned as-is.
+// Re-anchor events whose GUESSED year is an outlier onto the timeline's dominant year (see module
+// header). Returns a new array; events already on the dominant year, undated events, and every event
+// whose year was RECORDED rather than inferred pass through unchanged. When no year dominates, or the
+// timeline is too small, the input is returned as-is.
 export function clampOutlierYears(
   events: readonly ForensicEvent[],
   opts: YearClampOptions = {},
@@ -85,21 +99,57 @@ export function clampOutlierYears(
   const dominantFraction = opts.dominantFraction ?? DEFAULT_YEAR_CLAMP_DOMINANT_FRACTION;
   const minEvents = opts.minEvents ?? YEAR_CLAMP_MIN_EVENTS;
 
+  // The dominant year is voted on by the WHOLE dated timeline, including the events that are not
+  // themselves eligible to be moved: a recorded-year event is the best evidence of what year the case
+  // lives in, so it should anchor the guessers even though it can never be moved by them.
   const m = modalYear(events);
   if (!m || m.dated < minEvents) return [...events];
   if (m.count / m.dated < dominantFraction) return [...events]; // no clear anchor → leave untouched
   const dominantYear = m.year;
 
   return events.map((e) => {
+    if (e.yearInferred !== true) return e; // recorded year → evidence, never rewritten (#739)
     const y = yearOf(e.timestamp);
     if (y === null || y === dominantYear) return e;
-    const next: ForensicEvent = { ...e, timestamp: setYear(e.timestamp, dominantYear) };
+    const next: ForensicEvent = {
+      ...e,
+      timestamp: setYear(e.timestamp, dominantYear),
+      // First rewrite wins: a later merge that re-clamps must not overwrite the ORIGINAL recorded
+      // value with an already-adjusted one, or the audit trail launders itself.
+      yearClampedFrom: e.yearClampedFrom ?? e.timestamp,
+    };
     // Keep an aggregated row's end bound consistent if it too sits on an outlier year.
     if (e.endTimestamp && yearOf(e.endTimestamp) !== null && yearOf(e.endTimestamp) !== dominantYear) {
       next.endTimestamp = setYear(e.endTimestamp, dominantYear);
     }
     return next;
   });
+}
+
+/** One year-clamp adjustment, aggregated for display: "N events moved from 2025 to 2026". */
+export interface YearClampAdjustment {
+  from: number;
+  to: number;
+  count: number;
+}
+
+/**
+ * What the clamp changed on this timeline, read back off the events themselves. The UI signal #739
+ * asks for — an analyst must be able to see that a displayed time is machine-adjusted rather than
+ * recorded. Pure; returns [] for a timeline the clamp never touched.
+ */
+export function yearClampAdjustments(events: readonly ForensicEvent[]): YearClampAdjustment[] {
+  const byPair = new Map<string, YearClampAdjustment>();
+  for (const e of events) {
+    const from = yearOf(e.yearClampedFrom);
+    const to = yearOf(e.timestamp);
+    if (from === null || to === null || from === to) continue;
+    const key = `${from}>${to}`;
+    const hit = byPair.get(key);
+    if (hit) hit.count++;
+    else byPair.set(key, { from, to, count: 1 });
+  }
+  return [...byPair.values()].sort((a, b) => b.count - a.count || a.from - b.from);
 }
 
 // Best-guess year for a NEW year-less import (Cisco ASA / Snort / syslog), to use as the parser's

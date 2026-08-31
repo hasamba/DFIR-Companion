@@ -176,6 +176,10 @@ export async function importCiscoAsa(
       ...e,
       id: `${opts.idPrefix}e${i + 1}`,
       sources: e.sources?.length ? e.sources : [CISCO_ASA_SOURCE],
+      // An ASA line carries no year, so `assumeYear` above supplied one. Mark it a guess: this is
+      // what makes the event eligible for the merge's year-clamp, and what keeps the clamp off
+      // every importer that DID read a year out of the record (#739).
+      yearInferred: true,
     })),
     threadsOpened: [],
     threadsClosed: [],
@@ -241,6 +245,11 @@ export async function importSyslog(
       ...e,
       id: `${opts.idPrefix}e${i + 1}`,
       sources: e.sources?.length ? e.sources : [SYSLOG_SOURCE],
+      // Per PARSED LINE, carried up from syslogImport: RFC 3164 is year-less and its year came from
+      // `assumeYear` above, while RFC 5424 carries a full RFC 3339 stamp and is recorded evidence.
+      // One export mixes both framings, so marking the whole file would hand the merge's year-clamp
+      // permission to rewrite real timestamps — the #739 defect, in a second place.
+      ...(e.yearInferred ? { yearInferred: true } : {}),
     })),
     threadsOpened: [],
     threadsClosed: [],

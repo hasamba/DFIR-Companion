@@ -59,6 +59,35 @@ describe("parseSyslogLine", () => {
   it("returns null for a non-syslog line", () => {
     expect(parseSyslogLine("just some prose without framing", 2024)).toBeNull();
   });
+
+  // #739, per LINE. One export mixes both framings, so marking the file would hand the merge's
+  // year-clamp permission to rewrite an RFC 5424 timestamp that is recorded evidence.
+  it("marks only the year-less framing as an inferred year", () => {
+    expect(parseSyslogLine(SLACK, 2024)!.yearInferred).toBe(false); // RFC 5424 carries its own year
+    expect(parseSyslogLine(FAIL3164, 2024)!.yearInferred).toBe(true); // RFC 3164 does not
+  });
+});
+
+describe("year provenance through mapping and aggregation (#739)", () => {
+  it("carries the mark onto a mapped RFC 3164 event and leaves RFC 5424 unmarked", () => {
+    expect(mapSyslogLine(FAIL3164, 2024, new Map())!.yearInferred).toBe(true);
+    expect(mapSyslogLine(SLACK, 2024, new Map())!.yearInferred).toBeUndefined();
+  });
+
+  it("leaves a pure RFC 5424 import entirely unmarked", () => {
+    const parsed = parseSyslog([SLACK, PASSWD, ACCEPT, NOISE, CRIT].join("\n"), { assumeYear: 2024 });
+    expect(parsed.events.length).toBeGreaterThan(0);
+    expect(parsed.events.every((e) => e.yearInferred === undefined)).toBe(true);
+  });
+
+  it("marks a collapsed group when ANY of its rows was year-less", () => {
+    // The same sshd failure twice as RFC 3164 (one aggregation group), plus dated RFC 5424 chatter.
+    const log = [FAIL3164, FAIL3164, SLACK, NOISE].join("\n");
+    const parsed = parseSyslog(log, { assumeYear: 2024 });
+    const failed = parsed.events.find((e) => e.description.includes("Failed password"))!;
+    expect(failed.yearInferred).toBe(true);
+    expect(parsed.events.find((e) => e.description.includes("irqbalance"))?.yearInferred).toBeUndefined();
+  });
 });
 
 describe("mapSyslogLine", () => {
