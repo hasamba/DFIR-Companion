@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // The palette module lives outside companion/, next to graph-view.js. It guards its window/document
 // access, so importing its pure named exports in node works — same arrangement as graphView.test.ts.
 import {
@@ -250,8 +251,11 @@ describe("dashboard.html palette wiring", () => {
   it("derives Navigation from SECTION_DEFS rather than a hand-copied panel list", async () => {
     const h = await flat();
     expect(h).toMatch(/const nav = SECTION_DEFS\.map\(/);
+    // The gate on a nav entry is "does this section exist, and has its evidence arrived" — NOT
+    // "is it visible in the current layout", which is what hid the super-timeline behind the Now
+    // profile. What the entries DO is pinned by the behavioural describe at the bottom of this file.
     expect(h).toMatch(
-      /available: \(\) => !!document\.getElementById\(s\.id\) && isSectionVisible\(s\.id, vis\)/,
+      /const el = document\.getElementById\(s\.id\); return !!el && isSectionDataOpen\(el\);/,
     );
   });
 
@@ -267,5 +271,143 @@ describe("dashboard.html palette wiring", () => {
   it("documents the shortcut in the existing cheat sheet", async () => {
     const h = await html();
     expect(h).toMatch(/Ctrl\+K \/ ⌘K<\/td><td[^>]*>Command palette/);
+  });
+});
+
+// ── Navigation entries vs the active view profile ─────────────────────────────────────────────
+//
+// A view profile writes `false` into SECTIONS_VIS_KEY for every section it omits — the SAME store
+// the Settings section list uses (see applyViewLayout in js/dashboard-view-presets.js). The palette
+// used to filter its "Go to …" entries by that store, so from the default Now profile, whose list
+// is two sections long, the palette offered two jumps and the analyst could not reach the
+// super-timeline from it at all. The palette is the escape hatch FROM a narrow profile, so a
+// section the profile hides has to stay listed.
+//
+// The module is run the way the browser runs it rather than grepped, because what broke here is
+// behaviour — which sections are offered, and what running one does — not a string.
+describe("palette navigation reaches sections the active view hides", () => {
+  const SECTION_DEFS = [
+    { id: "sec-now", label: "Now" },
+    { id: "sec-super-timeline", label: "Super-Timeline" },
+    { id: "sec-gated", label: "Memory Next Steps" },
+    { id: "sec-absent", label: "Not In This Build" },
+  ];
+
+  type PaletteAction = {
+    id: string;
+    label: string;
+    category: string;
+    available?: () => boolean;
+    run: () => void;
+  };
+  type RegistryApi = { buildPaletteActions: () => PaletteAction[] };
+
+  function fakeSection(gateOpen?: string) {
+    return {
+      dataset: gateOpen === undefined ? {} : { gateOpen },
+      classList: { remove: () => {} },
+      scrollIntoView: () => {},
+    };
+  }
+
+  /**
+   * The registry's world: the four sections above, a localStorage, and the two visibility helpers.
+   *
+   * loadSectionsVis/isSectionVisible are RESTATED here rather than loaded, because they are
+   * declared in dashboard.html's inline script and no test can import that. They are copied from
+   * it verbatim; `applied` records that the reveal re-runs applySectionsVis(), which is what
+   * actually clears `display:none`.
+   */
+  function sandbox(vis: Record<string, boolean>) {
+    const store = new Map<string, string>([["dfir.sectionsVis", JSON.stringify(vis)]]);
+    const applied: number[] = [];
+    const els: Record<string, unknown> = {
+      "sec-now": fakeSection(),
+      "sec-super-timeline": fakeSection(),
+      "sec-gated": fakeSection(""), // gate present and CLOSED
+    };
+    const globals = {
+      document: { getElementById: (id: string) => els[id] ?? null },
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+      },
+      SECTION_DEFS,
+      SECTIONS_VIS_KEY: "dfir.sectionsVis",
+      loadSectionsVis: () => {
+        try {
+          return JSON.parse(store.get("dfir.sectionsVis") || "{}");
+        } catch {
+          return {};
+        }
+      },
+      isSectionVisible: (id: string, v: Record<string, boolean>) => {
+        if (v[id] === undefined) {
+          const d = SECTION_DEFS.find((s) => s.id === id);
+          return !(d && (d as { defaultHidden?: boolean }).defaultHidden);
+        }
+        return v[id] !== false;
+      },
+      applySectionsVis: () => void applied.push(1),
+      kbdOpenHelp: () => {},
+    };
+    const api = loadDashboardModule<RegistryApi>(
+      "dashboard-palette-registry.js",
+      ["dashboard-values.js"],
+      globals,
+    );
+    const storedVis = () => JSON.parse(store.get("dfir.sectionsVis") || "{}");
+    return { api, storedVis, applied };
+  }
+
+  // The Now profile: two sections on, everything else written off.
+  const NOW = { "sec-now": true, "sec-super-timeline": false, "sec-gated": false };
+
+  function navLabels(actions: PaletteAction[]) {
+    return actions
+      .filter((a) => a.category === "Navigation" && a.id.startsWith("nav.sec-"))
+      .filter((a) => (a.available ? a.available() : true))
+      .map((a) => a.label);
+  }
+
+  it("offers a section the profile switched off", () => {
+    const { api } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).toContain("Go to Super-Timeline");
+  });
+
+  it("turns that one section back on and re-applies visibility before scrolling", () => {
+    const { api, storedVis, applied } = sandbox(NOW);
+    const go = api.buildPaletteActions().find((a) => a.id === "nav.sec-super-timeline") as PaletteAction;
+    go.run();
+    expect(storedVis()["sec-super-timeline"]).toBe(true);
+    expect(applied).toHaveLength(1);
+  });
+
+  it("leaves every other section the profile hid alone, so the layout stays Now", () => {
+    const { api, storedVis } = sandbox(NOW);
+    const go = api.buildPaletteActions().find((a) => a.id === "nav.sec-super-timeline") as PaletteAction;
+    go.run();
+    expect(storedVis()["sec-gated"]).toBe(false);
+    expect(storedVis()["sec-now"]).toBe(true);
+  });
+
+  it("writes nothing when the section is already visible", () => {
+    const { api, storedVis, applied } = sandbox(NOW);
+    const go = api.buildPaletteActions().find((a) => a.id === "nav.sec-now") as PaletteAction;
+    go.run();
+    expect(storedVis()).toEqual(NOW);
+    expect(applied).toHaveLength(0);
+  });
+
+  it("still omits a section whose evidence gate is closed", () => {
+    // Un-hiding it would not show it — applySectionsVis() keeps a closed gate hidden — so offering
+    // the jump would produce an action that silently does nothing.
+    const { api } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).not.toContain("Go to Memory Next Steps");
+  });
+
+  it("still omits a section this build does not render", () => {
+    const { api } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).not.toContain("Go to Not In This Build");
   });
 });

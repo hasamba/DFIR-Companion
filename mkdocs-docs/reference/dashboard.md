@@ -50,6 +50,7 @@ Press **Ctrl+K** (or **⌘K** on macOS) anywhere on the dashboard to open a fuzz
 - Type to fuzzy-match by label or keyword; results rank whole-word and prefix matches above scattered-letter matches.
 - Prefix a query with `>` to filter to one category (`>exp csv` filters to Exports, then searches "csv" within it). A bare `>` lists every category.
 - Actions you've run recently float to the top of the unfiltered list.
+- A panel the current **dashboard view** hides is still listed. Picking it shows that one panel and scrolls to it; the rest of the view's layout is left alone, and a reload puts the view back. Use Settings → Dashboard sections to keep it on for good.
 - An action that doesn't apply to the current case (no case loaded, integration not configured, etc.) is hidden rather than shown disabled.
 
 ---
