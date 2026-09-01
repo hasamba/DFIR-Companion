@@ -23,6 +23,7 @@ import {
 } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
 import { reconTechniques } from "./reconTechniques.js";
+import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 
@@ -208,14 +209,23 @@ function classify(command: string): { severity: Severity; mitre: string[] } {
 // ───────────────────────────── IOC extraction ─────────────────────────────
 
 const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
-const URL_RE = /\bhttps?:\/\/[^\s'"|;>]+/gi;
+// Brackets and parens are ADMITTED and left to trimSentencePunctuation, which can tell the URI's
+// own `)` from the sentence's. No match may CONTAIN `](`, which keeps a markdown-style link from
+// becoming one match (#755) — see veloTextIocs.ts for why the guard sits on the `(`. The pipe and
+// semicolon stay excluded because a shell command is often delimited by them.
+const URL_RE = /\bhttps?:\/\/(?:[^\s'"|;>(]|(?<!\])\()+/gi;
 // A bare hostname token (label.label.tld). Excluded when it's clearly a file path segment.
 const DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/gi;
 const FILE_EXT_RE =
   /\.(?:sh|conf|log|txt|json|xml|yml|yaml|cfg|service|py|pl|c|h|so|gz|tar|zip|tmp|bak|pid|sock|key|pem|crt)$/i;
 
 function extractIocs(command: string, sink: Map<string, SiemIoc>): void {
-  for (const m of command.match(URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
+  // The SHARED rule, not a private copy. This scraper kept the same unconditional strip #756
+  // removed from siemImport, so a download URL in a shell history disagreed with the very same URL
+  // read out of a Velociraptor row: the strip cut a quoted URL's trailing dot and a path's own
+  // balanced `)`.
+  for (const m of command.matchAll(URL_RE))
+    addIoc(sink, "url", trimSentencePunctuation(m[0], command, m.index ?? 0).slice(0, 300));
   for (const m of command.match(IPV4_RE) ?? []) {
     const ip = cleanIp(m);
     if (ip) addIoc(sink, "ip", ip);
