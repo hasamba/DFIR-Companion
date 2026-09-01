@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 
-import { validateEnvUpdates } from "../../src/settings/envManager.js";
+import { validateEnvUpdates, RELOADABLE_ENV_PREFIXES } from "../../src/settings/envManager.js";
 
 /**
  * The Settings modal and POST /settings/env share an implicit contract: every field the modal lets
@@ -149,5 +149,57 @@ describe("saveSettings()", () => {
     );
     expect(fn, "the saveSettings slice is empty — every assertion below would be vacuous").not.toBe("");
     expect(fn).toMatch(/if \(ok\)\s*setTimeout\(/);
+  });
+});
+
+/**
+ * THE BROWSER'S HALF OF THE RELOAD CONTRACT.
+ *
+ * Saving Settings only writes .env. A key whose route reads process.env per request then keeps
+ * behaving the old way until a restart, unless the browser follows the save with POST
+ * /settings/reload for that key's prefix — and it only does so for prefixes in its OWN copy of the
+ * list, in public/js/dashboard-env-settings.js.
+ *
+ * DFIR_KEV_ (#760) was added to the server list and not the browser one, so the KEV toggle looked
+ * applied and did nothing. The two lists are not required to be equal — the server's is broader by
+ * design, holding keys an operator may hand-edit but the dashboard must not rewrite — but every
+ * prefix the BROWSER names has to be one the server will actually accept, or the reload 400s.
+ */
+describe("Settings reload ⇄ RELOADABLE_ENV_PREFIXES", () => {
+  const browserPrefixes = async (): Promise<string[]> => {
+    const src = await readFile(
+      new URL("../../../public/js/dashboard-env-settings.js", import.meta.url),
+      "utf8",
+    );
+    const block = /const RELOADABLE_ENV_PREFIXES = \[([\s\S]*?)\];/.exec(src);
+    expect(block, "the browser list should still be a literal array").not.toBeNull();
+    // Entry lines only. Scanning the whole block for quoted strings also picks up prose from the
+    // comments between the entries, which then reads as a prefix and fails for the wrong reason.
+    return (block as RegExpExecArray)[1]
+      .split("\n")
+      .map((line) => /^\s*"([^"]+)",?\s*$/.exec(line)?.[1])
+      .filter((prefix): prefix is string => Boolean(prefix));
+  };
+
+  it("only asks the server to reload prefixes the server accepts", async () => {
+    const unknown = (await browserPrefixes()).filter((p) => !RELOADABLE_ENV_PREFIXES.has(p));
+    expect(unknown, "these would 400 on POST /settings/reload").toEqual([]);
+  });
+
+  it("reloads every settings field whose prefix the server marks reloadable", async () => {
+    // A field the analyst can edit, whose prefix the server WILL reload, that the browser does not
+    // ask to reload, is a control that silently needs a restart. That is the #760 bug exactly.
+    const browser = await browserPrefixes();
+    const editable = (await envFields()).filter((f) => !f.readOnly).map((f) => f.key);
+    const serverWillReload = editable.filter((key) =>
+      [...RELOADABLE_ENV_PREFIXES].some((p) => key.startsWith(p)),
+    );
+    const missed = serverWillReload.filter((key) => !browser.some((p) => key.startsWith(p)));
+    expect(missed, "saved but not applied until a restart").toEqual([]);
+  });
+
+  it("keeps the KEV toggle on both halves", async () => {
+    expect(RELOADABLE_ENV_PREFIXES.has("DFIR_KEV_")).toBe(true);
+    expect(await browserPrefixes()).toContain("DFIR_KEV_");
   });
 });

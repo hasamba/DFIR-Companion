@@ -349,29 +349,43 @@
     "DFIR_DEHASHED_",
     "DFIR_PUSH_TOKEN",
     "DFIR_NSRL_",
+    // Settings → KEV → "Allow an internal mirror URL" (#760). The route reads process.env per
+    // request and Save only writes .env, so without this the toggle looks applied while the old
+    // value keeps deciding until a restart. This list is the browser's half of a contract with
+    // RELOADABLE_ENV_PREFIXES in settings/envManager.ts — adding a key to one alone does nothing.
+    "DFIR_KEV_",
     "DFIR_TOOL_",
     "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
   ];
 
-  // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178). Returns the
-  // distinct component names the server reports as REBUILT — empty when the save touched only groups
-  // with nothing to rebuild (AI, tools) or when a reload call fails, in which case the caller keeps
-  // the honest "restart to apply" message rather than claiming a change took effect.
+  // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178).
+  //
+  // Returns what the server did, in the terms the save message needs:
+  //   rebuilt  — components swapped out (a MISP client rebuilt against its new URL).
+  //   inEffect — the saved keys that are actually DECIDING BEHAVIOUR NOW.
+  //
+  // "In effect" is not "applied", and the difference is the whole point (#760). Every reloadable
+  // prefix gets loaded into process.env; only some of them thereby take hold. DFIR_KEV_ does — its
+  // route reads process.env per request, so the load is the whole job. DFIR_AI_ does not — the
+  // running analysis pipeline keeps its boot-time config, and reporting that save as live would
+  // tell an analyst a model change had taken hold when it had not. The server decides which is
+  // which and says so as `live`; this must not infer it from `applied`.
   async function applySavedEnvGroups(savedKeys) {
-    const prefixes = [
-      ...new Set(
-        savedKeys
-          .map(
-            (key) =>
-              RELOADABLE_ENV_PREFIXES.filter((p) => key.startsWith(p)).sort(
-                (a, b) => b.length - a.length,
-              )[0],
-          )
-          .filter(Boolean),
-      ),
-    ];
+    // Keep the keys grouped by the prefix they were reloaded under, so each key can be judged by
+    // what the server reported for ITS prefix rather than for the save as a whole.
+    const byPrefix = new Map();
+    savedKeys.forEach((key) => {
+      const prefix = RELOADABLE_ENV_PREFIXES.filter((p) => key.startsWith(p)).sort(
+        (a, b) => b.length - a.length,
+      )[0];
+      if (!prefix) return;
+      if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+      byPrefix.get(prefix).push(key);
+    });
+
     const rebuilt = [];
-    for (const prefix of prefixes) {
+    const inEffect = [];
+    for (const [prefix, keys] of byPrefix) {
       try {
         const r = await fetch("/settings/reload", {
           method: "POST",
@@ -379,12 +393,21 @@
           body: JSON.stringify({ prefix }),
         });
         const body = await r.json().catch(() => ({}));
-        (body.rebuilt || []).forEach((name) => {
+        const names = body.rebuilt || [];
+        names.forEach((name) => {
           if (!rebuilt.includes(name)) rebuilt.push(name);
+        });
+        // Something was swapped out, or the server says loading the env was enough. Either way the
+        // change is deciding behaviour now. `applied` is still consulted, because a key the server
+        // did not report loading is not in effect whatever the prefix's nature.
+        if (names.length === 0 && body.live !== true) continue;
+        const applied = body.applied || [];
+        keys.forEach((key) => {
+          if (applied.includes(key) && !inEffect.includes(key)) inEffect.push(key);
         });
       } catch {}
     }
-    return rebuilt;
+    return { rebuilt, inEffect };
   }
 
   async function saveSettings() {
@@ -447,23 +470,40 @@
           // one (#178). Now every integration group the save touched is applied live: /settings/reload
           // loads it into the environment AND rebuilds the clients it feeds, reporting them back.
           const changed = Object.keys(updates);
-          const rebuilt = await applySavedEnvGroups(changed);
+          const { rebuilt, inEffect } = await applySavedEnvGroups(changed);
           // The saved values are the new baseline, so saving twice without reopening the modal
           // doesn't rebuild the same clients again.
           changed.forEach((k) => {
             loadedEnvValues[k] = updates[k];
           });
+          // Say what actually happened to THESE keys. Two ways to get this wrong, and the code has
+          // been both: branching on `rebuilt` alone told the analyst to restart for DFIR_KEV_,
+          // which was already live; branching on `applied` told them an AI model change was live
+          // when the running pipeline had not moved. `inEffect` is the fact that matters, and the
+          // server is the one that knows it.
+          const stale = changed.filter((k) => !inEffect.includes(k));
           if (rebuilt.length > 0) {
             msg.textContent =
               "✓ Saved and applied live: " +
               rebuilt.join(", ") +
-              " — AI model changes still need a server restart";
+              (stale.length > 0 ? " — restart the server for the rest" : "");
             msg.style.color = "#5fd470";
-          } else {
-            // Changed something with no live client behind it (AI models, tool paths) — the honest
-            // answer is still "restart", so don't claim more than the server actually did.
+          } else if (inEffect.length > 0 && stale.length === 0) {
+            // Loaded into the running process, nothing to rebuild — the reload was the whole job.
+            msg.textContent = "✓ Saved and applied live — no restart needed";
+            msg.style.color = "#5fd470";
+          } else if (inEffect.length > 0) {
             msg.textContent =
-              "✓ Saved — restart the server to apply server-side changes";
+              "✓ Saved — " +
+              inEffect.length +
+              " of " +
+              changed.length +
+              " applied live; restart the server for the rest";
+            msg.style.color = "#ffd93b";
+          } else {
+            // Nothing the server can pick up without a restart (AI models, tool paths), or the
+            // reload call failed — the honest answer is still "restart".
+            msg.textContent = "✓ Saved — restart the server to apply server-side changes";
             msg.style.color = "#ffd93b";
           }
         } else {

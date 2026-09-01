@@ -13,6 +13,17 @@ import { parseKevJson, buildKevCatalog, type KevCatalog, type KevEntry } from ".
 // load and invalidated on every mutation so synthesis calls get the Map from memory.
 //
 // Same SUBDIR-not-sibling rationale as the whitelist and NSRL (prevents EPERM on a drive root).
+
+/** The bytes handed to ingestRaw parsed as JSON but held no KEV entries — so they were not a KEV
+ *  feed, and the catalog was left alone. Carries no response content: the caller that produced
+ *  those bytes is by definition one whose output we decided not to trust. */
+export class KevFeedShapeError extends Error {
+  constructor() {
+    super("not a CISA KEV feed — no vulnerability entries found; the existing catalog was kept");
+    this.name = "KevFeedShapeError";
+  }
+}
+
 export class KevStore {
   private cache: KevCatalog | null = null;
 
@@ -79,6 +90,13 @@ export class KevStore {
   // rebuild the catalog from it. Used by import-url / import-file where we have the full feed.
   async ingestRaw(raw: unknown): Promise<{ total: number }> {
     const entries = parseKevJson(raw);
+    // VALIDATE BEFORE WRITING (issue #760). The write used to happen on whatever was handed in, so
+    // a body that was not a KEV feed at all replaced the catalog with itself: the working catalog
+    // was destroyed, count fell to 0, and meta() then read catalogVersion/dateReleased back out of
+    // that stored body and returned them to the caller. For POST /kev/import-url — which fetches a
+    // caller-supplied URL — that made the file a read-back channel for the fetched response.
+    // A feed that yields no entries is never a feed worth storing; refuse it and keep what we have.
+    if (entries.length === 0) throw new KevFeedShapeError();
     // Persist the raw feed (with CISA metadata) alongside the entry array so meta() can read it.
     const dir = dirname(this.file);
     if (dir && !existsSync(dir)) await mkdir(dir, { recursive: true });

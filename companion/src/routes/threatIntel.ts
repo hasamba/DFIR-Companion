@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import type { Express, Request, Response } from "express";
@@ -14,6 +13,7 @@ import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from
 import { ingestNsrlFiles, splitNsrlPaths } from "../analysis/nsrlStore.js";
 import { parseNsrlText } from "../analysis/nsrl.js";
 import { NsrlDb, saveNsrlDbPath, removeNsrlDbPath } from "../analysis/nsrlDb.js";
+import { registerKevRoutes } from "./kev.js";
 import { buildManualIoc } from "../analysis/manualEntry.js";
 import { CustomerStore, parseList, sanitizeTargets } from "../analysis/customerStore.js";
 import {
@@ -763,70 +763,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
-  // CISA KEV catalog routes (issue #99). The catalog is global (like NSRL/whitelist).
-  // GET /kev — stats for the Settings → KEV panel.
-  // POST /kev/import-url — fetch the CISA feed from a URL (body: { url }).
-  // POST /kev/import-file — load the feed from a server-side file path (body: { path }).
-  // DELETE /kev — wipe the catalog.
-  app.get("/kev", async (_req: Request, res: Response) => {
-    if (!options.kevStore) return res.status(200).json({ count: 0, enabled: false });
-    try {
-      const m = await options.kevStore.meta();
-      return res.status(200).json({ ...m, enabled: m.count > 0 });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Fetch the CISA KEV feed from a URL and ingest it. Body: { url? } (defaults to the CISA feed).
-  // Passes the raw JSON through so meta() can read catalogVersion/dateReleased.
-  app.post("/kev/import-url", async (req: Request, res: Response) => {
-    if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
-    const CISA_KEV_URL =
-      "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
-    const url = typeof req.body?.url === "string" && req.body.url.trim() ? req.body.url.trim() : CISA_KEV_URL;
-    try {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-      if (!resp.ok) return res.status(502).json({ error: `fetch failed: HTTP ${resp.status}` });
-      const json: unknown = await resp.json();
-      const { total } = await options.kevStore.ingestRaw(json);
-      if (options.pipeline) options.pipeline.invalidateKevCache();
-      logLine(`[kev] imported ${total} entries from ${url}`);
-      return res.status(200).json({ total, source: url });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Load the CISA KEV feed JSON from a file on the server filesystem. Body: { path }.
-  // Localhost-only tool: reading an operator-specified path is intentional (like NSRL import-file).
-  app.post("/kev/import-file", async (req: Request, res: Response) => {
-    if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
-    const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!path) return res.status(400).json({ error: "path is required (a local copy of the CISA KEV JSON)" });
-    try {
-      const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
-      const { total } = await options.kevStore.ingestRaw(raw);
-      if (options.pipeline) options.pipeline.invalidateKevCache();
-      logLine(`[kev] loaded ${total} entries from file ${path}`);
-      return res.status(200).json({ total, source: path });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  // Wipe the KEV catalog.
-  app.delete("/kev", async (_req: Request, res: Response) => {
-    if (!options.kevStore) return res.status(501).json({ error: "KEV store not configured" });
-    try {
-      await options.kevStore.clear();
-      if (options.pipeline) options.pipeline.invalidateKevCache();
-      logLine(`[kev] catalog cleared`);
-      return res.status(200).json({ cleared: true, count: 0 });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
+  // CISA KEV catalog routes (issue #99) — GET /kev, POST /kev/import-url, POST /kev/import-file,
+  // DELETE /kev. They live in routes/kev.ts and are registered HERE, from this exact position,
+  // because Express matches layers in registration order and routeInventory.test.ts pins it.
+  registerKevRoutes(app, ctx);
 
   // Threat-intel enrichment toggle (per case, default OFF for OPSEC). GET reads the
   // current state. POST { enabled } turns it on/off; turning it ON enriches the current
