@@ -178,6 +178,20 @@
 
   function applyDashboardView(view, opts) {
     opts = opts || {};
+    // Applying a layout ends any palette detour (the reveal set in js/dashboard-section-order.js).
+    //
+    // THIS IS THE SEAM, not applyViewLayout(), because "Custom" applies no layout at all — the call
+    // below is skipped when view is null — and two paths reach Custom: the view menu, and
+    // applySavedViewForCase() restoring a case whose saved preference is Custom. A reveal left
+    // standing across either reads as part of the layout, and across the second it follows the
+    // analyst into the NEXT CASE, which is a different investigation.
+    //
+    // opts.keepReveals is the one exception, for the drag handlers. They pass null to record "this
+    // is a Custom layout now" as a side effect of a REORDER, not to apply a layout — and the
+    // analyst may be dragging the very panel they just revealed, so making it vanish mid-drag would
+    // be worse than the mismatch this clear exists to prevent.
+    if (!opts.keepReveals && typeof clearSectionReveals === "function")
+      clearSectionReveals();
     DfirState.setActiveView(view);
     if (view) applyViewLayout(view);
     updateDashViewButton();

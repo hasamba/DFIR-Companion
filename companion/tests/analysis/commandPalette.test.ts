@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // The palette module lives outside companion/, next to graph-view.js. It guards its window/document
 // access, so importing its pure named exports in node works — same arrangement as graphView.test.ts.
 import {
@@ -250,8 +251,11 @@ describe("dashboard.html palette wiring", () => {
   it("derives Navigation from SECTION_DEFS rather than a hand-copied panel list", async () => {
     const h = await flat();
     expect(h).toMatch(/const nav = SECTION_DEFS\.map\(/);
+    // The gate on a nav entry is "does this section exist, and has its evidence arrived" — NOT
+    // "is it visible in the current layout", which is what hid the super-timeline behind the Now
+    // profile. What the entries DO is pinned by the behavioural describe at the bottom of this file.
     expect(h).toMatch(
-      /available: \(\) => !!document\.getElementById\(s\.id\) && isSectionVisible\(s\.id, vis\)/,
+      /const el = document\.getElementById\(s\.id\); return !!el && isSectionDataOpen\(el\);/,
     );
   });
 
@@ -264,8 +268,259 @@ describe("dashboard.html palette wiring", () => {
     expect(h).toContain('paletteSelectActions( "pushSelect"');
   });
 
+  // The clear sits on applyDashboardView(), NOT applyViewLayout(), and that placement is the whole
+  // point: applyViewLayout() is skipped when the view is null, and null is exactly "Custom". Two
+  // paths reach Custom — the view menu, and applySavedViewForCase() restoring a case whose saved
+  // preference is Custom — and a reveal left standing across the second follows the analyst into
+  // the next case. The drag handlers opt out by name because they pass null for a REORDER.
+  // Asserted as source: the triggers are a menu click handler built from innerHTML and a drag
+  // handler, and what the reveal set itself does is covered by the describe below.
+  it("ends a palette reveal wherever a layout is applied, Custom and per-case restore included", async () => {
+    const presets = (
+      await readFile(new URL("../../../public/js/dashboard-view-presets.js", import.meta.url), "utf8")
+    ).replace(/\s+/g, " ");
+    expect(presets).toMatch(
+      /function applyDashboardView\(view, opts\) \{ opts = opts \|\| \{\};.*?if \(!opts\.keepReveals && typeof clearSectionReveals === "function"\) clearSectionReveals\(\);/,
+    );
+    // And NOT on applyViewLayout, which Custom never reaches.
+    expect(presets).not.toMatch(/function applyViewLayout\(view\) \{[^}]*clearSectionReveals\(\)/);
+    // The two reorder handlers opt out, so a drag never yanks the panel being dragged.
+    for (const f of ["dashboard-collapsible.js", "dashboard-section-order.js"]) {
+      const src = (await readFile(new URL(`../../../public/js/${f}`, import.meta.url), "utf8")).replace(
+        /\s+/g,
+        " ",
+      );
+      expect(src, f).toMatch(
+        /applyDashboardView\(null, \{ persist: true, rerender: false,.*?keepReveals: true, \}\)/,
+      );
+    }
+  });
+
+  // Connecting to a case is an INVESTIGATION boundary, not a layout change, and it gets its own
+  // clear rather than relying on the seam above. applySavedViewForCase() returns early when no view
+  // has loaded, and loadDashboardViews() ends in .catch(() => {}) — so after one failed
+  // /dashboard-views request it would never reach applyDashboardView(), and a panel revealed in one
+  // case would follow the analyst through every later one.
+  it("drops palette reveals when a different case is connected", async () => {
+    const connect = (
+      await readFile(new URL("../../../public/js/dashboard-case-connect.js", import.meta.url), "utf8")
+    ).replace(/\s+/g, " ");
+    expect(connect).toMatch(/clearSectionReveals\(\); applySavedViewForCase\(\);/);
+  });
+
   it("documents the shortcut in the existing cheat sheet", async () => {
     const h = await html();
     expect(h).toMatch(/Ctrl\+K \/ ⌘K<\/td><td[^>]*>Command palette/);
+  });
+});
+
+// ── Navigation entries vs the active view profile ─────────────────────────────────────────────
+//
+// A view profile writes `false` into SECTIONS_VIS_KEY for every section it omits — the SAME store
+// the Settings section list uses (see applyViewLayout in js/dashboard-view-presets.js). The palette
+// used to filter its "Go to …" entries by that store, so from the default Now profile, whose list
+// is two sections long, the palette offered two jumps and the analyst could not reach the
+// super-timeline from it at all. The palette is the escape hatch FROM a narrow profile, so a
+// section the profile hides has to stay listed.
+//
+// AND THE REVEAL MUST NOT WRITE THAT KEY BACK. The key cannot record intent — saveSettings()
+// stamps an explicit true/false on EVERY section on any Settings save, whatever the analyst was
+// changing, and applyViewLayout() stamps `false` on everything a view omits — so neither an
+// explicit `false` nor an absent entry means anyone chose to hide that panel. A reveal that wrote
+// to it would edit a preference nobody expressed, permanently and across every case, because one
+// key covers them all and no later write undoes a data-gated entry. It is held in memory instead.
+//
+// The real js/dashboard-section-order.js is loaded alongside the registry rather than stubbed, so
+// these run the actual reveal set and the actual applySectionsVis() that reads it.
+describe("palette navigation reaches sections the active view hides", () => {
+  const SECTION_DEFS = [
+    { id: "sec-now", label: "Now" },
+    { id: "sec-super-timeline", label: "Super-Timeline" },
+    { id: "sec-gated", label: "Memory Next Steps" },
+    // Gated AND defaultHidden, exactly like the real Related Cases panel.
+    { id: "sec-gate-dflt", label: "Related Cases", defaultHidden: true },
+    { id: "sec-absent", label: "Not In This Build" },
+  ];
+
+  type PaletteAction = {
+    id: string;
+    label: string;
+    category: string;
+    available?: () => boolean;
+    run: () => void;
+  };
+  type RegistryApi = {
+    buildPaletteActions: () => PaletteAction[];
+    clearSectionReveals: () => void;
+    applySectionsVis: () => void;
+  };
+
+  function fakeSection(gateOpen?: string) {
+    return {
+      dataset: gateOpen === undefined ? {} : { gateOpen },
+      style: { display: "" },
+      classList: { remove: () => {} },
+      scrollIntoView: () => {},
+    };
+  }
+
+  /**
+   * The registry's world: the five sections above, a localStorage, and the two visibility helpers.
+   *
+   * loadSectionsVis/isSectionVisible are RESTATED here rather than loaded, because they are
+   * declared in dashboard.html's inline script and no test can import that. They are copied from it
+   * verbatim. Everything else — the reveal set, applySectionsVis() — is the real module.
+   *
+   * `document.querySelector` returns null so applySecOrder() takes its own early return; the
+   * subject here is visibility, not order.
+   */
+  function sandbox(vis: Record<string, boolean>) {
+    const store = new Map<string, string>([["dfir.sectionsVis", JSON.stringify(vis)]]);
+    const writes: string[] = [];
+    const els: Record<string, ReturnType<typeof fakeSection>> = {
+      "sec-now": fakeSection(),
+      "sec-super-timeline": fakeSection(),
+      "sec-gated": fakeSection(""), // gate present and CLOSED
+      "sec-gate-dflt": fakeSection("1"), // gate OPEN, and defaultHidden above
+    };
+    const globals = {
+      document: {
+        getElementById: (id: string) => els[id] ?? null,
+        querySelector: () => null,
+      },
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          writes.push(k);
+          store.set(k, v);
+        },
+      },
+      SECTION_DEFS,
+      SECTIONS_VIS_KEY: "dfir.sectionsVis",
+      SECTIONS_ORDER_KEY: "dfir.sectionsOrder",
+      loadSectionsVis: () => {
+        try {
+          return JSON.parse(store.get("dfir.sectionsVis") || "{}");
+        } catch {
+          return {};
+        }
+      },
+      isSectionVisible: (id: string, v: Record<string, boolean>) => {
+        if (v[id] === undefined) {
+          const d = SECTION_DEFS.find((s) => s.id === id);
+          return !(d && (d as { defaultHidden?: boolean }).defaultHidden);
+        }
+        return v[id] !== false;
+      },
+      kbdOpenHelp: () => {},
+      esc: (x: string) => x,
+    };
+    const api = loadDashboardModule<RegistryApi>(
+      "dashboard-palette-registry.js",
+      ["dashboard-values.js", "dashboard-section-order.js"],
+      globals,
+    );
+    return {
+      api,
+      els,
+      writes,
+      storedVis: () => JSON.parse(store.get("dfir.sectionsVis") || "{}"),
+      jump: (id: string) => {
+        const go = api.buildPaletteActions().find((a) => a.id === "nav." + id) as PaletteAction;
+        go.run();
+      },
+    };
+  }
+
+  // The Now profile: one section on, the rest written off. The gated pair is absent, which is what
+  // applyViewLayout() really leaves behind — it never writes a gated section's visibility.
+  const NOW = { "sec-now": true, "sec-super-timeline": false };
+
+  function navLabels(actions: PaletteAction[]) {
+    return actions
+      .filter((a) => a.category === "Navigation" && a.id.startsWith("nav.sec-"))
+      .filter((a) => (a.available ? a.available() : true))
+      .map((a) => a.label);
+  }
+
+  it("offers a section the profile switched off", () => {
+    const { api } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).toContain("Go to Super-Timeline");
+  });
+
+  it("shows that section without writing the stored layout at all", () => {
+    const { els, writes, storedVis, jump } = sandbox(NOW);
+    jump("sec-super-timeline");
+    expect(els["sec-super-timeline"].style.display).toBe("");
+    // The whole point of the in-memory reveal: nothing in localStorage moved.
+    expect(writes).toEqual([]);
+    expect(storedVis()).toEqual(NOW);
+  });
+
+  it("leaves every other section the profile hid alone, so the layout stays Now", () => {
+    const { els, jump } = sandbox({ ...NOW, "sec-timeline": false });
+    jump("sec-super-timeline");
+    expect(els["sec-now"].style.display).toBe("");
+    expect(els["sec-gated"].style.display).toBe("none");
+  });
+
+  it("ends the detour when an explicit layout decision clears the reveals", () => {
+    // Switching view, saving Settings and connecting a case all call this. Clearing REPAINTS on its
+    // own — no applySectionsVis() from the caller — because two callers had no repaint to give: the
+    // case-connect boundary called none, and the per-case restore passes rerender:false.
+    const { api, els, jump } = sandbox(NOW);
+    jump("sec-super-timeline");
+    expect(els["sec-super-timeline"].style.display).toBe("");
+    api.clearSectionReveals();
+    expect(els["sec-super-timeline"].style.display).toBe("none");
+  });
+
+  it("does nothing at all when no reveal is standing", () => {
+    // The common case — every view switch and Settings save calls this. A section left mid-flight by
+    // another writer must not be repainted out from under it.
+    const { api, els } = sandbox(NOW);
+    els["sec-now"].style.display = "sentinel";
+    api.clearSectionReveals();
+    expect(els["sec-now"].style.display).toBe("sentinel");
+  });
+
+  it("still omits a section whose evidence gate is closed", () => {
+    // Revealing it would not show it — applySectionsVis() keeps a closed gate hidden either way —
+    // so offering the jump would produce an action that silently does nothing.
+    const { api, els } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).not.toContain("Go to Memory Next Steps");
+    // Asserted against a real visibility pass, not the fixture's initial value: the closed gate is
+    // what holds it at none, even though nothing in the store hides it.
+    api.applySectionsVis();
+    expect(els["sec-gated"].style.display).toBe("none");
+  });
+
+  it("still omits a section this build does not render", () => {
+    const { api } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).not.toContain("Go to Not In This Build");
+  });
+
+  // The real Related Cases panel: gated AND defaultHidden, so nothing is stored for it and it reads
+  // as hidden while nobody has decided anything.
+  it("reaches a gated, default-hidden section once its evidence lands", () => {
+    const { api, els, writes, jump } = sandbox(NOW);
+    expect(navLabels(api.buildPaletteActions())).toContain("Go to Related Cases");
+    jump("sec-gate-dflt");
+    expect(els["sec-gate-dflt"].style.display).toBe("");
+    expect(writes).toEqual([]);
+  });
+
+  // An explicit `false` is NOT evidence the analyst unticked anything: saveSettings() stamps one on
+  // every section on any Settings save, whatever was actually being changed. Reading it as intent
+  // is what left this panel unreachable in an earlier round of this fix.
+  it("reaches a gated section carrying an explicit false from an unrelated Settings save", () => {
+    const vis = { ...NOW, "sec-gate-dflt": false };
+    const { api, els, writes, storedVis, jump } = sandbox(vis);
+    expect(navLabels(api.buildPaletteActions())).toContain("Go to Related Cases");
+    jump("sec-gate-dflt");
+    expect(els["sec-gate-dflt"].style.display).toBe("");
+    // Still no write — the stored value stays exactly as the Settings save left it.
+    expect(writes).toEqual([]);
+    expect(storedVis()).toEqual(vis);
   });
 });

@@ -401,6 +401,10 @@
       if (cb) vis[id] = cb.checked;
     });
     localStorage.setItem(SECTIONS_VIS_KEY, JSON.stringify(vis));
+    // Saving Settings states every section's visibility outright, so it ends any palette detour
+    // still standing (see the reveal set in js/dashboard-section-order.js) — otherwise unticking a
+    // panel reached from the palette would leave it on screen.
+    if (typeof clearSectionReveals === "function") clearSectionReveals();
     applySectionsVis();
 
     // 3. Env vars → POST /settings/env
