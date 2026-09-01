@@ -244,6 +244,8 @@
     "getEffectiveOrder",
     "applySecOrder",
     "applySectionsVis",
+    "markSectionRevealed",
+    "clearSectionReveals",
     "renderSecChecks",
     // The query translator, the scope-apply function and the AI toggle. None has an initializer.
     "renderNlqPlatforms",

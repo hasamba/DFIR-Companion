@@ -84,6 +84,44 @@
     }
   }
 
+  // Sections the analyst reached from the command palette during THIS page load.
+  //
+  // The palette has to be able to jump to a panel the active dashboard view hides — that is what it
+  // is for. The obvious way, writing `true` into SECTIONS_VIS_KEY, is wrong: that key cannot record
+  // intent. applyViewLayout() stamps `false` on every section a view omits, and saveSettings()
+  // stamps an explicit true/false on EVERY section on any Settings save, whatever the analyst was
+  // actually changing. So neither an explicit `false` nor an absent entry tells you whether anyone
+  // decided anything, and a palette jump that wrote to it would be editing a layout preference the
+  // analyst never expressed — permanently and browser-wide, since one key covers every case and no
+  // later write undoes a data-gated entry.
+  //
+  // Holding the reveal in memory makes it exactly what it claims to be: a detour for this page load.
+  // The stored preference is untouched, the Settings checkbox keeps showing the real one, and a
+  // reload puts the layout back. The two moves that ARE explicit layout decisions — switching view
+  // and saving Settings — clear the set, so neither is fought by a stale reveal.
+  const sessionRevealed = new Set();
+
+  // Both mutators REPAINT, because the set is not what the analyst sees — display:none is written by
+  // applySectionsVis(), and mutating the set without re-running it changes nothing. Leaving that to
+  // callers cost three review rounds on the clear alone, so neither half leaves it to them now.
+  function markSectionRevealed(id) {
+    if (sessionRevealed.has(id)) return;
+    sessionRevealed.add(id);
+    applySectionsVis();
+  }
+  // The clear is the half that proved it: the case-connect boundary called no repaint at all, and
+  // the per-case restore passes rerender:false, so the Custom path had none either — both then
+  // depended on an async render that the connect path swallows on failure. The policy was right and
+  // the screen was still stale.
+  //
+  // The early return keeps this free: with nothing revealed there is nothing to undo, which is the
+  // usual case on a view switch or a Settings save.
+  function clearSectionReveals() {
+    if (!sessionRevealed.size) return;
+    sessionRevealed.clear();
+    applySectionsVis();
+  }
+
   function applySectionsVis() {
     applySecOrder();
     const vis = loadSectionsVis();
@@ -91,7 +129,10 @@
       const el = document.getElementById(id);
       if (el)
         el.style.display =
-          isSectionVisible(id, vis) && isSectionDataOpen(el) ? "" : "none";
+          (isSectionVisible(id, vis) || sessionRevealed.has(id)) &&
+          isSectionDataOpen(el)
+            ? ""
+            : "none";
     });
   }
 
@@ -138,8 +179,13 @@
           applySecOrder();
           // Same as the in-page drag grip: a manual reorder here makes this a Custom layout, so
           // the next load's applySavedViewForCase() doesn't overwrite it with the active preset.
+          // It keeps any palette reveal, though — the analyst may be dragging that very panel.
           if (typeof applyDashboardView === "function")
-            applyDashboardView(null, { persist: true, rerender: false });
+            applyDashboardView(null, {
+              persist: true,
+              rerender: false,
+              keepReveals: true,
+            });
         }
       });
       row.addEventListener("dragend", () => {
@@ -155,5 +201,7 @@
   window.getEffectiveOrder = getEffectiveOrder;
   window.applySecOrder = applySecOrder;
   window.applySectionsVis = applySectionsVis;
+  window.markSectionRevealed = markSectionRevealed;
+  window.clearSectionReveals = clearSectionReveals;
   window.renderSecChecks = renderSecChecks;
 })();

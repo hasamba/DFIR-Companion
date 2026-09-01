@@ -291,8 +291,11 @@ describe("dashboard.html", () => {
     const order = flat(
       await readFile(new URL("../../../public/js/dashboard-section-order.js", import.meta.url), "utf8"),
     );
+    // keepReveals is part of the call, not noise: a reorder is not a layout change, so it must NOT
+    // clear the palette's in-memory reveal set (js/dashboard-section-order.js) — the analyst may be
+    // dragging the very panel they revealed, and it would vanish under the cursor.
     const markCustom =
-      'if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });';
+      'if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false, keepReveals: true, });';
     // Exactly one site in each file, and nowhere else.
     expect(page.split(markCustom).length - 1, "the section-grip site").toBe(1);
     expect(order.split(markCustom).length - 1, "the Settings section-list site").toBe(1);
@@ -905,8 +908,13 @@ describe("dashboard.html — section visibility coverage", () => {
     const html = await load();
     // The gate is declared closed in markup so the section can't flash before render() runs.
     expect(html).toMatch(/<section id="sec-mem-nextsteps" data-gate-open=""/);
-    // Visibility is the AND of the user's choice and the data gate — not either one alone.
-    expect(html).toMatch(/isSectionVisible\(id, vis\) && isSectionDataOpen\(el\)/);
+    // Visibility is the AND of "the analyst can see this" and the data gate — not either one alone.
+    // The left side gained the palette's in-memory reveal set (a jump must reach a panel the active
+    // view hides), so it is now an OR; the gate stays ANDed OUTSIDE it, which is what this pins. A
+    // reveal cannot open a closed gate.
+    expect(html).toMatch(
+      /\(isSectionVisible\(id, vis\) \|\| sessionRevealed\.has\(id\)\) &&\s*isSectionDataOpen\(el\)/,
+    );
     // The memory-evidence check drives the gate and defers the actual display to applySectionsVis().
     expect(html).toMatch(/sec\.dataset\.gateOpen = hasMem \? "1" : "";[\s\S]{0,80}applySectionsVis\(\)/);
   });
