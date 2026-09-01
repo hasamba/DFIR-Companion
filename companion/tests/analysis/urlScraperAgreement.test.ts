@@ -1,15 +1,20 @@
 // One URL-bearing string through EVERY free-text URL scraper, asserting they answer identically.
 //
 // #744 unified two scrapers, #752 unified four — and #756 found a fifth that had been missed and had
-// already drifted, cutting a quoted URL's trailing dot and a path's own balanced ")". The same C2
-// URL must become the same indicator whether a Velociraptor script block, a Cyber Triage row, a
-// Windows 4104 record or a decoded PowerShell payload carried it. A per-file test cannot see that
-// disagreement; this one can, so it is the test that catches the next drift.
+// already drifted, cutting a quoted URL's trailing dot and a path's own balanced ")". A sixth, in
+// bashHistoryImport, held a byte-for-byte copy of that same private trim. The same C2 URL must
+// become the same indicator whether a Velociraptor script block, a Cyber Triage row, a Windows 4104
+// record, a decoded PowerShell payload or a shell history line carried it. A per-file test cannot
+// see that disagreement; this one can, so it is the test that catches the next drift.
+//
+// EVERY free-text URL scraper belongs in SCRAPERS below. Adding one without registering it here is
+// how all three of those issues happened.
 import { describe, it, expect } from "vitest";
 import { scrapeText } from "../../src/analysis/veloTextIocs.js";
 import { parseCybertriage } from "../../src/analysis/cybertriageImport.js";
 import { deobfuscateText } from "../../src/analysis/deobfuscate.js";
 import { textIocs, type SiemIoc } from "../../src/analysis/siemImport.js";
+import { parseShellHistoryFile } from "../../src/analysis/bashHistoryImport.js";
 
 function fromSink(collect: (sink: Map<string, SiemIoc>) => void): string[] {
   const sink = new Map<string, SiemIoc>();
@@ -49,11 +54,19 @@ function deobfuscated(text: string): string[] {
   return (r?.rawIocs ?? []).filter((i) => i.type === "url").map((i) => i.value);
 }
 
+// 5. A command line read out of a shell history file.
+function shellHistory(text: string): string[] {
+  return parseShellHistoryFile(`curl -o /tmp/p ${text}`)
+    .iocs.filter((i) => i.type === "url")
+    .map((i) => i.value);
+}
+
 const SCRAPERS: ReadonlyArray<readonly [string, (text: string) => string[]]> = [
   ["velociraptor", velo],
   ["siem", siem],
   ["cyber triage", cyberTriage],
   ["deobfuscate", deobfuscated],
+  ["shell history", shellHistory],
 ];
 
 function agreeOn(text: string, expected: string[]): void {
