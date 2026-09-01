@@ -16,6 +16,9 @@
 // is finer than milliseconds, so forensic precision isn't lost.
 //
 // Empty stays empty. Pure and idempotent (applying it twice is a no-op).
+//
+// A naive stamp is TAGGED (not shifted) by tagNaiveAsUtc in analysis/naiveTimestamp.ts, which the
+// delta schema applies to model output so nothing downstream has to guess a zone (#757).
 const TZ_OFFSET = /[+-]\d{2}:?\d{2}$/; // a trailing numeric timezone offset, e.g. +02:00 / -0500
 const SUBSEC = /\.(\d+)(?=[+-]\d{2}:?\d{2}$)/; // fractional seconds immediately before that offset
 

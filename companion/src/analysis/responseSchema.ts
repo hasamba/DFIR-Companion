@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalEventEnvelopeSchema } from "./canonicalEvent.js";
+import { tagNaiveAsUtc } from "./naiveTimestamp.js";
 
 // Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
 // maps to the fallback instead of rejecting the ENTIRE synthesis response.
@@ -65,7 +66,11 @@ export const deltaSchema = z.object({
     .array(
       z.object({
         id: z.string().min(1),
-        timestamp: z.string(), // event's real time as shown in the artifact
+        // Event's real time as shown in the artifact. A model that returns a NAIVE stamp (no "Z", no
+        // offset) is tagged UTC here, at the one boundary every AI event crosses (#757) — otherwise
+        // each downstream Date.parse reads it in the server's own zone, and the same delta yields a
+        // different year on a non-UTC host. Lexical, so nothing is shifted; see timeUtc.ts.
+        timestamp: z.string().transform(tagNaiveAsUtc),
         description: z.string().min(1),
         severity: severity.default("Info").catch("Info"),
         mitreTechniques: z.array(z.string()).default([]),
@@ -77,7 +82,7 @@ export const deltaSchema = z.object({
         // failed logins"), count is the number of occurrences and endTimestamp the time
         // of the last one. Absent/1 means a single discrete event.
         count: z.number().int().positive().optional(),
-        endTimestamp: z.string().optional(),
+        endTimestamp: z.string().transform(tagNaiveAsUtc).optional(), // tagged UTC like `timestamp` (#757)
         // Set by the DETERMINISTIC importers whose source has no year of its own (RFC 3164 syslog,
         // Cisco ASA, Snort) and by the AI log/CSV imports, which infer one. It marks the year in
         // `timestamp` as a guess, and it is the ONLY thing clampOutlierYears is allowed to re-anchor
