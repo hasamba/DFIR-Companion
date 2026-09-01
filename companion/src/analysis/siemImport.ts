@@ -43,6 +43,7 @@ import {
   isBenignThreadSource,
 } from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
+import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 
 // Re-exported for the sibling importers, which already source their shared helpers
 // (aggregateEvents / addIoc / cleanIp) from this module. `hasPlausibleTld` now lives in
@@ -1455,7 +1456,11 @@ export function genericIocs(pairs: [string, string][], iocSink: Map<string, Siem
 // in the timeline (which renders the description) but never becomes an IOC. Internal RFC1918 IPs are
 // kept (an internal SSH source is investigative); the `.local` mDNS suffix is skipped so every event's
 // AD hostname doesn't flood the IOC list.
-const TEXT_URL_RE = /\bhttps?:\/\/[^\s'"|;>]+/gi;
+// Brackets and parens are ADMITTED and left to trimSentencePunctuation, which can tell the URI's
+// own `)` from the sentence's. No match may CONTAIN `](`, which keeps a markdown-style link from
+// becoming one match (#755) — see veloTextIocs.ts for why the guard sits on the `(`. The pipe and
+// semicolon stay excluded because a SIEM message is often delimited by them.
+const TEXT_URL_RE = /\bhttps?:\/\/(?:[^\s'"|;>(]|(?<!\])\()+/gi;
 const TEXT_IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
 const TEXT_HASH_RE = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 // Windows domain/local ACCOUNT SIDs only (S-1-5-21-<3 domain ids>-<RID>). These name a specific
@@ -1470,7 +1475,12 @@ export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
   // runs on the WHOLE message. An input cap would be the wrong tool: it bounds one call but not the
   // total, since this runs per record and maxEvents only caps the events finally EMITTED — and it
   // would silently drop indicators past the cap, which for a DFIR tool is the failure that matters.
-  for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
+  // The SHARED rule, not a private copy. This scraper kept its own unconditional strip and had
+  // already drifted from the four #752 unified: it cut a quoted URL's trailing dot and a path's
+  // own balanced `)`, so one C2 URL became two indicators depending on whether a Velociraptor row
+  // or a Windows 4104 row carried it (#756).
+  for (const m of text.matchAll(TEXT_URL_RE))
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
   for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase());
   for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());
   for (const m of text.match(TEXT_IPV4_RE) ?? []) {
