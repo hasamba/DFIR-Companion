@@ -257,6 +257,18 @@ CISA Known Exploited Vulnerabilities integration:
 - CVEs in findings/events are checked against CISA KEV
 - KEV-listed CVEs are highlighted and mentioned in synthesis context and report
 
+**Loading the catalog.** "Load from CISA feed" makes the *server* fetch the feed, so the URL must
+be `https` to a public address. A URL that points at a loopback, private or link-local address is
+refused — that is how a feed field turns into a way to read the host's own internal services — and
+every redirect is checked the same way. The connection is then pinned to the address that check
+approved, so a hostname cannot change what it points at between the check and the connection. A
+host that will not resolve is refused rather than tried, so on a DNS outage this reports "could not
+be resolved". "Load from server file" reads a saved copy and needs no outbound access at all; use it
+when the Companion is air-gapped.
+
+- `DFIR_KEV_ALLOW_INTERNAL_URL=true` — allow `http` and internal addresses, for an organisation that
+  mirrors the KEV feed inside its own network. Off by default.
+
 ---
 
 ## Report Templates

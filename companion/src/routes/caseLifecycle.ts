@@ -34,6 +34,7 @@ import {
   reloadEnvPrefix,
   validateEnvUpdates,
   RELOADABLE_ENV_PREFIXES,
+  LIVE_FROM_ENV_PREFIXES,
 } from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
@@ -69,7 +70,7 @@ import type { RouteContext } from "./context.js";
  *
  * Module-private helpers moved verbatim (used only by routes here): removeCaseFromActiveListBestEffort,
  * deleteCaseFolderBestEffort (case archive/delete plumbing). The /settings/reload allowlist now
- * lives in settings/envManager.ts as RELOADABLE_ENV_PREFIXES, beside its writable twin.
+ * lives in settings/envManager.ts as RELOADABLE_ENV_PREFIXES, beside its writable and live twins.
  * logLine/errLine mirror createApp's (serverLogger.info/error) so the moved call sites stay verbatim.
  *
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
@@ -809,7 +810,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       }
       const applied = await reloadEnvPrefix(prefix);
       const rebuilt = ctx.rebuildForPrefix(prefix);
-      return res.json({ ok: true, applied, rebuilt });
+      return res.json({ ok: true, applied, rebuilt, live: LIVE_FROM_ENV_PREFIXES.has(prefix) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

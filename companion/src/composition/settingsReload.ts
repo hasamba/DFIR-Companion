@@ -56,6 +56,10 @@ const ENRICHMENT_PREFIXES = new Set([
 // DFIR_SHODAN_ feeds both sets — the one key backs the IOC provider and the attack-surface check.
 const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_SHODAN_"]);
 
+// Which prefixes need no restart once the env is loaded is LIVE_FROM_ENV_PREFIXES in
+// settings/envManager.ts, beside the reloadable and writable sets it belongs with — routes read it
+// to answer "did this save take effect", and routes may not import from composition/.
+
 export interface SettingsReloadDeps {
   options: AppOptions;
   /** Swap the live enrichment provider set (the engine reads it through an accessor). */

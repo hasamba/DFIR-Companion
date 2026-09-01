@@ -71,6 +71,10 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   "DFIR_DEHASHED_",
   "DFIR_PUSH_TOKEN",
   "DFIR_NSRL_",
+  // Settings → KEV: whether the feed URL may point inside the operator's own network (#760).
+  // Reloadable as well as writable — the route reads it per request, so a save that never reaches
+  // process.env would leave the analyst staring at a setting that is on and does nothing.
+  "DFIR_KEV_",
   "DFIR_TOOL_",
   // The exact key, not the DFIR_TELEGRAM_ family: a Telegram notification channel may borrow this
   // token, and both the channel route and the notifier read it live, so a rotation in .env has to be
@@ -82,6 +86,28 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   // sits in .env until a restart while the reconnect keeps refusing the insecure external host.
   "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
 ]);
+
+/**
+ * The THIRD list, and the one that answers a different question from the two around it.
+ *
+ * Writable is what the dashboard may change. Reloadable is what re-reading .env may pick up. This
+ * is what re-reading is ENOUGH for: prefixes whose consumers read process.env at use time, with
+ * nothing captured at startup, so loading the value IS the change taking effect and no restart is
+ * owed.
+ *
+ * Being reloadable does not imply this (#760). DFIR_AI_ and DFIR_VISION_ reload happily and the
+ * RUNNING analysis pipeline still holds its boot-time config — see composition/settingsReload.ts's
+ * header for the per-prefix reasoning — so a save message built on "applied" alone told the analyst
+ * an AI model change was live when it was not. POST /settings/reload reports this as `live` so the
+ * dashboard can say what actually happened.
+ *
+ * THE DEFAULT IS "NOT LIVE". A prefix earns a place here only when its consumers demonstrably
+ * re-read env on every use. DFIR_TOOL_ is a candidate by the same reasoning (its runner is
+ * stateless) and is deliberately left out: promoting it changes the message for tool settings,
+ * a separate behaviour change from the one #760 asked for, and over-reporting "restart" is the
+ * safe direction to be wrong in.
+ */
+export const LIVE_FROM_ENV_PREFIXES = new Set(["DFIR_KEV_"]);
 
 // Only keys starting with one of these prefixes may be written via POST /settings/env. The
 // dashboard can configure AI, integrations, enrichment, push, NSRL, and tools, but cannot
@@ -110,6 +136,7 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_DEHASHED_",
   "DFIR_PUSH_TOKEN",
   "DFIR_NSRL_",
+  "DFIR_KEV_",
   "DFIR_TOOL_",
   // Bearer tokens for analyst-registered MCP servers (#296), as DFIR_MCP_<ID>_TOKEN. The _TOKEN
   // suffix is already in SECRET_SUFFIXES, so GET /settings/env redacts these for free.

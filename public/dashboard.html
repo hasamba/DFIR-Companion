@@ -2530,6 +2530,11 @@
         </div>
 
         <div class="sfield">
+          <label>Allow an internal mirror URL<span class="sfield-hint">DFIR_KEV_ALLOW_INTERNAL_URL — the feed URL is fetched by the SERVER, so one pointing at a loopback, private or link-local address is refused; that is how a feed field turns into a way to read the host's own internal services. Set <code>true</code> only if your organisation mirrors the KEV feed inside its network (it permits <code>http</code> too). Default false. "Load from server file" above needs no networking freedom at all.</span></label>
+          <input id="env-DFIR_KEV_ALLOW_INTERNAL_URL" placeholder="false" />
+        </div>
+
+        <div class="sfield">
           <label>Actions</label>
           <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="kevClearBtn" type="button" data-safe-style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Clear catalog</button>
