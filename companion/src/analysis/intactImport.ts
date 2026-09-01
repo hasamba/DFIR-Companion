@@ -173,6 +173,9 @@ function readIntact(text: string): IntactInput | null {
       if (Array.isArray(root) && isIntactYaraRow(root.find(isObject))) {
         return { plugins: [], yara: root.filter(isObject), format: "intact-yara" };
       }
+      // A JSON-Lines file holding exactly ONE hit is a complete JSON object, so it never reaches the
+      // line loop below. Missing this case dropped the only detection a one-hit scan found.
+      if (isIntactYaraRow(root)) return { plugins: [], yara: [root as Row], format: "intact-yara" };
       return null;
     } catch {
       /* fall through to JSON Lines */
@@ -200,9 +203,15 @@ function readIntact(text: string): IntactInput | null {
 interface YaraHit {
   offset: number;
   rule: string;
-  components: string[];
-  value: string;
+  /** Every string match of this rule at this address — `Component` is what differs between them. */
+  matches: { component: string; value: string }[];
 }
+
+// How many of a hit's string matches are worth carrying, and how long a matched value may be. Both
+// bound a hostile input: `Value` is attacker-influenced memory content, and a rule with hundreds of
+// strings could otherwise make one row unbounded.
+const MAX_MATCHES = 8;
+const MAX_VALUE = 300;
 
 // Collapse the raw rows on (Offset, Rule). Two rows differing only in `Component` are two STRING
 // matches of one rule at one address — one hit, not two.
@@ -214,14 +223,21 @@ function dedupeYaraRows(rows: readonly Row[]): YaraHit[] {
     const rule = (r.Rule as string).trim();
     const key = `${offset}|${rule.toLowerCase()}`;
     const component = typeof r.Component === "string" ? r.Component.trim() : "";
-    const value = typeof r.Value === "string" ? r.Value.trim() : "";
+    const value = typeof r.Value === "string" ? oneLine(r.Value).slice(0, MAX_VALUE) : "";
+    const match = component || value ? [{ component, value }] : [];
     const existing = byPair.get(key);
     if (existing) {
-      if (component && !existing.components.includes(component)) existing.components.push(component);
-      if (!existing.value && value) existing.value = value;
+      // Keep each string match, not just the first: two rows sharing an address and a rule are two
+      // DIFFERENT strings of that rule, and which one matched is the analyst's whole read on the hit.
+      for (const m of match)
+        if (
+          existing.matches.length < MAX_MATCHES &&
+          !existing.matches.some((x) => x.component === m.component && x.value === m.value)
+        )
+          existing.matches.push(m);
       continue;
     }
-    byPair.set(key, { offset, rule, components: component ? [component] : [], value });
+    byPair.set(key, { offset, rule, matches: match });
   }
   return [...byPair.values()].sort((a, b) => a.offset - b.offset || a.rule.localeCompare(b.rule));
 }
@@ -257,6 +273,13 @@ function ruleFileClusters(hits: readonly YaraHit[]): Set<number> {
   return marked;
 }
 
+// The matched strings, rendered once and used for BOTH the description and `message`, so the two can
+// never disagree about what the rule actually hit.
+function matchDetail(hit: YaraHit): string {
+  const parts = hit.matches.map((m) => [m.component, m.value].filter(Boolean).join(" ")).filter(Boolean);
+  return parts.length ? `[${parts.join(" | ")}]` : "";
+}
+
 // The aggregation key IS the (Offset, Rule) identity, so it is also what the stable event id is
 // minted from — see intactYaraEventId.
 function yaraAggKey(hit: YaraHit): string {
@@ -271,8 +294,20 @@ function yaraAggKey(hit: YaraHit): string {
  * of Component and Value — so an analyst importing both files, which is the obvious thing to do,
  * would otherwise double-count every hit they share. Forensic events dedupe by id at the state
  * merge, and every other importer numbers its events from a per-import prefix, so a stable id is
- * what makes the two imports converge. The richer file wins on description simply by being merged
- * last, exactly as a re-import of any artifact does.
+ * what makes the two imports converge.
+ *
+ * WHAT THIS KEY DOES NOT SCOPE: the memory capture. Two Intact runs imported into one case whose
+ * images share a rule at the same virtual address land on ONE row. That cannot be fixed by adding a
+ * capture identity to the key, because the two files share NOTHING that identifies their capture —
+ * no image name, no host, no run id — and the payload's hit set is a strict SUBSET of the JSON-Lines
+ * set, so no fingerprint over the hits is stable across the pair either. Reconciling the pair and
+ * separating two captures are the same key, pulling opposite ways.
+ *
+ * What is done instead is to make the collision HARMLESS. Both rows describe the same rule at the
+ * same address, so the text is identical; `sources` unions at the merge, and the matched strings ride
+ * in `message`, which the merge only ever SETS. Nothing is deleted. Under ASLR two images sharing a
+ * 64-bit virtual address for one rule is already remote; two snapshots of the SAME host sharing one
+ * is plausible, and folding those into one row is the right reading of them anyway.
  */
 function intactYaraEventId(aggKey: string): string {
   return `iy${createHash("sha256").update(aggKey).digest("hex").slice(0, 16)}`;
@@ -295,21 +330,27 @@ function mapYaraHits(hits: readonly YaraHit[]): MappedEvent[] {
   return hits.map((hit, i) => {
     const severity: Severity = clustered.has(i) ? "Info" : "Low";
     const where = `0x${hit.offset.toString(16)}`;
-    const components = hit.components.length ? ` [${hit.components.slice(0, 8).join(", ")}]` : "";
-    const value = hit.value ? ` — ${oneLine(hit.value).slice(0, 120)}` : "";
+    const detail = matchDetail(hit);
     const note = clustered.has(i)
       ? " (many distinct rules within one small span — a YARA rule set resident in memory, not independent detections)"
       : "";
     return {
       timestamp: "", // a memory scan has no event time — mergeDelta stamps it at import time
-      description: `Intact YARA (memory): ${hit.rule} matched at ${where}${components}${value}${note}`.slice(
-        0,
-        600,
-      ),
+      description:
+        `Intact YARA (memory): ${hit.rule} matched at ${where}${detail ? ` ${detail}` : ""}${note}`.slice(
+          0,
+          600,
+        ),
       severity,
       mitre: [], // a rule NAME is not a technique; the file-based path reads T#### from rule meta, which Intact strips
       aggKey: yaraAggKey(hit),
       sources: [YARA_SOURCE, INTACT_SOURCE],
+      // The DURABLE copy of the matched strings. `description` is overwritten unconditionally at the
+      // state merge, so the stripped copy of a hit inside memory_payload.json would delete the detail
+      // from the row if the analyst imported that file second. `message` is only ever SET by an event
+      // that has one, so the detail survives whichever file lands last. It is also what the event
+      // details panel renders, so nothing here is hidden from the analyst.
+      ...(detail ? { message: detail } : {}),
     };
   });
 }

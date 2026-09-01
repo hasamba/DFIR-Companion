@@ -107,6 +107,13 @@ async function yaraRows(stateStore: StateStore): Promise<string[]> {
     .map((e) => e.description);
 }
 
+// The matched strings as the analyst sees them in the event's details panel.
+async function yaraDetail(stateStore: StateStore, rule: string): Promise<string> {
+  const state = await stateStore.load("c1");
+  const row = state.forensicTimeline.find((e) => e.description.includes(rule));
+  return `${row?.description ?? ""} ${row?.message ?? ""}`;
+}
+
 describe("#776 — importing both Intact files", () => {
   it(
     "keeps one timeline row per (offset, rule) instead of double-counting the shared hits",
@@ -124,6 +131,41 @@ describe("#776 — importing both Intact files", () => {
       expect(afterBoth).toHaveLength(3);
       // The richer file merged last, so a shared hit now carries the matched string it was missing.
       expect(afterBoth.find((d) => d.includes("Cobalt_Strike_Beacon"))).toContain("beacon.dll");
+    },
+    POLL_TIMEOUT_MS * 3,
+  );
+
+  // The reverse order is the one that used to lose evidence: mergeDelta overwrites `description`
+  // unconditionally, so the stripped copy inside memory_payload.json wiped the matched string off a
+  // row the JSON-Lines file had already filled in. The detail rides in `message`, which the merge
+  // only ever sets, so it now survives either order.
+  it(
+    "keeps the matched string when the stripped payload is imported second",
+    async () => {
+      const { app, stateStore, importMetaStore } = await makeApp();
+
+      await settle(importMetaStore, await startImport(app, FILE_YARA));
+      expect(await yaraDetail(stateStore, "Cobalt_Strike_Beacon")).toContain("beacon.dll");
+
+      await settle(importMetaStore, await startImport(app, FILE_PAYLOAD));
+      expect(await yaraRows(stateStore)).toHaveLength(3);
+      expect(await yaraDetail(stateStore, "Cobalt_Strike_Beacon")).toContain("beacon.dll");
+    },
+    POLL_TIMEOUT_MS * 3,
+  );
+
+  // A scan that found ONE thing is a complete JSON object, not JSON Lines. It parsed as an object,
+  // matched no Intact shape, fell through to the ordinary memory importer and produced nothing.
+  it(
+    "imports a scan that found exactly one hit",
+    async () => {
+      const { app, stateStore, importMetaStore } = await makeApp();
+      const single = {
+        filename: "yarascan_results.jsonl",
+        text: JSON.stringify({ ...SHARED[0], Component: "$s1", Value: "b'beacon.dll'" }),
+      };
+      await settle(importMetaStore, await startImport(app, single));
+      expect(await yaraRows(stateStore)).toHaveLength(1);
     },
     POLL_TIMEOUT_MS * 3,
   );

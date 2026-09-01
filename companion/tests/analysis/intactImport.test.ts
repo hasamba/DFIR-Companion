@@ -224,6 +224,23 @@ describe("Intact YARA rows", () => {
     expect(r.iocs).toEqual([]);
   });
 
+  // A file holding exactly ONE hit is a complete JSON object, not JSON Lines — it parsed as an
+  // object, matched neither the payload wrapper nor an array, and fell through to the ordinary
+  // memory importer, which produced nothing. A one-hit scan is exactly the case that matters most.
+  it("reads a file holding exactly one hit", () => {
+    const r = parseIntact(jsonl([yaraRow(0x1000_0000, "Cobalt_Strike_Beacon", "$s1", "b'beacon.dll'")]), {})!;
+    expect(r).not.toBeNull();
+    expect(r.format).toBe("intact-yara");
+    expect(r.yaraHits).toBe(1);
+    expect(r.events[0].description).toContain("Cobalt_Strike_Beacon");
+  });
+
+  it("still routes that one-hit file through the dispatcher, not the plain memory importer", () => {
+    const one = jsonl([yaraRow(0x1000_0000, "Cobalt_Strike_Beacon")]);
+    expect(detectImportKind("yarascan_results.jsonl", one)).toBe("memory");
+    expect(parseMemoryOrIntact(one, {}).events).toHaveLength(1);
+  });
+
   it("collapses two string matches of one rule at one offset into a single hit", () => {
     const rows = [
       yaraRow(0x1000_0000, "WinX_Shell_html", "$s0", "b'WinX Shell'"),
@@ -249,6 +266,34 @@ describe("Intact YARA dedupe across the two files", () => {
     const idsB = fromJsonl.events.map((e) => e.id);
     expect(idsA.length).toBe(2);
     expect(new Set(idsA)).toEqual(new Set(idsB));
+  });
+
+  // mergeDelta overwrites `description` unconditionally but only sets `message` when the incoming
+  // event HAS one. The matched string therefore has to live in `message` as well, or importing the
+  // stripped payload after the full JSON-Lines file would delete the detail from the case.
+  it("carries the matched detail in `message`, which a later sparse import cannot clear", () => {
+    const rich = parseIntact(jsonl(scatteredYara()), {})!;
+    const beacon = rich.events.find((e) => e.description.includes("Cobalt_Strike_Beacon"))!;
+    expect(beacon.message).toContain("$s1");
+    expect(beacon.message).toContain("beacon.dll");
+
+    const sparse = parseIntact(
+      payload({ yara: scatteredYara().map((r) => ({ Offset: r.Offset, Rule: r.Rule })) }),
+      {},
+    )!;
+    const sparseBeacon = sparse.events.find((e) => e.description.includes("Cobalt_Strike_Beacon"))!;
+    expect(sparseBeacon.id).toBe(beacon.id); // same row…
+    expect(sparseBeacon.message).toBeUndefined(); // …and it carries nothing that could overwrite it
+  });
+
+  it("keeps every string match of one hit in `message`, untruncated", () => {
+    const rows = [
+      yaraRow(0x1000_0000, "WinX_Shell_html", "$s0", "b'WinX Shell'"),
+      yaraRow(0x1000_0000, "WinX_Shell_html", "$s1", "b'Created by greenwood from n57'"),
+    ];
+    const r = parseIntact(jsonl(rows), {})!;
+    expect(r.events[0].message).toContain("WinX Shell");
+    expect(r.events[0].message).toContain("Created by greenwood from n57");
   });
 
   it("gives two different (Offset, Rule) pairs two different ids", () => {
