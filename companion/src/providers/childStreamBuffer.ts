@@ -13,11 +13,18 @@
  * consumer that genuinely needs the whole stream opts OUT with `Infinity`, which reads as deliberate
  * at the call site.
  *
- * What survives is the TAIL. Every consumer of these two runners reads the end: `finalText` and
- * `terminalResult` scan for the LAST `result` event and skip lines that fail to parse, and the
- * stderr readers take a 200-300 character snippet for an error message. Dropping the oldest output
- * therefore costs nothing any of them was going to read, while dropping the newest would cost the
- * answer.
+ * The two streams keep OPPOSITE ends, because their consumers read opposite ends.
+ *
+ * stdout keeps the TAIL: `finalText` and `terminalResult` scan for the LAST `result` event and skip
+ * lines that fail to parse, so dropping the oldest output costs nothing they were going to read
+ * while dropping the newest would cost the answer.
+ *
+ * stderr keeps the HEAD: every reader of it slices the FIRST 200-300 characters into an error
+ * message (claudeCode.ts, codex.ts, finalText), and codex.ts goes further and reorders the errors it
+ * found so the real cause "isn't pushed past the truncation by that noise". A tail-drop on stderr
+ * would throw away the only part any of them reads, and work against that deliberate ordering.
+ * classifyKind() scans stderr for auth/rate-limit/transport keywords, which appear in the error
+ * line rather than after 64 KB of it.
  */
 
 /**
@@ -33,10 +40,14 @@ export const DEFAULT_MAX_STDOUT_BYTES = 64 * 1024 * 1024;
 /**
  * Default ceiling for retained stderr, in bytes.
  *
- * Diagnostics, not evidence — every consumer takes a short snippet of it for an error message — so
- * this matches the tail budget integrations/childOutput.ts already applies to the same stream for
- * the same reason. stderr is the one nobody watches, which is exactly why it must be bounded: a
- * child that logs endlessly could exhaust the heap through it alone while stdout stayed quiet.
+ * Diagnostics, not evidence — every consumer takes a 200-300 character snippet of it for an error
+ * message — so this is generous by two orders of magnitude and no error path changes behaviour.
+ * stderr is the stream nobody watches, which is exactly why it must be bounded: a child that logs
+ * endlessly could exhaust the heap through it alone while stdout stayed quiet.
+ *
+ * The SIZE matches integrations/childOutput.ts; the END kept does not, and deliberately. That
+ * module keeps a tail because its readers want the end of a forensic tool's log. These runners'
+ * readers want the beginning of an error message. See the module docblock.
  */
 export const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 
@@ -77,6 +88,41 @@ export class StreamTail {
       this.chunks.shift();
       this.bytes -= this.chunkBytes.shift()!;
     }
+  }
+
+  /** Everything still retained, in arrival order. */
+  text(): string {
+    return this.chunks.join("");
+  }
+}
+
+/**
+ * Accumulates decoded stream chunks under a byte budget, keeping the oldest — the mirror of
+ * StreamTail, for a stream whose readers slice from the front.
+ *
+ * Once the budget is reached nothing further is retained. Whole chunks are kept rather than a
+ * string sliced to the byte, so the cap can never cut a surrogate pair in half; that costs at most
+ * one pipe chunk of overshoot, the same allowance StreamTail makes at the other end.
+ */
+export class StreamHead {
+  private readonly chunks: string[] = [];
+  private bytes = 0;
+  private full = false;
+
+  /** @param maxBytes retained-byte ceiling. `Infinity` keeps everything. */
+  constructor(private readonly maxBytes: number) {}
+
+  /** Bytes currently retained. Exceeds the cap only by the single chunk that reached it. */
+  get byteLength(): number {
+    return this.bytes;
+  }
+
+  /** Add a chunk, unless the budget is already met — later output is dropped, not the earlier. */
+  push(chunk: string): void {
+    if (this.full) return;
+    this.chunks.push(chunk);
+    this.bytes += Buffer.byteLength(chunk, "utf8");
+    if (this.bytes >= this.maxBytes) this.full = true;
   }
 
   /** Everything still retained, in arrival order. */

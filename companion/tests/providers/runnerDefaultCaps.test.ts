@@ -9,8 +9,8 @@ import { describe, it, expect, vi } from "vitest";
 // Substituting small ceilings is the only way to watch the FALLBACK work without pushing 64 MB
 // through a pipe. It also proves each runner reads the shared constants rather than hardcoding a
 // limit of its own — a runner that ignored them would keep the whole stream and fail here.
-vi.mock("../../src/providers/childStreamTail.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/providers/childStreamTail.js")>();
+vi.mock("../../src/providers/childStreamBuffer.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/providers/childStreamBuffer.js")>();
   return { ...actual, DEFAULT_MAX_STDOUT_BYTES: 16_000, DEFAULT_MAX_STDERR_BYTES: 8_000 };
 });
 
@@ -41,15 +41,18 @@ describe("provider runners cap their buffers with no cap passed", () => {
     expect(r.stdout).not.toContain("HEAD-MARKER");
   });
 
-  it("claudeRunner drops the oldest stderr and keeps the tail", async () => {
+  it("claudeRunner keeps the head of stderr, which is the end its readers slice", async () => {
     const r = await defaultClaudeRunner({
       bin: process.execPath,
       args: ["-e", burstScript("stderr")],
       stdin: "",
       timeoutMs: 30_000,
     });
-    expect(r.stderr).toContain("TAIL-MARKER");
-    expect(r.stderr).not.toContain("HEAD-MARKER");
+    // The opposite end from stdout, and deliberately: claudeCode.ts, codex.ts and finalText all
+    // slice the FIRST 200-300 characters of stderr into the error message they raise, and codex.ts
+    // orders its errors so the real cause is not pushed past that truncation.
+    expect(r.stderr).toContain("HEAD-MARKER");
+    expect(r.stderr).not.toContain("TAIL-MARKER");
   });
 
   it("codexRunner drops the oldest stdout and keeps the tail", async () => {
@@ -64,15 +67,18 @@ describe("provider runners cap their buffers with no cap passed", () => {
     expect(r.stdout).not.toContain("HEAD-MARKER");
   });
 
-  it("codexRunner drops the oldest stderr and keeps the tail", async () => {
+  it("codexRunner keeps the head of stderr, which is the end its readers slice", async () => {
     const r = await defaultCodexRunner({
       bin: process.execPath,
       args: ["-e", burstScript("stderr")],
       stdin: "",
       timeoutMs: 30_000,
     });
-    expect(r.stderr).toContain("TAIL-MARKER");
-    expect(r.stderr).not.toContain("HEAD-MARKER");
+    // The opposite end from stdout, and deliberately: claudeCode.ts, codex.ts and finalText all
+    // slice the FIRST 200-300 characters of stderr into the error message they raise, and codex.ts
+    // orders its errors so the real cause is not pushed past that truncation.
+    expect(r.stderr).toContain("HEAD-MARKER");
+    expect(r.stderr).not.toContain("TAIL-MARKER");
   });
 
   // The opt-out has to stay available and has to read as deliberate at the call site: a consumer

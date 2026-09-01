@@ -140,11 +140,13 @@ describe("defaultCodexRunner", () => {
   });
 
   // stderr was the stream nobody was watching: unbounded until the child exited, so a tool that
-  // logs endlessly could exhaust the heap on its own.
-  it("keeps the tail of stderr when maxStderrBytes is set", async () => {
+  // logs endlessly could exhaust the heap on its own. Bounding it must not cost the error message:
+  // codex.ts slices the first 300 characters into what it throws AND classifies the error kind from
+  // that text, so a cap keeping the tail would take away both.
+  it("bounds stderr while keeping the error its reader slices from the front", async () => {
     const script =
-      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");' +
-      'process.stderr.write("LAST-LINE\\n");';
+      'process.stderr.write("Error: 429 rate limit exceeded\\n");' +
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");';
     const r = await defaultCodexRunner({
       bin: process.execPath,
       args: ["-e", script],
@@ -154,6 +156,6 @@ describe("defaultCodexRunner", () => {
     });
 
     expect(Buffer.byteLength(r.stderr, "utf8")).toBeLessThan(200_000);
-    expect(r.stderr).toContain("LAST-LINE");
+    expect(r.stderr.slice(0, 300)).toContain("429 rate limit exceeded");
   });
 });

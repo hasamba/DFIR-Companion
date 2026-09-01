@@ -5,7 +5,12 @@
 // argument instead of using a raw shell string, matching this codebase's no-raw-shell convention
 // (see toolRunner.ts / velociraptorApi.ts) while still working on Windows.
 import spawn from "cross-spawn";
-import { DEFAULT_MAX_STDERR_BYTES, DEFAULT_MAX_STDOUT_BYTES, StreamTail } from "./childStreamTail.js";
+import {
+  DEFAULT_MAX_STDERR_BYTES,
+  DEFAULT_MAX_STDOUT_BYTES,
+  StreamHead,
+  StreamTail,
+} from "./childStreamBuffer.js";
 
 // Result of one Codex CLI invocation. Process-level failures (missing binary, timeout/abort) come
 // back as fields rather than rejections, so the provider maps them to ProviderError uniformly.
@@ -35,9 +40,12 @@ export interface CodexRunOptions {
    */
   maxStdoutBytes?: number;
   /**
-   * Cap on the stderr retained in the result, in bytes, with the same tail-drop semantics. Unset
-   * means DEFAULT_MAX_STDERR_BYTES. The consumer takes a 300-character snippet for an error
-   * message, so the tail is all it reads.
+   * Cap on the stderr retained in the result, in bytes. Unset means DEFAULT_MAX_STDERR_BYTES.
+   *
+   * Output past the cap is dropped, so what survives is the HEAD — the opposite end from stdout.
+   * codex.ts slices the first 300 characters into an error message, and orders the errors it found
+   * so the real cause is not "pushed past the truncation" by MCP startup noise; keeping the tail
+   * would defeat that.
    */
   maxStderrBytes?: number;
 }
@@ -56,7 +64,7 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     // until the heap gives out, and this runner had no cap to pass even if a caller wanted one
     // (#763). `Infinity` is the explicit opt-out.
     const stdout = new StreamTail(opts.maxStdoutBytes ?? DEFAULT_MAX_STDOUT_BYTES);
-    const stderr = new StreamTail(opts.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
+    const stderr = new StreamHead(opts.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
     let settled = false;
     let timedOut = false;
 

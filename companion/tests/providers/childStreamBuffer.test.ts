@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_MAX_STDERR_BYTES,
   DEFAULT_MAX_STDOUT_BYTES,
+  StreamHead,
   StreamTail,
-} from "../../src/providers/childStreamTail.js";
+} from "../../src/providers/childStreamBuffer.js";
 
 describe("StreamTail", () => {
   it("keeps everything while the retained output is under the cap", () => {
@@ -65,5 +66,52 @@ describe("StreamTail", () => {
     expect(Number.isFinite(DEFAULT_MAX_STDERR_BYTES)).toBe(true);
     expect(DEFAULT_MAX_STDOUT_BYTES).toBeGreaterThan(0);
     expect(DEFAULT_MAX_STDERR_BYTES).toBeGreaterThan(0);
+  });
+});
+
+describe("StreamHead", () => {
+  it("keeps everything while the retained output is under the cap", () => {
+    const head = new StreamHead(1000);
+    head.push("alpha");
+    head.push("beta");
+    expect(head.text()).toBe("alphabeta");
+    expect(head.byteLength).toBe(9);
+  });
+
+  // The mirror of StreamTail, and the reason both exist: every reader of these runners' stderr
+  // slices the FIRST 200-300 characters into an error message, so the newest output is the part
+  // that can be dropped.
+  it("drops later output and keeps the head once the cap is reached", () => {
+    const head = new StreamHead(8);
+    head.push("aaaaa");
+    head.push("bbbbb");
+    head.push("ccccc");
+    expect(head.text()).toBe("aaaaabbbbb");
+    expect(head.byteLength).toBe(10);
+  });
+
+  it("keeps the first chunk whole, however large it is", () => {
+    const head = new StreamHead(4);
+    head.push("x".repeat(50));
+    head.push("dropped");
+    // Whole chunks, never a byte-exact slice: a cap that cut mid-string could split a surrogate
+    // pair, and the overshoot is at most one pipe chunk.
+    expect(head.text()).toBe("x".repeat(50));
+  });
+
+  it("measures the cap in UTF-8 bytes, not UTF-16 code units", () => {
+    const head = new StreamHead(10);
+    head.push("€€€"); // 3 code units, 9 bytes — still under the cap
+    expect(head.byteLength).toBe(9);
+    head.push("zz");
+    expect(head.text()).toBe("€€€zz");
+    head.push("dropped");
+    expect(head.text()).toBe("€€€zz");
+  });
+
+  it("keeps the whole stream when the cap is Infinity", () => {
+    const head = new StreamHead(Infinity);
+    for (let i = 0; i < 100; i++) head.push("x".repeat(1000));
+    expect(head.byteLength).toBe(100_000);
   });
 });
