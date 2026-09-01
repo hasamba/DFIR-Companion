@@ -66,6 +66,55 @@ describe("NsrlDb", () => {
       NsrlDb.open(join(tmpdir(), "does-not-exist-" + process.pid + ".db")),
     ).rejects.toThrow();
   });
+
+  // #761 — the table name comes from the analyst-selected file's sqlite_master, so a hostile "NSRL
+  // export" can name a table with an embedded double quote and break out of the quoted identifier.
+  // The payload below turns the lookup into `... FROM "M" WHERE 1=1 UNION SELECT 1 AS x FROM "M"
+  // WHERE "sha256" = ? LIMIT 1`, which returns a row for EVERY hash — silently auto-marking every
+  // hashed event and IOC in the case as a false positive. Escaping the identifier keeps the name a
+  // name, so the lookup finds nothing.
+  it("does not let a hostile table name inject SQL into the hash lookup", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-nsrldb-inject-"));
+    const file = join(dir, "hostile.db");
+    const hostile = 'M" WHERE 1=1 UNION SELECT 1 AS x FROM "M';
+    const db = new DatabaseSync(file);
+    // Created first so detectHashTable reaches it before the decoy (both rank equally).
+    db.exec(`CREATE TABLE "${hostile.replace(/"/g, '""')}"(sha256 TEXT, md5 TEXT)`);
+    db.exec("CREATE TABLE M(sha256 TEXT, md5 TEXT)");
+    db.prepare("INSERT INTO M(sha256, md5) VALUES(?, ?)").run(SHA256.toUpperCase(), MD5.toUpperCase());
+    db.close();
+
+    const nsrl = NsrlDb.open(file);
+    try {
+      expect(nsrl.table).toBe(hostile); // the poisoned table IS the one selected
+      expect(nsrl.has("f".repeat(64))).toBe(false); // no injected UNION → unknown stays unknown
+      expect(nsrl.has("a".repeat(32))).toBe(false);
+      expect(nsrl.has(SHA256)).toBe(false); // the hostile table itself holds no rows
+    } finally {
+      nsrl.close();
+    }
+  });
+
+  // A quote in a hash COLUMN name can't reach the query today (hashColumnsOf only returns case
+  // variants of sha256/md5), but the same escaping must hold if that filter ever loosens.
+  it("keeps working when the hash columns use the RDS's own casing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-nsrldb-case-"));
+    const file = join(dir, "cased.db");
+    const db = new DatabaseSync(file);
+    db.exec('CREATE TABLE METADATA("SHA256" TEXT, "MD5" TEXT)');
+    db.prepare("INSERT INTO METADATA VALUES(?, ?)").run(SHA256.toUpperCase(), MD5.toUpperCase());
+    db.close();
+
+    const nsrl = NsrlDb.open(file);
+    try {
+      expect(nsrl.columns.sort()).toEqual(["md5", "sha256"]);
+      expect(nsrl.has(SHA256)).toBe(true);
+      expect(nsrl.has(MD5)).toBe(true);
+      expect(nsrl.has("f".repeat(64))).toBe(false);
+    } finally {
+      nsrl.close();
+    }
+  });
 });
 
 describe("NSRL DB path persistence", () => {

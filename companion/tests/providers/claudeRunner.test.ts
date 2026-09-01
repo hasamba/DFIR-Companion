@@ -81,7 +81,7 @@ describe("defaultClaudeRunner", () => {
     expect(r.stdout).not.toContain("�"); // the tail is still whole characters
   });
 
-  it("keeps everything when no cap is set", async () => {
+  it("keeps everything when the stream is far under the default cap", async () => {
     const r = await defaultClaudeRunner({
       bin: process.execPath,
       args: ["-e", 'process.stdout.write("y".repeat(100000))'],
@@ -89,6 +89,33 @@ describe("defaultClaudeRunner", () => {
       timeoutMs: 30_000,
     });
     expect(r.stdout.length).toBe(100_000);
+  });
+
+  // stderr was the stream nobody was watching: unbounded until the child exited, so a runaway agent
+  // could exhaust the heap through it alone (#762). Bounding it must cost neither reader: the front
+  // is what claudeCode.ts and finalText slice into the error they throw, and the back is where an
+  // error printed after a flood of progress output ends up.
+  it("bounds stderr while keeping the error at the front AND the one at the back", async () => {
+    const script =
+      'process.stderr.write("Error: not logged in\\n");' +
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");' +
+      'process.stderr.write("429 rate limit exceeded\\n");';
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", script],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStderrHeadBytes: 16_000,
+      maxStderrTailBytes: 8_000,
+    });
+
+    expect(Buffer.byteLength(r.stderr, "utf8")).toBeLessThan(200_000);
+    // The front, which the reader slices into its message.
+    expect(r.stderr.slice(0, 200)).toContain("Error: not logged in");
+    // The back, which decides the error KIND — and so whether the call is retried into the same
+    // wall. A head-only cap dropped this line and downgraded the kind to a retryable one.
+    expect(r.stderr).toContain("429 rate limit exceeded");
+    expect(r.stderr).toContain("stderr truncated");
   });
 
   it("reports a non-zero exit code", async () => {

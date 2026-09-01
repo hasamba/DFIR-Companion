@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DFIR Companion code map</title>
 <style>body{font:14px system-ui;margin:24px;background:#10151d;color:#e7edf5}input{width:100%;padding:10px;box-sizing:border-box;background:#18212d;color:inherit;border:1px solid #44536a;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{padding:8px;border-bottom:1px solid #2b3544;text-align:left;vertical-align:top}code{color:#a8d8ff}.muted{color:#99a6b7}</style></head>
-<body><h1>DFIR Companion code map</h1><p class="muted">803 modules · 477 routes. Search a path, route, dependency, or test.</p><input id="q" type="search" placeholder="Search code map…"><table><thead><tr><th>Module</th><th>Calls / imports</th><th>Affects / imported by</th><th>Tests</th></tr></thead><tbody id="rows"></tbody></table>
+<body><h1>DFIR Companion code map</h1><p class="muted">847 modules · 487 routes. Search a path, route, dependency, or test.</p><input id="q" type="search" placeholder="Search code map…"><table><thead><tr><th>Module</th><th>Calls / imports</th><th>Affects / imported by</th><th>Tests</th></tr></thead><tbody id="rows"></tbody></table>
 <script type="application/json" id="data">{
   "schemaVersion": 1,
   "roots": [
@@ -11,9 +11,25 @@
     "extension/src",
     "public/dashboard.html"
   ],
-  "moduleCount": 804,
-  "routeCount": 477,
+  "moduleCount": 847,
+  "routeCount": 487,
   "modules": [
+    {
+      "path": "companion/src/analysis/accountUsageImport.ts",
+      "kind": "module",
+      "lines": 159,
+      "imports": [
+        "companion/src/analysis/loginGraph.ts",
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/velociraptorTitle.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
     {
       "path": "companion/src/analysis/activityLog.ts",
       "kind": "module",
@@ -55,6 +71,7 @@
         "companion/tests/analysis/activityLog.test.ts",
         "companion/tests/helpers/activityLog.ts",
         "companion/tests/http/teamAuth.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/server/activityLogReadAfterWrite.test.ts",
         "companion/tests/server/clockSkewRoute.test.ts",
         "companion/tests/server/cockpitRoutes.test.ts",
@@ -64,6 +81,27 @@
         "companion/tests/server/presidioRoutes.test.ts",
         "companion/tests/server/slashCommandRoutes.test.ts",
         "companion/tests/server/starActivityLog.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/activityWaves.ts",
+      "kind": "module",
+      "lines": 304,
+      "imports": [
+        "companion/src/analysis/forensicSort.ts",
+        "companion/src/analysis/gapDetect.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/nextSteps.ts",
+        "companion/src/analysis/ai/synthesisMerge.ts",
+        "companion/src/analysis/knownUnknowns.ts",
+        "companion/src/reports/markdown.ts",
+        "companion/src/reports/reportWriter.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/activityWaves.test.ts"
       ]
     },
     {
@@ -139,6 +177,21 @@
       "importedBy": [
         "companion/src/analysis/adversaryEmulation.ts",
         "companion/src/analysis/adversaryHints.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
+      "path": "companion/src/analysis/aggKey.ts",
+      "kind": "module",
+      "lines": 29,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/binaryRenameImport.ts",
+        "companion/src/analysis/hijackLibImport.ts",
+        "companion/src/analysis/veloAggKeys.ts",
+        "companion/src/analysis/yaraGrade.ts",
+        "companion/src/analysis/yaraImport.ts"
       ],
       "routes": [],
       "tests": []
@@ -260,7 +313,7 @@
     {
       "path": "companion/src/analysis/ai/extraction.ts",
       "kind": "module",
-      "lines": 383,
+      "lines": 414,
       "imports": [
         "companion/src/analysis/ai/aiContext.ts",
         "companion/src/analysis/ai/prompts/index.ts",
@@ -324,8 +377,9 @@
     {
       "path": "companion/src/analysis/ai/nextSteps.ts",
       "kind": "module",
-      "lines": 184,
+      "lines": 185,
       "imports": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/ai/aiContext.ts",
         "companion/src/analysis/ai/prompts/index.ts",
         "companion/src/analysis/gapDetect.ts",
@@ -591,7 +645,7 @@
     {
       "path": "companion/src/analysis/ai/synthesis.ts",
       "kind": "module",
-      "lines": 728,
+      "lines": 785,
       "imports": [
         "companion/src/analysis/ai/aiContext.ts",
         "companion/src/analysis/ai/hunts.ts",
@@ -617,6 +671,7 @@
         "companion/src/analysis/hypothesis.ts",
         "companion/src/analysis/iocAnchors.ts",
         "companion/src/analysis/playbook.ts",
+        "companion/src/analysis/refutationGate.ts",
         "companion/src/analysis/responseSchema.ts",
         "companion/src/analysis/scope.ts",
         "companion/src/analysis/secondLook.ts",
@@ -673,8 +728,9 @@
     {
       "path": "companion/src/analysis/ai/synthesisMerge.ts",
       "kind": "module",
-      "lines": 387,
+      "lines": 516,
       "imports": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/answerContradiction.ts",
         "companion/src/analysis/assetGraph.ts",
         "companion/src/analysis/evidenceGraph.ts",
@@ -836,7 +892,8 @@
       "tests": [
         "companion/tests/analysis/aiControl.test.ts",
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
-        "companion/tests/composition/resynthesisCoalescing.test.ts"
+        "companion/tests/composition/resynthesisCoalescing.test.ts",
+        "companion/tests/composition/supersededSynthesisIsNotAnError.test.ts"
       ]
     },
     {
@@ -878,6 +935,19 @@
       "tests": [
         "companion/tests/analysis/aiState.test.ts"
       ]
+    },
+    {
+      "path": "companion/src/analysis/amcacheMasquerade.ts",
+      "kind": "module",
+      "lines": 60,
+      "imports": [
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
     },
     {
       "path": "companion/src/analysis/analysisRunCompare.ts",
@@ -924,7 +994,7 @@
     {
       "path": "companion/src/analysis/analysisRunRecorders.ts",
       "kind": "module",
-      "lines": 271,
+      "lines": 274,
       "imports": [
         "companion/src/analysis/analysisRunHash.ts",
         "companion/src/analysis/analysisRunSnapshot.ts",
@@ -1064,10 +1134,11 @@
     {
       "path": "companion/src/analysis/anonDiscovered.ts",
       "kind": "module",
-      "lines": 114,
+      "lines": 141,
       "imports": [
         "companion/src/analysis/anonEntities.ts",
         "companion/src/analysis/anonymize.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -1189,7 +1260,7 @@
     {
       "path": "companion/src/analysis/artifactBundleStore.ts",
       "kind": "module",
-      "lines": 422,
+      "lines": 463,
       "imports": [
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/safeStoreId.ts"
@@ -1202,6 +1273,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/artifactBundleStore.test.ts",
+        "companion/tests/integrations/velociraptor.test.ts",
         "companion/tests/server/dwellWindows.test.ts",
         "companion/tests/server/storeIdTraversalRoutes.test.ts",
         "companion/tests/server/superTimeline.test.ts",
@@ -1254,9 +1326,10 @@
     {
       "path": "companion/src/analysis/assetOverrides.ts",
       "kind": "module",
-      "lines": 296,
+      "lines": 328,
       "imports": [
         "companion/src/analysis/assetGraph.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
@@ -1282,6 +1355,7 @@
         "companion/tests/analysis/hostDuplicateGateSynthesis.test.ts",
         "companion/tests/analysis/hostDuplicateImportNotify.test.ts",
         "companion/tests/analysis/huntHostMerge.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/synthesisPromptHostMerge.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/server/aiStateRoute.test.ts",
@@ -1420,6 +1494,23 @@
       ]
     },
     {
+      "path": "companion/src/analysis/binaryRenameImport.ts",
+      "kind": "module",
+      "lines": 253,
+      "imports": [
+        "companion/src/analysis/aggKey.ts",
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stagingPaths.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/velociraptorTitle.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/analysis/bsdTime.ts",
       "kind": "module",
       "lines": 33,
@@ -1487,8 +1578,10 @@
     {
       "path": "companion/src/analysis/caseArchive.ts",
       "kind": "module",
-      "lines": 270,
-      "imports": [],
+      "lines": 306,
+      "imports": [
+        "companion/src/storage/portableFilename.ts"
+      ],
       "importedBy": [
         "companion/src/routes/caseLifecycle.ts"
       ],
@@ -1500,7 +1593,7 @@
     {
       "path": "companion/src/analysis/caseEncryption.ts",
       "kind": "module",
-      "lines": 93,
+      "lines": 112,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/caseExportArchive.ts",
@@ -1514,9 +1607,22 @@
       ]
     },
     {
+      "path": "companion/src/analysis/caseExistsGate.ts",
+      "kind": "module",
+      "lines": 52,
+      "imports": [
+        "companion/src/storage/caseStore.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/routeRegistry.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/analysis/caseExportArchive.ts",
       "kind": "module",
-      "lines": 640,
+      "lines": 657,
       "imports": [
         "companion/src/analysis/caseEncryption.ts",
         "companion/src/analysis/caseSqliteWorker.ts",
@@ -1525,6 +1631,7 @@
         "companion/src/analysis/zipArchive.ts",
         "companion/src/storage/caseStore.ts",
         "companion/src/storage/noFollowRead.ts",
+        "companion/src/storage/portableFilename.ts",
         "companion/src/types.ts",
         "companion/src/version.ts"
       ],
@@ -1573,7 +1680,7 @@
     {
       "path": "companion/src/analysis/casePassword.ts",
       "kind": "module",
-      "lines": 145,
+      "lines": 169,
       "imports": [
         "companion/src/types.ts"
       ],
@@ -1670,10 +1777,11 @@
     {
       "path": "companion/src/analysis/chainsawImport.ts",
       "kind": "module",
-      "lines": 374,
+      "lines": 396,
       "imports": [
         "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/stateTypes.ts"
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/veloDetectionNoise.ts"
       ],
       "importedBy": [
         "companion/src/analysis/ingest/endpointImports.ts",
@@ -1682,7 +1790,9 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/chainsawImport.test.ts"
+        "companion/tests/analysis/chainsawImport.test.ts",
+        "companion/tests/analysis/crossParserRecordDedup.test.ts",
+        "companion/tests/analysis/scriptBlockIocMatrix.test.ts"
       ]
     },
     {
@@ -1706,7 +1816,7 @@
     {
       "path": "companion/src/analysis/clockSkew.ts",
       "kind": "module",
-      "lines": 321,
+      "lines": 479,
       "imports": [
         "companion/src/analysis/correlate.ts",
         "companion/src/analysis/stateTypes.ts"
@@ -1727,7 +1837,7 @@
     {
       "path": "companion/src/analysis/clockSkewStore.ts",
       "kind": "module",
-      "lines": 166,
+      "lines": 220,
       "imports": [
         "companion/src/analysis/clockSkew.ts",
         "companion/src/storage/atomicWrite.ts",
@@ -1895,9 +2005,10 @@
     {
       "path": "companion/src/analysis/collectionPlanStore.ts",
       "kind": "module",
-      "lines": 70,
+      "lines": 80,
       "imports": [
         "companion/src/analysis/collectionPlan.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -1908,6 +2019,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/collectionPlanStore.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server/collectionPlanRoutes.test.ts"
       ]
     },
@@ -1947,6 +2059,7 @@
         "companion/tests/analysis/collabStoreConcurrency.test.ts",
         "companion/tests/analysis/comments.test.ts",
         "companion/tests/http/teamAuth.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/server.test.ts",
         "companion/tests/server/activityLogReadAfterWrite.test.ts",
         "companion/tests/server/captureFormats.test.ts",
@@ -2046,7 +2159,7 @@
     {
       "path": "companion/src/analysis/correlate.ts",
       "kind": "module",
-      "lines": 459,
+      "lines": 525,
       "imports": [
         "companion/src/analysis/chainSignature.ts",
         "companion/src/analysis/sourceTrust.ts",
@@ -2064,6 +2177,7 @@
         "companion/tests/analysis/clockSkew.test.ts",
         "companion/tests/analysis/correlate.test.ts",
         "companion/tests/analysis/crossHostLateral.test.ts",
+        "companion/tests/analysis/crossParserRecordDedup.test.ts",
         "companion/tests/analysis/eventRelevance.test.ts",
         "companion/tests/analysis/loadTest.test.ts",
         "companion/tests/analysis/sourceTrustIntegration.test.ts",
@@ -2084,7 +2198,8 @@
         "companion/src/analysis/ai/synthesis.ts",
         "companion/src/composition/aiProviders.ts",
         "companion/src/composition/appOptions.ts",
-        "companion/src/composition/runtimeStores.ts"
+        "companion/src/composition/runtimeStores.ts",
+        "companion/src/routes/findings.ts"
       ],
       "routes": [],
       "tests": [
@@ -2102,6 +2217,22 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/countryCentroids.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/crossCaseIndex.ts",
+      "kind": "module",
+      "lines": 473,
+      "imports": [
+        "companion/src/analysis/iocValue.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/crossCase.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/crossCaseIndex.test.ts"
       ]
     },
     {
@@ -2162,6 +2293,7 @@
         "companion/tests/analysis/custodyIntegrityScope.test.ts",
         "companion/tests/analysis/custodyManifest.test.ts",
         "companion/tests/analysis/custodyTransfer.test.ts",
+        "companion/tests/auth/expiredSessionSweep.test.ts",
         "companion/tests/e2e/workflows/custody.spec.ts",
         "companion/tests/http/teamAuth.test.ts",
         "companion/tests/reports/chainOfCustodySection.test.ts",
@@ -2172,7 +2304,8 @@
         "companion/tests/server/custodyManifestRoutes.test.ts",
         "companion/tests/server/custodyRoutes.test.ts",
         "companion/tests/server/mcpRunRoutes.test.ts",
-        "companion/tests/server/reportVersionsRoutes.test.ts"
+        "companion/tests/server/reportVersionsRoutes.test.ts",
+        "companion/tests/server/toolRunProvenance.test.ts"
       ]
     },
     {
@@ -2271,11 +2404,12 @@
     {
       "path": "companion/src/analysis/cybertriageImport.ts",
       "kind": "module",
-      "lines": 387,
+      "lines": 392,
       "imports": [
         "companion/src/analysis/csvImport.ts",
         "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/stateTypes.ts"
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/ingest/textUriTrim.ts"
       ],
       "importedBy": [
         "companion/src/analysis/ingest/endpointImports.ts",
@@ -2345,7 +2479,7 @@
     {
       "path": "companion/src/analysis/dashboardViews.ts",
       "kind": "module",
-      "lines": 416,
+      "lines": 428,
       "imports": [
         "companion/src/reports/reportTemplate.ts"
       ],
@@ -2424,9 +2558,10 @@
     {
       "path": "companion/src/analysis/deobfuscate.ts",
       "kind": "module",
-      "lines": 141,
+      "lines": 145,
       "imports": [
-        "companion/src/analysis/stateTypes.ts"
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/ingest/textUriTrim.ts"
       ],
       "importedBy": [
         "companion/src/analysis/applyDeobfuscation.ts"
@@ -2549,9 +2684,10 @@
     {
       "path": "companion/src/analysis/dwellWindowStore.ts",
       "kind": "module",
-      "lines": 71,
+      "lines": 84,
       "imports": [
         "companion/src/analysis/dwellWindow.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -2562,6 +2698,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/dwellWindowStore.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server/dwellWindows.test.ts"
       ]
     },
@@ -2607,6 +2744,20 @@
       ]
     },
     {
+      "path": "companion/src/analysis/eventAggregate.ts",
+      "kind": "module",
+      "lines": 174,
+      "imports": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/analysis/eventRelevance.ts",
       "kind": "module",
       "lines": 77,
@@ -2648,6 +2799,20 @@
       ]
     },
     {
+      "path": "companion/src/analysis/evtxRecordId.ts",
+      "kind": "module",
+      "lines": 37,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/hayabusaImport.ts",
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/crossParserRecordDedup.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/evtxXmlImport.ts",
       "kind": "module",
       "lines": 228,
@@ -2661,13 +2826,14 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/evtxXmlImport.test.ts"
+        "companion/tests/analysis/evtxXmlImport.test.ts",
+        "companion/tests/analysis/scriptBlockIocMatrix.test.ts"
       ]
     },
     {
       "path": "companion/src/analysis/exfilCorrelate.ts",
       "kind": "module",
-      "lines": 62,
+      "lines": 78,
       "imports": [
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -2801,8 +2967,9 @@
     {
       "path": "companion/src/analysis/findingWorkflow.ts",
       "kind": "module",
-      "lines": 114,
+      "lines": 129,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -2815,6 +2982,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/findingWorkflow.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server/cockpitRoutes.test.ts",
         "companion/tests/server/findingWorkflow.test.ts"
       ]
@@ -2842,6 +3010,19 @@
       ]
     },
     {
+      "path": "companion/src/analysis/flatWindowsEvent.ts",
+      "kind": "module",
+      "lines": 44,
+      "imports": [
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/analysis/forensicGate.ts",
       "kind": "module",
       "lines": 38,
@@ -2860,6 +3041,7 @@
         "companion/tests/analysis/explainEvent.test.ts",
         "companion/tests/analysis/forensicBoundary.test.ts",
         "companion/tests/analysis/forensicGate.test.ts",
+        "companion/tests/analysis/taggerPromotionBoundary.test.ts",
         "companion/tests/server/forensicGate.test.ts"
       ]
     },
@@ -2891,6 +3073,7 @@
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/ai/synthesisPersist.ts",
         "companion/src/analysis/ai/viewReports.ts",
         "companion/src/analysis/burstDetect.ts",
@@ -2952,12 +3135,13 @@
     {
       "path": "companion/src/analysis/gapDetect.ts",
       "kind": "module",
-      "lines": 460,
+      "lines": 482,
       "imports": [
         "companion/src/analysis/forensicSort.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/ai/nextSteps.ts",
         "companion/src/analysis/ai/promptBlocks.ts",
         "companion/src/analysis/ai/synthesisMerge.ts",
@@ -2969,6 +3153,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/activityWaves.test.ts",
         "companion/tests/analysis/gapDetect.test.ts",
         "companion/tests/analysis/gapHypothesis.test.ts",
         "companion/tests/analysis/shadowArtifacts.test.ts"
@@ -3052,12 +3237,14 @@
     {
       "path": "companion/src/analysis/hayabusaImport.ts",
       "kind": "module",
-      "lines": 327,
+      "lines": 356,
       "imports": [
         "companion/src/analysis/csvImport.ts",
+        "companion/src/analysis/evtxRecordId.ts",
         "companion/src/analysis/scriptBlockFragments.ts",
         "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/stateTypes.ts"
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/veloDetectionNoise.ts"
       ],
       "importedBy": [
         "companion/src/analysis/ingest/endpointImports.ts",
@@ -3065,13 +3252,15 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/hayabusaImport.test.ts"
+        "companion/tests/analysis/crossParserRecordDedup.test.ts",
+        "companion/tests/analysis/hayabusaImport.test.ts",
+        "companion/tests/analysis/scriptBlockIocMatrix.test.ts"
       ]
     },
     {
       "path": "companion/src/analysis/highSeverityFindings.ts",
       "kind": "module",
-      "lines": 105,
+      "lines": 209,
       "imports": [
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -3081,6 +3270,26 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/highSeverityFindings.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/hijackLibImport.ts",
+      "kind": "module",
+      "lines": 88,
+      "imports": [
+        "companion/src/analysis/aggKey.ts",
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/veloDetectionNoise.ts",
+        "companion/src/analysis/veloRowTime.ts",
+        "companion/src/analysis/velociraptorTitle.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/evalFixes.test.ts"
       ]
     },
     {
@@ -3150,9 +3359,10 @@
     {
       "path": "companion/src/analysis/hostDuplicateDismissals.ts",
       "kind": "module",
-      "lines": 66,
+      "lines": 76,
       "imports": [
         "companion/src/analysis/hostAlias.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -3170,6 +3380,7 @@
         "companion/tests/analysis/hostDuplicateDismissals.test.ts",
         "companion/tests/analysis/hostDuplicateGateSynthesis.test.ts",
         "companion/tests/analysis/hostDuplicateImportNotify.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/synthesisPromptHostMerge.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/server/aiStateRoute.test.ts",
@@ -3584,6 +3795,7 @@
         "companion/src/analysis/hypothesisStore.ts",
         "companion/src/analysis/pipeline.ts",
         "companion/src/analysis/priorWork.ts",
+        "companion/src/analysis/refutationGate.ts",
         "companion/src/analysis/secondLook.ts",
         "companion/src/reports/html.ts",
         "companion/src/reports/markdown.ts",
@@ -3600,6 +3812,7 @@
         "companion/tests/analysis/hypothesisStore.test.ts",
         "companion/tests/analysis/priorWork.test.ts",
         "companion/tests/analysis/reconsiderHypotheses.test.ts",
+        "companion/tests/analysis/refutationGate.test.ts",
         "companion/tests/analysis/secondLook.test.ts",
         "companion/tests/eval/scorer.ts",
         "companion/tests/reports/markdownStructureInjection.test.ts",
@@ -3672,7 +3885,7 @@
     {
       "path": "companion/src/analysis/importDetect.ts",
       "kind": "module",
-      "lines": 800,
+      "lines": 794,
       "imports": [
         "companion/src/analysis/bashHistoryImport.ts",
         "companion/src/analysis/ciscoAsaImport.ts",
@@ -3682,6 +3895,7 @@
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/evtxXmlImport.ts",
         "companion/src/analysis/importDetectSources.ts",
+        "companion/src/analysis/importerSpec.ts",
         "companion/src/analysis/journaldImport.ts",
         "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/siemImport.ts",
@@ -3695,7 +3909,9 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/evalFixes.test.ts",
         "companion/tests/analysis/importDetect.test.ts",
+        "companion/tests/analysis/importerSpec.test.ts",
         "companion/tests/analysis/k8sAuditImport.test.ts",
         "companion/tests/analysis/osqueryImport.test.ts",
         "companion/tests/analysis/yaraImport.test.ts"
@@ -3821,13 +4037,14 @@
     {
       "path": "companion/src/analysis/importerSpec.ts",
       "kind": "module",
-      "lines": 215,
+      "lines": 230,
       "imports": [
         "companion/src/analysis/regexSafety.ts"
       ],
       "importedBy": [
         "companion/src/analysis/ai/prompts/extraction.ts",
         "companion/src/analysis/declarativeImporter.ts",
+        "companion/src/analysis/importDetect.ts",
         "companion/src/analysis/importerStore.ts",
         "companion/src/routes/caseLifecycle.ts"
       ],
@@ -3962,7 +4179,7 @@
     {
       "path": "companion/src/analysis/ingest/endpointImports.ts",
       "kind": "module",
-      "lines": 438,
+      "lines": 451,
       "imports": [
         "companion/src/analysis/chainsawImport.ts",
         "companion/src/analysis/cybertriageImport.ts",
@@ -4049,7 +4266,7 @@
     {
       "path": "companion/src/analysis/ingest/logImports.ts",
       "kind": "module",
-      "lines": 436,
+      "lines": 445,
       "imports": [
         "companion/src/analysis/auditdImport.ts",
         "companion/src/analysis/bashHistoryImport.ts",
@@ -4075,7 +4292,7 @@
     {
       "path": "companion/src/analysis/ingest/networkImports.ts",
       "kind": "module",
-      "lines": 213,
+      "lines": 216,
       "imports": [
         "companion/src/analysis/ingest/importContext.ts",
         "companion/src/analysis/ingest/importState.ts",
@@ -4200,8 +4417,9 @@
     {
       "path": "companion/src/analysis/iocAlias.ts",
       "kind": "module",
-      "lines": 65,
+      "lines": 78,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -4212,7 +4430,9 @@
         "companion/src/composition/runtimeStores.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts"
+      ]
     },
     {
       "path": "companion/src/analysis/iocAnchors.ts",
@@ -4332,7 +4552,7 @@
     {
       "path": "companion/src/analysis/iocProvenanceChain.ts",
       "kind": "module",
-      "lines": 181,
+      "lines": 212,
       "imports": [
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -4363,7 +4583,7 @@
     {
       "path": "companion/src/analysis/iocRiskScore.ts",
       "kind": "module",
-      "lines": 201,
+      "lines": 247,
       "imports": [
         "companion/src/analysis/assetGraph.ts",
         "companion/src/analysis/forensicGate.ts",
@@ -4389,10 +4609,11 @@
     {
       "path": "companion/src/analysis/iocValue.ts",
       "kind": "module",
-      "lines": 267,
+      "lines": 323,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/anonymize.ts",
+        "companion/src/analysis/crossCaseIndex.ts",
         "companion/src/analysis/iocRepair.ts",
         "companion/src/analysis/manualEntry.ts",
         "companion/src/analysis/stateMerge.ts",
@@ -4428,9 +4649,10 @@
     {
       "path": "companion/src/analysis/iocWhitelistStore.ts",
       "kind": "module",
-      "lines": 84,
+      "lines": 98,
       "imports": [
         "companion/src/analysis/iocWhitelist.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
       "importedBy": [
@@ -4439,6 +4661,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server.test.ts",
         "companion/tests/server/iocRisk.test.ts",
         "companion/tests/server/iocWhitelistRoutes.test.ts"
@@ -4520,7 +4743,7 @@
     {
       "path": "companion/src/analysis/jobManager.ts",
       "kind": "module",
-      "lines": 736,
+      "lines": 751,
       "imports": [
         "companion/src/analysis/analysisRunHash.ts",
         "companion/src/analysis/analysisRunTypes.ts",
@@ -4531,6 +4754,7 @@
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/dropFolder.ts",
         "companion/src/composition/enrichment.ts",
+        "companion/src/composition/jobModel.ts",
         "companion/src/composition/runtimeStores.ts",
         "companion/src/composition/veloHunts.ts",
         "companion/src/routes/importJobTracking.ts"
@@ -4539,10 +4763,13 @@
       "tests": [
         "companion/tests/analysis/jobDurability.test.ts",
         "companion/tests/analysis/jobManager.test.ts",
+        "companion/tests/analysis/jobModel.test.ts",
+        "companion/tests/composition/enrichmentBatching.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
         "companion/tests/composition/resynthesisCoalescing.test.ts",
+        "companion/tests/composition/supersededSynthesisIsNotAnError.test.ts",
         "companion/tests/helpers/jobRegistrations.ts",
         "companion/tests/http/teamAuth.test.ts",
         "companion/tests/server.test.ts",
@@ -4552,6 +4779,7 @@
         "companion/tests/server/importQueuedDiffAttribution.test.ts",
         "companion/tests/server/importWriterExclusion.test.ts",
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
+        "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/jobs.test.ts",
         "companion/tests/server/mcpRunRoutes.test.ts",
         "companion/tests/server/synthesizeGateRoute.test.ts",
@@ -4561,7 +4789,7 @@
     {
       "path": "companion/src/analysis/jobRegistry.ts",
       "kind": "module",
-      "lines": 460,
+      "lines": 470,
       "imports": [
         "companion/src/analysis/analysisRunTypes.ts"
       ],
@@ -4578,6 +4806,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/aiState.test.ts",
+        "companion/tests/analysis/jobModel.test.ts",
         "companion/tests/analysis/jobRegistry.test.ts",
         "companion/tests/analysis/operationalMetrics.test.ts",
         "companion/tests/helpers/jobRegistrations.ts",
@@ -4698,8 +4927,9 @@
     {
       "path": "companion/src/analysis/knownUnknowns.ts",
       "kind": "module",
-      "lines": 447,
+      "lines": 448,
       "imports": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/adversaryEmulation.ts",
         "companion/src/analysis/evidenceGraph.ts",
         "companion/src/analysis/forensicSort.ts",
@@ -4729,9 +4959,10 @@
     {
       "path": "companion/src/analysis/lateralPathDismiss.ts",
       "kind": "module",
-      "lines": 134,
+      "lines": 145,
       "imports": [
         "companion/src/analysis/evidenceGraph.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -4743,15 +4974,17 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/lateralPathDismiss.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts"
       ]
     },
     {
       "path": "companion/src/analysis/learnedPatternStore.ts",
       "kind": "module",
-      "lines": 44,
+      "lines": 75,
       "imports": [
         "companion/src/analysis/learnedPatterns.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -4764,6 +4997,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server/learnedPatterns.test.ts"
       ]
     },
@@ -4824,11 +5058,13 @@
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
+        "companion/src/analysis/accountUsageImport.ts",
         "companion/src/analysis/sessionSegmentation.ts",
         "companion/src/routes/analysisGraph.ts"
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/accountUsageImport.test.ts",
         "companion/tests/analysis/loginGraph.test.ts",
         "companion/tests/server/loginGraph.test.ts"
       ]
@@ -4836,7 +5072,7 @@
     {
       "path": "companion/src/analysis/lookalikeDomains.ts",
       "kind": "module",
-      "lines": 350,
+      "lines": 385,
       "imports": [
         "companion/src/analysis/regexEscape.ts"
       ],
@@ -4986,7 +5222,7 @@
     {
       "path": "companion/src/analysis/mobileSummary.ts",
       "kind": "module",
-      "lines": 239,
+      "lines": 243,
       "imports": [
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -4996,6 +5232,22 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/mobileSummary.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/motwDownload.ts",
+      "kind": "module",
+      "lines": 92,
+      "imports": [
+        "companion/src/analysis/stagingPaths.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/evalFollowups.test.ts"
       ]
     },
     {
@@ -5016,6 +5268,19 @@
       "tests": [
         "companion/tests/analysis/canonicalEvent.test.ts",
         "companion/tests/analysis/networkImport.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/networkTokens.ts",
+      "kind": "module",
+      "lines": 103,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/networkTokens.test.ts"
       ]
     },
     {
@@ -5049,9 +5314,10 @@
     {
       "path": "companion/src/analysis/notificationStore.ts",
       "kind": "module",
-      "lines": 144,
+      "lines": 158,
       "imports": [
         "companion/src/analysis/notifications.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
       "importedBy": [
@@ -5062,6 +5328,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/notifications.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/notify.test.ts",
         "companion/tests/server.test.ts",
         "companion/tests/server/notificationRoutes.test.ts"
@@ -5070,7 +5337,7 @@
     {
       "path": "companion/src/analysis/notifications.ts",
       "kind": "module",
-      "lines": 531,
+      "lines": 557,
       "imports": [
         "companion/src/analysis/findingsDiff.ts",
         "companion/src/analysis/playbook.ts",
@@ -5101,6 +5368,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/notifications.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/notify.test.ts"
       ]
     },
@@ -5146,9 +5414,10 @@
     {
       "path": "companion/src/analysis/nsrlStore.ts",
       "kind": "module",
-      "lines": 120,
+      "lines": 129,
       "imports": [
         "companion/src/analysis/nsrl.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
       "importedBy": [
@@ -5159,6 +5428,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/nsrlStore.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server/nsrlRoutes.test.ts"
       ]
     },
@@ -5344,9 +5614,11 @@
     {
       "path": "companion/src/analysis/persistenceSniperImport.ts",
       "kind": "module",
-      "lines": 177,
+      "lines": 193,
       "imports": [
         "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stagingPaths.ts",
+        "companion/src/analysis/veloAggKeys.ts",
         "companion/src/analysis/velociraptorTitle.ts"
       ],
       "importedBy": [
@@ -5429,6 +5701,7 @@
         "companion/src/composition/aiProviders.ts",
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/appWiring.ts",
+        "companion/src/composition/jobModel.ts",
         "companion/src/routes/analysisRuns.ts",
         "companion/src/routes/caseLifecycle.ts",
         "companion/src/routes/importRunRecorder.ts"
@@ -5460,6 +5733,7 @@
         "companion/tests/analysis/secondLookLoop.test.ts",
         "companion/tests/analysis/starredReport.test.ts",
         "companion/tests/analysis/synthesisPromptHostMerge.test.ts",
+        "companion/tests/analysis/synthesizeAbort.test.ts",
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/analysis/timeYearClamp.test.ts",
@@ -5468,6 +5742,7 @@
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
         "companion/tests/composition/resynthesisCoalescing.test.ts",
+        "companion/tests/composition/supersededSynthesisIsNotAnError.test.ts",
         "companion/tests/e2e/aiStub.test.ts",
         "companion/tests/e2e/aiStub.ts",
         "companion/tests/e2e/workflows/importOperations.spec.ts",
@@ -5643,9 +5918,10 @@
     {
       "path": "companion/src/analysis/playbookStore.ts",
       "kind": "module",
-      "lines": 198,
+      "lines": 219,
       "imports": [
         "companion/src/analysis/playbook.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
@@ -5662,9 +5938,26 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/playbookStore.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/server.test.ts",
         "companion/tests/server/coachRoutes.test.ts",
         "companion/tests/server/playbookHunts.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/prefetchExecution.ts",
+      "kind": "module",
+      "lines": 176,
+      "imports": [
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/winProcessBaseline.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/prefetchExecution.test.ts"
       ]
     },
     {
@@ -5686,7 +5979,7 @@
     {
       "path": "companion/src/analysis/presentation.ts",
       "kind": "module",
-      "lines": 310,
+      "lines": 323,
       "imports": [
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -5905,6 +6198,37 @@
       ]
     },
     {
+      "path": "companion/src/analysis/ransomwareDetect.ts",
+      "kind": "module",
+      "lines": 123,
+      "imports": [
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/ransomwareDetect.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/rdpLateralDetect.ts",
+      "kind": "module",
+      "lines": 76,
+      "imports": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/evalFollowups.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/reconTechniques.ts",
       "kind": "module",
       "lines": 217,
@@ -5914,7 +6238,8 @@
         "companion/src/analysis/bashHistoryImport.ts",
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/osqueryImport.ts",
-        "companion/src/analysis/siemImport.ts"
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/tradecraftRules.ts"
       ],
       "routes": [],
       "tests": [
@@ -5943,11 +6268,12 @@
     {
       "path": "companion/src/analysis/redactedExport.ts",
       "kind": "module",
-      "lines": 344,
+      "lines": 398,
       "imports": [
         "companion/src/analysis/anonymize.ts",
         "companion/src/analysis/custodyManifest.ts",
-        "companion/src/analysis/zipArchive.ts"
+        "companion/src/analysis/zipArchive.ts",
+        "companion/src/storage/portableFilename.ts"
       ],
       "importedBy": [
         "companion/src/reports/redactedExportBuilder.ts",
@@ -5960,6 +6286,22 @@
         "companion/tests/analysis/redactedExport.test.ts",
         "companion/tests/reports/chainOfCustodyWriter.test.ts",
         "companion/tests/reports/redactedExportBuilder.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/refutationGate.ts",
+      "kind": "module",
+      "lines": 242,
+      "imports": [
+        "companion/src/analysis/hypothesis.ts",
+        "companion/src/analysis/stateTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/ai/synthesis.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/refutationGate.test.ts"
       ]
     },
     {
@@ -6002,7 +6344,7 @@
     {
       "path": "companion/src/analysis/responseSchema.ts",
       "kind": "module",
-      "lines": 294,
+      "lines": 304,
       "imports": [
         "companion/src/analysis/canonicalEvent.ts"
       ],
@@ -6032,6 +6374,21 @@
         "companion/tests/e2e/aiStub.ts",
         "companion/tests/e2e/workflows/synthesis.spec.ts"
       ]
+    },
+    {
+      "path": "companion/src/analysis/samAccountImport.ts",
+      "kind": "module",
+      "lines": 174,
+      "imports": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/veloRowTime.ts",
+        "companion/src/analysis/velociraptorTitle.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
     },
     {
       "path": "companion/src/analysis/sandboxImport.ts",
@@ -6122,6 +6479,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/scopeProject.test.ts",
+        "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/dashboard/dashboardScope.test.ts"
       ]
     },
@@ -6232,7 +6590,8 @@
         "companion/src/analysis/combinedLogImport.ts",
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/syslogImport.ts"
+        "companion/src/analysis/syslogImport.ts",
+        "companion/src/analysis/tradecraftRules.ts"
       ],
       "routes": [],
       "tests": [
@@ -6405,21 +6764,28 @@
     {
       "path": "companion/src/analysis/siemImport.ts",
       "kind": "module",
-      "lines": 1762,
+      "lines": 1669,
       "imports": [
         "companion/src/analysis/bsdTime.ts",
         "companion/src/analysis/canonicalEvent.ts",
+        "companion/src/analysis/eventAggregate.ts",
+        "companion/src/analysis/evtxRecordId.ts",
         "companion/src/analysis/internalIp.ts",
         "companion/src/analysis/reconTechniques.ts",
         "companion/src/analysis/secretSpillRules.ts",
         "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/textDomains.ts",
         "companion/src/analysis/timeUtc.ts",
-        "companion/src/analysis/tradecraftRules.ts"
+        "companion/src/analysis/tradecraftRules.ts",
+        "companion/src/analysis/winProcessBaseline.ts"
       ],
       "importedBy": [
+        "companion/src/analysis/accountUsageImport.ts",
+        "companion/src/analysis/amcacheMasquerade.ts",
         "companion/src/analysis/auditdImport.ts",
         "companion/src/analysis/awsImport.ts",
         "companion/src/analysis/bashHistoryImport.ts",
+        "companion/src/analysis/binaryRenameImport.ts",
         "companion/src/analysis/chainsawImport.ts",
         "companion/src/analysis/ciscoAsaImport.ts",
         "companion/src/analysis/cloudActivityImport.ts",
@@ -6428,9 +6794,12 @@
         "companion/src/analysis/declarativeImporter.ts",
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/emailImport.ts",
+        "companion/src/analysis/eventAggregate.ts",
         "companion/src/analysis/evtxXmlImport.ts",
+        "companion/src/analysis/flatWindowsEvent.ts",
         "companion/src/analysis/googleWorkspaceImport.ts",
         "companion/src/analysis/hayabusaImport.ts",
+        "companion/src/analysis/hijackLibImport.ts",
         "companion/src/analysis/hindsightImport.ts",
         "companion/src/analysis/importDetect.ts",
         "companion/src/analysis/importDetectSources.ts",
@@ -6453,6 +6822,8 @@
         "companion/src/analysis/persistenceSniperImport.ts",
         "companion/src/analysis/plasoImport.ts",
         "companion/src/analysis/pstreeDepth.ts",
+        "companion/src/analysis/rdpLateralDetect.ts",
+        "companion/src/analysis/samAccountImport.ts",
         "companion/src/analysis/sandboxImport.ts",
         "companion/src/analysis/scriptBlockFragments.ts",
         "companion/src/analysis/securityOnionImport.ts",
@@ -6464,7 +6835,11 @@
         "companion/src/analysis/theHiveImport.ts",
         "companion/src/analysis/thorImport.ts",
         "companion/src/analysis/thorRowMap.ts",
+        "companion/src/analysis/truncatedRemainder.ts",
+        "companion/src/analysis/veloDetectionNoise.ts",
         "companion/src/analysis/veloRowNormalize.ts",
+        "companion/src/analysis/veloRowTime.ts",
+        "companion/src/analysis/veloTextIocs.ts",
         "companion/src/analysis/velociraptorImport.ts",
         "companion/src/analysis/wazuhImport.ts",
         "companion/src/analysis/yaraImport.ts",
@@ -6478,10 +6853,13 @@
         "companion/tests/analysis/combinedLogImport.test.ts",
         "companion/tests/analysis/ecarImport.test.ts",
         "companion/tests/analysis/emailImport.test.ts",
+        "companion/tests/analysis/evalFixes.test.ts",
         "companion/tests/analysis/irisImport.test.ts",
+        "companion/tests/analysis/scriptBlockIocMatrix.test.ts",
         "companion/tests/analysis/siemImport.test.ts",
         "companion/tests/analysis/snortImport.test.ts",
         "companion/tests/analysis/syslogImport.test.ts",
+        "companion/tests/analysis/tagsYamlDefault.test.ts",
         "companion/tests/e2e/workflows/importOperations.spec.ts"
       ]
     },
@@ -6533,8 +6911,9 @@
     {
       "path": "companion/src/analysis/slashCommandStore.ts",
       "kind": "module",
-      "lines": 96,
+      "lines": 107,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
       "importedBy": [
@@ -6545,7 +6924,9 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/slashCommandStore.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/server/notificationRoutes.test.ts",
         "companion/tests/server/slashCommandRoutes.test.ts"
       ]
@@ -6642,6 +7023,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/nsrlDb.test.ts",
+        "companion/tests/auth/expiredSessionSweep.test.ts",
         "companion/tests/server/nsrlRoutes.test.ts"
       ]
     },
@@ -6656,6 +7038,21 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/sshBruteForce.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/stagingPaths.ts",
+      "kind": "module",
+      "lines": 95,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/binaryRenameImport.ts",
+        "companion/src/analysis/motwDownload.ts",
+        "companion/src/analysis/persistenceSniperImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/stagingPaths.test.ts"
       ]
     },
     {
@@ -6686,22 +7083,48 @@
         "companion/src/analysis/ai/synthesis.ts",
         "companion/src/analysis/ai/synthesisPersist.ts",
         "companion/src/analysis/analysisRunStore.ts",
+        "companion/src/analysis/anonDiscovered.ts",
+        "companion/src/analysis/assetOverrides.ts",
         "companion/src/analysis/cockpitStore.ts",
+        "companion/src/analysis/collectionPlanStore.ts",
         "companion/src/analysis/comments.ts",
         "companion/src/analysis/confidenceControl.ts",
         "companion/src/analysis/custody.ts",
+        "companion/src/analysis/dwellWindowStore.ts",
+        "companion/src/analysis/findingWorkflow.ts",
+        "companion/src/analysis/hostDuplicateDismissals.ts",
         "companion/src/analysis/hypothesisStore.ts",
         "companion/src/analysis/importLock.ts",
         "companion/src/analysis/importUndo.ts",
+        "companion/src/analysis/iocAlias.ts",
+        "companion/src/analysis/iocWhitelistStore.ts",
+        "companion/src/analysis/lateralPathDismiss.ts",
+        "companion/src/analysis/learnedPatternStore.ts",
         "companion/src/analysis/notebookStore.ts",
+        "companion/src/analysis/notificationStore.ts",
+        "companion/src/analysis/nsrlStore.ts",
         "companion/src/analysis/pinnedFindings.ts",
+        "companion/src/analysis/playbookStore.ts",
         "companion/src/analysis/savedHuntStore.ts",
+        "companion/src/analysis/slashCommandStore.ts",
+        "companion/src/analysis/synthMeta.ts",
+        "companion/src/analysis/taggerStore.ts",
         "companion/src/analysis/tags.ts",
+        "companion/src/analysis/veloHuntStore.ts",
+        "companion/src/analysis/veloMonitorStore.ts",
         "companion/src/composition/aiProviders.ts",
         "companion/src/composition/aiRuntime.ts",
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/runtimeStores.ts",
+        "companion/src/integrations/clickup/clickupExportStore.ts",
+        "companion/src/integrations/jira/jiraExportStore.ts",
+        "companion/src/integrations/mcp/mcpServerStore.ts",
+        "companion/src/integrations/notion/notionExportStore.ts",
+        "companion/src/integrations/servicenow/servicenowExportStore.ts",
+        "companion/src/integrations/socrates/socratesJobStore.ts",
+        "companion/src/integrations/tools/customToolStore.ts",
         "companion/src/reports/reportReleaseStore.ts",
+        "companion/src/reports/reportVersionStore.ts",
         "companion/src/reports/reportWorkflowStore.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -6710,6 +7133,7 @@
         "companion/tests/analysis/caseExportArchive.test.ts",
         "companion/tests/analysis/importRace.test.ts",
         "companion/tests/http/teamAuth.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/server.test.ts",
         "companion/tests/server/backupManager.test.ts"
       ]
@@ -6717,7 +7141,7 @@
     {
       "path": "companion/src/analysis/stateMerge.ts",
       "kind": "module",
-      "lines": 387,
+      "lines": 394,
       "imports": [
         "companion/src/analysis/canonicalEvent.ts",
         "companion/src/analysis/correlate.ts",
@@ -6777,6 +7201,7 @@
         "companion/src/reports/redactedExportBuilder.ts",
         "companion/src/reports/reportWriter.ts",
         "companion/src/routes/coach.ts",
+        "companion/src/routes/crossCase.ts",
         "companion/src/routes/importSection.ts",
         "companion/src/storage/backupManager.ts"
       ],
@@ -6806,6 +7231,7 @@
         "companion/tests/analysis/starredReport.test.ts",
         "companion/tests/analysis/stateStore.test.ts",
         "companion/tests/analysis/synthesisPromptHostMerge.test.ts",
+        "companion/tests/analysis/synthesizeAbort.test.ts",
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/analysis/taggerAuto.test.ts",
@@ -6815,6 +7241,7 @@
         "companion/tests/fullPipeline.test.ts",
         "companion/tests/helpers/caseWaits.ts",
         "companion/tests/http/teamAuth.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/reports/chainOfCustodyWriter.test.ts",
         "companion/tests/reports/reportGeneration.test.ts",
         "companion/tests/reports/reportWriter.test.ts",
@@ -6835,6 +7262,7 @@
         "companion/tests/server/collectDirective.test.ts",
         "companion/tests/server/collectionPlanRoutes.test.ts",
         "companion/tests/server/complianceRoute.test.ts",
+        "companion/tests/server/crossCaseRoutes.test.ts",
         "companion/tests/server/custodyManifestRoutes.test.ts",
         "companion/tests/server/deepPassRoutes.test.ts",
         "companion/tests/server/diagnostics.test.ts",
@@ -6872,6 +7300,7 @@
         "companion/tests/server/irisPushRoute.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts",
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
+        "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/knownUnknowns.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts",
         "companion/tests/server/learnedPatterns.test.ts",
@@ -6906,6 +7335,7 @@
         "companion/tests/server/synthesizeGateRoute.test.ts",
         "companion/tests/server/taggerRoutes.test.ts",
         "companion/tests/server/timerLifecycle.test.ts",
+        "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts",
         "companion/tests/server/veloBundle.test.ts",
         "companion/tests/server/veloCollectImportSlot.test.ts",
@@ -6917,12 +7347,14 @@
     {
       "path": "companion/src/analysis/stateTypes.ts",
       "kind": "module",
-      "lines": 371,
+      "lines": 400,
       "imports": [
         "companion/src/analysis/canonicalEvent.ts",
         "companion/src/analysis/iocExclude.ts"
       ],
       "importedBy": [
+        "companion/src/analysis/accountUsageImport.ts",
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/adversaryHints.ts",
         "companion/src/analysis/ai/aiContext.ts",
         "companion/src/analysis/ai/analystQueries.ts",
@@ -6955,6 +7387,7 @@
         "companion/src/analysis/awsImport.ts",
         "companion/src/analysis/bashHistoryImport.ts",
         "companion/src/analysis/beaconDetect.ts",
+        "companion/src/analysis/binaryRenameImport.ts",
         "companion/src/analysis/burstDetect.ts",
         "companion/src/analysis/canonicalEvent.ts",
         "companion/src/analysis/caseStats.ts",
@@ -6972,6 +7405,7 @@
         "companion/src/analysis/combinedLogImport.ts",
         "companion/src/analysis/complianceMap.ts",
         "companion/src/analysis/correlate.ts",
+        "companion/src/analysis/crossCaseIndex.ts",
         "companion/src/analysis/customerExposure.ts",
         "companion/src/analysis/customerStore.ts",
         "companion/src/analysis/cybertriageImport.ts",
@@ -6982,6 +7416,7 @@
         "companion/src/analysis/deobfuscate.ts",
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/emailImport.ts",
+        "companion/src/analysis/eventAggregate.ts",
         "companion/src/analysis/eventRelevance.ts",
         "companion/src/analysis/evidenceGraph.ts",
         "companion/src/analysis/exfilCorrelate.ts",
@@ -7002,6 +7437,7 @@
         "companion/src/analysis/graphContext.ts",
         "companion/src/analysis/hayabusaImport.ts",
         "companion/src/analysis/highSeverityFindings.ts",
+        "companion/src/analysis/hijackLibImport.ts",
         "companion/src/analysis/hindsightImport.ts",
         "companion/src/analysis/hostDuplicateGate.ts",
         "companion/src/analysis/hostRanking.ts",
@@ -7048,6 +7484,7 @@
         "companion/src/analysis/memoryNextStep.ts",
         "companion/src/analysis/mobileLeappImport.ts",
         "companion/src/analysis/mobileSummary.ts",
+        "companion/src/analysis/motwDownload.ts",
         "companion/src/analysis/networkImport.ts",
         "companion/src/analysis/notifications.ts",
         "companion/src/analysis/nsrl.ts",
@@ -7060,10 +7497,14 @@
         "companion/src/analysis/playbookHunt.ts",
         "companion/src/analysis/playbookMatch.ts",
         "companion/src/analysis/playbookStore.ts",
+        "companion/src/analysis/prefetchExecution.ts",
         "companion/src/analysis/presentation.ts",
         "companion/src/analysis/prevalence.ts",
         "companion/src/analysis/priorWork.ts",
         "companion/src/analysis/queryTranslate.ts",
+        "companion/src/analysis/ransomwareDetect.ts",
+        "companion/src/analysis/rdpLateralDetect.ts",
+        "companion/src/analysis/refutationGate.ts",
         "companion/src/analysis/sandboxImport.ts",
         "companion/src/analysis/scope.ts",
         "companion/src/analysis/scopeProject.ts",
@@ -7109,6 +7550,7 @@
         "companion/src/analysis/velociraptorImport.ts",
         "companion/src/analysis/wazuhImport.ts",
         "companion/src/analysis/workLogFilter.ts",
+        "companion/src/analysis/yaraGrade.ts",
         "companion/src/analysis/yaraImport.ts",
         "companion/src/composition/aiProviders.ts",
         "companion/src/composition/aiRuntime.ts",
@@ -7155,6 +7597,7 @@
         "companion/src/routes/casePush.ts",
         "companion/src/routes/cockpit.ts",
         "companion/src/routes/context.ts",
+        "companion/src/routes/crossCase.ts",
         "companion/src/routes/deepPass.ts",
         "companion/src/routes/findings.ts",
         "companion/src/routes/import.ts",
@@ -7169,6 +7612,8 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/accountUsageImport.test.ts",
+        "companion/tests/analysis/activityWaves.test.ts",
         "companion/tests/analysis/adversaryHints.test.ts",
         "companion/tests/analysis/analysisRunPipeline.test.ts",
         "companion/tests/analysis/analystQueryHostMerge.test.ts",
@@ -7193,7 +7638,9 @@
         "companion/tests/analysis/collectionPlan.test.ts",
         "companion/tests/analysis/complianceMap.test.ts",
         "companion/tests/analysis/correlate.test.ts",
+        "companion/tests/analysis/crossCaseIndex.test.ts",
         "companion/tests/analysis/crossHostLateral.test.ts",
+        "companion/tests/analysis/crossParserRecordDedup.test.ts",
         "companion/tests/analysis/customerExposure.test.ts",
         "companion/tests/analysis/d3fendMap.test.ts",
         "companion/tests/analysis/deepPass.test.ts",
@@ -7268,6 +7715,7 @@
         "companion/tests/analysis/promptHostTags.test.ts",
         "companion/tests/analysis/queryTranslate.test.ts",
         "companion/tests/analysis/rabbitHoleSurfaces.test.ts",
+        "companion/tests/analysis/refutationGate.test.ts",
         "companion/tests/analysis/scope.test.ts",
         "companion/tests/analysis/scopeProject.test.ts",
         "companion/tests/analysis/searchFilter.test.ts",
@@ -7293,15 +7741,20 @@
         "companion/tests/analysis/synthSelectChain.test.ts",
         "companion/tests/analysis/synthesisHostResolution.test.ts",
         "companion/tests/analysis/synthesisPromptHostMerge.test.ts",
+        "companion/tests/analysis/synthesizeAbort.test.ts",
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/analysis/tagger.test.ts",
+        "companion/tests/analysis/taggerAuthorship.test.ts",
         "companion/tests/analysis/taggerAuto.test.ts",
+        "companion/tests/analysis/taggerPromotionBoundary.test.ts",
         "companion/tests/analysis/taggerRules.test.ts",
+        "companion/tests/analysis/tagsYamlDefault.test.ts",
         "companion/tests/analysis/timeYearClamp.test.ts",
         "companion/tests/analysis/timelineAnomalies.test.ts",
         "companion/tests/analysis/timelineDiff.test.ts",
         "companion/tests/analysis/workLogFilter.test.ts",
+        "companion/tests/composition/enrichmentBatching.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
@@ -7355,6 +7808,7 @@
         "companion/tests/server/cockpitRoutes.test.ts",
         "companion/tests/server/collectionPlanRoutes.test.ts",
         "companion/tests/server/complianceRoute.test.ts",
+        "companion/tests/server/crossCaseRoutes.test.ts",
         "companion/tests/server/deepPassRoutes.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
@@ -7376,6 +7830,7 @@
         "companion/tests/server/iocRisk.test.ts",
         "companion/tests/server/iocWhitelistRoutes.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts",
+        "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/knownUnknowns.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts",
         "companion/tests/server/learnedPatterns.test.ts",
@@ -7568,9 +8023,10 @@
     {
       "path": "companion/src/analysis/synthMeta.ts",
       "kind": "module",
-      "lines": 261,
+      "lines": 278,
       "imports": [
         "companion/src/analysis/findingsDiff.ts",
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -7591,7 +8047,9 @@
       "tests": [
         "companion/tests/analysis/modelPerf.test.ts",
         "companion/tests/analysis/secondLookLoop.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/synthMeta.test.ts",
+        "companion/tests/analysis/synthesizeAbort.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts"
       ]
     },
@@ -7667,7 +8125,7 @@
     {
       "path": "companion/src/analysis/syslogImport.ts",
       "kind": "module",
-      "lines": 355,
+      "lines": 363,
       "imports": [
         "companion/src/analysis/secretSpillRules.ts",
         "companion/src/analysis/siemBuildProgress.ts",
@@ -7701,6 +8159,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/tagger.test.ts",
+        "companion/tests/analysis/tagsYamlDefault.test.ts",
         "companion/tests/server/presidioBroadcastCoverage.test.ts"
       ]
     },
@@ -7763,6 +8222,8 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/tagger.test.ts",
+        "companion/tests/analysis/taggerAuthorship.test.ts",
+        "companion/tests/analysis/taggerPromotionBoundary.test.ts",
         "companion/tests/analysis/taggerRuleSuggest.test.ts",
         "companion/tests/analysis/taggerRules.test.ts"
       ]
@@ -7783,13 +8244,17 @@
         "companion/src/routes/tagger.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/analysis/taggerAuthorship.test.ts",
+        "companion/tests/analysis/taggerPromotionBoundary.test.ts"
+      ]
     },
     {
       "path": "companion/src/analysis/taggerStore.ts",
       "kind": "module",
-      "lines": 197,
+      "lines": 267,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/taggerRules.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
@@ -7826,6 +8291,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/collabStoreConcurrency.test.ts",
+        "companion/tests/analysis/taggerAuthorship.test.ts",
         "companion/tests/analysis/taggerAuto.test.ts",
         "companion/tests/analysis/tags.test.ts",
         "companion/tests/server/activityLogReadAfterWrite.test.ts",
@@ -7875,6 +8341,21 @@
       ]
     },
     {
+      "path": "companion/src/analysis/textDomains.ts",
+      "kind": "module",
+      "lines": 167,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/veloTextIocs.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/evalFixes.test.ts",
+        "companion/tests/analysis/textDomains.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/theHiveImport.ts",
       "kind": "module",
       "lines": 331,
@@ -7894,10 +8375,11 @@
     {
       "path": "companion/src/analysis/thorImport.ts",
       "kind": "module",
-      "lines": 279,
+      "lines": 293,
       "imports": [
         "companion/src/analysis/siemImport.ts",
-        "companion/src/analysis/stateTypes.ts"
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/veloDetectionNoise.ts"
       ],
       "importedBy": [
         "companion/src/analysis/ingest/endpointImports.ts",
@@ -7943,7 +8425,7 @@
     {
       "path": "companion/src/analysis/timeYearClamp.ts",
       "kind": "module",
-      "lines": 124,
+      "lines": 174,
       "imports": [
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -8028,18 +8510,37 @@
     {
       "path": "companion/src/analysis/tradecraftRules.ts",
       "kind": "module",
-      "lines": 446,
-      "imports": [],
+      "lines": 531,
+      "imports": [
+        "companion/src/analysis/reconTechniques.ts",
+        "companion/src/analysis/secretSpillRules.ts"
+      ],
       "importedBy": [
         "companion/src/analysis/bashHistoryImport.ts",
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/osqueryImport.ts",
-        "companion/src/analysis/siemImport.ts"
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/veloDetectionNoise.ts"
       ],
       "routes": [],
       "tests": [
         "companion/tests/analysis/tradecraftRules.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/truncatedRemainder.ts",
+      "kind": "module",
+      "lines": 145,
+      "imports": [
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/truncatedRemainder.test.ts"
       ]
     },
     {
@@ -8115,10 +8616,46 @@
       ]
     },
     {
+      "path": "companion/src/analysis/veloAggKeys.ts",
+      "kind": "module",
+      "lines": 67,
+      "imports": [
+        "companion/src/analysis/aggKey.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/persistenceSniperImport.ts",
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
+      "path": "companion/src/analysis/veloDetectionNoise.ts",
+      "kind": "module",
+      "lines": 328,
+      "imports": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/tradecraftRules.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/chainsawImport.ts",
+        "companion/src/analysis/hayabusaImport.ts",
+        "companion/src/analysis/hijackLibImport.ts",
+        "companion/src/analysis/thorImport.ts",
+        "companion/src/analysis/velociraptorImport.ts",
+        "companion/src/analysis/yaraGrade.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/veloDetectionNoise.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/veloHuntStore.ts",
       "kind": "module",
-      "lines": 165,
+      "lines": 173,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts",
         "companion/src/storage/atomicWrite.ts",
@@ -8133,6 +8670,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/veloHuntStore.test.ts",
         "companion/tests/integrations/huntStatusPoller.test.ts",
         "companion/tests/server/collectDirective.test.ts",
@@ -8161,8 +8699,9 @@
     {
       "path": "companion/src/analysis/veloMonitorStore.ts",
       "kind": "module",
-      "lines": 87,
+      "lines": 96,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
@@ -8177,6 +8716,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/veloMonitorStore.test.ts",
         "companion/tests/integrations/monitorPoller.test.ts",
         "companion/tests/server/timerLifecycle.test.ts",
@@ -8210,6 +8750,38 @@
       "tests": [
         "companion/tests/analysis/scriptBlockFragments.test.ts",
         "companion/tests/analysis/veloRowNormalize.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/veloRowTime.ts",
+      "kind": "module",
+      "lines": 133,
+      "imports": [
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/hijackLibImport.ts",
+        "companion/src/analysis/samAccountImport.ts",
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
+      "path": "companion/src/analysis/veloTextIocs.ts",
+      "kind": "module",
+      "lines": 108,
+      "imports": [
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/textDomains.ts",
+        "companion/src/ingest/textUriTrim.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/evalFixes.test.ts"
       ]
     },
     {
@@ -8272,19 +8844,37 @@
     {
       "path": "companion/src/analysis/velociraptorImport.ts",
       "kind": "module",
-      "lines": 1822,
+      "lines": 1869,
       "imports": [
+        "companion/src/analysis/accountUsageImport.ts",
+        "companion/src/analysis/amcacheMasquerade.ts",
+        "companion/src/analysis/binaryRenameImport.ts",
         "companion/src/analysis/chainsawImport.ts",
         "companion/src/analysis/csvImport.ts",
+        "companion/src/analysis/flatWindowsEvent.ts",
+        "companion/src/analysis/hijackLibImport.ts",
+        "companion/src/analysis/motwDownload.ts",
+        "companion/src/analysis/networkTokens.ts",
         "companion/src/analysis/persistenceSniperImport.ts",
+        "companion/src/analysis/prefetchExecution.ts",
+        "companion/src/analysis/ransomwareDetect.ts",
+        "companion/src/analysis/rdpLateralDetect.ts",
+        "companion/src/analysis/samAccountImport.ts",
         "companion/src/analysis/scriptBlockFragments.ts",
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/analysis/thorRowMap.ts",
         "companion/src/analysis/timestompDetect.ts",
+        "companion/src/analysis/truncatedRemainder.ts",
+        "companion/src/analysis/veloAggKeys.ts",
+        "companion/src/analysis/veloDetectionNoise.ts",
         "companion/src/analysis/veloMessageFields.ts",
         "companion/src/analysis/veloRowNormalize.ts",
-        "companion/src/analysis/velociraptorTitle.ts"
+        "companion/src/analysis/veloRowTime.ts",
+        "companion/src/analysis/veloTextIocs.ts",
+        "companion/src/analysis/velociraptorTitle.ts",
+        "companion/src/analysis/yaraGrade.ts",
+        "companion/src/analysis/yaraHitContext.ts"
       ],
       "importedBy": [
         "companion/src/analysis/ingest/endpointImports.ts",
@@ -8294,6 +8884,12 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/accountUsageImport.test.ts",
+        "companion/tests/analysis/evalFixes.test.ts",
+        "companion/tests/analysis/evalFollowups.test.ts",
+        "companion/tests/analysis/ransomwareDetect.test.ts",
+        "companion/tests/analysis/scriptBlockIocMatrix.test.ts",
+        "companion/tests/analysis/veloDetectionNoise.test.ts",
         "companion/tests/analysis/velociraptorImport.test.ts"
       ]
     },
@@ -8316,7 +8912,11 @@
       "lines": 46,
       "imports": [],
       "importedBy": [
+        "companion/src/analysis/accountUsageImport.ts",
+        "companion/src/analysis/binaryRenameImport.ts",
+        "companion/src/analysis/hijackLibImport.ts",
         "companion/src/analysis/persistenceSniperImport.ts",
+        "companion/src/analysis/samAccountImport.ts",
         "companion/src/analysis/velociraptorImport.ts"
       ],
       "routes": [],
@@ -8340,6 +8940,20 @@
       ]
     },
     {
+      "path": "companion/src/analysis/winProcessBaseline.ts",
+      "kind": "module",
+      "lines": 220,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/prefetchExecution.ts",
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/siemImport.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/workLogFilter.ts",
       "kind": "module",
       "lines": 163,
@@ -8355,10 +8969,39 @@
       ]
     },
     {
+      "path": "companion/src/analysis/yaraGrade.ts",
+      "kind": "module",
+      "lines": 119,
+      "imports": [
+        "companion/src/analysis/aggKey.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/veloDetectionNoise.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/yaraGrade.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/yaraHitContext.ts",
+      "kind": "module",
+      "lines": 69,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/velociraptorImport.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/analysis/yaraImport.ts",
       "kind": "module",
-      "lines": 217,
+      "lines": 232,
       "imports": [
+        "companion/src/analysis/aggKey.ts",
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
@@ -8463,13 +9106,14 @@
     {
       "path": "companion/src/auth/authRoutes.ts",
       "kind": "module",
-      "lines": 464,
+      "lines": 543,
       "imports": [
         "companion/src/auth/authStore.ts",
         "companion/src/auth/teamAuth.ts",
         "companion/src/auth/types.ts",
         "companion/src/http/rateLimiter.ts",
         "companion/src/http/securityHeaders.ts",
+        "companion/src/logging/serverLogger.ts",
         "companion/src/serverAssets.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -8504,7 +9148,7 @@
     {
       "path": "companion/src/auth/authStore.ts",
       "kind": "module",
-      "lines": 753,
+      "lines": 771,
       "imports": [
         "companion/src/analysis/sqliteRuntime.ts",
         "companion/src/auth/password.ts",
@@ -8513,14 +9157,19 @@
       "importedBy": [
         "companion/src/auth/authFactory.ts",
         "companion/src/auth/authRoutes.ts",
-        "companion/src/auth/teamAuth.ts"
+        "companion/src/auth/teamAuth.ts",
+        "companion/src/composition/maintenanceTasks.ts"
       ],
       "routes": [],
       "tests": [
+        "companion/tests/auth/expiredSessionSweep.test.ts",
         "companion/tests/http/loginRateLimit.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/http/oidcStartRateLimit.test.ts",
         "companion/tests/http/teamAuth.test.ts",
-        "companion/tests/live/wsGate.test.ts"
+        "companion/tests/http/teamAuthBodyGate.test.ts",
+        "companion/tests/live/wsGate.test.ts",
+        "companion/tests/server/crossCaseRoutes.test.ts"
       ]
     },
     {
@@ -8555,6 +9204,7 @@
       "routes": [],
       "tests": [
         "companion/tests/http/oidcClient.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/http/oidcStartRateLimit.test.ts"
       ]
     },
@@ -8574,12 +9224,13 @@
     {
       "path": "companion/src/auth/policy.ts",
       "kind": "module",
-      "lines": 239,
+      "lines": 251,
       "imports": [
         "companion/src/auth/types.ts"
       ],
       "importedBy": [
-        "companion/src/auth/teamAuth.ts"
+        "companion/src/auth/teamAuth.ts",
+        "companion/src/composition/httpStack.ts"
       ],
       "routes": [],
       "tests": [
@@ -8589,7 +9240,7 @@
     {
       "path": "companion/src/auth/teamAuth.ts",
       "kind": "module",
-      "lines": 337,
+      "lines": 351,
       "imports": [
         "companion/src/analysis/casePassword.ts",
         "companion/src/auth/authStore.ts",
@@ -8608,9 +9259,12 @@
       "routes": [],
       "tests": [
         "companion/tests/http/loginRateLimit.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/http/oidcStartRateLimit.test.ts",
         "companion/tests/http/teamAuth.test.ts",
-        "companion/tests/live/wsGate.test.ts"
+        "companion/tests/http/teamAuthBodyGate.test.ts",
+        "companion/tests/live/wsGate.test.ts",
+        "companion/tests/server/crossCaseRoutes.test.ts"
       ]
     },
     {
@@ -8682,7 +9336,7 @@
     {
       "path": "companion/src/composition/aiProviders.ts",
       "kind": "module",
-      "lines": 266,
+      "lines": 270,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/aiCost.ts",
@@ -8741,7 +9395,7 @@
     {
       "path": "companion/src/composition/aiRateLimit.ts",
       "kind": "module",
-      "lines": 91,
+      "lines": 99,
       "imports": [
         "companion/src/http/rateLimiter.ts"
       ],
@@ -8789,7 +9443,7 @@
     {
       "path": "companion/src/composition/appOptions.ts",
       "kind": "module",
-      "lines": 549,
+      "lines": 577,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/aiCost.ts",
@@ -8909,17 +9563,21 @@
       "routes": [],
       "tests": [
         "companion/tests/composition/backfillCaptureLog.test.ts",
+        "companion/tests/composition/enrichmentBatching.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
-        "companion/tests/composition/resynthesisCoalescing.test.ts"
+        "companion/tests/composition/resynthesisCoalescing.test.ts",
+        "companion/tests/composition/supersededSynthesisIsNotAnError.test.ts",
+        "companion/tests/server/enrichmentConnectionTest.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts"
       ]
     },
     {
       "path": "companion/src/composition/appWiring.ts",
       "kind": "module",
-      "lines": 360,
+      "lines": 361,
       "imports": [
         "companion/src/analysis/custodyIntegrity.ts",
         "companion/src/analysis/huntPlatforms.ts",
@@ -8949,7 +9607,7 @@
     {
       "path": "companion/src/composition/captureAnalysis.ts",
       "kind": "module",
-      "lines": 520,
+      "lines": 525,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/hostDuplicateGate.ts",
@@ -8972,7 +9630,8 @@
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
-        "companion/tests/composition/resynthesisCoalescing.test.ts"
+        "companion/tests/composition/resynthesisCoalescing.test.ts",
+        "companion/tests/composition/supersededSynthesisIsNotAnError.test.ts"
       ]
     },
     {
@@ -9045,7 +9704,7 @@
     {
       "path": "companion/src/composition/dropFolder.ts",
       "kind": "module",
-      "lines": 542,
+      "lines": 551,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/dropLog.ts",
@@ -9056,6 +9715,7 @@
         "companion/src/composition/appOptions.ts",
         "companion/src/ingest/captureIngest.ts",
         "companion/src/integrations/tools/toolConfig.ts",
+        "companion/src/integrations/tools/toolProvenance.ts",
         "companion/src/logging/serverLogger.ts",
         "companion/src/storage/caseStore.ts",
         "companion/src/storage/noFollowRead.ts",
@@ -9073,7 +9733,7 @@
     {
       "path": "companion/src/composition/enrichment.ts",
       "kind": "module",
-      "lines": 338,
+      "lines": 385,
       "imports": [
         "companion/src/analysis/analysisRunRecorders.ts",
         "companion/src/analysis/jobManager.ts",
@@ -9092,6 +9752,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/composition/enrichmentBatching.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
         "companion/tests/e2e/workflows/enrichment.spec.ts"
       ]
@@ -9144,7 +9805,7 @@
     {
       "path": "companion/src/composition/externalTools.ts",
       "kind": "module",
-      "lines": 363,
+      "lines": 411,
       "imports": [
         "companion/src/analysis/dropLog.ts",
         "companion/src/analysis/dropScan.ts",
@@ -9158,6 +9819,7 @@
         "companion/src/integrations/tools/customToolStore.ts",
         "companion/src/integrations/tools/runToolImport.ts",
         "companion/src/integrations/tools/toolConfig.ts",
+        "companion/src/integrations/tools/toolProvenance.ts",
         "companion/src/logging/serverLogger.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -9170,7 +9832,7 @@
     {
       "path": "companion/src/composition/httpStack.ts",
       "kind": "module",
-      "lines": 248,
+      "lines": 338,
       "imports": [
         "companion/src/analysis/caseIdGate.ts",
         "companion/src/analysis/caseLockGate.ts",
@@ -9178,6 +9840,7 @@
         "companion/src/analysis/operationalHttpMetrics.ts",
         "companion/src/analysis/redactPaths.ts",
         "companion/src/auth/authRoutes.ts",
+        "companion/src/auth/policy.ts",
         "companion/src/composition/appOptions.ts",
         "companion/src/http/originGuard.ts",
         "companion/src/http/securityHeaders.ts",
@@ -9195,7 +9858,7 @@
     {
       "path": "companion/src/composition/importIngest.ts",
       "kind": "module",
-      "lines": 460,
+      "lines": 505,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/diagnostics.ts",
@@ -9248,9 +9911,26 @@
       ]
     },
     {
+      "path": "companion/src/composition/jobModel.ts",
+      "kind": "module",
+      "lines": 47,
+      "imports": [
+        "companion/src/analysis/jobManager.ts",
+        "companion/src/analysis/pipeline.ts",
+        "companion/src/routes/importKinds.ts"
+      ],
+      "importedBy": [
+        "companion/src/server.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/jobModel.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/composition/maintenanceTasks.ts",
       "kind": "module",
-      "lines": 260,
+      "lines": 293,
       "imports": [
         "companion/src/analysis/custody.ts",
         "companion/src/analysis/custodyIntegrity.ts",
@@ -9260,6 +9940,7 @@
         "companion/src/analysis/updateCheckRun.ts",
         "companion/src/analysis/updateCheckStore.ts",
         "companion/src/analysis/velociraptorClientStore.ts",
+        "companion/src/auth/authStore.ts",
         "companion/src/integrations/notify/notifyDispatch.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts",
         "companion/src/logging/serverLogger.ts",
@@ -9270,7 +9951,9 @@
         "companion/src/server.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/auth/expiredSessionSweep.test.ts"
+      ]
     },
     {
       "path": "companion/src/composition/ocrIndexer.ts",
@@ -9292,8 +9975,9 @@
     {
       "path": "companion/src/composition/routeRegistry.ts",
       "kind": "module",
-      "lines": 155,
+      "lines": 179,
       "imports": [
+        "companion/src/analysis/caseExistsGate.ts",
         "companion/src/composition/aiRateLimit.ts",
         "companion/src/composition/caseWriteGuard.ts",
         "companion/src/routes/aiModels.ts",
@@ -9311,10 +9995,13 @@
         "companion/src/routes/collectionPlan.ts",
         "companion/src/routes/compliance.ts",
         "companion/src/routes/context.ts",
+        "companion/src/routes/crossCase.ts",
         "companion/src/routes/custody.ts",
         "companion/src/routes/deepPass.ts",
+        "companion/src/routes/enrichmentTest.ts",
         "companion/src/routes/findings.ts",
         "companion/src/routes/findingsDisplay.ts",
+        "companion/src/routes/geoTiles.ts",
         "companion/src/routes/hostDuplicates.ts",
         "companion/src/routes/hostScope.ts",
         "companion/src/routes/import.ts",
@@ -9589,9 +10276,10 @@
     {
       "path": "companion/src/enrichment/abuseipdb.ts",
       "kind": "module",
-      "lines": 72,
+      "lines": 73,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9621,9 +10309,10 @@
     {
       "path": "companion/src/enrichment/crowdstrike.ts",
       "kind": "module",
-      "lines": 236,
+      "lines": 243,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9654,7 +10343,7 @@
     {
       "path": "companion/src/enrichment/enrichService.ts",
       "kind": "module",
-      "lines": 268,
+      "lines": 284,
       "imports": [
         "companion/src/analysis/iocValue.ts",
         "companion/src/analysis/stateTypes.ts",
@@ -9676,9 +10365,10 @@
     {
       "path": "companion/src/enrichment/geoip.ts",
       "kind": "module",
-      "lines": 177,
+      "lines": 181,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9692,9 +10382,10 @@
     {
       "path": "companion/src/enrichment/hashlookup.ts",
       "kind": "module",
-      "lines": 119,
+      "lines": 123,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9707,9 +10398,10 @@
     {
       "path": "companion/src/enrichment/huntingch.ts",
       "kind": "module",
-      "lines": 246,
+      "lines": 250,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9738,10 +10430,11 @@
     {
       "path": "companion/src/enrichment/misp.ts",
       "kind": "module",
-      "lines": 119,
+      "lines": 122,
       "imports": [
         "companion/src/enrichment/provider.ts",
-        "companion/src/integrations/misp/mispConnectivity.ts"
+        "companion/src/integrations/misp/mispConnectivity.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9755,9 +10448,10 @@
     {
       "path": "companion/src/enrichment/opencti.ts",
       "kind": "module",
-      "lines": 139,
+      "lines": 143,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9831,6 +10525,7 @@
         "companion/tests/analysis/starredReport.test.ts",
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
+        "companion/tests/composition/enrichmentBatching.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
         "companion/tests/enrichment/chainValidate.test.ts",
         "companion/tests/enrichment/enrichService.test.ts",
@@ -9856,6 +10551,7 @@
         "companion/tests/server/deepPassRoutes.test.ts",
         "companion/tests/server/diagnostics.test.ts",
         "companion/tests/server/dropFolderSymlink.test.ts",
+        "companion/tests/server/enrichmentConnectionTest.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
         "companion/tests/server/falsePositiveSuggest.test.ts",
         "companion/tests/server/huntOutcomes.test.ts",
@@ -9898,9 +10594,10 @@
     {
       "path": "companion/src/enrichment/rdap.ts",
       "kind": "module",
-      "lines": 140,
+      "lines": 144,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9928,9 +10625,10 @@
     {
       "path": "companion/src/enrichment/rockyraccoon.ts",
       "kind": "module",
-      "lines": 162,
+      "lines": 166,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichment.ts",
@@ -9946,9 +10644,10 @@
     {
       "path": "companion/src/enrichment/shodan.ts",
       "kind": "module",
-      "lines": 103,
+      "lines": 107,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9977,9 +10676,10 @@
     {
       "path": "companion/src/enrichment/virustotal.ts",
       "kind": "module",
-      "lines": 106,
+      "lines": 113,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -9992,9 +10692,10 @@
     {
       "path": "companion/src/enrichment/yeti.ts",
       "kind": "module",
-      "lines": 125,
+      "lines": 134,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -10023,7 +10724,7 @@
     {
       "path": "companion/src/http/rateLimiter.ts",
       "kind": "module",
-      "lines": 292,
+      "lines": 315,
       "imports": [],
       "importedBy": [
         "companion/src/auth/authRoutes.ts",
@@ -10031,23 +10732,26 @@
         "companion/src/routes/captures.ts",
         "companion/src/routes/casePassword.ts",
         "companion/src/routes/encryptedImport.ts",
+        "companion/src/routes/importKinds.ts",
         "companion/src/routes/slashCommand.ts"
       ],
       "routes": [],
       "tests": [
         "companion/tests/http/loginRateLimit.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/http/oidcStartRateLimit.test.ts",
         "companion/tests/http/rateLimiter.test.ts",
         "companion/tests/server/aiRateLimiterCoverage.test.ts",
         "companion/tests/server/capturesLockGate.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
+        "companion/tests/server/importKinds.test.ts",
         "companion/tests/server/slashCommandRoutes.test.ts"
       ]
     },
     {
       "path": "companion/src/http/securityHeaders.ts",
       "kind": "module",
-      "lines": 97,
+      "lines": 107,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/caseLockGate.ts",
@@ -10066,13 +10770,14 @@
         "companion/tests/http/securityHeaders.test.ts",
         "companion/tests/reports/html.test.ts",
         "companion/tests/reports/interactiveHtml.test.ts",
-        "companion/tests/reports/presentationExport.test.ts"
+        "companion/tests/reports/presentationExport.test.ts",
+        "companion/tests/server/geoTiles.test.ts"
       ]
     },
     {
       "path": "companion/src/http/staticAssets.ts",
       "kind": "module",
-      "lines": 338,
+      "lines": 351,
       "imports": [
         "companion/src/serverAssets.ts"
       ],
@@ -10090,6 +10795,7 @@
         "companion/tests/dashboard/dashboardTagger.test.ts",
         "companion/tests/dashboard/dashboardTimelineView.test.ts",
         "companion/tests/reports/dashboardCss.test.ts",
+        "companion/tests/server/staticAssetFreshness.test.ts",
         "companion/tests/settings/settingsSearch.test.ts"
       ]
     },
@@ -10135,6 +10841,19 @@
       "tests": []
     },
     {
+      "path": "companion/src/ingest/textUriTrim.ts",
+      "kind": "module",
+      "lines": 79,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/cybertriageImport.ts",
+        "companion/src/analysis/deobfuscate.ts",
+        "companion/src/analysis/veloTextIocs.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/ingest/titleSlug.ts",
       "kind": "module",
       "lines": 26,
@@ -10164,9 +10883,10 @@
     {
       "path": "companion/src/integrations/clickup/clickupClient.ts",
       "kind": "module",
-      "lines": 134,
+      "lines": 141,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -10176,14 +10896,16 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/integrations/clickup.test.ts"
+        "companion/tests/integrations/clickup.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts"
       ]
     },
     {
       "path": "companion/src/integrations/clickup/clickupExportStore.ts",
       "kind": "module",
-      "lines": 48,
+      "lines": 62,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -10194,6 +10916,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/clickup.test.ts"
       ]
     },
@@ -10235,11 +10958,12 @@
     {
       "path": "companion/src/integrations/customerExposureProviders.ts",
       "kind": "module",
-      "lines": 314,
+      "lines": 324,
       "imports": [
         "companion/src/analysis/customerExposure.ts",
         "companion/src/enrichment/provider.ts",
-        "companion/src/integrations/leakcheck/leakcheckClient.ts"
+        "companion/src/integrations/leakcheck/leakcheckClient.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/enrichmentProviders.ts"
@@ -10252,9 +10976,10 @@
     {
       "path": "companion/src/integrations/iris/irisClient.ts",
       "kind": "module",
-      "lines": 353,
+      "lines": 356,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -10355,9 +11080,10 @@
     {
       "path": "companion/src/integrations/jira/jiraClient.ts",
       "kind": "module",
-      "lines": 170,
+      "lines": 175,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -10370,14 +11096,16 @@
         "companion/tests/integrations/jiraClient.test.ts",
         "companion/tests/integrations/jiraPush.test.ts",
         "companion/tests/integrations/ticketExportStoreRoundTrip.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts"
       ]
     },
     {
       "path": "companion/src/integrations/jira/jiraExportStore.ts",
       "kind": "module",
-      "lines": 53,
+      "lines": 63,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/integrations/jira/jiraClient.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
@@ -10388,6 +11116,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/ticketExportStoreRoundTrip.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts"
       ]
@@ -10412,9 +11141,10 @@
     {
       "path": "companion/src/integrations/leakcheck/leakcheckClient.ts",
       "kind": "module",
-      "lines": 138,
+      "lines": 145,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/integrations/customerExposureProviders.ts"
@@ -10529,8 +11259,9 @@
     {
       "path": "companion/src/integrations/mcp/mcpServerStore.ts",
       "kind": "module",
-      "lines": 255,
+      "lines": 267,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
       "importedBy": [
@@ -10544,6 +11275,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/mcpAgentRunner.test.ts",
         "companion/tests/integrations/mcpDelivery.test.ts",
         "companion/tests/integrations/mcpGuard.test.ts",
@@ -10589,10 +11321,11 @@
     {
       "path": "companion/src/integrations/misp/mispPushClient.ts",
       "kind": "module",
-      "lines": 282,
+      "lines": 287,
       "imports": [
         "companion/src/enrichment/provider.ts",
-        "companion/src/integrations/misp/mispConnectivity.ts"
+        "companion/src/integrations/misp/mispConnectivity.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -10602,7 +11335,8 @@
       "routes": [],
       "tests": [
         "companion/tests/integrations/misp.test.ts",
-        "companion/tests/integrations/mispPushClient.test.ts"
+        "companion/tests/integrations/mispPushClient.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts"
       ]
     },
     {
@@ -10678,6 +11412,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/auth/expiredSessionSweep.test.ts",
         "companion/tests/integrations/notify.test.ts",
         "companion/tests/server.test.ts",
         "companion/tests/server/notificationRoutes.test.ts"
@@ -10750,9 +11485,10 @@
     {
       "path": "companion/src/integrations/notify/webhookSender.ts",
       "kind": "module",
-      "lines": 38,
+      "lines": 53,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/integrations/notify/notifyDispatch.ts"
@@ -10784,10 +11520,11 @@
     {
       "path": "companion/src/integrations/notion/notionClient.ts",
       "kind": "module",
-      "lines": 293,
+      "lines": 300,
       "imports": [
         "companion/src/enrichment/provider.ts",
-        "companion/src/integrations/notion/notionBlocks.ts"
+        "companion/src/integrations/notion/notionBlocks.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -10797,14 +11534,16 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/integrations/notion.test.ts"
+        "companion/tests/integrations/notion.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts"
       ]
     },
     {
       "path": "companion/src/integrations/notion/notionExportStore.ts",
       "kind": "module",
-      "lines": 62,
+      "lines": 72,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -10815,6 +11554,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/notion.test.ts"
       ]
     },
@@ -10842,9 +11582,10 @@
     {
       "path": "companion/src/integrations/servicenow/servicenowClient.ts",
       "kind": "module",
-      "lines": 169,
+      "lines": 176,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -10856,14 +11597,16 @@
       "tests": [
         "companion/tests/integrations/servicenowPush.test.ts",
         "companion/tests/integrations/ticketExportStoreRoundTrip.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts"
       ]
     },
     {
       "path": "companion/src/integrations/servicenow/servicenowExportStore.ts",
       "kind": "module",
-      "lines": 56,
+      "lines": 66,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/integrations/servicenow/servicenowClient.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
@@ -10874,6 +11617,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/ticketExportStoreRoundTrip.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts"
       ]
@@ -10898,9 +11642,10 @@
     {
       "path": "companion/src/integrations/socrates/socratesApi.ts",
       "kind": "module",
-      "lines": 148,
+      "lines": 155,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/externalTools.ts",
@@ -10915,8 +11660,9 @@
     {
       "path": "companion/src/integrations/socrates/socratesJobStore.ts",
       "kind": "module",
-      "lines": 58,
+      "lines": 65,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/caseStore.ts"
       ],
@@ -10927,6 +11673,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/socratesJob.test.ts"
       ]
     },
@@ -10949,9 +11696,11 @@
     {
       "path": "companion/src/integrations/timesketch/timesketchClient.ts",
       "kind": "module",
-      "lines": 280,
+      "lines": 314,
       "imports": [
-        "companion/src/enrichment/provider.ts"
+        "companion/src/enrichment/provider.ts",
+        "companion/src/integrations/tlsTrustHint.ts",
+        "companion/src/providers/boundedResponse.ts"
       ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
@@ -11004,10 +11753,24 @@
       ]
     },
     {
+      "path": "companion/src/integrations/tlsTrustHint.ts",
+      "kind": "module",
+      "lines": 58,
+      "imports": [],
+      "importedBy": [
+        "companion/src/integrations/timesketch/timesketchClient.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/integrations/tlsTrustHint.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/integrations/tools/customToolStore.ts",
       "kind": "module",
-      "lines": 183,
+      "lines": 197,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/integrations/tools/toolConfig.ts",
         "companion/src/storage/atomicWrite.ts"
       ],
@@ -11019,6 +11782,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/integrations/customToolStore.test.ts",
         "companion/tests/server/originGuardRoutes.test.ts"
       ]
@@ -11026,9 +11790,10 @@
     {
       "path": "companion/src/integrations/tools/runToolImport.ts",
       "kind": "module",
-      "lines": 144,
+      "lines": 215,
       "imports": [
         "companion/src/integrations/tools/toolConfig.ts",
+        "companion/src/integrations/tools/toolProvenance.ts",
         "companion/src/integrations/tools/toolRunner.ts"
       ],
       "importedBy": [
@@ -11038,13 +11803,14 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/integrations/toolProvenance.test.ts",
         "companion/tests/integrations/toolRunner.test.ts"
       ]
     },
     {
       "path": "companion/src/integrations/tools/toolConfig.ts",
       "kind": "module",
-      "lines": 292,
+      "lines": 379,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/dropScan.ts",
@@ -11053,21 +11819,44 @@
         "companion/src/composition/externalTools.ts",
         "companion/src/integrations/tools/customToolStore.ts",
         "companion/src/integrations/tools/runToolImport.ts",
+        "companion/src/integrations/tools/toolProvenance.ts",
         "companion/src/routes/context.ts",
         "companion/src/routes/import.ts",
         "companion/src/routes/tools.ts"
       ],
       "routes": [],
       "tests": [
+        "companion/tests/integrations/toolProvenance.test.ts",
         "companion/tests/integrations/toolRunner.test.ts",
         "companion/tests/server/socratesRoutes.test.ts",
+        "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/integrations/tools/toolProvenance.ts",
+      "kind": "module",
+      "lines": 295,
+      "imports": [
+        "companion/src/integrations/tools/toolConfig.ts",
+        "companion/src/integrations/tools/toolRunner.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/dropFolder.ts",
+        "companion/src/composition/externalTools.ts",
+        "companion/src/integrations/tools/runToolImport.ts",
+        "companion/src/routes/context.ts",
+        "companion/src/routes/import.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/integrations/toolProvenance.test.ts"
       ]
     },
     {
       "path": "companion/src/integrations/tools/toolRunner.ts",
       "kind": "module",
-      "lines": 242,
+      "lines": 252,
       "imports": [
         "companion/src/integrations/childOutput.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts"
@@ -11075,12 +11864,15 @@
       "importedBy": [
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/appWiring.ts",
-        "companion/src/integrations/tools/runToolImport.ts"
+        "companion/src/integrations/tools/runToolImport.ts",
+        "companion/src/integrations/tools/toolProvenance.ts"
       ],
       "routes": [],
       "tests": [
+        "companion/tests/integrations/toolProvenance.test.ts",
         "companion/tests/integrations/toolRunner.test.ts",
         "companion/tests/server/originGuardRoutes.test.ts",
+        "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts"
       ]
     },
@@ -11115,12 +11907,15 @@
     {
       "path": "companion/src/integrations/velociraptor/artifactTools.ts",
       "kind": "module",
-      "lines": 112,
-      "imports": [],
+      "lines": 205,
+      "imports": [
+        "companion/src/integrations/velociraptor/vqlDiagnostics.ts"
+      ],
       "importedBy": [
         "companion/src/integrations/velociraptor/artifactCatalog.ts",
         "companion/src/integrations/velociraptor/bundlePreflight.ts",
-        "companion/src/integrations/velociraptor/velociraptorApi.ts"
+        "companion/src/integrations/velociraptor/velociraptorApi.ts",
+        "companion/src/routes/velociraptor.ts"
       ],
       "routes": [],
       "tests": [
@@ -11131,7 +11926,7 @@
     {
       "path": "companion/src/integrations/velociraptor/bundlePreflight.ts",
       "kind": "module",
-      "lines": 112,
+      "lines": 132,
       "imports": [
         "companion/src/integrations/velociraptor/artifactTools.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts"
@@ -11147,7 +11942,7 @@
     {
       "path": "companion/src/integrations/velociraptor/clientInventory.ts",
       "kind": "module",
-      "lines": 61,
+      "lines": 90,
       "imports": [],
       "importedBy": [
         "companion/src/integrations/velociraptor/velociraptorApi.ts"
@@ -11188,7 +11983,7 @@
     {
       "path": "companion/src/integrations/velociraptor/velociraptorApi.ts",
       "kind": "module",
-      "lines": 1247,
+      "lines": 1250,
       "imports": [
         "companion/src/integrations/childOutput.ts",
         "companion/src/integrations/velociraptor/artifactCatalog.ts",
@@ -11237,9 +12032,10 @@
     {
       "path": "companion/src/integrations/velociraptor/vqlDiagnostics.ts",
       "kind": "module",
-      "lines": 92,
+      "lines": 101,
       "imports": [],
       "importedBy": [
+        "companion/src/integrations/velociraptor/artifactTools.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts"
       ],
       "routes": [],
@@ -11310,6 +12106,7 @@
         "companion/tests/analysis/slackSocketMode.test.ts",
         "companion/tests/analysis/telegramPoller.test.ts",
         "companion/tests/composition/backfillCaptureLog.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/logging/logger.test.ts",
         "companion/tests/logging/uncaughtExceptionNet.test.ts",
         "companion/tests/logging/unhandledRejectionNet.test.ts",
@@ -11322,8 +12119,10 @@
         "companion/tests/server/presidioRoutes.test.ts",
         "companion/tests/server/settingsReloadRebuild.test.ts",
         "companion/tests/server/setupWizard.test.ts",
+        "companion/tests/server/staticAssetFreshness.test.ts",
         "companion/tests/server/taggerRoutes.test.ts",
-        "companion/tests/server/tlsFetchForWiring.test.ts"
+        "companion/tests/server/tlsFetchForWiring.test.ts",
+        "companion/tests/settings/setupWizardSteps.test.ts"
       ]
     },
     {
@@ -11334,6 +12133,7 @@
         "companion/src/logging/logger.ts"
       ],
       "importedBy": [
+        "companion/src/auth/authRoutes.ts",
         "companion/src/composition/aiRuntime.ts",
         "companion/src/composition/captureAnalysis.ts",
         "companion/src/composition/caseNotifier.ts",
@@ -11403,8 +12203,9 @@
     {
       "path": "companion/src/providers/anthropic.ts",
       "kind": "module",
-      "lines": 136,
+      "lines": 155,
       "imports": [
+        "companion/src/providers/boundedResponse.ts",
         "companion/src/providers/provider.ts",
         "companion/src/providers/urlValidation.ts"
       ],
@@ -11414,6 +12215,46 @@
       "routes": [],
       "tests": [
         "companion/tests/providers/anthropic.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/providers/boundedResponse.ts",
+      "kind": "module",
+      "lines": 153,
+      "imports": [],
+      "importedBy": [
+        "companion/src/enrichment/abuseipdb.ts",
+        "companion/src/enrichment/crowdstrike.ts",
+        "companion/src/enrichment/geoip.ts",
+        "companion/src/enrichment/hashlookup.ts",
+        "companion/src/enrichment/huntingch.ts",
+        "companion/src/enrichment/misp.ts",
+        "companion/src/enrichment/opencti.ts",
+        "companion/src/enrichment/rdap.ts",
+        "companion/src/enrichment/rockyraccoon.ts",
+        "companion/src/enrichment/shodan.ts",
+        "companion/src/enrichment/virustotal.ts",
+        "companion/src/enrichment/yeti.ts",
+        "companion/src/integrations/clickup/clickupClient.ts",
+        "companion/src/integrations/customerExposureProviders.ts",
+        "companion/src/integrations/iris/irisClient.ts",
+        "companion/src/integrations/jira/jiraClient.ts",
+        "companion/src/integrations/leakcheck/leakcheckClient.ts",
+        "companion/src/integrations/misp/mispPushClient.ts",
+        "companion/src/integrations/notify/webhookSender.ts",
+        "companion/src/integrations/notion/notionClient.ts",
+        "companion/src/integrations/servicenow/servicenowClient.ts",
+        "companion/src/integrations/socrates/socratesApi.ts",
+        "companion/src/integrations/timesketch/timesketchClient.ts",
+        "companion/src/providers/anthropic.ts",
+        "companion/src/providers/gemini.ts",
+        "companion/src/providers/modelCatalog.ts",
+        "companion/src/providers/openai.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/integrations/timesketch.test.ts",
+        "companion/tests/providers/boundedResponse.test.ts"
       ]
     },
     {
@@ -11527,8 +12368,9 @@
     {
       "path": "companion/src/providers/gemini.ts",
       "kind": "module",
-      "lines": 94,
+      "lines": 98,
       "imports": [
+        "companion/src/providers/boundedResponse.ts",
         "companion/src/providers/provider.ts",
         "companion/src/providers/urlValidation.ts"
       ],
@@ -11558,8 +12400,9 @@
     {
       "path": "companion/src/providers/modelCatalog.ts",
       "kind": "module",
-      "lines": 302,
+      "lines": 307,
       "imports": [
+        "companion/src/providers/boundedResponse.ts",
         "companion/src/providers/codexRunner.ts",
         "companion/src/providers/urlValidation.ts"
       ],
@@ -11589,8 +12432,9 @@
     {
       "path": "companion/src/providers/openai.ts",
       "kind": "module",
-      "lines": 160,
+      "lines": 164,
       "imports": [
+        "companion/src/providers/boundedResponse.ts",
         "companion/src/providers/provider.ts",
         "companion/src/providers/urlValidation.ts"
       ],
@@ -11673,6 +12517,7 @@
         "companion/tests/analysis/presidioRetryPolicy.test.ts",
         "companion/tests/analysis/secondLookLoop.test.ts",
         "companion/tests/analysis/starredReport.test.ts",
+        "companion/tests/analysis/synthesizeAbort.test.ts",
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
@@ -11708,6 +12553,7 @@
         "companion/tests/server/importMissingCase.test.ts",
         "companion/tests/server/iocBulkRoutes.test.ts",
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
+        "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/learnedPatterns.test.ts",
         "companion/tests/server/memoryNextSteps.test.ts",
         "companion/tests/server/playbookHunts.test.ts",
@@ -11773,7 +12619,7 @@
     {
       "path": "companion/src/reports/csv.ts",
       "kind": "module",
-      "lines": 112,
+      "lines": 116,
       "imports": [
         "companion/src/analysis/forensicSort.ts",
         "companion/src/analysis/geoMap.ts",
@@ -11917,8 +12763,9 @@
     {
       "path": "companion/src/reports/markdown.ts",
       "kind": "module",
-      "lines": 1586,
+      "lines": 1597,
       "imports": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/adversaryEmulation.ts",
         "companion/src/analysis/adversaryGroupsData.ts",
         "companion/src/analysis/adversaryHints.ts",
@@ -12106,6 +12953,7 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/loadTest.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/fullPipeline.test.ts",
         "companion/tests/http/teamAuth.test.ts",
         "companion/tests/integrations/iris.test.ts",
@@ -12233,8 +13081,9 @@
     {
       "path": "companion/src/reports/reportVersionStore.ts",
       "kind": "module",
-      "lines": 312,
+      "lines": 322,
       "imports": [
+        "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/auth/identityContext.ts",
         "companion/src/reports/reportMeta.ts",
@@ -12253,6 +13102,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/http/teamAuth.test.ts",
         "companion/tests/reports/reportReleaseStore.test.ts",
         "companion/tests/reports/reportVersionStore.test.ts",
@@ -12299,6 +13149,7 @@
       "kind": "module",
       "lines": 837,
       "imports": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/adversaryGroupsData.ts",
         "companion/src/analysis/adversaryHints.ts",
         "companion/src/analysis/analysisRunHash.ts",
@@ -12732,7 +13583,7 @@
     {
       "path": "companion/src/routes/caseLifecycle.ts",
       "kind": "module",
-      "lines": 901,
+      "lines": 903,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/caseArchive.ts",
@@ -12838,7 +13689,7 @@
     {
       "path": "companion/src/routes/casePush.ts",
       "kind": "module",
-      "lines": 574,
+      "lines": 711,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/stateTypes.ts",
@@ -12874,14 +13725,19 @@
         "POST /cases/:id/push/jira/bulk",
         "GET /servicenow/status",
         "POST /cases/:id/push/servicenow",
-        "POST /cases/:id/push/servicenow/bulk"
+        "POST /cases/:id/push/servicenow/bulk",
+        "POST /misp/reconnect",
+        "POST /notion/reconnect",
+        "POST /clickup/reconnect",
+        "POST /jira/test",
+        "POST /servicenow/test"
       ],
       "tests": []
     },
     {
       "path": "companion/src/routes/clockSkew.ts",
       "kind": "module",
-      "lines": 118,
+      "lines": 127,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/clockSkew.ts",
@@ -12994,7 +13850,7 @@
     {
       "path": "companion/src/routes/context.ts",
       "kind": "module",
-      "lines": 351,
+      "lines": 353,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/diagnostics.ts",
@@ -13014,6 +13870,7 @@
         "companion/src/integrations/timesketch/timesketchClient.ts",
         "companion/src/integrations/tools/customToolStore.ts",
         "companion/src/integrations/tools/toolConfig.ts",
+        "companion/src/integrations/tools/toolProvenance.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts",
         "companion/src/logging/logger.ts",
         "companion/src/server.ts",
@@ -13042,11 +13899,14 @@
         "companion/src/routes/cockpit.ts",
         "companion/src/routes/collectionPlan.ts",
         "companion/src/routes/compliance.ts",
+        "companion/src/routes/crossCase.ts",
         "companion/src/routes/custody.ts",
         "companion/src/routes/deepPass.ts",
         "companion/src/routes/encryptedImport.ts",
+        "companion/src/routes/enrichmentTest.ts",
         "companion/src/routes/findings.ts",
         "companion/src/routes/findingsDisplay.ts",
+        "companion/src/routes/geoTiles.ts",
         "companion/src/routes/hostDuplicates.ts",
         "companion/src/routes/hostScope.ts",
         "companion/src/routes/huntWorkbench.ts",
@@ -13082,6 +13942,26 @@
         "companion/tests/server/hostDuplicatesRoutes.test.ts",
         "companion/tests/server/presidioResumeRoutes.test.ts"
       ]
+    },
+    {
+      "path": "companion/src/routes/crossCase.ts",
+      "kind": "module",
+      "lines": 268,
+      "imports": [
+        "companion/src/analysis/crossCaseIndex.ts",
+        "companion/src/analysis/stateStore.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/routes/context.ts",
+        "companion/src/types.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/routeRegistry.ts"
+      ],
+      "routes": [
+        "GET /global/iocs",
+        "GET /cases/:id/related"
+      ],
+      "tests": []
     },
     {
       "path": "companion/src/routes/custody.ts",
@@ -13153,7 +14033,7 @@
     {
       "path": "companion/src/routes/encryptedImport.ts",
       "kind": "module",
-      "lines": 104,
+      "lines": 115,
       "imports": [
         "companion/src/analysis/caseEncryption.ts",
         "companion/src/analysis/caseExportArchive.ts",
@@ -13170,11 +14050,28 @@
       "tests": []
     },
     {
+      "path": "companion/src/routes/enrichmentTest.ts",
+      "kind": "module",
+      "lines": 83,
+      "imports": [
+        "companion/src/routes/context.ts",
+        "companion/src/settings/envManager.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/routeRegistry.ts"
+      ],
+      "routes": [
+        "POST /enrichment/:id/reconnect"
+      ],
+      "tests": []
+    },
+    {
       "path": "companion/src/routes/findings.ts",
       "kind": "module",
-      "lines": 835,
+      "lines": 833,
       "imports": [
         "companion/src/analysis/activityLog.ts",
+        "companion/src/analysis/correlationProfile.ts",
         "companion/src/analysis/falsePositive.ts",
         "companion/src/analysis/falsePositiveSimilarity.ts",
         "companion/src/analysis/findingWorkflow.ts",
@@ -13249,6 +14146,24 @@
         "PUT /cases/:id/confidence-control"
       ],
       "tests": []
+    },
+    {
+      "path": "companion/src/routes/geoTiles.ts",
+      "kind": "module",
+      "lines": 205,
+      "imports": [
+        "companion/src/routes/context.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/routeRegistry.ts",
+        "companion/src/routes/system.ts"
+      ],
+      "routes": [
+        "GET /geo-tiles/:z/:x/:y.png"
+      ],
+      "tests": [
+        "companion/tests/server/geoTiles.test.ts"
+      ]
     },
     {
       "path": "companion/src/routes/hostDuplicates.ts",
@@ -13335,7 +14250,7 @@
     {
       "path": "companion/src/routes/import.ts",
       "kind": "module",
-      "lines": 3200,
+      "lines": 3203,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/auditdImport.ts",
@@ -13372,6 +14287,7 @@
         "companion/src/analysis/velociraptorImport.ts",
         "companion/src/analysis/wazuhImport.ts",
         "companion/src/integrations/tools/toolConfig.ts",
+        "companion/src/integrations/tools/toolProvenance.ts",
         "companion/src/routes/context.ts",
         "companion/src/routes/importCaseGuard.ts",
         "companion/src/routes/importJobTracking.ts",
@@ -13461,9 +14377,12 @@
     {
       "path": "companion/src/routes/importKinds.ts",
       "kind": "module",
-      "lines": 25,
-      "imports": [],
+      "lines": 42,
+      "imports": [
+        "companion/src/http/rateLimiter.ts"
+      ],
       "importedBy": [
+        "companion/src/composition/jobModel.ts",
         "companion/src/routes/import.ts",
         "companion/src/routes/importRecovery.ts"
       ],
@@ -13911,7 +14830,7 @@
     {
       "path": "companion/src/routes/system.ts",
       "kind": "module",
-      "lines": 702,
+      "lines": 733,
       "imports": [
         "companion/src/analysis/diagnostics.ts",
         "companion/src/analysis/diskWarn.ts",
@@ -13928,6 +14847,7 @@
         "companion/src/providers/codexStatus.ts",
         "companion/src/providers/provider.ts",
         "companion/src/routes/context.ts",
+        "companion/src/routes/geoTiles.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/version.ts"
       ],
@@ -13953,14 +14873,15 @@
         "GET /diagnostics/preflight",
         "POST /diagnostics/preflight",
         "GET /diagnostics/preflight/control",
-        "POST /diagnostics/preflight/control"
+        "POST /diagnostics/preflight/control",
+        "GET /system/presidio-health"
       ],
       "tests": []
     },
     {
       "path": "companion/src/routes/tagger.ts",
       "kind": "module",
-      "lines": 289,
+      "lines": 298,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/analysisRunHash.ts",
@@ -14129,7 +15050,7 @@
     {
       "path": "companion/src/routes/tools.ts",
       "kind": "module",
-      "lines": 315,
+      "lines": 353,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/forensicGate.ts",
@@ -14173,6 +15094,7 @@
         "companion/src/analysis/veloHuntStore.ts",
         "companion/src/analysis/veloRef.ts",
         "companion/src/analysis/veloTimeScope.ts",
+        "companion/src/integrations/velociraptor/artifactTools.ts",
         "companion/src/integrations/velociraptor/bundlePreflight.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts",
         "companion/src/routes/context.ts",
@@ -14260,7 +15182,7 @@
     {
       "path": "companion/src/server.ts",
       "kind": "module",
-      "lines": 643,
+      "lines": 651,
       "imports": [
         "companion/src/analysis/importLock.ts",
         "companion/src/analysis/instanceSecret.ts",
@@ -14284,6 +15206,7 @@
         "companion/src/composition/httpStack.ts",
         "companion/src/composition/importIngest.ts",
         "companion/src/composition/integrationClients.ts",
+        "companion/src/composition/jobModel.ts",
         "companion/src/composition/maintenanceTasks.ts",
         "companion/src/composition/ocrIndexer.ts",
         "companion/src/composition/routeRegistry.ts",
@@ -14316,6 +15239,7 @@
         "companion/tests/analysis/custodyIntegrityScope.test.ts",
         "companion/tests/analysis/dropLog.test.ts",
         "companion/tests/architecture/routeInventory.test.ts",
+        "companion/tests/architecture/serverImportInTestBody.test.ts",
         "companion/tests/composition/integrationClients.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
         "companion/tests/dashboard/dashboardNameResolution.test.ts",
@@ -14325,8 +15249,10 @@
         "companion/tests/eval/run.ts",
         "companion/tests/fullPipeline.test.ts",
         "companion/tests/http/loginRateLimit.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/http/oidcStartRateLimit.test.ts",
         "companion/tests/http/teamAuth.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/integrations/mispPushOptions.test.ts",
         "companion/tests/providers/claudeCode.wiring.test.ts",
         "companion/tests/providers/codex.wiring.test.ts",
@@ -14357,6 +15283,7 @@
         "companion/tests/server/collectionPlanRoutes.test.ts",
         "companion/tests/server/complianceRoute.test.ts",
         "companion/tests/server/confidenceControl.test.ts",
+        "companion/tests/server/crossCaseRoutes.test.ts",
         "companion/tests/server/custodyAutoRecord.test.ts",
         "companion/tests/server/custodyChainRoutes.test.ts",
         "companion/tests/server/custodyExportEvents.test.ts",
@@ -14367,6 +15294,7 @@
         "companion/tests/server/dropFolderSymlink.test.ts",
         "companion/tests/server/dwellWindows.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
+        "companion/tests/server/enrichmentConnectionTest.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
         "companion/tests/server/falsePositiveSuggest.test.ts",
         "companion/tests/server/findingWorkflow.test.ts",
@@ -14374,6 +15302,7 @@
         "companion/tests/server/fpCascade.test.ts",
         "companion/tests/server/fpPropagationStamp.test.ts",
         "companion/tests/server/geoMap.test.ts",
+        "companion/tests/server/geoTiles.test.ts",
         "companion/tests/server/hostDuplicatesRoutes.test.ts",
         "companion/tests/server/hostScopeRoutes.test.ts",
         "companion/tests/server/huntOutcomes.test.ts",
@@ -14388,6 +15317,7 @@
         "companion/tests/server/importWriterExclusion.test.ts",
         "companion/tests/server/importerRoutes.test.ts",
         "companion/tests/server/incidentTypeRoutes.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts",
         "companion/tests/server/interactiveReportRoute.test.ts",
         "companion/tests/server/iocBulkRoutes.test.ts",
         "companion/tests/server/iocExcludeRoutes.test.ts",
@@ -14399,6 +15329,7 @@
         "companion/tests/server/irisPushRoute.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts",
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
+        "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/jobs.test.ts",
         "companion/tests/server/knownUnknowns.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts",
@@ -14436,15 +15367,18 @@
         "companion/tests/server/sourceTrust.test.ts",
         "companion/tests/server/starActivityLog.test.ts",
         "companion/tests/server/starredReport.test.ts",
+        "companion/tests/server/staticAssetFreshness.test.ts",
         "companion/tests/server/storeIdTraversalRoutes.test.ts",
         "companion/tests/server/suggestHunts.test.ts",
         "companion/tests/server/superTimeline.test.ts",
         "companion/tests/server/synthesisOnlyGate.test.ts",
         "companion/tests/server/synthesizeGateRoute.test.ts",
+        "companion/tests/server/systemPresidioHealth.test.ts",
         "companion/tests/server/systemPresidioTest.test.ts",
         "companion/tests/server/taggerRoutes.test.ts",
         "companion/tests/server/timerLifecycle.test.ts",
         "companion/tests/server/tlsFetchForWiring.test.ts",
+        "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts",
         "companion/tests/server/updateCheckRoutes.test.ts",
         "companion/tests/server/veloBundle.test.ts",
@@ -14452,7 +15386,8 @@
         "companion/tests/server/veloImportExternal.test.ts",
         "companion/tests/server/veloMonitor.test.ts",
         "companion/tests/server/veloReconnect.test.ts",
-        "companion/tests/server/veloTimeScope.test.ts"
+        "companion/tests/server/veloTimeScope.test.ts",
+        "companion/tests/settings/setupWizardSteps.test.ts"
       ]
     },
     {
@@ -14477,7 +15412,7 @@
     {
       "path": "companion/src/settings/envManager.ts",
       "kind": "module",
-      "lines": 397,
+      "lines": 408,
       "imports": [
         "companion/src/config/aiEnv.ts",
         "companion/src/serverAssets.ts",
@@ -14486,6 +15421,7 @@
       "importedBy": [
         "companion/src/routes/caseLifecycle.ts",
         "companion/src/routes/casePush.ts",
+        "companion/src/routes/enrichmentTest.ts",
         "companion/src/routes/mcpServers.ts",
         "companion/src/routes/reportsExport.ts",
         "companion/src/routes/tools.ts",
@@ -14497,7 +15433,8 @@
         "companion/tests/settings/envManager.test.ts",
         "companion/tests/settings/envWriteLock.test.ts",
         "companion/tests/settings/settingsEnvFields.test.ts",
-        "companion/tests/settings/settingsEssentialAll.test.ts"
+        "companion/tests/settings/settingsEssentialAll.test.ts",
+        "companion/tests/settings/setupWizardSteps.test.ts"
       ]
     },
     {
@@ -14624,7 +15561,7 @@
     {
       "path": "companion/src/storage/caseStore.ts",
       "kind": "module",
-      "lines": 453,
+      "lines": 481,
       "imports": [
         "companion/src/analysis/ocrSearch.ts",
         "companion/src/analysis/stateLock.ts",
@@ -14641,6 +15578,7 @@
         "companion/src/analysis/anonDiscovered.ts",
         "companion/src/analysis/anonEntities.ts",
         "companion/src/analysis/assetOverrides.ts",
+        "companion/src/analysis/caseExistsGate.ts",
         "companion/src/analysis/caseExportArchive.ts",
         "companion/src/analysis/caseIdGate.ts",
         "companion/src/analysis/caseLockGate.ts",
@@ -14806,31 +15744,39 @@
         "companion/tests/analysis/scope.test.ts",
         "companion/tests/analysis/secondLookLoop.test.ts",
         "companion/tests/analysis/secondOpinionStore.test.ts",
+        "companion/tests/analysis/sideStoreConcurrency.test.ts",
         "companion/tests/analysis/starredReport.test.ts",
         "companion/tests/analysis/starredReportStore.test.ts",
         "companion/tests/analysis/stateStore.test.ts",
         "companion/tests/analysis/superTimelineStore.test.ts",
         "companion/tests/analysis/synthMeta.test.ts",
         "companion/tests/analysis/synthesisPromptHostMerge.test.ts",
+        "companion/tests/analysis/synthesizeAbort.test.ts",
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
+        "companion/tests/analysis/taggerAuthorship.test.ts",
         "companion/tests/analysis/taggerAuto.test.ts",
         "companion/tests/analysis/tags.test.ts",
         "companion/tests/analysis/veloHuntStore.test.ts",
         "companion/tests/analysis/veloMonitorStore.test.ts",
         "companion/tests/architecture/routeInventory.test.ts",
+        "companion/tests/auth/expiredSessionSweep.test.ts",
         "companion/tests/composition/backfillCaptureLog.test.ts",
+        "companion/tests/composition/enrichmentBatching.test.ts",
         "companion/tests/composition/enrichmentCoalescing.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
         "companion/tests/composition/resynthesisCoalescing.test.ts",
+        "companion/tests/composition/supersededSynthesisIsNotAnError.test.ts",
         "companion/tests/enrichment/enrichControl.test.ts",
         "companion/tests/eval/harness.ts",
         "companion/tests/fullPipeline.test.ts",
         "companion/tests/http/loginRateLimit.test.ts",
+        "companion/tests/http/oidcErrorRedirect.test.ts",
         "companion/tests/http/oidcStartRateLimit.test.ts",
         "companion/tests/http/teamAuth.test.ts",
+        "companion/tests/http/teamAuthBodyGate.test.ts",
         "companion/tests/ingest/captureIngest.test.ts",
         "companion/tests/ingest/evidenceSequence.test.ts",
         "companion/tests/integrations/clickup.test.ts",
@@ -14870,6 +15816,7 @@
         "companion/tests/server/collectionPlanRoutes.test.ts",
         "companion/tests/server/complianceRoute.test.ts",
         "companion/tests/server/confidenceControl.test.ts",
+        "companion/tests/server/crossCaseRoutes.test.ts",
         "companion/tests/server/custodyAutoRecord.test.ts",
         "companion/tests/server/custodyChainRoutes.test.ts",
         "companion/tests/server/custodyExportEvents.test.ts",
@@ -14880,6 +15827,7 @@
         "companion/tests/server/dropFolderSymlink.test.ts",
         "companion/tests/server/dwellWindows.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
+        "companion/tests/server/enrichmentConnectionTest.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
         "companion/tests/server/falsePositiveSuggest.test.ts",
         "companion/tests/server/findingWorkflow.test.ts",
@@ -14887,6 +15835,7 @@
         "companion/tests/server/fpCascade.test.ts",
         "companion/tests/server/fpPropagationStamp.test.ts",
         "companion/tests/server/geoMap.test.ts",
+        "companion/tests/server/geoTiles.test.ts",
         "companion/tests/server/hostDuplicatesRoutes.test.ts",
         "companion/tests/server/hostScopeRoutes.test.ts",
         "companion/tests/server/huntOutcomes.test.ts",
@@ -14901,6 +15850,7 @@
         "companion/tests/server/importWriterExclusion.test.ts",
         "companion/tests/server/importerRoutes.test.ts",
         "companion/tests/server/incidentTypeRoutes.test.ts",
+        "companion/tests/server/integrationConnectionTest.test.ts",
         "companion/tests/server/interactiveReportRoute.test.ts",
         "companion/tests/server/iocBulkRoutes.test.ts",
         "companion/tests/server/iocExcludeRoutes.test.ts",
@@ -14912,6 +15862,7 @@
         "companion/tests/server/irisPushRoute.test.ts",
         "companion/tests/server/jiraServicenowPushRoute.test.ts",
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
+        "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/jobs.test.ts",
         "companion/tests/server/knownUnknowns.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts",
@@ -14949,14 +15900,17 @@
         "companion/tests/server/sourceTrust.test.ts",
         "companion/tests/server/starActivityLog.test.ts",
         "companion/tests/server/starredReport.test.ts",
+        "companion/tests/server/staticAssetFreshness.test.ts",
         "companion/tests/server/storeIdTraversalRoutes.test.ts",
         "companion/tests/server/suggestHunts.test.ts",
         "companion/tests/server/superTimeline.test.ts",
         "companion/tests/server/synthesisOnlyGate.test.ts",
         "companion/tests/server/synthesizeGateRoute.test.ts",
+        "companion/tests/server/systemPresidioHealth.test.ts",
         "companion/tests/server/systemPresidioTest.test.ts",
         "companion/tests/server/taggerRoutes.test.ts",
         "companion/tests/server/timerLifecycle.test.ts",
+        "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts",
         "companion/tests/server/updateCheckRoutes.test.ts",
         "companion/tests/server/veloBundle.test.ts",
@@ -14965,6 +15919,7 @@
         "companion/tests/server/veloMonitor.test.ts",
         "companion/tests/server/veloReconnect.test.ts",
         "companion/tests/server/veloTimeScope.test.ts",
+        "companion/tests/settings/setupWizardSteps.test.ts",
         "companion/tests/storage/artifactStoredHook.test.ts",
         "companion/tests/storage/caseStore.test.ts"
       ]
@@ -14985,7 +15940,7 @@
     {
       "path": "companion/src/storage/noFollowRead.ts",
       "kind": "module",
-      "lines": 110,
+      "lines": 136,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/caseExportArchive.ts",
@@ -14995,6 +15950,21 @@
       "tests": [
         "companion/tests/server/dropFolderSymlink.test.ts",
         "companion/tests/storage/noFollowRead.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/storage/portableFilename.ts",
+      "kind": "module",
+      "lines": 196,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/caseArchive.ts",
+        "companion/src/analysis/caseExportArchive.ts",
+        "companion/src/analysis/redactedExport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/storage/portableFilename.test.ts"
       ]
     },
     {
@@ -15042,6 +16012,7 @@
         "companion/src/reports/interactiveHtml.ts",
         "companion/src/routes/caseLifecycle.ts",
         "companion/src/routes/context.ts",
+        "companion/src/routes/crossCase.ts",
         "companion/src/storage/caseStore.ts"
       ],
       "routes": [],
@@ -15510,6 +16481,15 @@
       ]
     },
     {
+      "path": "extension/src/options.html",
+      "kind": "page",
+      "lines": 50,
+      "imports": [],
+      "importedBy": [],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "extension/src/options.ts",
       "kind": "module",
       "lines": 76,
@@ -15534,19 +16514,44 @@
       ]
     },
     {
+      "path": "extension/src/popup.html",
+      "kind": "page",
+      "lines": 60,
+      "imports": [],
+      "importedBy": [],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "extension/src/popup.ts",
       "kind": "module",
-      "lines": 357,
+      "lines": 391,
       "imports": [
         "extension/src/adapters/override.ts",
         "extension/src/adapters/registry.ts",
         "extension/src/browser.ts",
+        "extension/src/popupSettings.ts",
         "extension/src/siteAccess.ts",
         "extension/src/types.ts"
       ],
       "importedBy": [],
       "routes": [],
       "tests": []
+    },
+    {
+      "path": "extension/src/popupSettings.ts",
+      "kind": "module",
+      "lines": 62,
+      "imports": [
+        "extension/src/types.ts"
+      ],
+      "importedBy": [
+        "extension/src/popup.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "extension/tests/popupSettings.test.ts"
+      ]
     },
     {
       "path": "extension/src/serviceWorker.ts",
@@ -15598,6 +16603,7 @@
         "extension/src/contextMenuCapture.ts",
         "extension/src/options.ts",
         "extension/src/popup.ts",
+        "extension/src/popupSettings.ts",
         "extension/src/serviceWorker.ts"
       ],
       "routes": [],
@@ -15617,166 +16623,15 @@
         "extension/tests/captureQueue.test.ts",
         "extension/tests/captureQueuePermanentFailure.test.ts",
         "extension/tests/companionClient.test.ts",
+        "extension/tests/popupSettings.test.ts",
         "extension/tests/settings.test.ts"
       ]
     },
     {
       "path": "public/dashboard.html",
       "kind": "page",
-      "lines": 5392,
-      "imports": [
-        "public/js/a11y/announcer.js",
-        "public/js/a11y/describe-as-table.js",
-        "public/js/a11y/landmarks.js",
-        "public/js/a11y/modal-autowire.js",
-        "public/js/a11y/tooltips.js",
-        "public/js/case-load-progress.js",
-        "public/js/command-palette.js",
-        "public/js/dashboard-activity-log.js",
-        "public/js/dashboard-adversary-hints.js",
-        "public/js/dashboard-ai-status.js",
-        "public/js/dashboard-ai-toggle.js",
-        "public/js/dashboard-analysis-runs.js",
-        "public/js/dashboard-anomalies.js",
-        "public/js/dashboard-asset-graph.js",
-        "public/js/dashboard-asset-overrides.js",
-        "public/js/dashboard-attack-phases.js",
-        "public/js/dashboard-backup.js",
-        "public/js/dashboard-bulk-findings.js",
-        "public/js/dashboard-bulk-ioc.js",
-        "public/js/dashboard-bulk-select.js",
-        "public/js/dashboard-case-connect.js",
-        "public/js/dashboard-case-lifecycle.js",
-        "public/js/dashboard-case-password.js",
-        "public/js/dashboard-case-template-picker.js",
-        "public/js/dashboard-case-templates.js",
-        "public/js/dashboard-case-unlock.js",
-        "public/js/dashboard-cockpit.js",
-        "public/js/dashboard-collapsible.js",
-        "public/js/dashboard-collection-plan.js",
-        "public/js/dashboard-comments.js",
-        "public/js/dashboard-compliance.js",
-        "public/js/dashboard-confidence-control.js",
-        "public/js/dashboard-correlation-profile.js",
-        "public/js/dashboard-custody.js",
-        "public/js/dashboard-custom-importers.js",
-        "public/js/dashboard-d3fend.js",
-        "public/js/dashboard-data-act.js",
-        "public/js/dashboard-deep-pass.js",
-        "public/js/dashboard-delete-case.js",
-        "public/js/dashboard-derived-panels.js",
-        "public/js/dashboard-diagnostics.js",
-        "public/js/dashboard-disk-warning.js",
-        "public/js/dashboard-encrypted-export.js",
-        "public/js/dashboard-enrichment.js",
-        "public/js/dashboard-env-settings.js",
-        "public/js/dashboard-escape.js",
-        "public/js/dashboard-evidence-graph.js",
-        "public/js/dashboard-exec-summary.js",
-        "public/js/dashboard-explain-event.js",
-        "public/js/dashboard-exposure-fp.js",
-        "public/js/dashboard-facade.js",
-        "public/js/dashboard-facet-filters.js",
-        "public/js/dashboard-facets.js",
-        "public/js/dashboard-false-positive.js",
-        "public/js/dashboard-filters.js",
-        "public/js/dashboard-finding-workflow.js",
-        "public/js/dashboard-fragments.js",
-        "public/js/dashboard-gap-hypotheses.js",
-        "public/js/dashboard-geo.js",
-        "public/js/dashboard-glyphs.js",
-        "public/js/dashboard-heatmap.js",
-        "public/js/dashboard-host-duplicates.js",
-        "public/js/dashboard-host-ranking.js",
-        "public/js/dashboard-host-scope.js",
-        "public/js/dashboard-hunt-profile.js",
-        "public/js/dashboard-hunts-jumps.js",
-        "public/js/dashboard-hypotheses.js",
-        "public/js/dashboard-import-case.js",
-        "public/js/dashboard-import-changes.js",
-        "public/js/dashboard-import-progress.js",
-        "public/js/dashboard-import-severity.js",
-        "public/js/dashboard-import-undo.js",
-        "public/js/dashboard-ioc-blocklist.js",
-        "public/js/dashboard-ioc-provenance.js",
-        "public/js/dashboard-ioc-quick-actions.js",
-        "public/js/dashboard-ioc-whitelist.js",
-        "public/js/dashboard-ioc.js",
-        "public/js/dashboard-jobs.js",
-        "public/js/dashboard-kev.js",
-        "public/js/dashboard-keyboard-nav.js",
-        "public/js/dashboard-kill-chain.js",
-        "public/js/dashboard-login-graph.js",
-        "public/js/dashboard-manual-add.js",
-        "public/js/dashboard-mcp.js",
-        "public/js/dashboard-memory-next-steps.js",
-        "public/js/dashboard-merge-picker.js",
-        "public/js/dashboard-narrative.js",
-        "public/js/dashboard-new-case.js",
-        "public/js/dashboard-notebook.js",
-        "public/js/dashboard-notifications.js",
-        "public/js/dashboard-nsrl.js",
-        "public/js/dashboard-ocr-search.js",
-        "public/js/dashboard-palette-registry.js",
-        "public/js/dashboard-pinned-findings.js",
-        "public/js/dashboard-playbook.js",
-        "public/js/dashboard-preflight-banner.js",
-        "public/js/dashboard-presentation-mode.js",
-        "public/js/dashboard-presidio.js",
-        "public/js/dashboard-push-token.js",
-        "public/js/dashboard-query-translator.js",
-        "public/js/dashboard-redacted-export.js",
-        "public/js/dashboard-render.js",
-        "public/js/dashboard-report-meta.js",
-        "public/js/dashboard-report-templates.js",
-        "public/js/dashboard-report-versions.js",
-        "public/js/dashboard-save-template.js",
-        "public/js/dashboard-scope-apply.js",
-        "public/js/dashboard-scope.js",
-        "public/js/dashboard-search-scope.js",
-        "public/js/dashboard-second-opinion.js",
-        "public/js/dashboard-section-order.js",
-        "public/js/dashboard-selection.js",
-        "public/js/dashboard-sessions.js",
-        "public/js/dashboard-settings-modal.js",
-        "public/js/dashboard-settings-tools.js",
-        "public/js/dashboard-setup-wizard.js",
-        "public/js/dashboard-sigma-hunt.js",
-        "public/js/dashboard-starred.js",
-        "public/js/dashboard-state.js",
-        "public/js/dashboard-super-timeline.js",
-        "public/js/dashboard-swimlane.js",
-        "public/js/dashboard-tagger.js",
-        "public/js/dashboard-tags.js",
-        "public/js/dashboard-text.js",
-        "public/js/dashboard-theme.js",
-        "public/js/dashboard-tickets.js",
-        "public/js/dashboard-time.js",
-        "public/js/dashboard-timeline-controls.js",
-        "public/js/dashboard-timeline-display.js",
-        "public/js/dashboard-timeline-gaps.js",
-        "public/js/dashboard-timeline-view.js",
-        "public/js/dashboard-toolbar-responsive.js",
-        "public/js/dashboard-tooltip.js",
-        "public/js/dashboard-unified-export.js",
-        "public/js/dashboard-unified-import.js",
-        "public/js/dashboard-values.js",
-        "public/js/dashboard-velo-bundles.js",
-        "public/js/dashboard-velo-coverage.js",
-        "public/js/dashboard-velo-fs-browse.js",
-        "public/js/dashboard-velo-monitors.js",
-        "public/js/dashboard-velo-triage.js",
-        "public/js/dashboard-view-presets.js",
-        "public/js/dashboard-views-editor.js",
-        "public/js/dashboard-wizard-ai-step.js",
-        "public/js/dashboard-wizard-steps.js",
-        "public/js/dashboard-zip-archive.js",
-        "public/js/diagnostics-panel.js",
-        "public/js/graph-view.js",
-        "public/js/hunt-workbench.js",
-        "public/js/safe-dom.js",
-        "public/js/settings-search.js"
-      ],
+      "lines": 5587,
+      "imports": [],
       "importedBy": [],
       "routes": [],
       "tests": [
@@ -15838,9 +16693,7 @@
       "kind": "browser",
       "lines": 108,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/a11y/announcer.test.ts",
@@ -15861,9 +16714,7 @@
       "kind": "browser",
       "lines": 145,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/a11y/describeAsTable.test.ts",
@@ -15899,9 +16750,7 @@
       "kind": "browser",
       "lines": 50,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/e2e/a11y/landmarks.spec.ts"
@@ -15914,9 +16763,7 @@
       "imports": [
         "public/js/a11y/modal.js"
       ],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardState.test.ts",
@@ -15958,9 +16805,7 @@
       "kind": "browser",
       "lines": 63,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/e2e/a11y/tooltips.spec.ts"
@@ -15980,9 +16825,7 @@
       "kind": "browser",
       "lines": 633,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/caseLoadProgress.test.ts",
@@ -16003,9 +16846,7 @@
       "kind": "browser",
       "lines": 281,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/caseLoadProgress.test.ts",
@@ -16018,9 +16859,7 @@
       "kind": "browser",
       "lines": 79,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16031,9 +16870,7 @@
       "kind": "browser",
       "lines": 208,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16042,11 +16879,9 @@
     {
       "path": "public/js/dashboard-ai-status.js",
       "kind": "browser",
-      "lines": 160,
+      "lines": 165,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/aiStateReconcile.test.ts",
@@ -16058,9 +16893,7 @@
       "kind": "browser",
       "lines": 65,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16071,9 +16904,7 @@
       "kind": "browser",
       "lines": 276,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16084,9 +16915,7 @@
       "kind": "browser",
       "lines": 99,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16097,9 +16926,7 @@
       "kind": "browser",
       "lines": 390,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardModuleResolution.test.ts",
@@ -16112,9 +16939,7 @@
       "kind": "browser",
       "lines": 225,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16125,9 +16950,7 @@
       "kind": "browser",
       "lines": 130,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16138,9 +16961,7 @@
       "kind": "browser",
       "lines": 90,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16151,9 +16972,7 @@
       "kind": "browser",
       "lines": 467,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16164,9 +16983,7 @@
       "kind": "browser",
       "lines": 60,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16177,9 +16994,7 @@
       "kind": "browser",
       "lines": 148,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16188,11 +17003,9 @@
     {
       "path": "public/js/dashboard-case-connect.js",
       "kind": "browser",
-      "lines": 687,
+      "lines": 688,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/aiStateReconcile.test.ts",
@@ -16205,9 +17018,7 @@
       "kind": "browser",
       "lines": 188,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16218,9 +17029,7 @@
       "kind": "browser",
       "lines": 118,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16231,9 +17040,7 @@
       "kind": "browser",
       "lines": 57,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16244,9 +17051,7 @@
       "kind": "browser",
       "lines": 159,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16257,9 +17062,7 @@
       "kind": "browser",
       "lines": 71,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16270,9 +17073,7 @@
       "kind": "browser",
       "lines": 319,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16283,9 +17084,7 @@
       "kind": "browser",
       "lines": 157,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -16297,9 +17096,7 @@
       "kind": "browser",
       "lines": 134,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFeatureLifecycle.test.ts",
@@ -16312,9 +17109,7 @@
       "kind": "browser",
       "lines": 132,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16325,9 +17120,7 @@
       "kind": "browser",
       "lines": 138,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16338,9 +17131,7 @@
       "kind": "browser",
       "lines": 87,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16351,9 +17142,7 @@
       "kind": "browser",
       "lines": 90,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16364,9 +17153,7 @@
       "kind": "browser",
       "lines": 130,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16377,9 +17164,7 @@
       "kind": "browser",
       "lines": 222,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16390,9 +17175,7 @@
       "kind": "browser",
       "lines": 108,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16401,11 +17184,9 @@
     {
       "path": "public/js/dashboard-data-act.js",
       "kind": "browser",
-      "lines": 180,
+      "lines": 181,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardTagger.test.ts",
@@ -16418,9 +17199,7 @@
       "kind": "browser",
       "lines": 278,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16431,9 +17210,7 @@
       "kind": "browser",
       "lines": 131,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16444,9 +17221,7 @@
       "kind": "browser",
       "lines": 298,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16455,11 +17230,9 @@
     {
       "path": "public/js/dashboard-diagnostics.js",
       "kind": "browser",
-      "lines": 596,
+      "lines": 654,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16470,9 +17243,7 @@
       "kind": "browser",
       "lines": 59,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16483,9 +17254,7 @@
       "kind": "browser",
       "lines": 99,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16496,9 +17265,7 @@
       "kind": "browser",
       "lines": 182,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16507,11 +17274,9 @@
     {
       "path": "public/js/dashboard-env-settings.js",
       "kind": "browser",
-      "lines": 482,
+      "lines": 507,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -16524,9 +17289,7 @@
       "kind": "browser",
       "lines": 63,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFragments.test.ts",
@@ -16548,9 +17311,7 @@
       "kind": "browser",
       "lines": 540,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardModuleResolution.test.ts",
@@ -16562,9 +17323,7 @@
       "kind": "browser",
       "lines": 74,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16575,9 +17334,7 @@
       "kind": "browser",
       "lines": 116,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16588,9 +17345,7 @@
       "kind": "browser",
       "lines": 495,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardTimelineView.test.ts",
@@ -16600,11 +17355,9 @@
     {
       "path": "public/js/dashboard-facade.js",
       "kind": "browser",
-      "lines": 645,
+      "lines": 649,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFeatureLifecycle.test.ts",
@@ -16616,9 +17369,7 @@
       "kind": "browser",
       "lines": 343,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFacets.test.ts",
@@ -16631,9 +17382,7 @@
       "kind": "browser",
       "lines": 129,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardApi.ts",
@@ -16649,9 +17398,7 @@
       "kind": "browser",
       "lines": 214,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16660,11 +17407,9 @@
     {
       "path": "public/js/dashboard-filters.js",
       "kind": "browser",
-      "lines": 199,
+      "lines": 212,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFacets.test.ts",
@@ -16680,9 +17425,7 @@
       "kind": "browser",
       "lines": 112,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16691,11 +17434,9 @@
     {
       "path": "public/js/dashboard-fragments.js",
       "kind": "browser",
-      "lines": 224,
+      "lines": 243,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFragments.test.ts",
@@ -16711,9 +17452,7 @@
       "kind": "browser",
       "lines": 195,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16722,11 +17461,9 @@
     {
       "path": "public/js/dashboard-geo.js",
       "kind": "browser",
-      "lines": 145,
+      "lines": 246,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardAstContract.test.ts",
@@ -16739,9 +17476,7 @@
       "kind": "browser",
       "lines": 115,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardGlyphs.test.ts",
@@ -16755,9 +17490,7 @@
       "kind": "browser",
       "lines": 95,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -16769,9 +17502,7 @@
       "kind": "browser",
       "lines": 151,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/aiStateReconcile.test.ts",
@@ -16785,9 +17516,7 @@
       "kind": "browser",
       "lines": 192,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16798,9 +17527,7 @@
       "kind": "browser",
       "lines": 367,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -16812,9 +17539,7 @@
       "kind": "browser",
       "lines": 163,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16825,9 +17550,7 @@
       "kind": "browser",
       "lines": 374,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16838,9 +17561,7 @@
       "kind": "browser",
       "lines": 441,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16849,11 +17570,9 @@
     {
       "path": "public/js/dashboard-import-case.js",
       "kind": "browser",
-      "lines": 149,
+      "lines": 194,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16864,9 +17583,7 @@
       "kind": "browser",
       "lines": 683,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16877,9 +17594,7 @@
       "kind": "browser",
       "lines": 79,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -16891,9 +17606,7 @@
       "kind": "browser",
       "lines": 83,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16904,9 +17617,7 @@
       "kind": "browser",
       "lines": 114,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16917,9 +17628,7 @@
       "kind": "browser",
       "lines": 57,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16928,11 +17637,9 @@
     {
       "path": "public/js/dashboard-ioc-provenance.js",
       "kind": "browser",
-      "lines": 464,
+      "lines": 491,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16943,9 +17650,7 @@
       "kind": "browser",
       "lines": 279,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16956,9 +17661,7 @@
       "kind": "browser",
       "lines": 168,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -16969,9 +17672,7 @@
       "kind": "browser",
       "lines": 118,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardIoc.test.ts",
@@ -16983,11 +17684,9 @@
     {
       "path": "public/js/dashboard-jobs.js",
       "kind": "browser",
-      "lines": 322,
+      "lines": 350,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -16999,9 +17698,7 @@
       "kind": "browser",
       "lines": 72,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardTagger.test.ts",
@@ -17013,9 +17710,7 @@
       "kind": "browser",
       "lines": 222,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17026,9 +17721,7 @@
       "kind": "browser",
       "lines": 368,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17039,9 +17732,7 @@
       "kind": "browser",
       "lines": 356,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17052,9 +17743,7 @@
       "kind": "browser",
       "lines": 121,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17065,9 +17754,7 @@
       "kind": "browser",
       "lines": 393,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFeatureLifecycle.test.ts",
@@ -17079,9 +17766,7 @@
       "kind": "browser",
       "lines": 146,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17092,9 +17777,7 @@
       "kind": "browser",
       "lines": 76,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17105,9 +17788,7 @@
       "kind": "browser",
       "lines": 289,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17118,9 +17799,7 @@
       "kind": "browser",
       "lines": 161,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17131,9 +17810,7 @@
       "kind": "browser",
       "lines": 177,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17144,9 +17821,7 @@
       "kind": "browser",
       "lines": 249,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17157,9 +17832,7 @@
       "kind": "browser",
       "lines": 266,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17170,9 +17843,7 @@
       "kind": "browser",
       "lines": 100,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17183,9 +17854,7 @@
       "kind": "browser",
       "lines": 294,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/commandPalette.test.ts",
@@ -17197,9 +17866,7 @@
       "kind": "browser",
       "lines": 261,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17210,9 +17877,7 @@
       "kind": "browser",
       "lines": 715,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17223,9 +17888,7 @@
       "kind": "browser",
       "lines": 76,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17236,9 +17899,7 @@
       "kind": "browser",
       "lines": 29,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17247,11 +17908,9 @@
     {
       "path": "public/js/dashboard-presidio.js",
       "kind": "browser",
-      "lines": 488,
+      "lines": 584,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/aiStateReconcile.test.ts",
@@ -17265,9 +17924,7 @@
       "kind": "browser",
       "lines": 147,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17278,9 +17935,7 @@
       "kind": "browser",
       "lines": 193,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17291,22 +17946,27 @@
       "kind": "browser",
       "lines": 84,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
       ]
     },
     {
+      "path": "public/js/dashboard-related-cases.js",
+      "kind": "browser",
+      "lines": 126,
+      "imports": [],
+      "importedBy": [],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "public/js/dashboard-render.js",
       "kind": "browser",
-      "lines": 478,
+      "lines": 488,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFeatureLifecycle.test.ts",
@@ -17320,9 +17980,7 @@
       "kind": "browser",
       "lines": 141,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17333,9 +17991,7 @@
       "kind": "browser",
       "lines": 283,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17346,9 +18002,7 @@
       "kind": "browser",
       "lines": 374,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17359,9 +18013,7 @@
       "kind": "browser",
       "lines": 86,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17372,9 +18024,7 @@
       "kind": "browser",
       "lines": 73,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17385,9 +18035,7 @@
       "kind": "browser",
       "lines": 233,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardApi.ts",
@@ -17400,11 +18048,9 @@
     {
       "path": "public/js/dashboard-search-scope.js",
       "kind": "browser",
-      "lines": 327,
+      "lines": 338,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17415,9 +18061,7 @@
       "kind": "browser",
       "lines": 272,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17428,9 +18072,7 @@
       "kind": "browser",
       "lines": 160,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/commandPalette.test.ts",
@@ -17443,9 +18085,7 @@
       "kind": "browser",
       "lines": 167,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardApi.ts",
@@ -17460,9 +18100,7 @@
       "kind": "browser",
       "lines": 129,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFeatureLifecycle.test.ts",
@@ -17474,9 +18112,7 @@
       "kind": "browser",
       "lines": 115,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -17489,9 +18125,7 @@
       "kind": "browser",
       "lines": 530,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17500,11 +18134,9 @@
     {
       "path": "public/js/dashboard-setup-wizard.js",
       "kind": "browser",
-      "lines": 567,
+      "lines": 753,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17515,9 +18147,7 @@
       "kind": "browser",
       "lines": 588,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17528,9 +18158,7 @@
       "kind": "browser",
       "lines": 140,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17541,9 +18169,7 @@
       "kind": "browser",
       "lines": 265,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardApi.ts",
@@ -17563,9 +18189,7 @@
       "kind": "browser",
       "lines": 652,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17576,9 +18200,7 @@
       "kind": "browser",
       "lines": 523,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardSwimlaneWiring.test.ts",
@@ -17588,11 +18210,9 @@
     {
       "path": "public/js/dashboard-tagger.js",
       "kind": "browser",
-      "lines": 273,
+      "lines": 293,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardTagger.test.ts",
@@ -17604,9 +18224,7 @@
       "kind": "browser",
       "lines": 255,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17617,9 +18235,7 @@
       "kind": "browser",
       "lines": 206,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/velociraptorImport.test.ts",
@@ -17635,9 +18251,7 @@
       "kind": "browser",
       "lines": 246,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -17647,11 +18261,9 @@
     {
       "path": "public/js/dashboard-tickets.js",
       "kind": "browser",
-      "lines": 402,
+      "lines": 482,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardAstContract.test.ts",
@@ -17665,9 +18277,7 @@
       "kind": "browser",
       "lines": 146,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFragments.test.ts",
@@ -17683,9 +18293,7 @@
       "kind": "browser",
       "lines": 334,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17696,9 +18304,7 @@
       "kind": "browser",
       "lines": 89,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17709,9 +18315,7 @@
       "kind": "browser",
       "lines": 82,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17722,9 +18326,7 @@
       "kind": "browser",
       "lines": 307,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardApi.ts",
@@ -17737,9 +18339,7 @@
       "kind": "browser",
       "lines": 60,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17750,9 +18350,7 @@
       "kind": "browser",
       "lines": 63,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17763,9 +18361,7 @@
       "kind": "browser",
       "lines": 100,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17776,9 +18372,7 @@
       "kind": "browser",
       "lines": 250,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/composition/resynthesisCoalescing.test.ts",
@@ -17789,11 +18383,9 @@
     {
       "path": "public/js/dashboard-values.js",
       "kind": "browser",
-      "lines": 236,
+      "lines": 253,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardFragments.test.ts",
@@ -17808,11 +18400,9 @@
     {
       "path": "public/js/dashboard-velo-bundles.js",
       "kind": "browser",
-      "lines": 364,
+      "lines": 371,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardModuleResolution.test.ts",
@@ -17820,13 +18410,20 @@
       ]
     },
     {
+      "path": "public/js/dashboard-velo-case.js",
+      "kind": "browser",
+      "lines": 39,
+      "imports": [],
+      "importedBy": [],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "public/js/dashboard-velo-coverage.js",
       "kind": "browser",
-      "lines": 53,
+      "lines": 85,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardApi.ts",
@@ -17837,24 +18434,29 @@
     {
       "path": "public/js/dashboard-velo-fs-browse.js",
       "kind": "browser",
-      "lines": 154,
+      "lines": 190,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
       ]
     },
     {
+      "path": "public/js/dashboard-velo-labels.js",
+      "kind": "browser",
+      "lines": 126,
+      "imports": [],
+      "importedBy": [],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "public/js/dashboard-velo-monitors.js",
       "kind": "browser",
       "lines": 326,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17863,11 +18465,9 @@
     {
       "path": "public/js/dashboard-velo-triage.js",
       "kind": "browser",
-      "lines": 798,
+      "lines": 795,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts",
@@ -17879,9 +18479,7 @@
       "kind": "browser",
       "lines": 265,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17892,9 +18490,7 @@
       "kind": "browser",
       "lines": 237,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17903,11 +18499,9 @@
     {
       "path": "public/js/dashboard-wizard-ai-step.js",
       "kind": "browser",
-      "lines": 234,
+      "lines": 271,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17916,11 +18510,9 @@
     {
       "path": "public/js/dashboard-wizard-steps.js",
       "kind": "browser",
-      "lines": 297,
+      "lines": 348,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17931,9 +18523,7 @@
       "kind": "browser",
       "lines": 66,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
@@ -17944,9 +18534,7 @@
       "kind": "browser",
       "lines": 190,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/dashboardModules.test.ts",
@@ -17968,9 +18556,7 @@
       "kind": "browser",
       "lines": 191,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/commandPalette.test.ts",
@@ -17995,9 +18581,7 @@
       "kind": "browser",
       "lines": 657,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/analysis/huntWorkbenchUi.test.ts",
@@ -18009,9 +18593,7 @@
       "kind": "browser",
       "lines": 436,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/http/teamAuthPolicy.test.ts",
@@ -18035,9 +18617,7 @@
       "kind": "browser",
       "lines": 218,
       "imports": [],
-      "importedBy": [
-        "public/dashboard.html"
-      ],
+      "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/settings/settingsSearch.test.ts"

@@ -5,6 +5,13 @@
 // argument instead of using a raw shell string, matching this codebase's no-raw-shell convention
 // (see toolRunner.ts / velociraptorApi.ts) while still working on Windows.
 import spawn from "cross-spawn";
+import {
+  DEFAULT_MAX_STDERR_HEAD_BYTES,
+  DEFAULT_MAX_STDERR_TAIL_BYTES,
+  DEFAULT_MAX_STDOUT_BYTES,
+  StreamEnds,
+  StreamTail,
+} from "./childStreamBuffer.js";
 
 // Result of one Codex CLI invocation. Process-level failures (missing binary, timeout/abort) come
 // back as fields rather than rejections, so the provider maps them to ProviderError uniformly.
@@ -23,6 +30,26 @@ export interface CodexRunOptions {
   timeoutMs: number;
   signal?: AbortSignal; // external cancellation
   cwd?: string;
+  /**
+   * Cap on the stdout retained in the result, in bytes. Oldest output is dropped once the cap is
+   * reached, so what survives is the TAIL. Unset means DEFAULT_MAX_STDOUT_BYTES; pass `Infinity` to
+   * retain the whole stream.
+   *
+   * `codex exec --json` emits one event per turn over evidence the runner does not control, so the
+   * stream has no length this code can assume (#763). The consumer reads the LAST event and skips
+   * lines that do not parse, so a truncated first line costs nothing.
+   */
+  maxStdoutBytes?: number;
+  /**
+   * Caps on the stderr retained in the result, in bytes. Unset means the DEFAULT_MAX_STDERR_*
+   * constants. stderr keeps BOTH ENDS and discards the middle, because its two readers want
+   * opposite parts: codex.ts slices the first 300 characters into the error it throws — ordering
+   * its errors so the real cause is not "pushed past the truncation" by MCP startup noise — and
+   * ALSO calls classifyKind() over the whole text, where a rate-limit line printed last decides
+   * whether analysis/ai/retry.ts retries the call at all.
+   */
+  maxStderrHeadBytes?: number;
+  maxStderrTailBytes?: number;
 }
 
 export type CodexRunner = (opts: CodexRunOptions) => Promise<CodexRunResult>;
@@ -35,8 +62,14 @@ export type CodexRunner = (opts: CodexRunOptions) => Promise<CodexRunResult>;
 // real `codex exec --json` invocation with a 29K-char stdin payload.
 export const defaultCodexRunner: CodexRunner = (opts) =>
   new Promise<CodexRunResult>((resolve) => {
-    let stdout = "";
-    let stderr = "";
+    // Bounded by default, like claudeRunner: `stdout += chunk` retains a runaway run's whole output
+    // until the heap gives out, and this runner had no cap to pass even if a caller wanted one
+    // (#763). `Infinity` is the explicit opt-out.
+    const stdout = new StreamTail(opts.maxStdoutBytes ?? DEFAULT_MAX_STDOUT_BYTES);
+    const stderr = new StreamEnds(
+      opts.maxStderrHeadBytes ?? DEFAULT_MAX_STDERR_HEAD_BYTES,
+      opts.maxStderrTailBytes ?? DEFAULT_MAX_STDERR_TAIL_BYTES,
+    );
     let settled = false;
     let timedOut = false;
 
@@ -69,7 +102,9 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
       }
     };
 
-    child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
+    child.on("error", (err: NodeJS.ErrnoException) =>
+      done({ code: null, stdout: stdout.text(), stderr: stderr.text(), spawnError: err }),
+    );
     // Non-null: stdio: ["pipe", "pipe", "pipe"] above guarantees these pipes exist; cross-spawn's
     // return type is the generic ChildProcess (stdout/stderr/stdin typed nullable for other stdio configs).
     // setEncoding, not per-chunk toString(): the stream's StringDecoder holds a partial multi-byte
@@ -78,12 +113,19 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     child.stdout!.setEncoding("utf8");
     child.stderr!.setEncoding("utf8");
     child.stdout!.on("data", (chunk: string) => {
-      stdout += chunk;
+      stdout.push(chunk);
     });
     child.stderr!.on("data", (chunk: string) => {
-      stderr += chunk;
+      stderr.push(chunk);
     });
-    child.on("close", (code) => done({ code, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) }));
+    child.on("close", (code) =>
+      done({
+        code,
+        stdout: stdout.text(),
+        stderr: stderr.text(),
+        ...(timedOut ? { timedOut: true } : {}),
+      }),
+    );
 
     child.stdin!.on("error", () => {
       /* ignore EPIPE if the child exits before we finish writing */
