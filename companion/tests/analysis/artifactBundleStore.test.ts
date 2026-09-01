@@ -336,6 +336,7 @@ describe("ArtifactBundleStore", () => {
     expect(bundle?.superTimelineOnly).toBe(true);
     expect(bundle?.builtIn).toBe(true);
     expect(bundle?.artifacts).toContain("Windows.NTFS.MFT");
+    expect(bundle?.artifacts).not.toContain("Windows.Applications.Edge.History");
     expect(bundle?.artifacts.some((a) => /sigma|yara|hayabusa/i.test(a))).toBe(false);
   });
 
