@@ -19,10 +19,24 @@
   // hand-written registry is stale the day someone adds a panel or an export, and stale entries
   // are worse than missing ones: they point at ids that no longer resolve.
 
-  // The un-collapse + scroll idiom used by the panel deep-links elsewhere in this file.
+  // The un-collapse + scroll idiom used by the panel deep-links elsewhere in this file, plus the
+  // un-hide that has to come first.
+  //
+  // A view profile is not a filter over the page, it is a WRITE: applyViewLayout() puts `false` into
+  // SECTIONS_VIS_KEY for every section the profile omits, and applySectionsVis() then sets
+  // display:none on each one. The default Now profile lists two sections, so on a fresh case almost
+  // every panel is hidden — and scrollIntoView() on a display:none element does nothing at all.
+  //
+  // The reveal is marked IN MEMORY rather than written back to that key. The key cannot record
+  // intent: saveSettings() stamps an explicit true/false on every section on any Settings save,
+  // whatever the analyst was changing, and applyViewLayout() stamps `false` on everything a view
+  // omits — so no value in it, present or absent, means "the analyst chose to hide this". Writing to
+  // it would edit a preference nobody expressed, permanently and across every case. See
+  // js/dashboard-section-order.js for the set and what clears it.
   function revealSection(id) {
     const sec = document.getElementById(id);
     if (!sec) return;
+    if (!isSectionVisible(id, loadSectionsVis())) markSectionRevealed(id);
     sec.classList.remove("collapsed");
     sec.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -219,7 +233,6 @@
   }
 
   function buildPaletteActions() {
-    const vis = loadSectionsVis(); // read once per keystroke, not once per panel
     const caseIdEl = document.getElementById("caseId");
     const hasCase = () => !!(caseIdEl && caseIdEl.value.trim());
 
@@ -228,9 +241,18 @@
       label: "Go to " + s.label,
       category: "Navigation",
       keywords: paletteSectionKeywords(s.label),
-      // A panel the analyst has switched off in Settings is not somewhere to jump to.
-      available: () =>
-        !!document.getElementById(s.id) && isSectionVisible(s.id, vis),
+      // The data gate still applies. A section whose evidence has not arrived cannot be shown by
+      // revealing it — applySectionsVis() keeps a closed gate hidden either way — so offering the
+      // jump would produce an action that silently does nothing.
+      //
+      // Visibility is NOT checked. It used to be, on the reading that a panel the analyst switched
+      // off is not somewhere to jump to, but SECTIONS_VIS_KEY cannot support that reading: a view
+      // profile and an unrelated Settings save both write it wholesale. Every panel this build
+      // renders, whose evidence is in, is reachable — which is the point of a command palette.
+      available: () => {
+        const el = document.getElementById(s.id);
+        return !!el && isSectionDataOpen(el);
+      },
       run: () => revealSection(s.id),
     }));
 

@@ -198,6 +198,7 @@ const WRITABLE_ENV_PREFIXES = [
   // Ransomware/sample-host detection-tuning lists (#700) — rendered as Settings fields but, like
   // the #240 knobs above, never added to this allowlist, so a save silently dropped them.
   "DFIR_RANSOM_EXTS",
+  "DFIR_RANSOM_EXTS_STRICT",
   "DFIR_SAMPLE_HOSTS",
 ];
 

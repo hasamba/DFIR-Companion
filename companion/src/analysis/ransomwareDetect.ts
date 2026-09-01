@@ -29,7 +29,7 @@ export interface RansomwareSignal {
 // Known ransomware file extensions — an encrypted file is renamed to one of these, and the string
 // exists on a victim host essentially nowhere else. DELIBERATELY curated to DISTINCTIVE family tags:
 // a generic word or a real file extension (`.inc` MDAC include files, `.play`, `.hive`, `.royal`,
-// `.basta`, `.lynx`) is NOT included — it produced a false T1486 on a WinSxS component. Widen with
+// `.basta`) is NOT included — it produced a false T1486 on a WinSxS component. Widen with
 // DFIR_RANSOM_EXTS (comma-separated) when a new family's tag is known and distinctive.
 const RANSOM_EXTS = new Set(
   [
@@ -67,6 +67,60 @@ const RANSOM_EXTS = new Set(
   ]
     .map((e) => e.trim().toLowerCase().replace(/^\./, ""))
     .filter(Boolean),
+);
+
+// Family tags that are ALSO an ordinary English word or a product name. These CANNOT go in
+// RANSOM_EXTS: that set additionally feeds the `<family>_readme` / `_locker` / `_note` note matcher
+// below, which is deliberately unscoped so a note is found wherever it is dropped — a bare word
+// there fires on any path. So they are carried separately and matched only on the shape ransomware
+// actually leaves: a second extension APPENDED to a still-intact original name
+// (`QuarterlyPlan.docx.LYNX`), never a single-extension `notes.lynx`, and never under a protected
+// OS directory. Widen with DFIR_RANSOM_EXTS_STRICT.
+//
+// `lynx` is here because scenario 011 (The DFIR Report, "Cat's Got Your Files", 2025-12-17) showed
+// the cost of omitting it. Lynx is an active family (the INC Ransom successor) whose impact phase
+// leaves NO process or Sigma evidence — the encrypted names in the MFT are the only signal there is,
+// and dropping the tag cost the entire T1486 conclusion on a case where the files were collected and
+// sitting in the import.
+const WORD_COLLISION_EXTS = new Set(
+  ["lynx", ...(process.env.DFIR_RANSOM_EXTS_STRICT ?? "").split(",")]
+    .map((e) => e.trim().toLowerCase().replace(/^\./, ""))
+    .filter(Boolean),
+);
+
+// The victim file's own extension, still in place under an appended family tag. An ALLOWLIST of
+// real user-data types, not a heuristic about what an extension "looks like": every shape-based rule
+// tried here was wrong in one direction or the other. Letters-first with a two-character minimum
+// rejected `archive.7z.LYNX` and `main.c.LYNX`, both ordinary victim files. Relaxing it to "contains
+// a letter" then accepted `lib.v1.lynx`, `pkg.rc1.lynx` and `bin.x64.lynx` — version fragments, the
+// exact thing the rule exists to reject. There is no shape that separates `7z` from `x64`, so the
+// question is settled by naming the types ransomware actually encrypts instead of guessing.
+//
+// Scoped to USER DATA on purpose: documents, media, archives, databases, mail, source, backups and
+// virtual disks. Ransomware targets those; it skips the OS. A type absent here means a `.lynx`
+// rename of it is not flagged as encryption — extend the list when one is missing. An analyst who
+// needs a family tag matched with no victim-extension requirement at all puts it in DFIR_RANSOM_EXTS
+// instead, which is the unconditional set; this list only gates the word-collision tags.
+const VICTIM_EXTS = new Set(
+  // documents, spreadsheets, presentations
+  (
+    "doc docx docm dot dotx odt rtf txt md pdf xps wpd pages tex " +
+    "xls xlsx xlsm xlsb xlt xltx ods csv tsv numbers ppt pptx pptm pps ppsx odp key " +
+    // images, audio, video
+    "jpg jpeg png gif bmp tif tiff svg webp heic raw cr2 nef psd ai eps " +
+    "mp3 mp4 avi mov wmv mkv flv wav flac m4a m4v mpg mpeg webm " +
+    // archives
+    "zip zipx 7z rar tar gz tgz bz2 xz iso cab arj lzh " +
+    // databases and mail
+    "mdb accdb db sqlite sqlite3 sql dbf myd frm ibd ldf mdf dmp pst ost msg eml nsf edb " +
+    // source and configuration
+    "c h cpp cc hpp cs java py js ts jsx tsx go rb php pl sh ps1 " +
+    "html htm css json xml yml yaml ini cfg conf properties toml " +
+    "aspx asp jsp cshtml jsonl ndjson rdp one vsd vsdx mpp pub wps " +
+    // backups, virtual disks, engineering, misc data
+    "bak backup bkf vmdk vmx vhd vhdx vdi ova ovf qcow2 vbk vib vrb " +
+    "dwg dxf step stp log dat pem crt p12 pfx"
+  ).split(" "),
 );
 
 // A ransom-NOTE filename. Kept strict (the ransom vocabulary must appear) so an ordinary `README.txt`
@@ -137,10 +191,24 @@ export function ransomwareSignal(nameOrPath: string): RansomwareSignal | null {
     };
   }
 
+  // 1b. A word-collision tag (`.lynx`) additionally needs the rename shape — the victim file's own
+  // extension still present beneath the appended one — before it counts as encryption.
+  if (ext && WORD_COLLISION_EXTS.has(ext) && !SYSTEM_DIR_RE.test(nameOrPath)) {
+    const stem = name.slice(0, name.length - ext.length - 1);
+    const inner = stem.includes(".") ? stem.slice(stem.lastIndexOf(".") + 1) : "";
+    if (VICTIM_EXTS.has(inner)) {
+      return {
+        severity: "High",
+        mitre: ["T1486"],
+        note: `file encrypted with the .${ext} ransomware extension`,
+      };
+    }
+  }
+
   // 2. A ransom note by its own name, or a `<family>_readme` note (akira_readme.txt).
   //
   // The note branches — and ONLY these — skip the detection stack, which names its rules after the
-  // attacks they catch. The extension branch above deliberately runs first and unguarded: a file
+  // attacks they catch. The extension branches above deliberately run first and unguarded: a file
   // renamed to `.akira` under `\Program Files\Velociraptor\` is impact evidence, no rule pack
   // ships a family tag as an extension, and losing that row would hide the encryption sweep in the
   // one directory an analyst is least likely to re-check.
@@ -162,7 +230,8 @@ export function ransomwareSignal(nameOrPath: string): RansomwareSignal | null {
   return null;
 }
 
-/** Is the family-extension set aware of `ext` (without the dot)? Exposed for tests. */
+/** Is either family-extension set aware of `ext` (without the dot)? Exposed for tests. */
 export function isRansomExtension(ext: string): boolean {
-  return RANSOM_EXTS.has(ext.trim().toLowerCase().replace(/^\./, ""));
+  const e = ext.trim().toLowerCase().replace(/^\./, "");
+  return RANSOM_EXTS.has(e) || WORD_COLLISION_EXTS.has(e);
 }

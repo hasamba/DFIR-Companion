@@ -260,6 +260,7 @@ export const FEATURES: Feature[] = [
       "superTaggedOnly",
       "superStarredOnly",
       "superSavedTimeframes",
+      "superLoadRequestToken",
     ],
   },
   {
@@ -697,6 +698,10 @@ export const FEATURES: Feature[] = [
       "getEffectiveOrder",
       "applySecOrder",
       "applySectionsVis",
+      // The palette's in-memory reveal set: one to add to it, one for the two explicit layout
+      // decisions (view switch, Settings save) that end the detour.
+      "markSectionRevealed",
+      "clearSectionReveals",
       "renderSecChecks",
     ],
     private: [],

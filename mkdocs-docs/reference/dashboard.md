@@ -50,6 +50,9 @@ Press **Ctrl+K** (or **⌘K** on macOS) anywhere on the dashboard to open a fuzz
 - Type to fuzzy-match by label or keyword; results rank whole-word and prefix matches above scattered-letter matches.
 - Prefix a query with `>` to filter to one category (`>exp csv` filters to Exports, then searches "csv" within it). A bare `>` lists every category.
 - Actions you've run recently float to the top of the unfiltered list.
+- Every panel this build shows is listed, whether or not the current **dashboard view** includes it. Picking one shows that panel and scrolls to it — the palette is how you reach a panel your view hides.
+- The reveal is temporary. It lasts until you switch view, save Settings, or reload, and it never changes your saved layout. To keep a panel on for good, tick it in Settings → Dashboard sections.
+- Four panels wait on evidence — Duplicate Hosts, Collection Plan, Memory Next Steps and Related Cases. Each is listed once the case holds what it reads, and not before.
 - An action that doesn't apply to the current case (no case loaded, integration not configured, etc.) is hidden rather than shown disabled.
 
 ---

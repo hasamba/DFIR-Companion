@@ -288,6 +288,11 @@
       }
     })();
     if (typeof verifyCustodyOnOpen === "function") verifyCustodyOnOpen(caseId); // never block a case connect
+    // A new case is a different investigation, so no palette reveal survives into it (the set in
+    // js/dashboard-section-order.js). This is NOT left to applySavedViewForCase() below: that
+    // returns early when no view has loaded, and loadDashboardViews() swallows a failed fetch — so
+    // one failed /dashboard-views request would carry a reveal through every later case.
+    if (typeof clearSectionReveals === "function") clearSectionReveals();
     applySavedViewForCase(); // restore this case's dashboard-view preset (#142)
     DfirStarred.replace([]);
     starredTagIds = new Map(); // reset synchronously; loadTags re-derives for the new case

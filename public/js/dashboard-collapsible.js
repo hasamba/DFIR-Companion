@@ -89,8 +89,13 @@
         // A manual drag makes this a Custom layout — otherwise the next page load's
         // applySavedViewForCase() re-applies the active preset's canned order over this one,
         // silently discarding the drag (the layout looked "reset" after refresh).
+        // It keeps any palette reveal, though — the analyst may be dragging that very panel.
         if (typeof applyDashboardView === "function")
-          applyDashboardView(null, { persist: true, rerender: false });
+          applyDashboardView(null, {
+            persist: true,
+            rerender: false,
+            keepReveals: true,
+          });
       });
     });
     // The initial order is applied by applySectionsVis() → applySecOrder() (runs last in init),
