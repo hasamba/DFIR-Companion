@@ -129,6 +129,36 @@ describe("Intact detection", () => {
     expect(detectImportKind("yarascan_results.jsonl", jsonl(scatteredYara()))).toBe("memory");
   });
 
+  // POST /cases/:id/import-file sniffs a bounded 256 KB HEAD of the file, never the whole thing —
+  // a Plaso super-timeline cannot even be held as one string. A real memory_payload.json is 289 KB,
+  // so the sample holds no complete root object, jsonSample returns nothing, and every structural
+  // signature is skipped. The route answered 400 for the very file this importer was written for.
+  it("recognises the wrapper from a truncated head, which is all the file-path route sniffs", () => {
+    const head = payload().slice(0, 120);
+    expect(() => JSON.parse(head)).toThrow(); // no complete root object to parse
+    expect(detectImportKind("memory_payload.json", head)).toBe("memory");
+  });
+
+  // The same case at the route's real bound, so this keeps pinning production behaviour if the
+  // 120-character slice above ever stops being representative.
+  it("recognises a payload larger than the route's own 256 KB sniff sample", () => {
+    const big = payload({
+      plugins: { "volatility3.plugins.windows.svcscan.SvcScan": svcRows(INTACT_PLUGIN_ROW_CAP * 8) },
+    });
+    expect(big.length).toBeGreaterThan(1 << 18);
+    const head = Buffer.from(big, "utf8")
+      .subarray(0, 1 << 18)
+      .toString("utf8"); // exactly what POST /cases/:id/import-file reads
+    expect(detectImportKind("memory_payload.json", head)).toBe("memory");
+  });
+
+  it("does not claim a truncated head that is not Intact's wrapper", () => {
+    const plain = JSON.stringify({ "windows.pslist.PsList": psTreeRows() }).slice(0, 120);
+    expect(detectImportKind("whatever.json", plain)).not.toBe("memory");
+    const wrapped = JSON.stringify({ plugins: { "Windows.KapeFiles.Targets": [{ a: 1 }] } }).slice(0, 60);
+    expect(detectImportKind("velo.json", wrapped)).not.toBe("memory");
+  });
+
   it("claims neither a plain Volatility plugin map nor an unrelated NDJSON record", () => {
     expect(isIntactMemoryFile({ "windows.pslist.PsList": [] }, null)).toBe(false);
     expect(isIntactMemoryFile({ Offset: 1, Rule: "R", Extra: 2 }, { Offset: 1, Rule: "R", Extra: 2 })).toBe(
