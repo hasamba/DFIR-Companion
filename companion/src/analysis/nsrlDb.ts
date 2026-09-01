@@ -60,7 +60,9 @@ export class NsrlDb {
       const columns: string[] = [];
       for (const col of hashColumnsOf(db, table)) {
         const length = LEN_FOR_COLUMN[col.toLowerCase()];
-        const stmt = db.prepare(`SELECT 1 AS x FROM "${table}" WHERE "${col}" = ? LIMIT 1`);
+        const stmt = db.prepare(
+          `SELECT 1 AS x FROM ${quoteIdent(table)} WHERE ${quoteIdent(col)} = ? LIMIT 1`,
+        );
         byLength.set(length, { column: col, stmt, upper: sampleIsUpper(db, table, col) });
         columns.push(col.toLowerCase());
       }
@@ -95,6 +97,15 @@ export class NsrlDb {
       /* already closed */
     }
   }
+}
+
+// Quote a table/column name for use as a SQL identifier (#761). Table names come from the
+// analyst-selected file's own sqlite_master, so a hostile "NSRL export" can name a table with an
+// embedded double quote and break out of the quoted identifier — turning the hash lookup into
+// attacker SQL. SQLite escapes a quote inside a quoted identifier by doubling it; that is lossless,
+// so a legitimate RDS whose table name holds a space or a dash still opens.
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
 // Pick the table holding a sha256/md5 column. Prefer a base TABLE named METADATA (in the modern RDS,
@@ -135,7 +146,9 @@ function hashColumnsOf(db: SqliteDatabase, table: string): string[] {
 function sampleIsUpper(db: SqliteDatabase, table: string, col: string): boolean {
   try {
     const row = db
-      .prepare(`SELECT "${col}" AS v FROM "${table}" WHERE "${col}" IS NOT NULL LIMIT 1`)
+      .prepare(
+        `SELECT ${quoteIdent(col)} AS v FROM ${quoteIdent(table)} WHERE ${quoteIdent(col)} IS NOT NULL LIMIT 1`,
+      )
       .get() as { v?: unknown } | undefined;
     const v = row?.v;
     if (typeof v === "string" && v) return v === v.toUpperCase();
