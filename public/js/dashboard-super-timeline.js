@@ -90,8 +90,17 @@
     return p.toString();
   }
 
+  // Whether the panel is the analyst's problem yet: a load has been STARTED for it, whether or not
+  // one has come back. The page used to ask `lastSuperData()` instead, which is only true once a
+  // response has LANDED — so a filter typed during the first (unfiltered) load fired no second
+  // request, that load painted every event, and nothing ever reloaded it. The analyst was left
+  // looking at an unfiltered panel under a filter that was set.
+  function superTimelineLive() { return superLoadRequestToken > 0 || !!DfirState.lastSuperData(); }
+
+  /** A view filter changed. Re-query, but only for a panel the analyst has actually opened. */
+  function refreshSuperTimelineFilters() { if (superTimelineLive()) loadSuperTimeline(); }
+
   function loadSuperTimeline(caseId) {
-    const requestToken = ++superLoadRequestToken;
     caseId = caseId || superCaseId();
     const list = document.getElementById("superTimelineList");
     const msg = document.getElementById("superTimelineMsg");
@@ -100,6 +109,9 @@
       if (list) list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>Open a case to view its super-timeline.</div>";
       return;
     }
+    // Taken here, not above: a call with no case sends nothing, so it must not invalidate a load
+    // that is still in flight.
+    const requestToken = ++superLoadRequestToken;
     if (msg) {
       msg.style.color = "var(--text-muted)";
       msg.textContent = "Loading super-timeline…";
@@ -653,6 +665,7 @@
   window.openSuperCtxMenu = openSuperCtxMenu;
   window.promoteSuperSelected = promoteSuperSelected;
   window.refreshSuperRows = refreshSuperRows;
+  window.refreshSuperTimelineFilters = refreshSuperTimelineFilters;
   window.renderSuperTimeline = renderSuperTimeline;
   window.saveTimeframe = saveTimeframe;
   window.superBulkStar = superBulkStar;

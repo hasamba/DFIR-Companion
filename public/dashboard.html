@@ -3997,7 +3997,7 @@
     if (typeof DfirTimelineView !== "undefined") DfirTimelineView.wire({
       timeline: () => renderTimelineEvents(DfirState.lastFt() || []),
       all: () => { if (DfirState.lastState()) typeof render === "function" && render(DfirState.lastState()); },
-      superTimeline: () => { if (DfirState.lastSuperData()) loadSuperTimeline(); },
+      superTimeline: () => refreshSuperTimelineFilters(),
       falsePositives: () => renderFalsePositives(fpMarkers, false),   // panel only — the action asks for `all` itself
       iocs: () => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); },
       derivedViews: () => refreshFilteredViews(),

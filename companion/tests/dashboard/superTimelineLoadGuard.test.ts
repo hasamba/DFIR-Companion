@@ -19,6 +19,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 interface SuperTimelineApi {
   loadSuperTimeline: (caseId?: string) => void;
+  refreshSuperTimelineFilters: () => void;
   DfirState: { lastSuperData: () => { total: number } | null };
 }
 
@@ -95,6 +96,31 @@ describe("the super-timeline load path", () => {
     await settle();
     expect(badge.textContent).toBe(" (3 events — page 1 of 1)"); // still the filtered view
     expect(api.DfirState.lastSuperData()?.total).toBe(3);
+  });
+
+  it("re-queries when a filter changes during the FIRST load, and drops that load's answer", async () => {
+    const { api, pending } = harness();
+
+    api.loadSuperTimeline(); // the case-open load: unfiltered, and slow
+    expect(pending).toHaveLength(1);
+
+    api.refreshSuperTimelineFilters(); // the analyst typed while it was still running
+    expect(pending).toHaveLength(2); // it re-queries instead of waiting for an answer to exist
+
+    pending[0].resolve(answer(100000)); // the unfiltered answer lands first…
+    await settle();
+    expect(api.DfirState.lastSuperData()).toBeNull(); // …and paints nothing
+
+    pending[1].resolve(answer(3));
+    await settle();
+    expect(api.DfirState.lastSuperData()?.total).toBe(3);
+  });
+
+  it("stays quiet for a panel the analyst never opened", () => {
+    const { api, pending } = harness();
+
+    api.refreshSuperTimelineFilters();
+    expect(pending).toHaveLength(0); // a filter change must not load a panel nobody asked for
   });
 
   it("does not let a stale failure overwrite a newer answer with an error", async () => {
