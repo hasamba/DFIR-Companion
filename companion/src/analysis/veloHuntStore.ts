@@ -15,6 +15,19 @@ import type { HuntTarget, SkippedArtifact } from "../integrations/velociraptor/v
 
 export type VeloHuntStatus = "running" | "collecting" | "imported" | "error" | "deleted" | "unreachable";
 
+/**
+ * Where a collect actually is while `status` is "collecting" (#770).
+ *
+ * "collecting" covers three very different waits, and the card used to render the same badge and no
+ * text for all of them — so a normal queue wait looked identical to a hang. Reported, never inferred:
+ *
+ *   fetching  — reading result rows out of Velociraptor. Network-bound, no case writes yet.
+ *   queued    — the rows are in hand and the collect is waiting for the case's import slot, i.e. for
+ *               ANOTHER import to finish. Nothing is wrong; the analyst simply cannot tell without it.
+ *   importing — holding the slot and writing. The long one on a large case.
+ */
+export type VeloCollectPhase = "fetching" | "queued" | "importing";
+
 export interface VeloHuntJob {
   bundleId: string;
   // Set when this job was launched for a specific DwellWindow (the "Dwell-Time Triage" bundle
@@ -30,6 +43,11 @@ export interface VeloHuntJob {
   waitMinutes: number;
   collectAt: string; // ISO — launchedAt + waitMinutes; when the auto-collect fires
   status: VeloHuntStatus;
+  // Set while `status` is "collecting", cleared on the way out of it. A job that says "collecting"
+  // with no phase was written by an older build, or stranded by a server that died mid-collect — the
+  // persisted status is NOT authority on what is running (see composition/veloHunts.ts's header).
+  collectPhase?: VeloCollectPhase;
+  collectRows?: number; // rows this collect fetched from Velociraptor; known once the fetch finishes
   target?: HuntTarget;
   minSeverity?: Severity; // optional import floor chosen at run time (keeps low-value items out)
   timeoutSeconds?: number; // optional per-collection timeout used for this hunt (Velociraptor default 600s)
@@ -66,6 +84,19 @@ export interface VeloHuntJob {
   skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
+}
+
+/**
+ * A hunt job as the DASHBOARD receives it: the persisted record plus one thing the record cannot say.
+ *
+ * `collectActive` is the answer to "is a collect actually running for this hunt RIGHT NOW", and it
+ * comes from the live in-flight map in composition/veloHunts.ts, never from the file. A persisted
+ * status of "collecting" only means some process once started one; a server that died mid-collect
+ * leaves it set forever, so reading the file as proof of activity makes the card assert work that
+ * stopped hours ago. Present only for a job whose status IS "collecting" — it means nothing otherwise.
+ */
+export interface VeloHuntJobView extends VeloHuntJob {
+  collectActive?: boolean;
 }
 
 /**

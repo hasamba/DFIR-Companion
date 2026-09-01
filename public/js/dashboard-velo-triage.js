@@ -673,14 +673,18 @@
             "this hunt was removed from Velociraptor — no results will be collected";
         } else if (job.status === "unreachable") {
           detail = "couldn't reach Velociraptor to check status — will retry";
+        } else if (job.status === "collecting") {
+          detail = veloCollectingDetail(job); // the one status with no text — that was the bug (#770)
         }
-        const canCollect =
-          job.status === "running" ||
-          job.status === "imported" ||
-          job.status === "error";
+        // js/dashboard-velo-coverage.js — a STRANDED collect can be collected again, a live one cannot.
+        const canCollect = veloCanCollect(job);
+        // A collect in flight DISABLES the button, never removes it (#770); the class stays off it so
+        // the click wiring below skips it.
         const collectBtn = canCollect
           ? `<button class="velo-collect-btn" data-hid="${escAttr(job.huntId)}">Collect now</button>`
-          : "";
+          : job.status === "collecting"
+            ? `<button disabled title="a collect is already running for this hunt">collecting…</button>`
+            : "";
         const cd =
           job.status === "running" && job.collectAt
             ? `<span class="velo-countdown" data-collect-at="${escAttr(job.collectAt)}"></span> `

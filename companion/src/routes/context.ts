@@ -3,6 +3,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
+import type { VeloHuntJobView } from "../analysis/veloHuntStore.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImporterRegistry, ImporterPrecedence } from "../analysis/importerStore.js";
@@ -215,6 +216,9 @@ export interface RouteContext {
   //   startVeloHuntCollect        — collect a hunt + import through the normal chain (also fired on a timer).
   //                                 Fire-and-forget: returns synchronously with what it decided, never
   //                                 drops the request (a concurrent one is coalesced — see #195).
+  //   listVeloHuntJobViews        — the case's hunt jobs plus `collectActive` on any still saying
+  //                                 "collecting". Liveness comes from the in-flight map; a persisted
+  //                                 "collecting" status survives the process that set it (#770).
   //   ingestVeloArtifactMap / ingestVeloUploads — the /import-external hunt/flow-map + uploads ingest cores.
   //   createVeloMonitor           — build + persist + schedule one monitor (manual + auto-monitor routes).
   //   recordHuntDeploy            — record a deployed hunt in the #157 hunting-feedback-loop ledger.
@@ -227,6 +231,7 @@ export interface RouteContext {
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
+  listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
   ingestVeloArtifactMap(
     caseId: string,
     mapJson: string,

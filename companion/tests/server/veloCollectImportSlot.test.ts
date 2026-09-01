@@ -123,6 +123,7 @@ async function makeApp(vqlRunner: VqlRunner = runner) {
   const importMetaStore = new ImportMetaStore(store);
   // One import at a time per case — the production setting, and the whole point of the slot.
   const jobManager = new JobManager({ perCaseConcurrency: 1 });
+  const veloHuntStore = new VeloHuntStore(store);
   const pipeline = buildRuntimePipeline({
     provider: undefined,
     synthesisProvider: undefined,
@@ -138,10 +139,10 @@ async function makeApp(vqlRunner: VqlRunner = runner) {
     jobManager,
     velociraptorClient: new VelociraptorClient(veloCfg, vqlRunner),
     artifactBundleStore: new ArtifactBundleStore(join(dirname(root), "bundles")),
-    veloHuntStore: new VeloHuntStore(store),
+    veloHuntStore,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore, superTimelineStore, importMetaStore, jobManager };
+  return { app, stateStore, superTimelineStore, importMetaStore, jobManager, veloHuntStore };
 }
 
 type App = Awaited<ReturnType<typeof makeApp>>["app"];
@@ -149,6 +150,19 @@ type App = Awaited<ReturnType<typeof makeApp>>["app"];
 async function huntJobStatus(app: App): Promise<string> {
   const jobs = await request(app).get("/cases/c1/velociraptor/hunt-jobs");
   return (jobs.body as Array<{ status?: string }>)[0]?.status ?? "no job at all";
+}
+
+// The whole hunt job, not just its status — the phase fields are the subject of the #770 test below.
+type HuntJobView = {
+  status?: string;
+  collectPhase?: string;
+  collectRows?: number;
+  collectActive?: boolean;
+};
+
+async function huntJob(app: App): Promise<HuntJobView> {
+  const jobs = await request(app).get("/cases/c1/velociraptor/hunt-jobs");
+  return (jobs.body as HuntJobView[])[0] ?? {};
 }
 
 async function waitForCollect(app: App): Promise<void> {
@@ -240,4 +254,71 @@ describe("a Velociraptor hunt collect takes the case's import slot", () => {
     },
     POLL_TIMEOUT_MS * 2,
   );
+});
+
+// The same slot, from the analyst's side (#770). Holding it is correct; being SILENT about holding it
+// is what made a routine wait look like a hang — the card showed a bare "collecting" badge with no
+// text, no countdown, and no button for the whole time.
+describe("a queued collect says what it is waiting for", () => {
+  it(
+    "reports the queue wait while it lasts, and stops reporting it once the import lands",
+    async () => {
+      const { app, jobManager } = await makeApp();
+      const blocker = jobManager.register({ caseId: "c1", kind: "enrichment", label: "holds the slot" });
+      await blocker.durable;
+      await request(app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect((await request(app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+      // The reads finish quickly against the stub runner; the slot is what it cannot have.
+      let seen: HuntJobView = {};
+      await pollFor(
+        () => `the collect to report a queue wait, last saw ${JSON.stringify(seen)}`,
+        async () => {
+          seen = await huntJob(app);
+          return seen.collectPhase === "queued" ? true : undefined;
+        },
+      );
+      expect(seen.status).toBe("collecting");
+      // The row count is what turns "waiting" into "waiting, with N rows already in hand".
+      expect(seen.collectRows).toBeGreaterThan(0);
+      // And it is genuinely in flight — the claim the card makes rests on this, not on the status.
+      expect(seen.collectActive).toBe(true);
+
+      await jobManager.finish(blocker.jobId);
+      await waitForCollect(app);
+
+      // Cleared on the way out, or the card would keep explaining a wait that ended.
+      const done = await huntJob(app);
+      expect(done.status).toBe("imported");
+      expect(done.collectPhase).toBeUndefined();
+      expect(done.collectRows).toBeUndefined();
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  // The trap the phase fields walk straight into. A stored "collecting" outlives the process that
+  // wrote it: this is a job exactly as a server killed mid-collect leaves it, and no later process is
+  // collecting it. Answering from the file would have the card assert an import that stopped hours ago
+  // AND withhold the one button that recovers it, since the status never leaves "collecting" by itself.
+  it("does not read a stored collecting status as a collect that is still running", async () => {
+    const { app, veloHuntStore } = await makeApp();
+    await veloHuntStore.upsert("c1", {
+      bundleId: "best-practice",
+      bundleName: "Best Practice",
+      artifacts: ["Generic.System.Pstree"],
+      huntId: "H.STRANDED",
+      launchedAt: "2026-06-01T00:00:00.000Z",
+      waitMinutes: 30,
+      collectAt: "2026-06-01T00:30:00.000Z",
+      status: "collecting",
+      collectPhase: "importing",
+      collectRows: 171,
+    });
+
+    const job = await huntJob(app);
+    expect(job.status).toBe("collecting");
+    expect(job.collectActive).toBe(false);
+  });
 });
