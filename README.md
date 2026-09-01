@@ -285,6 +285,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
 | **Sandbox reports** | CAPEv2 `report.json`, Falcon Sandbox summary | Sample verdict + behavioural signatures |
 | **Memory forensics** | Volatility 3 (`-r json`) + Rekall: pslist/pstree, netscan, malfind, cmdline, svcscan | malfind injected code → High (T1055); listings → Info/Low evidence |
+| **Intact (trimmed VolWeb)** | `memory_payload.json` plugin tables + `yarascan_results.jsonl` | Same plugin mapping; memory YARA hits → Low, a dense many-rule cluster → Info; row caps disclosed |
 | **TheHive** | Case / alert JSON export, observable list (TheHive 5) | TheHive severity 1–4; MITRE from ATT&CK-tagged tags |
 | **Email** | `.eml` (RFC 2822), best-effort `.msg` | SPF/DKIM/DMARC fail → sender spoof heuristics (T1566 Phishing) |
 | **Shell history** | `.bash_history` / `.zsh_history` (bash `HISTTIMEFORMAT` `#epoch` + zsh extended history) | Info by default; conservative bump on tradecraft (reverse shell, download-and-exec, cred access, log/history tampering, lateral SSH) |

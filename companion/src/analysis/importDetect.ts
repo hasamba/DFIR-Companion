@@ -8,6 +8,7 @@
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
+import { isIntactMemoryFile } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
@@ -393,6 +394,9 @@ function looksLikeTheHive(s: Row, root: unknown): boolean {
 }
 
 function detectJson(root: unknown, sample: Row): ImportKind {
+  // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the
+  // event-shaped SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
+  if (isIntactMemoryFile(root, sample)) return "memory";
   if (isVolatilityMap(root)) return "memory";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";

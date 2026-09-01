@@ -310,6 +310,7 @@
     "iocWhitelist.ts": "analysis/findings",
     "iocWhitelistStore.ts": "analysis/findings",
     "iocsDiff.ts": "analysis/findings",
+    "intactImport.ts": "analysis/ingest",
     "irisImport.ts": "analysis/ingest",
     "jobLedgerStore.ts": "analysis/case",
     "jobLedgerWorker.ts": "analysis/case",
