@@ -26,6 +26,35 @@ describe("ransomwareSignal — T1486 from a file name", () => {
     expect(ransomwareSignal("C:\\Windows\\System32\\kernel32.dll")).toBeNull();
   });
 
+  // Velociraptor unpacks its own compiled-Sigma tree into `\\Program Files\\Velociraptor\\Tools\\tmp*\\`
+  // for the duration of a hunt, and a Sigma RULE NAME reads like ransom vocabulary:
+  // `proc_creation_win_wbadmin_restore_file.yms` contains "restore_file". Grading the collector's own
+  // signature file as a ransom note put a High T1486 on the timeline of a host that had none.
+  it("does NOT flag Velociraptor's own bundled Sigma rule as a ransom note", () => {
+    expect(
+      ransomwareSignal(
+        "\\\\.\\C:\\Program Files\\Velociraptor\\Tools\\tmp1551490069\\signatures\\sigma\\windows\\process_creation\\proc_creation_win_wbadmin_restore_file.yms",
+      ),
+    ).toBeNull();
+  });
+
+  it("does NOT flag a Sigma/Chainsaw rule file whose name reads like ransom vocabulary", () => {
+    expect(ransomwareSignal("C:\\Tools\\sigma\\rules\\win_ransom_decrypt_files.yml")).toBeNull();
+    expect(
+      ransomwareSignal(
+        "C:\\Program Files\\Velociraptor\\Tools\\tmp99\\chainsaw\\rules\\akira_readme_drop.yml",
+      ),
+    ).toBeNull();
+  });
+
+  // The guard is scoped to the detection stack, NOT to ransom vocabulary in general — a real note
+  // lands wherever the attacker drops it, so a user directory must still grade High.
+  it("still flags a genuine ransom note in a user directory", () => {
+    const s = ransomwareSignal("C:\\Users\\v\\Desktop\\RESTORE-MY-FILES.txt");
+    expect(s?.severity).toBe("High");
+    expect(s?.mitre).toContain("T1486");
+  });
+
   it("knows the simulated families", () => {
     for (const f of ["akira", "trigona", "gentlemen", "lockbit", "blacksuit"]) {
       expect(isRansomExtension(f)).toBe(true);
@@ -75,5 +104,17 @@ describe("MFT/USN ransomware grading survives the Info floor", () => {
     const r = parseVelociraptorJson(JSON.stringify(rows), { maxEvents: 5 });
     // Only 5 kept, sorted most-severe first — the High ransom note must be one of them.
     expect(r.events.some((e) => e.severity === "High" && e.mitreTechniques.includes("T1486"))).toBe(true);
+  });
+
+  it("keeps the collector's own Sigma rule file at Info in the MFT", () => {
+    const row = {
+      _Source: "Windows.NTFS.MFT",
+      OSPath:
+        "\\\\.\\C:\\Program Files\\Velociraptor\\Tools\\tmp1551490069\\signatures\\sigma\\windows\\process_creation\\proc_creation_win_wbadmin_restore_file.yms",
+      Created0x10: "2026-08-26T03:00:00Z",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events.every((e) => !e.mitreTechniques.includes("T1486"))).toBe(true);
+    expect(r.events[0].severity).toBe("Info");
   });
 });

@@ -13,8 +13,12 @@
 // veloDetectionNoise "never trust an attacker signal" rule permits — that rule guards DEMOTIONS
 // (hiding evidence), and the failure mode here is the opposite (an attacker who names their note
 // innocuously simply is not flagged by THIS rule; other signals still apply).
+//
+// The one place that reasoning breaks is the DETECTION STACK, which names its rules after the attacks
+// they catch — see isDetectionStackPath.
 
 import type { Severity } from "./stateTypes.js";
+import { isCollectorOwnedLocation, isDetectionContentPath } from "./detectionStackPaths.js";
 
 export interface RansomwareSignal {
   severity: Severity;
@@ -79,8 +83,41 @@ function baseName(p: string): string {
 // under lock, so a "family extension" seen HERE is a coincidental component name (e.g. a WinSxS MDAC
 // folder), never an encrypted victim file. Scoping the extension match away from these dirs is not a
 // demotion on an attacker signal — the attacker cannot avoid encrypting user files by NOT touching
-// System32, and the ransom-NOTE match (which can legitimately land anywhere) is left unscoped.
+// System32, and the ransom-NOTE match (which can legitimately land anywhere on a HOST) is scoped only
+// away from the detection stack, below.
 const SYSTEM_DIR_RE = /\\Windows\\(?:System32|SysWOW64|WinSxS|servicing|assembly|Microsoft\.NET)\\/i;
+
+/**
+ * Is this path part of the DETECTION STACK rather than the host under investigation?
+ *
+ * A Sigma rule name reads like ransom vocabulary. Velociraptor unpacks its own compiled-Sigma tree
+ * into `\Program Files\Velociraptor\Tools\tmp*\signatures\sigma\…` for the duration of a hunt, and
+ * `proc_creation_win_wbadmin_restore_file.yms` contains "restore_file" — which RANSOM_NOTE_RE reads
+ * as "restore … file" and grades High/T1486. On a real 100k-row `Windows.NTFS.MFT` collection that
+ * rule file was the ONLY T1486 finding: every ransomware hit on the host's timeline was the
+ * collector's own signature, describing an attack rather than recording one.
+ *
+ * Reuses detectionStackPaths — the predicates the Velociraptor, THOR and YARA ingest paths already
+ * share — so all four agree on what "the tool found itself" means. Takes only the two an intruder
+ * cannot pick a NAME to satisfy:
+ *
+ *   isDetectionContentPath   the file IS rule content — `.yms` (Velociraptor's own compiled-Sigma
+ *                            format, which exists nowhere else on a Windows host), or a
+ *                            `.yml`/`.evtx`/`.etl` inside a detection tree.
+ *   isCollectorOwnedLocation the collector's own install tree.
+ *
+ * Deliberately NOT isDetectionToolLocation: that one also matches the published sample-corpus
+ * directory names, which ARE attacker-choosable (see #720) — a note dropped in a folder the intruder
+ * named `EVTX-ATTACK-SAMPLES` must still be found.
+ *
+ * The blast radius of a bypass is small either way. This function only declines to RAISE a row: an
+ * attacker who parks `RESTORE-MY-FILES.txt` under `\Velociraptor\` loses one High on that copy,
+ * while the same note in every encrypted directory — and every file renamed to a family extension —
+ * still grades High. Nothing is dropped; the row is still ingested, still counted, still findable.
+ */
+function isDetectionStackPath(nameOrPath: string): boolean {
+  return isDetectionContentPath(nameOrPath) || isCollectorOwnedLocation(nameOrPath);
+}
 
 /**
  * Does this file name / path indicate ransomware impact? Returns a High T1486 signal, or null.
@@ -88,6 +125,9 @@ const SYSTEM_DIR_RE = /\\Windows\\(?:System32|SysWOW64|WinSxS|servicing|assembly
 export function ransomwareSignal(nameOrPath: string): RansomwareSignal | null {
   const name = baseName(nameOrPath).toLowerCase();
   if (!name) return null;
+  // The detection stack describes ransomware; it is not evidence of it. Checked before every branch:
+  // a rule file trips the note vocabulary, and a rule tree can just as easily hold `akira_readme.yml`.
+  if (isDetectionStackPath(nameOrPath)) return null;
 
   // 1. Encrypted file: the LAST extension is a known family tag (`report.docx.akira`, `db.trigona`).
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
