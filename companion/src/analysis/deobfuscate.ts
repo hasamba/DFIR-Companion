@@ -37,7 +37,14 @@ const EXEC_MARKER_RE = /iex\b|invoke-expression|certutil|frombase64string|downlo
 
 // ──────────────────────────── IOC extraction from decoded text ────────────────
 
-const URL_RE = /\bhttps?:\/\/[^\s"'<>]{5,300}/gi;
+// A markdown-style link — `[http://a](http://b)`, routine in chat exports and notes imported as
+// evidence — must not become ONE match: without a guard the first URL runs through the `](`
+// splice, swallows the second, and `matchAll` resumes past both — one unresolvable indicator and
+// one silent miss (#755). The rule is that no match may CONTAIN `](`, and the guard sits on the
+// `(` rather than the `]`, so the bracket stays in the match and trimSentencePunctuation decides
+// whose it is. Guarding the `]` instead cut `http://[2001:db8::1](IPv6 endpoint)` down to
+// `http://[2001:db8::1`, throwing away the bracket IPv6 authority syntax REQUIRES.
+const URL_RE = /\bhttps?:\/\/(?:[^\s"'<>(]|(?<!\])\(){5,300}/gi;
 // IPv4: each octet ≤ 255 (avoid matching version numbers like "1.2.3.4.5" or "10.0" port refs)
 const IPV4_RE = /\b((?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))\b/g;
 const SHA256_RE = /\b([a-f0-9]{64})\b/gi;
