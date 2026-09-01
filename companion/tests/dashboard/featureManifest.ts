@@ -260,6 +260,7 @@ export const FEATURES: Feature[] = [
       "superTaggedOnly",
       "superStarredOnly",
       "superSavedTimeframes",
+      "superLoadRequestToken",
     ],
   },
   {

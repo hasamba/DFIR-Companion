@@ -46,6 +46,7 @@
   let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
   let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
   let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
+  let superLoadRequestToken = 0;  // only the newest request may update the panel
   const superCaseId = () => document.getElementById("caseId").value.trim();
 
   // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
@@ -89,16 +90,50 @@
     return p.toString();
   }
 
+
   function loadSuperTimeline(caseId) {
     caseId = caseId || superCaseId();
     const list = document.getElementById("superTimelineList");
-    if (!caseId) { if (list) list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>Open a case to view its super-timeline.</div>"; return; }
     const msg = document.getElementById("superTimelineMsg");
-    if (msg) msg.textContent = "";
-    fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline?${superQueryString()}`)
+    if (!caseId) {
+      if (msg) msg.textContent = "";
+      if (list) list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>Open a case to view its super-timeline.</div>";
+      return;
+    }
+    // Taken here, not above: a call with no case sends nothing, so it must not invalidate a load
+    // that is still in flight.
+    const requestToken = ++superLoadRequestToken;
+    // The question this request asks, kept so the answer can be checked against the question the
+    // analyst is asking by the time it lands. See the re-query below.
+    const askedFor = superQueryString();
+    if (msg) {
+      msg.style.color = "var(--text-muted)";
+      msg.textContent = "Loading super-timeline…";
+    }
+    fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline?${askedFor}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
-      .then(data => renderSuperTimeline(data, caseId))
-      .catch(e => { if (msg) msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s"; });
+      .then(data => {
+        if (requestToken !== superLoadRequestToken) return;
+        // The analyst moved the filters while this was in flight. This is the answer to a question
+        // nobody is asking any more, so it is NOT drawn: painting it would put every event back on
+        // screen under a filter that is set, which is the whole bug. Ask again instead, and leave
+        // the loading line up until an answer to the current question arrives.
+        //
+        // This is why the panel needs no "a load is running" flag. Such a flag cannot be cleared
+        // reliably: runPanelLoaders hands an ABORTED loader a promise that never settles, so one
+        // cancelled case load would leave it stuck on and the panel re-querying a case the analyst
+        // walked away from. An abandoned load simply never reaches this line.
+        if (superQueryString() !== askedFor) { loadSuperTimeline(caseId); return; }
+        if (msg) msg.textContent = "";
+        renderSuperTimeline(data, caseId);
+      })
+      .catch(e => {
+        if (requestToken !== superLoadRequestToken) return;
+        if (msg) {
+          msg.style.color = "var(--badge-danger-text)";
+          msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s";
+        }
+      });
   }
 
   function renderSuperFilters(data) {
