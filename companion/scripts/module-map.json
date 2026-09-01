@@ -218,6 +218,7 @@
     "deepPass.ts": "analysis/ai",
     "deepPassExecution.ts": "analysis/ai",
     "deobfuscate.ts": "analysis/privacy",
+    "detectionStackPaths.ts": "analysis/detect",
     "diagnostics.ts": "analysis/case",
     "diskWarn.ts": "analysis/case",
     "dropLog.ts": "analysis/case",
