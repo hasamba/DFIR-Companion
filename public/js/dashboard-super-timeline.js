@@ -46,6 +46,7 @@
   let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
   let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
   let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
+  let superLoadRequestToken = 0;  // only the newest request may update the panel
   const superCaseId = () => document.getElementById("caseId").value.trim();
 
   // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
@@ -90,15 +91,33 @@
   }
 
   function loadSuperTimeline(caseId) {
+    const requestToken = ++superLoadRequestToken;
     caseId = caseId || superCaseId();
     const list = document.getElementById("superTimelineList");
-    if (!caseId) { if (list) list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>Open a case to view its super-timeline.</div>"; return; }
     const msg = document.getElementById("superTimelineMsg");
-    if (msg) msg.textContent = "";
+    if (!caseId) {
+      if (msg) msg.textContent = "";
+      if (list) list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>Open a case to view its super-timeline.</div>";
+      return;
+    }
+    if (msg) {
+      msg.style.color = "var(--text-muted)";
+      msg.textContent = "Loading super-timeline…";
+    }
     fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline?${superQueryString()}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
-      .then(data => renderSuperTimeline(data, caseId))
-      .catch(e => { if (msg) msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s"; });
+      .then(data => {
+        if (requestToken !== superLoadRequestToken) return;
+        if (msg) msg.textContent = "";
+        renderSuperTimeline(data, caseId);
+      })
+      .catch(e => {
+        if (requestToken !== superLoadRequestToken) return;
+        if (msg) {
+          msg.style.color = "var(--badge-danger-text)";
+          msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s";
+        }
+      });
   }
 
   function renderSuperFilters(data) {
