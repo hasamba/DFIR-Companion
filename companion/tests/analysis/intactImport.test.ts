@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  looksLikeIntactPrefix,
   INTACT_PLUGIN_ROW_CAP,
   INTACT_YARA_ROW_CAP,
   isIntactMemoryFile,
@@ -150,6 +151,36 @@ describe("Intact detection", () => {
       .subarray(0, 1 << 18)
       .toString("utf8"); // exactly what POST /cases/:id/import-file reads
     expect(detectImportKind("memory_payload.json", head)).toBe("memory");
+  });
+
+  // The prefix sniff is a FALLBACK for a file too big to parse, and it must never outrank a file the
+  // structural signatures can classify properly. Two loose fragments — a `plugins` object of any
+  // shape, and an os-dotted key anywhere else in the document — used to be enough to claim a file
+  // that parses perfectly well. Claiming it routes it to the memory importer, which finds no Intact
+  // payload and emits ZERO events: the whole file is accepted and silently dropped.
+  it("leaves a parseable file alone even when it carries both fragments in unrelated places", () => {
+    const siem = JSON.stringify({
+      "@timestamp": "2026-09-01T10:00:00Z",
+      message: "sysmon agent started",
+      host: { name: "srv1" },
+      plugins: { sysmon: "enabled", winlogbeat: "enabled" },
+      "windows.eventlog": ["Security", "System"],
+    });
+    expect(detectImportKind("agent.json", siem)).toBe("siem");
+
+    const sandbox = JSON.stringify({
+      info: { id: 1 },
+      signatures: [{ name: "x" }],
+      plugins: { processing: ["static"] },
+      "linux.behaviour": [{ call: "open" }],
+    });
+    expect(detectImportKind("report.json", sandbox)).toBe("sandbox");
+  });
+
+  it("requires the plugin id to sit INSIDE the plugins object, not merely somewhere in the file", () => {
+    const split = `{"plugins":{"sysmon":"on"},"note":"windows.pslist":[]}`;
+    expect(looksLikeIntactPrefix(split)).toBe(false);
+    expect(looksLikeIntactPrefix(payload())).toBe(true);
   });
 
   it("does not claim a truncated head that is not Intact's wrapper", () => {

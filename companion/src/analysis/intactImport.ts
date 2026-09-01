@@ -138,11 +138,14 @@ function isIntactYaraRow(sample: unknown): boolean {
 // How much of a file's head the prefix sniff below reads. Matches the auditd sniff's window, and
 // comfortably clears the 256 KB sample the file-path import route hands the detector.
 const PREFIX_SCAN = 256_000;
-// The wrapper's two halves, matched as TEXT rather than parsed: the `plugins` container, and at
-// least one Volatility plugin id as a key mapping to an array.
-const INTACT_PLUGINS_KEY = /"plugins"\s*:\s*\{/;
-const INTACT_PLUGIN_ENTRY =
-  /"(?:volatility\d*\.plugins\.)?(?:windows|linux|mac)\.[a-z][A-Za-z0-9_.]*"\s*:\s*\[/;
+// The wrapper matched as TEXT rather than parsed: the `plugins` container IMMEDIATELY followed by a
+// Volatility plugin id mapping to an array. It is ONE contiguous pattern on purpose. As two
+// independent searches — a `plugins` object anywhere, an os-dotted key anywhere — it claimed ordinary
+// documents that merely contained both fragments in unrelated places, and a wrongly claimed file goes
+// to the memory importer, finds no Intact payload and imports ZERO events. Only whitespace may
+// separate the two halves, which covers minified and pretty-printed output alike.
+const INTACT_WRAPPER =
+  /"plugins"\s*:\s*\{\s*"(?:volatility\d*\.plugins\.)?(?:windows|linux|mac)\.[a-z][A-Za-z0-9_.]*"\s*:\s*\[/;
 
 /**
  * Recognise the payload wrapper from its PREFIX, without parsing it.
@@ -153,7 +156,12 @@ const INTACT_PLUGIN_ENTRY =
  * `jsonSample` returns nothing, and every structural signature — including isIntactMemoryFile — is
  * skipped. The route answered 400 for the exact file this importer exists to read.
  *
- * The two regexes below are deliberately narrow. A plain Volatility plugin map has no `plugins`
+ * This is a FALLBACK, and the caller must treat it as one: it runs only after the structural
+ * signatures have failed to classify the file, never ahead of them. A text sniff cannot know what a
+ * parsed document is, so letting it outrank a signature that CAN would trade a rare unreadable file
+ * for a common misread one.
+ *
+ * The pattern is deliberately narrow. A plain Volatility plugin map has no `plugins`
  * wrapper, and a Velociraptor artifact map's keys are capitalised (`Windows.KapeFiles.Targets`), so
  * neither can trip this. The JSON-Lines half needs nothing here: its first LINE is a complete object,
  * which jsonSample already samples at any file size.
@@ -161,7 +169,7 @@ const INTACT_PLUGIN_ENTRY =
 export function looksLikeIntactPrefix(text: string): boolean {
   const head = (text ?? "").trimStart().slice(0, PREFIX_SCAN);
   if (head[0] !== "{") return false;
-  return INTACT_PLUGINS_KEY.test(head) && INTACT_PLUGIN_ENTRY.test(head);
+  return INTACT_WRAPPER.test(head);
 }
 
 /**
