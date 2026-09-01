@@ -11,7 +11,12 @@ import { describe, it, expect, vi } from "vitest";
 // limit of its own — a runner that ignored them would keep the whole stream and fail here.
 vi.mock("../../src/providers/childStreamBuffer.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/providers/childStreamBuffer.js")>();
-  return { ...actual, DEFAULT_MAX_STDOUT_BYTES: 16_000, DEFAULT_MAX_STDERR_BYTES: 8_000 };
+  return {
+    ...actual,
+    DEFAULT_MAX_STDOUT_BYTES: 16_000,
+    DEFAULT_MAX_STDERR_HEAD_BYTES: 8_000,
+    DEFAULT_MAX_STDERR_TAIL_BYTES: 4_000,
+  };
 });
 
 import { defaultClaudeRunner } from "../../src/providers/claudeRunner.js";
@@ -41,18 +46,18 @@ describe("provider runners cap their buffers with no cap passed", () => {
     expect(r.stdout).not.toContain("HEAD-MARKER");
   });
 
-  it("claudeRunner keeps the head of stderr, which is the end its readers slice", async () => {
+  it("claudeRunner keeps both ends of stderr", async () => {
     const r = await defaultClaudeRunner({
       bin: process.execPath,
       args: ["-e", burstScript("stderr")],
       stdin: "",
       timeoutMs: 30_000,
     });
-    // The opposite end from stdout, and deliberately: claudeCode.ts, codex.ts and finalText all
-    // slice the FIRST 200-300 characters of stderr into the error message they raise, and codex.ts
-    // orders its errors so the real cause is not pushed past that truncation.
+    // BOTH ends, unlike stdout. The front is what claudeCode.ts, codex.ts and finalText slice into
+    // the error they raise; the back is what classifyKind() needs to see, and a kind it gets wrong
+    // sends analysis/ai/retry.ts back into a wall it could have known about.
     expect(r.stderr).toContain("HEAD-MARKER");
-    expect(r.stderr).not.toContain("TAIL-MARKER");
+    expect(r.stderr).toContain("TAIL-MARKER");
   });
 
   it("codexRunner drops the oldest stdout and keeps the tail", async () => {
@@ -67,18 +72,18 @@ describe("provider runners cap their buffers with no cap passed", () => {
     expect(r.stdout).not.toContain("HEAD-MARKER");
   });
 
-  it("codexRunner keeps the head of stderr, which is the end its readers slice", async () => {
+  it("codexRunner keeps both ends of stderr", async () => {
     const r = await defaultCodexRunner({
       bin: process.execPath,
       args: ["-e", burstScript("stderr")],
       stdin: "",
       timeoutMs: 30_000,
     });
-    // The opposite end from stdout, and deliberately: claudeCode.ts, codex.ts and finalText all
-    // slice the FIRST 200-300 characters of stderr into the error message they raise, and codex.ts
-    // orders its errors so the real cause is not pushed past that truncation.
+    // BOTH ends, unlike stdout. The front is what claudeCode.ts, codex.ts and finalText slice into
+    // the error they raise; the back is what classifyKind() needs to see, and a kind it gets wrong
+    // sends analysis/ai/retry.ts back into a wall it could have known about.
     expect(r.stderr).toContain("HEAD-MARKER");
-    expect(r.stderr).not.toContain("TAIL-MARKER");
+    expect(r.stderr).toContain("TAIL-MARKER");
   });
 
   // The opt-out has to stay available and has to read as deliberate at the call site: a consumer

@@ -19,12 +19,22 @@
  * lines that fail to parse, so dropping the oldest output costs nothing they were going to read
  * while dropping the newest would cost the answer.
  *
- * stderr keeps the HEAD: every reader of it slices the FIRST 200-300 characters into an error
- * message (claudeCode.ts, codex.ts, finalText), and codex.ts goes further and reorders the errors it
- * found so the real cause "isn't pushed past the truncation by that noise". A tail-drop on stderr
- * would throw away the only part any of them reads, and work against that deliberate ordering.
- * classifyKind() scans stderr for auth/rate-limit/transport keywords, which appear in the error
- * line rather than after 64 KB of it.
+ * stderr keeps BOTH ENDS, because two different readers want two different parts of it and each
+ * one-ended cap loses the other's:
+ *
+ *   - The HEAD is what gets displayed. claudeCode.ts and finalText slice the first 200 characters
+ *     into the error they throw, codex.ts the first 300, and codex.ts goes further and reorders the
+ *     errors it found so the real cause "isn't pushed past the truncation by that noise". A
+ *     tail-drop throws that away and works against a deliberate ordering.
+ *   - The TAIL is what gets CLASSIFIED. codex.ts calls classifyKind() over the whole of stderr, and
+ *     analysis/ai/retry.ts treats "auth", "rate_limit" and "timeout" as the NON-retryable kinds. A
+ *     rate-limit line printed after a flood of progress noise is not merely a nicer message: drop
+ *     it and the kind degrades to "transport" or "other", both retryable, so the pipeline runs the
+ *     same doomed call again — "tripling how long the analyst waits for the same error", in
+ *     retry.ts's own words.
+ *
+ * So the middle is what goes. Both one-ended versions of this were written and both were wrong;
+ * see StreamEnds.
  */
 
 /**
@@ -38,18 +48,26 @@
 export const DEFAULT_MAX_STDOUT_BYTES = 64 * 1024 * 1024;
 
 /**
- * Default ceiling for retained stderr, in bytes.
- *
- * Diagnostics, not evidence — every consumer takes a 200-300 character snippet of it for an error
- * message — so this is generous by two orders of magnitude and no error path changes behaviour.
- * stderr is the stream nobody watches, which is exactly why it must be bounded: a child that logs
- * endlessly could exhaust the heap through it alone while stdout stayed quiet.
- *
- * The SIZE matches integrations/childOutput.ts; the END kept does not, and deliberately. That
- * module keeps a tail because its readers want the end of a forensic tool's log. These runners'
- * readers want the beginning of an error message. See the module docblock.
+ * Default ceiling for the retained stderr HEAD, in bytes — the part a reader slices into an error
+ * message. Three orders of magnitude more than the 200-300 characters any of them takes, so no error
+ * path changes behaviour.
  */
-export const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
+export const DEFAULT_MAX_STDERR_HEAD_BYTES = 48 * 1024;
+
+/**
+ * Default ceiling for the retained stderr TAIL, in bytes — the safety net for an error line printed
+ * AFTER a flood of progress output, which classifyKind() must still be able to see. An error line is
+ * short, so this is smaller than the head budget.
+ */
+export const DEFAULT_MAX_STDERR_TAIL_BYTES = 16 * 1024;
+
+/**
+ * Total default ceiling for retained stderr, in bytes. stderr is the stream nobody watches, which is
+ * exactly why it must be bounded: a child that logs endlessly could exhaust the heap through it
+ * alone while stdout stayed quiet. The SIZE matches integrations/childOutput.ts; what is kept within
+ * it does not, and deliberately — see the module docblock.
+ */
+export const DEFAULT_MAX_STDERR_BYTES = DEFAULT_MAX_STDERR_HEAD_BYTES + DEFAULT_MAX_STDERR_TAIL_BYTES;
 
 /**
  * Accumulates decoded stream chunks under a byte budget, keeping the newest.
@@ -128,5 +146,66 @@ export class StreamHead {
   /** Everything still retained, in arrival order. */
   text(): string {
     return this.chunks.join("");
+  }
+}
+
+/**
+ * The marker standing in for the discarded middle.
+ *
+ * Carries NO DIGITS on purpose. classifyKind() regex-scans the whole retained string, and one of its
+ * patterns is /5\d\d/ for a server-error status — a byte count of "512 bytes elided" would match it
+ * and reclassify the error. The size that was dropped is not worth that risk; byteLength reports what
+ * was kept for anyone who needs a number.
+ */
+const TRUNCATION_MARKER = "\n[...stderr truncated...]\n";
+
+/**
+ * Retains both ends of a stream under two byte budgets, discarding the middle.
+ *
+ * For a stream with two readers that want opposite ends — one slicing a message off the front, one
+ * scanning the whole text for a keyword that may only appear at the back. Either single-ended cap
+ * silently costs the other reader what it needed; this costs neither, for the price of a marker
+ * where the gap is.
+ *
+ * The marker appears only when output was ACTUALLY dropped. Emitting it whenever the head filled up
+ * would claim a loss that did not happen, and a reader cannot tell a false marker from a real one.
+ */
+export class StreamEnds {
+  private readonly head: StreamHead;
+  private readonly tail: StreamTail;
+  private seenBytes = 0;
+
+  /**
+   * @param maxHeadBytes bytes retained from the front. `Infinity` sends everything to the head.
+   * @param maxTailBytes bytes retained from the back, once the head budget is met.
+   */
+  constructor(maxHeadBytes: number, maxTailBytes: number) {
+    this.head = new StreamHead(maxHeadBytes);
+    this.tail = new StreamTail(maxTailBytes);
+  }
+
+  /** Bytes retained across both ends. Excludes whatever the middle dropped. */
+  get byteLength(): number {
+    return this.head.byteLength + this.tail.byteLength;
+  }
+
+  /** Add a chunk to the head while it has room, otherwise to the rolling tail. */
+  push(chunk: string): void {
+    this.seenBytes += Buffer.byteLength(chunk, "utf8");
+    const before = this.head.byteLength;
+    this.head.push(chunk);
+    // StreamHead ignores a chunk once it is full, so an unchanged byteLength means the head refused
+    // this one and it belongs to the tail. Comparing sizes rather than asking the head whether it is
+    // full keeps the "keep the first chunk whole" rule in one place.
+    if (this.head.byteLength === before) this.tail.push(chunk);
+  }
+
+  /** Both retained ends, with a marker between them if anything was lost. */
+  text(): string {
+    const head = this.head.text();
+    const tail = this.tail.text();
+    if (!tail) return head;
+    const dropped = this.seenBytes > this.byteLength;
+    return dropped ? `${head}${TRUNCATION_MARKER}${tail}` : `${head}${tail}`;
   }
 }
