@@ -9,6 +9,7 @@ import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import type { InvestigationState, Severity } from "../stateTypes.js";
+import { tagNaiveAsUtc } from "../naiveTimestamp.js";
 import { buildStateSummary } from "../summary.js";
 import { detectTool } from "../toolDetect.js";
 import { getCsvPrompt, getLogPrompt, getSystemPrompt } from "./prompts/index.js";
@@ -241,9 +242,16 @@ function yearsPresentIn(text: string): Set<string> {
   return new Set(text.match(/\b(?:19|20)\d{2}\b/g) ?? []);
 }
 
-/** The UTC year of an ISO timestamp as a bare string, or "" when it does not parse. */
+/**
+ * The UTC year of an ISO timestamp as a bare string, or "" when it does not parse.
+ *
+ * deltaSchema already tagged a naive model stamp as UTC (#757), so the parse below is
+ * zone-independent for every caller in this file. Tagging again costs nothing and keeps the function
+ * correct on its own terms: judging a year through a zone-aware parse is what let a UTC+2 server read
+ * "2026-01-01T00:30:00" as 2025 and mark a RECORDED year as guessed.
+ */
 function yearStringOf(timestamp: string): string {
-  const ms = Date.parse(timestamp);
+  const ms = Date.parse(tagNaiveAsUtc(timestamp));
   return Number.isNaN(ms) ? "" : String(new Date(ms).getUTCFullYear());
 }
 

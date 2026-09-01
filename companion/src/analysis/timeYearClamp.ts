@@ -1,4 +1,5 @@
 import type { ForensicEvent } from "./stateTypes.js";
+import { tagNaiveAsUtc } from "./naiveTimestamp.js";
 
 // Deterministic year-clamp for MIS-DATED events.
 //
@@ -39,16 +40,22 @@ export interface YearClampOptions {
 }
 
 // Year of an ISO timestamp in UTC, or null when unparseable/empty.
+//
+// A naive stamp is tagged UTC first (#757). deltaSchema now does that for every new AI event, but
+// this clamp reads the WHOLE stored timeline, so a case imported before that fix can still hold one —
+// and reading it in the server's zone made this function answer 2025 for "2026-01-01T00:30:00" on a
+// UTC+2 host, which then had setYear move the event ~364 days instead of leaving it alone.
 function yearOf(ts: string | undefined): number | null {
   if (!ts) return null;
-  const ms = Date.parse(ts);
+  const ms = Date.parse(tagNaiveAsUtc(ts));
   return Number.isNaN(ms) ? null : new Date(ms).getUTCFullYear();
 }
 
 // Re-anchor an ISO timestamp onto `year`, preserving its month/day/time-of-day (UTC). Unparseable
-// input is returned unchanged.
+// input is returned unchanged. A naive stamp is tagged UTC first, for the same reason as yearOf
+// above: the month/day this rebuilds from must be the ones the string SHOWS (#757).
 function setYear(ts: string, year: number): string {
-  const ms = Date.parse(ts);
+  const ms = Date.parse(tagNaiveAsUtc(ts));
   if (Number.isNaN(ms)) return ts;
   const d = new Date(ms);
   return new Date(
