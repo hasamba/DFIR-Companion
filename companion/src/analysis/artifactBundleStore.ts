@@ -226,7 +226,6 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
       "Windows.Forensics.Amcache",
       "Windows.Forensics.Lnk",
       "Windows.Applications.Chrome.History",
-      "Windows.Applications.Edge.History",
       "Windows.Forensics.RecycleBin",
       "Windows.System.TaskScheduler",
       "Windows.Forensics.ActivitiesCache",
