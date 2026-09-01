@@ -156,10 +156,19 @@ const INTACT_WRAPPER =
  * `jsonSample` returns nothing, and every structural signature — including isIntactMemoryFile — is
  * skipped. The route answered 400 for the exact file this importer exists to read.
  *
- * This is a FALLBACK, and the caller must treat it as one: it runs only after the structural
- * signatures have failed to classify the file, never ahead of them. A text sniff cannot know what a
- * parsed document is, so letting it outrank a signature that CAN would trade a rare unreadable file
- * for a common misread one.
+ * WHERE THIS RUNS, AND WHY. It sits ABOVE the structural signatures in the JSON branch, and both
+ * halves of that decision were learned the hard way — moving it either way breaks a real file.
+ *
+ * Below them it misses valid payloads. Truncation does not always leave jsonSample empty: cut a
+ * row-per-line serialisation mid-file and it finds one complete ROW on a line. A `{Name, Offset}`
+ * mutantscan row matches no Volatility column fingerprint, so the structural path returns the SIEM
+ * catch-all and a check placed after it never runs.
+ *
+ * Above them it is only safe because the PATTERN is exact, never because of the position. It matched
+ * two fragments INDEPENDENTLY once — a `plugins` object anywhere, an os-dotted key anywhere — and
+ * claimed ordinary SIEM and sandbox documents that carried both in unrelated places. A wrongly
+ * claimed file imports ZERO events, so that is the expensive direction. Keep the pattern contiguous
+ * and the position stays earned; loosen it and this has to move.
  *
  * The pattern is deliberately narrow. A plain Volatility plugin map has no `plugins`
  * wrapper, and a Velociraptor artifact map's keys are capitalised (`Windows.KapeFiles.Targets`), so
