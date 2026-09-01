@@ -124,7 +124,12 @@ function isIntactPayload(root: unknown): boolean {
   return (
     entries.length > 0 &&
     entries.every(([, v]) => Array.isArray(v)) &&
-    entries.some(([k]) => VOL_MODULE_KEY.test(normalizeVolatilityPluginKey(k)))
+    // A Volatility-keyed entry holding ROW OBJECTS. The row check is the part that separates this
+    // from an ordinary config whose `plugins` map is keyed by platform — `{"windows.eventlog":
+    // ["Security"]}` clears every other condition here, and claiming it imports zero events.
+    entries.some(
+      ([k, v]) => VOL_MODULE_KEY.test(normalizeVolatilityPluginKey(k)) && (v as unknown[]).some(isObject),
+    )
   );
 }
 
@@ -145,7 +150,7 @@ const PREFIX_SCAN = 256_000;
 // to the memory importer, finds no Intact payload and imports ZERO events. Only whitespace may
 // separate the two halves, which covers minified and pretty-printed output alike.
 const INTACT_WRAPPER =
-  /"plugins"\s*:\s*\{\s*"(?:volatility\d*\.plugins\.)?(?:windows|linux|mac)\.[a-z][A-Za-z0-9_.]*"\s*:\s*\[/;
+  /^\{\s*"plugins"\s*:\s*\{\s*"(?:volatility\d*\.plugins\.)?(?:windows|linux|mac)\.[a-z][A-Za-z0-9_.]*"\s*:\s*\[/;
 
 /**
  * Recognise the payload wrapper from its PREFIX, without parsing it.
@@ -156,29 +161,39 @@ const INTACT_WRAPPER =
  * `jsonSample` returns nothing, and every structural signature — including isIntactMemoryFile — is
  * skipped. The route answered 400 for the exact file this importer exists to read.
  *
- * WHERE THIS RUNS, AND WHY. It sits ABOVE the structural signatures in the JSON branch, and both
- * halves of that decision were learned the hard way — moving it either way breaks a real file.
+ * WHAT THIS IS ALLOWED TO ANSWER. Exactly one input: a document CUT SHORT before its root object
+ * closed. Two conditions enforce that, and the scope — not the call order — is what makes it safe.
  *
- * Below them it misses valid payloads. Truncation does not always leave jsonSample empty: cut a
- * row-per-line serialisation mid-file and it finds one complete ROW on a line. A `{Name, Offset}`
- * mutantscan row matches no Volatility column fingerprint, so the structural path returns the SIEM
- * catch-all and a check placed after it never runs.
+ * It must match at the START of the document, not anywhere inside it. As a substring hunt over the
+ * head it claimed ordinary files that merely mention a plugin map: a SIEM agent-config event whose
+ * `plugins` are keyed by platform, an NDJSON stream with one such record in it. A wrongly claimed
+ * file goes to the memory importer, finds no Intact payload and imports ZERO events.
  *
- * Above them it is only safe because the PATTERN is exact, never because of the position. It matched
- * two fragments INDEPENDENTLY once — a `plugins` object anywhere, an os-dotted key anywhere — and
- * claimed ordinary SIEM and sandbox documents that carried both in unrelated places. A wrongly
- * claimed file imports ZERO events, so that is the expensive direction. Keep the pattern contiguous
- * and the position stays earned; loosen it and this has to move.
+ * And the document must NOT parse. If it parses, the structural signatures read a real record and
+ * answer correctly — a complete Intact payload included, via isIntactMemoryFile — so a text guess
+ * has nothing to add and everything to break.
  *
- * The pattern is deliberately narrow. A plain Volatility plugin map has no `plugins`
+ * Under those two conditions the call order stops mattering for safety, and it is placed ahead of the
+ * structural signatures for a reason of its own: truncation does not always leave jsonSample empty.
+ * Cut a row-per-line serialisation mid-file and it finds one complete ROW on a line; a
+ * `{Name, Offset}` mutantscan row matches no Volatility column fingerprint, so the structural path
+ * returns the SIEM catch-all and a check placed after it never runs.
+ *
+ * What is left is a truncated document whose first bytes are the wrapper's, which is Intact's own
+ * shape. The pattern is otherwise deliberately narrow. A plain Volatility plugin map has no `plugins`
  * wrapper, and a Velociraptor artifact map's keys are capitalised (`Windows.KapeFiles.Targets`), so
  * neither can trip this. The JSON-Lines half needs nothing here: its first LINE is a complete object,
  * which jsonSample already samples at any file size.
  */
 export function looksLikeIntactPrefix(text: string): boolean {
-  const head = (text ?? "").trimStart().slice(0, PREFIX_SCAN);
-  if (head[0] !== "{") return false;
-  return INTACT_WRAPPER.test(head);
+  if (!INTACT_WRAPPER.test((text ?? "").trimStart().slice(0, PREFIX_SCAN))) return false;
+  // Cheap regex first, parse second: only a document already shaped like the wrapper pays for this.
+  try {
+    JSON.parse(text);
+    return false; // it parses — the structural signatures have the real answer, including for Intact
+  } catch {
+    return true; // cut short before its root object closed: the one input this sniff speaks for
+  }
 }
 
 /**

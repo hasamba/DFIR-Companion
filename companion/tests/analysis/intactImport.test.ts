@@ -177,10 +177,13 @@ describe("Intact detection", () => {
     expect(detectImportKind("report.json", sandbox)).toBe("sandbox");
   });
 
-  it("requires the plugin id to sit INSIDE the plugins object, not merely somewhere in the file", () => {
+  it("requires the plugin id to open the document, not merely appear somewhere in it", () => {
     const split = `{"plugins":{"sysmon":"on"},"note":"windows.pslist":[]}`;
     expect(looksLikeIntactPrefix(split)).toBe(false);
-    expect(looksLikeIntactPrefix(payload())).toBe(true);
+    // Cut short: the one input the sniff answers for.
+    expect(looksLikeIntactPrefix(payload().slice(0, 120))).toBe(true);
+    // Complete: the structural signatures read the real record, so the sniff stands down.
+    expect(looksLikeIntactPrefix(payload())).toBe(false);
   });
 
   // The two constraints this sniff has to satisfy AT ONCE, so neither can be traded for the other.
@@ -206,6 +209,38 @@ describe("Intact detection", () => {
       '{\n "plugins": {\n  "volatility3.plugins.windows.mutantscan.MutantScan": [\n' +
       rows.map((r) => `   ${JSON.stringify(r)}`).join(",\n");
     expect(detectImportKind("memory_payload.json", cut(perRow))).toBe("memory");
+  });
+
+  // The sniff speaks for ONE input: a document cut short before its root object closed. It has no
+  // standing on a document that parses — the structural signatures read the real record there, and
+  // they classify a COMPLETE Intact payload correctly on their own. Treating it as a substring hunt
+  // over 256 KB instead claimed ordinary files that merely mention a plugin map.
+  it("leaves a parseable document alone even when it opens with the wrapper's own shape", () => {
+    const agent = JSON.stringify({
+      "@timestamp": "2026-09-01T10:00:00Z",
+      message: "agent configuration loaded",
+      plugins: { "windows.eventlog": ["Security", "System"], "linux.audit": ["auditd"] },
+    });
+    expect(detectImportKind("agent.json", agent)).toBe("siem");
+
+    // Even with the plugin map FIRST, which is the wrapper's own opening.
+    const pluginsFirst = JSON.stringify({
+      plugins: { "windows.eventlog": ["Security"] },
+      "@timestamp": "2026-09-01T10:00:00Z",
+      message: "agent configuration loaded",
+    });
+    expect(detectImportKind("agent.json", pluginsFirst)).toBe("siem");
+  });
+
+  it("leaves an NDJSON stream alone when one record happens to carry a plugin map", () => {
+    const stream = [
+      { "@timestamp": "2026-09-01T10:00:00Z", message: "boot", host: { name: "srv1" } },
+      { "@timestamp": "2026-09-01T10:00:01Z", message: "cfg", plugins: { "windows.eventlog": ["Security"] } },
+      { "@timestamp": "2026-09-01T10:00:02Z", message: "login", host: { name: "srv1" } },
+    ]
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    expect(detectImportKind("events.jsonl", stream)).toBe("siem");
   });
 
   it("does not claim a truncated head that is not Intact's wrapper", () => {
