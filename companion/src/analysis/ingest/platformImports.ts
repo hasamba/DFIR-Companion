@@ -2,7 +2,7 @@ import { type ExternalImporter } from "../declarativeImporter.js";
 import { parseEmail, type EmailImportOptions } from "../emailImport.js";
 import { parseEvtxXmlProgress } from "../evtxXmlImport.js";
 import { parseIrisCase, type IrisCaseData, type IrisImportOptions } from "../irisImport.js";
-import { parseMemory, type MemoryImportOptions } from "../memoryImport.js";
+import { intactTruncationNote, parseMemoryOrIntact, type MemoryImportOptions } from "../intactImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { parseSandboxReport, type SandboxImportOptions } from "../sandboxImport.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -193,7 +193,7 @@ export async function importMemory(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
+  const parsedRaw = parseMemoryOrIntact(text, { ...opts.memory, filename: opts.label });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Memory", parsed.total);
@@ -203,9 +203,12 @@ export async function importMemory(
     findings: [],
     iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
     mitreTechniques: [],
+    // A parser may mint its OWN id: the Intact adapter derives one from the (Offset, Rule) a YARA hit
+    // matched at, so the same hit arriving in both of Intact's files lands on ONE timeline row
+    // instead of being double-counted (#776). Everyone else leaves it empty and gets numbered here.
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
+      id: e.id || `${opts.idPrefix}e${i + 1}`,
       sources: e.sources?.length ? e.sources : [tool],
     })),
     threadsOpened: [],
@@ -214,8 +217,10 @@ export async function importMemory(
       `Memory import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
       (parsed.injected > 0 ? `, ${parsed.injected} injected-code hit(s)` : "") +
       (parsed.connections > 0 ? `, ${parsed.connections} connection(s)` : "") +
+      (parsed.yaraHits ? `, ${parsed.yaraHits} YARA hit(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      (parsed.truncated?.length ? ` — ${intactTruncationNote(parsed.truncated)}` : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

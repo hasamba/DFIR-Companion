@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Intact (trimmed VolWeb) import** — `memory_payload.json` and `yarascan_results.jsonl` are read deterministically instead of going to AI log triage; the two overlapping YARA sets dedupe on (offset, rule), memory-resident hits grade Low, a dense many-rule address cluster grades Info, and Intact's per-table row caps are disclosed. (closes #776)
 - **Related Cases** — a new dashboard panel and two routes (`GET /cases/:id/related`, `GET /global/iocs?q=`) that surface the other investigations sharing an indicator with this one. Ranked so a flagged hash outweighs a private address; scoped to the cases your account may already read. Off by default — set `DFIR_CROSS_CASE=on` to enable the routes, then turn the panel on in Settings → Dashboard sections. (closes #679)
 - **Chainsaw runs on raw `.evtx` from inside the Companion** — a sixth built-in tool alongside Hayabusa and the Velociraptor CLI (binary, Sigma rule directory and mapping file in Settings → Tools). The importer already existed; only the runner was missing. (#688)
 - **A parser run is now recorded in the chain of custody** — the tool output's custody entry states the parser's version, the exact arguments, the rule-set hash, the exit code, a stderr tail and the output hash, instead of a bare "companion". (#688)

@@ -26,7 +26,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **EDR / SIEM** | Velociraptor native JSON/JSONL/artifact-map, Velociraptor **upload-only artifacts** (e.g. THOR) — paste the GUI's "Uploaded Files" tab URL to import just the uploaded report, skipping rows entirely; also reads `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`, SIEM/EDR JSON (Elastic, Splunk, Kibana, winlogbeat), Wazuh JSON, THOR Nextron JSONL, ECAR (EDR Common Activity Record) NDJSON |
 | **Network** | Suricata eve.json, Zeek JSON (combined or per-stream conn/dns/http/ssl/x509/files), Security Onion events |
 | **Firewall / IDS / web logs** | Cisco ASA syslog (Built/Teardown/Deny), Snort/Suricata `alert_fast` IDS alerts, Apache/Nginx/Squid combined access logs, plain syslog (RFC 5424 / RFC 3164, Linux/Unix hosts) |
-| **Memory forensics** | Volatility 3 JSON + default text output, Rekall JSON, MemProcFS timeline CSV, MemProcFS findevil |
+| **Memory forensics** | Volatility 3 JSON + default text output, Rekall JSON, MemProcFS timeline CSV, MemProcFS findevil, Intact (trimmed VolWeb) `memory_payload.json` + `yarascan_results.jsonl` |
 | **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log, Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log |
 | **Identity provider** | Okta System Log, Google Workspace admin/login audit — severity comes from the event type, not the vendor's own operational grade, so IdP account-takeover tradecraft (MFA/2SV disabled, admin role granted, API token minted, OAuth grant consented, session impersonated, Workspace mail monitor added) grades above Info |
 | **Browser artifacts** | Hindsight JSON or CSV — Chrome/Edge/Brave history, downloads and interpretations. Every row is Info: browser artifacts are evidence, not verdicts, so they land in the super-timeline |
@@ -48,6 +48,27 @@ All of the above except CSV/log/DFIR-IRIS are **fully deterministic — no AI ca
 Deterministic imports also retain a [versioned canonical event envelope](canonical-events.md) with
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.
+
+### Intact (trimmed VolWeb output)
+
+Intact runs VolWeb over a RAM image, then combines and trims the result into two files. Drop either
+or both on the **Import** button — both are recognised as memory imports:
+
+- `memory_payload.json` — the Volatility 3 plugin tables (process tree, cmdline, malfind, svcscan,
+  dlllist, mutantscan, userassist, …) plus a stripped copy of the YARA hits.
+- `yarascan_results.jsonl` — one YARA hit per line, with the matched string and value.
+
+Three things are specific to Intact:
+
+- **The two YARA sets overlap.** The copy inside `memory_payload.json` is a subset of the JSON-Lines
+  file. Importing both is the obvious thing to do, so a hit is keyed on the address and the rule name
+  and lands on ONE timeline row either way — it is never counted twice.
+- **Memory YARA hits grade Low**, one tier below a file-based YARA match. A match in RAM names no
+  file, and a rule set loaded into memory matches its own strings. When many DIFFERENT rules fire
+  inside a few kilobytes of one another, that is a rule file rather than a set of detections, and
+  those rows drop to Info with the reason shown in the row.
+- **Intact caps its tables.** A table that came back holding the cap is named in the import note:
+  rows beyond it were never exported, so absence in that table is not evidence of absence.
 
 ## Evidence Drop Folder (Auto-Import Inbox)
 

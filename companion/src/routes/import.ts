@@ -18,7 +18,7 @@ import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "../analysis/sandboxImport.js";
-import { parseMemory, type MemoryImportOptions } from "../analysis/memoryImport.js";
+import { parseMemoryOrIntact, type MemoryImportOptions } from "../analysis/intactImport.js";
 import { parseEmail, type EmailImportOptions } from "../analysis/emailImport.js";
 import { parseTheHive } from "../analysis/theHiveImport.js";
 import { parseAuditdLog, type AuditdImportOptions } from "../analysis/auditdImport.js";
@@ -2482,7 +2482,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     };
 
     try {
-      const preview = parseMemory(text, memoryOpts);
+      const preview = parseMemoryOrIntact(text, memoryOpts);
       if (preview.format === "empty" && preview.kept === 0)
         return res.status(400).json({
           error:
