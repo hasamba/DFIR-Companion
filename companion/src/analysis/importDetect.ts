@@ -645,9 +645,9 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     // Rekall's JSON renderer is a list of [directive, payload] statements (arrays, not objects), so
     // jsonSample finds no representative object — detect it from the root shape first.
     if (isRekallCommandList(root)) return "memory";
-    // Intact's wrapper, read from the PREFIX — a payload bigger than the file-path route's sniff sample has no complete root object to parse (#776).
-    if (looksLikeIntactPrefix(t)) return "memory";
     if (sample) return vrHint(detectJson(root, sample));
+    // Intact's wrapper by PREFIX — a fallback, so it stays BELOW every structural signature (#776).
+    if (looksLikeIntactPrefix(t)) return "memory";
     // No representative object — but a Velociraptor-named file is still Velociraptor, so route it to
     // that importer rather than rejecting the whole file. This is what saved DetectRaptor's
     // HijackLibsMFT pack (a `{HijackLibInfo:{…}}` NDJSON shape jsonSample could not sample): the auto
