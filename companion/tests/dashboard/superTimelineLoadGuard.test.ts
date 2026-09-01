@@ -108,8 +108,8 @@ describe("the super-timeline load path", () => {
     expect(api.DfirState.lastSuperData()?.total).toBe(3);
   });
 
-  it("asks again when the filter moved while the first load was in flight", async () => {
-    const { api, urls, pending } = harness();
+  it("asks again when the filter moved while the first load was in flight, without drawing the stale answer", async () => {
+    const { api, msg, urls, pending } = harness();
 
     api.loadSuperTimeline(); // the case-open load: unfiltered, and slow
     expect(urls[0]).not.toContain("q=");
@@ -120,10 +120,15 @@ describe("the super-timeline load path", () => {
 
     expect(urls).toHaveLength(2); // the panel sees that it answered the wrong question
     expect(urls[1]).toContain("q=lynx");
+    // And it does NOT draw the answer it just discarded. Painting 100000 events under a filter that
+    // is set — even for the seconds the second query takes — is the bug being fixed, not a step
+    // on the way to fixing it.
+    expect(api.DfirState.lastSuperData()).toBeNull();
+    expect(msg.textContent).toBe("Loading super-timeline…");
 
     pending[1].resolve(answer(3));
     await settle();
-    expect(api.DfirState.lastSuperData()?.total).toBe(3); // and the filtered answer is what stands
+    expect(api.DfirState.lastSuperData()?.total).toBe(3); // the filtered answer is the first to paint
   });
 
   it("stays silent when an abandoned load never lands", async () => {

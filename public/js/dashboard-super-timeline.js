@@ -114,15 +114,18 @@
       .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
       .then(data => {
         if (requestToken !== superLoadRequestToken) return;
+        // The analyst moved the filters while this was in flight. This is the answer to a question
+        // nobody is asking any more, so it is NOT drawn: painting it would put every event back on
+        // screen under a filter that is set, which is the whole bug. Ask again instead, and leave
+        // the loading line up until an answer to the current question arrives.
+        //
+        // This is why the panel needs no "a load is running" flag. Such a flag cannot be cleared
+        // reliably: runPanelLoaders hands an ABORTED loader a promise that never settles, so one
+        // cancelled case load would leave it stuck on and the panel re-querying a case the analyst
+        // walked away from. An abandoned load simply never reaches this line.
+        if (superQueryString() !== askedFor) { loadSuperTimeline(caseId); return; }
         if (msg) msg.textContent = "";
         renderSuperTimeline(data, caseId);
-        // The analyst moved the filters while this was in flight, and the page's refresh could not
-        // re-query because the panel had no data to refresh yet — that is how a filter typed during
-        // the first load used to leave every event on screen under a filter that was set. The answer
-        // is on screen now, so the panel can see for itself that it answers the wrong question, and
-        // ask again. Stateless on purpose: an ABANDONED load never lands (runPanelLoaders hands an
-        // aborted loader a promise that never settles), so a cancelled case load ends in silence.
-        if (superQueryString() !== askedFor) loadSuperTimeline(caseId);
       })
       .catch(e => {
         if (requestToken !== superLoadRequestToken) return;
