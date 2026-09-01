@@ -3,32 +3,40 @@
 // Reported as "the filter does not filter the super-timeline": the analyst typed a term into the
 // dashboard's Filter box, the forensic timeline narrowed to 15 of 253 events, and the super-timeline
 // went on showing all 100000. The filter was wired end to end the whole time — superQueryString()
-// sends the term as `q`, and the server drops every row eventMatchesSearch() rejects — so both
-// halves of the failure were in this one load path:
+// sends the term as `q`, and the server drops every row eventMatchesSearch() rejects — so the whole
+// failure was in this one load path:
 //
 //   1. loadSuperTimeline drew NOTHING while the fetch was in flight. The store scans every row in
 //      JavaScript, so on a full case the query takes seconds, and for those seconds the panel still
 //      shows the previous unfiltered rows. That is indistinguishable from "the filter did nothing".
 //   2. There was no request token, so the last RESPONSE won rather than the last REQUEST. The
 //      unfiltered load still running when the analyst typed could land second and repaint all
-//      100000 rows over the filtered answer — permanently, until something else reloaded the panel.
+//      100000 rows over the filtered answer.
+//   3. The page's refresh could only re-query a panel that already HAD data (`lastSuperData()`), so
+//      a filter typed during the FIRST load fired no request at all. That load then painted every
+//      event, and nothing reloaded it.
 //
-// Both are asserted here against the real module, loaded the way the browser loads it.
+// The third is fixed here rather than in the page, and deliberately without an "a load is running"
+// flag: runPanelLoaders hands an aborted loader a promise that NEVER SETTLES (its own comment calls
+// that "the honest shape for this request was abandoned"), so such a flag would be stuck on for the
+// rest of the session after one cancelled case load — and a panel that is permanently "live"
+// re-queries a case the analyst walked away from. The request carries the question it asked
+// instead, and re-asks only when an answer lands against a question that has since changed.
 import { describe, it, expect } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 interface SuperTimelineApi {
   loadSuperTimeline: (caseId?: string) => void;
-  refreshSuperTimelineFilters: () => void;
   DfirState: { lastSuperData: () => { total: number } | null };
+  DfirTimelineView: { setSearch: (term: string) => void };
 }
 
 const PRELOAD = ["dashboard-state.js", "dashboard-time.js", "dashboard-timeline-view.js"];
 
-/** One super-timeline answer, as the route returns it. No rows — the guard is about WHICH answer paints. */
+/** One super-timeline answer, as the route returns it. No rows — these tests are about WHICH answer paints. */
 const answer = (total: number) => ({ events: [], total, origins: [], hosts: [], labelsAvailable: [] });
 
-/** A fetch whose every call hands the test the resolve/reject of that request. */
+/** A fetch that records every URL and hands the test the resolve/reject of that request. */
 function harness() {
   const msg = { textContent: "", style: { color: "" } };
   const list = { innerHTML: "" };
@@ -43,23 +51,25 @@ function harness() {
     stPrev: { disabled: false },
     stNext: { disabled: false },
   };
+  const urls: string[] = [];
   const pending: { resolve: (body: unknown) => void; reject: (e: Error) => void }[] = [];
   const globals = {
     URLSearchParams, // superQueryString() builds the query with it; the sandbox has no web globals
     document: { getElementById: (id: string) => elements[id] ?? null, addEventListener: () => {} },
-    fetch: () =>
-      new Promise((resolve, reject) => {
+    fetch: (url: string) => {
+      urls.push(url);
+      return new Promise((resolve, reject) => {
         pending.push({
           resolve: (body) => resolve({ ok: true, status: 200, json: () => Promise.resolve(body) }),
           reject,
         });
-      }),
+      });
+    },
   };
   return {
     msg,
-    list,
     badge,
-    pager,
+    urls,
     pending,
     api: loadDashboardModule<SuperTimelineApi>("dashboard-super-timeline.js", PRELOAD, globals),
   };
@@ -85,53 +95,47 @@ describe("the super-timeline load path", () => {
     const { api, badge, pending } = harness();
 
     api.loadSuperTimeline(); // the unfiltered load the case-open kicked off
-    api.loadSuperTimeline(); // the analyst typed "lynx" while that was still running
+    api.loadSuperTimeline(); // a second query while that one was still running
     expect(pending).toHaveLength(2);
 
-    pending[1].resolve(answer(3)); // the filtered answer comes back first…
+    pending[1].resolve(answer(3)); // the newer answer comes back first…
     await settle();
     expect(badge.textContent).toBe(" (3 events — page 1 of 1)");
 
-    pending[0].resolve(answer(100000)); // …and the older unfiltered one lands after it
+    pending[0].resolve(answer(100000)); // …and the older one lands after it
     await settle();
-    expect(badge.textContent).toBe(" (3 events — page 1 of 1)"); // still the filtered view
+    expect(badge.textContent).toBe(" (3 events — page 1 of 1)"); // still the newer view
     expect(api.DfirState.lastSuperData()?.total).toBe(3);
   });
 
-  it("re-queries when a filter changes during the FIRST load, and drops that load's answer", async () => {
-    const { api, pending } = harness();
+  it("asks again when the filter moved while the first load was in flight", async () => {
+    const { api, urls, pending } = harness();
 
     api.loadSuperTimeline(); // the case-open load: unfiltered, and slow
-    expect(pending).toHaveLength(1);
+    expect(urls[0]).not.toContain("q=");
 
-    api.refreshSuperTimelineFilters(); // the analyst typed while it was still running
-    expect(pending).toHaveLength(2); // it re-queries instead of waiting for an answer to exist
-
-    pending[0].resolve(answer(100000)); // the unfiltered answer lands first…
+    api.DfirTimelineView.setSearch("lynx"); // the analyst types while it is still running
+    pending[0].resolve(answer(100000)); // the unfiltered answer lands
     await settle();
-    expect(api.DfirState.lastSuperData()).toBeNull(); // …and paints nothing
+
+    expect(urls).toHaveLength(2); // the panel sees that it answered the wrong question
+    expect(urls[1]).toContain("q=lynx");
 
     pending[1].resolve(answer(3));
     await settle();
-    expect(api.DfirState.lastSuperData()?.total).toBe(3);
+    expect(api.DfirState.lastSuperData()?.total).toBe(3); // and the filtered answer is what stands
   });
 
-  it("stays quiet for a panel the analyst never opened", () => {
-    const { api, pending } = harness();
+  it("stays silent when an abandoned load never lands", async () => {
+    const { api, urls, pending } = harness();
 
-    api.refreshSuperTimelineFilters();
-    expect(pending).toHaveLength(0); // a filter change must not load a panel nobody asked for
-  });
+    api.loadSuperTimeline(); // a case-open load the analyst then cancelled
+    api.DfirTimelineView.setSearch("lynx");
+    await settle(); // its promise never settles — runPanelLoaders drops aborted loaders that way
 
-  it("goes quiet again when a load ends without an answer", async () => {
-    const { api, pending } = harness();
-
-    api.loadSuperTimeline(); // the case-open load…
-    pending[0].reject(new Error("aborted")); // …which the analyst then cancelled
-    await settle();
-
-    api.refreshSuperTimelineFilters();
-    expect(pending).toHaveLength(1); // no fresh full-store scan for a case they walked away from
+    expect(urls).toHaveLength(1); // no fresh full-store scan for a case they walked away from
+    expect(pending).toHaveLength(1);
+    expect(api.DfirState.lastSuperData()).toBeNull();
   });
 
   it("does not let a stale failure overwrite a newer answer with an error", async () => {

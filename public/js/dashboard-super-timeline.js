@@ -47,7 +47,6 @@
   let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
   let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
   let superLoadRequestToken = 0;  // only the newest request may update the panel
-  let superLoadsInFlight = 0;     // queries running right now — see superTimelineLive()
   const superCaseId = () => document.getElementById("caseId").value.trim();
 
   // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
@@ -91,19 +90,6 @@
     return p.toString();
   }
 
-  // Whether this panel is the analyst's problem right now: a query is running for it, or an answer
-  // has landed in it. NOT "a load was once started" — a monotonic counter never goes back down, so
-  // after a CANCELLED case load (dismissCaseLoading walks away from ~60 panel loads) a later filter
-  // change would fire a fresh full-store scan for the case the analyst just left.
-  //
-  // It is also not `lastSuperData()` alone, which is what the page used to ask: that is true only
-  // once a response has LANDED, so a filter typed during the first (unfiltered) load fired no second
-  // request at all — that load then painted every event and nothing reloaded it, leaving an
-  // unfiltered panel under a filter that was set. The in-flight half is what closes that window.
-  function superTimelineLive() { return superLoadsInFlight > 0 || !!DfirState.lastSuperData(); }
-
-  /** A view filter changed. Re-query, but only for a panel the analyst has actually opened. */
-  function refreshSuperTimelineFilters() { if (superTimelineLive()) loadSuperTimeline(); }
 
   function loadSuperTimeline(caseId) {
     caseId = caseId || superCaseId();
@@ -117,17 +103,26 @@
     // Taken here, not above: a call with no case sends nothing, so it must not invalidate a load
     // that is still in flight.
     const requestToken = ++superLoadRequestToken;
-    superLoadsInFlight++;
+    // The question this request asks, kept so the answer can be checked against the question the
+    // analyst is asking by the time it lands. See the re-query below.
+    const askedFor = superQueryString();
     if (msg) {
       msg.style.color = "var(--text-muted)";
       msg.textContent = "Loading super-timeline…";
     }
-    fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline?${superQueryString()}`)
+    fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline?${askedFor}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
       .then(data => {
         if (requestToken !== superLoadRequestToken) return;
         if (msg) msg.textContent = "";
         renderSuperTimeline(data, caseId);
+        // The analyst moved the filters while this was in flight, and the page's refresh could not
+        // re-query because the panel had no data to refresh yet — that is how a filter typed during
+        // the first load used to leave every event on screen under a filter that was set. The answer
+        // is on screen now, so the panel can see for itself that it answers the wrong question, and
+        // ask again. Stateless on purpose: an ABANDONED load never lands (runPanelLoaders hands an
+        // aborted loader a promise that never settles), so a cancelled case load ends in silence.
+        if (superQueryString() !== askedFor) loadSuperTimeline(caseId);
       })
       .catch(e => {
         if (requestToken !== superLoadRequestToken) return;
@@ -135,8 +130,7 @@
           msg.style.color = "var(--badge-danger-text)";
           msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s";
         }
-      })
-      .finally(() => { superLoadsInFlight--; });
+      });
   }
 
   function renderSuperFilters(data) {
@@ -672,7 +666,6 @@
   window.openSuperCtxMenu = openSuperCtxMenu;
   window.promoteSuperSelected = promoteSuperSelected;
   window.refreshSuperRows = refreshSuperRows;
-  window.refreshSuperTimelineFilters = refreshSuperTimelineFilters;
   window.renderSuperTimeline = renderSuperTimeline;
   window.saveTimeframe = saveTimeframe;
   window.superBulkStar = superBulkStar;

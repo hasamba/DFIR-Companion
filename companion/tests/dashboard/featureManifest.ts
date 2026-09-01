@@ -231,7 +231,6 @@ export const FEATURES: Feature[] = [
       "openSuperCtxMenu",
       "promoteSuperSelected",
       "refreshSuperRows",
-      "refreshSuperTimelineFilters",
       "renderSuperTimeline",
       "resetSuperPagination",
       "saveTimeframe",
@@ -262,7 +261,6 @@ export const FEATURES: Feature[] = [
       "superStarredOnly",
       "superSavedTimeframes",
       "superLoadRequestToken",
-      "superLoadsInFlight",
     ],
   },
   {
