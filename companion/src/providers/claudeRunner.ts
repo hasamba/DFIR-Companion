@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import {
-  DEFAULT_MAX_STDERR_BYTES,
+  DEFAULT_MAX_STDERR_HEAD_BYTES,
+  DEFAULT_MAX_STDERR_TAIL_BYTES,
   DEFAULT_MAX_STDOUT_BYTES,
-  StreamHead,
+  StreamEnds,
   StreamTail,
 } from "./childStreamBuffer.js";
 
@@ -39,12 +40,13 @@ export interface ClaudeRunOptions {
    */
   maxStdoutBytes?: number;
   /**
-   * Cap on the stderr retained in the result, in bytes. Unset means DEFAULT_MAX_STDERR_BYTES.
-   *
-   * Output past the cap is dropped, so what survives is the HEAD — the opposite end from stdout,
-   * because every consumer slices the FIRST 200-300 characters of stderr into an error message.
+   * Caps on the stderr retained in the result, in bytes. Unset means the DEFAULT_MAX_STDERR_*
+   * constants. stderr keeps BOTH ENDS and discards the middle, because its two readers want
+   * opposite parts: claudeCode.ts and finalText slice the first 200 characters into the error they
+   * throw, while the kind an error is classified as can turn on a line printed at the very end.
    */
-  maxStderrBytes?: number;
+  maxStderrHeadBytes?: number;
+  maxStderrTailBytes?: number;
 }
 
 export type ClaudeRunner = (opts: ClaudeRunOptions) => Promise<ClaudeRunResult>;
@@ -56,7 +58,10 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
     // site re-opens by forgetting it, which is the whole of #762 — so the fallback is a finite
     // ceiling and `Infinity` is the explicit opt-out.
     const stdout = new StreamTail(opts.maxStdoutBytes ?? DEFAULT_MAX_STDOUT_BYTES);
-    const stderr = new StreamHead(opts.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
+    const stderr = new StreamEnds(
+      opts.maxStderrHeadBytes ?? DEFAULT_MAX_STDERR_HEAD_BYTES,
+      opts.maxStderrTailBytes ?? DEFAULT_MAX_STDERR_TAIL_BYTES,
+    );
     let settled = false;
     let timedOut = false;
 

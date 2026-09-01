@@ -6,9 +6,10 @@
 // (see toolRunner.ts / velociraptorApi.ts) while still working on Windows.
 import spawn from "cross-spawn";
 import {
-  DEFAULT_MAX_STDERR_BYTES,
+  DEFAULT_MAX_STDERR_HEAD_BYTES,
+  DEFAULT_MAX_STDERR_TAIL_BYTES,
   DEFAULT_MAX_STDOUT_BYTES,
-  StreamHead,
+  StreamEnds,
   StreamTail,
 } from "./childStreamBuffer.js";
 
@@ -40,14 +41,15 @@ export interface CodexRunOptions {
    */
   maxStdoutBytes?: number;
   /**
-   * Cap on the stderr retained in the result, in bytes. Unset means DEFAULT_MAX_STDERR_BYTES.
-   *
-   * Output past the cap is dropped, so what survives is the HEAD — the opposite end from stdout.
-   * codex.ts slices the first 300 characters into an error message, and orders the errors it found
-   * so the real cause is not "pushed past the truncation" by MCP startup noise; keeping the tail
-   * would defeat that.
+   * Caps on the stderr retained in the result, in bytes. Unset means the DEFAULT_MAX_STDERR_*
+   * constants. stderr keeps BOTH ENDS and discards the middle, because its two readers want
+   * opposite parts: codex.ts slices the first 300 characters into the error it throws — ordering
+   * its errors so the real cause is not "pushed past the truncation" by MCP startup noise — and
+   * ALSO calls classifyKind() over the whole text, where a rate-limit line printed last decides
+   * whether analysis/ai/retry.ts retries the call at all.
    */
-  maxStderrBytes?: number;
+  maxStderrHeadBytes?: number;
+  maxStderrTailBytes?: number;
 }
 
 export type CodexRunner = (opts: CodexRunOptions) => Promise<CodexRunResult>;
@@ -64,7 +66,10 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     // until the heap gives out, and this runner had no cap to pass even if a caller wanted one
     // (#763). `Infinity` is the explicit opt-out.
     const stdout = new StreamTail(opts.maxStdoutBytes ?? DEFAULT_MAX_STDOUT_BYTES);
-    const stderr = new StreamHead(opts.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
+    const stderr = new StreamEnds(
+      opts.maxStderrHeadBytes ?? DEFAULT_MAX_STDERR_HEAD_BYTES,
+      opts.maxStderrTailBytes ?? DEFAULT_MAX_STDERR_TAIL_BYTES,
+    );
     let settled = false;
     let timedOut = false;
 

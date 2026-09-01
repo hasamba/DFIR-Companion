@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_MAX_STDERR_BYTES,
   DEFAULT_MAX_STDOUT_BYTES,
+  StreamEnds,
   StreamHead,
   StreamTail,
 } from "../../src/providers/childStreamBuffer.js";
@@ -113,5 +114,67 @@ describe("StreamHead", () => {
     const head = new StreamHead(Infinity);
     for (let i = 0; i < 100; i++) head.push("x".repeat(1000));
     expect(head.byteLength).toBe(100_000);
+  });
+});
+
+describe("StreamEnds", () => {
+  it("keeps everything, with no truncation marker, while under the budget", () => {
+    const ends = new StreamEnds(100, 100);
+    ends.push("alpha");
+    ends.push("beta");
+    // Nothing was lost, so nothing may claim it was: a marker on complete output is a lie about
+    // evidence, and the reader cannot tell it from a real elision.
+    expect(ends.text()).toBe("alphabeta");
+  });
+
+  // The whole point of holding both ends. classifyKind() scans stderr for auth and rate-limit
+  // keywords, and analysis/ai/retry.ts treats "auth" and "rate_limit" as NON-retryable. An error
+  // line the buffer dropped is therefore not merely a worse message — it downgrades the kind to a
+  // retryable one and the pipeline runs the same doomed call again.
+  it("keeps an early error AND a late one, dropping only the middle", () => {
+    const ends = new StreamEnds(20, 20);
+    ends.push("Error: not logged in\n");
+    for (let i = 0; i < 50; i++) ends.push("noise noise noise\n");
+    ends.push("429 rate limit\n");
+
+    const text = ends.text();
+    expect(text).toContain("Error: not logged in");
+    expect(text).toContain("429 rate limit");
+    expect(text).toContain("stderr truncated");
+  });
+
+  it("still lets a front-slicing reader find the first error", () => {
+    const ends = new StreamEnds(200, 50);
+    ends.push("Error: not logged in\n");
+    for (let i = 0; i < 50; i++) ends.push("x".repeat(100));
+    // claudeCode.ts and finalText slice the first 200 characters; codex.ts the first 300. The head
+    // budget has to come first in the joined text for that to keep working.
+    expect(ends.text().slice(0, 200)).toContain("Error: not logged in");
+  });
+
+  it("marks the elision only once something was actually dropped", () => {
+    const exact = new StreamEnds(5, 5);
+    exact.push("aaaaa");
+    exact.push("bbbbb");
+    // Head full, tail holds the rest, nothing lost between them.
+    expect(exact.text()).toBe("aaaaabbbbb");
+    exact.push("ccccc");
+    expect(exact.text()).toContain("stderr truncated");
+  });
+
+  it("keeps the whole stream when both budgets are Infinity", () => {
+    const ends = new StreamEnds(Infinity, Infinity);
+    for (let i = 0; i < 100; i++) ends.push("x".repeat(1000));
+    expect(ends.text()).toBe("x".repeat(100_000));
+  });
+
+  // The marker is scanned by classifyKind() along with everything else, and its regexes include
+  // /5\d\d/ for a server-error code. A byte count in the marker could match that by accident and
+  // reclassify the error, so the marker carries no digits.
+  it("uses a marker with no digits in it", () => {
+    const ends = new StreamEnds(5, 5);
+    for (let i = 0; i < 10; i++) ends.push("aaaaa");
+    const marker = ends.text().replace(/a/g, "");
+    expect(marker).not.toMatch(/\d/);
   });
 });

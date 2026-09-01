@@ -140,22 +140,29 @@ describe("defaultCodexRunner", () => {
   });
 
   // stderr was the stream nobody was watching: unbounded until the child exited, so a tool that
-  // logs endlessly could exhaust the heap on its own. Bounding it must not cost the error message:
-  // codex.ts slices the first 300 characters into what it throws AND classifies the error kind from
-  // that text, so a cap keeping the tail would take away both.
-  it("bounds stderr while keeping the error its reader slices from the front", async () => {
+  // logs endlessly could exhaust the heap on its own. Bounding it must cost neither reader: codex.ts
+  // slices the first 300 characters into what it throws, AND classifies the error kind from the
+  // whole text — and analysis/ai/retry.ts will retry a call whose rate limit it could not see.
+  it("bounds stderr while keeping the error at the front AND the one at the back", async () => {
     const script =
-      'process.stderr.write("Error: 429 rate limit exceeded\\n");' +
-      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");';
+      'process.stderr.write("Error: not logged in\\n");' +
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");' +
+      'process.stderr.write("429 rate limit exceeded\\n");';
     const r = await defaultCodexRunner({
       bin: process.execPath,
       args: ["-e", script],
       stdin: "",
       timeoutMs: 30_000,
-      maxStderrBytes: 16_000,
+      maxStderrHeadBytes: 16_000,
+      maxStderrTailBytes: 8_000,
     });
 
     expect(Buffer.byteLength(r.stderr, "utf8")).toBeLessThan(200_000);
-    expect(r.stderr.slice(0, 300)).toContain("429 rate limit exceeded");
+    // The front, which the reader slices into its message.
+    expect(r.stderr.slice(0, 300)).toContain("Error: not logged in");
+    // The back, which decides the error KIND — and so whether the call is retried into the same
+    // wall. A head-only cap dropped this line and downgraded the kind to a retryable one.
+    expect(r.stderr).toContain("429 rate limit exceeded");
+    expect(r.stderr).toContain("stderr truncated");
   });
 });
