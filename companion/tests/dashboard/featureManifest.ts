@@ -1620,7 +1620,7 @@ export { duplicateBindings };
 export const NON_FEATURES = new Set([
   "dashboard-state.js",
   "dashboard-velo-case.js", // pure helper: the connected case, and whether a bundle may run
-  "dashboard-velo-coverage.js", // pure helper: builds a hunt's per-artifact accounting line, holds nothing
+  "dashboard-velo-coverage.js", // pure helper: a hunt card's accounting + in-flight lines, holds nothing
   "dashboard-velo-labels.js", // pure helper: the run form's label picker over the cached fleet, holds nothing
   "dashboard-escape.js",
   "dashboard-time.js",

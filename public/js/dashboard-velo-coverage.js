@@ -82,3 +82,47 @@ function veloLaunchNotesHtml(j) {
     );
   return notes.length ? `launched ✓ — ${notes.join("; ")}` : "";
 }
+
+// What a hunt card says while its collect is in flight (#770).
+//
+// "collecting" is the one status renderVeloJobs had no text for, and it is also the one that lasts:
+// the badge appeared, the countdown disappeared (it only renders while "running"), the Collect-now
+// button was withheld, and the analyst got a yellow word and an empty line for the minutes a collect
+// takes on a large case. A wait nobody can see progress in is indistinguishable from a hang, and one
+// was reported as exactly that — a routine six-minute collect, 75 seconds of it queued behind another
+// import, read as a frozen companion.
+//
+// The phase comes off the job, and the phase alone is NOT permission to describe live work. A stored
+// "collecting" outlives the process that wrote it: kill the server mid-collect and the job says
+// "collecting", phase and all, forever. So the server stamps `collectActive` from its in-flight map
+// (the only authority — see composition/veloHunts.ts) and a stranded job is told apart from a busy one
+// here. Getting this wrong would trade an empty line for a confident lie, which is worse.
+//
+// `collectActive` is checked as an explicit `false`: absent means the server did not say, which is
+// what an older payload looks like, and "did not say" must not read as "stopped".
+
+/* exported veloCollectingDetail */
+function veloCollectingDetail(job) {
+  if (!job || job.status !== "collecting") return "";
+  const n = Number(job.collectRows);
+  const rows = Number.isFinite(n) && n >= 0 ? `${n} row(s)` : "results";
+  if (job.collectActive === false)
+    return "this collect is no longer running — the companion restarted, or it stopped part-way. Press Collect now to run it again.";
+  if (job.collectPhase === "queued")
+    return `${rows} fetched — waiting for another import on this case to finish before they can be written`;
+  if (job.collectPhase === "importing") return `importing ${rows}…`;
+  return "fetching results from Velociraptor…";
+}
+
+// Is this hunt's Collect button offered, and does pressing it do anything?
+//
+// Withholding it during a collect is right; withholding it from a STRANDED collect is how a hunt
+// becomes unrecoverable from the UI — the status never leaves "collecting" on its own, so the one
+// action that would fix it was the one the card refused to show (#770).
+
+/* exported veloCanCollect */
+function veloCanCollect(job) {
+  if (!job) return false;
+  if (job.status === "collecting") return job.collectActive === false;
+  return job.status === "running" || job.status === "imported" || job.status === "error";
+}

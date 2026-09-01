@@ -26,12 +26,9 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
-import { collectWarnings, superOnlyHunt, type VeloHuntJob } from "../analysis/veloHuntStore.js";
-import {
-  pollHuntStatusOnce,
-  isHuntStoppedEarly,
-  type HuntPollDeps,
-} from "../integrations/velociraptor/huntStatusPoller.js";
+import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
+import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
+import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
@@ -86,6 +83,13 @@ export interface VeloHunts {
   readonly veloHuntTimers: Map<string, NodeJS.Timeout>;
   /** Start a collect in the background; says synchronously whether it started or was queued. */
   startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
+  /**
+   * The case's hunt jobs as the dashboard reads them: the persisted records, plus `collectActive` on
+   * any still saying "collecting". That flag comes from the in-flight map, the only authority (see
+   * the file header) — the persisted status is not, because a process that died mid-collect leaves
+   * it set forever, and a card that trusts it claims live work that stopped (#770).
+   */
+  listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -163,107 +167,19 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     }
   }
 
-  // ── Velociraptor hunt STATUS polling ─────────────────────────────────────────────────────────
-  // Keyed `caseId huntId`, self-rescheduling setTimeout (not setInterval, so a slow poll can't
-  // overlap itself), .unref()'d so a pending poll never blocks process exit. Interval from
-  // DFIR_VELO_HUNT_POLL_S (default 30s, clamped 5-300). Mirrors the live-monitor scheduling.
-  const veloStatusTimers = new Map<string, NodeJS.Timeout>();
-  const statusKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
-
-  // One status-poll tick: load the job, poll (pure pollHuntStatusOnce), persist + broadcast only on
-  // an actual status change, then either reschedule, trigger an immediate collect, or stop. Never
-  // throws (pollHuntStatusOnce itself never throws; store I/O failures are best-effort).
-  async function pollVeloHuntStatus(caseId: string, huntId: string): Promise<void> {
-    const huntStore = options.veloHuntStore;
-    const client = options.velociraptorClient;
-    if (!huntStore || !client) {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
-      return;
-    }
-    let job: VeloHuntJob | null = null;
-    try {
-      job = await huntStore.get(caseId, huntId);
-    } catch (err) {
-      logLine(`[velo-hunt-status] failed to load hunt ${huntId} for status poll: ${(err as Error).message}`);
-    }
-    if (!job) {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
-      return;
-    }
-
-    const pollDeps: HuntPollDeps = { getState: (id) => client.huntStatus(id), log: logLine };
-    const outcome = await pollHuntStatusOnce(job, pollDeps);
-    if (outcome.job.status !== job.status) {
-      try {
-        await huntStore.upsert(caseId, outcome.job);
-      } catch {
-        /* best-effort */
-      }
-      options.onVeloHunt?.(caseId);
-    }
-
-    if (outcome.action === "reschedule") {
-      if (veloStatusTimers.has(statusKey(caseId, huntId))) scheduleVeloHuntStatusPoll(caseId, huntId);
-    } else if (outcome.action === "collect") {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
-      startVeloHuntCollect(caseId, huntId); // clears the fixed-delay timer + status poll itself (see below)
-    } else {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
-    }
-  }
-
-  // Arm (or re-arm) a hunt's status-poll timer for one interval out. Clears any existing timer first
-  // so start is idempotent. Clamped 5s..300s so a bad env value can't busy-loop or stall forever.
-  function scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void {
-    const key = statusKey(caseId, huntId);
-    const existing = veloStatusTimers.get(key);
-    if (existing) clearTimeout(existing);
-    const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
-    const timer = setTimeout(() => {
-      void pollVeloHuntStatus(caseId, huntId);
-    }, seconds * 1000);
-    timer.unref?.();
-    veloStatusTimers.set(key, timer);
-  }
-
-  function stopVeloHuntStatusPoll(caseId: string, huntId: string): void {
-    const key = statusKey(caseId, huntId);
-    const timer = veloStatusTimers.get(key);
-    if (timer) clearTimeout(timer);
-    veloStatusTimers.delete(key);
-  }
-
-  // Re-arm status polling for every non-terminal hunt job across all cases (server restart). As a
-  // side effect this also self-heals the pre-existing "fixed-delay auto-collect timer is lost on
-  // restart" gap: a resumed status poll will detect STOPPED/ARCHIVED on its own and trigger the
-  // collect even though the original setTimeout is gone. Best-effort per case.
-  async function resumeVeloHuntStatusPolls(): Promise<void> {
-    const huntStore = options.veloHuntStore;
-    if (!huntStore || !options.velociraptorClient) return;
-    let cases: { caseId: string }[] = [];
-    try {
-      cases = await store.listCases();
-    } catch {
-      return;
-    }
-    let resumed = 0;
-    for (const c of cases) {
-      try {
-        for (const job of await huntStore.list(c.caseId)) {
-          if (job.status === "running" || job.status === "unreachable") {
-            scheduleVeloHuntStatusPoll(c.caseId, job.huntId);
-            resumed++;
-          }
-        }
-      } catch {
-        /* skip this case */
-      }
-    }
-    if (resumed > 0)
-      logLine(
-        `[velo-hunt-status] resumed status polling for ${resumed} hunt(s) across ${cases.length} case(s)`,
-      );
-  }
+  // The status poller's timers — composition/veloHuntStatusTimers.ts. Split out when this file hit
+  // the 800-line ceiling; `startVeloHuntCollect` is injected because the collect stops the poll when
+  // it starts, so the dependency runs both ways and only one direction can be a module import.
+  const {
+    scheduleVeloHuntStatusPoll,
+    pollVeloHuntStatus,
+    stopVeloHuntStatusPoll,
+    resumeVeloHuntStatusPolls,
+  } = createVeloHuntStatusTimers({
+    store,
+    options,
+    startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
+  });
 
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
   // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
@@ -309,7 +225,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           /* best-effort */
         }
       }
-      job = { ...job, status: "collecting", ...(stoppedEarly ? { stoppedEarly: true } : {}) };
+      job = {
+        ...job,
+        status: "collecting",
+        collectPhase: "fetching",
+        collectRows: undefined,
+        ...(stoppedEarly ? { stoppedEarly: true } : {}),
+      };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       const minSeverity = job.minSeverity;
@@ -412,11 +334,20 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // always (see analysis/importLock.ts). The slot keeps the collect visible as work and stops it
       // starting while an import runs; the lock is what actually guarantees one writer, including
       // against the paths that never queue at all (/push, MCP, the Velociraptor monitors).
+      // The reads are done and the writes have not started: this collect is now waiting its turn.
+      // Published BEFORE the await, because the wait is the part the analyst cannot otherwise see —
+      // on a busy case it is minutes of a card that says nothing at all (#770).
+      job = { ...job, collectPhase: "queued", collectRows: totalRows };
+      await huntStore.upsert(caseId, job);
+      options.onVeloHunt?.(caseId);
       importSlot = await claimImportSlot(
         caseId,
         `velociraptor: hunt ${job.huntId} (${totalRows} row(s), ${uploads.length} upload(s))`,
       );
       releaseImportLock = await importLock.acquire(caseId);
+      job = { ...job, collectPhase: "importing" };
+      await huntStore.upsert(caseId, job);
+      options.onVeloHunt?.(caseId);
       if (options.stateStore) {
         try {
           stateBefore = await options.stateStore.load(caseId);
@@ -696,6 +627,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       job = {
         ...job,
         status: "imported",
+        collectPhase: undefined,
+        collectRows: undefined,
         importedAt: new Date().toISOString(),
         importFile: lastFile,
         addedEvents,
@@ -711,7 +644,14 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     } catch (err) {
       try {
         const cur = await huntStore.get(caseId, huntId);
-        if (cur) await huntStore.upsert(caseId, { ...cur, status: "error", error: (err as Error).message });
+        if (cur)
+          await huntStore.upsert(caseId, {
+            ...cur,
+            status: "error",
+            collectPhase: undefined,
+            collectRows: undefined,
+            error: (err as Error).message,
+          });
       } catch {
         /* ignore */
       }
@@ -740,6 +680,15 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   //   "queued"  — a collect was already in flight; ONE more pass will run when it finishes.
   // Either way the request is honored, which is what the 202 on the collect route promises. See the
   // file header for why dropping the second request instead was a real, silent bug (#195).
+  async function listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]> {
+    const jobs = (await options.veloHuntStore?.list(caseId)) ?? [];
+    return jobs.map((j) =>
+      j.status === "collecting"
+        ? { ...j, collectActive: collectingNow.has(collectKey(caseId, j.huntId)) }
+        : j,
+    );
+  }
+
   function startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued" {
     const key = collectKey(caseId, huntId);
     const inFlight = collectingNow.get(key);
@@ -788,6 +737,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   return {
     veloHuntTimers,
     startVeloHuntCollect,
+    listVeloHuntJobViews,
     scheduleVeloHuntStatusPoll,
     pollVeloHuntStatus,
     stopVeloHuntStatusPoll,

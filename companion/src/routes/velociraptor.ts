@@ -859,7 +859,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   app.get("/cases/:id/velociraptor/hunt-jobs", async (req: Request, res: Response) => {
     if (!options.veloHuntStore) return res.status(200).json([]);
     try {
-      return res.status(200).json(await options.veloHuntStore.list(req.params.id));
+      return res.status(200).json(await ctx.listVeloHuntJobViews(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
