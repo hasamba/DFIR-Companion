@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A raw file uploaded to a parser is kept byte-for-byte** as evidence beside the parser's output, and it survives a failed parse. It used to be deleted once parsed. (#688)
 - **One Windows record read by two parsers is one timeline row** — a Hayabusa run and a Chainsaw run over the same EVTX now merge on the record's own identity (channel + EventRecordID + host) and carry both tools as sources, instead of doubling the timeline. Two detections from the *same* parser on one record stay distinct. (#688)
 
+### Fixed
+- **A one-hit Intact YARA scan is no longer dropped** — a `yarascan_results.jsonl` holding exactly one row is a complete JSON object, not JSON Lines, so it fell through to the plain memory importer and produced nothing. (#776)
+- **The matched YARA string survives either import order** — importing the stripped copy inside `memory_payload.json` after the full JSON-Lines file used to wipe the matched string off the row. It now rides in the event's detail field, which a later import can only add to. (#776)
+
 ### Security
 - **A coding-agent run can no longer grow its output buffer without end** — the Claude Code and Codex CLI runners retained every byte of stdout and stderr until the child exited, so a looping agent run over evidence it does not control could exhaust the Node heap. Both streams are now bounded by default: stdout keeps its tail, where the result event is, and stderr keeps both ends, because one reader slices the error message off the front while the kind it is classified as — and so whether the call is retried — can turn on a line printed last. A caller that needs the whole stream asks for it explicitly. (closes #762, closes #763)
 - **A hostile "NSRL export" can no longer suppress evidence** — the table name read out of the analyst-selected RDS SQLite file was interpolated into the hash lookup without escaping its quotes, so a crafted name made every hash look known-good and silently auto-marked every hashed event and IOC in the case a false positive. Identifiers are now escaped. (closes #761)
