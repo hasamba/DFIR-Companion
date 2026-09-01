@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One Windows record read by two parsers is one timeline row** — a Hayabusa run and a Chainsaw run over the same EVTX now merge on the record's own identity (channel + EventRecordID + host) and carry both tools as sources, instead of doubling the timeline. Two detections from the *same* parser on one record stay distinct. (#688)
 
 ### Fixed
+- **A large Intact payload imports from a server path** — `POST /cases/:id/import-file` sniffs a bounded 256 KB head, and a real `memory_payload.json` is bigger than that, so the sample held no complete JSON document, every structural signature was skipped and the route answered 400. The wrapper is now recognised from its prefix. (#776)
 - **A one-hit Intact YARA scan is no longer dropped** — a `yarascan_results.jsonl` holding exactly one row is a complete JSON object, not JSON Lines, so it fell through to the plain memory importer and produced nothing. (#776)
 - **The matched YARA string survives either import order** — importing the stripped copy inside `memory_payload.json` after the full JSON-Lines file used to wipe the matched string off the row. It now rides in the event's detail field, which a later import can only add to. (#776)
 

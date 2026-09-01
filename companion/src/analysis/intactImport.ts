@@ -135,6 +135,35 @@ function isIntactYaraRow(sample: unknown): boolean {
   return typeof sample.Offset === "number" && typeof sample.Rule === "string" && !!sample.Rule.trim();
 }
 
+// How much of a file's head the prefix sniff below reads. Matches the auditd sniff's window, and
+// comfortably clears the 256 KB sample the file-path import route hands the detector.
+const PREFIX_SCAN = 256_000;
+// The wrapper's two halves, matched as TEXT rather than parsed: the `plugins` container, and at
+// least one Volatility plugin id as a key mapping to an array.
+const INTACT_PLUGINS_KEY = /"plugins"\s*:\s*\{/;
+const INTACT_PLUGIN_ENTRY =
+  /"(?:volatility\d*\.plugins\.)?(?:windows|linux|mac)\.[a-z][A-Za-z0-9_.]*"\s*:\s*\[/;
+
+/**
+ * Recognise the payload wrapper from its PREFIX, without parsing it.
+ *
+ * `POST /cases/:id/import-file` sniffs a bounded 256 KB head of the file and never the whole thing —
+ * a Plaso super-timeline cannot be held as one string at all, so a sample-based sniff is the only way
+ * to classify one. A real memory_payload.json is 289 KB, so that sample holds no complete root object,
+ * `jsonSample` returns nothing, and every structural signature — including isIntactMemoryFile — is
+ * skipped. The route answered 400 for the exact file this importer exists to read.
+ *
+ * The two regexes below are deliberately narrow. A plain Volatility plugin map has no `plugins`
+ * wrapper, and a Velociraptor artifact map's keys are capitalised (`Windows.KapeFiles.Targets`), so
+ * neither can trip this. The JSON-Lines half needs nothing here: its first LINE is a complete object,
+ * which jsonSample already samples at any file size.
+ */
+export function looksLikeIntactPrefix(text: string): boolean {
+  const head = (text ?? "").trimStart().slice(0, PREFIX_SCAN);
+  if (head[0] !== "{") return false;
+  return INTACT_PLUGINS_KEY.test(head) && INTACT_PLUGIN_ENTRY.test(head);
+}
+
 /**
  * Is this an Intact file? Consulted by the unified import detector on the SAME representative record
  * every other signature sees, and checked FIRST: the payload wrapper would otherwise fall through to

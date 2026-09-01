@@ -8,7 +8,7 @@
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
-import { isIntactMemoryFile } from "./intactImport.js";
+import { isIntactMemoryFile, looksLikeIntactPrefix } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
 import { looksLikeSysdig } from "./sysdigImport.js";
@@ -645,6 +645,8 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     // Rekall's JSON renderer is a list of [directive, payload] statements (arrays, not objects), so
     // jsonSample finds no representative object — detect it from the root shape first.
     if (isRekallCommandList(root)) return "memory";
+    // Intact's wrapper, read from the PREFIX — a payload bigger than the file-path route's sniff sample has no complete root object to parse (#776).
+    if (looksLikeIntactPrefix(t)) return "memory";
     if (sample) return vrHint(detectJson(root, sample));
     // No representative object — but a Velociraptor-named file is still Velociraptor, so route it to
     // that importer rather than rejecting the whole file. This is what saved DetectRaptor's
