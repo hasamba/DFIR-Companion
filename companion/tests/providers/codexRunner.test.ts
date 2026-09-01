@@ -101,4 +101,59 @@ describe("defaultCodexRunner", () => {
     });
     expect(r.stderr).toBe(SPLIT_UTF8_TEXT);
   });
+
+  // The cap #518 gave claudeRunner, which codexRunner never got (#763). What matters is WHICH end
+  // survives: `codex exec --json` emits one event per turn and the consumer reads the last one, so
+  // the cap has to drop the oldest output, not the newest.
+  it("keeps the tail of stdout when maxStdoutBytes is set", async () => {
+    const script =
+      'for (let i = 0; i < 200; i++) process.stdout.write("x".repeat(1000) + "\\n");' +
+      'process.stdout.write(JSON.stringify({ type: "item.completed", text: "the answer" }) + "\\n");';
+    const r = await defaultCodexRunner({
+      bin: process.execPath,
+      args: ["-e", script],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStdoutBytes: 16_000,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.stdout.length).toBeLessThan(200_000); // the full stream is ~200 KB
+    expect(r.stdout).toContain('"text":"the answer"');
+  });
+
+  // A cap named in bytes measured in UTF-16 code units undercounts every non-ASCII character, and
+  // this output carries plenty of them.
+  it("measures the stdout cap in UTF-8 bytes, not UTF-16 code units", async () => {
+    // "€" is one UTF-16 code unit but three UTF-8 bytes: 300k of them is 300k units and 900 KB.
+    const r = await defaultCodexRunner({
+      bin: process.execPath,
+      args: ["-e", 'process.stdout.write("\\u20ac".repeat(300000))'],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStdoutBytes: 200_000,
+    });
+
+    // The cap plus at most one whole chunk, which is always retained however large it is.
+    expect(Buffer.byteLength(r.stdout, "utf8")).toBeLessThanOrEqual(300_000);
+    expect(r.stdout).not.toContain("\ufffd"); // the tail is still whole characters
+  });
+
+  // stderr was the stream nobody was watching: unbounded until the child exited, so a tool that
+  // logs endlessly could exhaust the heap on its own.
+  it("keeps the tail of stderr when maxStderrBytes is set", async () => {
+    const script =
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");' +
+      'process.stderr.write("LAST-LINE\\n");';
+    const r = await defaultCodexRunner({
+      bin: process.execPath,
+      args: ["-e", script],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStderrBytes: 16_000,
+    });
+
+    expect(Buffer.byteLength(r.stderr, "utf8")).toBeLessThan(200_000);
+    expect(r.stderr).toContain("LAST-LINE");
+  });
 });
