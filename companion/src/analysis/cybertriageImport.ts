@@ -162,7 +162,14 @@ function classify(rec: Row): Kind {
 // ───────────────────────────── IOC harvesting ─────────────────────────────
 
 // Admits brackets and parens; trimSentencePunctuation decides which are the URI's (see there).
-const TEXT_URL = /\bhttps?:\/\/[^\s"'<>}]+/gi;
+// A markdown-style link — `[http://a](http://b)`, routine in chat exports and notes imported as
+// evidence — must not become ONE match: without a guard the first URL runs through the `](`
+// splice, swallows the second, and `matchAll` resumes past both — one unresolvable indicator and
+// one silent miss (#755). The rule is that no match may CONTAIN `](`, and the guard sits on the
+// `(` rather than the `]`, so the bracket stays in the match and trimSentencePunctuation decides
+// whose it is. Guarding the `]` instead cut `http://[2001:db8::1](IPv6 endpoint)` down to
+// `http://[2001:db8::1`, throwing away the bracket IPv6 authority syntax REQUIRES.
+const TEXT_URL = /\bhttps?:\/\/(?:[^\s"'<>}(]|(?<!\])\()+/gi;
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 
