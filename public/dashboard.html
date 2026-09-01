@@ -1283,6 +1283,7 @@
         <div class="settings-group-head">Ransomware note / renamed-file detection (T1486)</div>
         <div class="sfield-row">
           <div class="sfield"><label>Extra family extensions<span class="sfield-hint">DFIR_RANSOM_EXTS — comma-separated, in addition to the built-in list, e.g. .lockbit</span></label><input id="env-DFIR_RANSOM_EXTS" placeholder=".lockbit" /></div>
+          <div class="sfield"><label>Extra word-like family extensions<span class="sfield-hint">DFIR_RANSOM_EXTS_STRICT — for a tag that is also an ordinary word (.lynx). Matches only a renamed file that kept its own extension, e.g. report.docx.lynx</span></label><input id="env-DFIR_RANSOM_EXTS_STRICT" placeholder=".lynx" /></div>
         </div>
         <div class="settings-group-head">Detection-noise suppression (collector tools &amp; sample data)</div>
         <div class="sfield-row">
