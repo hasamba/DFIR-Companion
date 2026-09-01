@@ -432,8 +432,13 @@ export interface VeloLabelsApi {
   veloWireLabelPickers(form: { querySelector(sel: string): unknown } | null): void;
 }
 
-// public/js/dashboard-velo-coverage.js — the per-artifact accounting line under a hunt job.
+// public/js/dashboard-velo-coverage.js — the explanatory lines under a hunt job: per-artifact
+// accounting once it has collected, and what it is doing while it still is.
 export interface VeloCoverageApi {
+  veloCollectingDetail(
+    job: { status?: string; collectPhase?: string; collectRows?: number; collectActive?: boolean } | null,
+  ): string;
+  veloCanCollect(job: { status?: string; collectActive?: boolean } | null): boolean;
   veloCoverageHtml(job: {
     status?: string;
     artifacts?: string[];

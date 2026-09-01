@@ -106,3 +106,105 @@ describe("veloLaunchNotesHtml", () => {
     expect(html).toContain("&lt;img src=x&gt;");
   });
 });
+
+// The in-flight half of the same module (#770). "collecting" was the ONE status renderVeloJobs had
+// no text for, and it is also the one that lasts minutes — so a routine collect, part of it queued
+// behind another import, presented as a yellow badge over an empty line and read as a hang.
+describe("veloCollectingDetail", () => {
+  it("says nothing for a job that is not collecting", () => {
+    expect(cov.veloCollectingDetail({ status: "running" })).toBe("");
+    expect(cov.veloCollectingDetail({ status: "imported", collectPhase: "importing" })).toBe("");
+    expect(cov.veloCollectingDetail(null)).toBe("");
+  });
+
+  it("distinguishes waiting for another import from doing the work", () => {
+    const queued = cov.veloCollectingDetail({
+      status: "collecting",
+      collectPhase: "queued",
+      collectRows: 171,
+    });
+    expect(queued).toContain("171 row(s)");
+    expect(queued).toContain("waiting for another import");
+
+    const importing = cov.veloCollectingDetail({
+      status: "collecting",
+      collectPhase: "importing",
+      collectRows: 171,
+    });
+    expect(importing).toContain("importing 171 row(s)");
+    expect(importing).not.toContain("waiting");
+  });
+
+  it("names Velociraptor while the rows are still being read", () => {
+    expect(cov.veloCollectingDetail({ status: "collecting", collectPhase: "fetching" })).toContain(
+      "fetching results from Velociraptor",
+    );
+  });
+
+  // A job written before this field existed, or stranded by a server that died mid-collect. The
+  // fallback must still say SOMETHING — an empty line here is the whole bug.
+  it("falls back to the first thing a collect does when the phase is missing", () => {
+    const html = cov.veloCollectingDetail({ status: "collecting" });
+    expect(html).not.toBe("");
+    expect(html).toContain("fetching");
+  });
+
+  // THE TRAP. A stored "collecting" outlives the process that wrote it, so the phase alone is not
+  // permission to describe live work — a server killed mid-collect leaves the job saying "importing"
+  // forever. Trading an empty line for a confident lie would be the worse bug.
+  it("stops claiming live work once the server says the collect is not running", () => {
+    const stranded = cov.veloCollectingDetail({
+      status: "collecting",
+      collectPhase: "importing",
+      collectRows: 171,
+      collectActive: false,
+    });
+    expect(stranded).not.toContain("importing 171");
+    expect(stranded).toContain("no longer running");
+    expect(stranded).toContain("Collect now");
+  });
+
+  // "the server did not say" is what an older payload looks like, and it must not read as "stopped".
+  it("keeps describing the phase when liveness is simply absent", () => {
+    expect(cov.veloCollectingDetail({ status: "collecting", collectPhase: "importing" })).toContain(
+      "importing",
+    );
+  });
+
+  // A row count is the one number here, and "0 row(s)" is a real answer — a hunt whose artifacts all
+  // came back empty. It must not be mistaken for "not known yet".
+  it("reports a zero row count, and stays vague when there is no count at all", () => {
+    expect(
+      cov.veloCollectingDetail({ status: "collecting", collectPhase: "importing", collectRows: 0 }),
+    ).toContain("0 row(s)");
+    expect(cov.veloCollectingDetail({ status: "collecting", collectPhase: "importing" })).toContain(
+      "importing results",
+    );
+  });
+});
+
+// The other half of the same mistake: a stranded collect that cannot be collected again is a hunt no
+// analyst can recover from the card, because the status never leaves "collecting" on its own.
+describe("veloCanCollect", () => {
+  it("offers the button in every status that is not a live collect", () => {
+    expect(cov.veloCanCollect({ status: "running" })).toBe(true);
+    expect(cov.veloCanCollect({ status: "imported" })).toBe(true);
+    expect(cov.veloCanCollect({ status: "error" })).toBe(true);
+  });
+
+  it("withholds it from a collect that is really running", () => {
+    expect(cov.veloCanCollect({ status: "collecting", collectActive: true })).toBe(false);
+    // Liveness absent = the server did not say. Withhold, exactly as before this field existed.
+    expect(cov.veloCanCollect({ status: "collecting" })).toBe(false);
+  });
+
+  it("offers it to a STRANDED collect, which is the only way back", () => {
+    expect(cov.veloCanCollect({ status: "collecting", collectActive: false })).toBe(true);
+  });
+
+  it("withholds it where a collect can never help", () => {
+    expect(cov.veloCanCollect({ status: "deleted" })).toBe(false);
+    expect(cov.veloCanCollect({ status: "unreachable" })).toBe(false);
+    expect(cov.veloCanCollect(null)).toBe(false);
+  });
+});
