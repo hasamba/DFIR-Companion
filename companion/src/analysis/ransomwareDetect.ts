@@ -83,8 +83,8 @@ function baseName(p: string): string {
 // under lock, so a "family extension" seen HERE is a coincidental component name (e.g. a WinSxS MDAC
 // folder), never an encrypted victim file. Scoping the extension match away from these dirs is not a
 // demotion on an attacker signal — the attacker cannot avoid encrypting user files by NOT touching
-// System32, and the ransom-NOTE match (which can legitimately land anywhere on a HOST) is scoped only
-// away from the detection stack, below.
+// System32. The ransom-NOTE match can legitimately land anywhere on a HOST, so it is scoped away
+// from the detection stack instead — see isDetectionStackPath.
 const SYSTEM_DIR_RE = /\\Windows\\(?:System32|SysWOW64|WinSxS|servicing|assembly|Microsoft\.NET)\\/i;
 
 /**
@@ -110,10 +110,11 @@ const SYSTEM_DIR_RE = /\\Windows\\(?:System32|SysWOW64|WinSxS|servicing|assembly
  * directory names, which ARE attacker-choosable (see #720) — a note dropped in a folder the intruder
  * named `EVTX-ATTACK-SAMPLES` must still be found.
  *
- * The blast radius of a bypass is small either way. This function only declines to RAISE a row: an
- * attacker who parks `RESTORE-MY-FILES.txt` under `\Velociraptor\` loses one High on that copy,
- * while the same note in every encrypted directory — and every file renamed to a family extension —
- * still grades High. Nothing is dropped; the row is still ingested, still counted, still findable.
+ * The blast radius of a bypass is small either way. This gates the ransom-NOTE branches only, and
+ * only declines to RAISE them: an attacker who parks `RESTORE-MY-FILES.txt` under `\Velociraptor\`
+ * loses one High on that copy, while the same note in every encrypted directory — and every file
+ * renamed to a family extension, anywhere — still grades High. Nothing is dropped; the row is still
+ * ingested, still counted, still findable.
  */
 function isDetectionStackPath(nameOrPath: string): boolean {
   return isDetectionContentPath(nameOrPath) || isCollectorOwnedLocation(nameOrPath);
@@ -125,9 +126,6 @@ function isDetectionStackPath(nameOrPath: string): boolean {
 export function ransomwareSignal(nameOrPath: string): RansomwareSignal | null {
   const name = baseName(nameOrPath).toLowerCase();
   if (!name) return null;
-  // The detection stack describes ransomware; it is not evidence of it. Checked before every branch:
-  // a rule file trips the note vocabulary, and a rule tree can just as easily hold `akira_readme.yml`.
-  if (isDetectionStackPath(nameOrPath)) return null;
 
   // 1. Encrypted file: the LAST extension is a known family tag (`report.docx.akira`, `db.trigona`).
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
@@ -140,6 +138,14 @@ export function ransomwareSignal(nameOrPath: string): RansomwareSignal | null {
   }
 
   // 2. A ransom note by its own name, or a `<family>_readme` note (akira_readme.txt).
+  //
+  // The note branches — and ONLY these — skip the detection stack, which names its rules after the
+  // attacks they catch. The extension branch above deliberately runs first and unguarded: a file
+  // renamed to `.akira` under `\Program Files\Velociraptor\` is impact evidence, no rule pack
+  // ships a family tag as an extension, and losing that row would hide the encryption sweep in the
+  // one directory an analyst is least likely to re-check.
+  if (isDetectionStackPath(nameOrPath)) return null;
+
   const family = [...RANSOM_EXTS].find(
     (f) =>
       name.includes(`${f}_readme`) ||

@@ -47,6 +47,15 @@ describe("ransomwareSignal — T1486 from a file name", () => {
     ).toBeNull();
   });
 
+  // The guard covers the NOTE vocabulary only. A family extension is impact evidence wherever it
+  // lands: ransomware that reaches the collector's own directory has still encrypted a file there,
+  // and no rule pack ships a `.akira`.
+  it("still flags a family-extension file inside the collector's own tree", () => {
+    const s = ransomwareSignal("C:\\Program Files\\Velociraptor\\data.docx.akira");
+    expect(s?.severity).toBe("High");
+    expect(s?.mitre).toContain("T1486");
+  });
+
   // The guard is scoped to the detection stack, NOT to ransom vocabulary in general — a real note
   // lands wherever the attacker drops it, so a user directory must still grade High.
   it("still flags a genuine ransom note in a user directory", () => {
