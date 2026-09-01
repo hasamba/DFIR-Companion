@@ -123,6 +123,17 @@ describe("the super-timeline load path", () => {
     expect(pending).toHaveLength(0); // a filter change must not load a panel nobody asked for
   });
 
+  it("goes quiet again when a load ends without an answer", async () => {
+    const { api, pending } = harness();
+
+    api.loadSuperTimeline(); // the case-open load…
+    pending[0].reject(new Error("aborted")); // …which the analyst then cancelled
+    await settle();
+
+    api.refreshSuperTimelineFilters();
+    expect(pending).toHaveLength(1); // no fresh full-store scan for a case they walked away from
+  });
+
   it("does not let a stale failure overwrite a newer answer with an error", async () => {
     const { api, msg, pending } = harness();
 

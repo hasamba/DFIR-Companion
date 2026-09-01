@@ -47,6 +47,7 @@
   let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
   let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
   let superLoadRequestToken = 0;  // only the newest request may update the panel
+  let superLoadsInFlight = 0;     // queries running right now — see superTimelineLive()
   const superCaseId = () => document.getElementById("caseId").value.trim();
 
   // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
@@ -90,12 +91,16 @@
     return p.toString();
   }
 
-  // Whether the panel is the analyst's problem yet: a load has been STARTED for it, whether or not
-  // one has come back. The page used to ask `lastSuperData()` instead, which is only true once a
-  // response has LANDED — so a filter typed during the first (unfiltered) load fired no second
-  // request, that load painted every event, and nothing ever reloaded it. The analyst was left
-  // looking at an unfiltered panel under a filter that was set.
-  function superTimelineLive() { return superLoadRequestToken > 0 || !!DfirState.lastSuperData(); }
+  // Whether this panel is the analyst's problem right now: a query is running for it, or an answer
+  // has landed in it. NOT "a load was once started" — a monotonic counter never goes back down, so
+  // after a CANCELLED case load (dismissCaseLoading walks away from ~60 panel loads) a later filter
+  // change would fire a fresh full-store scan for the case the analyst just left.
+  //
+  // It is also not `lastSuperData()` alone, which is what the page used to ask: that is true only
+  // once a response has LANDED, so a filter typed during the first (unfiltered) load fired no second
+  // request at all — that load then painted every event and nothing reloaded it, leaving an
+  // unfiltered panel under a filter that was set. The in-flight half is what closes that window.
+  function superTimelineLive() { return superLoadsInFlight > 0 || !!DfirState.lastSuperData(); }
 
   /** A view filter changed. Re-query, but only for a panel the analyst has actually opened. */
   function refreshSuperTimelineFilters() { if (superTimelineLive()) loadSuperTimeline(); }
@@ -112,6 +117,7 @@
     // Taken here, not above: a call with no case sends nothing, so it must not invalidate a load
     // that is still in flight.
     const requestToken = ++superLoadRequestToken;
+    superLoadsInFlight++;
     if (msg) {
       msg.style.color = "var(--text-muted)";
       msg.textContent = "Loading super-timeline…";
@@ -129,7 +135,8 @@
           msg.style.color = "var(--badge-danger-text)";
           msg.textContent = "failed to load super-timeline: " + e.message + " — restart the companion server if this 404s";
         }
-      });
+      })
+      .finally(() => { superLoadsInFlight--; });
   }
 
   function renderSuperFilters(data) {

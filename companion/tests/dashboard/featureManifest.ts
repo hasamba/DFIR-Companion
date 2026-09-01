@@ -262,6 +262,7 @@ export const FEATURES: Feature[] = [
       "superStarredOnly",
       "superSavedTimeframes",
       "superLoadRequestToken",
+      "superLoadsInFlight",
     ],
   },
   {
