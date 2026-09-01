@@ -183,6 +183,31 @@ describe("Intact detection", () => {
     expect(looksLikeIntactPrefix(payload())).toBe(true);
   });
 
+  // The two constraints this sniff has to satisfy AT ONCE, so neither can be traded for the other.
+  //
+  // A truncated payload can still yield a sample: cut a row-per-line serialisation mid-file and
+  // jsonSample finds one complete row on a line. A `{Name, Offset}` mutantscan row matches no
+  // Volatility column fingerprint, so the structural path lands on the SIEM catch-all — and a sniff
+  // placed BELOW that path never gets to correct it. Hence the sniff runs ahead of the structural
+  // checks. What makes that safe is the PATTERN, not the position: it matches `plugins` immediately
+  // followed by a Volatility plugin id, which nothing but Intact's wrapper has.
+  it("claims a truncated payload whichever way it was serialised", () => {
+    const rows = Array.from({ length: 4000 }, (_, i) => ({ Name: `Mutant_${i}`, Offset: 60559664 + i }));
+    const body = { plugins: { "volatility3.plugins.windows.mutantscan.MutantScan": rows } };
+    const cut = (text: string): string =>
+      Buffer.from(text, "utf8")
+        .subarray(0, 1 << 18)
+        .toString("utf8");
+
+    expect(detectImportKind("memory_payload.json", cut(JSON.stringify(body)))).toBe("memory");
+    expect(detectImportKind("memory_payload.json", cut(JSON.stringify(body, null, 2)))).toBe("memory");
+    // Row-per-line: jsonSample DOES find a sample here, and it is not a recognisable Volatility row.
+    const perRow =
+      '{\n "plugins": {\n  "volatility3.plugins.windows.mutantscan.MutantScan": [\n' +
+      rows.map((r) => `   ${JSON.stringify(r)}`).join(",\n");
+    expect(detectImportKind("memory_payload.json", cut(perRow))).toBe("memory");
+  });
+
   it("does not claim a truncated head that is not Intact's wrapper", () => {
     const plain = JSON.stringify({ "windows.pslist.PsList": psTreeRows() }).slice(0, 120);
     expect(detectImportKind("whatever.json", plain)).not.toBe("memory");
