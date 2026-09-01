@@ -81,7 +81,7 @@ describe("defaultClaudeRunner", () => {
     expect(r.stdout).not.toContain("�"); // the tail is still whole characters
   });
 
-  it("keeps everything when no cap is set", async () => {
+  it("keeps everything when the stream is far under the default cap", async () => {
     const r = await defaultClaudeRunner({
       bin: process.execPath,
       args: ["-e", 'process.stdout.write("y".repeat(100000))'],
@@ -89,6 +89,26 @@ describe("defaultClaudeRunner", () => {
       timeoutMs: 30_000,
     });
     expect(r.stdout.length).toBe(100_000);
+  });
+
+  // stderr was the stream nobody was watching: unbounded until the child exited, so a runaway agent
+  // could exhaust the heap through it alone (#762). Bounding it must not cost the error message —
+  // claudeCode.ts and finalText both slice the FIRST 200 characters of stderr into what they throw,
+  // so the cap keeps the head and drops the flood that follows.
+  it("bounds stderr while keeping the error its readers slice from the front", async () => {
+    const script =
+      'process.stderr.write("Error: not logged in\\n");' +
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(1000) + "\\n");';
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", script],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStderrBytes: 16_000,
+    });
+
+    expect(Buffer.byteLength(r.stderr, "utf8")).toBeLessThan(200_000);
+    expect(r.stderr.slice(0, 200)).toContain("Error: not logged in");
   });
 
   it("reports a non-zero exit code", async () => {

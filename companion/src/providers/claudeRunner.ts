@@ -1,4 +1,10 @@
 import { spawn } from "node:child_process";
+import {
+  DEFAULT_MAX_STDERR_BYTES,
+  DEFAULT_MAX_STDOUT_BYTES,
+  StreamHead,
+  StreamTail,
+} from "./childStreamBuffer.js";
 
 // Result of one CLI invocation. Process-level failures (missing binary, timeout/abort) come
 // back as fields rather than rejections, so the provider maps them to ProviderError uniformly.
@@ -21,15 +27,24 @@ export interface ClaudeRunOptions {
   onStderr?: (chunk: string) => void;
   /**
    * Cap on the stdout retained in the result, in bytes. Oldest output is dropped once the cap is
-   * reached, so what survives is the TAIL. Unset means keep everything.
+   * reached, so what survives is the TAIL. Unset means DEFAULT_MAX_STDOUT_BYTES; pass `Infinity` to
+   * retain the whole stream.
    *
-   * For a long agent run the retained buffer is otherwise unbounded: `--output-format stream-json`
-   * emits every tool result as an event, and a 40-turn investigation over a memory image can carry
-   * far more of them than any consumer reads back (#518). Only set this where the consumer reads
-   * the end of the stream — both `terminalResult` and `finalText` scan for the LAST `result` event
-   * and already skip lines that do not parse, so a truncated first line costs nothing.
+   * For a long agent run the retained buffer would otherwise grow without end: `--output-format
+   * stream-json` emits every tool result as an event, and a 40-turn investigation over a memory
+   * image can carry far more of them than any consumer reads back (#518). Lower this where the
+   * consumer reads the end of the stream — both `terminalResult` and `finalText` scan for the LAST
+   * `result` event and already skip lines that do not parse, so a truncated first line costs
+   * nothing.
    */
   maxStdoutBytes?: number;
+  /**
+   * Cap on the stderr retained in the result, in bytes. Unset means DEFAULT_MAX_STDERR_BYTES.
+   *
+   * Output past the cap is dropped, so what survives is the HEAD — the opposite end from stdout,
+   * because every consumer slices the FIRST 200-300 characters of stderr into an error message.
+   */
+  maxStderrBytes?: number;
 }
 
 export type ClaudeRunner = (opts: ClaudeRunOptions) => Promise<ClaudeRunResult>;
@@ -37,17 +52,11 @@ export type ClaudeRunner = (opts: ClaudeRunOptions) => Promise<ClaudeRunResult>;
 // Default runner: spawn the claude CLI, feed stdin, collect stdout/stderr, resolve on close.
 export const defaultClaudeRunner: ClaudeRunner = (opts) =>
   new Promise<ClaudeRunResult>((resolve) => {
-    // Retained as chunks rather than one growing string so the cap can drop the oldest ones without
-    // rebuilding the whole buffer on every event. Each chunk's UTF-8 size is kept alongside it:
-    // String.length counts UTF-16 code units, which undercounts every non-ASCII character — and
-    // non-ASCII is exactly what this output carries (hostnames, filenames, quoted log text), so a
-    // byte cap measured in code units would let the buffer run several times over its limit.
-    const stdoutChunks: string[] = [];
-    const stdoutChunkBytes: number[] = [];
-    let stdoutBytes = 0;
-    const maxStdoutBytes = opts.maxStdoutBytes ?? Infinity;
-    const stdoutText = () => stdoutChunks.join("");
-    let stderr = "";
+    // Both streams are bounded by default. A cap only the caller can ask for is one every new call
+    // site re-opens by forgetting it, which is the whole of #762 — so the fallback is a finite
+    // ceiling and `Infinity` is the explicit opt-out.
+    const stdout = new StreamTail(opts.maxStdoutBytes ?? DEFAULT_MAX_STDOUT_BYTES);
+    const stderr = new StreamHead(opts.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
     let settled = false;
     let timedOut = false;
 
@@ -78,7 +87,7 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
     };
 
     child.on("error", (err: NodeJS.ErrnoException) =>
-      done({ code: null, stdout: stdoutText(), stderr, spawnError: err }),
+      done({ code: null, stdout: stdout.text(), stderr: stderr.text(), spawnError: err }),
     );
     // Decode through the stream's own StringDecoder, which holds a partial multi-byte sequence back
     // until the rest arrives. Calling toString() on each Buffer instead turns any character split
@@ -87,23 +96,22 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      stdoutChunks.push(chunk);
-      const chunkBytes = Buffer.byteLength(chunk, "utf8");
-      stdoutChunkBytes.push(chunkBytes);
-      stdoutBytes += chunkBytes;
-      // Keep at least the newest chunk, however large it is: a cap must never yield empty output.
-      while (stdoutBytes > maxStdoutBytes && stdoutChunks.length > 1) {
-        stdoutChunks.shift();
-        stdoutBytes -= stdoutChunkBytes.shift()!;
-      }
+      stdout.push(chunk);
+      // The tap gets every chunk whatever the cap drops: it feeds the live stream in the UI, which
+      // consumes output as it arrives rather than reading the buffer back.
       opts.onStdout?.(chunk);
     });
     child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
+      stderr.push(chunk);
       opts.onStderr?.(chunk);
     });
     child.on("close", (code) =>
-      done({ code, stdout: stdoutText(), stderr, ...(timedOut ? { timedOut: true } : {}) }),
+      done({
+        code,
+        stdout: stdout.text(),
+        stderr: stderr.text(),
+        ...(timedOut ? { timedOut: true } : {}),
+      }),
     );
 
     child.stdin.on("error", () => {
