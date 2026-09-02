@@ -133,32 +133,6 @@ export function clampOutlierYears(
   });
 }
 
-/** One year-clamp adjustment, aggregated for display: "N events moved from 2025 to 2026". */
-export interface YearClampAdjustment {
-  from: number;
-  to: number;
-  count: number;
-}
-
-/**
- * What the clamp changed on this timeline, read back off the events themselves. The UI signal #739
- * asks for — an analyst must be able to see that a displayed time is machine-adjusted rather than
- * recorded. Pure; returns [] for a timeline the clamp never touched.
- */
-export function yearClampAdjustments(events: readonly ForensicEvent[]): YearClampAdjustment[] {
-  const byPair = new Map<string, YearClampAdjustment>();
-  for (const e of events) {
-    const from = yearOf(e.yearClampedFrom);
-    const to = yearOf(e.timestamp);
-    if (from === null || to === null || from === to) continue;
-    const key = `${from}>${to}`;
-    const hit = byPair.get(key);
-    if (hit) hit.count++;
-    else byPair.set(key, { from, to, count: 1 });
-  }
-  return [...byPair.values()].sort((a, b) => b.count - a.count || a.from - b.from);
-}
-
 // Best-guess year for a NEW year-less import (Cisco ASA / Snort / syslog), to use as the parser's
 // `assumeYear` instead of blindly stamping the current calendar year.
 //

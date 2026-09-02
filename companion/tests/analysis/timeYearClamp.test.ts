@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampOutlierYears, pickImportYear, yearClampAdjustments } from "../../src/analysis/timeYearClamp.js";
+import { clampOutlierYears, pickImportYear } from "../../src/analysis/timeYearClamp.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
@@ -133,25 +133,6 @@ describe("clampOutlierYears", () => {
     const again = clampOutlierYears([...once.filter((e) => e.id === "old"), ...body(2025, 30)]);
     expect(again.find((e) => e.id === "old")!.timestamp).toBe("2025-05-14T12:01:13.000Z");
     expect(again.find((e) => e.id === "old")!.yearClampedFrom).toBe("2023-05-14T12:01:13Z");
-  });
-});
-
-describe("yearClampAdjustments", () => {
-  it("aggregates the rewrites by year pair, most frequent first", () => {
-    const out = clampOutlierYears([
-      guessed("a", "2023-05-14T12:00:00Z"),
-      guessed("b", "2023-05-14T13:00:00Z"),
-      guessed("c", "2022-05-14T13:00:00Z"),
-      ...body(2024, 30),
-    ]);
-    expect(yearClampAdjustments(out)).toEqual([
-      { from: 2023, to: 2024, count: 2 },
-      { from: 2022, to: 2024, count: 1 },
-    ]);
-  });
-
-  it("reports nothing for a timeline the clamp never touched", () => {
-    expect(yearClampAdjustments(body(2024, 30))).toEqual([]);
   });
 });
 
