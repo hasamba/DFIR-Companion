@@ -105,9 +105,15 @@ describe("renameForgedFindingIds", () => {
     expect(out.nextSteps?.[0].relatedFindingIds).toEqual([renamed]);
   });
 
+  it("stops the model minting into the rename namespace, which is what makes reuse provable", () => {
+    // Reuse folds a repeated invention onto the row an earlier window created. That is only sound
+    // while `f-model-…` can ONLY come from a rename — so a model inventing one is renamed too.
+    // Without this, a planted `f-model-f-auto-e5` would absorb a later forged `f-auto-e5`.
+    const out = renameForgedFindingIds(delta([modelFinding("f-model-f-auto-e5")]), new Set());
+    expect(out.findings[0].id).toBe("f-model-f-model-f-auto-e5");
+  });
+
   it("suffixes only on a real clash — another finding in the same delta already owns the name", () => {
-    // Reuse is for the name an earlier window gave THIS id. A different finding in the same delta
-    // that happens to be called `f-model-f-auto-e5` is not that, so the two must stay separate.
     const out = renameForgedFindingIds(
       delta([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]),
       new Set(),
@@ -115,6 +121,16 @@ describe("renameForgedFindingIds", () => {
     const ids = out.findings.map((f) => f.id);
     expect(new Set(ids).size).toBe(2);
     expect(ids).toContain("f-model-f-auto-e5-2");
+  });
+
+  it("lets the model update a renamed finding by the id the prompt now shows it", () => {
+    // buildFindingsEcho shows `[f-model-f-auto-e5] title`, and the model is told to update by id.
+    // The namespace is closed to MINTING, not to updating a row the case already holds.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-model-f-auto-e5")]),
+      new Set(["f-model-f-auto-e5"]),
+    );
+    expect(out.findings[0].id).toBe("f-model-f-auto-e5");
   });
 
   it("reuses the name an earlier window gave the same invented id, instead of stacking a -2", () => {

@@ -40,6 +40,23 @@ export function isDeterministicFindingId(id: string): boolean {
 // report against a raw model response should still be able to find the row.
 const MODEL_FINDING_ID_PREFIX = "f-model-";
 
+/**
+ * Ids the model may not MINT — the backfills' three, plus the rename target namespace.
+ *
+ * That last one is not tidiness. `renameForgedFindingIds` REUSES a canonical name the case already
+ * holds, on the strength of it only ever coming from renaming that exact id — which is what stops a
+ * repeated invention from stacking a `-2` duplicate on every window. A model free to write
+ * `f-model-…` itself would break that reasoning: it could plant `f-model-f-auto-e5` as an unrelated
+ * finding in one window, and a forged `f-auto-e5` in the next would be folded onto it and overwrite
+ * it. Closing the namespace is what makes the reuse provable without a persisted provenance field.
+ *
+ * Distinct from `isDeterministicFindingId` on purpose: that one answers "did a BACKFILL mint this",
+ * which `carryOutOfWindowFindings` acts on, and a renamed model finding must never qualify.
+ */
+function isReservedFindingId(id: string): boolean {
+  return isDeterministicFindingId(id) || id.startsWith(MODEL_FINDING_ID_PREFIX);
+}
+
 export const deltaSchema = z.object({
   findings: z.array(
     z.object({
@@ -254,16 +271,18 @@ export type AnalysisDelta = z.infer<typeof deltaSchema>;
 // `forensicEvents`, `keyQuestions` and `nextSteps` all carry `relatedFindingIds` and rewriting the
 // finding alone would leave three dangling pointers.
 //
-// Applied in mergeDelta, the one seam every delta crosses on its way into a case, and once more at
-// the top of the synthesis fold — which reads the RAW delta for event back-links and for the
-// model's relevance verdict, and would drop both for a finding the merge renamed underneath it.
-// Idempotent, so applying it twice is safe. Deterministic importers are unaffected: every one of
-// them builds `findings: []`.
+// Applied ONCE per path. `mergeDelta` is that place for the import and MCP-agent routes. Synthesis
+// runs it earlier instead, at the top of the fold, because the fold reads the RAW delta again for
+// event back-links and for the model's relevance verdict and would drop both for a finding renamed
+// underneath it; it then hands those settled ids to the merge as `knownFindingIds`, which is what
+// keeps the merge from renaming them a second time. Re-running this blind is NOT a no-op — an id it
+// already moved into the `f-model-` namespace is reserved, so a second pass would move it again.
+// Deterministic importers are unaffected: every one of them builds `findings: []`.
 export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
   const taken = new Set([...known, ...delta.findings.map((f) => f.id)]);
   const remap = new Map<string, string>();
   for (const f of delta.findings) {
-    if (remap.has(f.id) || known.has(f.id) || !isDeterministicFindingId(f.id)) continue;
+    if (remap.has(f.id) || known.has(f.id) || !isReservedFindingId(f.id)) continue;
     const canonical = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
     // A second window repeating the same invented id must land on the SAME renamed finding and
     // update it. Bumping to `-2` there would append a duplicate on every repeat instead, so a

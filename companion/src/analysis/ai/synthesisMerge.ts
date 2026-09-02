@@ -165,9 +165,11 @@ function replaceConclusions(
     windowSequence: 0,
     timestamp: ts,
     sourceScreenshots: [],
-    // `base` has no findings, so the merge must be told what the case really holds — otherwise the
-    // model updating a deterministic finding by id looks like it inventing one (#787).
-    knownFindingIds: new Set(state.findings.map((f) => f.id)),
+    // Two things at once (#787). `base` has no findings, so without this the merge would read the
+    // model updating a deterministic finding by id as it INVENTING one. And this delta has already
+    // been normalized at the top of the fold, so its ids are settled: passing them here is what
+    // stops the merge renaming an id the fold just assigned a second time.
+    knownFindingIds: new Set([...state.findings.map((f) => f.id), ...delta.findings.map((f) => f.id)]),
   });
 }
 
