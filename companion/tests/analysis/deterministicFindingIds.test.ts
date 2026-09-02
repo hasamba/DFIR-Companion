@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { carryOutOfWindowFindings } from "../../src/analysis/ai/synthesisMerge.js";
+import { BACKFILLS } from "../helpers/deterministicBackfills.js";
 import {
   isDeterministicFindingId,
   renameForgedFindingIds,
@@ -258,5 +259,60 @@ describe("what the rename protects", () => {
     );
     expect(next.findings.map((f) => f.id)).toEqual(["f-gap-e1-e2"]);
     expect(next.forensicTimeline[0].relatedFindingIds).toContain("f-gap-e1-e2");
+  });
+});
+
+/**
+ * #758: a backfill pass must REGISTER the id shape it mints, and nothing mechanical said so.
+ *
+ * The register is `responseSchema.ts`'s prefix list, and `isDeterministicFindingId` is the only
+ * reader that matters here: `carryOutOfWindowFindings` re-attaches a prior finding across a
+ * narrowed window ONLY when that predicate accepts its id. A pass whose id the predicate does not
+ * know is therefore not carried — so the first time an analyst narrows the scope, that pass's
+ * findings are overwritten in SQLite, and widening the window again does not bring them back. That
+ * is the #751 data loss, and the whole suite stays green while it happens.
+ *
+ * #787 removed the drift BETWEEN the three existing sites by giving them one shared list. It could
+ * not do anything about the fourth pass nobody has written yet, which is what this covers: each
+ * backfill is RUN, and the id it really mints is put through the predicate and then through the
+ * carry. A new pass added to this table without a registered prefix fails on the assertion rather
+ * than on a case that lost findings months later.
+ *
+ * The pair of assertions is deliberate. The predicate alone would pass for a pass that mints a
+ * registered id but never back-links its finding to an event — `supportingEventIds` drops an
+ * unlinked finding as "nothing proves it is outside the window", so it is silently not carried
+ * either. Only running the carry catches that, and running it needs the pass to be in the table.
+ *
+ * Which is why the table's own completeness is not left to whoever adds the next pass: the
+ * architecture gate loads every module under src/ that exports a backfill and fails unless this
+ * table runs that very function — by reference, so a stub named after a pass cannot stand in for
+ * it. The literal scan there cannot stand in for this either — it reads an unlinked
+ * pass's id as perfectly well-formed, because it is.
+ */
+describe("every deterministic backfill registers the id it mints (#758)", () => {
+  it.each(BACKFILLS)("$name mints an id the register knows", ({ run }) => {
+    const minted = run().findings;
+    // A pass that produced nothing would pass every assertion below without testing anything.
+    expect(minted.length, "the fixture no longer triggers this pass").toBeGreaterThan(0);
+    for (const f of minted) {
+      expect(
+        isDeterministicFindingId(f.id),
+        `"${f.id}" is not in responseSchema.ts's prefix list, so carryOutOfWindowFindings will ` +
+          "drop it the first time an analyst narrows the scope (#751). Register the prefix there",
+      ).toBe(true);
+    }
+  });
+
+  it.each(BACKFILLS)("$name's finding survives a narrowed window", ({ name, run }) => {
+    const prior = run();
+    // Every event out of scope: the narrowest window there is, and the one #751 was filed about.
+    const next = carryOutOfWindowFindings(
+      { ...emptyState("c1"), forensicTimeline: prior.forensicTimeline },
+      { prior, inWindowEvents: [], markers: [] },
+    );
+    expect(
+      next.findings.map((f) => f.id).sort(),
+      `${name}'s findings were deleted by a narrowed window and will not return when it widens`,
+    ).toEqual(prior.findings.map((f) => f.id).sort());
   });
 });

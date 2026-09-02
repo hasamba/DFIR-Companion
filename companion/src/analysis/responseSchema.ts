@@ -38,7 +38,7 @@ export function isDeterministicFindingId(id: string): boolean {
 // What a model finding wearing a reserved id is renamed to. The ORIGINAL id is kept inside the new
 // one: the rename is a downgrade of a provenance claim, not a redaction, and an analyst comparing a
 // report against a raw model response should still be able to find the row.
-const MODEL_FINDING_ID_PREFIX = "f-model-";
+export const MODEL_FINDING_ID_PREFIX = "f-model-";
 
 export const deltaSchema = z.object({
   findings: z.array(
