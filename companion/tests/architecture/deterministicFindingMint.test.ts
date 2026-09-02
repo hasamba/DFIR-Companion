@@ -186,32 +186,52 @@ describe("the dashboard's copy of the prefixes matches the register", () => {
   });
 });
 
+/**
+ * Every exported name in `source` that starts with "backfill", however it is written.
+ *
+ * Both an `export function backfill…()` declaration and an `export const backfill… = …` binding
+ * count. Only the first form exists today, but the second is ordinary TypeScript and a guard that
+ * accepted only the shape already in the tree would wave through the first person to write the
+ * other one — which is failing open, quietly, in exactly the place this file exists to prevent.
+ */
+export function exportedBackfillNames(source: string): string[] {
+  const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const exported = (node: ts.Node): boolean =>
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  const names: string[] = [];
+  for (const node of sf.statements) {
+    if (!exported(node)) continue;
+    if (ts.isFunctionDeclaration(node) && node.name?.text.startsWith("backfill")) {
+      names.push(node.name.text);
+    } else if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && d.name.text.startsWith("backfill")) names.push(d.name.text);
+      }
+    }
+  }
+  return names;
+}
+
 describe("the behaviour table covers every backfill that exists", () => {
   // The literal scan above proves an id is registered. It cannot prove the pass LINKS its finding
   // to an event, and an unlinked finding is not carried either — `supportingEventIds` drops it
   // before the window test. That check lives in the behaviour table, which can only check a pass
   // it has been given, so the table's completeness is what makes the pair airtight.
   //
-  // `export function backfill*` is the naming every one of the three passes already uses, and it
-  // is what a fourth will be called by anyone matching the surrounding code. A pass deliberately
-  // named otherwise is not caught here — but it is not caught by a comment either, and this at
-  // least fails for the ordinary case instead of trusting it.
-  it("lists every `export function backfill*` in src/analysis", async () => {
-    const dir = new URL("../../src/analysis/", import.meta.url);
+  // Every source file, not just src/analysis's top level. The first version of this gate read one
+  // directory without recursing, while the literal scan beside it walked the whole tree — so a pass
+  // added in src/analysis/ai/ (36 .ts files live below that top level, and synthesisMerge.ts is
+  // already there) would have been invisible to the very check meant to find it.
+  //
+  // A pass named something other than `backfill*` is still not caught. That is the convention all
+  // three use and the one a fourth gets by matching the surrounding code; the alternative to
+  // trusting it is trusting a comment, which is what this replaced.
+  it("lists every exported backfill in src/", { timeout: 30_000 }, async () => {
+    const files = await sources(SRC);
     const exported: string[] = [];
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
-      const source = await readFile(new URL(entry.name, dir), "utf8");
-      const sf = ts.createSourceFile(entry.name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-      for (const node of sf.statements) {
-        if (
-          ts.isFunctionDeclaration(node) &&
-          node.name?.text.startsWith("backfill") &&
-          node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
-        ) {
-          exported.push(node.name.text);
-        }
-      }
+    for (const file of files) {
+      exported.push(...exportedBackfillNames(await readFile(new URL(file, SRC), "utf8")));
     }
 
     expect(
@@ -221,10 +241,26 @@ describe("the behaviour table covers every backfill that exists", () => {
     expect(
       exported.sort(),
       "a deterministic backfill pass that the behaviour table in " +
-        "tests/analysis/deterministicFindingIds.test.ts does not run. Add it to BACKFILLS there: " +
+        "tests/helpers/deterministicBackfills.ts does not run. Add it to BACKFILLS there: " +
         "registering its id prefix is only half of what it needs, and the other half — that it " +
         "back-links its finding to an event, without which the finding is not carried across a " +
         "narrowed window either — can only be checked by running the pass (#751/#758)",
     ).toEqual(BACKFILLS.map((b) => b.name).sort());
+  });
+
+  it("reads both export forms, and only exported backfills", () => {
+    // The detector watched working, for the same reason the literal scan has a fixture: a walk that
+    // reports the three real passes looks identical whether it is right or has stopped seeing.
+    const source = [
+      "export function backfillOne(state) { return state; }",
+      "export const backfillTwo = (state) => state;", // the form the first version missed
+      "function backfillThree(state) { return state; }", // not exported: not a pass anything can call
+      "export function detectSomething() {}", // exported, not a backfill
+      "export const backfillFour = function (state) { return state; };",
+      "// export function backfillInProse() {} — a comment is not a declaration",
+      'export const note = "export function backfillQuoted() {}";', // a string is not one either
+    ].join("\n");
+
+    expect(exportedBackfillNames(source)).toEqual(["backfillOne", "backfillTwo", "backfillFour"]);
   });
 });
