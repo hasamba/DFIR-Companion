@@ -286,20 +286,25 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
   // a stale answer back to "unknown". Left alone, the text would keep citing the reserved id while
   // the structured link moved — and would then point at whatever finding a backfill later mints
   // under that id. Exact-token only, so `f-auto-e5` never matches inside `f-auto-e50`.
+  // Boundaries and case-insensitivity match `textMentionsFindingId` exactly, because that is the
+  // function whose behaviour this has to stay true to: it is what reads a finding id back out of
+  // prose, and it accepts `F-AUTO-E5` for `f-auto-e5`. A stricter matcher here would leave the one
+  // spelling that function still resolves — pointing it at whatever a backfill later mints.
   const idPattern = new RegExp(
-    `(?<![A-Za-z0-9_-])(?:${[...remap.keys()]
+    `(?<![\\w-])(?:${[...remap.keys()]
       .sort((a, b) => b.length - a.length)
       .map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join("|")})(?![A-Za-z0-9_-])`,
-    "g",
+      .join("|")})(?![\\w-])`,
+    "gi",
   );
+  const byLowerId = new Map([...remap].map(([from, to]) => [from.toLowerCase(), to]));
+  const renameText = (text: string): string =>
+    text.replace(idPattern, (token) => byLowerId.get(token.toLowerCase()) ?? token);
   const renameProse = <T extends Record<string, unknown>>(row: T, fields: readonly (keyof T)[]): T => {
     const patched: Partial<T> = {};
     for (const field of fields) {
       const value = row[field];
-      if (typeof value === "string" && value) {
-        patched[field] = value.replace(idPattern, (id) => rename(id)) as T[keyof T];
-      }
+      if (typeof value === "string" && value) patched[field] = renameText(value) as T[keyof T];
     }
     return { ...row, ...patched };
   };
@@ -316,6 +321,14 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
             renameProse(n, ["action", "rationale", "pointer"]),
           ),
         }
+      : {}),
+    // The kill-chain narrative is prompted for "citing finding ids and times", and stateMerge
+    // persists it verbatim — so it carries the same dangling reference the structured links no
+    // longer do. The uncertainty ledger's free text can name one too.
+    ...(delta.attackerPath ? { attackerPath: renameText(delta.attackerPath) } : {}),
+    ...(delta.narrativeTimeline ? { narrativeTimeline: renameText(delta.narrativeTimeline) } : {}),
+    ...(delta.uncertainties
+      ? { uncertainties: delta.uncertainties.map((u) => renameProse(u, ["basis", "gap"])) }
       : {}),
   };
 }

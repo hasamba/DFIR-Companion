@@ -143,6 +143,31 @@ describe("renameForgedFindingIds", () => {
     expect(out.nextSteps?.[0].rationale).toBe("f-model-f-auto-e5 is open");
   });
 
+  it("rewrites the id in the kill-chain narrative and the uncertainty ledger too", () => {
+    // The attackerPath prompt asks for "citing finding ids and times", and stateMerge persists the
+    // narrative verbatim — so the reserved id would survive there after the link had moved.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], {
+        attackerPath: "entry via f-auto-e5 then lateral",
+        narrativeTimeline: "f-auto-e5 opened the door",
+        uncertainties: [{ topic: "t", basis: "rests on f-auto-e5", gap: "confirm f-auto-e5" }],
+      }),
+      new Set(),
+    );
+    expect(out.attackerPath).toBe("entry via f-model-f-auto-e5 then lateral");
+    expect(out.narrativeTimeline).toBe("f-model-f-auto-e5 opened the door");
+    expect(out.uncertainties?.[0].basis).toBe("rests on f-model-f-auto-e5");
+    expect(out.uncertainties?.[0].gap).toBe("confirm f-model-f-auto-e5");
+  });
+
+  it("rewrites a prose citation whatever its case, because textMentionsFindingId reads it that way", () => {
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], { attackerPath: "see F-AUTO-E5 for the entry point" }),
+      new Set(),
+    );
+    expect(out.attackerPath).toBe("see f-model-f-auto-e5 for the entry point");
+  });
+
   it("matches whole ids only, so f-auto-e5 leaves f-auto-e50 alone", () => {
     const out = renameForgedFindingIds(
       delta([modelFinding("f-auto-e5")], {
