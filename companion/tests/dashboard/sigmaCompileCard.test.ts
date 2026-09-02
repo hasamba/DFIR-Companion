@@ -9,6 +9,13 @@ interface SigmaCompileApi {
   sigmaCompileCardHtml: (prefill?: string) => string;
   sigmaCompileResultHtml: (result: unknown) => string;
   sigmaCompileChip: (id: string) => string;
+  launchHuntInto: (
+    vql: string,
+    description: string,
+    res: unknown,
+    btn: unknown,
+    ctx?: Record<string, unknown>,
+  ) => void;
 }
 
 // The page's escapers are inline in dashboard.html; these are the same two functions.
@@ -113,5 +120,49 @@ describe("sigmaCompileChip — the per-finding entry", () => {
 
   it("is empty when Velociraptor is not an enabled platform", () => {
     expect(load({ platforms: ["sigma"], velo: false }).sigmaCompileChip("f1")).toBe("");
+  });
+});
+
+describe("launchHuntInto with coverage: snapshot (#803)", () => {
+  function launch(ctx: Record<string, unknown>) {
+    const bodies: Array<Record<string, unknown>> = [];
+    let consumed = 0;
+    const api = loadDashboardModule<SigmaCompileApi>("dashboard-sigma-hunt.js", [], {
+      esc,
+      escAttr,
+      enabledHuntPlatforms: new Set(["velociraptor"]),
+      veloEnabled: true,
+      ICON_DOWNLOAD: "",
+      ICON_HUNT: "",
+      document: { getElementById: () => null, querySelectorAll: () => [] },
+      consumePendingHuntHypothesis: () => {
+        consumed++;
+        return "hyp-armed";
+      },
+      fetch: (_url: string, init: { body: string }) => {
+        bodies.push(JSON.parse(init.body));
+        return new Promise(() => {}); // never settles; only the request body is under test
+      },
+    });
+    api.launchHuntInto("SELECT 1", "d", { innerHTML: "", querySelector: () => null }, null, {
+      caseId: "c1",
+      title: "t",
+      ...ctx,
+    });
+    return { body: bodies[0], consumed };
+  }
+
+  it("sends coverage: snapshot and leaves an armed hypothesis un-consumed", () => {
+    const { body, consumed } = launch({ coverage: "snapshot" });
+    expect(body.coverage).toBe("snapshot");
+    expect(body.relatedHypothesisId).toBeUndefined();
+    expect(consumed).toBe(0);
+  });
+
+  it("an ordinary fleet hunt still consumes the armed hypothesis and sends no coverage", () => {
+    const { body, consumed } = launch({});
+    expect(body.coverage).toBeUndefined();
+    expect(body.relatedHypothesisId).toBe("hyp-armed");
+    expect(consumed).toBe(1);
   });
 });

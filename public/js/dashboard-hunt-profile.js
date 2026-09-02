@@ -25,6 +25,9 @@
   const HP_STATUS = {
     collectedHit: { cls: "hp-hit", label: "hit" },
     collectedMiss: { cls: "hp-miss", label: "no evidence" },
+    // #803: a live snapshot (a compiled Sigma rule over pslist()/netstat()/glob()) that returned
+    // nothing. Not a miss: the process may have exited before the hunt ran.
+    snapshotEmpty: { cls: "hp-pending", label: "empty snapshot" },
     pending: { cls: "hp-pending", label: "pending" },
   };
   function loadHuntProfile(caseId) {
@@ -48,6 +51,7 @@
       + `<span><b>${profile.total}</b> hunted</span>`
       + `<span data-safe-style="color:#6bcb77"><b>${profile.hit}</b> hit</span>`
       + `<span><b>${profile.missed}</b> no results</span>`
+      + (profile.snapshotEmpty ? `<span title="Live-snapshot hunts (compiled Sigma rules) that returned nothing — not negative evidence"><b>${profile.snapshotEmpty}</b> empty snapshot${profile.snapshotEmpty === 1 ? "" : "s"}</span>` : "")
       + `<span data-safe-style="color:#6aa9ff"><b>${profile.pending}</b> pending</span>`
       + `</div>`;
     // Pivot-class productivity (#72): which pivot type (hash/process/path/network/registry) has
@@ -64,10 +68,14 @@
         + `</span>`;
     }).join("") + `</div>` : "";
     const rows = hunts.map((h, i) => {
-      const st = h.status === "collected" ? (h.foundEvidence ? HP_STATUS.collectedHit : HP_STATUS.collectedMiss) : HP_STATUS.pending;
+      const st = h.status === "collected"
+        ? (h.foundEvidence ? HP_STATUS.collectedHit : h.coverage === "snapshot" ? HP_STATUS.snapshotEmpty : HP_STATUS.collectedMiss)
+        : HP_STATUS.pending;
       // "not collected yet" not "results not yet collected": ▸ results can show LIVE rows from Velociraptor
       // before the hunt is imported, and "results not yet collected" read as a contradiction next to them.
-      const result = h.status === "collected" ? (h.resultSummary || (h.foundEvidence ? "new evidence" : "no results")) : "not collected yet";
+      const result = h.status === "collected"
+        ? (h.foundEvidence ? (h.resultSummary || "new evidence") : h.coverage === "snapshot" ? "no rows in the live snapshot (not a miss)" : (h.resultSummary || "no results"))
+        : "not collected yet";
       const techs = (h.mitreTechniques || []).map((t) => {
         const u = attackUrl(t);
         return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="hp-tech">${esc(t)}</a>` : `<span class="hp-tech">${esc(t)}</span>`;

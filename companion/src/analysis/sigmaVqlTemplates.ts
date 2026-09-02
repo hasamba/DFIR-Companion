@@ -38,6 +38,13 @@ export interface VqlTemplate {
   /** Glob templates: how the FROM clause is built from the derived roots. */
   globFrom?: (roots: readonly string[]) => string;
   registry?: boolean;
+  /**
+   * True when the plugin reads live state (the process list, open connections, the disk or the
+   * registry as they are NOW) rather than an event history. The hunt loop must never record such a
+   * query's empty result as a miss (#803). Every v1 template is a snapshot; an event-backed
+   * template (Sysmon EID 1 from the endpoint's EVTX, #802) would be the first to say false.
+   */
+  snapshot: boolean;
 }
 
 const BY_PID_PARENT = 'LET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key="Pid")';
@@ -68,6 +75,7 @@ export const PROCESS_CREATION: VqlTemplate = {
     sha1: { kind: "hash", expr: "Hashes.SHA1", needs: "hash" },
   },
   coverage: () => "pslist(): running processes only, not process history",
+  snapshot: true,
 };
 
 export const NETWORK_CONNECTION: VqlTemplate = {
@@ -96,6 +104,7 @@ export const NETWORK_CONNECTION: VqlTemplate = {
     },
   },
   coverage: () => "netstat(): open connections only, not connection history",
+  snapshot: true,
 };
 
 export const FILE_EVENT: VqlTemplate = {
@@ -110,6 +119,7 @@ export const FILE_EVENT: VqlTemplate = {
     `glob(): files on disk now under ${roots.join(", ")}` +
     (roots.some((r) => r.startsWith("C:/**")) ? ", which walks the whole disk" : ""),
   globFrom: (roots) => `glob(globs=${listLiteral(roots)})`,
+  snapshot: true,
 };
 
 export const REGISTRY: VqlTemplate = {
@@ -124,6 +134,7 @@ export const REGISTRY: VqlTemplate = {
     `glob(accessor="registry"): registry keys and values as they are now under ${roots.join(", ")}`,
   globFrom: (roots) => `glob(globs=${listLiteral(roots)}, accessor="registry")`,
   registry: true,
+  snapshot: true,
 };
 
 export const VQL_TEMPLATES: readonly VqlTemplate[] = [

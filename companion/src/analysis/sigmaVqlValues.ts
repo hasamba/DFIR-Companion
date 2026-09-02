@@ -62,19 +62,30 @@ export function re2Objection(pattern: string): string | null {
 
 // ── Paths and globs ───────────────────────────────────────────────────────────────────────────
 
-/** A Sigma path value as a Velociraptor glob: forward slashes, Sigma wildcards kept as glob wildcards. */
-export function fileGlob(value: string, mode: SigmaMatchMode): string {
+/**
+ * A Sigma path value as Velociraptor globs: forward slashes, Sigma wildcards kept as glob wildcards.
+ * Velociraptor's recursive `**` only works as a path component of its own, so a prefix that does not
+ * end on a separator needs TWO globs: the same-component prefix (`C:/Temp*`) and everything under it
+ * (`C:/Temp*` + `/**`). A prefix ending on a separator is a directory and gets one recursive glob.
+ */
+export function fileGlob(value: string, mode: SigmaMatchMode): string[] {
   const p = value.replace(/\\/g, "/");
   switch (mode) {
     case "exact":
-      return p;
+      return [p];
     case "startswith":
-      return p + "**";
+      return prefixGlobs(p);
     case "contains":
-      return "C:/**/*" + p + "*";
+      return ["C:/**/*" + p + "*"];
     case "endswith":
-      return "C:/**/*" + p;
+      return ["C:/**/*" + p];
   }
+}
+
+/** The enumeration superset for a `startswith` path, file or registry (see fileGlob). */
+export function prefixGlobs(p: string): string[] {
+  if (p.endsWith("/")) return [p + "**"];
+  return [p + "*", p + "*/**"];
 }
 
 /** The glob that walks the whole disk, so the header can admit it. */
@@ -89,7 +100,7 @@ const HIVES: ReadonlyArray<{ names: string[]; glob: string; regex: string }> = [
 ];
 
 export interface RegistryPath {
-  glob: string;
+  globs: string[];
   /** Regex body (already escaped) matching what the registry accessor reports as OSPath. */
   regexBody: string;
 }
@@ -104,7 +115,8 @@ export function registryPath(value: string, mode: "exact" | "startswith"): Regis
   const hive = HIVES.find((h) => h.names.includes(m[1].toLowerCase()));
   if (!hive) return null;
   const rest = m[2] ?? "";
-  const glob = hive.glob + (rest ? "/" + rest.replace(/\\/g, "/") : "") + (mode === "startswith" ? "**" : "");
+  const path = hive.glob + (rest ? "/" + rest.replace(/\\/g, "/") : "");
+  const globs = mode === "startswith" ? prefixGlobs(path) : [path];
   const regexBody = hive.regex + (rest ? "\\\\" + sigmaRegexBody(rest.replace(/\//g, "\\")) : "");
-  return { glob, regexBody };
+  return { globs, regexBody };
 }

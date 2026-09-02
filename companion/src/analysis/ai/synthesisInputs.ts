@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AiControlStore } from "../aiControl.js";
 import type { FalsePositiveMarker } from "../falsePositive.js";
-import { renderPriorHuntsBlock } from "../huntOutcomes.js";
+import { huntSignalsFromOutcomes, renderPriorHuntsBlock } from "../huntOutcomes.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
 import type { IncidentTypeStore } from "../incidentTypeStore.js";
 import { renderIncidentTypeBlock } from "../incidentTypes.js";
@@ -148,14 +148,7 @@ async function buildHypothesisBlocks(
  */
 async function applyHuntExhaustion(ctx: SynthesisInputContext, caseId: string): Promise<void> {
   const outcomes = await loadHuntOutcomes(ctx, caseId);
-  const huntSignals = outcomes
-    .filter((o) => o.status === "collected")
-    .map((o) => ({
-      ...(o.relatedHypothesisId ? { relatedHypothesisId: o.relatedHypothesisId } : {}),
-      techniques: o.mitreTechniques ?? [],
-      missed: o.foundEvidence === false,
-      title: o.title,
-    }));
+  const huntSignals = huntSignalsFromOutcomes(outcomes); // #803: a live snapshot is never a miss
   if (huntSignals.some((s) => s.missed)) await ctx.opts.hypothesisStore?.applyExhaustion(caseId, huntSignals);
 }
 

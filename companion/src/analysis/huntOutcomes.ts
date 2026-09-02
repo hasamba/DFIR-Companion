@@ -22,6 +22,8 @@ export type HuntOutcomeStatus = "deployed" | "collected";
 // VQL). The collected-only fields (foundEvidence/added*/resultSummary/collectedAt) are filled when the
 // hunt's results are imported. All fields optional past the deploy-time core so a partial/older file
 // loads cleanly.
+export type HuntCoverage = "events" | "snapshot";
+
 export interface HuntOutcome {
   id: string; // stable: the Velociraptor huntId when known, else `${fingerprint}:${deployedAt}`
   source: HuntOutcomeSource;
@@ -37,6 +39,10 @@ export interface HuntOutcome {
   // a hunt that comes back empty counts as a MISS against it (→ eventual `exhausted`). Optional — most
   // hunts aren't tied to a specific hypothesis and fall back to technique-overlap matching.
   relatedHypothesisId?: string;
+  // What the VQL observed (#803). "snapshot" = live state at collection time (pslist/netstat/glob of
+  // the disk or registry as it is NOW), so an empty result says nothing about the past and is never a
+  // miss. Absent = an event-backed or otherwise historical query, where empty IS negative evidence.
+  coverage?: HuntCoverage;
   resultRows?: number; // collected: total rows the hunt returned (what the analyst sees) — a snapshot, not cumulative
   addedEvents?: number; // collected: events NEW to the case after dedup (cumulative across re-collects)
   addedIocs?: number; // collected: IOCs new to the case (cumulative)
@@ -94,6 +100,7 @@ export interface HuntDeployInput {
   mitreTechniques?: string[];
   huntId?: string;
   relatedHypothesisId?: string; // ACH (#14): the hypothesis this hunt tests, when deployed from one
+  coverage?: HuntCoverage; // #803: "snapshot" marks a live-state query whose empty result is not a miss
   deployedAt: string; // ISO (the route stamps it — keeps this module time-free)
 }
 
@@ -121,6 +128,7 @@ export function recordDeploy(
     ).slice(0, 20),
     ...(huntId ? { huntId } : {}),
     ...(input.relatedHypothesisId ? { relatedHypothesisId: String(input.relatedHypothesisId).trim() } : {}),
+    ...(input.coverage === "snapshot" ? { coverage: "snapshot" as const } : {}),
     deployedAt: input.deployedAt,
     status: "deployed",
   };
@@ -197,6 +205,42 @@ export function deployedFingerprints(outcomes: readonly HuntOutcome[]): Set<stri
   return out;
 }
 
+// A collected hunt that found nothing, where "nothing" MEANS something. An empty live snapshot
+// (#803) is excluded: the process may have exited, the connection closed, the file been deleted
+// before the hunt ran, so its empty result is not negative evidence and must not read as a miss —
+// not in the profile, not in a pivot class, and never against a hypothesis.
+export function isMiss(o: HuntOutcome): boolean {
+  return o.status === "collected" && !o.foundEvidence && o.coverage !== "snapshot";
+}
+
+export function isSnapshotEmpty(o: HuntOutcome): boolean {
+  return o.status === "collected" && !o.foundEvidence && o.coverage === "snapshot";
+}
+
+// One hunting signal per COLLECTED outcome, for hypothesis exhaustion (investigation-guidance #14).
+// Structurally the same shape as hypothesis.ts's HypothesisHuntSignal; declared here so this module
+// stays the single place that decides what a miss is. A snapshot is never `missed`.
+export interface HuntSignal {
+  relatedHypothesisId?: string;
+  techniques: string[];
+  missed: boolean;
+  title?: string;
+}
+
+export function huntSignalsFromOutcomes(outcomes: readonly HuntOutcome[]): HuntSignal[] {
+  return (outcomes ?? [])
+    .filter((o) => o.status === "collected")
+    .map((o) => ({
+      ...(o.relatedHypothesisId ? { relatedHypothesisId: o.relatedHypothesisId } : {}),
+      techniques: o.mitreTechniques ?? [],
+      missed: isMiss(o),
+      title: o.title,
+    }));
+}
+
+const SNAPSHOT_EMPTY_NOTE =
+  "no rows in the live snapshot (NOT negative evidence — the process, connection or file may have been gone before the hunt ran)";
+
 // The "PRIOR HUNTS" prompt context block fed to suggestHunts/suggestPlaybookHunts/suggestTechniqueHunts.
 // Lenient/optional like the other context blocks: "" when there are no outcomes, else a block ending in
 // a blank line so it concatenates cleanly ahead of the rest of the user prompt.
@@ -205,8 +249,9 @@ export function renderPriorHuntsBlock(outcomes: readonly HuntOutcome[], limit = 
   if (!list.length) return "";
   const lines = list.map((o) => {
     const tech = o.mitreTechniques?.length ? `  (${o.mitreTechniques.join(", ")})` : "";
-    const result =
-      o.status === "collected"
+    const result = isSnapshotEmpty(o)
+      ? SNAPSHOT_EMPTY_NOTE
+      : o.status === "collected"
         ? o.resultSummary || (o.foundEvidence ? "new evidence" : "no new evidence")
         : "results not yet collected";
     return `- [${o.status}] "${o.title}" — ${result}${tech}`;
@@ -221,7 +266,8 @@ export function renderPriorHuntsBlock(outcomes: readonly HuntOutcome[], limit = 
 export interface HuntingProfile {
   total: number;
   hit: number; // collected AND found new evidence
-  missed: number; // collected AND found nothing
+  missed: number; // collected AND found nothing, where nothing is negative evidence
+  snapshotEmpty: number; // #803: collected live snapshots that found nothing — shown apart, never a miss
   pending: number; // deployed but not yet collected
   hunts: HuntOutcome[];
   pivotProductivity: PivotProductivity[]; // #72: aggregate hit-rate by pivot class
@@ -231,16 +277,19 @@ export function buildHuntingProfile(outcomes: readonly HuntOutcome[]): HuntingPr
   const hunts = [...(outcomes ?? [])];
   let hit = 0;
   let missed = 0;
+  let snapshotEmpty = 0;
   let pending = 0;
   for (const o of hunts) {
     if (o.status !== "collected") pending++;
     else if (o.foundEvidence) hit++;
+    else if (o.coverage === "snapshot") snapshotEmpty++;
     else missed++;
   }
   return {
     total: hunts.length,
     hit,
     missed,
+    snapshotEmpty,
     pending,
     hunts,
     pivotProductivity: buildPivotProductivity(hunts),
@@ -295,7 +344,7 @@ export function buildPivotProductivity(outcomes: readonly HuntOutcome[]): PivotP
     entry.total++;
     if (o.status !== "collected") entry.pending++;
     else if (o.foundEvidence) entry.hit++;
-    else entry.missed++;
+    else if (isMiss(o)) entry.missed++; // an empty snapshot counts toward total only (#803)
   }
   return order
     .map((type) => tally.get(type)!)

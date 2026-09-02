@@ -13,7 +13,7 @@ import {
   type VeloArtifactInfo,
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
-import type { HuntOutcomeSource } from "../analysis/huntOutcomes.js";
+import { parseDeployHuntBody } from "./huntDeployBody.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
 import { resolveTimeScope, buildTimeScopePlan, type TimeScope } from "../analysis/veloTimeScope.js";
 import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
@@ -922,25 +922,18 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         .status(501)
         .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const caseId = req.params.id;
-    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
-    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
-    const description =
-      typeof req.body?.description === "string" && req.body.description.trim() ? req.body.description : title;
-    const rawSource = String(req.body?.source ?? "");
-    const allowedSources: HuntOutcomeSource[] = ["fleet", "playbook", "technique"]; // "bundle" is server-set, not client-supplied
-    const source: HuntOutcomeSource = allowedSources.includes(rawSource as HuntOutcomeSource)
-      ? (rawSource as HuntOutcomeSource)
-      : "fleet";
-    const mitreTechniques = toStringArray(req.body?.mitreTechniques);
-    const mode = req.body?.mode === "collection" ? "collection" : "hunt";
-    const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
-    // ACH hunt→hypothesis link (investigation-guidance #14, deferred): when the analyst deploys a hunt to
-    // TEST a specific hypothesis, carry its id so an empty result counts as a MISS against that exact
-    // hypothesis (→ eventual `exhausted`), not just a technique-overlap match.
-    const relatedHypothesisId =
-      typeof req.body?.relatedHypothesisId === "string" && req.body.relatedHypothesisId.trim()
-        ? req.body.relatedHypothesisId.trim()
-        : undefined;
+    // Body parsing lives in huntDeployBody.ts (#803): this file sits at its size cap.
+    const {
+      vql,
+      title,
+      description,
+      source,
+      mitreTechniques,
+      mode,
+      hostname,
+      relatedHypothesisId,
+      coverage,
+    } = parseDeployHuntBody(req.body);
     if (!vql) return res.status(400).json({ error: "vql is required" });
     if (!title) return res.status(400).json({ error: "title is required" });
     try {
@@ -957,6 +950,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           mitreTechniques,
           deployedAt: new Date().toISOString(),
           ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
+          ...(coverage ? { coverage } : {}),
         });
         options.onVeloHunt?.(caseId);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -1013,6 +1007,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         huntId: launch.huntId,
         deployedAt: new Date().toISOString(),
         ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
+        ...(coverage ? { coverage } : {}),
       });
       options.onVeloHunt?.(caseId);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
