@@ -53,8 +53,8 @@ import {
   GENERIC_TIME_KEYS,
   cellStr,
   filePathIoc,
+  malfindDescription,
   pickTime,
-  regionAddress,
   serviceImagePath,
 } from "./memoryFields.js";
 import { pstreeChildren } from "./pstreeDepth.js";
@@ -376,19 +376,17 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     const pid = pickPid(r);
     const prot = pick(r, ["Protection", "protection"]);
     const tag = pick(r, ["Tag", "tag", "VadTag", "vad_tag"]);
-    const start = pick(r, ["Start VPN", "Start", "start", "CommitCharge"]);
+    const region = pick(r, ["Start VPN", "Start", "start"]); // an ADDRESS; CommitCharge is a page count
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
     out.push({
       timestamp: "",
-      description:
-        `${tool} ${label}: executable/injected private memory in ${proc || "?"} (PID ${pid || "?"})${start ? ` at ${regionAddress(start)}` : ""}${prot ? ` — protection ${prot}` : ""}${tag ? `, tag ${tag}` : ""}`.slice(
-          0,
-          600,
-        ),
+      description: malfindDescription(tool, label, proc, pid, region, prot, tag),
       severity: "High",
       mitre: ["T1055"],
-      aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${start}|${prot}`.toLowerCase().slice(0, 400),
+      aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${region || pick(r, ["CommitCharge"])}|${prot}`
+        .toLowerCase()
+        .slice(0, 400),
       sources: [tool],
       ...(name ? { processName: name } : {}),
     });
