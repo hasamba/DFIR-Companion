@@ -189,28 +189,47 @@ describe("the dashboard's copy of the prefixes matches the register", () => {
 /**
  * Every exported name in `source` that starts with "backfill", however it is written.
  *
- * Both an `export function backfill…()` declaration and an `export const backfill… = …` binding
- * count. Only the first form exists today, but the second is ordinary TypeScript and a guard that
- * accepted only the shape already in the tree would wave through the first person to write the
- * other one — which is failing open, quietly, in exactly the place this file exists to prevent.
+ * Three forms count, because TypeScript has three ordinary ways to export a function and a guard
+ * that knows only the shape already in the tree waves through the first person to write another:
+ *
+ *   export function backfill…() {}          the form all three passes use today
+ *   export const backfill… = …              a binding rather than a declaration
+ *   export { backfill… }                    declared plainly, exported in a list at the end
+ *
+ * The third is the one that reads least like an export at its declaration site — `function
+ * backfill…()` with no modifier on it — which is exactly why a scanner looking for the `export`
+ * keyword on the declaration misses it. `export { x as backfill… }` counts under the name it is
+ * exported AS, since that is the name the rest of the tree can call.
+ *
+ * Type-only exports are skipped: a type is not a pass. `export * from` needs nothing — whatever it
+ * re-exports is declared in a file this walk already reads.
  */
 export function exportedBackfillNames(source: string): string[] {
   const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const exported = (node: ts.Node): boolean =>
     ts.canHaveModifiers(node) &&
     (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-  const names: string[] = [];
+  const names = new Set<string>();
   for (const node of sf.statements) {
+    // `export { … }` carries no export MODIFIER — the statement is the export — so it has to be
+    // read before the modifier check below, not through it.
+    if (ts.isExportDeclaration(node)) {
+      if (node.isTypeOnly || !node.exportClause || !ts.isNamedExports(node.exportClause)) continue;
+      for (const spec of node.exportClause.elements) {
+        if (!spec.isTypeOnly && spec.name.text.startsWith("backfill")) names.add(spec.name.text);
+      }
+      continue;
+    }
     if (!exported(node)) continue;
     if (ts.isFunctionDeclaration(node) && node.name?.text.startsWith("backfill")) {
-      names.push(node.name.text);
+      names.add(node.name.text);
     } else if (ts.isVariableStatement(node)) {
       for (const d of node.declarationList.declarations) {
-        if (ts.isIdentifier(d.name) && d.name.text.startsWith("backfill")) names.push(d.name.text);
+        if (ts.isIdentifier(d.name) && d.name.text.startsWith("backfill")) names.add(d.name.text);
       }
     }
   }
-  return names;
+  return [...names];
 }
 
 describe("the behaviour table covers every backfill that exists", () => {
@@ -248,19 +267,31 @@ describe("the behaviour table covers every backfill that exists", () => {
     ).toEqual(BACKFILLS.map((b) => b.name).sort());
   });
 
-  it("reads both export forms, and only exported backfills", () => {
+  it("reads every export form, and only exported backfills", () => {
     // The detector watched working, for the same reason the literal scan has a fixture: a walk that
     // reports the three real passes looks identical whether it is right or has stopped seeing.
+    // Every line here was missed by some earlier version of this scanner.
     const source = [
       "export function backfillOne(state) { return state; }",
-      "export const backfillTwo = (state) => state;", // the form the first version missed
-      "function backfillThree(state) { return state; }", // not exported: not a pass anything can call
-      "export function detectSomething() {}", // exported, not a backfill
+      "export const backfillTwo = (state) => state;", // missed while it read declarations only
       "export const backfillFour = function (state) { return state; };",
+      "function backfillFive(state) { return state; }", // no modifier here…
+      "export { backfillFive };", // …the export is its own statement, and carries no modifier
+      "export { helper as backfillSix };", // exported AS a backfill: that is the callable name
+      "function backfillThree(state) { return state; }", // never exported: nothing can call it
+      "export function detectSomething() {}", // exported, not a backfill
+      "export type { backfillType };", // a type is not a pass
+      "export { type backfillInline };", // nor is an inline type-only specifier
       "// export function backfillInProse() {} — a comment is not a declaration",
       'export const note = "export function backfillQuoted() {}";', // a string is not one either
     ].join("\n");
 
-    expect(exportedBackfillNames(source)).toEqual(["backfillOne", "backfillTwo", "backfillFour"]);
+    expect(exportedBackfillNames(source).sort()).toEqual([
+      "backfillFive",
+      "backfillFour",
+      "backfillOne",
+      "backfillSix",
+      "backfillTwo",
+    ]);
   });
 });
