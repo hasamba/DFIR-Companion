@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { carryOutOfWindowFindings } from "../../src/analysis/ai/synthesisMerge.js";
-import { deltaSchema, isDeterministicFindingId } from "../../src/analysis/responseSchema.js";
+import {
+  isDeterministicFindingId,
+  renameForgedFindingIds,
+  type AnalysisDelta,
+} from "../../src/analysis/responseSchema.js";
+import { mergeDelta } from "../../src/analysis/stateMerge.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 /**
  * A deterministic finding id is a PROVENANCE claim (#787).
  *
- * Three separate passes read `f-auto-*` / `f-gap-*` / `f-waves` as proof that a finding was minted
- * by a deterministic backfill and not by a model: `carryOutOfWindowFindings` re-attaches only those
- * across a narrowed window, and each backfill treats one it already sees as its own work being
- * done and skips. But the synthesis prompt echoes every prior finding id back to the model
- * (`buildFindingsEcho`), so the model is SHOWN the very strings those three passes trust.
+ * Three passes read `f-auto-*` / `f-gap-*` / `f-waves` as proof that a finding was minted by a
+ * backfill and not by a model: `carryOutOfWindowFindings` re-attaches only those across a narrowed
+ * window, and each backfill treats one it already sees as its own work being done and skips. But
+ * both prompts echo every prior finding id back to the model AND tell it to update by id, so the
+ * string alone cannot say who wrote it.
  *
- * The schema is where that is stopped: a model finding wearing a reserved id is renamed before it
- * can reach state, and every reference to it inside the same delta is renamed with it.
+ * The discriminator is the case. An id already in the case is the model doing as it was told; an id
+ * that exists nowhere is the model inventing provenance, and only that one is renamed.
  */
 
 const finding = (id: string, over: Partial<Finding> = {}): Finding => ({
@@ -41,11 +46,8 @@ const event = (id: string, findingIds: string[], timestamp = "2026-01-01T00:00:0
   sourceScreenshots: [],
 });
 
-const parse = (
-  findings: unknown[],
-  over: Record<string, unknown> = {},
-): ReturnType<typeof deltaSchema.parse> =>
-  deltaSchema.parse({
+const delta = (findings: unknown[], over: Record<string, unknown> = {}): AnalysisDelta =>
+  ({
     findings,
     iocs: [],
     mitreTechniques: [],
@@ -54,64 +56,100 @@ const parse = (
     timelineNote: "n",
     summary: "s",
     ...over,
-  });
+  }) as AnalysisDelta;
 
-const modelFinding = (id: string): Record<string, unknown> => ({
+const modelFinding = (id: string, title = "model claim"): Record<string, unknown> => ({
   id,
   severity: "Critical",
-  title: "model claim",
+  title,
   description: "d",
   relatedIocs: [],
   mitreTechniques: [],
   status: "open",
 });
 
-describe("reserved deterministic finding ids", () => {
-  it.each(["f-auto-e5", "f-gap-e1-e2", "f-waves"])(
-    "renames the model's %s out of the reserved space",
-    (id) => {
-      const delta = parse([modelFinding(id)]);
-      expect(delta.findings[0].id).not.toBe(id);
-      expect(isDeterministicFindingId(delta.findings[0].id)).toBe(false);
-      // The claim itself is kept — only its provenance label is taken away.
-      expect(delta.findings[0].title).toBe("model claim");
-    },
-  );
+const ctx = { windowSequence: 0, timestamp: "2026-02-01T00:00:00.000Z", sourceScreenshots: [] };
+
+describe("renameForgedFindingIds", () => {
+  it.each(["f-auto-e5", "f-gap-e1-e2", "f-waves"])("renames an invented %s", (id) => {
+    const out = renameForgedFindingIds(delta([modelFinding(id)]), new Set());
+    expect(out.findings[0].id).not.toBe(id);
+    expect(isDeterministicFindingId(out.findings[0].id)).toBe(false);
+    // The claim itself is kept — only the borrowed provenance label goes.
+    expect(out.findings[0].title).toBe("model claim");
+  });
 
   it("leaves an ordinary model id untouched", () => {
-    expect(parse([modelFinding("f1")]).findings[0].id).toBe("f1");
+    expect(renameForgedFindingIds(delta([modelFinding("f1")]), new Set()).findings[0].id).toBe("f1");
+  });
+
+  it("leaves an id the case already holds untouched — that is an update, not an invention", () => {
+    const out = renameForgedFindingIds(delta([modelFinding("f-auto-e5")]), new Set(["f-auto-e5"]));
+    expect(out.findings[0].id).toBe("f-auto-e5");
   });
 
   it("renames every reference to the finding inside the same delta", () => {
-    const delta = parse([modelFinding("f-waves")], {
-      forensicEvents: [
-        { id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "d", relatedFindingIds: ["f-waves"] },
-      ],
-      keyQuestions: [{ id: "q1", question: "q?", relatedFindingIds: ["f-waves"] }],
-      nextSteps: [{ id: "n1", action: "a", relatedFindingIds: ["f-waves"] }],
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-waves")], {
+        forensicEvents: [
+          { id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "d", relatedFindingIds: ["f-waves"] },
+        ],
+        keyQuestions: [{ id: "q1", question: "q?", relatedFindingIds: ["f-waves"] }],
+        nextSteps: [{ id: "n1", action: "a", relatedFindingIds: ["f-waves"] }],
+      }),
+      new Set(),
+    );
+    const renamed = out.findings[0].id;
+    expect(out.forensicEvents?.[0].relatedFindingIds).toEqual([renamed]);
+    expect(out.keyQuestions?.[0].relatedFindingIds).toEqual([renamed]);
+    expect(out.nextSteps?.[0].relatedFindingIds).toEqual([renamed]);
+  });
+
+  it("does not collide with an id already in the case, or with another in the delta", () => {
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5"), modelFinding("f-gap-e1-e2")]),
+      new Set(["f-model-f-auto-e5"]),
+    );
+    const ids = out.findings.map((f) => f.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).not.toContain("f-model-f-auto-e5");
+  });
+
+  it("maps a repeated invented id to one replacement, so the merge still folds them together", () => {
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5"), modelFinding("f-auto-e5")]),
+      new Set(),
+    );
+    expect(out.findings[0].id).toBe(out.findings[1].id);
+  });
+});
+
+describe("mergeDelta applies the check against the case", () => {
+  it("renames an invented deterministic id on its way into the case", () => {
+    const merged = mergeDelta(emptyState("c1"), delta([modelFinding("f-auto-e5")]), ctx);
+    expect(merged.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5"]);
+  });
+
+  it("updates the real finding in place when the model returns an id the case holds", () => {
+    const state = { ...emptyState("c1"), findings: [finding("f-auto-e5", { title: "auto-flagged" })] };
+    const merged = mergeDelta(state, delta([modelFinding("f-auto-e5", "refined by the model")]), ctx);
+    expect(merged.findings.map((f) => f.id)).toEqual(["f-auto-e5"]);
+    expect(merged.findings[0].title).toBe("refined by the model");
+  });
+
+  it("honours knownFindingIds, because synthesis merges into an emptied finding list", () => {
+    // What replaceConclusions does: the base has no findings, so the case's real ids come via ctx.
+    const merged = mergeDelta({ ...emptyState("c1"), findings: [] }, delta([modelFinding("f-auto-e5")]), {
+      ...ctx,
+      knownFindingIds: new Set(["f-auto-e5"]),
     });
-    const renamed = delta.findings[0].id;
-    expect(delta.forensicEvents?.[0].relatedFindingIds).toEqual([renamed]);
-    expect(delta.keyQuestions?.[0].relatedFindingIds).toEqual([renamed]);
-    expect(delta.nextSteps?.[0].relatedFindingIds).toEqual([renamed]);
-  });
-
-  it("does not collide with an id the model already used for a different finding", () => {
-    const delta = parse([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]);
-    const [a, b] = delta.findings.map((f) => f.id);
-    expect(a).not.toBe(b);
-    expect(isDeterministicFindingId(a)).toBe(false);
-  });
-
-  it("maps a repeated reserved id to one replacement, so the merge still folds them together", () => {
-    const delta = parse([modelFinding("f-auto-e5"), modelFinding("f-auto-e5")]);
-    expect(delta.findings[0].id).toBe(delta.findings[1].id);
+    expect(merged.findings.map((f) => f.id)).toEqual(["f-auto-e5"]);
   });
 });
 
 describe("what the rename protects", () => {
-  it("lets the wave backfill still mint the real f-waves after the model claimed that id", () => {
-    const claimed = parse([modelFinding("f-waves")]);
+  it("lets the wave backfill still mint the real f-waves after the model invented that id", () => {
+    const claimed = renameForgedFindingIds(delta([modelFinding("f-waves")]), new Set());
     const state = {
       ...emptyState("c1"),
       findings: claimed.findings.map((f) => finding(f.id, { title: f.title })),
@@ -131,7 +169,7 @@ describe("what the rename protects", () => {
   });
 
   it("does not carry a renamed model finding across a narrowed window", () => {
-    const claimed = parse([modelFinding("f-auto-e9")]);
+    const claimed = renameForgedFindingIds(delta([modelFinding("f-auto-e9")]), new Set());
     const renamed = claimed.findings[0].id;
     const prior = {
       ...emptyState("c1"),
@@ -146,10 +184,9 @@ describe("what the rename protects", () => {
   });
 
   it("still carries a genuine out-of-window deterministic finding (#751)", () => {
-    const genuine = finding("f-gap-e1-e2");
     const prior = {
       ...emptyState("c1"),
-      findings: [genuine],
+      findings: [finding("f-gap-e1-e2")],
       forensicTimeline: [event("e1", ["f-gap-e1-e2"])],
     };
     const next = carryOutOfWindowFindings(

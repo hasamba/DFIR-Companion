@@ -582,6 +582,65 @@ describe("synthesize — narrowing the scope (#751)", () => {
   });
 });
 
+describe("synthesize — a model may not mint a deterministic finding id (#787)", () => {
+  const pipelineWith = (rawText: string): AnalysisPipeline =>
+    new AnalysisPipeline({
+      provider: spyProvider(rawText).provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+  const modelFinding = (id: string, title: string, relatedEventIds: string[]): Record<string, unknown> => ({
+    id,
+    severity: "Critical",
+    title,
+    description: "d",
+    relatedIocs: [],
+    mitreTechniques: [],
+    status: "open",
+    relatedEventIds,
+  });
+
+  it("renames an id the model invented, and the backfill still creates its own finding", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("e1", "2026-06-01T00:00:00.000Z", "ransomware note dropped", "Critical"),
+    );
+    await stateStore.save(seeded);
+
+    // The model claims a backfill id for a finding no backfill ever made, and does not cite e1 —
+    // so if the claim were believed, e1 would stay uncovered AND the impostor would look automatic.
+    const state = await pipelineWith(
+      delta({ findings: [modelFinding("f-auto-invented", "model claim", [])] }),
+    ).synthesize("c1");
+
+    expect(state.findings.map((f) => f.id).sort()).toEqual(["f-auto-e1", "f-model-f-auto-invented"]);
+    expect(state.findings.find((f) => f.id === "f-auto-e1")!.title).not.toBe("model claim");
+  });
+
+  it("keeps the id when the model updates a deterministic finding the case really holds", async () => {
+    // The prompts echo every prior finding as `[id] title` and tell the model to update BY ID. A
+    // model doing exactly that must not have its update turned into a second, unprotected finding —
+    // that would drop the real one out of the class carryOutOfWindowFindings protects (#751).
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("e1", "2026-06-01T00:00:00.000Z", "ransomware note dropped", "Critical"),
+    );
+    await stateStore.save(seeded);
+
+    expect((await pipelineWith(delta({ findings: [] })).synthesize("c1")).findings.map((f) => f.id)).toEqual([
+      "f-auto-e1",
+    ]);
+
+    const state = await pipelineWith(
+      delta({ findings: [modelFinding("f-auto-e1", "refined by the model", ["e1"])] }),
+    ).synthesize("c1", { force: true });
+
+    expect(state.findings.map((f) => f.id)).toEqual(["f-auto-e1"]);
+    expect(state.findings[0].title).toBe("refined by the model");
+  });
+});
+
 describe("synthesize — skip-when-unchanged", () => {
   async function seedOneEvent(): Promise<void> {
     const seeded = emptyState("c1");

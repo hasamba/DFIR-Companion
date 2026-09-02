@@ -23,7 +23,7 @@ const collectDirective = z
 // CLAIM, and three separate passes act on it: `carryOutOfWindowFindings` re-attaches only these
 // across a narrowed window (#751), and each backfill treats one it already sees in state as its own
 // work being done and skips (activityWaves.ts, gapDetect.ts). The minting sites import these, so
-// the list the boundary enforces and the list the backfills write can never drift apart.
+// the list the merge enforces and the list the backfills write can never drift apart.
 export const AUTO_FINDING_ID_PREFIX = "f-auto-";
 export const GAP_FINDING_ID_PREFIX = "f-gap-";
 export const WAVES_FINDING_ID = "f-waves";
@@ -40,7 +40,7 @@ export function isDeterministicFindingId(id: string): boolean {
 // report against a raw model response should still be able to find the row.
 const MODEL_FINDING_ID_PREFIX = "f-model-";
 
-const deltaObject = z.object({
+export const deltaSchema = z.object({
   findings: z.array(
     z.object({
       id: z.string().min(1),
@@ -234,24 +234,33 @@ const deltaObject = z.object({
     .optional(),
 });
 
-type DeltaObject = z.infer<typeof deltaObject>;
+export type AnalysisDelta = z.infer<typeof deltaSchema>;
 
 // A model is SHOWN the deterministic ids: the synthesis prompt echoes every prior finding as
-// `[id] title` (buildFindingsEcho) and the extraction prompt does the same (buildStateSummary). So a
-// model can emit one back, and until #787 nothing stopped it — the id went into state verbatim and
-// three passes then read it as proof of deterministic provenance. Worse than the stale conclusion
-// that carried across a narrow window: an emitted `f-waves` or `f-gap-a-b` made the matching backfill
-// skip, DELETING a real detection and leaving the model's text in its place.
+// `[id] title` (buildFindingsEcho), the extraction prompt does the same (buildStateSummary), and
+// both tell the model to update an existing finding BY ITS ID. So the id alone cannot say who
+// wrote it, and until #787 nothing checked — a model that echoed the pattern for a finding that
+// did not exist minted a new one wearing deterministic provenance. It then survived every
+// narrowed-scope run as if a backfill had made it, and worse: an invented `f-waves` or
+// `f-gap-a-b` made the matching backfill treat its own work as already done and SKIP, so the real
+// detection was never created and the model's text stood in its place.
 //
-// So rename it here, at the one boundary every model delta crosses, before any consumer sees it.
-// The finding is kept in full — only the reserved id is taken away — and every reference to it
-// INSIDE the same delta is renamed with it, so nothing is left pointing at an id that no longer
-// exists. Deterministic importers are unaffected: every one of them builds `findings: []`.
-function renameReservedFindingIds(delta: DeltaObject): DeltaObject {
-  const used = new Set(delta.findings.map((f) => f.id));
+// The discriminator is the case, not the string. An id already in the case is the model doing what
+// it was told — updating a finding a backfill really did mint — and it is left alone. An id that
+// exists nowhere is the model inventing provenance, and it is renamed to `f-model-<original>`
+// before any consumer sees it. The claim itself is kept in full; only the borrowed label goes, and
+// the original id stays inside the new one so the row is still findable against a raw model
+// response. Every reference to the finding INSIDE the same delta is renamed with it, because
+// `forensicEvents`, `keyQuestions` and `nextSteps` all carry `relatedFindingIds` and rewriting the
+// finding alone would leave three dangling pointers.
+//
+// Applied in mergeDelta, the one seam every delta crosses on its way into a case. Deterministic
+// importers are unaffected: every one of them builds `findings: []`.
+export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
+  const used = new Set([...known, ...delta.findings.map((f) => f.id)]);
   const remap = new Map<string, string>();
   for (const f of delta.findings) {
-    if (remap.has(f.id) || !isDeterministicFindingId(f.id)) continue;
+    if (remap.has(f.id) || known.has(f.id) || !isDeterministicFindingId(f.id)) continue;
     // Suffix only on a genuine collision, so the common case stays readable and stable across runs.
     let renamed = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
     for (let n = 2; used.has(renamed); n++) renamed = `${MODEL_FINDING_ID_PREFIX}${f.id}-${n}`;
@@ -271,10 +280,6 @@ function renameReservedFindingIds(delta: DeltaObject): DeltaObject {
     ...(delta.nextSteps ? { nextSteps: renameRefs(delta.nextSteps) } : {}),
   };
 }
-
-export const deltaSchema = deltaObject.transform(renameReservedFindingIds);
-
-export type AnalysisDelta = z.infer<typeof deltaSchema>;
 
 // AI synthesis/extraction responses must never carry extractedFrom — that field asserts an
 // authoritative, stored source-event link, which only the deterministic importers (pipeline.ts)

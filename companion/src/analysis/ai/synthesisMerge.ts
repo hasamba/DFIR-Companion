@@ -153,6 +153,9 @@ function replaceConclusions(
     windowSequence: 0,
     timestamp: ts,
     sourceScreenshots: [],
+    // `base` has no findings, so the merge must be told what the case really holds — otherwise the
+    // model updating a deterministic finding by id looks like it inventing one (#787).
+    knownFindingIds: new Set(state.findings.map((f) => f.id)),
   });
 }
 
