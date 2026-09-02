@@ -54,6 +54,7 @@ import {
   cellStr,
   filePathIoc,
   malfindDescription,
+  malfindRegion,
   pickTime,
   serviceImagePath,
 } from "./memoryFields.js";
@@ -376,17 +377,15 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     const pid = pickPid(r);
     const prot = pick(r, ["Protection", "protection"]);
     const tag = pick(r, ["Tag", "tag", "VadTag", "vad_tag"]);
-    const region = pick(r, ["Start VPN", "Start", "start"]); // an ADDRESS; CommitCharge is a page count
+    const region = malfindRegion(r); // its token and its phrase must agree — see malfindRegion
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
     out.push({
       timestamp: "",
-      description: malfindDescription(tool, label, proc, pid, region, prot, tag),
+      description: malfindDescription(tool, label, proc, pid, region.phrase, prot, tag),
       severity: "High",
       mitre: ["T1055"],
-      aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${region || pick(r, ["CommitCharge"])}|${prot}`
-        .toLowerCase()
-        .slice(0, 400),
+      aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${region.token}|${prot}`.toLowerCase().slice(0, 400),
       sources: [tool],
       ...(name ? { processName: name } : {}),
     });
