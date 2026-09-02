@@ -1,3 +1,4 @@
+import { WAVES_FINDING_ID } from "./responseSchema.js";
 import type { ForensicEvent, Finding, InvestigationState } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import {
@@ -257,7 +258,7 @@ export function backfillActivityWaveFinding(
   timestamp: string,
 ): InvestigationState {
   if (!pattern) return state;
-  const id = "f-waves";
+  const id = WAVES_FINDING_ID;
   if (state.findings.some((f) => f.id === id)) return state;
 
   const waveList = pattern.waves

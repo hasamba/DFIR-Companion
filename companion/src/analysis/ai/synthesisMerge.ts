@@ -18,7 +18,7 @@ import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
 import { unionEventTechniques } from "../reconTechniques.js";
-import type { deltaSchema } from "../responseSchema.js";
+import { isDeterministicFindingId, type deltaSchema } from "../responseSchema.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
@@ -181,11 +181,6 @@ function linkEventsToFindings(
       relatedFindingIds: eventToFindings.get(e.id) ?? [],
     })),
   };
-}
-
-/** Ids the DETERMINISTIC backfills mint. Everything else in a finding set came from the model. */
-function isDeterministicFindingId(id: string): boolean {
-  return id.startsWith("f-auto-") || id.startsWith("f-gap-") || id === "f-waves";
 }
 
 /**

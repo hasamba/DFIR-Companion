@@ -1,3 +1,4 @@
+import { GAP_FINDING_ID_PREFIX } from "./responseSchema.js";
 import {
   SEVERITY_RANK,
   type ForensicEvent,
@@ -423,7 +424,7 @@ export function backfillSilenceGapFindings(
     if (newFindings.length >= cap) break;
     // Idempotency key derived from the bounding events — stable across synthesis runs over the same
     // gap (so re-synthesis refreshes rather than duplicates), and unique per distinct gap.
-    const id = `f-gap-${gap.beforeEventId}-${gap.afterEventId}`;
+    const id = `${GAP_FINDING_ID_PREFIX}${gap.beforeEventId}-${gap.afterEventId}`;
     if (existingIds.has(id)) continue;
     existingIds.add(id);
     // The start time keeps the title unique per gap — two gaps of equal duration are distinct facts,
