@@ -5,8 +5,14 @@
 //  2. A field outside the template's map is a refusal, not a warning. The rule's meaning survives
 //     intact or the rule does not compile.
 //  3. Every string match is a case-insensitive RE2 regex (sigmaVqlValues.ts).
-//  4. The output is one blank-line-free block — header comments, LET stages, one SELECT — because
-//     launchHunt() splits statements on blank lines and drops comment lines.
+//  4. Each compiled source is one blank-line-free block — header comments, LET stages, one SELECT —
+//     because launchHunt() splits statements on blank lines and drops comment lines. A rule whose
+//     `logsource.category` template cannot answer every selection MAY still compile to several such
+//     blocks, blank-line-separated, when its condition is a top-level `1 of …` / `or` of whole
+//     selections and every selection resolves against SOME template (#802): one source per category,
+//     packaged into a single hunt by the launcher that already splits on blank lines. A `not` or an
+//     `and` reaching across selections keeps the rule on the single-template path, where a field
+//     outside that one template still refuses by name, as it always has.
 //
 // Refusals mirror the parser's: every problem in one list, each at a YAML path, in a sentence for
 // the analyst. Parse refusals stop the pipeline; compile refusals exist only for rules that parsed.
@@ -36,6 +42,7 @@ import {
   templateField,
   templateFieldNames,
   templateFor,
+  VQL_TEMPLATES,
   type TemplateColumn,
   type VqlTemplate,
 } from "./sigmaVqlTemplates.js";
@@ -367,6 +374,81 @@ function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: 
   };
 }
 
+// ── Mixed-category rules: one source per category (#802) ─────────────────────────────────────
+
+// The selection names a top-level "1 of …" / "or" condition names WHOLE, or null when the
+// condition reaches deeper (a `not`, an `and`, or an `or` over anything but bare selection refs) —
+// the cases the single-template path keeps handling exactly as it always has.
+function wholeSelectionNames(c: SigmaCondition): string[] | null {
+  if (c.kind === "oneOf") return c.names;
+  if (c.kind === "or" && c.operands.every((o) => o.kind === "ref"))
+    return c.operands.map((o) => (o as { kind: "ref"; name: string }).name);
+  return null;
+}
+
+// Compile one selection against the first template (declared category first) that answers every
+// field it uses. A glob template that resolves zero glob roots does not count as answering it — an
+// empty glob() would silently return nothing (see the sibling check in compileSigmaToVql).
+function bestTemplateFor(
+  order: readonly VqlTemplate[],
+  sel: SigmaSelection,
+): { template: VqlTemplate; expr: string; needs: Needs } | null {
+  for (const template of order) {
+    const trialOut: SigmaRefusal[] = [];
+    const trialNeeds: Needs = { extras: new Set(), globs: [] };
+    const expr = compileSelection(template, sel, trialNeeds, trialOut);
+    if (expr === null || trialOut.length) continue;
+    if (template.globFrom && trialNeeds.globs.length === 0) continue;
+    return { template, expr, needs: trialNeeds };
+  }
+  return null;
+}
+
+// Try the mixed-category path: only reachable once the single-template compile has already failed.
+// Every selection the condition names whole must resolve against some template, declared category
+// preferred, or this returns null and the original single-template refusals stand — they are
+// already correct for a genuine capability gap (e.g. no template has a hostname column) and for a
+// condition this function does not touch (`not` / `and` across selections).
+function compileMultiSource(rule: SigmaRule): SigmaCompiled | null {
+  const names = wholeSelectionNames(rule.detection.condition);
+  if (!names) return null;
+  const selections = new Map(rule.detection.selections.map((s) => [s.name, s]));
+  const declared = templateFor(rule.logsource.category);
+  const order = declared ? [declared, ...VQL_TEMPLATES.filter((t) => t !== declared)] : VQL_TEMPLATES;
+
+  const groups = new Map<VqlTemplate, { needs: Needs; parts: string[] }>();
+  for (const name of names) {
+    const sel = selections.get(name);
+    if (!sel) return null;
+    const best = bestTemplateFor(order, sel);
+    if (!best) return null;
+    let group = groups.get(best.template);
+    if (!group) {
+      group = { needs: { extras: new Set(), globs: [] }, parts: [] };
+      groups.set(best.template, group);
+    }
+    group.parts.push(best.expr);
+    for (const extra of best.needs.extras) group.needs.extras.add(extra);
+    for (const g of best.needs.globs) if (!group.needs.globs.includes(g)) group.needs.globs.push(g);
+  }
+  if (groups.size < 2) return null; // one category throughout — the single-template refusal stands
+
+  const sources = [...groups.entries()].map(([template, group]) => {
+    const where = group.parts.length === 1 ? group.parts[0] : `(${group.parts.join(" OR ")})`;
+    return assemble(template, rule, where, group.needs);
+  });
+  return {
+    ok: true,
+    vql: sources.map((s) => s.vql).join("\n\n"),
+    coverage: sources.map((s) => s.coverage).join("; "),
+    title: rule.title,
+    ...(rule.id !== undefined ? { id: rule.id } : {}),
+    ...(rule.level !== undefined ? { level: rule.level } : {}),
+    mitreTechniques: [...rule.mitreTechniques],
+    snapshot: sources.some((s) => s.snapshot),
+  };
+}
+
 /** Compile a parsed rule. Pure and deterministic; never throws on input. */
 export function compileSigmaToVql(rule: SigmaRule): SigmaCompileResult {
   const template = templateFor(rule.logsource.category);
@@ -403,7 +485,7 @@ export function compileSigmaToVql(rule: SigmaRule): SigmaCompileResult {
       message: `no ${source} value to derive a path from; the hunt needs at least one to know where to look`,
     });
   }
-  if (out.length) return { ok: false, refusals: out };
+  if (out.length) return compileMultiSource(rule) ?? { ok: false, refusals: out };
   return assemble(template, rule, compileCondition(rule.detection.condition, exprs), needs);
 }
 

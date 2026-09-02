@@ -460,6 +460,104 @@ describe("compileSigmaToVql — round trip with the dashboard's Sigma draft expo
   });
 });
 
+describe("compileSigmaToVql — mixed-category rules become several hunt sources (#802)", () => {
+  const mixed = (condition: string, head = "title: T") =>
+    [
+      head,
+      "logsource:",
+      "  category: process_creation",
+      "  product: windows",
+      "detection:",
+      "  sel_process:",
+      String.raw`    Image|endswith: '\certutil.exe'`,
+      "  sel_network:",
+      "    DestinationIp: '203.0.113.10'",
+      "  sel_file:",
+      String.raw`    TargetFilename: 'C:\Users\Public\payload.ps1'`,
+      `  condition: ${condition}`,
+      "",
+    ].join("\n");
+
+  it("splits a top-level '1 of sel_*' into one blank-line-separated source per category", () => {
+    const r = compiled(mixed("1 of sel_*"));
+    const stmts = r.vql.split(/\n\s*\n/);
+    expect(stmts).toHaveLength(3);
+    expect(stmts[0]).toContain("LET Procs <= SELECT");
+    expect(stmts[0]).toContain(String.raw`WHERE Image =~ "(?i)\\\\certutil\\.exe$"`);
+    expect(stmts[1]).toContain("LET Conns <= SELECT");
+    expect(stmts[1]).toContain(String.raw`WHERE DestinationIp =~ "(?i)^203\\.0\\.113\\.10$"`);
+    expect(stmts[2]).toContain("LET Files <= SELECT");
+    const fileWhere = String.raw`WHERE TargetFilename =~ "(?i)^C:\\\\Users\\\\Public\\\\payload\\.ps1$"`;
+    expect(stmts[2]).toContain(fileWhere);
+    expect(r.coverage).toBe(
+      "pslist(): running processes only, not process history; " +
+        "netstat(): open connections only, not connection history; " +
+        "glob(): files on disk now under C:/Users/Public/payload.ps1",
+    );
+    expect(r.snapshot).toBe(true);
+  });
+
+  it("takes the same path for an explicit top-level 'or' of whole selections", () => {
+    const r = compiled(mixed("sel_process or sel_network or sel_file"));
+    expect(r.vql.split(/\n\s*\n/)).toHaveLength(3);
+  });
+
+  it("gives identical bytes on two compiles", () => {
+    expect(vql(mixed("1 of sel_*"))).toBe(vql(mixed("1 of sel_*")));
+  });
+
+  it("never emits a source that itself contains a blank line", () => {
+    for (const stmt of vql(mixed("1 of sel_*")).split(/\n\s*\n/)) expect(stmt).not.toMatch(/\n\s*\n/);
+  });
+
+  it("stays on the single-template refusal when the top condition ANDs across categories", () => {
+    const r = refusals(mixed("sel_process and sel_network"));
+    expect(r).toEqual([
+      { path: "detection.sel_network.DestinationIp", message: expect.stringContaining("pslist()") },
+      { path: "detection.sel_file.TargetFilename", message: expect.stringContaining("pslist()") },
+    ]);
+  });
+
+  it("stays on the single-template refusal when a 'not' reaches across categories", () => {
+    const r = refusals(mixed("sel_process or not sel_network"));
+    expect(r.some((x) => x.path === "detection.sel_network.DestinationIp")).toBe(true);
+  });
+
+  it("stays refused when one selection fits no template at all (a genuine capability gap)", () => {
+    // DestinationHostname has no column on ANY template (netstat() has no hostname field), so this
+    // rule can never fully resolve — the original per-field refusals stand, not a partial hunt.
+    const yaml = [
+      "title: T",
+      "logsource:",
+      "  category: process_creation",
+      "  product: windows",
+      "detection:",
+      "  sel_process:",
+      String.raw`    Image|endswith: '\certutil.exe'`,
+      "  sel_hostname:",
+      "    DestinationHostname|contains: 'example.invalid'",
+      "  condition: 1 of sel_*",
+      "",
+    ].join("\n");
+    const r = refusals(yaml);
+    expect(r).toEqual([
+      {
+        path: "detection.sel_hostname.DestinationHostname|contains",
+        message: expect.stringMatching(/hostname/i),
+      },
+    ]);
+  });
+
+  it("does not split when every selection already fits the declared category (no regression)", () => {
+    const yaml = rule(
+      "process_creation",
+      "  sel_a:\n    Image: a\n  sel_b:\n    Image: b",
+      "1 of sel_*",
+    );
+    expect(vql(yaml).split(/\n\s*\n/)).toHaveLength(1);
+  });
+});
+
 describe("compileSigmaToVql — review fixes (#803)", () => {
   it("refuses a product other than Windows, because every template is a Windows plugin with Windows roots", () => {
     const linux =
