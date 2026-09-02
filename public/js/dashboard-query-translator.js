@@ -125,8 +125,14 @@
               ? `<button class="nlq-deploy" data-idx="${idx}" title="Launch this VQL as a hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
               : `<button class="nlq-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`
             : "";
+        // The AI wrote the Sigma rule; the VQL is deterministic (#798). Gated the way the hunt
+        // modal's Sigma card is: on the velociraptor platform, since that is what it produces.
+        const compileBtn =
+          q.platform === "sigma" && q.query && enabledHuntPlatforms.has("velociraptor")
+            ? `<button class="nlq-sigma-compile" data-idx="${idx}" title="Compile this Sigma rule to Velociraptor VQL — deterministic, no second AI call">Compile to VQL</button>`
+            : "";
         const actions = q.query
-          ? `<div class="nlq-actions"><button class="nlq-copy" data-idx="${idx}">Copy</button>${deployBtn}</div><div class="nlq-res" id="nlqRes${idx}"></div>`
+          ? `<div class="nlq-actions"><button class="nlq-copy" data-idx="${idx}">Copy</button>${compileBtn}${deployBtn}</div><div class="nlq-res" id="nlqRes${idx}"></div>`
           : "";
         return (
           `<div class="nlq-card${na ? " na" : ""}">` +
@@ -157,6 +163,13 @@
             .catch(() => {
               b.textContent = "copy failed";
             });
+        }),
+    );
+    box.querySelectorAll(".nlq-sigma-compile").forEach(
+      (b) =>
+        (b.onclick = () => {
+          const q = document.getElementById("nlqQ" + b.dataset.idx);
+          openSigmaCompileWith(q ? q.value : "", "Query translator — Sigma rule");
         }),
     );
     box.querySelectorAll(".nlq-deploy:not([disabled])").forEach(

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sigma → VQL hunts** — paste a Sigma rule in the hunt modal, compile it deterministically (one fixed Velociraptor template per logsource category, every unsupported line refused by name), and launch it as a recorded fleet hunt; shortcuts from a finding's Sigma draft and the Query Translator's Sigma card. (part of #764; closes #796, #797, #798)
 - **Intact (trimmed VolWeb) import** — `memory_payload.json` and `yarascan_results.jsonl` are read deterministically instead of going to AI log triage; the two overlapping YARA sets dedupe on (offset, rule), memory-resident hits grade Low, a dense many-rule address cluster grades Info, and Intact's per-table row caps are disclosed. (closes #776)
 - **Related Cases** — a new dashboard panel and two routes (`GET /cases/:id/related`, `GET /global/iocs?q=`) that surface the other investigations sharing an indicator with this one. Ranked so a flagged hash outweighs a private address; scoped to the cases your account may already read. Off by default — set `DFIR_CROSS_CASE=on` to enable the routes, then turn the panel on in Settings → Dashboard sections. (closes #679)
 - **Chainsaw runs on raw `.evtx` from inside the Companion** — a sixth built-in tool alongside Hayabusa and the Velociraptor CLI (binary, Sigma rule directory and mapping file in Settings → Tools). The importer already existed; only the runner was missing. (#688)
