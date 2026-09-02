@@ -188,7 +188,14 @@ function checkRegexValues(path: string, values: readonly SigmaScalar[], out: Ref
       out.add(path, `a regular expression is limited to ${SIGMA_MAX_REGEX_LENGTH} characters`);
       return false;
     }
-    const safety = checkRegexSafety(pattern);
+    // Sigma `re` values are RE2 and often open with an inline flag group, `(?i)…`, which the
+    // JavaScript RegExp inside checkRegexSafety rejects as an invalid group. Lift the flags out
+    // and hand them over separately; RE2's `U` (ungreedy) has no JS twin and is dropped for the
+    // safety check only — the pattern itself reaches the endpoint unchanged.
+    const inline = /^\(\?([imsU]+)\)/.exec(pattern);
+    const body = inline ? pattern.slice(inline[0].length) : pattern;
+    const flags = inline ? inline[1].replace(/U/g, "") : "";
+    const safety = checkRegexSafety(body, flags);
     if (!safety.ok) {
       out.add(
         path,
