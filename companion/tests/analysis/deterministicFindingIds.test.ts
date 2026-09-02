@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { carryOutOfWindowFindings } from "../../src/analysis/ai/synthesisMerge.js";
+import { backfillSilenceGapFindings, detectTimelineGaps } from "../../src/analysis/gapDetect.js";
+import { backfillHighSeverityFindings } from "../../src/analysis/highSeverityFindings.js";
 import {
   isDeterministicFindingId,
   renameForgedFindingIds,
   type AnalysisDelta,
 } from "../../src/analysis/responseSchema.js";
 import { mergeDelta } from "../../src/analysis/stateMerge.js";
-import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import {
+  emptyState,
+  type Finding,
+  type ForensicEvent,
+  type InvestigationState,
+} from "../../src/analysis/stateTypes.js";
 
 /**
  * A deterministic finding id is a PROVENANCE claim (#787).
@@ -258,5 +265,89 @@ describe("what the rename protects", () => {
     );
     expect(next.findings.map((f) => f.id)).toEqual(["f-gap-e1-e2"]);
     expect(next.forensicTimeline[0].relatedFindingIds).toContain("f-gap-e1-e2");
+  });
+});
+
+/**
+ * #758: a backfill pass must REGISTER the id shape it mints, and nothing mechanical said so.
+ *
+ * The register is `responseSchema.ts`'s prefix list, and `isDeterministicFindingId` is the only
+ * reader that matters here: `carryOutOfWindowFindings` re-attaches a prior finding across a
+ * narrowed window ONLY when that predicate accepts its id. A pass whose id the predicate does not
+ * know is therefore not carried — so the first time an analyst narrows the scope, that pass's
+ * findings are overwritten in SQLite, and widening the window again does not bring them back. That
+ * is the #751 data loss, and the whole suite stays green while it happens.
+ *
+ * #787 removed the drift BETWEEN the three existing sites by giving them one shared list. It could
+ * not do anything about the fourth pass nobody has written yet, which is what this covers: each
+ * backfill is RUN, and the id it really mints is put through the predicate and then through the
+ * carry. A new pass added to this table without a registered prefix fails on the assertion rather
+ * than on a case that lost findings months later.
+ *
+ * The pair of assertions is deliberate. The predicate alone would pass for a pass that mints a
+ * registered id but never back-links its finding to an event — `supportingEventIds` drops an
+ * unlinked finding as "nothing proves it is outside the window", so it is silently not carried
+ * either. Only running the carry catches that.
+ */
+describe("every deterministic backfill registers the id it mints (#758)", () => {
+  // Two bursts three weeks apart: enough silence between them for a complete gap AND the wave
+  // cadence, so one timeline drives all three passes.
+  const burstEvents: ForensicEvent[] = [
+    ...[0, 1, 2].map((i) => event(`a${i}`, [], `2026-01-01T00:0${i}:00.000Z`)),
+    ...[0, 1, 2].map((i) => event(`b${i}`, [], `2026-01-20T00:0${i}:00.000Z`)),
+  ];
+  const stamp = "2026-01-21T00:00:00.000Z";
+
+  // Each entry RUNS the real pass and hands back the state it produced. Add a new backfill here.
+  const BACKFILLS: { name: string; run: () => InvestigationState }[] = [
+    {
+      name: "backfillHighSeverityFindings",
+      run: () => {
+        const state = { ...emptyState("c1"), forensicTimeline: burstEvents };
+        return backfillHighSeverityFindings(state, new Set(burstEvents.map((e) => e.id)), stamp);
+      },
+    },
+    {
+      name: "backfillSilenceGapFindings",
+      run: () => {
+        const state = { ...emptyState("c1"), forensicTimeline: burstEvents };
+        const gaps = detectTimelineGaps(burstEvents);
+        return backfillSilenceGapFindings(state, gaps, stamp);
+      },
+    },
+    {
+      name: "backfillActivityWaveFinding",
+      run: () => {
+        const state = { ...emptyState("c1"), forensicTimeline: burstEvents };
+        const { pattern } = detectGapsWithWaves(burstEvents);
+        return backfillActivityWaveFinding(state, pattern, stamp);
+      },
+    },
+  ];
+
+  it.each(BACKFILLS)("$name mints an id the register knows", ({ run }) => {
+    const minted = run().findings;
+    // A pass that produced nothing would pass every assertion below without testing anything.
+    expect(minted.length, "the fixture no longer triggers this pass").toBeGreaterThan(0);
+    for (const f of minted) {
+      expect(
+        isDeterministicFindingId(f.id),
+        `"${f.id}" is not in responseSchema.ts's prefix list, so carryOutOfWindowFindings will ` +
+          "drop it the first time an analyst narrows the scope (#751). Register the prefix there",
+      ).toBe(true);
+    }
+  });
+
+  it.each(BACKFILLS)("$name's finding survives a narrowed window", ({ name, run }) => {
+    const prior = run();
+    // Every event out of scope: the narrowest window there is, and the one #751 was filed about.
+    const next = carryOutOfWindowFindings(
+      { ...emptyState("c1"), forensicTimeline: prior.forensicTimeline },
+      { prior, inWindowEvents: [], markers: [] },
+    );
+    expect(
+      next.findings.map((f) => f.id).sort(),
+      `${name}'s findings were deleted by a narrowed window and will not return when it widens`,
+    ).toEqual(prior.findings.map((f) => f.id).sort());
   });
 });

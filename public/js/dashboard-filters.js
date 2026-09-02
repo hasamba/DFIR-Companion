@@ -155,16 +155,22 @@ function yearClampChip(e) {
 //
 // These two prefixes identify findings the backfill passes mint — that is NOT the same claim as
 // "everything else comes from AI synthesis". A synthesis finding's id is whatever the model
-// returned (companion/src/analysis/responseSchema.ts's `z.string().min(1)`, stored verbatim by
-// stateMerge.ts — unlike IOC ids, a finding id is never canonicalised server-side), so a model
-// that echoes one of these reserved prefixes back — plausible on a noisy import, where the ids
-// echoed into its own prompt are overwhelmingly f-auto-/f-gap- — is classified as a backfill too,
-// however it actually originated. On a noisy import these backfills can outnumber the AI's real
-// conclusions, which is what the lens is for. The id is still the classifier because it is already
+// returned, and it is never canonicalised server-side the way an IOC id is. Since #787 the model
+// can no longer INVENT one of these, though: mergeDelta renames a reserved id the case does not
+// already hold to `f-model-<original>` before it is stored (renameForgedFindingIds, in
+// companion/src/analysis/responseSchema.ts), so a prefix reaching this function is the backfill's
+// own work. What the model may still do is UPDATE a finding a backfill really minted, by returning
+// its id — both prompts ask for exactly that — and such a row is correctly classified as a
+// backfill, because that is what it is. On a noisy import these backfills can outnumber the AI's
+// real conclusions, which is what the lens is for. The id is the classifier because it is already
 // load-bearing: both generators derive it from their source events precisely so re-synthesis
 // REFRESHES a backfill finding instead of duplicating it. That makes it a stable identity, and
-// means no new field and no migration — hardening stateMerge.ts against the model-echo case above
-// is a separate, deliberately out-of-scope follow-up.
+// means no new field and no migration.
+//
+// The two prefixes below are a fourth copy of a list this module cannot import, so
+// companion/tests/architecture/deterministicFindingMint.test.ts pins them to the constants the
+// server mints from (#758). Without that, a rename server-side would leave these lenses matching
+// an id the product no longer produces: the checkbox stops hiding anything, and says so nowhere.
 //
 // The trailing hyphen is part of each prefix on purpose — without it an AI finding id'd
 // "f-automation" would read as a backfill and disappear from the panel.
