@@ -18,6 +18,17 @@ describe("serviceImagePath", () => {
     );
   });
 
+  // The cut fires on an extension, so it must fire on the one that ENDS the executable — not on the
+  // first one anywhere in the string. Cutting inside a directory name silently rewrites a real path
+  // into a shorter path that also looks real, which is worse than leaving the arguments on: an
+  // analyst pivoting on it finds nothing and has nothing telling them the value was truncated.
+  it("cuts at the extension that ends the executable, not at one inside a directory name", () => {
+    expect(serviceImagePath("C:\\tools\\node.js\\agent.exe --run")).toBe("C:\\tools\\node.js\\agent.exe");
+    expect(serviceImagePath("C:\\Program Files\\app.dll.backup\\service.exe")).toBe(
+      "C:\\Program Files\\app.dll.backup\\service.exe",
+    );
+  });
+
   it("refuses the placeholders Volatility prints for an absent value", () => {
     for (const junk of ["N/A", "n/a", "-", "", "   ", "none", "null"])
       expect(serviceImagePath(junk)).toBe("");

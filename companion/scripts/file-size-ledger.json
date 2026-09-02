@@ -2,7 +2,7 @@
   "analysis/anonymize.ts": 848,
   "analysis/caseSqliteWorker.ts": 812,
   "analysis/evidenceGraph.ts": 855,
-  "analysis/memoryImport.ts": 1543,
+  "analysis/memoryImport.ts": 1541,
   "analysis/seedDemoCase.ts": 2700,
   "analysis/siemImport.ts": 1679,
   "analysis/velociraptorImport.ts": 1869,

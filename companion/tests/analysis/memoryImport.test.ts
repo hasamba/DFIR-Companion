@@ -213,6 +213,18 @@ describe("parseMemory — malfind names the region it found", () => {
     expect(descriptions.some((d) => d.includes("0x4000000"))).toBe(true);
   });
 
+  // The aggregation key falls back to CommitCharge — a PAGE COUNT — when a source carries no
+  // Start VPN. That is fine as a discriminator and false as an address: rendering it made the row
+  // state a memory location that does not exist.
+  it("says nothing about the address when the row carries none", () => {
+    const noAddress = [
+      { PID: 3120, Process: "evil.exe", Tag: "VadS", Protection: "PAGE_EXECUTE_READWRITE", CommitCharge: 1 },
+    ];
+    const r = parseMemory(JSON.stringify(noAddress), { filename: "malfind.json" });
+    expect(r.events[0].description).not.toMatch(/\bat 0x/);
+    expect(r.events[0].description).toContain("PAGE_EXECUTE_READWRITE");
+  });
+
   it("leaves an already-hex address as written", () => {
     const r = parseMemory(JSON.stringify(malfind()), { filename: "malfind.json" });
     expect(r.events[0].description).toContain("0x2000000");

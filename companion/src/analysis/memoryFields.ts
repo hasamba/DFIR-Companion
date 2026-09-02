@@ -78,8 +78,11 @@ export const GENERIC_TIME_KEYS = [
 
 // The placeholders Volatility prints for a value it could not read. None of them is a path.
 const NOT_A_PATH = /^(n\/?a|-|none|null|unknown)$/i;
-// Where an executable's name ends and its arguments begin.
-const IMAGE_EXT = /\.(exe|dll|sys|com|scr|bat|cmd|ps1|vbs|js|jse|msi|efi|drv|ocx)\b/i;
+// Where an executable's name ends and its arguments begin. The lookahead is the whole point: the
+// extension must END the token, or the cut lands inside a DIRECTORY name — `C:\tools\node.js\agent.exe`
+// became `C:\tools\node.js`, a shorter path that still looks real, which is a worse indicator than
+// the command line it replaced because nothing about it says it was truncated.
+const IMAGE_EXT = /\.(exe|dll|sys|com|scr|bat|cmd|ps1|vbs|js|jse|msi|efi|drv|ocx)(?=$|\s)/i;
 
 /**
  * The IMAGE PATH inside a service's `Binary` column.
@@ -141,4 +144,31 @@ export function regionAddress(raw: string): string {
   } catch {
     return s;
   }
+}
+
+/**
+ * The sentence a malfind row becomes. Arguments are in the order they read:
+ * tool, plugin label, process, pid, region, protection, tag.
+ *
+ * It lives here because the REGION is the part that matters and the part that was missing. Malfind
+ * rows are undated, and correlation folds two events that share a timestamp and a description — so
+ * with no address in the text, three separate RWX regions in one process collapsed into one row
+ * while the import note still counted three. `region` must be an ADDRESS: the caller's aggregation
+ * key falls back to CommitCharge, a page count, and rendering that as `at 0x1` would have the row
+ * state a memory location that does not exist.
+ */
+export function malfindDescription(
+  tool: string,
+  label: string,
+  process: string,
+  pid: string,
+  region: string,
+  protection: string,
+  tag: string,
+): string {
+  return (
+    `${tool} ${label}: executable/injected private memory in ${process || "?"} (PID ${pid || "?"})` +
+    `${region ? ` at ${regionAddress(region)}` : ""}${protection ? ` — protection ${protection}` : ""}` +
+    `${tag ? `, tag ${tag}` : ""}`
+  ).slice(0, 600);
 }
