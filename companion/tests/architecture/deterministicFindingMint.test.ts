@@ -18,7 +18,7 @@
 //
 //   1. Every finding-id literal in the source is found and checked, wherever it is written and
 //      whether or not its author knew this rule existed.
-//   2. Every `export function backfill*` in src/analysis appears in that behaviour table.
+//   2. Every backfill function a module under src/ exports IS the function that table runs.
 //
 // The second exists because the first cannot see LINKAGE. A pass that registers its prefix
 // correctly but never back-links its finding to an event is dropped by `supportingEventIds` as
@@ -281,25 +281,51 @@ describe("the behaviour table covers every backfill that exists", () => {
   // A pass named something other than `backfill*` is still not caught. That is the convention all
   // three use and the one a fourth gets by matching the surrounding code; the alternative to
   // trusting it is trusting a comment, which is what this replaced.
-  it("lists every exported backfill in src/", { timeout: 30_000 }, async () => {
+  it("runs the very function each module exports", { timeout: 30_000 }, async () => {
+    // BY REFERENCE, not by name. Comparing names let a pass go untested while the gate stayed
+    // green: a stub defined in the helper and named after a real pass satisfies a name comparison
+    // exactly, so the table ran the stub, both behaviour tests passed against it, and the real
+    // pass — the one that might mint an unregistered id or forget to link its finding — was never
+    // called. Watched happening: a `backfillNewPass` in src/analysis plus a same-named local
+    // stub in the helper, and this test passed. A function is only itself, so identity closes it.
+    //
+    // The scan chooses WHICH modules to load; the modules themselves say what they export. That
+    // split matters for `export { backfillReal as helper }`, where the scan reports the name that
+    // identifies the pass while the module's key is "helper" — reading the module's own values
+    // means the export form never has to be re-derived here.
     const files = await sources(SRC);
-    const exported: string[] = [];
+    const exported = new Map<object, string>();
     for (const file of files) {
-      exported.push(...exportedBackfillNames(await readFile(new URL(file, SRC), "utf8")));
+      const source = await readFile(new URL(file, SRC), "utf8");
+      if (exportedBackfillNames(source).length === 0) continue;
+      const mod: Record<string, unknown> = await import(new URL(file, SRC).href);
+      for (const [key, value] of Object.entries(mod)) {
+        if (typeof value !== "function") continue;
+        // The export key OR the function's own name: a default export is keyed "default", and an
+        // aliased one is keyed by the alias, but both still carry the name they were declared with.
+        const named = key.startsWith("backfill") ? key : value.name;
+        if (named.startsWith("backfill")) exported.set(value, named);
+      }
     }
 
     expect(
-      exported.length,
+      exported.size,
       "found no backfill passes — the walk is looking in the wrong place",
     ).toBeGreaterThan(0);
+
+    const inTable = new Set(BACKFILLS.map((b) => b.fn));
+    const untested = [...exported].filter(([fn]) => !inTable.has(fn)).map(([, name]) => name);
+    const notAPass = BACKFILLS.filter((b) => !exported.has(b.fn)).map((b) => b.name);
+
     expect(
-      exported.sort(),
-      "a deterministic backfill pass that the behaviour table in " +
-        "tests/helpers/deterministicBackfills.ts does not run. Add it to BACKFILLS there: " +
-        "registering its id prefix is only half of what it needs, and the other half — that it " +
-        "back-links its finding to an event, without which the finding is not carried across a " +
-        "narrowed window either — can only be checked by running the pass (#751/#758)",
-    ).toEqual(BACKFILLS.map((b) => b.name).sort());
+      { untested, notAPass },
+      "`untested`: a deterministic backfill pass that the table in " +
+        "tests/helpers/deterministicBackfills.ts does not run. Add it there — registering its id " +
+        "prefix is only half of what a pass needs, and the other half, that it back-links its " +
+        "finding to an event, can only be checked by running it (#751/#758). `notAPass`: a table " +
+        "entry calling something no module under src/ exports, which is how a stub comes to be " +
+        "tested in a real pass's place",
+    ).toEqual({ untested: [], notAPass: [] });
   });
 
   it("reads every export form, and only exported backfills", () => {

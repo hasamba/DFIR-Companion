@@ -10,7 +10,7 @@
 // imitation of it. It lives in a helper rather than in either test because both read it:
 // tests/analysis/deterministicFindingIds.test.ts runs each entry, and
 // tests/architecture/deterministicFindingMint.test.ts parses src/analysis and fails when an
-// `export function backfill*` is missing from it. Importing one test file from another would work
+// backfill export is not run by it. Importing one test file from another would work
 // and would also run every test in it twice.
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { backfillSilenceGapFindings, detectTimelineGaps } from "../../src/analysis/gapDetect.js";
@@ -38,23 +38,50 @@ const stamp = "2026-01-21T00:00:00.000Z";
 const seed = (): InvestigationState => ({ ...emptyState("c1"), forensicTimeline: burstEvents });
 
 /**
+ * One entry: the pass itself, plus the arguments to call it with.
+ *
+ * `name` is DERIVED from the function rather than written beside it, and `run` calls that same
+ * reference. This is the whole point of the shape. When the two were independent fields, a new
+ * entry copied from an old one could carry a new `name` while its `run` still invoked the pass it
+ * was copied from: the completeness gate below saw the new name and passed, both behaviour tests
+ * ran the OLD pass a second time, and the new pass shipped with neither its id shape nor its event
+ * linkage ever checked — the silence this file exists to break, wearing a green tick. Now the name
+ * and the callee are one reference, so they cannot disagree.
+ *
+ * The arguments are a thunk, not a value: each entry seeds its own state, and sharing one would let
+ * whichever pass ran first hand its findings to the next.
+ */
+// Curried, so the pass's parameter tuple is fixed by the FIRST call and the argument list in the
+// second is then checked against it. Taking both at once, TypeScript infers the tuple from the
+// thunk as well, the two candidates disagree, and the arguments widen to a plain union array that
+// no longer has to match the pass's signature — the type stops checking the one thing it is for.
+export interface BackfillEntry {
+  // The pass itself, for the architecture gate to compare against the modules' own exports. Typed
+  // `object` rather than a call signature because it is only ever compared by identity: a function
+  // IS an object, every pass's parameters differ, and a shared signature here would either lie
+  // about them or need a cast at each entry.
+  fn: object;
+  name: string;
+  run: () => InvestigationState;
+}
+
+const pass =
+  <A extends unknown[]>(fn: (...args: A) => InvestigationState) =>
+  (args: () => A): BackfillEntry => ({
+    fn,
+    name: fn.name,
+    run: () => fn(...args()),
+  });
+
+/**
  * Each entry RUNS the real pass and hands back the state it produced.
  *
- * ADD A NEW BACKFILL HERE. `name` is the EXPORTED function's name, not a label — the architecture
- * gate parses src/analysis for every `export function backfill*` and fails when one is missing from
- * this list, so this is a checked obligation rather than a comment hoping to be remembered.
+ * ADD A NEW BACKFILL HERE. The architecture gate loads every module under src/ that exports a
+ * backfill and compares those functions with `fn` BY REFERENCE, so this is a checked obligation
+ * rather than a comment hoping to be remembered — and a stub named after a real pass fails it.
  */
-export const BACKFILLS: { name: string; run: () => InvestigationState }[] = [
-  {
-    name: "backfillHighSeverityFindings",
-    run: () => backfillHighSeverityFindings(seed(), new Set(burstEvents.map((e) => e.id)), stamp),
-  },
-  {
-    name: "backfillSilenceGapFindings",
-    run: () => backfillSilenceGapFindings(seed(), detectTimelineGaps(burstEvents), stamp),
-  },
-  {
-    name: "backfillActivityWaveFinding",
-    run: () => backfillActivityWaveFinding(seed(), detectGapsWithWaves(burstEvents).pattern, stamp),
-  },
+export const BACKFILLS = [
+  pass(backfillHighSeverityFindings)(() => [seed(), new Set(burstEvents.map((e) => e.id)), stamp]),
+  pass(backfillSilenceGapFindings)(() => [seed(), detectTimelineGaps(burstEvents), stamp]),
+  pass(backfillActivityWaveFinding)(() => [seed(), detectGapsWithWaves(burstEvents).pattern, stamp]),
 ];

@@ -284,8 +284,9 @@ describe("what the rename protects", () => {
  * either. Only running the carry catches that, and running it needs the pass to be in the table.
  *
  * Which is why the table's own completeness is not left to whoever adds the next pass: the
- * architecture gate parses src/analysis for every `export function backfill*` and fails when one is
- * missing from BACKFILLS. The literal scan there cannot stand in for this — it reads an unlinked
+ * architecture gate loads every module under src/ that exports a backfill and fails unless this
+ * table runs that very function — by reference, so a stub named after a pass cannot stand in for
+ * it. The literal scan there cannot stand in for this either — it reads an unlinked
  * pass's id as perfectly well-formed, because it is.
  */
 describe("every deterministic backfill registers the id it mints (#758)", () => {
