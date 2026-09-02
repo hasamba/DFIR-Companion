@@ -334,6 +334,7 @@
     "m365Import.ts": "analysis/ingest",
     "macosImport.ts": "analysis/ingest",
     "manualEntry.ts": "analysis/workflow",
+    "memoryFields.ts": "analysis/ingest",
     "memoryImport.ts": "analysis/ingest",
     "memoryNextStep.ts": "analysis/ai",
     "mitreTactics.ts": "analysis/intel",

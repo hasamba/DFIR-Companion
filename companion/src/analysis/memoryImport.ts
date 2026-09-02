@@ -49,6 +49,14 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import {
+  GENERIC_TIME_KEYS,
+  cellStr,
+  filePathIoc,
+  pickTime,
+  regionAddress,
+  serviceImagePath,
+} from "./memoryFields.js";
 import { pstreeChildren } from "./pstreeDepth.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -91,28 +99,6 @@ const PRIVATE_IP =
 
 // ───────────────────────────── cell / field helpers ─────────────────────────────
 
-// Resolve a cell to a display string. Volatility cells are primitives; a Rekall object cell (e.g. a
-// rendered `_EPROCESS`) is reduced to its name/value.
-function cellStr(v: unknown): string {
-  if (v == null) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (isObject(v)) {
-    for (const k of ["name", "str", "repr", "value", "Name", "Value"]) {
-      const s = getCI(v, k);
-      if (typeof s === "string" && s.trim()) return s.trim();
-      if (typeof s === "number") return String(s);
-    }
-    const cybox = getCI(v, "Cybox");
-    if (isObject(cybox)) {
-      const n = getCI(cybox, "Name");
-      if (typeof n === "string" && n.trim()) return n.trim();
-    }
-    return "";
-  }
-  return "";
-}
-
 // First non-empty resolved value across candidate keys (case-insensitive).
 function pick(row: Row, keys: string[]): string {
   for (const k of keys) {
@@ -133,27 +119,6 @@ function pickPid(row: Row): string {
     if (/^\d+$/.test(p)) return p;
   }
   return direct;
-}
-
-// The artifact's own time. Handles a Rekall time object ({epoch}) and a Volatility naive/ISO string;
-// "N/A" / "-" / "0" / null render as undated. Never the import time.
-function pickTime(row: Row, keys: string[]): string {
-  for (const k of keys) {
-    const v = getCI(row, k);
-    if (isObject(v)) {
-      const ep = getCI(v, "epoch") ?? getCI(v, "value");
-      const n = typeof ep === "number" ? ep : Number(cellStr(ep));
-      if (Number.isFinite(n) && n > 1e8) {
-        const d = new Date(n > 1e12 ? n : n * 1000);
-        if (!Number.isNaN(d.getTime())) return d.toISOString();
-      }
-    }
-    const raw = cellStr(v).trim();
-    if (!raw || /^(n\/?a|-|0|none|null)$/i.test(raw)) continue;
-    const t = normalizeTime(raw);
-    if (t) return t;
-  }
-  return "";
 }
 
 function colSet(rows: Row[]): Set<string> {
@@ -280,7 +245,7 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
       const path = pick(r, ["Path", "path"]);
       if (name || pid) {
         if (name) addIoc(sink, "process", name);
-        if (path && /[\\/]/.test(path)) addIoc(sink, "file", path.slice(0, 300));
+        addIoc(sink, "file", filePathIoc(path));
         const parentName = parent || (ppid ? baseName(pidIndex.get(ppid) ?? "") : "");
         const exitNote = exited && !/^(n\/?a|-|0|none)$/i.test(exited) ? ", terminated" : "";
         let description = `${tool} ${label}: ${name || "?"} (PID ${pid || "?"}${ppid ? `, PPID ${ppid}` : ""}${exitNote})`;
@@ -351,7 +316,7 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
           ...(parentName ? { parentName } : {}),
           ...(Number.isInteger(pidNumber) && pidNumber > 0 ? { pid: pidNumber } : {}),
           ...(cmd ? { commandLine: cmd } : {}),
-          ...(path && /[\\/]/.test(path) ? { path } : {}),
+          ...(filePathIoc(path) ? { path } : {}),
         });
       }
       walk(pstreeChildren(r, depth), name || parent, depth + 1);
@@ -417,7 +382,7 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     out.push({
       timestamp: "",
       description:
-        `${tool} ${label}: executable/injected private memory in ${proc || "?"} (PID ${pid || "?"})${prot ? ` — protection ${prot}` : ""}${tag ? `, tag ${tag}` : ""}`.slice(
+        `${tool} ${label}: executable/injected private memory in ${proc || "?"} (PID ${pid || "?"})${start ? ` at ${regionAddress(start)}` : ""}${prot ? ` — protection ${prot}` : ""}${tag ? `, tag ${tag}` : ""}`.slice(
           0,
           600,
         ),
@@ -470,7 +435,8 @@ function mapService(label: string, tool: string, rows: Row[], sink: Map<string, 
     const state = pick(r, ["State", "state"]);
     const binary = pick(r, ["Binary", "Binary Path", "binary", "ServiceDll", "Dll", "Path"]);
     if (!name && !binary) continue;
-    if (binary && /[\\/]/.test(binary)) addIoc(sink, "file", binary.slice(0, 300));
+    const image = serviceImagePath(binary);
+    addIoc(sink, "file", image); // the row text below still shows the full command line
     const susp = isSuspiciousCmd(binary, "");
     const severity: Severity = susp === "strong" ? "High" : susp === "weak" ? "Medium" : "Info";
     out.push({
@@ -484,7 +450,7 @@ function mapService(label: string, tool: string, rows: Row[], sink: Map<string, 
       mitre: [],
       aggKey: `mem|svc|${(name || binary).toLowerCase()}`.slice(0, 400),
       sources: [tool],
-      ...(binary && /[\\/]/.test(binary) ? { path: binary } : {}),
+      ...(image ? { path: image } : {}),
     });
   }
   return out;
@@ -497,7 +463,7 @@ function mapModule(label: string, tool: string, rows: Row[], sink: Map<string, S
     const path = pick(r, ["Path", "path", "FullPath", "MappedPath"]);
     const base = pick(r, ["Base", "base", "Offset", "DllBase"]);
     if (!name && !path) continue;
-    if (path && /[\\/]/.test(path)) addIoc(sink, "file", path.slice(0, 300));
+    addIoc(sink, "file", filePathIoc(path));
     out.push({
       timestamp: "",
       description:
@@ -509,7 +475,7 @@ function mapModule(label: string, tool: string, rows: Row[], sink: Map<string, S
       mitre: [],
       aggKey: `mem|mod|${(name || path).toLowerCase()}`.slice(0, 400),
       sources: [tool],
-      ...(path && /[\\/]/.test(path) ? { path } : {}),
+      ...(filePathIoc(path) ? { path } : {}),
     });
   }
   return out;
@@ -530,7 +496,7 @@ function mapDll(
     const dllName = pick(r, ["Name", "name", "BaseDllName"]);
     const proc = procName(r);
     const pid = pickPid(r);
-    if (path && /[\\/]/.test(path)) addIoc(sink, "file", path.slice(0, 300));
+    addIoc(sink, "file", filePathIoc(path));
     if (!telemetry) continue;
     if (!path && !dllName) continue;
     out.push({
@@ -545,7 +511,7 @@ function mapDll(
       aggKey: `mem|dll|${proc.toLowerCase()}|${(path || dllName).toLowerCase()}`.slice(0, 400),
       sources: [tool],
       ...(proc ? { processName: proc } : {}),
-      ...(path && /[\\/]/.test(path) ? { path } : {}),
+      ...(filePathIoc(path) ? { path } : {}),
     });
   }
   return out;
@@ -567,7 +533,7 @@ function mapGeneric(label: string, tool: string, rows: Row[], sink: Map<string, 
       .map(([k, v]) => `${k}=${v}`)
       .join(" ");
     out.push({
-      timestamp: pickTime(r, ["CreateTime", "Created", "Time", "time", "Timestamp"]),
+      timestamp: pickTime(r, GENERIC_TIME_KEYS),
       description: `${tool} ${label}: ${body}`.slice(0, 600),
       severity: "Info",
       mitre: [],
@@ -1006,7 +972,7 @@ function mapFindevil(rows: FindevilRow[], sink: Map<string, SiemIoc>): MappedEve
     } else if (t === "PE_PATCHED") {
       pathIoc = /([A-Za-z]:\\[^\s]+|\\[^\s]+\.(?:dll|exe|sys))\s*$/.exec(description)?.[1] ?? "";
     }
-    if (pathIoc && /[\\/]/.test(pathIoc)) addIoc(sink, "file", pathIoc.slice(0, 300));
+    addIoc(sink, "file", filePathIoc(pathIoc));
 
     out.push({
       timestamp: "",
@@ -1016,7 +982,7 @@ function mapFindevil(rows: FindevilRow[], sink: Map<string, SiemIoc>): MappedEve
       aggKey: findevilAggKey(type, pid, process, description),
       sources: ["MemProcFS"],
       ...(pName ? { processName: pName } : {}),
-      ...(pathIoc && /[\\/]/.test(pathIoc) ? { path: pathIoc } : {}),
+      ...(filePathIoc(pathIoc) ? { path: pathIoc } : {}),
     });
   }
   return out;
@@ -1193,7 +1159,7 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
 
     const pName = baseName(proc);
     if (pName) addIoc(sink, "process", pName);
-    if (procPath && /[\\/]/.test(procPath)) addIoc(sink, "file", procPath.slice(0, 300));
+    addIoc(sink, "file", filePathIoc(procPath));
 
     const timestamp = normalizeTime(created) ?? "";
     const memNote = [memType, memTag].filter(Boolean).join(" / ");
@@ -1298,7 +1264,7 @@ function mapMpfsTimelineRow(
       const cleanPath = cleanMpfsPath(m[3] ?? "");
       const pName = baseName(procName);
       if (pName) addIoc(sink, "process", pName);
-      if (cleanPath && /[\\/]/.test(cleanPath)) addIoc(sink, "file", cleanPath.slice(0, 300));
+      addIoc(sink, "file", filePathIoc(cleanPath));
       const verb = action.toUpperCase() === "DEL" ? "exit" : "start";
       const userNote = user ? ` [${user}]` : "";
       mapped.push({
@@ -1309,7 +1275,7 @@ function mapMpfsTimelineRow(
         aggKey: `memprocfs|proc|${action.toUpperCase()}|${pid}|${procName.toLowerCase()}`,
         sources: ["MemProcFS"],
         ...(pName ? { processName: pName } : {}),
-        ...(cleanPath && /[\\/]/.test(cleanPath) ? { path: cleanPath } : {}),
+        ...(filePathIoc(cleanPath) ? { path: cleanPath } : {}),
       });
       break;
     }

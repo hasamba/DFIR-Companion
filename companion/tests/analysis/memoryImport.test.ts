@@ -182,6 +182,121 @@ describe("parseMemory — Volatility 3 malfind", () => {
   });
 });
 
+// Correlation folds two events that share a timestamp and a description. Malfind rows are undated,
+// so the DESCRIPTION is the only thing keeping two regions apart — and it named neither. Three RWX
+// regions in one process came back as one timeline row while the import note still said three.
+describe("parseMemory — malfind names the region it found", () => {
+  const twoRegions = [
+    {
+      PID: 3120,
+      Process: "evil.exe",
+      "Start VPN": 33554432,
+      Tag: "VadS",
+      Protection: "PAGE_EXECUTE_READWRITE",
+    },
+    {
+      PID: 3120,
+      Process: "evil.exe",
+      "Start VPN": 67108864,
+      Tag: "VadS",
+      Protection: "PAGE_EXECUTE_READWRITE",
+    },
+  ];
+
+  it("gives two regions in one process two distinct descriptions", () => {
+    const r = parseMemory(JSON.stringify(twoRegions), { filename: "malfind.json" });
+    expect(r.injected).toBe(2);
+    const descriptions = r.events.map((e) => e.description);
+    expect(descriptions).toHaveLength(2);
+    expect(new Set(descriptions).size).toBe(2);
+    expect(descriptions.some((d) => d.includes("0x2000000"))).toBe(true);
+    expect(descriptions.some((d) => d.includes("0x4000000"))).toBe(true);
+  });
+
+  it("leaves an already-hex address as written", () => {
+    const r = parseMemory(JSON.stringify(malfind()), { filename: "malfind.json" });
+    expect(r.events[0].description).toContain("0x2000000");
+  });
+});
+
+// svcscan's Binary column is a COMMAND LINE: quoted, and followed by arguments. Stored verbatim it
+// produced file IOCs that match nothing — `"C:\...\MsMpEng.exe"` with the quotes, and
+// `svchost.exe -k RPCSS -p`. 72 of 261 IOCs on one real import were unusable this way.
+describe("parseMemory — service IOCs are image paths, not command lines", () => {
+  const services = {
+    "windows.svcscan.SvcScan": [
+      {
+        Name: "A",
+        Display: "Defender",
+        State: "SERVICE_RUNNING",
+        Binary: '"C:\\ProgramData\\X\\MsMpEng.exe"',
+      },
+      {
+        Name: "B",
+        Display: "RPCSS",
+        State: "SERVICE_RUNNING",
+        Binary: "C:\\WINDOWS\\system32\\svchost.exe -k RPCSS -p",
+      },
+      { Name: "C", Display: "Stopped", State: "SERVICE_STOPPED", Binary: "N/A" },
+    ],
+  };
+
+  it("stores the executable alone", () => {
+    const files = parseMemory(JSON.stringify(services), { filename: "svc.json" })
+      .iocs.filter((i) => i.type === "file")
+      .map((i) => i.value);
+    expect(files).toContain("C:\\ProgramData\\X\\MsMpEng.exe");
+    expect(files).toContain("C:\\WINDOWS\\system32\\svchost.exe");
+    expect(files.some((v) => v.includes("-k RPCSS"))).toBe(false);
+    expect(files.some((v) => v.startsWith('"'))).toBe(false);
+    expect(files).not.toContain("N/A");
+  });
+
+  it("keeps the full command line in the row the analyst reads", () => {
+    const r = parseMemory(JSON.stringify(services), { filename: "svc.json" });
+    expect(r.events.some((e) => e.description.includes("-k RPCSS -p"))).toBe(true);
+  });
+});
+
+// A registry plugin dates its rows with `Last Write Time`. The generic mapper looked for
+// CreateTime/Created/Time/Timestamp only, so every UserAssist row landed undated with its real
+// time sitting unread in the row.
+describe("parseMemory — the N/A placeholder is not a path", () => {
+  it("keeps a process row's placeholder path out of the IOC list and off the event", () => {
+    const rows = [
+      { PID: 4, PPID: 0, ImageFileName: "System", Path: "N/A", CreateTime: "2026-08-30 15:00:33.000000" },
+      {
+        PID: 684,
+        PPID: 4,
+        ImageFileName: "wininit.exe",
+        Path: "C:\\WINDOWS\\system32\\wininit.exe",
+        CreateTime: "2026-08-30 15:00:34.000000",
+      },
+    ];
+    const r = parseMemory(JSON.stringify({ "windows.pstree.PsTree": rows }), { filename: "pstree.json" });
+    const files = r.iocs.filter((i) => i.type === "file").map((i) => i.value);
+    expect(files).toEqual(["C:\\WINDOWS\\system32\\wininit.exe"]);
+    expect(r.events.find((e) => e.description.includes("System"))?.path).toBeUndefined();
+  });
+});
+
+describe("parseMemory — a generic table keeps the time it carries", () => {
+  it("reads Last Write Time from a registry plugin", () => {
+    const rows = {
+      "windows.registry.userassist.UserAssist": [
+        {
+          Name: "N/A",
+          Path: "ntuser.dat\\Software\\Microsoft\\Windows",
+          Type: "Key",
+          "Last Write Time": "2026-09-01T07:36:38+00:00",
+        },
+      ],
+    };
+    const r = parseMemory(JSON.stringify(rows), { filename: "userassist.json" });
+    expect(r.events[0].timestamp).toBe("2026-09-01T07:36:38.000Z");
+  });
+});
+
 describe("parseMemory — Volatility 3 cmdline", () => {
   it("bumps a suspicious (encoded/hidden) command line and leaves a benign one Info", () => {
     const r = parseMemory(JSON.stringify(cmdline()), { filename: "cmdline.json" });
