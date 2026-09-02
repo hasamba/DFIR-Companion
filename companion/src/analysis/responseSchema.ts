@@ -322,9 +322,14 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
   // lowercase key would rewrite prose for both to whichever was mapped last, pointing half the
   // citations at the wrong finding. An exact hit always wins; the case-insensitive lookup is built
   // only for keys no other id shares, and an ambiguous token is left exactly as the model wrote it.
+  // Ambiguity is decided over EVERY id in play, not just the renamed ones. An id that is NOT
+  // renamed still owns its prose citations — `f-auto-E5` already in the case is a finding the model
+  // may legitimately cite — and counting only the renamed ids would call `f-auto-e5` unambiguous
+  // and send that citation to the renamed finding instead. A near-miss redirect is worse than no
+  // rewrite: it moves a claim onto evidence that was never its own.
   const lowerCollisions = new Map<string, number>();
-  for (const from of remap.keys()) {
-    const lower = from.toLowerCase();
+  for (const id of new Set([...delta.findings.map((f) => f.id), ...known])) {
+    const lower = id.toLowerCase();
     lowerCollisions.set(lower, (lowerCollisions.get(lower) ?? 0) + 1);
   }
   const byLowerId = new Map(

@@ -217,6 +217,17 @@ describe("renameForgedFindingIds", () => {
     );
   });
 
+  it("does not redirect a citation of a finding the case already holds under a different case", () => {
+    // `f-auto-E5` is an existing finding — not renamed, and it owns its own citations. Judging
+    // ambiguity from the renamed ids alone would call `f-auto-e5` unique and steal them.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], { attackerPath: "entry via f-auto-E5, then f-auto-e5" }),
+      new Set(["f-auto-E5"]),
+    );
+    expect(out.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5"]);
+    expect(out.attackerPath).toBe("entry via f-auto-E5, then f-model-f-auto-e5");
+  });
+
   it("rewrites a prose citation whatever its case, because textMentionsFindingId reads it that way", () => {
     const out = renameForgedFindingIds(
       delta([modelFinding("f-auto-e5")], { attackerPath: "see F-AUTO-E5 for the entry point" }),
