@@ -1,3 +1,4 @@
+import { AUTO_FINDING_ID_PREFIX } from "./responseSchema.js";
 import type { InvestigationState, Finding, Severity, ForensicEvent } from "./stateTypes.js";
 
 const HIGH_SEVERITY = new Set<Severity>(["Critical", "High"]);
@@ -151,7 +152,7 @@ export function backfillHighSeverityFindings(
   for (const [title, events] of groups) {
     // Stable finding id: lex-first event id in the group.
     const repId = [...events].sort((a, b) => a.id.localeCompare(b.id))[0].id;
-    const findingId = `f-auto-${repId}`;
+    const findingId = `${AUTO_FINDING_ID_PREFIX}${repId}`;
     const repEvent = events.find((e) => e.id === repId)!;
     const severity: Severity = events.some((e) => e.severity === "Critical") ? "Critical" : "High";
     const mitre = [...new Set(events.flatMap((e) => e.mitreTechniques))];

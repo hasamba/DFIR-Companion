@@ -19,6 +19,27 @@ const collectDirective = z
   })
   .optional();
 
+// Finding ids the DETERMINISTIC backfills mint. These are not names — they are a PROVENANCE
+// CLAIM, and three separate passes act on it: `carryOutOfWindowFindings` re-attaches only these
+// across a narrowed window (#751), and each backfill treats one it already sees in state as its own
+// work being done and skips (activityWaves.ts, gapDetect.ts). The minting sites import these, so
+// the list the merge enforces and the list the backfills write can never drift apart.
+export const AUTO_FINDING_ID_PREFIX = "f-auto-";
+export const GAP_FINDING_ID_PREFIX = "f-gap-";
+export const WAVES_FINDING_ID = "f-waves";
+
+const RESERVED_FINDING_ID_PREFIXES = [AUTO_FINDING_ID_PREFIX, GAP_FINDING_ID_PREFIX];
+
+/** True for an id only a deterministic backfill is allowed to mint. */
+export function isDeterministicFindingId(id: string): boolean {
+  return id === WAVES_FINDING_ID || RESERVED_FINDING_ID_PREFIXES.some((p) => id.startsWith(p));
+}
+
+// What a model finding wearing a reserved id is renamed to. The ORIGINAL id is kept inside the new
+// one: the rename is a downgrade of a provenance claim, not a redaction, and an analyst comparing a
+// report against a raw model response should still be able to find the row.
+const MODEL_FINDING_ID_PREFIX = "f-model-";
+
 export const deltaSchema = z.object({
   findings: z.array(
     z.object({
@@ -214,6 +235,103 @@ export const deltaSchema = z.object({
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;
+
+// A model is SHOWN the deterministic ids: the synthesis prompt echoes every prior finding as
+// `[id] title` (buildFindingsEcho), the extraction prompt does the same (buildStateSummary), and
+// both tell the model to update an existing finding BY ITS ID. So the id alone cannot say who
+// wrote it, and until #787 nothing checked — a model that echoed the pattern for a finding that
+// did not exist minted a new one wearing deterministic provenance. It then survived every
+// narrowed-scope run as if a backfill had made it, and worse: an invented `f-waves` or
+// `f-gap-a-b` made the matching backfill treat its own work as already done and SKIP, so the real
+// detection was never created and the model's text stood in its place.
+//
+// The discriminator is the case, not the string. An id already in the case is the model doing what
+// it was told — updating a finding a backfill really did mint — and it is left alone. An id that
+// exists nowhere is the model inventing provenance, and it is renamed to `f-model-<original>`
+// before any consumer sees it. The claim itself is kept in full; only the borrowed label goes, and
+// the original id stays inside the new one so the row is still findable against a raw model
+// response. Every reference to the finding INSIDE the same delta is renamed with it, because
+// `forensicEvents`, `keyQuestions` and `nextSteps` all carry `relatedFindingIds` and rewriting the
+// finding alone would leave three dangling pointers.
+//
+// Applied in mergeDelta, the one seam every delta crosses on its way into a case, and once more at
+// the top of the synthesis fold — which reads the RAW delta for event back-links and for the
+// model's relevance verdict, and would drop both for a finding the merge renamed underneath it.
+// Idempotent, so applying it twice is safe. Deterministic importers are unaffected: every one of
+// them builds `findings: []`.
+export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
+  const taken = new Set([...known, ...delta.findings.map((f) => f.id)]);
+  const remap = new Map<string, string>();
+  for (const f of delta.findings) {
+    if (remap.has(f.id) || known.has(f.id) || !isDeterministicFindingId(f.id)) continue;
+    const canonical = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
+    // A second window repeating the same invented id must land on the SAME renamed finding and
+    // update it. Bumping to `-2` there would append a duplicate on every repeat instead, so a
+    // canonical name the case already holds is REUSED — it can only have come from renaming this
+    // exact id. Suffixes are for a real clash: another id in this delta, or an unrelated case row.
+    let renamed = canonical;
+    if (!known.has(canonical)) {
+      for (let n = 2; taken.has(renamed); n++) renamed = `${canonical}-${n}`;
+    }
+    taken.add(renamed);
+    remap.set(f.id, renamed);
+  }
+  if (remap.size === 0) return delta;
+
+  const rename = (id: string): string => remap.get(id) ?? id;
+  const renameRefs = <T extends { relatedFindingIds: string[] }>(rows: T[]): T[] =>
+    rows.map((r) => ({ ...r, relatedFindingIds: r.relatedFindingIds.map(rename) }));
+  // A question's answer/pointer and a next step's action/rationale name findings in PROSE as well,
+  // and that prose is not decoration: reconsiderKeyQuestions matches finding ids inside it to force
+  // a stale answer back to "unknown". Left alone, the text would keep citing the reserved id while
+  // the structured link moved — and would then point at whatever finding a backfill later mints
+  // under that id. Exact-token only, so `f-auto-e5` never matches inside `f-auto-e50`.
+  // Boundaries and case-insensitivity match `textMentionsFindingId` exactly, because that is the
+  // function whose behaviour this has to stay true to: it is what reads a finding id back out of
+  // prose, and it accepts `F-AUTO-E5` for `f-auto-e5`. A stricter matcher here would leave the one
+  // spelling that function still resolves — pointing it at whatever a backfill later mints.
+  const idPattern = new RegExp(
+    `(?<![\\w-])(?:${[...remap.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|")})(?![\\w-])`,
+    "gi",
+  );
+  const byLowerId = new Map([...remap].map(([from, to]) => [from.toLowerCase(), to]));
+  const renameText = (text: string): string =>
+    text.replace(idPattern, (token) => byLowerId.get(token.toLowerCase()) ?? token);
+  const renameProse = <T extends Record<string, unknown>>(row: T, fields: readonly (keyof T)[]): T => {
+    const patched: Partial<T> = {};
+    for (const field of fields) {
+      const value = row[field];
+      if (typeof value === "string" && value) patched[field] = renameText(value) as T[keyof T];
+    }
+    return { ...row, ...patched };
+  };
+  return {
+    ...delta,
+    findings: delta.findings.map((f) => (remap.has(f.id) ? { ...f, id: rename(f.id) } : f)),
+    ...(delta.forensicEvents ? { forensicEvents: renameRefs(delta.forensicEvents) } : {}),
+    ...(delta.keyQuestions
+      ? { keyQuestions: renameRefs(delta.keyQuestions).map((q) => renameProse(q, ["answer", "pointer"])) }
+      : {}),
+    ...(delta.nextSteps
+      ? {
+          nextSteps: renameRefs(delta.nextSteps).map((n) =>
+            renameProse(n, ["action", "rationale", "pointer"]),
+          ),
+        }
+      : {}),
+    // The kill-chain narrative is prompted for "citing finding ids and times", and stateMerge
+    // persists it verbatim — so it carries the same dangling reference the structured links no
+    // longer do. The uncertainty ledger's free text can name one too.
+    ...(delta.attackerPath ? { attackerPath: renameText(delta.attackerPath) } : {}),
+    ...(delta.narrativeTimeline ? { narrativeTimeline: renameText(delta.narrativeTimeline) } : {}),
+    ...(delta.uncertainties
+      ? { uncertainties: delta.uncertainties.map((u) => renameProse(u, ["basis", "gap"])) }
+      : {}),
+  };
+}
 
 // AI synthesis/extraction responses must never carry extractedFrom — that field asserts an
 // authoritative, stored source-event link, which only the deterministic importers (pipeline.ts)

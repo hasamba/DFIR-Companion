@@ -566,6 +566,9 @@ export async function synthesize(
     highSeverityBackfillCount,
     eligibleIds,
     surviving,
+    // The fold's delta, not this scope's: an invented deterministic id was renamed on the way in
+    // (#787), and grading keys the model's relevance verdict on the id the case now holds.
+    delta: foldedDelta,
   } = await foldSynthesisDelta(ctx, {
     caseId,
     state,
@@ -578,7 +581,7 @@ export async function synthesize(
   if (opts.dryRun) return next;
 
   next = await finalizeFindings(ctx, caseId, next, {
-    delta,
+    delta: foldedDelta,
     surviving,
     eligibleIds,
     sourceTrust,

@@ -1,4 +1,4 @@
-import type { AnalysisDelta } from "./responseSchema.js";
+import { renameForgedFindingIds, type AnalysisDelta } from "./responseSchema.js";
 import type {
   InvestigationState,
   Finding,
@@ -43,6 +43,12 @@ export interface WindowContext {
   // into. Consulted before the exact-value dedup below so a later window re-extracting the same
   // near-duplicate routes straight onto the canonical IOC instead of recreating the duplicate.
   iocAliases?: Record<string, string>;
+  // Finding ids the case ALREADY holds, for the forged-provenance check (#787). Defaults to
+  // `state.findings`, which is right for every caller merging into a live case. Synthesis is the
+  // exception: it merges into a deliberately EMPTIED finding list (replaceConclusions), so without
+  // this it would read every prior deterministic finding as newly invented and rename the model's
+  // legitimate update to one — losing the finding the carry-forward exists to protect (#751).
+  knownFindingIds?: ReadonlySet<string>;
 }
 
 function uniq(values: string[]): string[] {
@@ -66,9 +72,14 @@ function nextIocSeq(iocs: IOC[]): number {
 
 export function mergeDelta(
   state: InvestigationState,
-  delta: AnalysisDelta,
+  incoming: AnalysisDelta,
   ctx: WindowContext,
 ): InvestigationState {
+  // A model may update a deterministic finding by id, but it may not MINT one (#787).
+  const delta = renameForgedFindingIds(
+    incoming,
+    ctx.knownFindingIds ?? new Set(state.findings.map((f) => f.id)),
+  );
   // IOCs first — we need the id remap before processing findings so their
   // relatedIocs cross-references (e.g. the model's "i1") can be rewritten to
   // our canonical ids ("i001", "i002", ...).
