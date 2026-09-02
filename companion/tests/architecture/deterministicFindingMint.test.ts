@@ -189,20 +189,30 @@ describe("the dashboard's copy of the prefixes matches the register", () => {
 /**
  * Every exported name in `source` that starts with "backfill", however it is written.
  *
- * Three forms count, because TypeScript has three ordinary ways to export a function and a guard
- * that knows only the shape already in the tree waves through the first person to write another:
+ * Every form counts, because TypeScript has several ordinary ways to export a function and a guard
+ * that knows only the shape already in the tree waves through the first person to write another.
+ * Each line below was missed by some earlier version of this scanner:
  *
  *   export function backfill…() {}          the form all three passes use today
  *   export const backfill… = …              a binding rather than a declaration
  *   export { backfill… }                    declared plainly, exported in a list at the end
+ *   export { x as backfill… }               exported under a different name
+ *   export default function backfill…() {}  a named default
+ *   export default backfill…                an assignment, not a declaration or a list
+ *   export = backfill…                      the same, in TypeScript's own spelling
+ *   export { backfill… as default }         the name is in the specifier's LEFT half
  *
- * The third is the one that reads least like an export at its declaration site — `function
- * backfill…()` with no modifier on it — which is exactly why a scanner looking for the `export`
- * keyword on the declaration misses it. `export { x as backfill… }` counts under the name it is
- * exported AS, since that is the name the rest of the tree can call.
+ * The pattern in the misses: a scanner that looks for the `export` keyword ON a declaration sees
+ * only the first two. The rest put the export in a statement of its own, and two of them put the
+ * pass's name somewhere other than where the previous version looked for it.
+ *
+ * The reported name is always the one the rest of the tree can CALL the pass by — the alias for
+ * `x as backfill…`, and the local name for `backfill… as default`, whose exported name is the
+ * useless string "default".
  *
  * Type-only exports are skipped: a type is not a pass. `export * from` needs nothing — whatever it
- * re-exports is declared in a file this walk already reads.
+ * re-exports is declared in a file this walk already reads. An ANONYMOUS default
+ * (`export default function () {}`) has no name to match and is not reachable by one either.
  */
 export function exportedBackfillNames(source: string): string[] {
   const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -216,7 +226,19 @@ export function exportedBackfillNames(source: string): string[] {
     if (ts.isExportDeclaration(node)) {
       if (node.isTypeOnly || !node.exportClause || !ts.isNamedExports(node.exportClause)) continue;
       for (const spec of node.exportClause.elements) {
-        if (!spec.isTypeOnly && spec.name.text.startsWith("backfill")) names.add(spec.name.text);
+        if (spec.isTypeOnly) continue;
+        // The exported name normally; the LOCAL one when a pass is exported `as default`, since
+        // "default" names nothing a caller can use.
+        const called = spec.name.text.startsWith("backfill") ? spec.name.text : spec.propertyName?.text;
+        if (called?.startsWith("backfill")) names.add(called);
+      }
+      continue;
+    }
+    // `export default backfill…` and `export = backfill…`: an assignment, so neither a modified
+    // declaration nor a named-export list. The identifier is the only name it has.
+    if (ts.isExportAssignment(node)) {
+      if (ts.isIdentifier(node.expression) && node.expression.text.startsWith("backfill")) {
+        names.add(node.expression.text);
       }
       continue;
     }
@@ -278,6 +300,12 @@ describe("the behaviour table covers every backfill that exists", () => {
       "function backfillFive(state) { return state; }", // no modifier here…
       "export { backfillFive };", // …the export is its own statement, and carries no modifier
       "export { helper as backfillSix };", // exported AS a backfill: that is the callable name
+      "export default function backfillSeven(state) { return state; }", // a named default
+      "function backfillEight(state) { return state; }",
+      "export default backfillEight;", // an assignment: neither a declaration nor a list
+      "function backfillNine(state) { return state; }",
+      "export { backfillNine as default };", // the name is in the specifier's LEFT half
+      "export default function (state) { return state; }", // anonymous: no name to match
       "function backfillThree(state) { return state; }", // never exported: nothing can call it
       "export function detectSomething() {}", // exported, not a backfill
       "export type { backfillType };", // a type is not a pass
@@ -287,9 +315,12 @@ describe("the behaviour table covers every backfill that exists", () => {
     ].join("\n");
 
     expect(exportedBackfillNames(source).sort()).toEqual([
+      "backfillEight",
       "backfillFive",
       "backfillFour",
+      "backfillNine",
       "backfillOne",
+      "backfillSeven",
       "backfillSix",
       "backfillTwo",
     ]);
