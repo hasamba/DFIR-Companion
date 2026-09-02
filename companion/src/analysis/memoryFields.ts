@@ -147,28 +147,57 @@ export function regionAddress(raw: string): string {
 }
 
 /**
- * The sentence a malfind row becomes. Arguments are in the order they read:
- * tool, plugin label, process, pid, region, protection, tag.
+ * How a malfind row NAMES the region it found: the token its aggregation key uses, and the phrase
+ * its description prints. They come from one place because they must agree.
  *
- * It lives here because the REGION is the part that matters and the part that was missing. Malfind
- * rows are undated, and correlation folds two events that share a timestamp and a description — so
- * with no address in the text, three separate RWX regions in one process collapsed into one row
- * while the import note still counted three. `region` must be an ADDRESS: the caller's aggregation
- * key falls back to CommitCharge, a page count, and rendering that as `at 0x1` would have the row
- * state a memory location that does not exist.
+ * Two layers can fold malfind rows, and only the second is visible to the analyst. The aggregator
+ * keys on this token, so the parser keeps regions apart. Correlation then unions events sharing a
+ * timestamp and a description — and malfind rows are undated — so ANY discriminator the key uses but
+ * the description does not print is undone at the case merge, silently, with the count reset to 1
+ * while the import note still reports the true number. Three regions became one row that way.
+ *
+ * So the rule is: print what you key on. An address when the source gives one; the end address, or
+ * the commit charge, when it does not — each labelled for what it is, never dressed up as an address.
+ * When the source offers nothing at all the token is empty for every row, the AGGREGATOR collapses
+ * them into one event, and its count says how many there were. That is the honest answer to evidence
+ * that genuinely cannot tell two regions apart, and it is not the same as losing them at the merge.
+ */
+export function malfindRegion(row: Row): { token: string; phrase: string } {
+  const at = (keys: string[]): string => {
+    for (const k of keys) {
+      const v = cellStr(getCI(row, k)).trim();
+      if (v && !/^(n\/?a|-|none|null)$/i.test(v)) return v;
+    }
+    return "";
+  };
+  const start = at(["Start VPN", "Start", "start"]);
+  if (start) return { token: regionAddress(start), phrase: ` at ${regionAddress(start)}` };
+  const end = at(["End VPN", "End", "end"]);
+  if (end) return { token: `end:${regionAddress(end)}`, phrase: ` ending at ${regionAddress(end)}` };
+  const charge = at(["CommitCharge", "commit_charge"]);
+  if (charge) return { token: `cc:${charge}`, phrase: ` commit charge ${charge}` };
+  return { token: "", phrase: "" };
+}
+
+/**
+ * The sentence a malfind row becomes. Arguments are in the order they read:
+ * tool, plugin label, process, pid, region phrase, protection, tag.
+ *
+ * The region phrase comes from malfindRegion, which also supplies the aggregation key's token — see
+ * there for why the two must be built together.
  */
 export function malfindDescription(
   tool: string,
   label: string,
   process: string,
   pid: string,
-  region: string,
+  regionPhrase: string,
   protection: string,
   tag: string,
 ): string {
   return (
     `${tool} ${label}: executable/injected private memory in ${process || "?"} (PID ${pid || "?"})` +
-    `${region ? ` at ${regionAddress(region)}` : ""}${protection ? ` — protection ${protection}` : ""}` +
+    `${regionPhrase}${protection ? ` — protection ${protection}` : ""}` +
     `${tag ? `, tag ${tag}` : ""}`
   ).slice(0, 600);
 }
