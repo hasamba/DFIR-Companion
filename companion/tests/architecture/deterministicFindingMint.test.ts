@@ -206,12 +206,14 @@ describe("the dashboard's copy of the prefixes matches the register", () => {
  * only the first two. The rest put the export in a statement of its own, and two of them put the
  * pass's name somewhere other than where the previous version looked for it.
  *
- * The reported name is always the one the rest of the tree can CALL the pass by — the alias for
- * `x as backfill…`, and the local name for `backfill… as default`, whose exported name is the
- * useless string "default". The converse follows and is deliberate: `export { backfill… as helper
- * }` is NOT reported, because `helper` is what the tree sees. A pass exported under a name outside
- * the convention is outside this gate, the same as one named `applyGapFindings`, and saying so is
- * honest where reporting it under a name nothing can call would not be.
+ * The reported name is whichever half of the specifier is backfill-shaped. It is an IDENTIFIER for
+ * the BACKFILLS entry, not an import specifier — so `export { backfillRealPass as helper }` is
+ * reported as `backfillRealPass`, the name that says what it is, even though importers write
+ * `helper`. Reading only the exported name reads more natural and fails open: "helper" is not
+ * backfill-shaped, so a real pass would go unreported and lose its findings in silence.
+ *
+ * That is the deliberate direction throughout. Over-reporting costs someone one BACKFILLS entry.
+ * Under-reporting costs a case its findings, months later, with every test green.
  *
  * Type-only exports are skipped: a type is not a pass. `export * from` needs nothing — whatever it
  * re-exports is declared in a file this walk already reads. An ANONYMOUS default
@@ -230,15 +232,17 @@ export function exportedBackfillNames(source: string): string[] {
       if (node.isTypeOnly || !node.exportClause || !ts.isNamedExports(node.exportClause)) continue;
       for (const spec of node.exportClause.elements) {
         if (spec.isTypeOnly) continue;
-        // The EXPORTED name, which is what the rest of the tree can call it by. `as default` is
-        // the one exception: "default" names nothing usable, so the local name stands in.
+        // EITHER half. The exported name when that is the backfill-shaped one, otherwise the
+        // local name — which covers `x as backfill…`, `backfill… as default` (whose exported name
+        // is the useless string "default") and `backfill… as helper` in one rule.
         //
-        // Deliberately not "either half starts with backfill". That reading reported `export {
-        // backfillX as helper }` as a pass called `backfillX`, which nothing can call it — the
-        // tree sees `helper`. A pass exported under a non-backfill name has left the convention
-        // this gate reads, exactly as one named `applyGapFindings` would have, and the docblock
-        // above says so rather than half-catching it under a name that does not exist.
-        const called = spec.name.text === "default" ? spec.propertyName?.text : spec.name.text;
+        // Restricting this to the exported name, as one round of review talked me into, reads
+        // better and fails open: `export { backfillRealPass as helper }` reports "helper", which
+        // is not backfill-shaped, so a real pass goes unreported and its findings are lost in
+        // exactly the silence this file exists to break. The reported name is an IDENTIFIER for
+        // the BACKFILLS entry, not an import specifier — nobody is expected to type it into an
+        // import — so a name that identifies the pass beats one that reads more natural.
+        const called = spec.name.text.startsWith("backfill") ? spec.name.text : spec.propertyName?.text;
         if (called?.startsWith("backfill")) names.add(called);
       }
       continue;
@@ -315,7 +319,7 @@ describe("the behaviour table covers every backfill that exists", () => {
       "function backfillNine(state) { return state; }",
       "export { backfillNine as default };", // the name is in the specifier's LEFT half
       "function backfillTen(state) { return state; }",
-      "export { backfillTen as helper };", // exported OUT of the convention: the tree sees `helper`
+      "export { backfillTen as helper };", // renamed on export: still a pass, still must be listed
       "export default function (state) { return state; }", // anonymous: no name to match
       "function backfillThree(state) { return state; }", // never exported: nothing can call it
       "export function detectSomething() {}", // exported, not a backfill
@@ -333,6 +337,7 @@ describe("the behaviour table covers every backfill that exists", () => {
       "backfillOne",
       "backfillSeven",
       "backfillSix",
+      "backfillTen",
       "backfillTwo",
     ]);
   });
