@@ -254,17 +254,26 @@ export type AnalysisDelta = z.infer<typeof deltaSchema>;
 // `forensicEvents`, `keyQuestions` and `nextSteps` all carry `relatedFindingIds` and rewriting the
 // finding alone would leave three dangling pointers.
 //
-// Applied in mergeDelta, the one seam every delta crosses on its way into a case. Deterministic
-// importers are unaffected: every one of them builds `findings: []`.
+// Applied in mergeDelta, the one seam every delta crosses on its way into a case, and once more at
+// the top of the synthesis fold — which reads the RAW delta for event back-links and for the
+// model's relevance verdict, and would drop both for a finding the merge renamed underneath it.
+// Idempotent, so applying it twice is safe. Deterministic importers are unaffected: every one of
+// them builds `findings: []`.
 export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
-  const used = new Set([...known, ...delta.findings.map((f) => f.id)]);
+  const taken = new Set([...known, ...delta.findings.map((f) => f.id)]);
   const remap = new Map<string, string>();
   for (const f of delta.findings) {
     if (remap.has(f.id) || known.has(f.id) || !isDeterministicFindingId(f.id)) continue;
-    // Suffix only on a genuine collision, so the common case stays readable and stable across runs.
-    let renamed = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
-    for (let n = 2; used.has(renamed); n++) renamed = `${MODEL_FINDING_ID_PREFIX}${f.id}-${n}`;
-    used.add(renamed);
+    const canonical = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
+    // A second window repeating the same invented id must land on the SAME renamed finding and
+    // update it. Bumping to `-2` there would append a duplicate on every repeat instead, so a
+    // canonical name the case already holds is REUSED — it can only have come from renaming this
+    // exact id. Suffixes are for a real clash: another id in this delta, or an unrelated case row.
+    let renamed = canonical;
+    if (!known.has(canonical)) {
+      for (let n = 2; taken.has(renamed); n++) renamed = `${canonical}-${n}`;
+    }
+    taken.add(renamed);
     remap.set(f.id, renamed);
   }
   if (remap.size === 0) return delta;
@@ -272,12 +281,42 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
   const rename = (id: string): string => remap.get(id) ?? id;
   const renameRefs = <T extends { relatedFindingIds: string[] }>(rows: T[]): T[] =>
     rows.map((r) => ({ ...r, relatedFindingIds: r.relatedFindingIds.map(rename) }));
+  // A question's answer/pointer and a next step's action/rationale name findings in PROSE as well,
+  // and that prose is not decoration: reconsiderKeyQuestions matches finding ids inside it to force
+  // a stale answer back to "unknown". Left alone, the text would keep citing the reserved id while
+  // the structured link moved — and would then point at whatever finding a backfill later mints
+  // under that id. Exact-token only, so `f-auto-e5` never matches inside `f-auto-e50`.
+  const idPattern = new RegExp(
+    `(?<![A-Za-z0-9_-])(?:${[...remap.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|")})(?![A-Za-z0-9_-])`,
+    "g",
+  );
+  const renameProse = <T extends Record<string, unknown>>(row: T, fields: readonly (keyof T)[]): T => {
+    const patched: Partial<T> = {};
+    for (const field of fields) {
+      const value = row[field];
+      if (typeof value === "string" && value) {
+        patched[field] = value.replace(idPattern, (id) => rename(id)) as T[keyof T];
+      }
+    }
+    return { ...row, ...patched };
+  };
   return {
     ...delta,
     findings: delta.findings.map((f) => (remap.has(f.id) ? { ...f, id: rename(f.id) } : f)),
     ...(delta.forensicEvents ? { forensicEvents: renameRefs(delta.forensicEvents) } : {}),
-    ...(delta.keyQuestions ? { keyQuestions: renameRefs(delta.keyQuestions) } : {}),
-    ...(delta.nextSteps ? { nextSteps: renameRefs(delta.nextSteps) } : {}),
+    ...(delta.keyQuestions
+      ? { keyQuestions: renameRefs(delta.keyQuestions).map((q) => renameProse(q, ["answer", "pointer"])) }
+      : {}),
+    ...(delta.nextSteps
+      ? {
+          nextSteps: renameRefs(delta.nextSteps).map((n) =>
+            renameProse(n, ["action", "rationale", "pointer"]),
+          ),
+        }
+      : {}),
   };
 }
 

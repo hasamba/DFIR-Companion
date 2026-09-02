@@ -18,7 +18,7 @@ import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
 import { unionEventTechniques } from "../reconTechniques.js";
-import { isDeterministicFindingId, type deltaSchema } from "../responseSchema.js";
+import { isDeterministicFindingId, renameForgedFindingIds, type deltaSchema } from "../responseSchema.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
@@ -91,6 +91,12 @@ export interface DeltaFoldResult {
   eligibleIds: Set<string>;
   /** Delta finding ids that survived the false-positive filter. */
   surviving: Set<string>;
+  /**
+   * The delta the fold actually applied — the caller's, with any invented deterministic finding id
+   * renamed (#787). Grading reads the delta again for the model's relevance verdict and must key on
+   * these ids, not the ones the model sent, or a renamed finding silently loses that verdict.
+   */
+  delta: ReturnType<typeof deltaSchema.parse>;
 }
 
 /**
@@ -104,7 +110,12 @@ export async function foldSynthesisDelta(
   ctx: DeltaFoldContext,
   input: DeltaFoldInput,
 ): Promise<DeltaFoldResult> {
-  const { caseId, state, delta, markers, scopedEvents, playbookTasks } = input;
+  const { caseId, state, markers, scopedEvents, playbookTasks } = input;
+  // ONE normalization for the whole fold (#787). Everything below reads the delta again — the event
+  // back-links here, the relevance verdict in grading — and each read matches the model's ids
+  // against the ids the merge persisted. Renaming inside the merge alone would leave those reads
+  // looking for an id that no longer exists, silently dropping both.
+  const delta = renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id)));
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts);
@@ -130,6 +141,7 @@ export async function foldSynthesisDelta(
     highSeverityBackfillCount: netted.highSeverityBackfillCount,
     eligibleIds,
     surviving,
+    delta,
   };
 }
 

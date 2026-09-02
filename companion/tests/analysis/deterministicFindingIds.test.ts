@@ -105,14 +105,52 @@ describe("renameForgedFindingIds", () => {
     expect(out.nextSteps?.[0].relatedFindingIds).toEqual([renamed]);
   });
 
-  it("does not collide with an id already in the case, or with another in the delta", () => {
+  it("suffixes only on a real clash — another finding in the same delta already owns the name", () => {
+    // Reuse is for the name an earlier window gave THIS id. A different finding in the same delta
+    // that happens to be called `f-model-f-auto-e5` is not that, so the two must stay separate.
     const out = renameForgedFindingIds(
-      delta([modelFinding("f-auto-e5"), modelFinding("f-gap-e1-e2")]),
-      new Set(["f-model-f-auto-e5"]),
+      delta([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]),
+      new Set(),
     );
     const ids = out.findings.map((f) => f.id);
     expect(new Set(ids).size).toBe(2);
-    expect(ids).not.toContain("f-model-f-auto-e5");
+    expect(ids).toContain("f-model-f-auto-e5-2");
+  });
+
+  it("reuses the name an earlier window gave the same invented id, instead of stacking a -2", () => {
+    // Window 1 renamed it and the case kept that row. Window 2 repeating the id must UPDATE that
+    // row, not append `f-model-f-auto-e5-2` beside it — and again on every window after.
+    const out = renameForgedFindingIds(delta([modelFinding("f-auto-e5")]), new Set(["f-model-f-auto-e5"]));
+    expect(out.findings[0].id).toBe("f-model-f-auto-e5");
+  });
+
+  it("renames the id where a question or next step names it in prose, not only in the link", () => {
+    // reconsiderKeyQuestions matches finding ids inside this prose, so a stale one is not cosmetic.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], {
+        keyQuestions: [
+          { id: "q1", question: "q?", answer: "see f-auto-e5", pointer: "f-auto-e5", relatedFindingIds: [] },
+        ],
+        nextSteps: [
+          { id: "n1", action: "triage f-auto-e5", rationale: "f-auto-e5 is open", relatedFindingIds: [] },
+        ],
+      }),
+      new Set(),
+    );
+    expect(out.keyQuestions?.[0].answer).toBe("see f-model-f-auto-e5");
+    expect(out.keyQuestions?.[0].pointer).toBe("f-model-f-auto-e5");
+    expect(out.nextSteps?.[0].action).toBe("triage f-model-f-auto-e5");
+    expect(out.nextSteps?.[0].rationale).toBe("f-model-f-auto-e5 is open");
+  });
+
+  it("matches whole ids only, so f-auto-e5 leaves f-auto-e50 alone", () => {
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], {
+        nextSteps: [{ id: "n1", action: "f-auto-e50 stays", relatedFindingIds: [] }],
+      }),
+      new Set(),
+    );
+    expect(out.nextSteps?.[0].action).toBe("f-auto-e50 stays");
   });
 
   it("maps a repeated invented id to one replacement, so the merge still folds them together", () => {

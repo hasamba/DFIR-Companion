@@ -618,6 +618,26 @@ describe("synthesize — a model may not mint a deterministic finding id (#787)"
     expect(state.findings.find((f) => f.id === "f-auto-e1")!.title).not.toBe("model claim");
   });
 
+  it("carries the model's event links onto the renamed finding, so nothing is double-counted", async () => {
+    // The fold reads the delta AGAIN after the merge, to back-link events and to grade. If only the
+    // merge renamed, those reads would look for the id the model sent, find nothing, drop the link,
+    // and the backfill would then raise a SECOND finding for an event the model had already covered.
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("e1", "2026-06-01T00:00:00.000Z", "ransomware note dropped", "Critical"),
+    );
+    await stateStore.save(seeded);
+
+    const state = await pipelineWith(
+      delta({ findings: [modelFinding("f-auto-invented", "model claim", ["e1"])] }),
+    ).synthesize("c1");
+
+    expect(state.findings.map((f) => f.id)).toEqual(["f-model-f-auto-invented"]);
+    expect(state.forensicTimeline.find((e) => e.id === "e1")!.relatedFindingIds).toEqual([
+      "f-model-f-auto-invented",
+    ]);
+  });
+
   it("keeps the id when the model updates a deterministic finding the case really holds", async () => {
     // The prompts echo every prior finding as `[id] title` and tell the model to update BY ID. A
     // model doing exactly that must not have its update turned into a second, unprotected finding —
