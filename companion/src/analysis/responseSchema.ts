@@ -354,8 +354,13 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
     // no longer blocks then mints that id for a real finding — so the text ends up pointing at
     // somebody else's evidence. Every finding is swept, not just the renamed ones: an untouched
     // finding can cite a renamed one just as easily.
+    //
+    // NOT the title. A finding false-positive marker stores a title keyword and `applyFalsePositive`
+    // matches it against the title by substring — so editing a title breaks the marker, and a
+    // finding the analyst explicitly rejected comes back on the next synthesis. A stale id in a
+    // title is visible; an undone rejection is not, and it is the analyst's call being overturned.
     findings: delta.findings.map((f) => {
-      const swept = renameProse(f, ["title", "description", "confidenceReason"]);
+      const swept = renameProse(f, ["description", "confidenceReason"]);
       return remap.has(f.id) ? { ...swept, id: rename(f.id) } : swept;
     }),
     ...(delta.forensicEvents ? { forensicEvents: renameRefs(delta.forensicEvents) } : {}),
@@ -374,6 +379,11 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
     // longer do. The uncertainty ledger's free text can name one too.
     ...(delta.attackerPath ? { attackerPath: renameText(delta.attackerPath) } : {}),
     ...(delta.narrativeTimeline ? { narrativeTimeline: renameText(delta.narrativeTimeline) } : {}),
+    // Both of these are persisted as well — `summary` becomes `lastSummary` and feeds the report
+    // and the next run's prompt, `timelineNote` becomes a timeline row — so a reserved id left in
+    // either outlives the finding that carried it.
+    ...(delta.summary ? { summary: renameText(delta.summary) } : {}),
+    ...(delta.timelineNote ? { timelineNote: renameText(delta.timelineNote) } : {}),
     ...(delta.uncertainties
       ? { uncertainties: delta.uncertainties.map((u) => renameProse(u, ["basis", "gap"])) }
       : {}),

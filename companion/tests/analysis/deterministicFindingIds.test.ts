@@ -192,11 +192,17 @@ describe("renameForgedFindingIds", () => {
         attackerPath: "entry via f-auto-e5 then lateral",
         narrativeTimeline: "f-auto-e5 opened the door",
         uncertainties: [{ topic: "t", basis: "rests on f-auto-e5", gap: "confirm f-auto-e5" }],
+        summary: "f-auto-e5 is the lead",
+        timelineNote: "raised f-auto-e5",
       }),
       new Set(),
     );
     expect(out.attackerPath).toBe("entry via f-model-f-auto-e5 then lateral");
     expect(out.narrativeTimeline).toBe("f-model-f-auto-e5 opened the door");
+    // `summary` is persisted as lastSummary and feeds the report and the next prompt;
+    // `timelineNote` becomes a timeline row. Both outlive the id if left alone.
+    expect(out.summary).toBe("f-model-f-auto-e5 is the lead");
+    expect(out.timelineNote).toBe("raised f-model-f-auto-e5");
     expect(out.uncertainties?.[0].basis).toBe("rests on f-model-f-auto-e5");
     expect(out.uncertainties?.[0].gap).toBe("confirm f-model-f-auto-e5");
   });
@@ -233,11 +239,22 @@ describe("renameForgedFindingIds", () => {
       new Set(),
     );
     expect(out.findings[0].id).toBe("f-model-f-waves");
-    expect(out.findings[0].title).toBe("f-model-f-waves: staged in bursts");
+    // The TITLE is deliberately left alone: a finding false-positive marker stores a title keyword
+    // and applyFalsePositive matches it by substring, so editing the title would silently undo an
+    // analyst's rejection of this finding.
+    expect(out.findings[0].title).toBe("f-waves: staged in bursts");
     expect(out.findings[0].description).toBe("see f-model-f-waves");
     expect(out.findings[0].confidenceReason).toBe("derived from f-model-f-waves");
     // An untouched finding citing a renamed one is swept as well.
     expect(out.findings[1].description).toBe("corroborates f-model-f-waves");
+  });
+
+  it("rewrites the executive summary, which is persisted and feeds the next prompt", () => {
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], { summary: "the case turns on f-auto-e5" }),
+      new Set(),
+    );
+    expect(out.summary).toBe("the case turns on f-model-f-auto-e5");
   });
 
   it("does not redirect a citation of a finding the case already holds under a different case", () => {
