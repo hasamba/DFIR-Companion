@@ -1,20 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { carryOutOfWindowFindings } from "../../src/analysis/ai/synthesisMerge.js";
-import { backfillSilenceGapFindings, detectTimelineGaps } from "../../src/analysis/gapDetect.js";
-import { backfillHighSeverityFindings } from "../../src/analysis/highSeverityFindings.js";
+import { BACKFILLS } from "../helpers/deterministicBackfills.js";
 import {
   isDeterministicFindingId,
   renameForgedFindingIds,
   type AnalysisDelta,
 } from "../../src/analysis/responseSchema.js";
 import { mergeDelta } from "../../src/analysis/stateMerge.js";
-import {
-  emptyState,
-  type Finding,
-  type ForensicEvent,
-  type InvestigationState,
-} from "../../src/analysis/stateTypes.js";
+import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 /**
  * A deterministic finding id is a PROVENANCE claim (#787).
@@ -287,44 +281,14 @@ describe("what the rename protects", () => {
  * The pair of assertions is deliberate. The predicate alone would pass for a pass that mints a
  * registered id but never back-links its finding to an event — `supportingEventIds` drops an
  * unlinked finding as "nothing proves it is outside the window", so it is silently not carried
- * either. Only running the carry catches that.
+ * either. Only running the carry catches that, and running it needs the pass to be in the table.
+ *
+ * Which is why the table's own completeness is not left to whoever adds the next pass: the
+ * architecture gate parses src/analysis for every `export function backfill*` and fails when one is
+ * missing from BACKFILLS. The literal scan there cannot stand in for this — it reads an unlinked
+ * pass's id as perfectly well-formed, because it is.
  */
 describe("every deterministic backfill registers the id it mints (#758)", () => {
-  // Two bursts three weeks apart: enough silence between them for a complete gap AND the wave
-  // cadence, so one timeline drives all three passes.
-  const burstEvents: ForensicEvent[] = [
-    ...[0, 1, 2].map((i) => event(`a${i}`, [], `2026-01-01T00:0${i}:00.000Z`)),
-    ...[0, 1, 2].map((i) => event(`b${i}`, [], `2026-01-20T00:0${i}:00.000Z`)),
-  ];
-  const stamp = "2026-01-21T00:00:00.000Z";
-
-  // Each entry RUNS the real pass and hands back the state it produced. Add a new backfill here.
-  const BACKFILLS: { name: string; run: () => InvestigationState }[] = [
-    {
-      name: "backfillHighSeverityFindings",
-      run: () => {
-        const state = { ...emptyState("c1"), forensicTimeline: burstEvents };
-        return backfillHighSeverityFindings(state, new Set(burstEvents.map((e) => e.id)), stamp);
-      },
-    },
-    {
-      name: "backfillSilenceGapFindings",
-      run: () => {
-        const state = { ...emptyState("c1"), forensicTimeline: burstEvents };
-        const gaps = detectTimelineGaps(burstEvents);
-        return backfillSilenceGapFindings(state, gaps, stamp);
-      },
-    },
-    {
-      name: "backfillActivityWaveFinding",
-      run: () => {
-        const state = { ...emptyState("c1"), forensicTimeline: burstEvents };
-        const { pattern } = detectGapsWithWaves(burstEvents);
-        return backfillActivityWaveFinding(state, pattern, stamp);
-      },
-    },
-  ];
-
   it.each(BACKFILLS)("$name mints an id the register knows", ({ run }) => {
     const minted = run().findings;
     // A pass that produced nothing would pass every assertion below without testing anything.

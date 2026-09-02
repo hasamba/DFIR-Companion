@@ -12,10 +12,20 @@
 // `f-newthing-${id}` inline compiles, ships, and loses findings in silence.
 //
 // tests/analysis/deterministicFindingIds.test.ts covers that from the behaviour side: it RUNS each
-// backfill and puts the id it really mints through the predicate and the carry. That table is only
-// as complete as the person adding the pass remembers to make it. This is the half that needs no
-// remembering — every finding-id literal in the source is found and checked, wherever it is
-// written and whether or not its author knew this rule existed.
+// backfill and puts the id it really mints through the predicate and the carry. This file is the
+// half that needs no remembering, and it has two jobs, because registration is not the only way a
+// pass loses its findings:
+//
+//   1. Every finding-id literal in the source is found and checked, wherever it is written and
+//      whether or not its author knew this rule existed.
+//   2. Every `export function backfill*` in src/analysis appears in that behaviour table.
+//
+// The second exists because the first cannot see LINKAGE. A pass that registers its prefix
+// correctly but never back-links its finding to an event is dropped by `supportingEventIds` as
+// "nothing proves it is outside the window" — not carried, same lost findings, and a literal scan
+// reads its id as perfectly well-formed. Only running the pass through the carry catches that, and
+// running it requires the pass to be in the table. So the table's completeness is itself pinned
+// here rather than left to a comment saying "add a new backfill here".
 //
 // PARSED, NOT SCANNED, for the reason childStderr.test.ts gives at length: the register's own
 // docblock names `f-auto-` and `f-gap-` in prose, dashboard-filters.js explains both prefixes over
@@ -29,6 +39,7 @@ import {
   MODEL_FINDING_ID_PREFIX,
   isDeterministicFindingId,
 } from "../../src/analysis/responseSchema.js";
+import { BACKFILLS } from "../helpers/deterministicBackfills.js";
 
 const SRC = new URL("../../src/", import.meta.url);
 const DASHBOARD_FILTERS = new URL("../../../public/js/dashboard-filters.js", import.meta.url);
@@ -172,5 +183,48 @@ describe("the dashboard's copy of the prefixes matches the register", () => {
         "responseSchema.ts mints. A lens matching an id the product does not mint hides nothing, " +
         "and says so nowhere",
     ).toEqual([AUTO_FINDING_ID_PREFIX, GAP_FINDING_ID_PREFIX].sort());
+  });
+});
+
+describe("the behaviour table covers every backfill that exists", () => {
+  // The literal scan above proves an id is registered. It cannot prove the pass LINKS its finding
+  // to an event, and an unlinked finding is not carried either — `supportingEventIds` drops it
+  // before the window test. That check lives in the behaviour table, which can only check a pass
+  // it has been given, so the table's completeness is what makes the pair airtight.
+  //
+  // `export function backfill*` is the naming every one of the three passes already uses, and it
+  // is what a fourth will be called by anyone matching the surrounding code. A pass deliberately
+  // named otherwise is not caught here — but it is not caught by a comment either, and this at
+  // least fails for the ordinary case instead of trusting it.
+  it("lists every `export function backfill*` in src/analysis", async () => {
+    const dir = new URL("../../src/analysis/", import.meta.url);
+    const exported: string[] = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+      const source = await readFile(new URL(entry.name, dir), "utf8");
+      const sf = ts.createSourceFile(entry.name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      for (const node of sf.statements) {
+        if (
+          ts.isFunctionDeclaration(node) &&
+          node.name?.text.startsWith("backfill") &&
+          node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+        ) {
+          exported.push(node.name.text);
+        }
+      }
+    }
+
+    expect(
+      exported.length,
+      "found no backfill passes — the walk is looking in the wrong place",
+    ).toBeGreaterThan(0);
+    expect(
+      exported.sort(),
+      "a deterministic backfill pass that the behaviour table in " +
+        "tests/analysis/deterministicFindingIds.test.ts does not run. Add it to BACKFILLS there: " +
+        "registering its id prefix is only half of what it needs, and the other half — that it " +
+        "back-links its finding to an event, without which the finding is not carried across a " +
+        "narrowed window either — can only be checked by running the pass (#751/#758)",
+    ).toEqual(BACKFILLS.map((b) => b.name).sort());
   });
 });
