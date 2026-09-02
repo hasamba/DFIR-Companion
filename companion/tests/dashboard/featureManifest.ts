@@ -334,6 +334,12 @@ export const FEATURES: Feature[] = [
       "openHuntModal",
       "closeHuntModal",
       "launchHuntInto",
+      "sigmaCompileCardHtml",
+      "sigmaCompileResultHtml",
+      "compileSigmaRule",
+      "openSigmaCompileWith",
+      "sigmaCompileChip",
+      "compileFindingSigma",
     ],
     // The Sigma/hunt helpers: YAML quoting and value-list building, and the per-format escapers.
     // No mutable state — toastTimer was the only `let` under this banner and it stayed with

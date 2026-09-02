@@ -426,6 +426,8 @@
               return `<div class="hunt-card">${head}${content}${runnable ? `<div class="hunt-run-res" id="huntRunRes${idx}"></div>` : ""}</div>`;
             })
             .join("");
+    body.innerHTML += sigmaCompileCardHtml();
+    bindSigmaCard();
     body.querySelectorAll(".hunt-copy").forEach(
       (b) =>
         (b.onclick = () => {
@@ -570,12 +572,169 @@
       });
   }
 
+  // ── Sigma rule → VQL (#798) ─────────────────────────────────────────────────────────────────
+  // The paste card lives in the hunt modal. Compile is offline (POST /cases/:id/sigma/compile) and
+  // deterministic — no AI. Only Run needs the Velociraptor API, and it goes through launchHuntInto
+  // with the case context so the hunt is recorded in the hunting profile like any other fleet
+  // hunt. The card is gated on the `velociraptor` hunt platform, not on `sigma`: it consumes a
+  // Sigma rule and produces VQL, so it is a Velociraptor surface.
+  function sigmaCompileEnabled() {
+    return enabledHuntPlatforms.has("velociraptor");
+  }
+  function sigmaCompileCardHtml(prefill) {
+    if (!sigmaCompileEnabled()) return "";
+    return (
+      `<div class="hunt-card sigma-compile-card">` +
+      `<div class="hunt-card-head"><span>Sigma rule → Velociraptor hunt</span><div>` +
+      `<button class="sigma-compile-go" id="sigmaCompileBtn" title="Compile this Sigma rule to VQL — deterministic, no AI">Compile</button></div></div>` +
+      `<textarea class="hunt-vql-edit" id="sigmaYamlIn" spellcheck="false" placeholder="Paste a Sigma rule (YAML). Supported logsource categories: process_creation, network_connection, file_event, registry_*">${esc(prefill || "")}</textarea>` +
+      `<div class="hunt-run-res" id="sigmaCompileRes"></div></div>`
+    );
+  }
+  // What the analyst sees under the paste box: the VQL card, the refusal list, or one error line.
+  // Refusal lines are written by the parser and the compiler for the analyst and rendered as text.
+  function sigmaCompileResultHtml(result) {
+    if (!result || result.error)
+      return `<div data-safe-style="color:var(--sev-high);font-size:12px">error: ${esc((result && result.error) || "compile failed")}</div>`;
+    if (!result.ok) {
+      const items = (result.refusals || [])
+        .map((r) => `<li><code>${esc(r.path)}</code> — ${esc(r.message)}</li>`)
+        .join("");
+      return (
+        `<div class="sigma-refusals"><div data-safe-style="font-size:12px;margin-bottom:4px">The Companion cannot express this rule as VQL. Nothing was compiled.</div>` +
+        `<ul>${items}</ul></div>`
+      );
+    }
+    const run = veloEnabled
+      ? `<button class="hunt-run" id="sigmaRunBtn" title="Launch a hunt that runs this VQL on ALL enrolled Velociraptor clients">▶ Run hunt (all clients)</button>`
+      : `<span data-safe-style="color:var(--text-muted);font-size:11px">Velociraptor API not configured — copy the VQL, or set the API config path in Settings → Integrations</span>`;
+    return (
+      `<div class="sigma-coverage" data-safe-style="font-size:12px;margin:6px 0">Compiled <strong>${esc(result.title || "rule")}</strong> → ${esc(result.coverage || "")}</div>` +
+      `<textarea class="hunt-vql-edit" id="sigmaVqlOut" spellcheck="false">${esc(result.vql)}</textarea>` +
+      `<div data-safe-style="display:flex;gap:6px;align-items:center;margin-top:6px"><button class="sigma-compile-go" id="sigmaCopyBtn">Copy</button>${run}</div>` +
+      `<div class="hunt-run-res" id="sigmaRunRes"></div>`
+    );
+  }
+  function bindSigmaResult(res, j, caseId) {
+    if (!j || !j.ok) return;
+    const copy = res.querySelector("#sigmaCopyBtn");
+    const out = res.querySelector("#sigmaVqlOut");
+    if (copy && out)
+      copy.onclick = () =>
+        navigator.clipboard
+          .writeText(out.value)
+          .then(() => {
+            copy.textContent = "Copied ✓";
+            copy.classList.add("copied");
+            setTimeout(() => {
+              copy.textContent = "Copy";
+              copy.classList.remove("copied");
+            }, 1500);
+          })
+          .catch(() => {
+            copy.textContent = "copy failed";
+          });
+    const run = res.querySelector("#sigmaRunBtn");
+    if (run && out)
+      run.onclick = () =>
+        launchHuntInto(out.value, `Sigma: ${j.title || "rule"}`, res.querySelector("#sigmaRunRes"), run, {
+          caseId,
+          title: j.title || "Sigma rule",
+          source: "fleet",
+          mitre: j.mitreTechniques || [],
+        });
+  }
+  function compileSigmaRule() {
+    const box = document.getElementById("sigmaYamlIn");
+    const res = document.getElementById("sigmaCompileRes");
+    const btn = document.getElementById("sigmaCompileBtn");
+    if (!box || !res) return;
+    const caseEl = document.getElementById("caseId");
+    const caseId = ((caseEl && caseEl.value) || "").trim();
+    const yaml = box.value;
+    if (!caseId) {
+      res.innerHTML = sigmaCompileResultHtml({ error: "connect to a case first" });
+      return;
+    }
+    if (!yaml.trim()) {
+      res.innerHTML = sigmaCompileResultHtml({ error: "paste a Sigma rule first" });
+      return;
+    }
+    if (btn) btn.disabled = true;
+    fetch(`/cases/${encodeURIComponent(caseId)}/sigma/compile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ yaml }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        res.innerHTML = sigmaCompileResultHtml(j);
+        bindSigmaResult(res, j, caseId);
+      })
+      .catch((e) => {
+        res.innerHTML = sigmaCompileResultHtml({ error: e.message });
+      })
+      .finally(() => {
+        if (btn) btn.disabled = false;
+      });
+  }
+  function bindSigmaCard() {
+    const btn = document.getElementById("sigmaCompileBtn");
+    if (btn) btn.onclick = compileSigmaRule;
+  }
+  // Open the modal on the Sigma card alone, prefilled with a rule, and compile it at once. The two
+  // shortcuts — the per-finding chip and the query translator's Sigma card — both land here.
+  function openSigmaCompileWith(yaml, label) {
+    huntLabel = label || "Sigma rule";
+    document.getElementById("huntTitle").textContent = "Sigma rule → Velociraptor hunt";
+    document.getElementById("huntSub").textContent = huntLabel;
+    document.getElementById("huntBody").innerHTML =
+      sigmaCompileCardHtml(yaml) ||
+      "<div data-safe-style='color:var(--text-muted);font-size:12px'>Velociraptor is not an enabled hunt platform (<code>DFIR_HUNT_PLATFORMS</code>), so there is nothing to compile to.</div>";
+    bindSigmaCard();
+    document.getElementById("huntOverlay").classList.add("open");
+    if (yaml && sigmaCompileEnabled()) compileSigmaRule();
+  }
+  // Per-finding action-row chip, next to "Export as Sigma draft": the same draft, compiled.
+  function sigmaCompileChip(id) {
+    if (!sigmaCompileEnabled()) return "";
+    return `<button class="sigma-compile-btn" data-sigma-cid="${escAttr(String(id))}" title="Compile this finding's Sigma draft to Velociraptor VQL and open it in the hunt modal">${ICON_HUNT}</button>`;
+  }
+  function compileFindingSigma(findingId) {
+    const f = ((DfirState.lastState() && DfirState.lastState().findings) || []).find(
+      (x) => x.id === findingId,
+    );
+    if (!f) return;
+    const yaml = findingSigmaYaml(f, findingSigmaContext(f));
+    if (!yaml) {
+      showToast(
+        "No Sigma draft: this finding has no hash / IP / domain / path / process indicators on its related events or IOCs to key a rule on.",
+        "warn",
+      );
+      return;
+    }
+    openSigmaCompileWith(yaml, f.title || String(f.id));
+  }
+
   // The two controls the page's shared modal-wiring block used to bind.
   function initHuntModal() {
     document.getElementById("huntClose").onclick = closeHuntModal;
     document.getElementById("huntOverlay").addEventListener("click", (e) => {
       if (e.target.id === "huntOverlay") closeHuntModal();
     });
+      // Capture phase, so the chip wins over the finding row's own click handlers and the row does
+    // not toggle under the analyst's cursor.
+    document.addEventListener(
+      "click",
+      (e) => {
+        const chip = e.target.closest && e.target.closest(".sigma-compile-btn");
+        if (!chip) return;
+        e.stopPropagation();
+        e.preventDefault();
+        compileFindingSigma(chip.getAttribute("data-sigma-cid"));
+      },
+      true,
+    );
   }
 
   window.exportFindingSigma = exportFindingSigma;
@@ -587,4 +746,10 @@
   window.closeHuntModal = closeHuntModal;
   window.launchHuntInto = launchHuntInto;
   window.initHuntModal = initHuntModal;
+  window.sigmaCompileCardHtml = sigmaCompileCardHtml;
+  window.sigmaCompileResultHtml = sigmaCompileResultHtml;
+  window.compileSigmaRule = compileSigmaRule;
+  window.openSigmaCompileWith = openSigmaCompileWith;
+  window.sigmaCompileChip = sigmaCompileChip;
+  window.compileFindingSigma = compileFindingSigma;
 })();

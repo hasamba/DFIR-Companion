@@ -353,6 +353,16 @@ body.has-servicenow .snow-push-btn, body.has-servicenow #findingBulkSnowBtn { di
 .hunt-card-head > div { display: flex; gap: 6px; }
 .hunt-run { background: var(--success); border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
 .hunt-run:disabled { opacity: .6; cursor: default; }
+.sigma-compile-card .hunt-vql-edit { min-height: 140px; }
+.sigma-compile-go { background: var(--accent-solid); border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.sigma-compile-go.copied { background: var(--success); }
+.sigma-compile-go:disabled { opacity: .6; cursor: default; }
+.sigma-refusals ul { margin: 4px 0 0 18px; padding: 0; font-size: 12px; color: var(--sev-high); }
+.sigma-refusals code { color: var(--text-bright); }
+.sigma-compile-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 6px; font-size: 10px; cursor: pointer; line-height: 16px; }
+.sigma-compile-btn:hover { color: var(--accent); border-color: var(--accent); }
+.sigma-compile-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
 .hunt-vql-edit { width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical; background: var(--bg-primary);
   color: var(--text-bright); border: 0; border-top: 1px solid var(--border-color); padding: 10px; font-size: 11px;
   font-family: ui-monospace, Menlo, Consolas, monospace; }

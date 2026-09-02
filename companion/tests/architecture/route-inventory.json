@@ -216,6 +216,7 @@
     "ROUTE PUT /cases/:id/hunt-query/saved/:huntId",
     "ROUTE DELETE /cases/:id/hunt-query/saved/:huntId",
     "ROUTE POST /cases/:id/hunt-query/finding-evidence",
+    "ROUTE POST /cases/:id/sigma/compile",
     "ROUTE GET /cases/:id/swimlane",
     "ROUTE GET /cases/:id/timeline-gaps",
     "ROUTE POST /cases/:id/timeline-gaps/hypothesize",

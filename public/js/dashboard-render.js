@@ -424,7 +424,7 @@
                 : "") +
               `</span>` +
               `<span class="finding-conf-cell">${confMeter}</span>` +
-              `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
+              `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${sigmaCompileChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
               (hasEvidence
                 ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>`
                 : "") +

@@ -21,6 +21,37 @@ Each suggestion card shows the VQL query with a **Deploy hunt** button (requires
 
 ---
 
+## Sigma Rule → Fleet Hunt
+
+**Paste a Sigma rule, compile it, launch it.** The hunt-query modal (the 🔍 button on a finding or a
+detected value) carries a **Sigma rule → Velociraptor hunt** card. Paste a rule and press
+**Compile**. The Companion turns it into VQL deterministically — no AI is involved, and the same
+rule always gives the same VQL — and shows it in an editable box with the usual **▶ Run hunt (all
+clients)** button. The hunt is recorded in the Hunting Profile like any other fleet hunt.
+
+Two shortcuts feed the same card: the **Compile to VQL** chip beside a finding's **Export as Sigma
+draft** action, and the **Compile to VQL** button on the Query Translator's Sigma card.
+
+**What compiles.** One fixed template per `logsource.category`. The compiled VQL opens with a
+header that says which one it is:
+
+| Sigma category | Runs on the endpoint as | Covers |
+|---|---|---|
+| `process_creation` | `pslist()` | running processes only, not process history |
+| `network_connection` | `netstat()` | open connections only, not connection history |
+| `file_event` | `glob()` | files on disk now, under roots taken from the rule |
+| `registry_set` / `registry_event` / `registry_add` / `registry_delete` | `glob(accessor="registry")` | keys and values as they are now; the key must be rooted in a hive |
+
+**What is refused.** Any other category, any field the template has no column for (for example
+`DestinationHostname` — `netstat()` has no hostname column), the modifiers `base64`, `windash`,
+`fieldref` and the like, aggregations, `near` and `timeframe`. A refusal lists every problem in
+the rule, one line each, with the YAML path. Nothing half-translated is ever offered to run.
+
+The card appears when Velociraptor is an enabled hunt platform (`DFIR_HUNT_PLATFORMS`). Compile
+works before the Velociraptor API is configured; only **Run** needs it.
+
+---
+
 ## Hunting Feedback Loop
 
 The **Hunting Profile** panel tracks every hunt's outcome:
