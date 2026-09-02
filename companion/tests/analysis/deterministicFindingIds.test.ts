@@ -113,14 +113,39 @@ describe("renameForgedFindingIds", () => {
     expect(out.findings[0].id).toBe("f-model-f-model-f-auto-e5");
   });
 
-  it("suffixes only on a real clash — another finding in the same delta already owns the name", () => {
+  it("keeps two inventions apart without arbitrating, because prefixing is injective", () => {
     const out = renameForgedFindingIds(
       delta([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]),
       new Set(),
     );
-    const ids = out.findings.map((f) => f.id);
-    expect(new Set(ids).size).toBe(2);
-    expect(ids).toContain("f-model-f-auto-e5-2");
+    expect(out.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5", "f-model-f-model-f-auto-e5"]);
+  });
+
+  it("gives a repeated invention the same id every window, so it updates and never appends", () => {
+    // The failure this pins: a name chosen by arbitrating a clash means nothing to the next window,
+    // so replaying one delta drifts `-2`, `-3`, … and stacks a duplicate finding each time.
+    const input = delta([modelFinding("f-auto-e5")]);
+    const first = renameForgedFindingIds(input, new Set()).findings.map((f) => f.id);
+    const second = renameForgedFindingIds(input, new Set(first)).findings.map((f) => f.id);
+    const third = renameForgedFindingIds(input, new Set([...first, ...second])).findings.map((f) => f.id);
+    expect(first).toEqual(["f-model-f-auto-e5"]);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it("adds no new row on any replay, even when one delta names the same finding two ways", () => {
+    // Adversarial shape: `f-auto-e5` and the name it gets renamed to, in one delta. From window two
+    // they both denote the row window one created, so they fold onto it. What must never happen is
+    // a THIRD name appearing — that is the duplicate accumulation, one indirection later.
+    const input = delta([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]);
+    const first = new Set(renameForgedFindingIds(input, new Set()).findings.map((f) => f.id));
+    let known = first;
+    for (let window = 0; window < 3; window++) {
+      const ids = renameForgedFindingIds(input, known).findings.map((f) => f.id);
+      expect(ids.filter((id) => !first.has(id))).toEqual([]);
+      known = new Set([...known, ...ids]);
+    }
+    expect(known).toEqual(first);
   });
 
   it("lets the model update a renamed finding by the id the prompt now shows it", () => {

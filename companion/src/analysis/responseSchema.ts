@@ -279,21 +279,22 @@ export type AnalysisDelta = z.infer<typeof deltaSchema>;
 // already moved into the `f-model-` namespace is reserved, so a second pass would move it again.
 // Deterministic importers are unaffected: every one of them builds `findings: []`.
 export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
-  const taken = new Set([...known, ...delta.findings.map((f) => f.id)]);
   const remap = new Map<string, string>();
   for (const f of delta.findings) {
     if (remap.has(f.id) || known.has(f.id) || !isReservedFindingId(f.id)) continue;
-    const canonical = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
-    // A second window repeating the same invented id must land on the SAME renamed finding and
-    // update it. Bumping to `-2` there would append a duplicate on every repeat instead, so a
-    // canonical name the case already holds is REUSED — it can only have come from renaming this
-    // exact id. Suffixes are for a real clash: another id in this delta, or an unrelated case row.
-    let renamed = canonical;
-    if (!known.has(canonical)) {
-      for (let n = 2; taken.has(renamed); n++) renamed = `${canonical}-${n}`;
-    }
-    taken.add(renamed);
-    remap.set(f.id, renamed);
+    // One deterministic name per invented id, with no collision arbitration — and that is the whole
+    // point. A window repeating the same invention lands on the SAME name, so it UPDATES the row an
+    // earlier window created instead of appending a duplicate beside it.
+    //
+    // Nothing can be sitting on that name except the row this same rule already put there:
+    // prefixing is injective, so two different ids never collide; and an id that survives this pass
+    // unrenamed is either outside the reserved namespace (so it cannot look like one of these) or
+    // already in the case — in which case the name IS its row, and landing on it is correct.
+    //
+    // An earlier revision suffixed a `-2` on apparent clashes. That is what must not happen: a
+    // suffixed name carries no meaning the next window can reuse, so replaying one delta drifts to
+    // `-3`, `-4`, and the duplicates this rule exists to prevent come back one indirection later.
+    remap.set(f.id, `${MODEL_FINDING_ID_PREFIX}${f.id}`);
   }
   if (remap.size === 0) return delta;
 
