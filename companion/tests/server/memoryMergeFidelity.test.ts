@@ -131,6 +131,45 @@ describe("#776 — malfind regions survive the case merge", () => {
     POLL_TIMEOUT_MS * 2,
   );
 
+  // `Unknown` in the address column used to satisfy the address branch, which both printed it as a
+  // location and skipped the fallback — so these three collapsed back to one row.
+  it(
+    "does not let a placeholder address stand in for a real one",
+    async () => {
+      const { app, stateStore, importMetaStore } = await makeApp();
+      await importRows(app, importMetaStore, [
+        {
+          PID: 3120,
+          Process: "evil.exe",
+          "Start VPN": "Unknown",
+          Tag: "VadS",
+          Protection: "PAGE_EXECUTE_READWRITE",
+          CommitCharge: 1,
+        },
+        {
+          PID: 3120,
+          Process: "evil.exe",
+          "Start VPN": "Unknown",
+          Tag: "VadS",
+          Protection: "PAGE_EXECUTE_READWRITE",
+          CommitCharge: 2,
+        },
+        {
+          PID: 3120,
+          Process: "evil.exe",
+          "Start VPN": "Unknown",
+          Tag: "VadS",
+          Protection: "PAGE_EXECUTE_READWRITE",
+          CommitCharge: 3,
+        },
+      ]);
+      const rows = await malfindRows(stateStore);
+      expect(rows).toHaveLength(3);
+      expect(rows.every((e) => !/Unknown/.test(e.description))).toBe(true);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
   it(
     "reports a truthful count when the source gives nothing to tell the regions apart",
     async () => {

@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { filePathIoc, regionAddress, serviceImagePath } from "../../src/analysis/memoryFields.js";
+import {
+  filePathIoc,
+  isPlaceholderCell,
+  malfindRegion,
+  pickTime,
+  regionAddress,
+  serviceImagePath,
+} from "../../src/analysis/memoryFields.js";
 
 describe("serviceImagePath", () => {
   it("unwraps a quoted ImagePath and drops the arguments after it", () => {
@@ -77,5 +84,44 @@ describe("regionAddress", () => {
 
   it("stays exact past 2^53, where a double would round", () => {
     expect(regionAddress("18446744073709551615")).toBe("0xffffffffffffffff");
+  });
+});
+
+// Three copies of the placeholder list lived in this file and drifted apart. The shortest one was
+// the address path, so `Unknown` in a Start VPN column read as a real address: the row said
+// "at Unknown", and — worse — matching there SKIPPED the fallback to End VPN and CommitCharge, so
+// two regions told apart only by their commit charge became one row again at the case merge.
+describe("isPlaceholderCell", () => {
+  it("covers every spelling the memory tools print for an absent value", () => {
+    for (const v of ["N/A", "n/a", "n\\a", "-", "--", "none", "NULL", "Unknown", "unavailable", "?", "  -  "])
+      expect(isPlaceholderCell(v), v).toBe(true);
+  });
+
+  it("does not touch a real value", () => {
+    for (const v of ["0x2000000", "2178332819456", "C:\\Windows", "VadS", "0"])
+      expect(isPlaceholderCell(v), v).toBe(false);
+  });
+
+  it("is the SAME list every reader uses, so the copies cannot drift apart again", () => {
+    expect(malfindRegion({ "Start VPN": "Unknown", CommitCharge: 4 }).token).toBe("cc:4");
+    expect(filePathIoc("Unknown")).toBe("");
+    expect(serviceImagePath("Unknown")).toBe("");
+    expect(pickTime({ CreateTime: "Unknown" }, ["CreateTime"])).toBe("");
+    expect(pickTime({ CreateTime: "0" }, ["CreateTime"])).toBe(""); // pickTime's own extra rule survives
+  });
+});
+
+describe("malfindRegion", () => {
+  it("falls through a placeholder address to whatever the row can still tell apart", () => {
+    for (const junk of ["Unknown", "--", "N/A", "none"]) {
+      const a = malfindRegion({ "Start VPN": junk, CommitCharge: 1 });
+      const b = malfindRegion({ "Start VPN": junk, CommitCharge: 2 });
+      expect(a.token, junk).not.toBe(b.token);
+      expect(a.phrase, junk).toBe(" commit charge 1");
+    }
+  });
+
+  it("never prints a placeholder as a location", () => {
+    for (const junk of ["Unknown", "--", "N/A"]) expect(malfindRegion({ "Start VPN": junk }).phrase).toBe("");
   });
 });
