@@ -194,6 +194,7 @@ describe("renameForgedFindingIds", () => {
         uncertainties: [{ topic: "t", basis: "rests on f-auto-e5", gap: "confirm f-auto-e5" }],
         summary: "f-auto-e5 is the lead",
         timelineNote: "raised f-auto-e5",
+        threadsOpened: [{ id: "t1", description: "Investigate f-auto-e5" }],
       }),
       new Set(),
     );
@@ -203,6 +204,8 @@ describe("renameForgedFindingIds", () => {
     // `timelineNote` becomes a timeline row. Both outlive the id if left alone.
     expect(out.summary).toBe("f-model-f-auto-e5 is the lead");
     expect(out.timelineNote).toBe("raised f-model-f-auto-e5");
+    // A thread outlives everything else here — it sits in openThreads until an analyst closes it.
+    expect(out.threadsOpened[0].description).toBe("Investigate f-model-f-auto-e5");
     expect(out.uncertainties?.[0].basis).toBe("rests on f-model-f-auto-e5");
     expect(out.uncertainties?.[0].gap).toBe("confirm f-model-f-auto-e5");
   });

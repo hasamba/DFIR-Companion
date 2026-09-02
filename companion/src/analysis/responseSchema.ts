@@ -364,6 +364,10 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
       return remap.has(f.id) ? { ...swept, id: rename(f.id) } : swept;
     }),
     ...(delta.forensicEvents ? { forensicEvents: renameRefs(delta.forensicEvents) } : {}),
+    // An opened thread is persisted in `openThreads` and stays there until an analyst closes it,
+    // so a reserved id in its description outlives the finding that carried it by longer than
+    // anything else here.
+    threadsOpened: delta.threadsOpened.map((t) => renameProse(t, ["description"])),
     ...(delta.keyQuestions
       ? { keyQuestions: renameRefs(delta.keyQuestions).map((q) => renameProse(q, ["answer", "pointer"])) }
       : {}),
