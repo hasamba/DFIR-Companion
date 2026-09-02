@@ -217,6 +217,29 @@ describe("renameForgedFindingIds", () => {
     );
   });
 
+  it("rewrites the id where the finding's own title or description names it", () => {
+    // Left behind, the row cites `f-waves` while wearing another id — and the backfill it no longer
+    // blocks then mints `f-waves` for the real wave finding, so the text cites somebody else.
+    const out = renameForgedFindingIds(
+      delta([
+        {
+          ...modelFinding("f-waves"),
+          title: "f-waves: staged in bursts",
+          description: "see f-waves",
+          confidenceReason: "derived from f-waves",
+        },
+        { ...modelFinding("f1"), description: "corroborates f-waves" },
+      ]),
+      new Set(),
+    );
+    expect(out.findings[0].id).toBe("f-model-f-waves");
+    expect(out.findings[0].title).toBe("f-model-f-waves: staged in bursts");
+    expect(out.findings[0].description).toBe("see f-model-f-waves");
+    expect(out.findings[0].confidenceReason).toBe("derived from f-model-f-waves");
+    // An untouched finding citing a renamed one is swept as well.
+    expect(out.findings[1].description).toBe("corroborates f-model-f-waves");
+  });
+
   it("does not redirect a citation of a finding the case already holds under a different case", () => {
     // `f-auto-E5` is an existing finding — not renamed, and it owns its own citations. Judging
     // ambiguity from the renamed ids alone would call `f-auto-e5` unique and steal them.

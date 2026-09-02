@@ -349,7 +349,15 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
   };
   return {
     ...delta,
-    findings: delta.findings.map((f) => (remap.has(f.id) ? { ...f, id: rename(f.id) } : f)),
+    // A finding's OWN prose cites ids too, and leaving one behind is the worst placement of all:
+    // the row would keep naming the reserved id while wearing a different one, and the backfill it
+    // no longer blocks then mints that id for a real finding — so the text ends up pointing at
+    // somebody else's evidence. Every finding is swept, not just the renamed ones: an untouched
+    // finding can cite a renamed one just as easily.
+    findings: delta.findings.map((f) => {
+      const swept = renameProse(f, ["title", "description", "confidenceReason"]);
+      return remap.has(f.id) ? { ...swept, id: rename(f.id) } : swept;
+    }),
     ...(delta.forensicEvents ? { forensicEvents: renameRefs(delta.forensicEvents) } : {}),
     ...(delta.keyQuestions
       ? { keyQuestions: renameRefs(delta.keyQuestions).map((q) => renameProse(q, ["answer", "pointer"])) }
