@@ -106,16 +106,57 @@ describe("renameForgedFindingIds", () => {
     expect(out.nextSteps?.[0].relatedFindingIds).toEqual([renamed]);
   });
 
-  it("suffixes only on a real clash — another finding in the same delta already owns the name", () => {
-    // Reuse is for the name an earlier window gave THIS id. A different finding in the same delta
-    // that happens to be called `f-model-f-auto-e5` is not that, so the two must stay separate.
+  it("stops the model minting into the rename namespace, which is what makes reuse provable", () => {
+    // Reuse folds a repeated invention onto the row an earlier window created. That is only sound
+    // while `f-model-…` can ONLY come from a rename — so a model inventing one is renamed too.
+    // Without this, a planted `f-model-f-auto-e5` would absorb a later forged `f-auto-e5`.
+    const out = renameForgedFindingIds(delta([modelFinding("f-model-f-auto-e5")]), new Set());
+    expect(out.findings[0].id).toBe("f-model-f-model-f-auto-e5");
+  });
+
+  it("keeps two inventions apart without arbitrating, because prefixing is injective", () => {
     const out = renameForgedFindingIds(
       delta([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]),
       new Set(),
     );
-    const ids = out.findings.map((f) => f.id);
-    expect(new Set(ids).size).toBe(2);
-    expect(ids).toContain("f-model-f-auto-e5-2");
+    expect(out.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5", "f-model-f-model-f-auto-e5"]);
+  });
+
+  it("gives a repeated invention the same id every window, so it updates and never appends", () => {
+    // The failure this pins: a name chosen by arbitrating a clash means nothing to the next window,
+    // so replaying one delta drifts `-2`, `-3`, … and stacks a duplicate finding each time.
+    const input = delta([modelFinding("f-auto-e5")]);
+    const first = renameForgedFindingIds(input, new Set()).findings.map((f) => f.id);
+    const second = renameForgedFindingIds(input, new Set(first)).findings.map((f) => f.id);
+    const third = renameForgedFindingIds(input, new Set([...first, ...second])).findings.map((f) => f.id);
+    expect(first).toEqual(["f-model-f-auto-e5"]);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it("adds no new row on any replay, even when one delta names the same finding two ways", () => {
+    // Adversarial shape: `f-auto-e5` and the name it gets renamed to, in one delta. From window two
+    // they both denote the row window one created, so they fold onto it. What must never happen is
+    // a THIRD name appearing — that is the duplicate accumulation, one indirection later.
+    const input = delta([modelFinding("f-auto-e5"), modelFinding("f-model-f-auto-e5")]);
+    const first = new Set(renameForgedFindingIds(input, new Set()).findings.map((f) => f.id));
+    let known = first;
+    for (let window = 0; window < 3; window++) {
+      const ids = renameForgedFindingIds(input, known).findings.map((f) => f.id);
+      expect(ids.filter((id) => !first.has(id))).toEqual([]);
+      known = new Set([...known, ...ids]);
+    }
+    expect(known).toEqual(first);
+  });
+
+  it("lets the model update a renamed finding by the id the prompt now shows it", () => {
+    // buildFindingsEcho shows `[f-model-f-auto-e5] title`, and the model is told to update by id.
+    // The namespace is closed to MINTING, not to updating a row the case already holds.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-model-f-auto-e5")]),
+      new Set(["f-model-f-auto-e5"]),
+    );
+    expect(out.findings[0].id).toBe("f-model-f-auto-e5");
   });
 
   it("reuses the name an earlier window gave the same invented id, instead of stacking a -2", () => {
@@ -152,13 +193,83 @@ describe("renameForgedFindingIds", () => {
         attackerPath: "entry via f-auto-e5 then lateral",
         narrativeTimeline: "f-auto-e5 opened the door",
         uncertainties: [{ topic: "t", basis: "rests on f-auto-e5", gap: "confirm f-auto-e5" }],
+        summary: "f-auto-e5 is the lead",
+        timelineNote: "raised f-auto-e5",
+        threadsOpened: [{ id: "t1", description: "Investigate f-auto-e5" }],
       }),
       new Set(),
     );
     expect(out.attackerPath).toBe("entry via f-model-f-auto-e5 then lateral");
     expect(out.narrativeTimeline).toBe("f-model-f-auto-e5 opened the door");
+    // `summary` is persisted as lastSummary and feeds the report and the next prompt;
+    // `timelineNote` becomes a timeline row. Both outlive the id if left alone.
+    expect(out.summary).toBe("f-model-f-auto-e5 is the lead");
+    expect(out.timelineNote).toBe("raised f-model-f-auto-e5");
+    // A thread outlives everything else here — it sits in openThreads until an analyst closes it.
+    expect(out.threadsOpened[0].description).toBe("Investigate f-model-f-auto-e5");
     expect(out.uncertainties?.[0].basis).toBe("rests on f-model-f-auto-e5");
     expect(out.uncertainties?.[0].gap).toBe("confirm f-model-f-auto-e5");
+  });
+
+  it("leaves prose alone when two ids differ only by case, rather than guessing which one it means", () => {
+    // mergeDelta compares ids exactly, so `f-auto-E5` and `f-auto-e5` are two findings. A bare
+    // case-insensitive rewrite would send prose for both to whichever mapped last.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5"), modelFinding("f-auto-E5")], {
+        attackerPath: "exact f-auto-e5 and exact f-auto-E5 and ambiguous F-AUTO-E5",
+      }),
+      new Set(),
+    );
+    expect(out.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5", "f-model-f-auto-E5"]);
+    // Both exact spellings still move; only the third, which matches neither exactly, is untouched.
+    expect(out.attackerPath).toBe(
+      "exact f-model-f-auto-e5 and exact f-model-f-auto-E5 and ambiguous F-AUTO-E5",
+    );
+  });
+
+  it("rewrites the id where the finding's own title or description names it", () => {
+    // Left behind, the row cites `f-waves` while wearing another id — and the backfill it no longer
+    // blocks then mints `f-waves` for the real wave finding, so the text cites somebody else.
+    const out = renameForgedFindingIds(
+      delta([
+        {
+          ...modelFinding("f-waves"),
+          title: "f-waves: staged in bursts",
+          description: "see f-waves",
+          confidenceReason: "derived from f-waves",
+        },
+        { ...modelFinding("f1"), description: "corroborates f-waves" },
+      ]),
+      new Set(),
+    );
+    expect(out.findings[0].id).toBe("f-model-f-waves");
+    // The TITLE is deliberately left alone: a finding false-positive marker stores a title keyword
+    // and applyFalsePositive matches it by substring, so editing the title would silently undo an
+    // analyst's rejection of this finding.
+    expect(out.findings[0].title).toBe("f-waves: staged in bursts");
+    expect(out.findings[0].description).toBe("see f-model-f-waves");
+    expect(out.findings[0].confidenceReason).toBe("derived from f-model-f-waves");
+    // An untouched finding citing a renamed one is swept as well.
+    expect(out.findings[1].description).toBe("corroborates f-model-f-waves");
+  });
+
+  it("rewrites the executive summary, which is persisted and feeds the next prompt", () => {
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], { summary: "the case turns on f-auto-e5" }),
+      new Set(),
+    );
+    expect(out.summary).toBe("the case turns on f-model-f-auto-e5");
+  });
+
+  it("does not redirect a citation of a finding the case already holds under a different case", () => {
+    // `f-auto-E5` is an existing finding — not renamed, and it owns its own citations. Judging
+    // ambiguity from the renamed ids alone would call `f-auto-e5` unique and steal them.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5")], { attackerPath: "entry via f-auto-E5, then f-auto-e5" }),
+      new Set(["f-auto-E5"]),
+    );
+    expect(out.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5"]);
+    expect(out.attackerPath).toBe("entry via f-auto-E5, then f-model-f-auto-e5");
   });
 
   it("rewrites a prose citation whatever its case, because textMentionsFindingId reads it that way", () => {

@@ -40,6 +40,23 @@ export function isDeterministicFindingId(id: string): boolean {
 // report against a raw model response should still be able to find the row.
 export const MODEL_FINDING_ID_PREFIX = "f-model-";
 
+/**
+ * Ids the model may not MINT — the backfills' three, plus the rename target namespace.
+ *
+ * That last one is not tidiness. `renameForgedFindingIds` REUSES a canonical name the case already
+ * holds, on the strength of it only ever coming from renaming that exact id — which is what stops a
+ * repeated invention from stacking a `-2` duplicate on every window. A model free to write
+ * `f-model-…` itself would break that reasoning: it could plant `f-model-f-auto-e5` as an unrelated
+ * finding in one window, and a forged `f-auto-e5` in the next would be folded onto it and overwrite
+ * it. Closing the namespace is what makes the reuse provable without a persisted provenance field.
+ *
+ * Distinct from `isDeterministicFindingId` on purpose: that one answers "did a BACKFILL mint this",
+ * which `carryOutOfWindowFindings` acts on, and a renamed model finding must never qualify.
+ */
+function isReservedFindingId(id: string): boolean {
+  return isDeterministicFindingId(id) || id.startsWith(MODEL_FINDING_ID_PREFIX);
+}
+
 export const deltaSchema = z.object({
   findings: z.array(
     z.object({
@@ -254,27 +271,30 @@ export type AnalysisDelta = z.infer<typeof deltaSchema>;
 // `forensicEvents`, `keyQuestions` and `nextSteps` all carry `relatedFindingIds` and rewriting the
 // finding alone would leave three dangling pointers.
 //
-// Applied in mergeDelta, the one seam every delta crosses on its way into a case, and once more at
-// the top of the synthesis fold — which reads the RAW delta for event back-links and for the
-// model's relevance verdict, and would drop both for a finding the merge renamed underneath it.
-// Idempotent, so applying it twice is safe. Deterministic importers are unaffected: every one of
-// them builds `findings: []`.
+// Applied ONCE per path. `mergeDelta` is that place for the import and MCP-agent routes. Synthesis
+// runs it earlier instead, at the top of the fold, because the fold reads the RAW delta again for
+// event back-links and for the model's relevance verdict and would drop both for a finding renamed
+// underneath it; it then hands those settled ids to the merge as `knownFindingIds`, which is what
+// keeps the merge from renaming them a second time. Re-running this blind is NOT a no-op — an id it
+// already moved into the `f-model-` namespace is reserved, so a second pass would move it again.
+// Deterministic importers are unaffected: every one of them builds `findings: []`.
 export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
-  const taken = new Set([...known, ...delta.findings.map((f) => f.id)]);
   const remap = new Map<string, string>();
   for (const f of delta.findings) {
-    if (remap.has(f.id) || known.has(f.id) || !isDeterministicFindingId(f.id)) continue;
-    const canonical = `${MODEL_FINDING_ID_PREFIX}${f.id}`;
-    // A second window repeating the same invented id must land on the SAME renamed finding and
-    // update it. Bumping to `-2` there would append a duplicate on every repeat instead, so a
-    // canonical name the case already holds is REUSED — it can only have come from renaming this
-    // exact id. Suffixes are for a real clash: another id in this delta, or an unrelated case row.
-    let renamed = canonical;
-    if (!known.has(canonical)) {
-      for (let n = 2; taken.has(renamed); n++) renamed = `${canonical}-${n}`;
-    }
-    taken.add(renamed);
-    remap.set(f.id, renamed);
+    if (remap.has(f.id) || known.has(f.id) || !isReservedFindingId(f.id)) continue;
+    // One deterministic name per invented id, with no collision arbitration — and that is the whole
+    // point. A window repeating the same invention lands on the SAME name, so it UPDATES the row an
+    // earlier window created instead of appending a duplicate beside it.
+    //
+    // Nothing can be sitting on that name except the row this same rule already put there:
+    // prefixing is injective, so two different ids never collide; and an id that survives this pass
+    // unrenamed is either outside the reserved namespace (so it cannot look like one of these) or
+    // already in the case — in which case the name IS its row, and landing on it is correct.
+    //
+    // An earlier revision suffixed a `-2` on apparent clashes. That is what must not happen: a
+    // suffixed name carries no meaning the next window can reuse, so replaying one delta drifts to
+    // `-3`, `-4`, and the duplicates this rule exists to prevent come back one indirection later.
+    remap.set(f.id, `${MODEL_FINDING_ID_PREFIX}${f.id}`);
   }
   if (remap.size === 0) return delta;
 
@@ -297,9 +317,28 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
       .join("|")})(?![\\w-])`,
     "gi",
   );
-  const byLowerId = new Map([...remap].map(([from, to]) => [from.toLowerCase(), to]));
+  // Case-insensitive matching needs an unambiguous target. `f-auto-E5` and `f-auto-e5` are two
+  // DIFFERENT findings to mergeDelta, which compares ids exactly — so folding them onto one
+  // lowercase key would rewrite prose for both to whichever was mapped last, pointing half the
+  // citations at the wrong finding. An exact hit always wins; the case-insensitive lookup is built
+  // only for keys no other id shares, and an ambiguous token is left exactly as the model wrote it.
+  // Ambiguity is decided over EVERY id in play, not just the renamed ones. An id that is NOT
+  // renamed still owns its prose citations — `f-auto-E5` already in the case is a finding the model
+  // may legitimately cite — and counting only the renamed ids would call `f-auto-e5` unambiguous
+  // and send that citation to the renamed finding instead. A near-miss redirect is worse than no
+  // rewrite: it moves a claim onto evidence that was never its own.
+  const lowerCollisions = new Map<string, number>();
+  for (const id of new Set([...delta.findings.map((f) => f.id), ...known])) {
+    const lower = id.toLowerCase();
+    lowerCollisions.set(lower, (lowerCollisions.get(lower) ?? 0) + 1);
+  }
+  const byLowerId = new Map(
+    [...remap]
+      .filter(([from]) => lowerCollisions.get(from.toLowerCase()) === 1)
+      .map(([from, to]) => [from.toLowerCase(), to]),
+  );
   const renameText = (text: string): string =>
-    text.replace(idPattern, (token) => byLowerId.get(token.toLowerCase()) ?? token);
+    text.replace(idPattern, (token) => remap.get(token) ?? byLowerId.get(token.toLowerCase()) ?? token);
   const renameProse = <T extends Record<string, unknown>>(row: T, fields: readonly (keyof T)[]): T => {
     const patched: Partial<T> = {};
     for (const field of fields) {
@@ -310,8 +349,25 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
   };
   return {
     ...delta,
-    findings: delta.findings.map((f) => (remap.has(f.id) ? { ...f, id: rename(f.id) } : f)),
+    // A finding's OWN prose cites ids too, and leaving one behind is the worst placement of all:
+    // the row would keep naming the reserved id while wearing a different one, and the backfill it
+    // no longer blocks then mints that id for a real finding — so the text ends up pointing at
+    // somebody else's evidence. Every finding is swept, not just the renamed ones: an untouched
+    // finding can cite a renamed one just as easily.
+    //
+    // NOT the title. A finding false-positive marker stores a title keyword and `applyFalsePositive`
+    // matches it against the title by substring — so editing a title breaks the marker, and a
+    // finding the analyst explicitly rejected comes back on the next synthesis. A stale id in a
+    // title is visible; an undone rejection is not, and it is the analyst's call being overturned.
+    findings: delta.findings.map((f) => {
+      const swept = renameProse(f, ["description", "confidenceReason"]);
+      return remap.has(f.id) ? { ...swept, id: rename(f.id) } : swept;
+    }),
     ...(delta.forensicEvents ? { forensicEvents: renameRefs(delta.forensicEvents) } : {}),
+    // An opened thread is persisted in `openThreads` and stays there until an analyst closes it,
+    // so a reserved id in its description outlives the finding that carried it by longer than
+    // anything else here.
+    threadsOpened: delta.threadsOpened.map((t) => renameProse(t, ["description"])),
     ...(delta.keyQuestions
       ? { keyQuestions: renameRefs(delta.keyQuestions).map((q) => renameProse(q, ["answer", "pointer"])) }
       : {}),
@@ -327,6 +383,11 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
     // longer do. The uncertainty ledger's free text can name one too.
     ...(delta.attackerPath ? { attackerPath: renameText(delta.attackerPath) } : {}),
     ...(delta.narrativeTimeline ? { narrativeTimeline: renameText(delta.narrativeTimeline) } : {}),
+    // Both of these are persisted as well — `summary` becomes `lastSummary` and feeds the report
+    // and the next run's prompt, `timelineNote` becomes a timeline row — so a reserved id left in
+    // either outlives the finding that carried it.
+    ...(delta.summary ? { summary: renameText(delta.summary) } : {}),
+    ...(delta.timelineNote ? { timelineNote: renameText(delta.timelineNote) } : {}),
     ...(delta.uncertainties
       ? { uncertainties: delta.uncertainties.map((u) => renameProse(u, ["basis", "gap"])) }
       : {}),
