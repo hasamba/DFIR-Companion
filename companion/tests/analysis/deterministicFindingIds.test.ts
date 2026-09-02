@@ -201,6 +201,22 @@ describe("renameForgedFindingIds", () => {
     expect(out.uncertainties?.[0].gap).toBe("confirm f-model-f-auto-e5");
   });
 
+  it("leaves prose alone when two ids differ only by case, rather than guessing which one it means", () => {
+    // mergeDelta compares ids exactly, so `f-auto-E5` and `f-auto-e5` are two findings. A bare
+    // case-insensitive rewrite would send prose for both to whichever mapped last.
+    const out = renameForgedFindingIds(
+      delta([modelFinding("f-auto-e5"), modelFinding("f-auto-E5")], {
+        attackerPath: "exact f-auto-e5 and exact f-auto-E5 and ambiguous F-AUTO-E5",
+      }),
+      new Set(),
+    );
+    expect(out.findings.map((f) => f.id)).toEqual(["f-model-f-auto-e5", "f-model-f-auto-E5"]);
+    // Both exact spellings still move; only the third, which matches neither exactly, is untouched.
+    expect(out.attackerPath).toBe(
+      "exact f-model-f-auto-e5 and exact f-model-f-auto-E5 and ambiguous F-AUTO-E5",
+    );
+  });
+
   it("rewrites a prose citation whatever its case, because textMentionsFindingId reads it that way", () => {
     const out = renameForgedFindingIds(
       delta([modelFinding("f-auto-e5")], { attackerPath: "see F-AUTO-E5 for the entry point" }),

@@ -317,9 +317,23 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
       .join("|")})(?![\\w-])`,
     "gi",
   );
-  const byLowerId = new Map([...remap].map(([from, to]) => [from.toLowerCase(), to]));
+  // Case-insensitive matching needs an unambiguous target. `f-auto-E5` and `f-auto-e5` are two
+  // DIFFERENT findings to mergeDelta, which compares ids exactly — so folding them onto one
+  // lowercase key would rewrite prose for both to whichever was mapped last, pointing half the
+  // citations at the wrong finding. An exact hit always wins; the case-insensitive lookup is built
+  // only for keys no other id shares, and an ambiguous token is left exactly as the model wrote it.
+  const lowerCollisions = new Map<string, number>();
+  for (const from of remap.keys()) {
+    const lower = from.toLowerCase();
+    lowerCollisions.set(lower, (lowerCollisions.get(lower) ?? 0) + 1);
+  }
+  const byLowerId = new Map(
+    [...remap]
+      .filter(([from]) => lowerCollisions.get(from.toLowerCase()) === 1)
+      .map(([from, to]) => [from.toLowerCase(), to]),
+  );
   const renameText = (text: string): string =>
-    text.replace(idPattern, (token) => byLowerId.get(token.toLowerCase()) ?? token);
+    text.replace(idPattern, (token) => remap.get(token) ?? byLowerId.get(token.toLowerCase()) ?? token);
   const renameProse = <T extends Record<string, unknown>>(row: T, fields: readonly (keyof T)[]): T => {
     const patched: Partial<T> = {};
     for (const field of fields) {
