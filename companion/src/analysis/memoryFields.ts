@@ -44,7 +44,7 @@ export function pickTime(row: Row, keys: string[]): string {
       }
     }
     const raw = cellStr(v).trim();
-    if (!raw || /^(n\/?a|-|0|none|null)$/i.test(raw)) continue;
+    if (!raw || raw === "0" || isPlaceholderCell(raw)) continue; // "0" is a placeholder for a TIME only
     const t = normalizeTime(raw);
     if (t) return t;
   }
@@ -76,8 +76,23 @@ export const GENERIC_TIME_KEYS = [
   "Timestamp",
 ];
 
-// The placeholders Volatility prints for a value it could not read. None of them is a path.
-const NOT_A_PATH = /^(n\/?a|-|none|null|unknown)$/i;
+/**
+ * A cell that holds no value — the spellings the memory tools print for something they could not read.
+ *
+ * ONE list, exported, because three copies of it lived in this file and drifted apart. The address
+ * path had the shortest, so `Unknown` in a Start VPN column read as a real address: the row said
+ * "at Unknown", and matching there SKIPPED the fallback to End VPN and CommitCharge — so two regions
+ * told apart only by their commit charge became one row again at the case merge, which is the exact
+ * defect that fallback exists to prevent.
+ *
+ * `0` is deliberately absent: it is a placeholder for a TIME (pickTime rejects it separately) and a
+ * legitimate value elsewhere.
+ */
+const PLACEHOLDER_CELL = /^(?:n\/?a|n\\a|-{1,2}|none|null|unknown|unavailable|\?)$/i;
+
+export function isPlaceholderCell(value: string): boolean {
+  return PLACEHOLDER_CELL.test((value ?? "").trim());
+}
 // Where an executable's name ends and its arguments begin. The lookahead is the whole point: the
 // extension must END the token, or the cut lands inside a DIRECTORY name — `C:\tools\node.js\agent.exe`
 // became `C:\tools\node.js`, a shorter path that still looks real, which is a worse indicator than
@@ -102,7 +117,7 @@ const IMAGE_EXT = /\.(exe|dll|sys|com|scr|bat|cmd|ps1|vbs|js|jse|msi|efi|drv|ocx
  */
 export function serviceImagePath(raw: string): string {
   const s = (raw ?? "").trim();
-  if (!s || NOT_A_PATH.test(s)) return "";
+  if (!s || isPlaceholderCell(s)) return "";
   const quoted = /^"([^"]+)"/.exec(s);
   let image = quoted ? quoted[1].trim() : s;
   if (!quoted) {
@@ -110,7 +125,7 @@ export function serviceImagePath(raw: string): string {
     if (ext) image = image.slice(0, ext.index + ext[0].length);
   }
   image = image.trim();
-  if (!image || NOT_A_PATH.test(image) || !/[\\/]/.test(image)) return "";
+  if (!image || isPlaceholderCell(image) || !/[\\/]/.test(image)) return "";
   return image.slice(0, 300);
 }
 
@@ -124,7 +139,7 @@ export function serviceImagePath(raw: string): string {
  */
 export function filePathIoc(raw: string): string {
   const s = (raw ?? "").trim();
-  if (!s || NOT_A_PATH.test(s) || !/[\\/]/.test(s)) return "";
+  if (!s || isPlaceholderCell(s) || !/[\\/]/.test(s)) return "";
   return s.slice(0, 300);
 }
 
@@ -166,7 +181,7 @@ export function malfindRegion(row: Row): { token: string; phrase: string } {
   const at = (keys: string[]): string => {
     for (const k of keys) {
       const v = cellStr(getCI(row, k)).trim();
-      if (v && !/^(n\/?a|-|none|null)$/i.test(v)) return v;
+      if (v && !isPlaceholderCell(v)) return v;
     }
     return "";
   };
