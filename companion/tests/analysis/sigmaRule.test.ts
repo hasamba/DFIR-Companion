@@ -357,6 +357,14 @@ detection:
     expect(r[0].message).toMatch(new RegExp(String(SIGMA_MAX_REGEX_LENGTH)));
   });
 
+  it("accepts a leading RE2 inline flag group on a re value, which JavaScript's RegExp would reject", () => {
+    expect(parseSigmaRule(withField("CommandLine|re", "'(?i)-enc\\s+[A-Za-z0-9+/=]{20,}'")).ok).toBe(true);
+    expect(parseSigmaRule(withField("CommandLine|re", "'(?is)a.b'")).ok).toBe(true);
+    expect(refusals(withField("CommandLine|re", "'(?i)^(a|aa)+b$'"))[0].path).toBe(
+      "detection.sel.CommandLine|re",
+    );
+  });
+
   it("refuses a catastrophic re value through checkRegexSafety, with its reason", () => {
     const r = refusals(withField("Image|re", "'^(a|aa)+b$'"));
     expect(r[0].path).toBe("detection.sel.Image|re");

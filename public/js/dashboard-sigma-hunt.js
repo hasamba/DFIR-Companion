@@ -579,6 +579,9 @@
   }
 
   window.exportFindingSigma = exportFindingSigma;
+  // Published for the Sigma → VQL round-trip test (#797): the compiler must accept the draft
+  // this function writes, and the only honest way to prove that is to run the real function.
+  window.findingSigmaYaml = findingSigmaYaml;
   window.sigmaExportChip = sigmaExportChip;
   window.openHuntModal = openHuntModal;
   window.closeHuntModal = closeHuntModal;

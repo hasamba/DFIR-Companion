@@ -329,6 +329,7 @@ export const FEATURES: Feature[] = [
     publish: [
       "initHuntModal",
       "exportFindingSigma",
+      "findingSigmaYaml",
       "sigmaExportChip",
       "openHuntModal",
       "closeHuntModal",
