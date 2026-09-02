@@ -202,7 +202,7 @@ describe("compileSigmaToVql — golden registry", () => {
       reg("    TargetObject|startswith: 'HKCU\\Software\\Classes\\ms-settings'", "registry_event"),
     );
     expect(text).toContain(
-      String.raw`glob(globs=["HKEY_USERS/*/Software/Classes/ms-settings**"], accessor="registry")`,
+      String.raw`glob(globs=["HKEY_USERS/*/Software/Classes/ms-settings*", "HKEY_USERS/*/Software/Classes/ms-settings*/**"], accessor="registry")`,
     );
     expect(whereOf(text)).toBe(
       String.raw`TargetObject =~ "(?i)^HKEY_USERS\\\\[^\\\\]+\\\\Software\\\\Classes\\\\ms-settings"`,
@@ -457,5 +457,48 @@ describe("compileSigmaToVql — round trip with the dashboard's Sigma draft expo
     const where = whereOf(r.vql);
     expect(where).toContain(String.raw`Image =~ "(?i)\\\\certutil\\.exe$"`);
     expect(where).toContain("Hashes.SHA256 =~");
+  });
+});
+
+describe("compileSigmaToVql — review fixes (#803)", () => {
+  it("refuses a product other than Windows, because every template is a Windows plugin with Windows roots", () => {
+    const linux =
+      "title: T\nlogsource:\n  category: file_event\n  product: linux\ndetection:\n  sel:\n    TargetFilename|contains: 'x'\n  condition: sel\n";
+    expect(refusals(linux)).toEqual([
+      { path: "logsource.product", message: expect.stringMatching(/linux.*Windows|Windows.*linux/) },
+    ]);
+    expect(compileSigmaText(linux.replace("product: linux", "product: Windows")).ok).toBe(true);
+    expect(compileSigmaText(linux.replace("  product: linux\n", "")).ok).toBe(true);
+  });
+
+  it("enumerates a prefix without a trailing separator as the same-component prefix AND its descendants", () => {
+    const text = vql(file("    TargetFilename|startswith: 'C:\\Temp'"));
+    expect(text).toContain(String.raw`glob(globs=["C:/Temp*", "C:/Temp*/**"])`);
+    // A prefix that ends on a separator is a directory: one recursive glob, as before.
+    expect(vql(file("    TargetFilename|startswith: 'C:\\Users\\'"))).toContain(
+      String.raw`glob(globs=["C:/Users/**"])`,
+    );
+  });
+
+  it("ANDs cidr ranges under |all instead of dropping the modifier", () => {
+    expect(
+      whereOf(vql(net("    DestinationIp|cidr|all:\n      - '10.0.0.0/8'\n      - '10.1.0.0/16'"))),
+    ).toBe(
+      String.raw`(cidr_contains(ip=DestinationIp, ranges=["10.0.0.0/8"]) AND cidr_contains(ip=DestinationIp, ranges=["10.1.0.0/16"]))`,
+    );
+    expect(whereOf(vql(net("    DestinationIp|cidr:\n      - '10.0.0.0/8'\n      - '10.1.0.0/16'")))).toBe(
+      String.raw`cidr_contains(ip=DestinationIp, ranges=["10.0.0.0/8", "10.1.0.0/16"])`,
+    );
+  });
+
+  it("says the compiled query is a live snapshot, so the hunt loop never records its empty result as a miss", () => {
+    for (const y of [
+      proc("    Image: x"),
+      net("    DestinationPort: 1"),
+      file("    TargetFilename: 'C:\\x'"),
+      reg("    TargetObject: 'HKLM\\A'"),
+    ]) {
+      expect(compiled(y).snapshot).toBe(true);
+    }
   });
 });

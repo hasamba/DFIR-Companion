@@ -143,6 +143,22 @@ describe("hunting feedback loop — routes (#157)", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("deploy-hunt records coverage: snapshot and drops the hypothesis link (#803)", async () => {
+    const { app } = await makeApp();
+    const res = await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({
+      vql: "SELECT * FROM pslist()",
+      title: "Sigma: certutil",
+      source: "fleet",
+      coverage: "snapshot",
+      relatedHypothesisId: "hyp-1",
+    });
+    expect(res.status).toBe(200);
+    const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+    expect(profile.hunts[0]).toMatchObject({ title: "Sigma: certutil", coverage: "snapshot" });
+    expect(profile.hunts[0].relatedHypothesisId).toBeUndefined();
+    expect(profile.snapshotEmpty).toBe(0);
+  });
+
   it("deploy-hunt validates vql/title and collection-mode hostname", async () => {
     const { app } = await makeApp();
     expect(
@@ -174,6 +190,7 @@ describe("hunting feedback loop — routes (#157)", () => {
       total: 0,
       hit: 0,
       missed: 0,
+      snapshotEmpty: 0,
       pending: 0,
       hunts: [],
       pivotProductivity: [],

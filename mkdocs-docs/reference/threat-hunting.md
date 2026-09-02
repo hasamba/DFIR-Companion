@@ -50,6 +50,13 @@ the rule, one line each, with the YAML path. Nothing half-translated is ever off
 The card appears when Velociraptor is an enabled hunt platform (`DFIR_HUNT_PLATFORMS`). Compile
 works before the Velociraptor API is configured; only **Run** needs it.
 
+**A compiled rule is a live snapshot, and the Hunting Profile knows it.** Every template reads the
+endpoint as it is now, so a process that exited, a connection that closed or a file that was
+deleted before the hunt ran will not be there. An empty result from a compiled Sigma rule is
+therefore shown as **empty snapshot**, not as *no evidence*: it does not count as a miss, it does
+not lower a pivot class's hit rate, and it never counts toward exhausting a hypothesis. Only rules
+for `product: windows` (or with no product) compile; every template is a Windows plugin.
+
 ---
 
 ## Hunting Feedback Loop

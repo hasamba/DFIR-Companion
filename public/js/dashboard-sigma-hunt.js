@@ -490,9 +490,13 @@
       : "/velociraptor/hunt";
     // #14: link this hunt to a hypothesis — either the caller set it on ctx, or the analyst armed the
     // "🎯 test via hunt" button (consumed once here). An empty result then exhausts that hypothesis.
-    const relatedHypothesisId =
-      (ctx && ctx.relatedHypothesisId) ||
-      (recorded ? consumePendingHuntHypothesis() : undefined);
+    // #803: a live-snapshot hunt (a compiled Sigma rule) is never linked to a hypothesis — its
+    // empty result is not negative evidence — so the armed "test via hunt" is left for a real one.
+    const snapshot = !!(ctx && ctx.coverage === "snapshot");
+    const relatedHypothesisId = snapshot
+      ? undefined
+      : (ctx && ctx.relatedHypothesisId) ||
+        (recorded ? consumePendingHuntHypothesis() : undefined);
     const body = recorded
       ? {
           vql,
@@ -501,6 +505,7 @@
           source: ctx.source || "fleet",
           mitreTechniques: ctx.mitre || [],
           ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
+          ...(snapshot ? { coverage: "snapshot" } : {}),
         }
       : { vql, description: description || "DFIR hunt" };
     fetch(url, {
@@ -642,6 +647,7 @@
           title: j.title || "Sigma rule",
           source: "fleet",
           mitre: j.mitreTechniques || [],
+          ...(j.snapshot ? { coverage: "snapshot" } : {}),
         });
   }
   function compileSigmaRule() {

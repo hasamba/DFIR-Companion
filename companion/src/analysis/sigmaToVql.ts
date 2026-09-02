@@ -51,6 +51,8 @@ export interface SigmaCompiled {
   id?: string;
   level?: string;
   mitreTechniques: string[];
+  /** True when the VQL reads live state, so an empty result is not a miss (#803). */
+  snapshot: boolean;
 }
 
 export type SigmaCompileResult = SigmaCompiled | { ok: false; refusals: SigmaRefusal[] };
@@ -203,7 +205,12 @@ function compileField(template: VqlTemplate, selPath: string, m: SigmaFieldMatch
   if (mode === "cidr") {
     if (column.kind !== "ip")
       throw new CompileRefusal(path, `the cidr modifier applies to an IP address column; ${name} is not one`);
-    return `cidr_contains(ip=${column.expr ?? name}, ranges=${vqlStringList(m.values.map((v) => stringValue(path, v)))})`;
+    const ranges = m.values.map((v) => stringValue(path, v));
+    const col = column.expr ?? name;
+    // `all` means the address must sit inside EVERY range (nested ranges); one call per range, ANDed.
+    if (m.modifiers.includes("all") && ranges.length > 1)
+      return `(${ranges.map((r) => `cidr_contains(ip=${col}, ranges=${vqlStringList([r])})`).join(" AND ")})`;
+    return `cidr_contains(ip=${col}, ranges=${vqlStringList(ranges)})`;
   }
   const parts = m.values.map((v) => oneComparison(path, name, column, mode, v));
   if (parts.length === 1) return parts[0];
@@ -234,11 +241,11 @@ function collectGlobs(
           path,
           `'${value}' is not rooted in a hive (HKLM, HKCU, HKU, HKCR), so the hunt would walk the whole registry`,
         );
-      if (!needs.globs.includes(rp.glob)) needs.globs.push(rp.glob);
+      for (const g of rp.globs) if (!needs.globs.includes(g)) needs.globs.push(g);
       continue;
     }
-    const glob = mode === "re" ? WHOLE_DISK_GLOB : fileGlob(value, mode as SigmaMatchMode);
-    if (!needs.globs.includes(glob)) needs.globs.push(glob);
+    const globs = mode === "re" ? [WHOLE_DISK_GLOB] : fileGlob(value, mode as SigmaMatchMode);
+    for (const g of globs) if (!needs.globs.includes(g)) needs.globs.push(g);
   }
 }
 
@@ -356,6 +363,7 @@ function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: 
     ...(rule.id !== undefined ? { id: rule.id } : {}),
     ...(rule.level !== undefined ? { level: rule.level } : {}),
     mitreTechniques: [...rule.mitreTechniques],
+    snapshot: template.snapshot,
   };
 }
 
@@ -368,6 +376,18 @@ export function compileSigmaToVql(rule: SigmaRule): SigmaCompileResult {
       ? `the ${rule.logsource.category} category has no VQL template; ${supported}`
       : `logsource.category is required to pick a VQL template; ${supported}`;
     return { ok: false, refusals: [{ path: "logsource.category", message }] };
+  }
+  const product = rule.logsource.product?.trim();
+  if (product && product.toLowerCase() !== "windows") {
+    return {
+      ok: false,
+      refusals: [
+        {
+          path: "logsource.product",
+          message: `the ${product} product has no VQL template; every template is a Windows plugin with Windows path roots, so only product: windows (or no product) compiles`,
+        },
+      ],
+    };
   }
   const out: SigmaRefusal[] = [];
   const needs: Needs = { extras: new Set(), globs: [] };

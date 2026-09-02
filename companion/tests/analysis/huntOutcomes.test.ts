@@ -11,6 +11,7 @@ import {
   buildPivotProductivity,
   renderHuntProductivityBlock,
   HUNT_OUTCOME_MAX_DEFAULT,
+  huntSignalsFromOutcomes,
   type HuntOutcome,
 } from "../../src/analysis/huntOutcomes.js";
 
@@ -400,6 +401,7 @@ describe("buildHuntingProfile", () => {
       total: 0,
       hit: 0,
       missed: 0,
+      snapshotEmpty: 0,
       pending: 0,
       hunts: [],
       pivotProductivity: [],
@@ -547,5 +549,58 @@ describe("renderHuntProductivityBlock", () => {
     expect(block).toContain("process: 0/1 hunts found evidence (0%)");
     expect(block.indexOf("hash:")).toBeLessThan(block.indexOf("process:")); // more productive class listed first
     expect(block.endsWith("\n\n")).toBe(true);
+  });
+});
+
+describe("snapshot coverage (#803) — an empty live snapshot is not a miss", () => {
+  const snap = recordDeploy([], {
+    source: "fleet",
+    title: "Sigma: certutil",
+    vql: "SELECT * FROM pslist()",
+    coverage: "snapshot",
+    deployedAt: T0,
+    huntId: "H.S",
+  });
+  const events = recordDeploy([], {
+    source: "fleet",
+    title: "evtx sweep",
+    vql: "SELECT * FROM parse_evtx()",
+    deployedAt: T0,
+    huntId: "H.E",
+  });
+  const collectedEmpty = (o: HuntOutcome[]) =>
+    fillOutcome(o, o[0].huntId!, { resultRows: 0, addedEvents: 0, addedIocs: 0, collectedAt: T1 });
+
+  it("recordDeploy keeps the coverage mark, and leaves it off an ordinary hunt", () => {
+    expect(snap[0].coverage).toBe("snapshot");
+    expect(events[0].coverage).toBeUndefined();
+  });
+
+  it("buildHuntingProfile counts an empty snapshot apart from the misses", () => {
+    const profile = buildHuntingProfile([...collectedEmpty(snap), ...collectedEmpty(events)]);
+    expect([profile.hit, profile.missed, profile.pending, profile.snapshotEmpty]).toEqual([0, 1, 0, 1]);
+  });
+
+  it("buildPivotProductivity does not charge an empty snapshot against the pivot class", () => {
+    const rows = buildPivotProductivity(collectedEmpty(snap));
+    expect(rows.find((r) => r.type === "process")).toMatchObject({ total: 1, hit: 0, missed: 0 });
+  });
+
+  it("huntSignalsFromOutcomes never reports a snapshot as a miss, so no hypothesis is exhausted by it", () => {
+    const signals = huntSignalsFromOutcomes([...collectedEmpty(snap), ...collectedEmpty(events)]);
+    expect(signals.map((s) => s.missed)).toEqual([false, true]);
+    expect(huntSignalsFromOutcomes(snap)).toEqual([]); // not collected yet → no signal
+  });
+
+  it("renderPriorHuntsBlock tells the model an empty snapshot is not negative evidence", () => {
+    const block = renderPriorHuntsBlock(collectedEmpty(snap));
+    expect(block).toMatch(/live snapshot/i);
+    expect(block).not.toMatch(/no results/);
+  });
+
+  it("a snapshot that DID return rows is a hit like any other", () => {
+    const hit = fillOutcome(snap, "H.S", { resultRows: 3, addedEvents: 1, addedIocs: 0, collectedAt: T1 });
+    expect(buildHuntingProfile(hit).hit).toBe(1);
+    expect(huntSignalsFromOutcomes(hit)[0].missed).toBe(false);
   });
 });
