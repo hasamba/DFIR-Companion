@@ -40,7 +40,10 @@ test("US-361: a pasted Sigma rule compiles to VQL with its coverage line, and Ru
   await openHuntModal(page, demoCase);
 
   const box = page.locator("#sigmaYamlIn");
-  await expect(box, "the Sigma card must sit in the hunt modal when Velociraptor is an enabled platform").toBeVisible();
+  await expect(
+    box,
+    "the Sigma card must sit in the hunt modal when Velociraptor is an enabled platform",
+  ).toBeVisible();
   await box.fill(RULE);
   await page.locator("#sigmaCompileBtn").click();
 
