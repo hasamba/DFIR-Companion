@@ -69,6 +69,18 @@ describe("POST /cases/:id/sigma/compile", () => {
     expect(res.body.refusals[0].path).toBe("yaml");
   });
 
+  it("answers an anchor/alias expansion bomb with 400 and the YAML refusal, never 500 (#805)", async () => {
+    let bomb = 'k1: &a1 ["lol","lol","lol","lol","lol","lol","lol","lol","lol"]\n';
+    for (let i = 2; i <= 9; i++)
+      bomb += `k${i}: &a${i} [${Array(9)
+        .fill(`*a${i - 1}`)
+        .join(",")}]\n`;
+    const res = await compile(bomb);
+    expect(res.status, res.text).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.refusals).toEqual([{ path: "yaml", message: expect.stringContaining("too complex") }]);
+  });
+
   it("answers a missing or non-string yaml with 400", async () => {
     expect((await request(app).post("/cases/c1/sigma/compile").send({})).status).toBe(400);
     expect((await compile(42)).status).toBe(400);

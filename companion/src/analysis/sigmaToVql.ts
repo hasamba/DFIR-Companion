@@ -253,6 +253,11 @@ function collectGlobs(
       continue;
     }
     const globs = mode === "re" ? [WHOLE_DISK_GLOB] : fileGlob(value, mode as SigmaMatchMode);
+    if (!globs)
+      throw new CompileRefusal(
+        path,
+        `'${value}' is rooted on a drive or a host, and ${mode} searches every folder of C: for it, where a rooted path can never appear; match it with startswith or exactly, or drop the root to hunt the fragment`,
+      );
     for (const g of globs) if (!needs.globs.includes(g)) needs.globs.push(g);
   }
 }
@@ -278,6 +283,15 @@ function compileFieldMap(
   needs: Needs,
   out: SigmaRefusal[],
 ): string | null {
+  if (fields.length === 0) {
+    // The parser refuses this first (#806); here for a SigmaRule built without it, so `WHERE ()`
+    // is never assembled.
+    out.push({
+      path: selPath,
+      message: "this selection has no fields, so it matches nothing; give it at least one field",
+    });
+    return null;
+  }
   const parts: string[] = [];
   for (const m of fields) {
     try {

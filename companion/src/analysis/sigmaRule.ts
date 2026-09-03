@@ -73,7 +73,19 @@ function readDocument(text: string, out: Refusals): Plain | null {
     out.add("yaml", `the YAML does not parse: ${doc.errors[0].message.split("\n")[0]}`);
     return null;
   }
-  const value = doc.toJS() as unknown;
+  let value: unknown;
+  try {
+    value = doc.toJS();
+  } catch (error) {
+    // The yaml package guards itself against anchor/alias expansion bombs by THROWING from toJS()
+    // (doc.errors stays empty for that payload — #805). Adversary-authored input is a refusal.
+    const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    out.add(
+      "yaml",
+      `the YAML is too complex to read (the parser stopped it: ${reason}); paste a plain Sigma rule without anchors or aliases`,
+    );
+    return null;
+  }
   if (!isPlain(value)) {
     out.add("yaml", "the rule must be a YAML map with title, logsource and detection keys");
     return null;
@@ -242,19 +254,35 @@ function countValues(raw: unknown): number {
   return 1;
 }
 
+// An empty map `{}` matches nothing in Sigma and would compile to `WHERE ()` (#806): refused here,
+// before the compiler, so the analyst reads the reason at the selection that carries it.
+const NO_FIELDS = "this selection has no fields, so it matches nothing; give it at least one field";
+
 function readSelection(name: string, raw: unknown, out: Refusals): SigmaSelection | null {
   const path = `detection.${name}`;
   if (countValues(raw) > SIGMA_MAX_VALUES_PER_SELECTION) {
     out.add(path, `a selection is limited to ${SIGMA_MAX_VALUES_PER_SELECTION} values`);
     return null;
   }
-  if (isPlain(raw)) return { kind: "map", name, fields: readFieldMap(path, raw, out) };
+  if (isPlain(raw)) {
+    if (Object.keys(raw).length === 0) {
+      out.add(path, NO_FIELDS);
+      return null;
+    }
+    return { kind: "map", name, fields: readFieldMap(path, raw, out) };
+  }
   if (!Array.isArray(raw) || raw.length === 0) {
     out.add(path, "a selection must be a map of fields, a list of such maps, or a list of keywords");
     return null;
   }
-  if (raw.every(isPlain))
+  if (raw.every(isPlain)) {
+    const empty = raw.findIndex((m) => Object.keys(m).length === 0);
+    if (empty >= 0) {
+      out.add(`${path}[${empty}]`, NO_FIELDS.replace("this selection", "this entry of the selection list"));
+      return null;
+    }
     return { kind: "list", name, alternatives: raw.map((m) => readFieldMap(path, m, out)) };
+  }
   if (raw.every(isScalar)) return { kind: "keywords", name, values: raw };
   out.add(path, "a selection list must not mix field maps with bare values");
   return null;

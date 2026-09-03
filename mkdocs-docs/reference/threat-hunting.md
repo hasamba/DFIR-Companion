@@ -45,7 +45,10 @@ header that says which one it is:
 **What is refused.** Any other category, any field the template has no column for (for example
 `DestinationHostname` — `netstat()` has no hostname column), the modifiers `base64`, `windash`,
 `fieldref` and the like, aggregations, `near` and `timeframe`. A refusal lists every problem in
-the rule, one line each, with the YAML path. Nothing half-translated is ever offered to run.
+the rule, one line each, with the YAML path. A selection with no fields, a `1 of them` over no
+selection, and a `contains` / `endswith` path rooted on a drive or a host (`D:\tools\x.log`,
+which a search under `C:` could never find) are refused too. Nothing half-translated is ever
+offered to run.
 
 **A rule that spans categories becomes one hunt with several sources.** A finding's **Export as
 Sigma draft** writes a `process_creation` rule that also carries a network block and a file block
