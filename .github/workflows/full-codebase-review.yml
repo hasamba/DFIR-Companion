@@ -1,0 +1,28 @@
+name: opencode-full-review
+on:
+  workflow_dispatch: {}
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: anomalyco/opencode/github@latest
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: "ollama-cloud/kimi-k2.7-code:cloud"
+          use_github_token: true
+          prompt: |
+            Perform a full code review of the entire repository as it exists
+            on this branch. Walk through all source files (ignore build
+            artifacts, dependencies, and generated files). Identify bugs,
+            security issues, code smells, and design problems. Produce a
+            structured markdown report grouped by file and severity, then
+            commit it as CODE_REVIEW_REPORT.md on a new branch and open a
+            pull request with the results.
