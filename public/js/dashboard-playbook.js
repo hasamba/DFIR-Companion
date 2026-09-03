@@ -36,6 +36,7 @@
           description: description || "DFIR collection",
           source: ctx.source || "playbook",
           mitreTechniques: ctx.mitre || [],
+          ...(ctx.coverage === "snapshot" ? { coverage: "snapshot" } : {}), // #809
         }
       : { hostname, vql, description: description || "DFIR collection" };
     fetch(url, {
@@ -488,7 +489,7 @@
             : "") +
           (techs ? `<div class="pbh-techs">${techs}</div>` : "") +
           `<textarea class="pbh-vql" id="pbhQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>` +
-          `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}<button class="pbh-regen" data-idx="${idx}" title="Generate a different VQL for this task approaching from a different angle">🔄 Regenerate</button></div>` +
+          `<div class="pbh-actions"><button class="pbh-copy" data-idx="${idx}">Copy VQL</button>${deployBtn}<button class="pbh-regen" data-idx="${idx}" title="Generate a different VQL for this task approaching from a different angle">🔄 Regenerate</button>${huntSnapshotToggleHtml("pbh-snapshot", idx, s.vql)}</div>` +
           veloNote +
           `<div class="pbh-res" id="pbhRes${idx}"></div>` +
           `</div>` +
@@ -551,7 +552,8 @@
             title: s.title || "DFIR playbook hunt",
             source: "playbook",
             mitre: s.mitreTechniques || [],
-          }; // #157 record the deploy
+            ...huntSnapshotCtx(container, "pbh-snapshot", idx),
+          }; // #157 record the deploy; #809 the analyst's live-snapshot choice rides along
           if (s.mode === "collection" && s.targetHost)
             collectHostInto(s.targetHost, vql, desc, res, b, ctx);
           else launchHuntInto(vql, desc, res, b, ctx);

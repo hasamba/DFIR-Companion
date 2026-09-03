@@ -223,9 +223,11 @@ function checkRegexValues(path: string, values: readonly SigmaScalar[], out: Ref
     // Sigma `re` values are RE2 and often open with an inline flag group, `(?i)…`, which the
     // JavaScript RegExp inside checkRegexSafety rejects as an invalid group. Lift the flags out
     // and hand them over separately; RE2's `U` (ungreedy) has no JS twin and is dropped for the
-    // safety check only — the pattern itself reaches the endpoint unchanged.
+    // safety check only — the pattern itself reaches the endpoint unchanged. RE2's named group
+    // spelling `(?P<name>…)` is the same skew (#810): JavaScript names a group `(?<name>…)`, so the
+    // `P` is dropped for the check the same way, and the endpoint still gets the original bytes.
     const inline = /^\(\?([imsU]+)\)/.exec(pattern);
-    const body = inline ? pattern.slice(inline[0].length) : pattern;
+    const body = (inline ? pattern.slice(inline[0].length) : pattern).replace(/\(\?P</g, "(?<");
     const flags = inline ? inline[1].replace(/U/g, "") : "";
     const safety = checkRegexSafety(body, flags);
     if (!safety.ok) {

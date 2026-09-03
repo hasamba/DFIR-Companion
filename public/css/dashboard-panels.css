@@ -367,6 +367,8 @@ body.has-servicenow .snow-push-btn, body.has-servicenow #findingBulkSnowBtn { di
   color: var(--text-bright); border: 0; border-top: 1px solid var(--border-color); padding: 10px; font-size: 11px;
   font-family: ui-monospace, Menlo, Consolas, monospace; }
 .hunt-run-res { padding: 8px 10px; border-top: 1px solid var(--border-color); }
+.hunt-snapshot-opt { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); cursor: pointer; margin-left: auto; }
+.hunt-snapshot-opt input { margin: 0; }
 .hunt-refresh { background: var(--border-color); border: 0; color: var(--text-primary); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
 .hunt-refresh:hover { color: #fff; }
 /* Attacker Sessions story view (#341). Session cards share the bordered-card language of the

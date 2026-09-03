@@ -398,7 +398,13 @@ const oneLine = (s: string): string =>
     .replace(/"/g, "'")
     .trim();
 
-function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: Needs): SigmaCompiled {
+function assemble(
+  template: VqlTemplate,
+  rule: SigmaRule,
+  where: string,
+  needs: Needs,
+  unreferenced: readonly string[] = [],
+): SigmaCompiled {
   const sysmonOnly = needs.extras.has("sysmon") ? template.sysmonOnly : undefined;
   const coverage = sysmonOnly?.coverage ?? template.coverage(needs.globs);
   const idPart = rule.id ? ` (${oneLine(rule.id)})` : "";
@@ -414,6 +420,9 @@ function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: 
   const lines = [
     `-- Sigma "${oneLine(rule.title)}"${idPart} → ${coverage}`,
     "-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL",
+    ...(unreferenced.length
+      ? [`-- Not in the condition, so not in this hunt: ${unreferenced.map(oneLine).join(", ")}`]
+      : []),
     ...(template.preStages ?? []),
     ...used.map((n) => template.extraStages[n]).filter((s): s is string => !!s),
     `LET ${template.stage} <= SELECT ${columns.join(", ")} FROM ${from}`,
@@ -431,6 +440,42 @@ function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: 
     snapshot: !readsHistory(template, needs.extras),
   };
 }
+
+// ── Which selections the condition actually uses (#808) ──────────────────────────────────────
+
+// A selection the condition never names is dead text: it must not add a glob root, a lookup stage
+// or a word to the coverage sentence, or an unused `contains` block turns the hunt into a
+// whole-disk walk the condition never asked for. It is still compiled, so a broken unused block
+// refuses like any other — nothing half-understood is left in the rule — and the header names it.
+function referencedSelectionNames(c: SigmaCondition, into = new Set<string>()): Set<string> {
+  switch (c.kind) {
+    case "ref":
+      into.add(c.name);
+      break;
+    case "not":
+      referencedSelectionNames(c.operand, into);
+      break;
+    case "and":
+    case "or":
+      for (const o of c.operands) referencedSelectionNames(o, into);
+      break;
+    case "oneOf":
+    case "allOf":
+      for (const n of c.names) into.add(n);
+      break;
+  }
+  return into;
+}
+
+const unreferencedSelectionNames = (rule: SigmaRule): string[] => {
+  const used = referencedSelectionNames(rule.detection.condition);
+  return rule.detection.selections.map((s) => s.name).filter((n) => !used.has(n));
+};
+
+const mergeNeeds = (into: Needs, from: Needs): void => {
+  for (const extra of from.extras) into.extras.add(extra);
+  for (const g of from.globs) if (!into.globs.includes(g)) into.globs.push(g);
+};
 
 // ── Mixed-category rules: one source per category (#802) ─────────────────────────────────────
 
@@ -570,11 +615,12 @@ function compileMultiSource(
   if (unresolved.length) return resolved ? { ok: false, refusals: unresolved } : null;
   if (![...groups.keys()].some((t) => !declared.has(t))) return null;
 
+  const unreferenced = unreferencedSelectionNames(rule);
   return combine(
     rule,
     [...groups.entries()].map(([template, group]) => {
       const where = group.parts.length === 1 ? group.parts[0] : `(${group.parts.join(" OR ")})`;
-      return assemble(template, rule, where, group.needs);
+      return assemble(template, rule, where, group.needs, unreferenced);
     }),
     !everyBlockHasHistory,
   );
@@ -598,16 +644,27 @@ function combine(rule: SigmaRule, sources: readonly SigmaCompiled[], snapshot: b
 }
 
 // The whole rule against one template: every selection, then the condition, or the refusals.
+const belongsTo = (r: SigmaRefusal, n: string): boolean =>
+  r.path === `detection.${n}` || r.path.startsWith(`detection.${n}.`);
+
+// The whole rule against one template. Every selection compiles (a broken one refuses), but only
+// a selection the condition names contributes its glob roots and lookup stages (#808). An unused
+// block that some template could answer — a file block under a process rule — is not broken, so
+// its refusal is dropped and only the header records it; one no template can answer still refuses.
 function compileWhole(
   template: VqlTemplate,
   rule: SigmaRule,
+  declared: ReadonlySet<VqlTemplate>,
 ): { ok: true; source: SigmaCompiled } | { ok: false; refusals: SigmaRefusal[] } {
   const out: SigmaRefusal[] = [];
   const needs: Needs = { extras: new Set(), globs: [] };
   const exprs = new Map<string, string>();
+  const referenced = referencedSelectionNames(rule.detection.condition);
   for (const sel of rule.detection.selections) {
-    const expr = compileSelection(template, sel, needs, out);
+    const own: Needs = { extras: new Set(), globs: [] };
+    const expr = compileSelection(template, sel, own, out);
     if (expr !== null) exprs.set(sel.name, expr);
+    if (referenced.has(sel.name)) mergeNeeds(needs, own);
   }
   if (template.globFrom && needs.globs.length === 0 && out.length === 0) {
     const source = Object.entries(template.fields).find(([, c]) => c.globSource)?.[0] ?? "a path";
@@ -616,10 +673,17 @@ function compileWhole(
       message: `no ${source} value to derive a path from; the hunt needs at least one to know where to look`,
     });
   }
-  if (out.length) return { ok: false, refusals: out };
+  const unreferenced = unreferencedSelectionNames(rule);
+  const order = [...declared, ...VQL_TEMPLATES.filter((t) => !declared.has(t))];
+  const ignorable = unreferenced.filter((n) => {
+    const sel = rule.detection.selections.find((s) => s.name === n);
+    return !!sel && resolveSelection(order, declared, sel).ok;
+  });
+  const live = out.filter((r) => !ignorable.some((n) => belongsTo(r, n)));
+  if (live.length) return { ok: false, refusals: live };
   return {
     ok: true,
-    source: assemble(template, rule, compileCondition(rule.detection.condition, exprs), needs),
+    source: assemble(template, rule, compileCondition(rule.detection.condition, exprs), needs, unreferenced),
   };
 }
 
@@ -648,8 +712,10 @@ export function compileSigmaToVql(rule: SigmaRule): SigmaCompileResult {
   // Every template the category owns that answers the whole rule becomes a source; the ones that
   // cannot are simply left out (pslist() has no OriginalFileName, the event log does). When none
   // can, the refusal is the shortest list — the template closest to answering — unless the rule is
-  // a mixed-category draft the split path can take.
-  const attempts = declared.map((template) => compileWhole(template, rule));
+  // a mixed-category draft the split path can take. A broken selection the condition never names
+  // still refuses on either path (#808).
+  const declaredSet = new Set(declared);
+  const attempts = declared.map((template) => compileWhole(template, rule, declaredSet));
   const sources = attempts.flatMap((a) => (a.ok ? [a.source] : []));
   // Every source here answers every block, so the hunt is a snapshot only when every source is.
   if (sources.length)
@@ -658,10 +724,15 @@ export function compileSigmaToVql(rule: SigmaRule): SigmaCompileResult {
       sources,
       sources.every((s) => s.snapshot),
     );
-  const refusals = attempts
+  const live = attempts
     .flatMap((a) => (a.ok ? [] : [a.refusals]))
     .reduce((best, r) => (r.length < best.length ? r : best));
-  return compileMultiSource(rule, declared) ?? { ok: false, refusals };
+  const multi = compileMultiSource(rule, declared);
+  if (!multi) return { ok: false, refusals: live };
+  const unreferenced = unreferencedSelectionNames(rule);
+  const dead = live.filter((r) => unreferenced.some((n) => belongsTo(r, n)));
+  if (!dead.length) return multi;
+  return { ok: false, refusals: multi.ok ? dead : [...multi.refusals, ...dead] };
 }
 
 /** Parse then compile. Parse refusals come back as they are; compile runs only on a parsed rule. */

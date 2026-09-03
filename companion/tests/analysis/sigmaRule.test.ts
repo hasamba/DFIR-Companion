@@ -431,6 +431,15 @@ detection:
     );
   });
 
+  it("accepts an RE2 named group (?P<name>…), which JavaScript spells (?<name>…) (#810)", () => {
+    expect(parseSigmaRule(withField("CommandLine|re", "'(?P<enc>-enc\\s+\\w+)'")).ok).toBe(true);
+    expect(parseSigmaRule(withField("CommandLine|re", "'(?i)^(?P<cmd>cmd|powershell)\\.exe'")).ok).toBe(true);
+    // The lift is for the check only: a catastrophic pattern inside a named group is still refused.
+    expect(refusals(withField("CommandLine|re", "'^(?P<bomb>(a|aa)+)b$'"))[0].path).toBe(
+      "detection.sel.CommandLine|re",
+    );
+  });
+
   it("refuses a catastrophic re value through checkRegexSafety, with its reason", () => {
     const r = refusals(withField("Image|re", "'^(a|aa)+b$'"));
     expect(r[0].path).toBe("detection.sel.Image|re");

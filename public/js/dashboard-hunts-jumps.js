@@ -95,7 +95,7 @@
             : "") +
           (techs ? `<div class="vhs-techs">${techs}</div>` : "") +
           `<textarea class="vhs-vql" id="vhsQ${idx}" spellcheck="false">${esc(s.vql)}</textarea>` +
-          `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${regenBtn}${deployBtn}</div>` +
+          `<div class="vhs-actions"><button class="vhs-copy" data-idx="${idx}">Copy VQL</button>${regenBtn}${deployBtn}${huntSnapshotToggleHtml("vhs-snapshot", idx, s.vql)}</div>` +
           `<div class="vhs-res" id="vhsRes${idx}"></div>` +
           `</div>`
         );
@@ -136,8 +136,8 @@
             title,
             document.getElementById("vhsRes" + idx),
             b,
-            { caseId, title, source: vhsSource, mitre },
-          ); // #157 record the deploy
+            { caseId, title, source: vhsSource, mitre, ...huntSnapshotCtx(el, "vhs-snapshot", idx) },
+          ); // #157 record the deploy; #809 the analyst's live-snapshot choice rides along
         }),
     );
     el.querySelectorAll(".vhs-regen").forEach(
