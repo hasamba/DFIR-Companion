@@ -22,7 +22,9 @@ export function demoteBelowSeverity(
   const floor = SEVERITY_RANK[min];
   const kept: ForensicEvent[] = [];
   const demoted: ForensicEvent[] = [];
-  for (const e of events) (SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
+  // A promoted row stays regardless of severity: the analyst put it here on purpose, and the cut
+  // exists to keep unreviewed telemetry out, not to remove what an analyst asked to see.
+  for (const e of events) (e.promotedAt || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
   return { kept, demoted };
 }
 

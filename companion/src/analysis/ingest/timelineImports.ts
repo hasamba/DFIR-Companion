@@ -102,6 +102,16 @@ export async function promoteSuperTimeline(
       timestamp: opts.importedAt,
       sourceScreenshots: [],
     });
+    // Stamp the promoted rows so the forensic gate keeps them (see ForensicEvent.promotedAt). The
+    // delta schema strips unknown keys, so the stamp cannot ride through mergeWithAliases; apply it
+    // by id afterwards, exactly like the provenance markers below. An earlier stamp is kept.
+    const promotedIds = new Set(events.map((e) => e.id));
+    state = {
+      ...state,
+      forensicTimeline: state.forensicTimeline.map((e) =>
+        promotedIds.has(e.id) && !e.promotedAt ? { ...e, promotedAt: opts.importedAt } : e,
+      ),
+    };
     // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
     // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
     // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").

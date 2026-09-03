@@ -73,6 +73,8 @@ export interface HayabusaParseResult {
 // Hayabusa level vocabulary → our Severity. Hayabusa abbreviates in some versions
 // (crit/med) and spells out in others (critical/medium); accept both.
 const LEVEL: Record<string, Severity> = {
+  emergency: "Critical", // Hayabusa's highest level (its own tier above critical)
+  emer: "Critical",
   critical: "Critical",
   crit: "Critical",
   high: "High",
@@ -235,11 +237,13 @@ function mapRecord(
   const recordIdentity = fullMessage
     ? undefined
     : evtxRecordIdentity(channel, firstStr(rec, ["RecordID", "Record ID", "RecordId", "EventRecordID"]));
+  // Only the SUBJECT is number-normalized (PIDs, logon ids, GUIDs are volatile). The rule, channel,
+  // event id and host are identity: stripping their digits folded "WS-01" and "WS-02", and EID 4624
+  // with 4625, into one counted row on the first host — a fleet-wide hit looked like a single host.
   const aggKey =
-    `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject}`
+    `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject
       .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+      .replace(/\d+/g, "#")}`.slice(0, 400);
 
   return {
     host,

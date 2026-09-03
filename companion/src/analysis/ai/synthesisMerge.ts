@@ -119,8 +119,18 @@ export async function foldSynthesisDelta(
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts);
-  // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
-  const filtered = applyFalsePositive(merged, markers);
+  // Safety net: drop anything confirmed false-positive that the model RE-INTRODUCED. An IOC that
+  // was already in the persisted state stays: it is evidence with provenance, every reader (report
+  // writer, prompt blocks, dashboard) already hides false-positive IOCs by value, and deleting it
+  // here made the marking irreversible — un-marking after one synthesis could not bring it back.
+  const fpFiltered = applyFalsePositive(merged, markers);
+  const norm = (v: string): string => v.trim().toLowerCase();
+  const priorIocs = new Set(state.iocs.map((i) => norm(i.value)));
+  const keptIocs = new Set(fpFiltered.iocs.map((i) => norm(i.value)));
+  const filtered = {
+    ...fpFiltered,
+    iocs: merged.iocs.filter((i) => keptIocs.has(norm(i.value)) || priorIocs.has(norm(i.value))),
+  };
   const surviving = new Set(filtered.findings.map((f) => f.id));
   const linked = linkEventsToFindings(filtered, delta, surviving);
 

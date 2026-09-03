@@ -4137,3 +4137,38 @@ describe("parseVelociraptorJson — a malware-family name in a verdict title esc
     expect(severityOf(title)).toBe("Medium");
   });
 });
+
+// ── Investigator-workflow regressions (2026-09 codebase review) ─────────────────────────────────
+
+describe("Velociraptor aggregation key across hosts", () => {
+  const pslist = (host: string, pid: number, day: number): object => ({
+    ClientId: `C.${host}`,
+    Hostname: host,
+    _Source: "Windows.System.Pslist",
+    Pid: pid,
+    Ppid: 600,
+    Name: "mimikatz.exe",
+    CommandLine: "mimikatz.exe sekurlsa::logonpasswords",
+    Exe: "C:\\Users\\Public\\mimikatz.exe",
+    CreateTime: `2026-05-1${day}T10:00:00Z`,
+    Username: "ACME\\svc",
+  });
+
+  it("keeps one row per host when a fleet hunt finds the same process on WKSTN-01, -02 and -03", () => {
+    const text = [pslist("WKSTN-01", 4001, 1), pslist("WKSTN-02", 4002, 2), pslist("WKSTN-03", 4003, 3)]
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    const r = parseVelociraptorJson(text);
+    expect(r.events).toHaveLength(3);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WKSTN-01", "WKSTN-02", "WKSTN-03"]);
+  });
+
+  it("still folds the same process on the same host when only the pid differs", () => {
+    const text = [pslist("WKSTN-01", 4001, 1), pslist("WKSTN-01", 4077, 1)]
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    const r = parseVelociraptorJson(text);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+});

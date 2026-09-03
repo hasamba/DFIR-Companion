@@ -311,3 +311,109 @@ describe("parseHayabusaTimeline — PowerShell 4104 script-block fragments", () 
     expect(r.events[0].message).toBeUndefined();
   });
 });
+
+// ── Investigator-workflow regressions (2026-09 codebase review) ─────────────────────────────────
+
+const HAYABUSA_CSV_HEADER =
+  '"Timestamp","Computer","Channel","EventID","Level","MitreTactics","MitreTags","OtherTags","RuleTitle","Details","ExtraFieldInfo","RuleFile","EvtxFile"';
+
+function csvRow(
+  ts: string,
+  computer: string,
+  eid: string,
+  level: string,
+  title: string,
+  details: string,
+): string {
+  return `"${ts}","${computer}","Sec","${eid}","${level}","","","","${title}","${details}","","${title}.yml","${computer}.evtx"`;
+}
+
+describe("Hayabusa level vocabulary", () => {
+  it("maps the emergency level (Hayabusa's highest, abbreviated 'emer') to Critical, not the Medium fallback", () => {
+    const text = [
+      HAYABUSA_CSV_HEADER,
+      csvRow("2026-05-12 18:00:00.000 +00:00", "WS-01", "4624", "emer", "Mimikatz Emergency", "x: y"),
+      csvRow("2026-05-12 18:01:00.000 +00:00", "WS-02", "4624", "emergency", "Spelled Emergency", "x: y"),
+    ].join("\n");
+    const r = parseHayabusaTimeline(text);
+    expect(r.events.map((e) => e.severity)).toEqual(["Critical", "Critical"]);
+    // With the import-time severity floor the manual recommends, the emergency rows must survive.
+    expect(parseHayabusaTimeline(text, { minSeverity: "High" }).events).toHaveLength(2);
+  });
+});
+
+describe("Hayabusa aggregation key", () => {
+  it("does not fold the same rule on hosts that differ only by a number into one row on the first host", () => {
+    const text = [
+      HAYABUSA_CSV_HEADER,
+      csvRow(
+        "2026-05-12 08:00:00.000 +00:00",
+        "WS-01.acme.local",
+        "4624",
+        "high",
+        "RDP Logon",
+        "Type: 10 ¦ TgtUser: j.rivera ¦ SrcIP: 10.20.30.44",
+      ),
+      csvRow(
+        "2026-05-13 21:30:00.000 +00:00",
+        "WS-02.acme.local",
+        "4624",
+        "high",
+        "RDP Logon",
+        "Type: 10 ¦ TgtUser: j.rivera ¦ SrcIP: 10.20.30.44",
+      ),
+    ].join("\n");
+    const r = parseHayabusaTimeline(text);
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01.acme.local", "WS-02.acme.local"]);
+    expect(r.events.map((e) => e.count ?? 1)).toEqual([1, 1]);
+  });
+
+  it("does not fold a logon success (4624) with a logon failure (4625) on the same host", () => {
+    const text = [
+      HAYABUSA_CSV_HEADER,
+      csvRow(
+        "2026-05-14 02:00:00.000 +00:00",
+        "SRV17",
+        "4624",
+        "high",
+        "RDP Logon",
+        "TgtUser: j.rivera ¦ SrcIP: 10.20.30.99",
+      ),
+      csvRow(
+        "2026-05-14 02:10:00.000 +00:00",
+        "SRV17",
+        "4625",
+        "high",
+        "RDP Logon",
+        "TgtUser: j.rivera ¦ SrcIP: 10.20.30.99",
+      ),
+    ].join("\n");
+    expect(parseHayabusaTimeline(text).events).toHaveLength(2);
+  });
+
+  it("still folds repeats of one rule on one host that differ only by volatile numbers", () => {
+    const text = [
+      HAYABUSA_CSV_HEADER,
+      csvRow(
+        "2026-05-12 08:00:00.000 +00:00",
+        "WS-01",
+        "4688",
+        "med",
+        "Whoami Execution",
+        "Proc: whoami.exe ¦ PID: 4001",
+      ),
+      csvRow(
+        "2026-05-12 08:05:00.000 +00:00",
+        "WS-01",
+        "4688",
+        "med",
+        "Whoami Execution",
+        "Proc: whoami.exe ¦ PID: 4077",
+      ),
+    ].join("\n");
+    const r = parseHayabusaTimeline(text);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+});

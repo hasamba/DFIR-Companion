@@ -24,6 +24,13 @@ function foldVolatileIds(s: string): string {
   return s.replace(GUID_RE, "<guid>").replace(/\d+/g, "#");
 }
 
+// The same fold for the inline keys in velociraptorImport.ts (usn, mft, pslist, netstat and the
+// generic artifact mapper), lowercased. Apply it to a command line, a path, a pid — never to the
+// host or artifact segment, or "WKSTN-01".."WKSTN-50" become one counted row on the first host.
+export function volatileText(s: string): string {
+  return foldVolatileIds(s.toLowerCase());
+}
+
 // Sigma with no parsed event underneath. The rule title is the only discriminator besides the host,
 // and a verbose Sigma title reaches the bound on its own.
 export function sigmaAggKey(host: string, title: string): string {

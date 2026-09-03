@@ -259,6 +259,11 @@ export interface ForensicEvent {
   // "[second-look: h2]" onto a raw super-timeline row it promoted to resolve an open hypothesis/question.
   // Rendered as a small chip on the timeline row so the analyst sees the row is machine-surfaced.
   provenance?: string[];
+  // Set when an analyst (or an analyst-initiated path: super-timeline promote, explain-event,
+  // starred report, second look) deliberately pulled this row up from the super-timeline. The
+  // forensic gate never demotes a row carrying this stamp, whatever its severity — otherwise the
+  // next import's demote pass silently undoes the promotion (the row is Info, so it fails the cut).
+  promotedAt?: string;
 }
 
 // Result of validating a parent→child process relationship against behavioral intel

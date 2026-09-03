@@ -898,3 +898,52 @@ The DD-3 fix deliberately baked a Dockerfile HEALTHCHECK against /health because
 | PF2-2 | LOW | `companion/src/analysis/huntQueryExecutor.ts:249` | Hunt executor compiles the matches-predicate RegExp per row per evaluation — the one per-row compile the PF-3/PF-4 sweep missed |
 | PF2-3 | LOW | `companion/src/analysis/evtxXmlImport.ts:171` | parseWinEventXmlProgress's event-count loop blocks the event loop ~0.4-0.7 s with no yield or abort check — the exact gap the branch fixed for syslog's count loop |
 | DD2-1 | LOW | `docker-compose.yml:61` | Compose healthcheck probes auth-gated /dashboard, not /health — reports unhealthy under the recommended team mode |
+
+---
+
+## Third pass — investigator-workflow review (2026-09-03)
+
+*Base commit: 117aa95 (`master` tip, v0.36.0). Method: the previous passes read the code by area; this
+one drives it. A companion was booted from `tests/e2e/server-entry.ts` (temp cases root, stub AI
+provider) and an investigation was walked end to end over HTTP the way the manual's "Analyst
+Walkthrough" describes it — create case → import Chainsaw / Hayabusa / EvtxECmd / Velociraptor /
+Suricata / THOR / EML exports → tag, comment, star, promote, merge hosts, mark false positives, set
+scope and clock skew → synthesize → hunt-query and Sigma compile → every export → encrypted archive
+round trip, undo/redo, archive, password, delete. Every candidate was then traced in the code and,
+where it is a parser, reproduced with the parser alone. Security was out of scope by request. Only
+confirmed findings appear; each fixed one carries a regression test.*
+
+### What held up
+
+Timezone offsets (`+09:00`, `-05:00`), epoch-second and 7-digit-fraction timestamps, BOM/CRLF CSVs,
+empty and unknown files, the encrypted `.dfircase` round trip (state, tags, comments, false
+positives, scope, super-timeline, notebook, activity log, report meta all byte-identical), import
+undo/redo, clock-skew override idempotence, the case-password cookie flow, forensic and
+super-timeline paging (no duplicates, no gaps, stable tiebreak), Markdown/HTML/CSV escaping of
+pipes, angle brackets, quotes and embedded newlines, all 114 case `GET` endpoints, every dashboard
+and extension `fetch()` target against the registered routes, Sigma → VQL escaping of
+`C:\Program Files (x86)\`, and the hunt-query language. None of these produced a defect.
+
+### Findings
+
+| ID | Sev | Location | Finding | Status |
+|---|---|---|---|---|
+| WF-1 | HIGH | `companion/src/composition/importIngest.ts:323`, `analysis/forensicGate.ts:18`, `analysis/ingest/timelineImports.ts:81` | **A row promoted from the super-timeline is silently demoted again by the next import.** Promotion merges the row into the forensic timeline at its own severity (Info); `demoteForensicForCase` runs after every import and removes everything below the floor, promoted rows included. Reproduced: promote 2 rows (forensic total 17), import one more file (+1 event) → total 16, both promoted ids gone. Explain-event, starred report and second-look use the same path, so their promotions are lost the same way — the ARCHITECTURE.md promise that promotion is "the honest record of what happened" did not survive one import. | Fixed: `ForensicEvent.promotedAt` is stamped on promotion; the gate never demotes a stamped row. `tests/analysis/promotionSurvivesDemote.test.ts`. |
+| WF-2 | HIGH | `companion/src/analysis/velociraptorImport.ts` (usn, mft, generic, pslist, netstat keys), `hayabusaImport.ts:238`, `siemImport.ts:1541` | **The same detection on hosts that differ only by a number folds into one row on the first host.** These aggregation keys put the host (and, for Hayabusa, the event id) inside the string and then ran `.replace(/\d+/g, "#")` over the whole key. `WKSTN-01`, `WKSTN-02`, `WKSTN-03` running `mimikatz.exe` on three different days → one event on `WKSTN-01`, count 3, dated the earliest; Hayabusa 4624 (success) and 4625 (failure) on `SRV17` → one row; a 3,000-row synthetic Hayabusa CSV → one event. Host ranking, asset graph and the report then name one host. `veloAggKeys.ts` states the rule ("that normalisation must never reach the HOST", #659) — these seven sites never followed it. | Fixed: only the volatile text is normalised (`veloAggKeys.volatileText`); host, artifact, channel and event id are literal. Tests in `hayabusaImport.test.ts`, `velociraptorImport.test.ts`. |
+| WF-3 | HIGH | `companion/src/analysis/ai/synthesisMerge.ts:123` | **Marking an IOC false-positive becomes irreversible after one synthesis.** `foldSynthesisDelta` persisted `applyFalsePositive(merged, markers)`, which deletes matching IOCs from state. Reproduced: mark `10.20.30.44` FP → synthesize → IOC count 14 → 13 → remove the marker → IOC does not return (its `extractedFrom` provenance is gone too). `falsePositive.ts` documents the marking as reversible; that held for events, not IOCs. Every reader (report writer, prompt blocks, dashboard `fpIocValueSet`) already hides FP'd IOCs by value, so nothing needed the deletion. | Fixed: an IOC already in the case is kept; only a model re-introduction is dropped (the existing pipeline test for that still passes). Test added to `pipeline.test.ts`. |
+| WF-4 | MEDIUM | `companion/src/analysis/hayabusaImport.ts:75` | **Hayabusa's highest level, `emergency` / `emer`, was unmapped and fell back to Medium.** With the import-time severity floor the manual recommends ("High"), those rows were dropped entirely: `emer` + `minSeverity=High` → 0 events kept, `crit` → kept. | Fixed: both spellings map to Critical. Test in `hayabusaImport.test.ts`. |
+| WF-5 | MEDIUM | `companion/src/ingest/captureIngest.ts:23`, `src/types.ts:1` vs `extension/src/serviceWorker.ts:364,397` | **The extension's `manual` trigger is rejected by the server.** The Ctrl+Shift+S toggle-on capture and the popup's one-off capture send `triggerType: "manual"`; the payload schema only knew `timer/navigation/tab_switch/click` and answered 400 "invalid payload". The timer, navigation and per-row click captures were unaffected, which is why the E2E suite (which uses `click`) did not see it. | Fixed: `manual` added to the schema and the shared type. Test in `captureIngest.test.ts`. |
+| WF-6 | MEDIUM | `companion/src/reports/iocBlocklist.ts:45`, `public/dashboard.html:872` | **The IOC block-list export is empty by default on any case without enrichment hits.** The list's severity is derived only from the IOC's worst enrichment verdict (none → Info) and the UI default floor is Medium, so a case whose IOCs come from Critical detections exports a header and nothing else unless the analyst picks "Info — all IOCs". | Open. Suggest deriving the floor from the worst severity of the events the IOC was extracted from, or defaulting the picker to Info with the verdict filter as an explicit checkbox. |
+| WF-7 | LOW | `companion/src/routes/import.ts` (undo), `analysis/importUndo.ts` | **Undoing an import also reverts analyst work done after it.** Undo restores the whole pre-import state snapshot, so manual events and promotions made since that import vanish with it (17 → 14 events when undoing a one-event import). Redo brings them back, but the confirm text names only the import. | Open. Suggest naming the collateral in the confirm dialog, or replaying post-import analyst deltas onto the restored snapshot. |
+| WF-8 | LOW | `companion/src/analysis/huntQueryExecutor.ts:262-280` | **Hunt-query equality on keyword fields is case-sensitive while `contains` is not.** `host.name = "ws-fin-07.acme.local"` → 0 rows for a row recorded as `WS-FIN-07.acme.local`; everywhere else (host duplicates, ranking) hostnames are folded to lower case. | Open. Suggest case-folding `=`/`!=` for keyword-typed fields. |
+| WF-9 | LOW | `companion/src/analysis/importDetect.ts:492-530` | **Chainsaw CSV (`chainsaw hunt --csv`) and EvtxECmd CSV are not recognised** and fall to the AI-only generic CSV importer, which is skipped (`reason: ai-off`) when the case's AI toggle is off — the default for a new case. The manual lists "Chainsaw/Hayabusa hunt results (JSON or CSV)" and "KAPE/Eric Zimmerman tool outputs (CSV)". | Open. Suggest signatures for the Chainsaw CSV header (`timestamp,detections,path,…`) and EvtxECmd (`RecordNumber,EventRecordId,TimeCreated,…`). |
+| WF-10 | LOW | `companion/src/routes/findings.ts:232` | `POST /false-positive` with `kind: "ioc"` accepts any `ref` and, with `addToWhitelist`, promotes it verbatim — an IOC id (`i001`) became an exact-match whitelist rule that can never match. Only reachable through direct API use (the dashboard sends the value). | Open. Suggest resolving `ref` against the case's IOC values before promoting. |
+| WF-11 | INFO | `companion/src/analysis/chainsawImport.ts`, `canonicalEvent.ts` legacy upgrade | Chainsaw events carry an empty canonical `time` envelope (`observed: ""`, `precision: "unknown"`) although `timestamp` is set; Hayabusa and Velociraptor events fill it. Any consumer of `canonical.time` sees Chainsaw rows as undated. | Open. |
+
+### Verification
+
+Every fix was re-run against a fresh companion after the change: promoted rows survive a later
+import (`promotedAt` present), an FP'd IOC survives synthesis and reappears in the report after
+un-marking, a `manual` capture answers 201, `emer` under a High floor imports as Critical, and a
+three-host Velociraptor `Pslist` result ranks three hosts. Full suite, lint, Prettier, typecheck and
+the size / import / boundary gates are green on the branch.

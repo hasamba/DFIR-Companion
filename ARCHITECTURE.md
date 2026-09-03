@@ -157,7 +157,9 @@ None of them run on their own — each is a button the analyst presses. Two now 
 
 Promotion is not a workaround, it is the honest record of what happened: clicking "explain this" or
 starring an event **is** the analyst declaring it interesting, and the forensic timeline is where
-interesting events live. Each promotion carries a note saying which action caused it, so it can be
+interesting events live. A promoted row keeps its severity (promotion does not forge a verdict) and
+carries `promotedAt`; `demoteBelowSeverity` never demotes a stamped row, so the next import's
+demote pass cannot undo what the analyst asked for (`tests/analysis/promotionSurvivesDemote.test.ts`). Each promotion carries a note saying which action caused it, so it can be
 told apart from an import six months later. This is the seam `runSecondLook` already used —
 deterministic search, promote with provenance, then re-synthesize.
 

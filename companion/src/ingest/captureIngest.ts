@@ -20,7 +20,7 @@ const payloadSchema = z.object({
   timestamp: z.string().min(1),
   url: z.string().min(1),
   tabTitle: z.string(),
-  triggerType: z.enum(["timer", "navigation", "tab_switch", "click"]),
+  triggerType: z.enum(["timer", "navigation", "tab_switch", "click", "manual"]),
   imageBase64: z.string().min(1),
 });
 

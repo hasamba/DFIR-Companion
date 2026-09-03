@@ -938,6 +938,67 @@ describe("AnalysisPipeline", () => {
     expect(state.iocs.map((i) => i.value)).toEqual(["10.0.0.5"]);
   });
 
+  it("synthesize keeps an IOC that was already in the case when it is marked false-positive, so un-marking can restore it", async () => {
+    const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "RDP logon from 10.20.30.44",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    // Evidence-derived IOC with provenance: the importer extracted it from e1.
+    seeded.iocs.push({
+      id: "i001",
+      type: "ip",
+      value: "10.20.30.44",
+      firstSeen: "2026-05-20T09:00:00Z",
+      extractedFrom: ["e1"],
+    });
+    await stateStore.save(seeded);
+
+    const falsePositiveStore = new FalsePositiveStore(caseStore);
+    await falsePositiveStore.save("c1", [
+      {
+        id: "ioc:10.20.30.44",
+        kind: "ioc",
+        ref: "10.20.30.44",
+        reason: "known-good-tool",
+        note: "jump host",
+        markedAt: "",
+        markedBy: "dana",
+      },
+    ]);
+
+    const synthDelta = JSON.stringify({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "p",
+      summary: "s",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", synthDelta),
+      falsePositiveStore,
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    // The marker hides it in every reader; the persisted record must not lose the evidence.
+    expect(state.iocs.map((i) => i.value)).toEqual(["10.20.30.44"]);
+    expect((await stateStore.load("c1")).iocs.find((i) => i.value === "10.20.30.44")?.extractedFrom).toEqual([
+      "e1",
+    ]);
+  });
+
   it("synthesize asks the model to re-answer a key question whose supporting finding was just marked false-positive", async () => {
     const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
     const seeded = emptyState("c1");

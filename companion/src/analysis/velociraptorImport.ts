@@ -83,6 +83,7 @@ import {
   detectionOverlayAggKey,
   downloadAggKey,
   taskAggKey,
+  volatileText,
 } from "./veloAggKeys.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
 import { rdpLateralSignal } from "./rdpLateralDetect.js";
@@ -908,12 +909,11 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   else if (rdp) description = `${description} — ${rdp.note} (T1021.001)`.slice(0, 600);
   description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
+  // Number-normalize only the row text (PIDs, timestamps, GUIDs). The artifact and host are
+  // identity: stripping their digits folded the same process on WKSTN-01..WKSTN-50 into one counted
+  // row attributed to the first host, so a fleet hunt lost which hosts were affected.
   const aggKey =
-    thor?.aggKey ??
-    `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+    thor?.aggKey ?? `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${volatileText(base)}`.slice(0, 400);
 
   const m: MappedEvent = {
     timestamp: pickTime(row),
@@ -973,9 +973,7 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
   const ransom = ransomwareSignal(path);
   const aggKey = ransom
     ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
-    : `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
-        .replace(/\d+/g, "#")
-        .slice(0, 400);
+    : `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${volatileText(path)}`.slice(0, 400);
   return {
     timestamp: pickTime(row),
     description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
@@ -1050,9 +1048,7 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
     // A ransomware sweep touches thousands of MFT records — collapse per host + impact type (see mapUsn).
     const aggKey = ransom
       ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
-      : `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
-          .replace(/\d+/g, "#")
-          .slice(0, 400);
+      : `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${volatileText(path)}`.slice(0, 400);
     events.push({
       timestamp: t,
       description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
@@ -1108,9 +1104,10 @@ function actionEvent(o: {
     );
   description = withHostSuffix(description, o.host).slice(0, 600);
   const aggKey =
-    `vr|${o.artifact.toLowerCase()}|${o.host.toLowerCase()}|${o.action.toLowerCase()}|${(o.aggSubject ?? o.subject).toLowerCase()}`
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+    `vr|${o.artifact.toLowerCase()}|${o.host.toLowerCase()}|${o.action.toLowerCase()}|${volatileText(o.aggSubject ?? o.subject)}`.slice(
+      0,
+      400,
+    );
   return {
     timestamp: o.time,
     description,
@@ -1299,11 +1296,12 @@ function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEv
   if (subject) description += `: ${oneLine(subject).slice(0, 300)}`;
   description = withHostSuffix(description, host).slice(0, 600);
 
+  // ppid is volatile (a fresh boot renumbers it), so it is normalized like the command line.
   const aggKey =
-    `vr-pslist|${name.toLowerCase()}|${ppid}|${host.toLowerCase()}|${(cmdline || exe || name).toLowerCase()}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+    `vr-pslist|${volatileText(name)}|${volatileText(ppid)}|${host.toLowerCase()}|${volatileText(cmdline || exe || name)}`.slice(
+      0,
+      400,
+    );
 
   return {
     timestamp: pickTime(row),
@@ -1352,9 +1350,10 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   description = description.slice(0, 600);
 
   const aggKey =
-    `vr-netstat|${name.toLowerCase()}|${status.toLowerCase()}|${lport}|${raddr.toLowerCase()}|${rport}|${host.toLowerCase()}`
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+    `vr-netstat|${volatileText(name)}|${status.toLowerCase()}|${volatileText(lport)}|${volatileText(raddr)}|${volatileText(rport)}|${host.toLowerCase()}`.slice(
+      0,
+      400,
+    );
 
   return {
     timestamp: pickTime(row),

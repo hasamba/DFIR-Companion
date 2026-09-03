@@ -1538,10 +1538,10 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
 
   const severity = pickGenericSeverity(rec);
   // Aggregate identical generic events, normalizing volatile numbers/GUIDs out of the key.
-  const aggKey = `gen|${vendor ?? ""}|${host}|${base}`
+  const aggKey = `gen|${vendor ?? ""}|${host}|${base
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<guid>")
+    .replace(/\d+/g, "#")}`
     .toLowerCase()
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-    .replace(/\d+/g, "#")
     .slice(0, 400);
 
   return {

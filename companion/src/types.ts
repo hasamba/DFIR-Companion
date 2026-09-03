@@ -1,4 +1,5 @@
-export type TriggerType = "timer" | "navigation" | "tab_switch" | "click";
+// Mirrors extension/src/types.ts: "manual" is the hotkey toggle-on capture and the popup's one-off capture.
+export type TriggerType = "timer" | "navigation" | "tab_switch" | "click" | "manual";
 
 export interface CaptureMetadata {
   caseId: string;

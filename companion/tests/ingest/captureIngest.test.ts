@@ -228,3 +228,17 @@ describe("isDedupEnabled", () => {
     }
   });
 });
+
+// The extension sends triggerType "manual" for the hotkey toggle-on capture and the popup's
+// one-off capture (extension/src/serviceWorker.ts). The server's payload schema rejected it, so
+// exactly those two captures failed with 400 "invalid payload".
+describe("ingestCapture accepts the extension's manual trigger", () => {
+  it("stores a manual capture like any other trigger", async () => {
+    const meta = await ingestCapture(
+      store,
+      payload({ triggerType: "manual", imageBase64: await pngBase64(10, 20, 30) }),
+    );
+    expect(meta.triggerType).toBe("manual");
+    expect(meta.sequenceNumber).toBe(1);
+  });
+});
