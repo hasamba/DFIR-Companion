@@ -45,7 +45,10 @@ describe("POST /cases/:id/sigma/compile", () => {
     expect(res.body.ok).toBe(true);
     expect(res.body.vql).toContain("FROM pslist()");
     expect(res.body.vql).toContain('Image =~ "(?i)\\\\\\\\certutil\\\\.exe$"');
-    expect(res.body.coverage).toBe("pslist(): running processes only, not process history");
+    expect(res.body.coverage).toBe(
+      "pslist(): running processes only, not process history; " +
+        "Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go",
+    );
     expect(res.body.title).toBe("Certutil download");
     expect(res.body.id).toBe("2f0d4b8e-7d2a-4d4d-9c26-0a5d2b4c9e11");
     expect(res.body.level).toBe("high");

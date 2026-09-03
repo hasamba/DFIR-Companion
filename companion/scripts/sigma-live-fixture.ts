@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileSigmaText } from "../src/analysis/sigmaToVql.js";
+import { PROCESS_EVENTS } from "../src/analysis/sigmaVqlTemplates.js";
 import {
   VelociraptorClient,
   loadVelociraptorConfig,
@@ -84,12 +85,19 @@ export const LIVE_RULES: Readonly<Record<string, string>> = {
   ),
 };
 
+// Raw VQL beside the rules, for a branch no rule can force: the Security 4688 fallback runs only
+// where the Sysmon log is absent, and the lab client has Sysmon.
+export const LIVE_PROBES: Readonly<Record<string, string>> = {
+  security4688: [...(PROCESS_EVENTS.preStages ?? []), "SELECT * FROM SecurityEvents LIMIT 20"].join("\n"),
+};
+
 type Row = Record<string, unknown>;
 interface Launched {
   key: string;
   huntId: string;
   artifact: string;
   sources: string[];
+  probe?: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -134,8 +142,14 @@ async function main(): Promise<void> {
     console.log(`launched ${key}: ${h.huntId} (${h.sources.join(", ")})`);
     launched.push({ key, huntId: h.huntId, artifact: h.artifact, sources: h.sources });
   }
+  for (const [key, text] of Object.entries(LIVE_PROBES)) {
+    const h = await client.launchHunt(text, `Sigma: live probe ${key}`, { expirySeconds: 1800 });
+    console.log(`launched probe ${key}: ${h.huntId} (${h.sources.join(", ")})`);
+    launched.push({ key, huntId: h.huntId, artifact: h.artifact, sources: h.sources, probe: true });
+  }
 
   const hunts: Record<string, unknown> = {};
+  const probes: Record<string, unknown> = {};
   const done = new Set<string>();
   for (let i = 0; i < 24 && done.size < launched.length; i++) {
     await sleep(15_000);
@@ -155,7 +169,8 @@ async function main(): Promise<void> {
         sources[src] = (res.rows as Row[]).slice(0, keep);
         console.log(`  ${h.key}/${src}: ${res.rows.length} row(s)`);
       }
-      hunts[h.key] = { huntId: h.huntId, ...compiled[h.key], sources };
+      if (h.probe) probes[h.key] = { huntId: h.huntId, vql: LIVE_PROBES[h.key], sources };
+      else hunts[h.key] = { huntId: h.huntId, ...compiled[h.key], sources };
       done.add(h.key);
     }
   }
@@ -175,6 +190,7 @@ async function main(): Promise<void> {
     },
     launcher: "VelociraptorClient.launchHunt() — the path the dashboard's Sigma card uses",
     hunts,
+    probes,
   };
   mkdirSync(dirname(OUT), { recursive: true });
   writeFileSync(OUT, JSON.stringify(fixture, null, 2) + "\n");

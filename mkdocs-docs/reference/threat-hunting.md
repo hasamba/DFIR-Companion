@@ -37,7 +37,7 @@ header that says which one it is:
 
 | Sigma category | Runs on the endpoint as | Covers |
 |---|---|---|
-| `process_creation` | `pslist()` | running processes only, not process history |
+| `process_creation` | `pslist()` **and** `parse_evtx()` over Sysmon event 1, or Security 4688 where Sysmon is absent — two sources in one hunt | running processes now, plus process history as far back as the endpoint's event logs go |
 | `network_connection` | `netstat()` | open connections only, not connection history |
 | `file_event` | `glob()` | files on disk now, under roots taken from the rule |
 | `registry_set` / `registry_event` / `registry_add` / `registry_delete` | `glob(accessor="registry")` | keys and values as they are now; the key must be rooted in a hive |
@@ -67,12 +67,23 @@ with an enrolled Windows client and run `npm run sigma:live-fixture` from `compa
 The card appears when Velociraptor is an enabled hunt platform (`DFIR_HUNT_PLATFORMS`). Compile
 works before the Velociraptor API is configured; only **Run** needs it.
 
-**A compiled rule is a live snapshot, and the Hunting Profile knows it.** Every template reads the
-endpoint as it is now, so a process that exited, a connection that closed or a file that was
-deleted before the hunt ran will not be there. An empty result from a compiled Sigma rule is
-therefore shown as **empty snapshot**, not as *no evidence*: it does not count as a miss, it does
-not lower a pivot class's hit rate, and it never counts toward exhausting a hypothesis. Only rules
-for `product: windows` (or with no product) compile; every template is a Windows plugin.
+**A live-only rule is a snapshot, and the Hunting Profile knows it.** The network, file and
+registry templates read the endpoint as it is now, so a connection that closed or a file that was
+deleted before the hunt ran will not be there. An empty result from such a rule is therefore shown
+as **empty snapshot**, not as *no evidence*: it does not count as a miss, it does not lower a pivot
+class's hit rate, and it never counts toward exhausting a hypothesis.
+
+**A `process_creation` rule reads history, so its empty result is a real miss.** Its second source
+parses the endpoint's own event log — Sysmon event 1 where the Sysmon log exists, otherwise Security
+4688 — so a process that started and exited weeks ago still matches, with the Sysmon fields Sigma
+rules are written against (`Image`, `CommandLine`, `ParentImage`, `ParentCommandLine`, `User`,
+`Hashes` as the `SHA256=…,MD5=…` string, `OriginalFileName`, `IntegrityLevel`, `CurrentDirectory`).
+A 4688 row carries no hashes, parent command line or PE metadata, and its command line only when
+command-line auditing is on. An endpoint with neither log contributes nothing to that source, so on
+such a fleet an empty result still reads as a miss; keep Sysmon or 4688 auditing on where this
+matters. A field only the event log has (`OriginalFileName`, `imphash`…) compiles to the history
+source alone. Only rules for `product: windows` (or with no product) compile; every template is a
+Windows plugin.
 
 ---
 
