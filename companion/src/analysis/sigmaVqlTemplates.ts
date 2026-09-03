@@ -18,7 +18,7 @@ export interface TemplateColumn {
   /** For `hashTag`: the algorithm tag inside the Hashes string (SHA256, MD5, SHA1, IMPHASH). */
   tag?: string;
   /** An extra stage or column this field needs; added to the template only when the field is used. */
-  needs?: "parent" | "hash" | "procLookup";
+  needs?: "parent" | "hash" | "procLookup" | "sysmon";
   /** The field whose values derive the glob() roots (file and registry templates). */
   globSource?: boolean;
   /** A per-field reason shown instead of the generic "no column" refusal. */
@@ -34,6 +34,12 @@ export interface VqlTemplate {
   from?: string;
   /** LET stages emitted before everything else, every time. */
   preStages?: readonly string[];
+  /**
+   * When a field with `needs: "sysmon"` is used, the source runs on the Sysmon branch alone with
+   * this FROM and coverage, and counts as a snapshot: the fallback log cannot evaluate the rule, so
+   * its history covers only part of the fleet and an empty result is not negative evidence.
+   */
+  sysmonOnly?: { from: string; coverage: string };
   /** Base columns, always selected. */
   baseColumns: readonly string[];
   /** Columns added when a field with the matching `needs` is used, in this order. */
@@ -105,13 +111,19 @@ export const PROCESS_EVENTS: VqlTemplate = {
   preStages: [
     `LET SysmonLog <= "${WINEVT}/Microsoft-Windows-Sysmon%4Operational.evtx"`,
     `LET SecurityLog <= "${WINEVT}/Security.evtx"`,
-    "LET HasSysmon <= SELECT count() AS N FROM glob(globs=SysmonLog)",
     `LET SysmonEvents = SELECT ${EVENT_TIME}, "Sysmon" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company ${evtxEvents("SysmonLog", 1)}`,
     `LET SecurityEvents = SELECT ${EVENT_TIME}, "Security" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + "\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company ${evtxEvents("SecurityLog", 4688)}`,
+    // Decided on event-1 rows, not on the log file's presence: a leftover log after Sysmon was
+    // removed, or a config that drops event 1, must not hide the Security history. LIMIT 1 stops
+    // the parse at the first event.
+    "LET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1",
   ],
   baseColumns: ["*"],
   extraColumns: {},
   extraStages: {},
+  // `needs: "sysmon"` marks what 4688 never records (NULL above): the rule then runs on the Sysmon
+  // branch alone. CommandLine stays on both, since 4688 does record it when command-line auditing
+  // is on.
   fields: {
     Image: { kind: "string" },
     CommandLine: { kind: "string" },
@@ -119,24 +131,34 @@ export const PROCESS_EVENTS: VqlTemplate = {
     ParentProcessId: { kind: "number" },
     User: { kind: "string" },
     ParentImage: { kind: "string" },
-    ParentCommandLine: { kind: "string" },
+    ParentCommandLine: { kind: "string", needs: "sysmon" },
     // Sysmon writes "SHA256=…,MD5=…,IMPHASH=…"; a Sigma Hashes value is written against that string.
-    Hashes: { kind: "string" },
-    sha256: { kind: "hashTag", tag: "SHA256" },
-    md5: { kind: "hashTag", tag: "MD5" },
-    sha1: { kind: "hashTag", tag: "SHA1" },
-    imphash: { kind: "hashTag", tag: "IMPHASH" },
-    OriginalFileName: { kind: "string" },
-    IntegrityLevel: { kind: "string" },
-    CurrentDirectory: { kind: "string" },
-    Description: { kind: "string" },
-    Product: { kind: "string" },
-    Company: { kind: "string" },
+    Hashes: { kind: "string", needs: "sysmon" },
+    sha256: { kind: "hashTag", tag: "SHA256", needs: "sysmon" },
+    md5: { kind: "hashTag", tag: "MD5", needs: "sysmon" },
+    sha1: { kind: "hashTag", tag: "SHA1", needs: "sysmon" },
+    imphash: { kind: "hashTag", tag: "IMPHASH", needs: "sysmon" },
+    OriginalFileName: { kind: "string", needs: "sysmon" },
+    IntegrityLevel: { kind: "string", needs: "sysmon" },
+    CurrentDirectory: { kind: "string", needs: "sysmon" },
+    Description: { kind: "string", needs: "sysmon" },
+    Product: { kind: "string", needs: "sysmon" },
+    Company: { kind: "string", needs: "sysmon" },
   },
   coverage: () =>
     "Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go",
+  sysmonOnly: {
+    from: "SysmonEvents",
+    coverage:
+      "Sysmon event 1 only: the rule uses fields Security 4688 does not record, so an endpoint without Sysmon cannot answer it",
+  },
   snapshot: false,
 };
+
+/** Whether this source reads event history for the rule as compiled, so its empty result is a real miss. */
+export function readsHistory(template: VqlTemplate, needs: ReadonlySet<string>): boolean {
+  return !template.snapshot && !(template.sysmonOnly && needs.has("sysmon"));
+}
 
 export const NETWORK_CONNECTION: VqlTemplate = {
   categories: ["network_connection"],

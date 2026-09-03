@@ -148,6 +148,18 @@ describe("Sigma → VQL templates against rows from a live Velociraptor (#802)",
     }
   });
 
+  it("process events: a hash field runs the Sysmon branch alone, and the hunt is a snapshot", () => {
+    const h = hunt("processHashes");
+    expect(h.snapshot).toBe(true);
+    expect(h.vql).toContain("LET ProcEvents <= SELECT * FROM SysmonEvents\n");
+    expect(h.vql).not.toContain("else=SecurityEvents");
+    for (const row of rows("processHashes", "Pivot0")) expect(row.Hashes).toBeTypeOf("object");
+    for (const row of rows("processHashes", "Pivot1")) {
+      expect(row.Source).toBe("Sysmon");
+      expect(row.Hashes).toMatch(/(^|,)(MD5|SHA1|SHA256|IMPHASH)=[0-9A-F]+/i);
+    }
+  });
+
   it("process events: the Security 4688 branch runs without error, and its rows, if audited, map to the same columns", () => {
     // Process-creation auditing is off by default, so this probe may return nothing; what it proves
     // then is that parse_evtx over Security.evtx and the hex pid conversion do not fail the flow.

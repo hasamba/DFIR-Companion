@@ -30,12 +30,22 @@ const rule = (cat: string, det: string) =>
 
 // Every rule is written to MATCH on a stock Windows client, so the rows prove the column shapes.
 export const LIVE_RULES: Readonly<Record<string, string>> = {
+  // Fields both logs record: the event source keeps its Sysmon-or-4688 branch and is a real miss.
   process: rule(
     "process_creation",
     [
       "  sel:",
       String.raw`    Image|endswith: '\svchost.exe'`,
       String.raw`    ParentImage|endswith: '\services.exe'`,
+      "  condition: sel",
+    ].join("\n"),
+  ),
+  // A hash field: pslist() hashes the binary; the event source runs on the Sysmon branch alone.
+  processHashes: rule(
+    "process_creation",
+    [
+      "  sel:",
+      String.raw`    Image|endswith: '\svchost.exe'`,
       "    Hashes|contains: 'a'",
       "  condition: sel",
     ].join("\n"),

@@ -78,11 +78,23 @@ parses the endpoint's own event log — Sysmon event 1 where the Sysmon log exis
 4688 — so a process that started and exited weeks ago still matches, with the Sysmon fields Sigma
 rules are written against (`Image`, `CommandLine`, `ParentImage`, `ParentCommandLine`, `User`,
 `Hashes` as the `SHA256=…,MD5=…` string, `OriginalFileName`, `IntegrityLevel`, `CurrentDirectory`).
-A 4688 row carries no hashes, parent command line or PE metadata, and its command line only when
+The branch is chosen on the client by whether the Sysmon log yields an event 1, not by whether the
+file exists, so a leftover log after Sysmon was removed does not hide the Security history. A 4688
+row carries no hashes, parent command line or PE metadata, and its command line only when
 command-line auditing is on. An endpoint with neither log contributes nothing to that source, so on
 such a fleet an empty result still reads as a miss; keep Sysmon or 4688 auditing on where this
-matters. A field only the event log has (`OriginalFileName`, `imphash`…) compiles to the history
-source alone. Only rules for `product: windows` (or with no product) compile; every template is a
+matters.
+
+Two cases keep the snapshot protection even for `process_creation`. A rule that uses a field only
+Sysmon records (`Hashes`, `sha256`, `md5`, `sha1`, `imphash`, `ParentCommandLine`,
+`OriginalFileName`, `IntegrityLevel`, `CurrentDirectory`, `Description`, `Product`, `Company`)
+runs the history source on the Sysmon branch alone, says so in its coverage line, and stays a
+snapshot: a 4688-only endpoint cannot evaluate it, so its empty result is not negative evidence. And
+a draft that spans categories stays a snapshot as long as any of its blocks (a network or file
+block) has no history source. A field only the event log has compiles to the history source alone.
+A regex (`|re`) on `sha256`, `md5`, `sha1` or `imphash` is refused for the event source, because the
+`ALG=` tag in front of it would break the regex's own anchors; the live `pslist()` source still
+takes it. Only rules for `product: windows` (or with no product) compile; every template is a
 Windows plugin.
 
 ---

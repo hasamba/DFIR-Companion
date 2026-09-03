@@ -515,8 +515,26 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
         "netstat(): open connections only, not connection history; " +
         "glob(): files on disk now under C:/Users/Public/payload.ps1",
     );
-    // One source reads history, so an empty result is a real miss for the hunt loop (#803).
-    expect(r.snapshot).toBe(false);
+    // The network and file blocks have no history source, so an empty result is still not negative
+    // evidence for them: the hunt stays a snapshot (#803). Only a rule whose every block reads
+    // history gives up that protection.
+    expect(r.snapshot).toBe(true);
+  });
+
+  it("is a real miss only when every block has a history source", () => {
+    const procOnly = rule(
+      "process_creation",
+      "  sel_a:\n    Image: a\n  sel_b:\n    CommandLine: b",
+      "1 of sel_*",
+    );
+    expect(compiled(procOnly).snapshot).toBe(false);
+    const withNet = rule(
+      "process_creation",
+      "  sel_a:\n    Image: a\n  sel_b:\n    DestinationPort: 443",
+      "1 of sel_*",
+    );
+    expect(stagesOf(vql(withNet))).toEqual(["Procs", "ProcEvents", "Conns"]);
+    expect(compiled(withNet).snapshot).toBe(true);
   });
 
   it("takes the same path for an explicit top-level 'or' of whole selections", () => {
@@ -645,9 +663,9 @@ describe("compileSigmaToVql — golden process events: Sysmon 1, else Security 4
         String.raw`-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL`,
         String.raw`LET SysmonLog <= "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx"`,
         String.raw`LET SecurityLog <= "C:/Windows/System32/winevt/Logs/Security.evtx"`,
-        String.raw`LET HasSysmon <= SELECT count() AS N FROM glob(globs=SysmonLog)`,
         String.raw`LET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, "Sysmon" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })`,
         String.raw`LET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, "Security" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + "\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })`,
+        String.raw`LET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1`,
         String.raw`LET ProcEvents <= SELECT * FROM if(condition=HasSysmon[0].N > 0, then=SysmonEvents, else=SecurityEvents)`,
         String.raw`SELECT * FROM ProcEvents`,
         String.raw`WHERE Image =~ "(?i)\\\\certutil\\.exe$"`,
@@ -666,7 +684,23 @@ describe("compileSigmaToVql — golden process events: Sysmon 1, else Security 4
     expect(whereOf(events("    Hashes|contains: 'SHA256=abc'"))).toBe(String.raw`Hashes =~ "(?i)SHA256=abc"`);
   });
 
-  it("runs only the event source for a field pslist() cannot answer, and says so", () => {
+  it("drops the event source for a regex on a hash tag, because the tag prefix would break the regex's own anchors", () => {
+    // pslist() still takes it: its Hashes.SHA256 member is the bare hex the regex was written for.
+    const text = vql(proc("    sha256|re: '^[0-9a-f]{64}$'"));
+    expect(stagesOf(text)).toEqual(["Procs"]);
+    expect(whereOf(text)).toBe(String.raw`Hashes.SHA256 =~ "^[0-9a-f]{64}$"`);
+    // imphash exists only on the event source, so there the rule refuses outright.
+    expect(refusals(proc("    imphash|re: '^[0-9a-f]{32}$'"))).toHaveLength(1);
+    expect(refusals(proc("    imphash|re: '^[0-9a-f]{32}$'"))[0].path).toBe("detection.sel.imphash|re");
+  });
+
+  const SYSMON_ONLY =
+    "Sysmon event 1 only: the rule uses fields Security 4688 does not record, so an endpoint without Sysmon cannot answer it";
+
+  it("runs only the event source for a field pslist() cannot answer, on the Sysmon branch alone, as a snapshot", () => {
+    // 4688 has no hashes, parent command line or PE metadata; a rule on those fields cannot be
+    // evaluated on a 4688-only endpoint, so its history covers only part of the fleet and its empty
+    // result is not negative evidence (#803).
     for (const fields of [
       "    imphash: 'abc'",
       "    OriginalFileName: 'cmd.exe'",
@@ -674,10 +708,29 @@ describe("compileSigmaToVql — golden process events: Sysmon 1, else Security 4
     ]) {
       const r = compiled(proc(fields));
       expect(stagesOf(r.vql)).toEqual(["ProcEvents"]);
-      expect(r.coverage).toBe(
-        "Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go",
-      );
+      expect(r.vql).toContain("LET ProcEvents <= SELECT * FROM SysmonEvents\n");
+      expect(r.vql).not.toContain("else=SecurityEvents");
+      expect(r.coverage).toBe(SYSMON_ONLY);
+      expect(r.snapshot).toBe(true);
     }
+  });
+
+  it("keeps both branches, and the real miss, for fields both logs record", () => {
+    for (const fields of [
+      "    Image: x",
+      "    CommandLine|contains: x",
+      "    ParentImage: x",
+      "    User: x",
+    ]) {
+      const r = compiled(proc(fields));
+      expect(sourceOf(r.vql, "ProcEvents")).toContain("then=SysmonEvents, else=SecurityEvents");
+      expect(r.snapshot).toBe(false);
+    }
+    // A hash beside the Image moves the whole source to the Sysmon branch.
+    const r = compiled(proc("    Image: x\n    sha256: 'abc'"));
+    expect(sourceOf(r.vql, "ProcEvents")).toContain("LET ProcEvents <= SELECT * FROM SysmonEvents\n");
+    expect(r.coverage).toBe(`pslist(): running processes only, not process history; ${SYSMON_ONLY}`);
+    expect(r.snapshot).toBe(true);
   });
 
   it("still refuses a field neither process source has", () => {
@@ -688,7 +741,7 @@ describe("compileSigmaToVql — golden process events: Sysmon 1, else Security 4
 
   it("is not a snapshot: the history source makes an empty result a real miss", () => {
     expect(compiled(proc("    Image: x")).snapshot).toBe(false);
-    expect(compiled(proc("    OriginalFileName: 'x'")).snapshot).toBe(false);
+    expect(compiled(proc("    CommandLine|contains: 'x'")).snapshot).toBe(false);
   });
 });
 

@@ -44,6 +44,7 @@ import {
   SIGMA_VQL_CATEGORIES,
   templateField,
   templateFieldNames,
+  readsHistory,
   templatesFor,
   VQL_TEMPLATES,
   type TemplateColumn,
@@ -177,11 +178,13 @@ function hashTagComparison(
   value: string | number | boolean,
 ): string {
   const s = stringValue(path, value);
-  if (mode === "re") {
-    const objection = re2Objection(s);
-    if (objection) throw new CompileRefusal(path, objection);
-    return `Hashes =~ ${vqlString(`(?i)${tag}=${s}`)}`;
-  }
+  // A regex would run against the whole "SHA256=…,MD5=…" string behind the tag, so its own ^ and $
+  // would no longer mean what the rule's author meant.
+  if (mode === "re")
+    throw new CompileRefusal(
+      path,
+      `${field} is one hash inside the Hashes string, where a regex cannot keep its anchors; use exact, contains, startswith or endswith`,
+    );
   if (!(mode in MATCH_MODES) && mode !== "exact")
     throw new CompileRefusal(
       path,
@@ -382,7 +385,8 @@ const oneLine = (s: string): string =>
     .trim();
 
 function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: Needs): SigmaCompiled {
-  const coverage = template.coverage(needs.globs);
+  const sysmonOnly = needs.extras.has("sysmon") ? template.sysmonOnly : undefined;
+  const coverage = sysmonOnly?.coverage ?? template.coverage(needs.globs);
   const idPart = rule.id ? ` (${oneLine(rule.id)})` : "";
   const order: NonNullable<TemplateColumn["needs"]>[] = ["hash", "parent", "procLookup"];
   const used = order.filter((n) => needs.extras.has(n));
@@ -390,7 +394,9 @@ function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: 
     ...template.baseColumns,
     ...used.map((n) => template.extraColumns[n]).filter((c): c is string => !!c),
   ];
-  const from = template.globFrom ? template.globFrom(needs.globs) : (template.from ?? template.source);
+  const from = template.globFrom
+    ? template.globFrom(needs.globs)
+    : (sysmonOnly?.from ?? template.from ?? template.source);
   const lines = [
     `-- Sigma "${oneLine(rule.title)}"${idPart} → ${coverage}`,
     "-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL",
@@ -408,7 +414,7 @@ function assemble(template: VqlTemplate, rule: SigmaRule, where: string, needs: 
     ...(rule.id !== undefined ? { id: rule.id } : {}),
     ...(rule.level !== undefined ? { level: rule.level } : {}),
     mitreTechniques: [...rule.mitreTechniques],
-    snapshot: template.snapshot,
+    snapshot: !readsHistory(template, needs.extras),
   };
 }
 
@@ -527,6 +533,7 @@ function compileMultiSource(
   };
   const unresolved: SigmaRefusal[] = [];
   let resolved = 0;
+  let everyBlockHasHistory = true;
   for (const name of names) {
     const sel = selections.get(name);
     if (!sel) return null;
@@ -538,11 +545,13 @@ function compileMultiSource(
     resolved++;
     // A block that stays in its own category runs on every template that category owns (the live
     // list AND the event history); a block that moves goes to the one template that took it.
-    if (declared.has(r.trial.template)) {
-      for (const t of r.trials) if (declared.has(t.template) && t.expr !== null) add(t);
-    } else {
-      add(r.trial);
-    }
+    const targets = declared.has(r.trial.template)
+      ? r.trials.filter((t) => declared.has(t.template) && t.expr !== null)
+      : [r.trial];
+    for (const t of targets) add(t);
+    // A block with no history source (a netstat() or glob() block) keeps the hunt a snapshot: its
+    // part of an empty result is not negative evidence, whatever the process blocks found (#803).
+    if (!targets.some((t) => readsHistory(t.template, t.needs.extras))) everyBlockHasHistory = false;
   }
   if (unresolved.length) return resolved ? { ok: false, refusals: unresolved } : null;
   if (![...groups.keys()].some((t) => !declared.has(t))) return null;
@@ -553,13 +562,14 @@ function compileMultiSource(
       const where = group.parts.length === 1 ? group.parts[0] : `(${group.parts.join(" OR ")})`;
       return assemble(template, rule, where, group.needs);
     }),
+    !everyBlockHasHistory,
   );
 }
 
 // Several sources become one hunt: blank-line-separated (the launcher's statement boundary), one
-// coverage sentence each, and a snapshot only when EVERY source is one — a history source makes an
-// empty result a real miss.
-function combine(rule: SigmaRule, sources: readonly SigmaCompiled[]): SigmaCompiled {
+// coverage sentence each. `snapshot` is the caller's call: a hunt is a snapshot unless every block
+// of the rule has a history source, because only then is an empty result negative evidence.
+function combine(rule: SigmaRule, sources: readonly SigmaCompiled[], snapshot: boolean): SigmaCompiled {
   if (sources.length === 1) return sources[0];
   return {
     ok: true,
@@ -569,7 +579,7 @@ function combine(rule: SigmaRule, sources: readonly SigmaCompiled[]): SigmaCompi
     ...(rule.id !== undefined ? { id: rule.id } : {}),
     ...(rule.level !== undefined ? { level: rule.level } : {}),
     mitreTechniques: [...rule.mitreTechniques],
-    snapshot: sources.every((s) => s.snapshot),
+    snapshot,
   };
 }
 
@@ -627,7 +637,13 @@ export function compileSigmaToVql(rule: SigmaRule): SigmaCompileResult {
   // a mixed-category draft the split path can take.
   const attempts = declared.map((template) => compileWhole(template, rule));
   const sources = attempts.flatMap((a) => (a.ok ? [a.source] : []));
-  if (sources.length) return combine(rule, sources);
+  // Every source here answers every block, so the hunt is a snapshot only when every source is.
+  if (sources.length)
+    return combine(
+      rule,
+      sources,
+      sources.every((s) => s.snapshot),
+    );
   const refusals = attempts
     .flatMap((a) => (a.ok ? [] : [a.refusals]))
     .reduce((best, r) => (r.length < best.length ? r : best));
