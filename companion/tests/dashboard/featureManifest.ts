@@ -1494,6 +1494,14 @@ export const FEATURES: Feature[] = [
     private: ["relatedCases", "relatedCasesFor"],
   },
   {
+    // The live-snapshot choice on an AI-suggested hunt (#809): a pure "does this VQL read live
+    // state" reader, the checkbox markup, and the reader that turns it into the deploy ctx. No
+    // state, no initializer — the hunt-suggestion and playbook renderers call it at paint time.
+    file: "dashboard-hunt-snapshot.js",
+    publish: ["vqlReadsLiveState", "huntSnapshotToggleHtml", "huntSnapshotCtx"],
+    private: ["LIVE_STATE_PLUGINS"],
+  },
+  {
     // Near-duplicate host review — the pre-synthesis merge gate's UI surface. One piece of view
     // state (the pending pairs), so it is an IIFE for the same reason dashboard-host-scope.js is.
     // initHostDuplicates exists only to bind the header badge's click-to-scroll handler: the panel

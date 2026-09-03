@@ -50,6 +50,14 @@ selection, and a `contains` / `endswith` path rooted on a drive or a host (`D:\t
 which a search under `C:` could never find) are refused too. Nothing half-translated is ever
 offered to run.
 
+**A selection the condition never names stays out of the hunt.** Only the selections the
+`condition` reaches contribute their path roots and lookup stages: an unused `contains` block
+cannot turn a prefix hunt into a whole-disk walk, and an unused `ParentImage` block adds no
+parent lookup. The block is still parsed and compiled: one that some template could answer (a
+file block under a process rule) is simply left out, and the VQL header says so
+(`-- Not in the condition, so not in this hunt: …`); one that no template can answer is a broken
+block and refuses like any other.
+
 **A rule that spans categories becomes one hunt with several sources.** A finding's **Export as
 Sigma draft** writes a `process_creation` rule that also carries a network block and a file block
 under `condition: 1 of sel_*`. When the condition is a top-level `1 of …` or `or` of whole
@@ -76,6 +84,16 @@ deleted before the hunt ran will not be there. An empty result from a compiled S
 therefore shown as **empty snapshot**, not as *no evidence*: it does not count as a miss, it does
 not lower a pivot class's hit rate, and it never counts toward exhausting a hypothesis. Only rules
 for `product: windows` (or with no product) compile; every template is a Windows plugin.
+
+An AI-suggested hunt (the Velociraptor hunt suggestions and a playbook task's hunt) can have the
+same character — a `pslist()` query observes the process list as it is now — but the Companion
+cannot tell from arbitrary VQL what it observes, so it does not guess. Each suggestion card carries
+a **live snapshot (empty ≠ miss)** checkbox beside Deploy. It is ticked by default only when every
+`FROM` in the VQL is one of the live-state plugins (`pslist`, `netstat`, `glob`, `stat`, `hash`,
+`read_file`, `yara`, `reg_keys`, `read_reg_key`); a `parse_evtx()`, an `Artifact.<Name>()` or a
+`foreach()` wrapper leaves it unticked. The analyst's choice is what the deploy records: ticked,
+the hunt is a snapshot and is never linked to an armed **🎯 test via hunt** hypothesis; unticked,
+an empty result is a miss as before.
 
 ---
 

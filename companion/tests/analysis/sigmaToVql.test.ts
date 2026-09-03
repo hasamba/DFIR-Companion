@@ -248,6 +248,12 @@ describe("compileSigmaToVql — modifiers and values", () => {
     );
   });
 
+  it("keeps an RE2 named group (?P<name>…) byte-identical for the endpoint (#810)", () => {
+    expect(
+      whereOf(vql(proc(String.raw`    CommandLine|re: '(?i)-enc\s+(?P<blob>[A-Za-z0-9+/=]{20,})'`))),
+    ).toBe(String.raw`CommandLine =~ "(?i)-enc\\s+(?P<blob>[A-Za-z0-9+/=]{20,})"`);
+  });
+
   it("compares numbers on number columns, with gt/gte/lt/lte and exact", () => {
     expect(whereOf(vql(net("    DestinationPort|gte: 1024\n    SourcePort|lt: 1024")))).toBe(
       String.raw`(DestinationPort >= 1024 AND SourcePort < 1024)`,
@@ -300,6 +306,91 @@ describe("compileSigmaToVql — condition", () => {
     expect(
       whereOf(vql(rule("process_creation", "  sel:\n    - Image: a\n      User: u\n    - Image: b"))),
     ).toBe(String.raw`((Image =~ "(?i)^a$" AND User =~ "(?i)^u$") OR Image =~ "(?i)^b$")`);
+  });
+});
+
+describe("compileSigmaToVql — a selection the condition never names stays out of the hunt (#808)", () => {
+  const two = (category: string, sel: string, unused: string, condition = "sel") =>
+    rule(category, `  sel:\n${sel}\n  unused:\n${unused}`, condition);
+
+  it("does not let an unused contains block turn a prefix hunt into a whole-disk walk", () => {
+    const r = compiled(
+      two(
+        "file_event",
+        "    TargetFilename|startswith: 'C:\\OnlyHere\\'",
+        "    TargetFilename|contains: 'foo'",
+      ),
+    );
+    expect(r.vql).toContain(String.raw`glob(globs=["C:/OnlyHere/**"])`);
+    expect(r.vql).not.toContain("foo");
+    expect(r.coverage).toBe("glob(): files on disk now under C:/OnlyHere/**");
+    expect(whereOf(r.vql)).toBe(String.raw`TargetFilename =~ "(?i)^C:\\\\OnlyHere\\\\"`);
+  });
+
+  it("does not add the parent lookup stage for an unused parent field", () => {
+    const r = vql(
+      two("process_creation", "    Image|endswith: '\\cmd.exe'", "    ParentImage|endswith: '\\x.exe'"),
+    );
+    expect(r).not.toContain("ByPid");
+    expect(r).not.toContain("ParentImage");
+  });
+
+  it("names the unused selection in the header, so the analyst sees it was left out", () => {
+    const r = vql(
+      two("process_creation", "    Image|endswith: '\\cmd.exe'", "    CommandLine|contains: 'x'"),
+    );
+    expect(r.split("\n")[2]).toBe("-- Not in the condition, so not in this hunt: unused");
+    expect(vql(proc("    Image: x"))).not.toContain("Not in the condition");
+  });
+
+  it("still refuses a broken unused selection — nothing half-understood stays in the rule", () => {
+    const r = refusals(two("process_creation", "    Image|endswith: '\\cmd.exe'", "    NoSuchField: 1"));
+    expect(r.map((x) => x.path)).toEqual(["detection.unused.NoSuchField"]);
+  });
+
+  it("refuses a glob rule whose only path lives in an unused selection, because the hunt would have no root", () => {
+    const r = refusals(two("registry_set", "    Details: 'x'", "    TargetObject: 'HKLM\\SOFTWARE\\a'"));
+    expect(r).toEqual([{ path: "detection", message: expect.stringMatching(/no TargetObject value/) }]);
+  });
+
+  it("counts a selection reached through not / and / 1 of / all of as used", () => {
+    const sel = "    Image|endswith: '\\cmd.exe'";
+    const parent = "    ParentImage|endswith: '\\x.exe'";
+    for (const cond of ["sel and not unused", "1 of them", "all of them", "sel or unused"]) {
+      expect(vql(two("process_creation", sel, parent, cond))).toContain("ByPid");
+    }
+  });
+
+  it("ignores an unused block another template could answer, instead of refusing it against the declared one", () => {
+    const r = compiled(
+      two("process_creation", "    Image|endswith: '\\cmd.exe'", "    TargetFilename|contains: 'x'"),
+    );
+    expect(r.vql).toContain("-- Not in the condition, so not in this hunt: unused");
+    expect(r.vql).not.toContain("glob(");
+    expect(r.coverage).toBe("pslist(): running processes only, not process history");
+  });
+
+  it("still refuses a broken unused selection in a mixed-category rule, where only the named blocks resolve", () => {
+    const r = refusals(
+      rule(
+        "process_creation",
+        "  sel_proc:\n    Image|endswith: '\\cmd.exe'\n  sel_net:\n    DestinationIp: '10.0.0.1'\n  unused:\n    NoSuchField: 1",
+        "1 of sel_*",
+      ),
+    );
+    expect(r.map((x) => x.path)).toEqual(["detection.unused.NoSuchField"]);
+  });
+
+  it("names the unused selection once per source in a mixed-category hunt", () => {
+    const r = vql(
+      rule(
+        "process_creation",
+        "  sel_proc:\n    Image|endswith: '\\cmd.exe'\n  sel_net:\n    DestinationIp: '10.0.0.1'\n  unused:\n    TargetFilename|contains: 'x'",
+        "1 of sel_*",
+      ),
+    );
+    expect(r).not.toContain("glob(");
+    expect(r.match(/-- Not in the condition, so not in this hunt: unused/g)).toHaveLength(2);
   });
 });
 
@@ -521,8 +612,12 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
   });
 
   it("stays on the single-template refusal when the top condition ANDs across categories", () => {
+    // sel_file is not in the condition and glob() could answer it, so it is not blamed (#808).
     const r = refusals(mixed("sel_process and sel_network"));
     expect(r).toEqual([
+      { path: "detection.sel_network.DestinationIp", message: expect.stringContaining("pslist()") },
+    ]);
+    expect(refusals(mixed("sel_process and sel_network and sel_file"))).toEqual([
       { path: "detection.sel_network.DestinationIp", message: expect.stringContaining("pslist()") },
       { path: "detection.sel_file.TargetFilename", message: expect.stringContaining("pslist()") },
     ]);
