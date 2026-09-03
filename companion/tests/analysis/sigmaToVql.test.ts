@@ -430,21 +430,31 @@ describe("compileSigmaToVql — round trip with the dashboard's Sigma draft expo
     host: "",
   };
 
-  it("parses the draft, and refuses exactly the three blocks whose fields pslist() cannot answer, by name", () => {
+  it("parses the draft, and refuses only the domain block — the one no template can answer — with the netstat hint", () => {
     // The draft is a process_creation rule that also carries network and file blocks (it is a
-    // correct rule for a SIEM, where one event stream carries all of them). One template per
-    // category means those blocks refuse here, each with its own line — never a silent drop.
+    // correct rule for a SIEM, where one event stream carries all of them). The IP and file blocks
+    // would become their own sources (#802); the domain block cannot, because netstat() has no
+    // hostname column. So the refusal names that block alone, with the fix, instead of blaming
+    // pslist() for two blocks that compile fine elsewhere.
     const yaml = api.findingSigmaYaml(finding, ctx);
     expect(yaml).toContain("sel_network_domain");
     const r = compileSigmaText(yaml);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.refusals.map((x) => x.path)).toEqual([
-      "detection.sel_network_ip.DestinationIp",
-      "detection.sel_network_domain.DestinationHostname|contains",
-      "detection.sel_file_path.TargetFilename|contains",
+    expect(r.refusals).toEqual([
+      {
+        path: "detection.sel_network_domain.DestinationHostname|contains",
+        message: expect.stringMatching(/netstat\(\).*use DestinationIp/),
+      },
     ]);
-    expect(r.refusals[1].message).toMatch(/pslist\(\)/);
+  });
+
+  it("compiles the draft to three sources once the domain block is gone", () => {
+    const yaml = api.findingSigmaYaml(finding, { ...ctx, domains: [] });
+    const r = compileSigmaText(yaml);
+    if (!r.ok) throw new Error(r.refusals.map((x) => `${x.path}: ${x.message}`).join("\n"));
+    const stmts = r.vql.split(/\n\s*\n/);
+    expect(stmts.map((s) => /LET (\w+) <= SELECT/.exec(s)?.[1])).toEqual(["Procs", "Conns", "Files"]);
   });
 
   it("compiles the draft's process, parent and hash blocks, and records the finding's technique", () => {
@@ -543,17 +553,65 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
     expect(r).toEqual([
       {
         path: "detection.sel_hostname.DestinationHostname|contains",
-        message: expect.stringMatching(/hostname/i),
+        message: expect.stringMatching(/netstat\(\) has no hostname column.*use DestinationIp/),
       },
     ]);
   });
 
-  it("does not split when every selection already fits the declared category (no regression)", () => {
-    const yaml = rule(
-      "process_creation",
-      "  sel_a:\n    Image: a\n  sel_b:\n    Image: b",
-      "1 of sel_*",
+  it("keeps a selection made only of process-context fields with its declared category", () => {
+    // Image (like User and ProcessId) names the process BEHIND a file, registry or network event.
+    // On its own it must not turn a file_event block into a pslist() hunt for a running process —
+    // that is a different question than the rule asked. The glob() template has no Image column,
+    // so the block refuses there, by name, and the rule stays refused.
+    const yaml = [
+      "title: T",
+      "logsource:",
+      "  category: file_event",
+      "  product: windows",
+      "detection:",
+      "  sel_path:",
+      String.raw`    TargetFilename: 'C:\Users\Public\payload.ps1'`,
+      "  sel_proc:",
+      String.raw`    Image|endswith: '\foo.exe'`,
+      "  condition: 1 of sel_*",
+      "",
+    ].join("\n");
+    const r = refusals(yaml);
+    expect(r).toEqual([
+      {
+        path: "detection.sel_proc.Image|endswith",
+        message: expect.stringMatching(/Image.*glob\(\)/),
+      },
+    ]);
+  });
+
+  it("moves a selection to another category when a field only that category answers anchors it", () => {
+    // DestinationIp exists on netstat() alone, so this block is a connection block even though it
+    // also names the Image; the netstat source gains the ByPid lookup to answer Image there.
+    const yaml = [
+      "title: T",
+      "logsource:",
+      "  category: process_creation",
+      "  product: windows",
+      "detection:",
+      "  sel_cmd:",
+      "    CommandLine|contains: 'urlcache'",
+      "  sel_conn:",
+      String.raw`    Image|endswith: '\certutil.exe'`,
+      "    DestinationIp: '203.0.113.10'",
+      "  condition: 1 of sel_*",
+      "",
+    ].join("\n");
+    const stmts = vql(yaml).split(/\n\s*\n/);
+    expect(stmts).toHaveLength(2);
+    expect(stmts[1]).toContain('LET ByPid <= memoize(query={ SELECT Pid, Exe FROM pslist() }, key="Pid")');
+    expect(stmts[1]).toContain(
+      String.raw`WHERE (Image =~ "(?i)\\\\certutil\\.exe$" AND DestinationIp =~ "(?i)^203\\.0\\.113\\.10$")`,
     );
+  });
+
+  it("does not split when every selection already fits the declared category (no regression)", () => {
+    const yaml = rule("process_creation", "  sel_a:\n    Image: a\n  sel_b:\n    Image: b", "1 of sel_*");
     expect(vql(yaml).split(/\n\s*\n/)).toHaveLength(1);
   });
 });
