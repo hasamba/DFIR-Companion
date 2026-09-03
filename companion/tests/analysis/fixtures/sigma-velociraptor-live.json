@@ -1,0 +1,268 @@
+{
+  "capturedAt": "2026-09-03",
+  "server": {
+    "version": "0.77.2",
+    "hostname": "b55181749a7a",
+    "os": "linux"
+  },
+  "client": {
+    "clientId": "C.111bad88ef8f8fc5",
+    "hostname": "DESKTOP-16OJFO6",
+    "os": "windows",
+    "release": "Microsoft Windows 11 Enterprise Evaluation25H2",
+    "agent": "0.77.2"
+  },
+  "launcher": "VelociraptorClient.launchHunt() — the path the dashboard's Sigma card uses",
+  "hunts": {
+    "process": {
+      "huntId": "H.DACINEBH1MT48",
+      "rule": "title: 802 live process_creation\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel:\n    Image|endswith: '\\svchost.exe'\n    ParentImage|endswith: '\\services.exe'\n    Hashes|contains: 'a'\n  condition: sel\n",
+      "vql": "-- Sigma \"802 live process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key=\"Pid\")\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, hash(path=Exe) AS Hashes, get(item=ByPid, field=str(str=Ppid)).Exe AS ParentImage, get(item=ByPid, field=str(str=Ppid)).CommandLine AS ParentCommandLine FROM pslist()\nSELECT * FROM Procs\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\" AND (Hashes.MD5 =~ \"(?i)a\" OR Hashes.SHA1 =~ \"(?i)a\" OR Hashes.SHA256 =~ \"(?i)a\"))",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "Pid": 1016,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p",
+            "User": "NT AUTHORITY\\SYSTEM",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "FlowId": "F.DACINEBH1MT48.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 948,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k RPCSS -p",
+            "User": "NT AUTHORITY\\NETWORK SERVICE",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "FlowId": "F.DACINEBH1MT48.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 552,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p -s LSM",
+            "User": "NT AUTHORITY\\SYSTEM",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "FlowId": "F.DACINEBH1MT48.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    },
+    "netPort": {
+      "huntId": "H.DACINEG1RP1J2",
+      "rule": "title: 802 live network_connection\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  sel:\n    DestinationPort|gte: 1\n    Image|endswith: '.exe'\n  condition: sel\n",
+      "vql": "-- Sigma \"802 live network_connection\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe FROM pslist() }, key=\"Pid\")\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort, get(item=ByPid, field=str(str=Pid)).Exe AS Image FROM netstat()\nSELECT * FROM Conns\nWHERE (DestinationPort >= 1 AND Image =~ \"(?i)\\\\.exe$\")",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "Pid": 3548,
+            "Status": "ESTAB",
+            "SourceIp": "192.168.195.133",
+            "SourcePort": 49712,
+            "DestinationIp": "98.66.133.184",
+            "DestinationPort": 443,
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "FlowId": "F.DACINEG1RP1J2.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 5740,
+            "Status": "ESTAB",
+            "SourceIp": "192.168.195.133",
+            "SourcePort": 49768,
+            "DestinationIp": "192.168.195.135",
+            "DestinationPort": 8000,
+            "Image": "C:\\Program Files\\Velociraptor\\Velociraptor.exe",
+            "FlowId": "F.DACINEG1RP1J2.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    },
+    "netCidr": {
+      "huntId": "H.DACINEURGSDCC",
+      "rule": "title: 802 live network_connection\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  sel:\n    DestinationIp|cidr:\n      - '10.0.0.0/8'\n      - '192.168.0.0/16'\n      - '172.16.0.0/12'\n  condition: sel\n",
+      "vql": "-- Sigma \"802 live network_connection\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort FROM netstat()\nSELECT * FROM Conns\nWHERE cidr_contains(ip=DestinationIp, ranges=[\"10.0.0.0/8\", \"192.168.0.0/16\", \"172.16.0.0/12\"])",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "Pid": 5740,
+            "Status": "ESTAB",
+            "SourceIp": "192.168.195.133",
+            "SourcePort": 49768,
+            "DestinationIp": "192.168.195.135",
+            "DestinationPort": 8000,
+            "FlowId": "F.DACINEURGSDCC.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    },
+    "file": {
+      "huntId": "H.DACINEVIAEI04",
+      "rule": "title: 802 live file_event\nlogsource:\n  category: file_event\n  product: windows\ndetection:\n  sel:\n    TargetFilename: 'C:\\Windows\\System32\\cmd.exe'\n  condition: sel\n",
+      "vql": "-- Sigma \"802 live file_event\" → glob(): files on disk now under C:/Windows/System32/cmd.exe\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Files <= SELECT OSPath AS TargetFilename, Size, Mtime FROM glob(globs=[\"C:/Windows/System32/cmd.exe\"])\nSELECT * FROM Files\nWHERE TargetFilename =~ \"(?i)^C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\cmd\\\\.exe$\"",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "TargetFilename": "C:\\Windows\\System32\\cmd.exe",
+            "Size": 344064,
+            "Mtime": "2025-12-05T02:54:10.1128473Z",
+            "FlowId": "F.DACINEVIAEI04.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    },
+    "registry": {
+      "huntId": "H.DACINF423LIO8",
+      "rule": "title: 802 live registry_set\nlogsource:\n  category: registry_set\n  product: windows\ndetection:\n  sel:\n    TargetObject|startswith: 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion'\n    Details|contains: 'Windows'\n  condition: sel\n",
+      "vql": "-- Sigma \"802 live registry_set\" → glob(accessor=\"registry\"): registry keys and values as they are now under HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*, HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*/**\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Keys <= SELECT OSPath AS TargetObject, Data.value AS Details, Mtime FROM glob(globs=[\"HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*\", \"HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*/**\"], accessor=\"registry\")\nSELECT * FROM Keys\nWHERE (TargetObject =~ \"(?i)^HKEY_LOCAL_MACHINE\\\\\\\\Software\\\\\\\\Microsoft\\\\\\\\Windows NT\\\\\\\\CurrentVersion\" AND Details =~ \"(?i)Windows\")",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\PathName",
+            "Details": "C:\\WINDOWS",
+            "Mtime": "2026-09-03T07:15:04.7821908Z",
+            "FlowId": "F.DACINF423LIO8.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProductName",
+            "Details": "Windows 10 Enterprise Evaluation",
+            "Mtime": "2026-09-03T07:15:04.7821908Z",
+            "FlowId": "F.DACINF423LIO8.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NtVdm64\\ACMSETUP30K\\ProductName",
+            "Details": "Microsoft Windows*",
+            "Mtime": "2025-12-05T11:39:26.519497Z",
+            "FlowId": "F.DACINF423LIO8.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NtVdm64\\ACMSETUP12\\ProductName",
+            "Details": "Microsoft Setup for Windows",
+            "Mtime": "2025-12-05T11:39:26.519497Z",
+            "FlowId": "F.DACINF423LIO8.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    },
+    "mixed": {
+      "huntId": "H.DACINFANI3JIK",
+      "rule": "title: 802 live process_creation\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel_process:\n    Image|endswith: '\\svchost.exe'\n    ParentImage|endswith: '\\services.exe'\n  sel_hash:\n    Hashes|contains: 'a'\n  sel_network_ip:\n    DestinationIp|cidr: '10.0.0.0/8'\n  sel_file_path:\n    TargetFilename: 'C:\\Windows\\System32\\cmd.exe'\n  condition: 1 of sel_*\n",
+      "vql": "-- Sigma \"802 live process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key=\"Pid\")\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, hash(path=Exe) AS Hashes, get(item=ByPid, field=str(str=Ppid)).Exe AS ParentImage, get(item=ByPid, field=str(str=Ppid)).CommandLine AS ParentCommandLine FROM pslist()\nSELECT * FROM Procs\nWHERE ((Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\") OR (Hashes.MD5 =~ \"(?i)a\" OR Hashes.SHA1 =~ \"(?i)a\" OR Hashes.SHA256 =~ \"(?i)a\"))\n\n-- Sigma \"802 live process_creation\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort FROM netstat()\nSELECT * FROM Conns\nWHERE cidr_contains(ip=DestinationIp, ranges=[\"10.0.0.0/8\"])\n\n-- Sigma \"802 live process_creation\" → glob(): files on disk now under C:/Windows/System32/cmd.exe\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Files <= SELECT OSPath AS TargetFilename, Size, Mtime FROM glob(globs=[\"C:/Windows/System32/cmd.exe\"])\nSELECT * FROM Files\nWHERE TargetFilename =~ \"(?i)^C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\cmd\\\\.exe$\"",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "Pid": 448,
+            "Ppid": 4,
+            "Name": "smss.exe",
+            "Image": "C:\\Windows\\System32\\smss.exe",
+            "CommandLine": "\\SystemRoot\\System32\\smss.exe",
+            "User": "NT AUTHORITY\\SYSTEM",
+            "Hashes": {
+              "MD5": "a7b58c2227cb94554b2dcbf8e9359149",
+              "SHA1": "dcb3a53fe0ce73e8a33c23bc61a1c9e310df4c13",
+              "SHA256": "1d51e30f1a7c5885fc359e625a569117c9b317e387ae4e34ee6250109be46315"
+            },
+            "ParentImage": "",
+            "ParentCommandLine": "",
+            "FlowId": "F.DACINFANI3JIK.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 632,
+            "Ppid": 620,
+            "Name": "csrss.exe",
+            "Image": "C:\\Windows\\System32\\csrss.exe",
+            "CommandLine": "%SystemRoot%\\system32\\csrss.exe ObjectDirectory=\\Windows SharedSection=1024,20480,768 Windows=On SubSystemType=Windows ServerDll=basesrv,1 ServerDll=winsrv:UserServerDllInitialization,3 ServerDll=sxssrv,4 ProfileControl=Off MaxRequestThreads=16",
+            "User": "NT AUTHORITY\\SYSTEM",
+            "Hashes": {
+              "MD5": "e77e433573b7f629cfa089ffc8626292",
+              "SHA1": "17397f105f7d51112261ecc501fe99b8fcf4de67",
+              "SHA256": "a958083fd4982697973d1f4a05a8f51b1f5d551a558cfa0097cfb6867fdce3ba"
+            },
+            "ParentImage": null,
+            "ParentCommandLine": null,
+            "FlowId": "F.DACINFANI3JIK.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ],
+        "Pivot1": [],
+        "Pivot2": [
+          {
+            "TargetFilename": "C:\\Windows\\System32\\cmd.exe",
+            "Size": 344064,
+            "Mtime": "2025-12-05T02:54:10.1128473Z",
+            "FlowId": "F.DACINFANI3JIK.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -47,6 +47,23 @@ header that says which one it is:
 `fieldref` and the like, aggregations, `near` and `timeframe`. A refusal lists every problem in
 the rule, one line each, with the YAML path. Nothing half-translated is ever offered to run.
 
+**A rule that spans categories becomes one hunt with several sources.** A finding's **Export as
+Sigma draft** writes a `process_creation` rule that also carries a network block and a file block
+under `condition: 1 of sel_*`. When the condition is a top-level `1 of …` or `or` of whole
+selections, each block compiles against the template that owns its fields — the IP block on
+`netstat()`, the path block on `glob()` — and the hunt runs them as separate sources. A block moves
+to another category only on a field that category owns (`DestinationIp`, `TargetFilename`,
+`TargetObject`…), never on `Image`, `User` or `ProcessId` alone, because every Sigma event names
+the process behind it and a bare `Image` under a `file_event` rule is still a file question. A
+`not` or an `and` across blocks keeps the one-template rule, and a block no template can answer
+(`DestinationHostname`) refuses by itself, with the fix, while the others are left out of the
+refusal because they would have compiled.
+
+Every template's VQL has been launched as a real hunt against a Velociraptor 0.77.2 server with a
+Windows 11 client, and the rows it returned are pinned in the test suite. To re-prove them after a
+template change, point `DFIR_VELOCIRAPTOR_API_CONFIG` and `DFIR_VELOCIRAPTOR_BINARY` at a server
+with an enrolled Windows client and run `npm run sigma:live-fixture` from `companion/`.
+
 The card appears when Velociraptor is an enabled hunt platform (`DFIR_HUNT_PLATFORMS`). Compile
 works before the Velociraptor API is configured; only **Run** needs it.
 
