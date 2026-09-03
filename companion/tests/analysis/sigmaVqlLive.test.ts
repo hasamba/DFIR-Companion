@@ -17,10 +17,17 @@ interface LiveHunt {
   snapshot: boolean;
   sources: Record<string, Row[]>;
 }
+interface LiveProbe {
+  huntId: string;
+  vql: string;
+  sources: Record<string, Row[]>;
+}
 interface LiveFixture {
   capturedAt: string;
   client: { os: string; agent: string };
   hunts: Record<string, LiveHunt>;
+  /** Raw VQL run beside the compiled rules, to exercise a branch a rule cannot force. */
+  probes: Record<string, LiveProbe>;
 }
 
 const fixture = JSON.parse(
@@ -65,7 +72,7 @@ describe("Sigma → VQL templates against rows from a live Velociraptor (#802)",
         }
   });
 
-  it("process: the ByPid lookup fills ParentImage/ParentCommandLine and hash() is an object with MD5, SHA1 and SHA256", () => {
+  it("process: the ByPid lookup fills ParentImage/ParentCommandLine on the live source", () => {
     for (const row of rows("process")) {
       expect(row.Image).toMatch(/\\svchost\.exe$/i);
       expect(row.ParentImage).toMatch(/\\services\.exe$/i);
@@ -74,6 +81,11 @@ describe("Sigma → VQL templates against rows from a live Velociraptor (#802)",
       expect(typeof row.Ppid).toBe("number");
       expect(typeof row.CommandLine).toBe("string");
       expect(typeof row.User).toBe("string");
+    }
+  });
+
+  it("process: hash() is an object with MD5, SHA1 and SHA256 on the live source", () => {
+    for (const row of rows("processHashes")) {
       const hashes = row.Hashes as Record<string, string>;
       expect(hashes.MD5).toMatch(HEX);
       expect(hashes.MD5).toHaveLength(32);
@@ -123,14 +135,67 @@ describe("Sigma → VQL templates against rows from a live Velociraptor (#802)",
     }
   });
 
-  it("mixed: one hunt carried a source per category, each read back by its own name with its own columns", () => {
+  it("process events: Sysmon event 1 rows carry the normalised columns, with Hashes as the tagged string", () => {
+    // The lab client runs Sysmon, so the if() picked the Sysmon branch; every row says so.
+    for (const row of rows("process", "Pivot1")) {
+      expect(row.Source).toBe("Sysmon");
+      expect(row.EventTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(row.Image).toMatch(/\\svchost\.exe$/i);
+      expect(row.ParentImage).toMatch(/\\services\.exe$/i);
+      expect(typeof row.CommandLine).toBe("string");
+      expect(typeof row.ParentCommandLine).toBe("string");
+      expect(typeof row.ProcessId).toBe("number");
+      expect(typeof row.ParentProcessId).toBe("number");
+      expect(typeof row.User).toBe("string");
+      expect(row.Hashes).toMatch(/(^|,)SHA256=[0-9A-F]{64}(,|$)/i);
+      expect(typeof row.OriginalFileName).toBe("string");
+      expect(typeof row.IntegrityLevel).toBe("string");
+    }
+  });
+
+  it("process events: a hash field runs the Sysmon branch alone, and the hunt is a snapshot", () => {
+    const h = hunt("processHashes");
+    expect(h.snapshot).toBe(true);
+    expect(h.vql).toContain("LET ProcEvents <= SELECT * FROM SysmonEvents\n");
+    expect(h.vql).not.toContain("else=SecurityEvents");
+    for (const row of rows("processHashes", "Pivot0")) expect(row.Hashes).toBeTypeOf("object");
+    for (const row of rows("processHashes", "Pivot1")) {
+      expect(row.Source).toBe("Sysmon");
+      expect(row.Hashes).toMatch(/(^|,)(MD5|SHA1|SHA256|IMPHASH)=[0-9A-F]+/i);
+    }
+  });
+
+  it("process events: the Security 4688 branch runs without error, and its rows, if audited, map to the same columns", () => {
+    // Process-creation auditing is off by default, so this probe may return nothing; what it proves
+    // then is that parse_evtx over Security.evtx and the hex pid conversion do not fail the flow.
+    const probe = fixture.probes.security4688;
+    expect(probe.vql).toContain("SELECT * FROM SecurityEvents");
+    // The lab client audits process creation, so the rows are real: the first 4688 events after
+    // boot are kernel children ("Registry", parent pid 4) with no path and a "-\-" user.
+    for (const row of probe.sources.Pivot0 ?? []) {
+      expect(row.Source).toBe("Security");
+      expect(row.EventTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(typeof row.Image).toBe("string");
+      expect(row.Image).not.toBe("");
+      // NewProcessId is a hex string in the log ("0x7c"); int() turns it into the number 124.
+      expect(typeof row.ProcessId).toBe("number");
+      expect(row.ProcessId as number).toBeGreaterThan(0);
+      expect(typeof row.ParentProcessId).toBe("number");
+      expect(row.User).toMatch(/\\/);
+      expect(row.Hashes).toBeNull();
+      expect(row.ParentCommandLine).toBeNull();
+    }
+  });
+
+  it("mixed: one hunt carried a source per template, each read back by its own name with its own columns", () => {
     const h = hunt("mixed");
-    expect(Object.keys(h.sources)).toEqual(["Pivot0", "Pivot1", "Pivot2"]);
-    expect(h.vql.split(/\n\s*\n/)).toHaveLength(3);
+    expect(Object.keys(h.sources)).toEqual(["Pivot0", "Pivot1", "Pivot2", "Pivot3"]);
+    expect(h.vql.split(/\n\s*\n/)).toHaveLength(4);
     for (const row of rows("mixed", "Pivot0")) expect(row.Hashes).toBeTypeOf("object");
-    // Pivot1 is the netstat source over 10.0.0.0/8; the client had no such connection, so it is
+    for (const row of rows("mixed", "Pivot1")) expect(row.Source).toBe("Sysmon");
+    // Pivot2 is the netstat source over 10.0.0.0/8; the client had no such connection, so it is
     // empty — the launcher still read it by name instead of reporting the whole artifact empty.
-    expect(h.sources.Pivot1).toEqual([]);
-    for (const row of rows("mixed", "Pivot2")) expect(row.TargetFilename).toMatch(/cmd\.exe$/i);
+    expect(h.sources.Pivot2).toEqual([]);
+    for (const row of rows("mixed", "Pivot3")) expect(row.TargetFilename).toMatch(/cmd\.exe$/i);
   });
 });

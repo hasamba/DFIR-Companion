@@ -28,10 +28,21 @@ function refusals(yaml: string): SigmaRefusal[] {
   if (r.ok) throw new Error("expected refusals, got VQL:\n" + r.vql);
   return r.refusals;
 }
+// A compiled rule is one or more blank-line-separated sources; each names its stage in a LET.
+const sourcesOf = (text: string): string[] => text.split(/\n\s*\n/);
+// The WHERE clause of the FIRST source (for process_creation: the pslist() one).
 const whereOf = (text: string): string => {
-  const i = text.indexOf("\nWHERE ");
+  const first = sourcesOf(text)[0];
+  const i = first.indexOf("\nWHERE ");
   if (i < 0) throw new Error("no WHERE in:\n" + text);
-  return text.slice(i + "\nWHERE ".length);
+  return first.slice(i + "\nWHERE ".length);
+};
+const stagesOf = (text: string): (string | undefined)[] =>
+  sourcesOf(text).map((s) => /^LET (\w+) <= SELECT[^\n]*\nSELECT \* FROM \1\n/m.exec(s)?.[1]);
+const sourceOf = (text: string, stage: string): string => {
+  const s = sourcesOf(text).find((b) => b.includes(`\nLET ${stage} <= SELECT`));
+  if (!s) throw new Error(`no ${stage} source in:\n` + text);
+  return s;
 };
 
 const rule = (category: string, detection: string, condition = "sel", head = "title: T") =>
@@ -44,7 +55,7 @@ const reg = (fields: string, category = "registry_set") => rule(category, `  sel
 
 describe("compileSigmaToVql — golden process_creation", () => {
   it("compiles Image|endswith to a pslist() stage and a case-insensitive anchored regex", () => {
-    expect(vql(proc("    Image|endswith: '\\certutil.exe'"))).toBe(
+    expect(sourceOf(vql(proc("    Image|endswith: '\\certutil.exe'")), "Procs")).toBe(
       [
         String.raw`-- Sigma "T" → pslist(): running processes only, not process history`,
         String.raw`-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL`,
@@ -59,8 +70,14 @@ describe("compileSigmaToVql — golden process_creation", () => {
     const text = vql(
       proc("    Image|endswith: '\\a.exe'\n    ParentImage|endswith: '\\b.exe'\n    sha256: 'abc'"),
     );
-    expect(text).not.toMatch(/\n\s*\n/);
-    expect(text.split("\n").filter((l) => !l.startsWith("--")).length).toBeGreaterThanOrEqual(3);
+    for (const source of sourcesOf(text)) {
+      expect(source).not.toMatch(/\n\s*\n/);
+      expect(source.split("\n").filter((l) => !l.startsWith("--")).length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("pairs the live pslist() source with the event-history source, in that order (#802)", () => {
+    expect(stagesOf(vql(proc("    Image: x")))).toEqual(["Procs", "ProcEvents"]);
   });
 
   it("puts the rule id in the header when the rule has one", () => {
@@ -332,7 +349,9 @@ describe("compileSigmaToVql — a selection the condition never names stays out 
       two("process_creation", "    Image|endswith: '\\cmd.exe'", "    ParentImage|endswith: '\\x.exe'"),
     );
     expect(r).not.toContain("ByPid");
-    expect(r).not.toContain("ParentImage");
+    // The live source adds the parent columns only on demand; the event source always carries them.
+    expect(sourceOf(r, "Procs")).not.toContain("ParentImage");
+    expect(whereOf(sourceOf(r, "ProcEvents"))).not.toContain("ParentImage");
   });
 
   it("names the unused selection in the header, so the analyst sees it was left out", () => {
@@ -366,8 +385,13 @@ describe("compileSigmaToVql — a selection the condition never names stays out 
       two("process_creation", "    Image|endswith: '\\cmd.exe'", "    TargetFilename|contains: 'x'"),
     );
     expect(r.vql).toContain("-- Not in the condition, so not in this hunt: unused");
-    expect(r.vql).not.toContain("glob(");
-    expect(r.coverage).toBe("pslist(): running processes only, not process history");
+    // No file source was added for it (the event source's own glob() over the log path stays).
+    expect(stagesOf(r.vql)).toEqual(["Procs", "ProcEvents"]);
+    expect(r.vql).not.toContain("LET Files");
+    expect(r.coverage).toBe(
+      "pslist(): running processes only, not process history; " +
+        "Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go",
+    );
   });
 
   it("still refuses a broken unused selection in a mixed-category rule, where only the named blocks resolve", () => {
@@ -389,8 +413,9 @@ describe("compileSigmaToVql — a selection the condition never names stays out 
         "1 of sel_*",
       ),
     );
-    expect(r).not.toContain("glob(");
-    expect(r.match(/-- Not in the condition, so not in this hunt: unused/g)).toHaveLength(2);
+    expect(stagesOf(r)).toEqual(["Procs", "ProcEvents", "Conns"]);
+    expect(r).not.toContain("LET Files");
+    expect(r.match(/-- Not in the condition, so not in this hunt: unused/g)).toHaveLength(3);
   });
 });
 
@@ -407,10 +432,8 @@ describe("compileSigmaToVql — refusals", () => {
   });
 
   it("refuses a field the template has no column for, naming the fields it knows", () => {
-    const r = refusals(proc("    OriginalFileName: x"));
-    expect(r).toEqual([
-      { path: "detection.sel.OriginalFileName", message: expect.stringContaining("Image") },
-    ]);
+    const r = refusals(proc("    TargetFilename: x"));
+    expect(r).toEqual([{ path: "detection.sel.TargetFilename", message: expect.stringContaining("Image") }]);
     expect(r[0].message).toContain("CommandLine");
   });
 
@@ -422,10 +445,8 @@ describe("compileSigmaToVql — refusals", () => {
 
   it("reports every problem in one list, and parse refusals stop before compile refusals", () => {
     expect(
-      refusals(proc("    OriginalFileName: x\n    Image: true\n    DestinationHostname: y")).map(
-        (r) => r.path,
-      ),
-    ).toEqual(["detection.sel.OriginalFileName", "detection.sel.Image", "detection.sel.DestinationHostname"]);
+      refusals(proc("    TargetFilename: x\n    Image: true\n    DestinationHostname: y")).map((r) => r.path),
+    ).toEqual(["detection.sel.TargetFilename", "detection.sel.Image", "detection.sel.DestinationHostname"]);
     const parseOnly = refusals(rule("image_load", "  sel:\n    Image|base64: x"));
     expect(parseOnly.map((r) => r.path)).toEqual(["detection.sel.Image|base64"]);
   });
@@ -544,8 +565,7 @@ describe("compileSigmaToVql — round trip with the dashboard's Sigma draft expo
     const yaml = api.findingSigmaYaml(finding, { ...ctx, domains: [] });
     const r = compileSigmaText(yaml);
     if (!r.ok) throw new Error(r.refusals.map((x) => `${x.path}: ${x.message}`).join("\n"));
-    const stmts = r.vql.split(/\n\s*\n/);
-    expect(stmts.map((s) => /LET (\w+) <= SELECT/.exec(s)?.[1])).toEqual(["Procs", "Conns", "Files"]);
+    expect(stagesOf(r.vql)).toEqual(["Procs", "ProcEvents", "Conns", "Files"]);
   });
 
   it("compiles the draft's process, parent and hash blocks, and records the finding's technique", () => {
@@ -581,26 +601,44 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
 
   it("splits a top-level '1 of sel_*' into one blank-line-separated source per category", () => {
     const r = compiled(mixed("1 of sel_*"));
-    const stmts = r.vql.split(/\n\s*\n/);
-    expect(stmts).toHaveLength(3);
-    expect(stmts[0]).toContain("LET Procs <= SELECT");
-    expect(stmts[0]).toContain(String.raw`WHERE Image =~ "(?i)\\\\certutil\\.exe$"`);
-    expect(stmts[1]).toContain("LET Conns <= SELECT");
-    expect(stmts[1]).toContain(String.raw`WHERE DestinationIp =~ "(?i)^203\\.0\\.113\\.10$"`);
-    expect(stmts[2]).toContain("LET Files <= SELECT");
+    expect(stagesOf(r.vql)).toEqual(["Procs", "ProcEvents", "Conns", "Files"]);
+    const procWhere = String.raw`WHERE Image =~ "(?i)\\\\certutil\\.exe$"`;
+    expect(sourceOf(r.vql, "Procs")).toContain(procWhere);
+    expect(sourceOf(r.vql, "ProcEvents")).toContain(procWhere);
+    expect(sourceOf(r.vql, "Conns")).toContain(String.raw`WHERE DestinationIp =~ "(?i)^203\\.0\\.113\\.10$"`);
     const fileWhere = String.raw`WHERE TargetFilename =~ "(?i)^C:\\\\Users\\\\Public\\\\payload\\.ps1$"`;
-    expect(stmts[2]).toContain(fileWhere);
+    expect(sourceOf(r.vql, "Files")).toContain(fileWhere);
     expect(r.coverage).toBe(
       "pslist(): running processes only, not process history; " +
+        "Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go; " +
         "netstat(): open connections only, not connection history; " +
         "glob(): files on disk now under C:/Users/Public/payload.ps1",
     );
+    // The network and file blocks have no history source, so an empty result is still not negative
+    // evidence for them: the hunt stays a snapshot (#803). Only a rule whose every block reads
+    // history gives up that protection.
     expect(r.snapshot).toBe(true);
+  });
+
+  it("is a real miss only when every block has a history source", () => {
+    const procOnly = rule(
+      "process_creation",
+      "  sel_a:\n    Image: a\n  sel_b:\n    CommandLine: b",
+      "1 of sel_*",
+    );
+    expect(compiled(procOnly).snapshot).toBe(false);
+    const withNet = rule(
+      "process_creation",
+      "  sel_a:\n    Image: a\n  sel_b:\n    DestinationPort: 443",
+      "1 of sel_*",
+    );
+    expect(stagesOf(vql(withNet))).toEqual(["Procs", "ProcEvents", "Conns"]);
+    expect(compiled(withNet).snapshot).toBe(true);
   });
 
   it("takes the same path for an explicit top-level 'or' of whole selections", () => {
     const r = compiled(mixed("sel_process or sel_network or sel_file"));
-    expect(r.vql.split(/\n\s*\n/)).toHaveLength(3);
+    expect(stagesOf(r.vql)).toEqual(["Procs", "ProcEvents", "Conns", "Files"]);
   });
 
   it("gives identical bytes on two compiles", () => {
@@ -697,17 +735,116 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
       "  condition: 1 of sel_*",
       "",
     ].join("\n");
-    const stmts = vql(yaml).split(/\n\s*\n/);
-    expect(stmts).toHaveLength(2);
-    expect(stmts[1]).toContain('LET ByPid <= memoize(query={ SELECT Pid, Exe FROM pslist() }, key="Pid")');
-    expect(stmts[1]).toContain(
+    const text = vql(yaml);
+    expect(stagesOf(text)).toEqual(["Procs", "ProcEvents", "Conns"]);
+    const conns = sourceOf(text, "Conns");
+    expect(conns).toContain('LET ByPid <= memoize(query={ SELECT Pid, Exe FROM pslist() }, key="Pid")');
+    expect(conns).toContain(
       String.raw`WHERE (Image =~ "(?i)\\\\certutil\\.exe$" AND DestinationIp =~ "(?i)^203\\.0\\.113\\.10$")`,
     );
   });
 
   it("does not split when every selection already fits the declared category (no regression)", () => {
     const yaml = rule("process_creation", "  sel_a:\n    Image: a\n  sel_b:\n    Image: b", "1 of sel_*");
-    expect(vql(yaml).split(/\n\s*\n/)).toHaveLength(1);
+    const text = vql(yaml);
+    // Only the category's own pair — no foreign source, one OR per source.
+    expect(stagesOf(text)).toEqual(["Procs", "ProcEvents"]);
+    expect(whereOf(sourceOf(text, "Procs"))).toBe(String.raw`(Image =~ "(?i)^a$" OR Image =~ "(?i)^b$")`);
+    expect(whereOf(sourceOf(text, "ProcEvents"))).toBe(
+      String.raw`(Image =~ "(?i)^a$" OR Image =~ "(?i)^b$")`,
+    );
+  });
+});
+
+describe("compileSigmaToVql — golden process events: Sysmon 1, else Security 4688 (#802)", () => {
+  const events = (fields: string) => sourceOf(vql(proc(fields)), "ProcEvents");
+
+  it("compiles the event-history source, byte for byte", () => {
+    expect(events("    Image|endswith: '\\certutil.exe'")).toBe(
+      [
+        String.raw`-- Sigma "T" → Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go`,
+        String.raw`-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL`,
+        String.raw`LET SysmonLog <= "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx"`,
+        String.raw`LET SecurityLog <= "C:/Windows/System32/winevt/Logs/Security.evtx"`,
+        String.raw`LET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, "Sysmon" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })`,
+        String.raw`LET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, "Security" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + "\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })`,
+        String.raw`LET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1`,
+        String.raw`LET ProcEvents <= SELECT * FROM if(condition=HasSysmon[0].N > 0, then=SysmonEvents, else=SecurityEvents)`,
+        String.raw`SELECT * FROM ProcEvents`,
+        String.raw`WHERE Image =~ "(?i)\\\\certutil\\.exe$"`,
+      ].join("\n"),
+    );
+  });
+
+  it("matches sha256/md5/sha1/imphash against the Sysmon Hashes string by its tag", () => {
+    expect(whereOf(events("    sha256: 'AbC'"))).toBe(String.raw`Hashes =~ "(?i)SHA256=AbC(,|$)"`);
+    expect(whereOf(events("    md5|contains: 'abc'"))).toBe(String.raw`Hashes =~ "(?i)MD5=[^,]*abc"`);
+    expect(whereOf(events("    imphash|startswith: 'abc'"))).toBe(String.raw`Hashes =~ "(?i)IMPHASH=abc"`);
+    expect(whereOf(events("    sha1|endswith: 'abc'"))).toBe(String.raw`Hashes =~ "(?i)SHA1=[^,]*abc(,|$)"`);
+  });
+
+  it("treats Hashes itself as the Sysmon string, so the usual 'ALG=value' rule text matches as written", () => {
+    expect(whereOf(events("    Hashes|contains: 'SHA256=abc'"))).toBe(String.raw`Hashes =~ "(?i)SHA256=abc"`);
+  });
+
+  it("drops the event source for a regex on a hash tag, because the tag prefix would break the regex's own anchors", () => {
+    // pslist() still takes it: its Hashes.SHA256 member is the bare hex the regex was written for.
+    const text = vql(proc("    sha256|re: '^[0-9a-f]{64}$'"));
+    expect(stagesOf(text)).toEqual(["Procs"]);
+    expect(whereOf(text)).toBe(String.raw`Hashes.SHA256 =~ "^[0-9a-f]{64}$"`);
+    // imphash exists only on the event source, so there the rule refuses outright.
+    expect(refusals(proc("    imphash|re: '^[0-9a-f]{32}$'"))).toHaveLength(1);
+    expect(refusals(proc("    imphash|re: '^[0-9a-f]{32}$'"))[0].path).toBe("detection.sel.imphash|re");
+  });
+
+  const SYSMON_ONLY =
+    "Sysmon event 1 only: the rule uses fields Security 4688 does not record, so an endpoint without Sysmon cannot answer it";
+
+  it("runs only the event source for a field pslist() cannot answer, on the Sysmon branch alone, as a snapshot", () => {
+    // 4688 has no hashes, parent command line or PE metadata; a rule on those fields cannot be
+    // evaluated on a 4688-only endpoint, so its history covers only part of the fleet and its empty
+    // result is not negative evidence (#803).
+    for (const fields of [
+      "    imphash: 'abc'",
+      "    OriginalFileName: 'cmd.exe'",
+      "    IntegrityLevel: 'High'",
+    ]) {
+      const r = compiled(proc(fields));
+      expect(stagesOf(r.vql)).toEqual(["ProcEvents"]);
+      expect(r.vql).toContain("LET ProcEvents <= SELECT * FROM SysmonEvents\n");
+      expect(r.vql).not.toContain("else=SecurityEvents");
+      expect(r.coverage).toBe(SYSMON_ONLY);
+      expect(r.snapshot).toBe(true);
+    }
+  });
+
+  it("keeps both branches, and the real miss, for fields both logs record", () => {
+    for (const fields of [
+      "    Image: x",
+      "    CommandLine|contains: x",
+      "    ParentImage: x",
+      "    User: x",
+    ]) {
+      const r = compiled(proc(fields));
+      expect(sourceOf(r.vql, "ProcEvents")).toContain("then=SysmonEvents, else=SecurityEvents");
+      expect(r.snapshot).toBe(false);
+    }
+    // A hash beside the Image moves the whole source to the Sysmon branch.
+    const r = compiled(proc("    Image: x\n    sha256: 'abc'"));
+    expect(sourceOf(r.vql, "ProcEvents")).toContain("LET ProcEvents <= SELECT * FROM SysmonEvents\n");
+    expect(r.coverage).toBe(`pslist(): running processes only, not process history; ${SYSMON_ONLY}`);
+    expect(r.snapshot).toBe(true);
+  });
+
+  it("still refuses a field neither process source has", () => {
+    const r = refusals(proc("    TargetFilename: 'x'"));
+    expect(r.map((x) => x.path)).toEqual(["detection.sel.TargetFilename"]);
+    expect(r[0].message).toMatch(/no column/);
+  });
+
+  it("is not a snapshot: the history source makes an empty result a real miss", () => {
+    expect(compiled(proc("    Image: x")).snapshot).toBe(false);
+    expect(compiled(proc("    CommandLine|contains: 'x'")).snapshot).toBe(false);
   });
 });
 
@@ -742,15 +879,16 @@ describe("compileSigmaToVql — review fixes (#803)", () => {
     );
   });
 
-  it("says the compiled query is a live snapshot, so the hunt loop never records its empty result as a miss", () => {
+  it("says a live-only query is a snapshot, so the hunt loop never records its empty result as a miss", () => {
     for (const y of [
-      proc("    Image: x"),
       net("    DestinationPort: 1"),
       file("    TargetFilename: 'C:\\x'"),
       reg("    TargetObject: 'HKLM\\A'"),
     ]) {
       expect(compiled(y).snapshot).toBe(true);
     }
+    // process_creation reads event history too (#802), so it is the one category that is not.
+    expect(compiled(proc("    Image: x")).snapshot).toBe(false);
   });
 });
 

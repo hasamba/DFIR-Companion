@@ -1,19 +1,24 @@
-// One fixed VQL template per Sigma logsource category (#797). The category picks the client-side
-// plugin and a fixed field map; a Sigma field outside the map is a refusal, never a warning. Add a
-// category only with a fixture proven against a real Velociraptor, not from memory.
+// Fixed VQL templates per Sigma logsource category (#797). The category picks the client-side
+// plugin(s) and a fixed field map; a Sigma field outside the map is a refusal, never a warning. Add
+// a template only with a fixture proven against a real Velociraptor, not from memory — see
+// tests/analysis/sigmaVqlLive.test.ts and `npm run sigma:live-fixture`.
 //
 // Each template materialises ONE stage (`LET <Stage> <= SELECT … FROM <plugin>`) whose columns
 // carry the Sigma field names, so the WHERE clause the compiler writes reads like the rule. The
 // hunt launcher splits statements on blank lines, so a template never emits one.
 
-export type ColumnKind = "string" | "number" | "ip" | "hashes" | "hash";
+// `hashes` is pslist's hash() object (Hashes.SHA256 …); `hash` one of its members; `hashTag` a
+// Sysmon-style "SHA256=…,MD5=…" string matched by tag.
+export type ColumnKind = "string" | "number" | "ip" | "hashes" | "hash" | "hashTag";
 
 export interface TemplateColumn {
   kind: ColumnKind;
   /** VQL expression the WHERE clause uses; defaults to the Sigma field name. */
   expr?: string;
+  /** For `hashTag`: the algorithm tag inside the Hashes string (SHA256, MD5, SHA1, IMPHASH). */
+  tag?: string;
   /** An extra stage or column this field needs; added to the template only when the field is used. */
-  needs?: "parent" | "hash" | "procLookup";
+  needs?: "parent" | "hash" | "procLookup" | "sysmon";
   /** The field whose values derive the glob() roots (file and registry templates). */
   globSource?: boolean;
   /** A per-field reason shown instead of the generic "no column" refusal. */
@@ -25,6 +30,16 @@ export interface VqlTemplate {
   stage: string;
   /** The plugin call, for the header and the FROM clause. */
   source: string;
+  /** The FROM clause when it is not simply `source` (glob templates use `globFrom` instead). */
+  from?: string;
+  /** LET stages emitted before everything else, every time. */
+  preStages?: readonly string[];
+  /**
+   * When a field with `needs: "sysmon"` is used, the source runs on the Sysmon branch alone with
+   * this FROM and coverage, and counts as a snapshot: the fallback log cannot evaluate the rule, so
+   * its history covers only part of the fleet and an empty result is not negative evidence.
+   */
+  sysmonOnly?: { from: string; coverage: string };
   /** Base columns, always selected. */
   baseColumns: readonly string[];
   /** Columns added when a field with the matching `needs` is used, in this order. */
@@ -41,8 +56,9 @@ export interface VqlTemplate {
   /**
    * True when the plugin reads live state (the process list, open connections, the disk or the
    * registry as they are NOW) rather than an event history. The hunt loop must never record such a
-   * query's empty result as a miss (#803). Every v1 template is a snapshot; an event-backed
-   * template (Sysmon EID 1 from the endpoint's EVTX, #802) would be the first to say false.
+   * query's empty result as a miss (#803). PROCESS_EVENTS (Sysmon EID 1 / Security 4688 from the
+   * endpoint's EVTX, #802) is the one that says false: it reads history, so an empty result is a
+   * real miss — provided the endpoint keeps one of those logs at all.
    */
   snapshot: boolean;
 }
@@ -77,6 +93,72 @@ export const PROCESS_CREATION: VqlTemplate = {
   coverage: () => "pslist(): running processes only, not process history",
   snapshot: true,
 };
+
+// The event-history twin of PROCESS_CREATION (#802 item 3): Sysmon event 1 when the Sysmon log
+// exists, otherwise Security 4688. Both are normalised to one column set so the WHERE clause is the
+// same for either. A 4688 row has no hashes, parent command line or PE metadata (NULL), and its
+// CommandLine is empty unless command-line auditing is on. Proven live: see sigmaVqlLive.test.ts.
+const WINEVT = "C:/Windows/System32/winevt/Logs";
+const EVENT_TIME = "timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime";
+const evtxEvents = (log: string, eventId: number): string =>
+  `FROM foreach(row={ SELECT OSPath FROM glob(globs=${log}) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = ${eventId} })`;
+
+export const PROCESS_EVENTS: VqlTemplate = {
+  categories: ["process_creation"],
+  stage: "ProcEvents",
+  source: "parse_evtx()",
+  from: "if(condition=HasSysmon[0].N > 0, then=SysmonEvents, else=SecurityEvents)",
+  preStages: [
+    `LET SysmonLog <= "${WINEVT}/Microsoft-Windows-Sysmon%4Operational.evtx"`,
+    `LET SecurityLog <= "${WINEVT}/Security.evtx"`,
+    `LET SysmonEvents = SELECT ${EVENT_TIME}, "Sysmon" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company ${evtxEvents("SysmonLog", 1)}`,
+    `LET SecurityEvents = SELECT ${EVENT_TIME}, "Security" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + "\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company ${evtxEvents("SecurityLog", 4688)}`,
+    // Decided on event-1 rows, not on the log file's presence: a leftover log after Sysmon was
+    // removed, or a config that drops event 1, must not hide the Security history. LIMIT 1 stops
+    // the parse at the first event.
+    "LET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1",
+  ],
+  baseColumns: ["*"],
+  extraColumns: {},
+  extraStages: {},
+  // `needs: "sysmon"` marks what 4688 never records (NULL above): the rule then runs on the Sysmon
+  // branch alone. CommandLine stays on both, since 4688 does record it when command-line auditing
+  // is on.
+  fields: {
+    Image: { kind: "string" },
+    CommandLine: { kind: "string" },
+    ProcessId: { kind: "number" },
+    ParentProcessId: { kind: "number" },
+    User: { kind: "string" },
+    ParentImage: { kind: "string" },
+    ParentCommandLine: { kind: "string", needs: "sysmon" },
+    // Sysmon writes "SHA256=…,MD5=…,IMPHASH=…"; a Sigma Hashes value is written against that string.
+    Hashes: { kind: "string", needs: "sysmon" },
+    sha256: { kind: "hashTag", tag: "SHA256", needs: "sysmon" },
+    md5: { kind: "hashTag", tag: "MD5", needs: "sysmon" },
+    sha1: { kind: "hashTag", tag: "SHA1", needs: "sysmon" },
+    imphash: { kind: "hashTag", tag: "IMPHASH", needs: "sysmon" },
+    OriginalFileName: { kind: "string", needs: "sysmon" },
+    IntegrityLevel: { kind: "string", needs: "sysmon" },
+    CurrentDirectory: { kind: "string", needs: "sysmon" },
+    Description: { kind: "string", needs: "sysmon" },
+    Product: { kind: "string", needs: "sysmon" },
+    Company: { kind: "string", needs: "sysmon" },
+  },
+  coverage: () =>
+    "Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go",
+  sysmonOnly: {
+    from: "SysmonEvents",
+    coverage:
+      "Sysmon event 1 only: the rule uses fields Security 4688 does not record, so an endpoint without Sysmon cannot answer it",
+  },
+  snapshot: false,
+};
+
+/** Whether this source reads event history for the rule as compiled, so its empty result is a real miss. */
+export function readsHistory(template: VqlTemplate, needs: ReadonlySet<string>): boolean {
+  return !template.snapshot && !(template.sysmonOnly && needs.has("sysmon"));
+}
 
 export const NETWORK_CONNECTION: VqlTemplate = {
   categories: ["network_connection"],
@@ -137,20 +219,26 @@ export const REGISTRY: VqlTemplate = {
   snapshot: true,
 };
 
+// A category may own several templates; each becomes its own source in one hunt. process_creation
+// runs the live process list AND the event history, in that order.
 export const VQL_TEMPLATES: readonly VqlTemplate[] = [
   PROCESS_CREATION,
+  PROCESS_EVENTS,
   NETWORK_CONNECTION,
   FILE_EVENT,
   REGISTRY,
 ];
 
 /** Every Sigma logsource category with a template, in display order. */
-export const SIGMA_VQL_CATEGORIES: readonly string[] = VQL_TEMPLATES.flatMap((t) => t.categories);
+export const SIGMA_VQL_CATEGORIES: readonly string[] = [
+  ...new Set(VQL_TEMPLATES.flatMap((t) => t.categories)),
+];
 
-export function templateFor(category: string | undefined): VqlTemplate | undefined {
-  if (!category) return undefined;
+/** The templates a category owns, in source order; empty when the category has none. */
+export function templatesFor(category: string | undefined): VqlTemplate[] {
+  if (!category) return [];
   const key = category.trim().toLowerCase();
-  return VQL_TEMPLATES.find((t) => t.categories.includes(key));
+  return VQL_TEMPLATES.filter((t) => t.categories.includes(key));
 }
 
 /** Case-insensitive field lookup; returns the canonical name with the column. */
