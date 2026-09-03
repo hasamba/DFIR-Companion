@@ -142,6 +142,35 @@ describe("parseSigmaRule — YAML boundary", () => {
     expect(refusals("- just\n- a list\n")[0].path).toBe("yaml");
   });
 
+  it("refuses an anchor/alias expansion bomb as a YAML refusal instead of throwing (#805)", () => {
+    // 432 bytes: nine aliases per level, eight levels deep. The yaml package stops it inside
+    // toJS() with a ReferenceError and leaves doc.errors empty, so only a catch turns it into a
+    // refusal — and the route above would otherwise answer 500.
+    let bomb = 'k1: &a1 ["lol","lol","lol","lol","lol","lol","lol","lol","lol"]\n';
+    for (let i = 2; i <= 9; i++)
+      bomb += `k${i}: &a${i} [${Array(9)
+        .fill(`*a${i - 1}`)
+        .join(",")}]\n`;
+    expect(Buffer.byteLength(bomb)).toBeLessThan(SIGMA_MAX_RULE_BYTES);
+    const r = refusals(bomb);
+    expect(r).toEqual([{ path: "yaml", message: expect.stringMatching(/too complex.*anchors or aliases/) }]);
+  });
+
+  it("refuses a cyclic alias, which converts without error and would overflow every later walk", () => {
+    const head = "title: T\nlogsource:\n  category: process_creation\ndetection:\n";
+    for (const detection of [
+      "  sel: &a [*a]\n  condition: sel\n",
+      "  sel: &a\n    Image: *a\n  condition: sel\n",
+    ]) {
+      expect(refusals(head + detection)).toEqual([
+        { path: "yaml", message: expect.stringMatching(/refers to itself.*anchors or aliases/) },
+      ]);
+    }
+    // A shared (acyclic) alias is ordinary YAML and still parses.
+    const shared = head + "  sel:\n    Image: &v x\n    CommandLine: *v\n  condition: sel\n";
+    expect(parsed(shared).detection.selections[0]).toMatchObject({ kind: "map" });
+  });
+
   it(`refuses text over ${SIGMA_MAX_RULE_BYTES} bytes before parsing it`, () => {
     const big = MINIMAL + "description: " + "x".repeat(SIGMA_MAX_RULE_BYTES) + "\n";
     const r = refusals(big);
@@ -280,6 +309,43 @@ detection:
         `title: T\nlogsource:\n  category: c\ndetection:\n  sel:\n    Image:\n${values}\n  condition: sel\n`,
       ),
     ).toEqual(["detection.sel"]);
+  });
+});
+
+describe("parseSigmaRule — a selection that matches nothing is refused (#806)", () => {
+  const withDetection = (detection: string) =>
+    `title: T\nlogsource:\n  category: process_creation\ndetection:\n${detection}`;
+
+  it("refuses an empty selection map at the selection's path", () => {
+    expect(refusals(withDetection("  sel: {}\n  condition: sel\n"))).toEqual([
+      { path: "detection.sel", message: expect.stringMatching(/no fields.*matches nothing/) },
+    ]);
+  });
+
+  it("refuses an empty map inside a selection list, naming the entry", () => {
+    const r = refusals(withDetection("  sel:\n    - {}\n    - Image: x\n  condition: sel\n"));
+    expect(r).toEqual([
+      { path: "detection.sel[0]", message: expect.stringMatching(/no fields.*matches nothing/) },
+    ]);
+    // The entries after an empty one are still read, so the list of refusals stays complete.
+    expect(paths(withDetection("  sel:\n    - {}\n    - Image|base64: x\n  condition: sel\n"))).toEqual([
+      "detection.sel[0]",
+      "detection.sel.Image|base64",
+    ]);
+    // A list whose maps all carry fields still parses as alternatives.
+    const rule = parsed(withDetection("  sel:\n    - Image: x\n    - Image: y\n  condition: sel\n"));
+    expect(rule.detection.selections[0].kind).toBe("list");
+  });
+
+  it("refuses '1 of them' and 'all of them' when the rule defines no selection", () => {
+    for (const condition of ["1 of them", "all of them", "not 1 of them"]) {
+      expect(refusals(withDetection(`  condition: ${condition}\n`))).toEqual([
+        { path: "detection.condition", message: expect.stringMatching(/'them'.*defines none/) },
+      ]);
+    }
+    // With one selection defined, `them` resolves to it as before.
+    const rule = parsed(withDetection("  sel:\n    Image: x\n  condition: 1 of them\n"));
+    expect(rule.detection.condition).toEqual({ kind: "oneOf", names: ["sel"] });
   });
 });
 

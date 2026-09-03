@@ -788,3 +788,74 @@ describe("compileSigmaToVql — review fixes (#803)", () => {
     expect(compiled(proc("    Image: x")).snapshot).toBe(false);
   });
 });
+
+describe("compileSigmaToVql — review fixes (#806, #807)", () => {
+  it("never assembles `WHERE ()`: an empty selection and a condition over no selection are refusals", () => {
+    const head = "title: T\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n";
+    for (const detection of [
+      "  sel: {}\n  condition: sel\n",
+      "  sel:\n    - {}\n  condition: sel\n",
+      "  condition: 1 of them\n",
+      "  condition: all of them\n",
+    ]) {
+      const r = compileSigmaText(head + detection);
+      expect(r.ok, detection).toBe(false);
+      if (!r.ok) expect(r.refusals.length, detection).toBeGreaterThan(0);
+    }
+  });
+
+  it("refuses an empty field list handed to the compiler directly, at the selection's path", () => {
+    const parsedRule = parseSigmaRule(proc("    Image: x"));
+    if (!parsedRule.ok) throw new Error("fixture must parse");
+    const rule = {
+      ...parsedRule.rule,
+      detection: {
+        ...parsedRule.rule.detection,
+        selections: [{ kind: "map" as const, name: "sel", fields: [] }],
+      },
+    };
+    const r = compileSigmaToVql(rule);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.refusals).toEqual([{ path: "detection.sel", message: expect.stringMatching(/no fields/) }]);
+    }
+  });
+
+  it("refuses a drive-rooted or UNC-rooted contains/endswith path, which a C:/** glob could never match (#807)", () => {
+    for (const [key, value] of [
+      ["TargetFilename|contains", "D:\\tools\\evil.log"],
+      ["TargetFilename|endswith", "D:\\tools\\evil.log"],
+      ["TargetFilename|contains", "C:\\tools\\evil.log"],
+      ["TargetFilename|endswith", "\\\\fileserver\\share\\evil.log"],
+    ]) {
+      const r = refusals(file(`    ${key}: '${value}'`));
+      expect(r, `${key}: ${value}`).toEqual([
+        { path: `detection.sel.${key}`, message: expect.stringMatching(/rooted.*never appear.*startswith/) },
+      ]);
+    }
+  });
+
+  it("keeps the rooted forms that do work: startswith and an exact match on another drive", () => {
+    expect(vql(file("    TargetFilename|startswith: 'D:\\tools'"))).toContain(
+      String.raw`glob(globs=["D:/tools*", "D:/tools*/**"])`,
+    );
+    expect(vql(file("    TargetFilename: 'D:\\tools\\evil.log'"))).toContain(
+      String.raw`glob(globs=["D:/tools/evil.log"])`,
+    );
+  });
+
+  it("treats a fragment that opens on a separator as a component boundary, so C:\\Temp\\x.exe itself is found", () => {
+    // Before: C:/**/*/Temp/x.exe, which needs one component between C: and Temp and so skips
+    // C:/Temp/x.exe. `**` already matches zero or more components.
+    expect(vql(file("    TargetFilename|endswith: '\\Temp\\x.exe'"))).toContain(
+      String.raw`glob(globs=["C:/**/Temp/x.exe"])`,
+    );
+    expect(vql(file("    TargetFilename|contains: '\\Temp\\'"))).toContain(
+      String.raw`glob(globs=["C:/**/Temp/*"])`,
+    );
+    // A bare name is unchanged: any folder, any prefix.
+    expect(vql(file("    TargetFilename|endswith: '.hta'"))).toContain(
+      String.raw`glob(globs=["C:/**/*.hta"])`,
+    );
+  });
+});
