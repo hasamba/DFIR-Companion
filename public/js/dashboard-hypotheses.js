@@ -129,7 +129,7 @@
       `<span class="hyp-title">${esc(h.title)}</span>${src}${review}${exhausted}` +
       // #14 deferred: link the NEXT deployed hunt to this hypothesis, so an empty result exhausts it.
       (h.status === "open" && !h.exhausted
-        ? ` <button class="hyp-hunt" data-act="linkNextHunt" data-id="${id}" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>`
+        ? ` <button class="hyp-hunt" data-act="linkNextHunt" data-id="${id}" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted). A hunt deployed as a live snapshot is not linked: its empty result is not a miss.">🎯 test via hunt</button>`
         : "") +
       `<button class="hyp-del" data-act="hypDelete" data-id="${id}" title="Delete">✕</button>` +
       `</div>${outcome}${desc}${discrim}${meta}${history}` +

@@ -522,8 +522,11 @@
         const link = j.guiUrl
           ? ` · <a href="${escAttr(j.guiUrl)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent)">open in Velociraptor ↗</a>`
           : "";
+        const snapNote = snapshot
+          ? ` · <span data-safe-style="color:var(--text-muted)">live snapshot — an empty result is not a miss and is not linked to a hypothesis</span>`
+          : "";
         res.innerHTML =
-          `<div data-safe-style="font-size:12px;margin-bottom:6px">🎯 Hunt <strong>${esc(j.huntId)}</strong> launched on all clients · ${esc(j.state)}${link} ` +
+          `<div data-safe-style="font-size:12px;margin-bottom:6px">🎯 Hunt <strong>${esc(j.huntId)}</strong> launched on all clients · ${esc(j.state)}${link}${snapNote} ` +
           `<button class="hunt-refresh" data-hid="${escAttr(j.huntId)}" data-art="${escAttr(j.artifact)}" data-src="${escAttr((j.sources || []).join(","))}">↻ Refresh results</button></div>` +
           `<div class="hunt-results-rows" data-safe-style="color:var(--text-muted);font-size:12px">waiting for endpoints to respond…</div>`;
         const rb = res.querySelector(".hunt-refresh");
