@@ -62,13 +62,24 @@ export function re2Objection(pattern: string): string | null {
 
 // ── Paths and globs ───────────────────────────────────────────────────────────────────────────
 
+/** The glob that walks the whole disk, so the header can admit it. */
+export const WHOLE_DISK_GLOB = "C:/**";
+
+/** A drive root (`C:`) or a UNC root (`//host`) at the start of a slash-normalised path. */
+const ROOTED_PATH_RE = /^(?:[A-Za-z]:|\/\/)/;
+
 /**
  * A Sigma path value as Velociraptor globs: forward slashes, Sigma wildcards kept as glob wildcards.
  * Velociraptor's recursive `**` only works as a path component of its own, so a prefix that does not
  * end on a separator needs TWO globs: the same-component prefix (`C:/Temp*`) and everything under it
  * (`C:/Temp*` + `/**`). A prefix ending on a separator is a directory and gets one recursive glob.
+ *
+ * A `contains` / `endswith` value is a name or a fragment searched under every folder of C:. A value
+ * rooted on a drive or a UNC host can never appear there (a Windows filename holds no `:`), so it
+ * returns null and the caller refuses it (#807). A fragment that opens on a separator names a
+ * component boundary, which `C:/**` + `/` already is, so no `*` is put in front of it.
  */
-export function fileGlob(value: string, mode: SigmaMatchMode): string[] {
+export function fileGlob(value: string, mode: SigmaMatchMode): string[] | null {
   const p = value.replace(/\\/g, "/");
   switch (mode) {
     case "exact":
@@ -76,9 +87,11 @@ export function fileGlob(value: string, mode: SigmaMatchMode): string[] {
     case "startswith":
       return prefixGlobs(p);
     case "contains":
-      return ["C:/**/*" + p + "*"];
-    case "endswith":
-      return ["C:/**/*" + p];
+    case "endswith": {
+      if (ROOTED_PATH_RE.test(p)) return null;
+      const tail = p.startsWith("/") ? p.slice(1) : "*" + p;
+      return [`${WHOLE_DISK_GLOB}/${tail}${mode === "contains" ? "*" : ""}`];
+    }
   }
 }
 
@@ -87,9 +100,6 @@ export function prefixGlobs(p: string): string[] {
   if (p.endsWith("/")) return [p + "**"];
   return [p + "*", p + "*/**"];
 }
-
-/** The glob that walks the whole disk, so the header can admit it. */
-export const WHOLE_DISK_GLOB = "C:/**";
 
 const HIVES: ReadonlyArray<{ names: string[]; glob: string; regex: string }> = [
   { names: ["hklm", "hkey_local_machine"], glob: "HKEY_LOCAL_MACHINE", regex: "HKEY_LOCAL_MACHINE" },

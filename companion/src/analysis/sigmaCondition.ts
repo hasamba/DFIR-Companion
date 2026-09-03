@@ -38,7 +38,12 @@ function tokenize(text: string): Token[] {
 
 /** Sigma's `*` / `?` selection-name wildcards, anchored, against the names the rule defines. */
 function resolvePattern(pattern: string, names: readonly string[]): string[] {
-  if (pattern.toLowerCase() === "them") return [...names];
+  if (pattern.toLowerCase() === "them") {
+    // With no selections `them` would resolve to nothing and compile to `WHERE ()` (#806).
+    if (names.length === 0)
+      throw new ConditionRefusal("'them' refers to every selection, but the rule defines none");
+    return [...names];
+  }
   if (!/[*?]/.test(pattern)) {
     if (!names.includes(pattern))
       throw new ConditionRefusal(`selection '${pattern}' is not defined under detection`);
