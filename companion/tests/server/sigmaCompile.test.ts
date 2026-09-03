@@ -81,6 +81,16 @@ describe("POST /cases/:id/sigma/compile", () => {
     expect(res.body.refusals).toEqual([{ path: "yaml", message: expect.stringContaining("too complex") }]);
   });
 
+  it("answers a cyclic alias with 400 and the YAML refusal, never 500", async () => {
+    const res = await compile(
+      "title: T\nlogsource:\n  category: process_creation\ndetection:\n  sel: &a [*a]\n  condition: sel\n",
+    );
+    expect(res.status, res.text).toBe(400);
+    expect(res.body.refusals).toEqual([
+      { path: "yaml", message: expect.stringContaining("refers to itself") },
+    ]);
+  });
+
   it("answers a missing or non-string yaml with 400", async () => {
     expect((await request(app).post("/cases/c1/sigma/compile").send({})).status).toBe(400);
     expect((await compile(42)).status).toBe(400);

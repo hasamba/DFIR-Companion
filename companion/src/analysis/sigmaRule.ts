@@ -86,11 +86,31 @@ function readDocument(text: string, out: Refusals): Plain | null {
     );
     return null;
   }
+  if (hasCycle(value)) {
+    // `sel: &a [*a]` converts without an error into a value that refers to itself; every walk
+    // after this point (countValues, readFieldMap) would recurse without end.
+    out.add(
+      "yaml",
+      "the YAML refers to itself through an anchor (a cyclic alias); paste a plain Sigma rule without anchors or aliases",
+    );
+    return null;
+  }
   if (!isPlain(value)) {
     out.add("yaml", "the rule must be a YAML map with title, logsource and detection keys");
     return null;
   }
   return value;
+}
+
+/** True when a converted YAML value contains itself. The trail is per path, so a value reached twice by two different aliases is fine. */
+function hasCycle(value: unknown, trail = new Set<object>()): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (trail.has(value)) return true;
+  trail.add(value);
+  const children = Array.isArray(value) ? value : Object.values(value);
+  const cyclic = children.some((c) => hasCycle(c, trail));
+  trail.delete(value);
+  return cyclic;
 }
 
 // ── Metadata ──────────────────────────────────────────────────────────────────────────────────
@@ -276,12 +296,14 @@ function readSelection(name: string, raw: unknown, out: Refusals): SigmaSelectio
     return null;
   }
   if (raw.every(isPlain)) {
-    const empty = raw.findIndex((m) => Object.keys(m).length === 0);
-    if (empty >= 0) {
-      out.add(`${path}[${empty}]`, NO_FIELDS.replace("this selection", "this entry of the selection list"));
+    // Every entry is read even after an empty one, so the refusal list stays complete.
+    const alternatives = raw.map((m, i) => {
+      if (Object.keys(m).length > 0) return readFieldMap(path, m, out);
+      out.add(`${path}[${i}]`, NO_FIELDS.replace("this selection", "this entry of the selection list"));
       return null;
-    }
-    return { kind: "list", name, alternatives: raw.map((m) => readFieldMap(path, m, out)) };
+    });
+    if (alternatives.some((a) => a === null)) return null;
+    return { kind: "list", name, alternatives: alternatives as SigmaFieldMatch[][] };
   }
   if (raw.every(isScalar)) return { kind: "keywords", name, values: raw };
   out.add(path, "a selection list must not mix field maps with bare values");

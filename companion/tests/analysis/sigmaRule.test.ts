@@ -156,6 +156,21 @@ describe("parseSigmaRule — YAML boundary", () => {
     expect(r).toEqual([{ path: "yaml", message: expect.stringMatching(/too complex.*anchors or aliases/) }]);
   });
 
+  it("refuses a cyclic alias, which converts without error and would overflow every later walk", () => {
+    const head = "title: T\nlogsource:\n  category: process_creation\ndetection:\n";
+    for (const detection of [
+      "  sel: &a [*a]\n  condition: sel\n",
+      "  sel: &a\n    Image: *a\n  condition: sel\n",
+    ]) {
+      expect(refusals(head + detection)).toEqual([
+        { path: "yaml", message: expect.stringMatching(/refers to itself.*anchors or aliases/) },
+      ]);
+    }
+    // A shared (acyclic) alias is ordinary YAML and still parses.
+    const shared = head + "  sel:\n    Image: &v x\n    CommandLine: *v\n  condition: sel\n";
+    expect(parsed(shared).detection.selections[0]).toMatchObject({ kind: "map" });
+  });
+
   it(`refuses text over ${SIGMA_MAX_RULE_BYTES} bytes before parsing it`, () => {
     const big = MINIMAL + "description: " + "x".repeat(SIGMA_MAX_RULE_BYTES) + "\n";
     const r = refusals(big);
@@ -311,6 +326,11 @@ describe("parseSigmaRule — a selection that matches nothing is refused (#806)"
     const r = refusals(withDetection("  sel:\n    - {}\n    - Image: x\n  condition: sel\n"));
     expect(r).toEqual([
       { path: "detection.sel[0]", message: expect.stringMatching(/no fields.*matches nothing/) },
+    ]);
+    // The entries after an empty one are still read, so the list of refusals stays complete.
+    expect(paths(withDetection("  sel:\n    - {}\n    - Image|base64: x\n  condition: sel\n"))).toEqual([
+      "detection.sel[0]",
+      "detection.sel.Image|base64",
     ]);
     // A list whose maps all carry fields still parses as alternatives.
     const rule = parsed(withDetection("  sel:\n    - Image: x\n    - Image: y\n  condition: sel\n"));
