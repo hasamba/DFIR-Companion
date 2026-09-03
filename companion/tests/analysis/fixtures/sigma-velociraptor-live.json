@@ -14,9 +14,9 @@
   "launcher": "VelociraptorClient.launchHunt() — the path the dashboard's Sigma card uses",
   "hunts": {
     "process": {
-      "huntId": "H.DACJR6D8H4PNA",
-      "rule": "title: live fixture process_creation\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel:\n    Image|endswith: '\\svchost.exe'\n    ParentImage|endswith: '\\services.exe'\n    Hashes|contains: 'a'\n  condition: sel\n",
-      "vql": "-- Sigma \"live fixture process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key=\"Pid\")\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, hash(path=Exe) AS Hashes, get(item=ByPid, field=str(str=Ppid)).Exe AS ParentImage, get(item=ByPid, field=str(str=Ppid)).CommandLine AS ParentCommandLine FROM pslist()\nSELECT * FROM Procs\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\" AND (Hashes.MD5 =~ \"(?i)a\" OR Hashes.SHA1 =~ \"(?i)a\" OR Hashes.SHA256 =~ \"(?i)a\"))\n\n-- Sigma \"live fixture process_creation\" → Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET HasSysmon <= SELECT count() AS N FROM glob(globs=SysmonLog)\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nLET ProcEvents <= SELECT * FROM if(condition=HasSysmon[0].N > 0, then=SysmonEvents, else=SecurityEvents)\nSELECT * FROM ProcEvents\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\" AND Hashes =~ \"(?i)a\")",
+      "huntId": "H.DACKVD5VP3490",
+      "rule": "title: live fixture process_creation\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel:\n    Image|endswith: '\\svchost.exe'\n    ParentImage|endswith: '\\services.exe'\n  condition: sel\n",
+      "vql": "-- Sigma \"live fixture process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key=\"Pid\")\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, get(item=ByPid, field=str(str=Ppid)).Exe AS ParentImage, get(item=ByPid, field=str(str=Ppid)).CommandLine AS ParentCommandLine FROM pslist()\nSELECT * FROM Procs\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\")\n\n-- Sigma \"live fixture process_creation\" → Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nLET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1\nLET ProcEvents <= SELECT * FROM if(condition=HasSysmon[0].N > 0, then=SysmonEvents, else=SecurityEvents)\nSELECT * FROM ProcEvents\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\")",
       "snapshot": false,
       "sources": {
         "Pivot0": [
@@ -27,14 +27,9 @@
             "Image": "C:\\Windows\\System32\\svchost.exe",
             "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p",
             "User": "NT AUTHORITY\\SYSTEM",
-            "Hashes": {
-              "MD5": "7b88d0896fbf43469a9959d59824a514",
-              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
-              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
-            },
             "ParentImage": "C:\\Windows\\System32\\services.exe",
             "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -46,14 +41,9 @@
             "Image": "C:\\Windows\\System32\\svchost.exe",
             "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k RPCSS -p",
             "User": "NT AUTHORITY\\NETWORK SERVICE",
-            "Hashes": {
-              "MD5": "7b88d0896fbf43469a9959d59824a514",
-              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
-              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
-            },
             "ParentImage": "C:\\Windows\\System32\\services.exe",
             "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -65,14 +55,9 @@
             "Image": "C:\\Windows\\System32\\svchost.exe",
             "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p -s LSM",
             "User": "NT AUTHORITY\\SYSTEM",
-            "Hashes": {
-              "MD5": "7b88d0896fbf43469a9959d59824a514",
-              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
-              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
-            },
             "ParentImage": "C:\\Windows\\System32\\services.exe",
             "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -84,14 +69,9 @@
             "Image": "C:\\Windows\\System32\\svchost.exe",
             "CommandLine": "C:\\WINDOWS\\System32\\svchost.exe -k NetworkService -s TermService",
             "User": "NT AUTHORITY\\NETWORK SERVICE",
-            "Hashes": {
-              "MD5": "7b88d0896fbf43469a9959d59824a514",
-              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
-              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
-            },
             "ParentImage": "C:\\Windows\\System32\\services.exe",
             "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -115,7 +95,7 @@
             "Description": "Host Process for Windows Services",
             "Product": "Microsoft® Windows® Operating System",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -137,7 +117,7 @@
             "Description": "Host Process for Windows Services",
             "Product": "Microsoft® Windows® Operating System",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -159,7 +139,7 @@
             "Description": "Host Process for Windows Services",
             "Product": "Microsoft® Windows® Operating System",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -181,7 +161,175 @@
             "Description": "Host Process for Windows Services",
             "Product": "Microsoft® Windows® Operating System",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6D8H4PNA.H",
+            "FlowId": "F.DACKVD5VP3490.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ]
+      }
+    },
+    "processHashes": {
+      "huntId": "H.DACKVD96F0V6S",
+      "rule": "title: live fixture process_creation\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel:\n    Image|endswith: '\\svchost.exe'\n    Hashes|contains: 'a'\n  condition: sel\n",
+      "vql": "-- Sigma \"live fixture process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, hash(path=Exe) AS Hashes FROM pslist()\nSELECT * FROM Procs\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND (Hashes.MD5 =~ \"(?i)a\" OR Hashes.SHA1 =~ \"(?i)a\" OR Hashes.SHA256 =~ \"(?i)a\"))\n\n-- Sigma \"live fixture process_creation\" → Sysmon event 1 only: the rule uses fields Security 4688 does not record, so an endpoint without Sysmon cannot answer it\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nLET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1\nLET ProcEvents <= SELECT * FROM SysmonEvents\nSELECT * FROM ProcEvents\nWHERE (Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND Hashes =~ \"(?i)a\")",
+      "snapshot": true,
+      "sources": {
+        "Pivot0": [
+          {
+            "Pid": 1016,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p",
+            "User": "NT AUTHORITY\\SYSTEM",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 948,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k RPCSS -p",
+            "User": "NT AUTHORITY\\NETWORK SERVICE",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 552,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p -s LSM",
+            "User": "NT AUTHORITY\\SYSTEM",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "Pid": 1132,
+            "Ppid": 860,
+            "Name": "svchost.exe",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\System32\\svchost.exe -k NetworkService -s TermService",
+            "User": "NT AUTHORITY\\NETWORK SERVICE",
+            "Hashes": {
+              "MD5": "7b88d0896fbf43469a9959d59824a514",
+              "SHA1": "2938ff787f23b6a706526bf852bb9bc147225a77",
+              "SHA256": "53a39b900e3bfbf384acd13f0fc2329fa8d42b61e993d8ed5adf3a1428005d26"
+            },
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          }
+        ],
+        "Pivot1": [
+          {
+            "EventTime": "2026-08-30T14:59:22.009198427Z",
+            "Source": "Sysmon",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k GPSvcGroup",
+            "ProcessId": 9744,
+            "ParentProcessId": 816,
+            "User": "NT AUTHORITY\\SYSTEM",
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "Hashes": "MD5=7B88D0896FBF43469A9959D59824A514,SHA256=53A39B900E3BFBF384ACD13F0FC2329FA8D42B61E993D8ED5ADF3A1428005D26,IMPHASH=DE43BD45CC98C143357416C7519ECCFD",
+            "OriginalFileName": "svchost.exe",
+            "IntegrityLevel": "System",
+            "CurrentDirectory": "C:\\WINDOWS\\system32\\",
+            "Description": "Host Process for Windows Services",
+            "Product": "Microsoft® Windows® Operating System",
+            "Company": "Microsoft Corporation",
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "EventTime": "2026-08-30T14:59:46.901726484Z",
+            "Source": "Sysmon",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\System32\\svchost.exe -k CameraMonitor",
+            "ProcessId": 11664,
+            "ParentProcessId": 816,
+            "User": "NT AUTHORITY\\SYSTEM",
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "Hashes": "MD5=7B88D0896FBF43469A9959D59824A514,SHA256=53A39B900E3BFBF384ACD13F0FC2329FA8D42B61E993D8ED5ADF3A1428005D26,IMPHASH=DE43BD45CC98C143357416C7519ECCFD",
+            "OriginalFileName": "svchost.exe",
+            "IntegrityLevel": "System",
+            "CurrentDirectory": "C:\\WINDOWS\\system32\\",
+            "Description": "Host Process for Windows Services",
+            "Product": "Microsoft® Windows® Operating System",
+            "Company": "Microsoft Corporation",
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "EventTime": "2026-08-30T15:00:40.274684906Z",
+            "Source": "Sysmon",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k DcomLaunch -p",
+            "ProcessId": 984,
+            "ParentProcessId": 832,
+            "User": "NT AUTHORITY\\SYSTEM",
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "Hashes": "MD5=7B88D0896FBF43469A9959D59824A514,SHA256=53A39B900E3BFBF384ACD13F0FC2329FA8D42B61E993D8ED5ADF3A1428005D26,IMPHASH=DE43BD45CC98C143357416C7519ECCFD",
+            "OriginalFileName": "svchost.exe",
+            "IntegrityLevel": "System",
+            "CurrentDirectory": "C:\\WINDOWS\\system32\\",
+            "Description": "Host Process for Windows Services",
+            "Product": "Microsoft® Windows® Operating System",
+            "Company": "Microsoft Corporation",
+            "FlowId": "F.DACKVD96F0V6S.H",
+            "ClientId": "C.111bad88ef8f8fc5",
+            "_OrgId": "root",
+            "Fqdn": "DESKTOP-16OJFO6.localdomain"
+          },
+          {
+            "EventTime": "2026-08-30T15:00:40.286716699Z",
+            "Source": "Sysmon",
+            "Image": "C:\\Windows\\System32\\svchost.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\svchost.exe -k RPCSS -p",
+            "ProcessId": 768,
+            "ParentProcessId": 832,
+            "User": "NT AUTHORITY\\NETWORK SERVICE",
+            "ParentImage": "C:\\Windows\\System32\\services.exe",
+            "ParentCommandLine": "C:\\WINDOWS\\system32\\services.exe",
+            "Hashes": "MD5=7B88D0896FBF43469A9959D59824A514,SHA256=53A39B900E3BFBF384ACD13F0FC2329FA8D42B61E993D8ED5ADF3A1428005D26,IMPHASH=DE43BD45CC98C143357416C7519ECCFD",
+            "OriginalFileName": "svchost.exe",
+            "IntegrityLevel": "System",
+            "CurrentDirectory": "C:\\WINDOWS\\system32\\",
+            "Description": "Host Process for Windows Services",
+            "Product": "Microsoft® Windows® Operating System",
+            "Company": "Microsoft Corporation",
+            "FlowId": "F.DACKVD96F0V6S.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -190,7 +338,7 @@
       }
     },
     "netPort": {
-      "huntId": "H.DACJR6M3EOSO8",
+      "huntId": "H.DACKVDAM23P12",
       "rule": "title: live fixture network_connection\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  sel:\n    DestinationPort|gte: 1\n    Image|endswith: '.exe'\n  condition: sel\n",
       "vql": "-- Sigma \"live fixture network_connection\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe FROM pslist() }, key=\"Pid\")\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort, get(item=ByPid, field=str(str=Pid)).Exe AS Image FROM netstat()\nSELECT * FROM Conns\nWHERE (DestinationPort >= 1 AND Image =~ \"(?i)\\\\.exe$\")",
       "snapshot": true,
@@ -204,7 +352,7 @@
             "DestinationIp": "98.66.133.184",
             "DestinationPort": 443,
             "Image": "C:\\Windows\\System32\\svchost.exe",
-            "FlowId": "F.DACJR6M3EOSO8.H",
+            "FlowId": "F.DACKVDAM23P12.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -217,7 +365,7 @@
             "DestinationIp": "192.168.195.135",
             "DestinationPort": 8000,
             "Image": "C:\\Program Files\\Velociraptor\\Velociraptor.exe",
-            "FlowId": "F.DACJR6M3EOSO8.H",
+            "FlowId": "F.DACKVDAM23P12.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -226,7 +374,7 @@
       }
     },
     "netCidr": {
-      "huntId": "H.DACJR6HHCB8G6",
+      "huntId": "H.DACKVDB5DQHHI",
       "rule": "title: live fixture network_connection\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  sel:\n    DestinationIp|cidr:\n      - '10.0.0.0/8'\n      - '192.168.0.0/16'\n      - '172.16.0.0/12'\n  condition: sel\n",
       "vql": "-- Sigma \"live fixture network_connection\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort FROM netstat()\nSELECT * FROM Conns\nWHERE cidr_contains(ip=DestinationIp, ranges=[\"10.0.0.0/8\", \"192.168.0.0/16\", \"172.16.0.0/12\"])",
       "snapshot": true,
@@ -239,7 +387,7 @@
             "SourcePort": 49768,
             "DestinationIp": "192.168.195.135",
             "DestinationPort": 8000,
-            "FlowId": "F.DACJR6HHCB8G6.H",
+            "FlowId": "F.DACKVDB5DQHHI.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -248,7 +396,7 @@
       }
     },
     "file": {
-      "huntId": "H.DACJR6SMPT2H0",
+      "huntId": "H.DACKVDLJV341I",
       "rule": "title: live fixture file_event\nlogsource:\n  category: file_event\n  product: windows\ndetection:\n  sel:\n    TargetFilename: 'C:\\Windows\\System32\\cmd.exe'\n  condition: sel\n",
       "vql": "-- Sigma \"live fixture file_event\" → glob(): files on disk now under C:/Windows/System32/cmd.exe\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Files <= SELECT OSPath AS TargetFilename, Size, Mtime FROM glob(globs=[\"C:/Windows/System32/cmd.exe\"])\nSELECT * FROM Files\nWHERE TargetFilename =~ \"(?i)^C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\cmd\\\\.exe$\"",
       "snapshot": true,
@@ -258,7 +406,7 @@
             "TargetFilename": "C:\\Windows\\System32\\cmd.exe",
             "Size": 344064,
             "Mtime": "2025-12-05T02:54:10.1128473Z",
-            "FlowId": "F.DACJR6SMPT2H0.H",
+            "FlowId": "F.DACKVDLJV341I.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -267,7 +415,7 @@
       }
     },
     "registry": {
-      "huntId": "H.DACJR6ODSA2O2",
+      "huntId": "H.DACKVDI58DLII",
       "rule": "title: live fixture registry_set\nlogsource:\n  category: registry_set\n  product: windows\ndetection:\n  sel:\n    TargetObject|startswith: 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion'\n    Details|contains: 'Windows'\n  condition: sel\n",
       "vql": "-- Sigma \"live fixture registry_set\" → glob(accessor=\"registry\"): registry keys and values as they are now under HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*, HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*/**\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Keys <= SELECT OSPath AS TargetObject, Data.value AS Details, Mtime FROM glob(globs=[\"HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*\", \"HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion*/**\"], accessor=\"registry\")\nSELECT * FROM Keys\nWHERE (TargetObject =~ \"(?i)^HKEY_LOCAL_MACHINE\\\\\\\\Software\\\\\\\\Microsoft\\\\\\\\Windows NT\\\\\\\\CurrentVersion\" AND Details =~ \"(?i)Windows\")",
       "snapshot": true,
@@ -277,7 +425,7 @@
             "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\PathName",
             "Details": "C:\\WINDOWS",
             "Mtime": "2026-09-03T07:15:04.7821908Z",
-            "FlowId": "F.DACJR6ODSA2O2.H",
+            "FlowId": "F.DACKVDI58DLII.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -286,7 +434,7 @@
             "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProductName",
             "Details": "Windows 10 Enterprise Evaluation",
             "Mtime": "2026-09-03T07:15:04.7821908Z",
-            "FlowId": "F.DACJR6ODSA2O2.H",
+            "FlowId": "F.DACKVDI58DLII.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -295,16 +443,16 @@
             "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRoot",
             "Details": "C:\\WINDOWS",
             "Mtime": "2026-09-03T07:15:04.7821908Z",
-            "FlowId": "F.DACJR6ODSA2O2.H",
+            "FlowId": "F.DACKVDI58DLII.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
           },
           {
-            "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SRUM\\Extensions\\{973F5D5C-1D90-4944-BE8E-24B94231A174}\\@",
-            "Details": "Windows Network Data Usage Monitor",
-            "Mtime": "2024-04-01T07:29:03.085526Z",
-            "FlowId": "F.DACJR6ODSA2O2.H",
+            "TargetObject": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\DefaultProductKey2\\OSProductPfn",
+            "Details": "Microsoft.Windows.72.X19-98718_8wekyb3d8bbwe",
+            "Mtime": "2024-04-01T08:09:36.9659622Z",
+            "FlowId": "F.DACKVDI58DLII.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -313,10 +461,10 @@
       }
     },
     "mixed": {
-      "huntId": "H.DACJR6QIIUPE0",
+      "huntId": "H.DACKVDO8GE77M",
       "rule": "title: live fixture process_creation\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel_process:\n    Image|endswith: '\\svchost.exe'\n    ParentImage|endswith: '\\services.exe'\n  sel_hash:\n    Hashes|contains: 'a'\n  sel_network_ip:\n    DestinationIp|cidr: '10.0.0.0/8'\n  sel_file_path:\n    TargetFilename: 'C:\\Windows\\System32\\cmd.exe'\n  condition: 1 of sel_*\n",
-      "vql": "-- Sigma \"live fixture process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key=\"Pid\")\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, hash(path=Exe) AS Hashes, get(item=ByPid, field=str(str=Ppid)).Exe AS ParentImage, get(item=ByPid, field=str(str=Ppid)).CommandLine AS ParentCommandLine FROM pslist()\nSELECT * FROM Procs\nWHERE ((Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\") OR (Hashes.MD5 =~ \"(?i)a\" OR Hashes.SHA1 =~ \"(?i)a\" OR Hashes.SHA256 =~ \"(?i)a\"))\n\n-- Sigma \"live fixture process_creation\" → Sysmon event 1, or Security 4688 where Sysmon is absent: process history as far back as the endpoint's event logs go\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET HasSysmon <= SELECT count() AS N FROM glob(globs=SysmonLog)\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nLET ProcEvents <= SELECT * FROM if(condition=HasSysmon[0].N > 0, then=SysmonEvents, else=SecurityEvents)\nSELECT * FROM ProcEvents\nWHERE ((Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\") OR Hashes =~ \"(?i)a\")\n\n-- Sigma \"live fixture process_creation\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort FROM netstat()\nSELECT * FROM Conns\nWHERE cidr_contains(ip=DestinationIp, ranges=[\"10.0.0.0/8\"])\n\n-- Sigma \"live fixture process_creation\" → glob(): files on disk now under C:/Windows/System32/cmd.exe\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Files <= SELECT OSPath AS TargetFilename, Size, Mtime FROM glob(globs=[\"C:/Windows/System32/cmd.exe\"])\nSELECT * FROM Files\nWHERE TargetFilename =~ \"(?i)^C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\cmd\\\\.exe$\"",
-      "snapshot": false,
+      "vql": "-- Sigma \"live fixture process_creation\" → pslist(): running processes only, not process history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET ByPid <= memoize(query={ SELECT Pid, Exe, CommandLine FROM pslist() }, key=\"Pid\")\nLET Procs <= SELECT Pid, Ppid, Name, Exe AS Image, CommandLine, Username AS User, hash(path=Exe) AS Hashes, get(item=ByPid, field=str(str=Ppid)).Exe AS ParentImage, get(item=ByPid, field=str(str=Ppid)).CommandLine AS ParentCommandLine FROM pslist()\nSELECT * FROM Procs\nWHERE ((Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\") OR (Hashes.MD5 =~ \"(?i)a\" OR Hashes.SHA1 =~ \"(?i)a\" OR Hashes.SHA256 =~ \"(?i)a\"))\n\n-- Sigma \"live fixture process_creation\" → Sysmon event 1 only: the rule uses fields Security 4688 does not record, so an endpoint without Sysmon cannot answer it\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nLET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1\nLET ProcEvents <= SELECT * FROM SysmonEvents\nSELECT * FROM ProcEvents\nWHERE ((Image =~ \"(?i)\\\\\\\\svchost\\\\.exe$\" AND ParentImage =~ \"(?i)\\\\\\\\services\\\\.exe$\") OR Hashes =~ \"(?i)a\")\n\n-- Sigma \"live fixture process_creation\" → netstat(): open connections only, not connection history\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Conns <= SELECT Pid, Status, Laddr.IP AS SourceIp, Laddr.Port AS SourcePort, Raddr.IP AS DestinationIp, Raddr.Port AS DestinationPort FROM netstat()\nSELECT * FROM Conns\nWHERE cidr_contains(ip=DestinationIp, ranges=[\"10.0.0.0/8\"])\n\n-- Sigma \"live fixture process_creation\" → glob(): files on disk now under C:/Windows/System32/cmd.exe\n-- Compiled by DFIR Companion from a Sigma rule; the same rule always yields this VQL\nLET Files <= SELECT OSPath AS TargetFilename, Size, Mtime FROM glob(globs=[\"C:/Windows/System32/cmd.exe\"])\nSELECT * FROM Files\nWHERE TargetFilename =~ \"(?i)^C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\cmd\\\\.exe$\"",
+      "snapshot": true,
       "sources": {
         "Pivot0": [
           {
@@ -333,7 +481,7 @@
             },
             "ParentImage": "",
             "ParentCommandLine": "",
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -352,7 +500,7 @@
             },
             "ParentImage": null,
             "ParentCommandLine": null,
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -371,7 +519,7 @@
             },
             "ParentImage": null,
             "ParentCommandLine": null,
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -390,7 +538,7 @@
             },
             "ParentImage": null,
             "ParentCommandLine": null,
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -414,7 +562,7 @@
             "Description": "System activity monitor",
             "Product": "Sysinternals Sysmon",
             "Company": "Sysinternals - www.sysinternals.com",
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -436,7 +584,7 @@
             "Description": "Sink to receive asynchronous callbacks for WMI client application",
             "Product": "Microsoft® Windows® Operating System",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -458,7 +606,7 @@
             "Description": "Microsoft Edge",
             "Product": "Microsoft Edge",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -480,7 +628,7 @@
             "Description": "Microsoft Edge",
             "Product": "Microsoft Edge",
             "Company": "Microsoft Corporation",
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -492,7 +640,7 @@
             "TargetFilename": "C:\\Windows\\System32\\cmd.exe",
             "Size": 344064,
             "Mtime": "2025-12-05T02:54:10.1128473Z",
-            "FlowId": "F.DACJR6QIIUPE0.H",
+            "FlowId": "F.DACKVDO8GE77M.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -503,8 +651,8 @@
   },
   "probes": {
     "security4688": {
-      "huntId": "H.DACJR6SI08EHE",
-      "vql": "LET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET HasSysmon <= SELECT count() AS N FROM glob(globs=SysmonLog)\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nSELECT * FROM SecurityEvents LIMIT 20",
+      "huntId": "H.DACKVDPGE3SKU",
+      "vql": "LET SysmonLog <= \"C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx\"\nLET SecurityLog <= \"C:/Windows/System32/winevt/Logs/Security.evtx\"\nLET SysmonEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Sysmon\" AS Source, EventData.Image AS Image, EventData.CommandLine AS CommandLine, EventData.ProcessId AS ProcessId, EventData.ParentProcessId AS ParentProcessId, EventData.User AS User, EventData.ParentImage AS ParentImage, EventData.ParentCommandLine AS ParentCommandLine, EventData.Hashes AS Hashes, EventData.OriginalFileName AS OriginalFileName, EventData.IntegrityLevel AS IntegrityLevel, EventData.CurrentDirectory AS CurrentDirectory, EventData.Description AS Description, EventData.Product AS Product, EventData.Company AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SysmonLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 1 })\nLET SecurityEvents = SELECT timestamp(epoch=System.TimeCreated.SystemTime) AS EventTime, \"Security\" AS Source, EventData.NewProcessName AS Image, EventData.CommandLine AS CommandLine, int(int=EventData.NewProcessId) AS ProcessId, int(int=EventData.ProcessId) AS ParentProcessId, EventData.SubjectDomainName + \"\\\\\" + EventData.SubjectUserName AS User, EventData.ParentProcessName AS ParentImage, NULL AS ParentCommandLine, NULL AS Hashes, NULL AS OriginalFileName, NULL AS IntegrityLevel, NULL AS CurrentDirectory, NULL AS Description, NULL AS Product, NULL AS Company FROM foreach(row={ SELECT OSPath FROM glob(globs=SecurityLog) }, query={ SELECT * FROM parse_evtx(filename=OSPath) WHERE System.EventID.Value = 4688 })\nLET HasSysmon <= SELECT count() AS N FROM SysmonEvents LIMIT 1\nSELECT * FROM SecurityEvents LIMIT 20",
       "sources": {
         "Pivot0": [
           {
@@ -524,7 +672,7 @@
             "Description": null,
             "Product": null,
             "Company": null,
-            "FlowId": "F.DACJR6SI08EHE.H",
+            "FlowId": "F.DACKVDPGE3SKU.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -546,7 +694,7 @@
             "Description": null,
             "Product": null,
             "Company": null,
-            "FlowId": "F.DACJR6SI08EHE.H",
+            "FlowId": "F.DACKVDPGE3SKU.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -568,7 +716,7 @@
             "Description": null,
             "Product": null,
             "Company": null,
-            "FlowId": "F.DACJR6SI08EHE.H",
+            "FlowId": "F.DACKVDPGE3SKU.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"
@@ -590,7 +738,7 @@
             "Description": null,
             "Product": null,
             "Company": null,
-            "FlowId": "F.DACJR6SI08EHE.H",
+            "FlowId": "F.DACKVDPGE3SKU.H",
             "ClientId": "C.111bad88ef8f8fc5",
             "_OrgId": "root",
             "Fqdn": "DESKTOP-16OJFO6.localdomain"

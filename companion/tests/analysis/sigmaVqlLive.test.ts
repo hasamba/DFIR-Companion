@@ -72,7 +72,7 @@ describe("Sigma → VQL templates against rows from a live Velociraptor (#802)",
         }
   });
 
-  it("process: the ByPid lookup fills ParentImage/ParentCommandLine and hash() is an object with MD5, SHA1 and SHA256", () => {
+  it("process: the ByPid lookup fills ParentImage/ParentCommandLine on the live source", () => {
     for (const row of rows("process")) {
       expect(row.Image).toMatch(/\\svchost\.exe$/i);
       expect(row.ParentImage).toMatch(/\\services\.exe$/i);
@@ -81,6 +81,11 @@ describe("Sigma → VQL templates against rows from a live Velociraptor (#802)",
       expect(typeof row.Ppid).toBe("number");
       expect(typeof row.CommandLine).toBe("string");
       expect(typeof row.User).toBe("string");
+    }
+  });
+
+  it("process: hash() is an object with MD5, SHA1 and SHA256 on the live source", () => {
+    for (const row of rows("processHashes")) {
       const hashes = row.Hashes as Record<string, string>;
       expect(hashes.MD5).toMatch(HEX);
       expect(hashes.MD5).toHaveLength(32);

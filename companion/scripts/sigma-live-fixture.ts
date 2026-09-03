@@ -10,7 +10,8 @@
 //   DFIR_VELOCIRAPTOR_API_CONFIG=/path/api_client.yaml DFIR_VELOCIRAPTOR_BINARY=/path/velociraptor \
 //     npm run sigma:live-fixture
 // Needs at least one enrolled Windows client. `--dry` compiles and prints the rules without
-// launching anything. `--rows N` caps rows kept per source (default 4).
+// launching anything. `--rows N` caps rows kept per source (default 4). `--reuse` launches nothing
+// and reads back the newest hunt of each rule and probe already on the server.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -20,6 +21,7 @@ import { PROCESS_EVENTS } from "../src/analysis/sigmaVqlTemplates.js";
 import {
   VelociraptorClient,
   loadVelociraptorConfig,
+  splitVqlStatements,
 } from "../src/integrations/velociraptor/velociraptorApi.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -133,7 +135,9 @@ async function main(): Promise<void> {
 
   const config = loadVelociraptorConfig();
   if (!config) throw new Error("set DFIR_VELOCIRAPTOR_API_CONFIG (and DFIR_VELOCIRAPTOR_BINARY)");
-  const client = new VelociraptorClient({ ...config, maxRows: Math.max(keep, 1) });
+  // The row cap applies to every read, the hunts() listing included; rows are trimmed to `keep`
+  // below, so the cap only needs to be generous.
+  const client = new VelociraptorClient({ ...config, maxRows: 1000 });
 
   const server = (await client.run("SELECT Hostname, OS FROM info()")).rows[0] as Row | undefined;
   const clients = (
@@ -145,17 +149,55 @@ async function main(): Promise<void> {
   console.log(`\nserver ${String(server?.Hostname ?? "?")}; ${clients.length} Windows client(s)`);
 
   const launched: Launched[] = [];
-  for (const [key, c] of Object.entries(compiled)) {
-    // "Sigma: " first — an artifact name part may not start with a digit, and the launcher derives
-    // the name from this description exactly as the dashboard's Sigma card does.
-    const h = await client.launchHunt(c.vql, `Sigma: live fixture ${key}`, { expirySeconds: 1800 });
-    console.log(`launched ${key}: ${h.huntId} (${h.sources.join(", ")})`);
-    launched.push({ key, huntId: h.huntId, artifact: h.artifact, sources: h.sources });
-  }
-  for (const [key, text] of Object.entries(LIVE_PROBES)) {
-    const h = await client.launchHunt(text, `Sigma: live probe ${key}`, { expirySeconds: 1800 });
-    console.log(`launched probe ${key}: ${h.huntId} (${h.sources.join(", ")})`);
-    launched.push({ key, huntId: h.huntId, artifact: h.artifact, sources: h.sources, probe: true });
+  if (argFlag("--reuse")) {
+    // Read back the newest hunt this script launched for each rule and probe (by description)
+    // instead of launching again — for a poll that was cut short, or a re-read of the same run.
+    // hunts() does not honour ORDER BY here, so the newest is picked client-side.
+    const rows = (
+      await client.run(
+        "SELECT hunt_id, hunt_description, artifacts, create_time FROM hunts() WHERE hunt_description =~ 'Sigma: live (fixture|probe) '",
+      )
+    ).rows as Row[];
+    rows.sort((a, b) => Number(b.create_time) - Number(a.create_time));
+    const newest = new Map<string, Row>();
+    for (const r of rows) {
+      const d = String(r.hunt_description ?? "");
+      if (!newest.has(d)) newest.set(d, r);
+    }
+    const pick = async (description: string, key: string, vql: string, probe?: boolean): Promise<void> => {
+      const r = newest.get(`DFIR Companion: ${description}`);
+      if (!r) throw new Error(`no hunt on the server for "${description}" — run without --reuse first`);
+      const artifact = String((r.artifacts as string[])[0] ?? "");
+      const statements = splitVqlStatements(vql);
+      // The fixture pairs rows with the VQL the compiler emits NOW; a reused hunt must have run
+      // exactly that text, or the pairing would be a lie. The server keeps the artifact's sources.
+      const def = (await client.run(`SELECT sources FROM artifact_definitions(names='${artifact}')`))
+        .rows[0] as { sources?: { query?: string }[] } | undefined;
+      const ran = (def?.sources ?? []).map((s) => String(s.query ?? "").trim());
+      if (ran.length !== statements.length || ran.some((q, i) => q !== statements[i]))
+        throw new Error(
+          `${key}: the newest hunt ${String(r.hunt_id)} ran different VQL — run without --reuse`,
+        );
+      const sources = statements.map((_, i) => `Pivot${i}`);
+      console.log(`reusing ${key}: ${String(r.hunt_id)} (${sources.join(", ")})`);
+      launched.push({ key, huntId: String(r.hunt_id), artifact, sources, ...(probe ? { probe } : {}) });
+    };
+    for (const [key, c] of Object.entries(compiled)) await pick(`Sigma: live fixture ${key}`, key, c.vql);
+    for (const [key, text] of Object.entries(LIVE_PROBES))
+      await pick(`Sigma: live probe ${key}`, key, text, true);
+  } else {
+    for (const [key, c] of Object.entries(compiled)) {
+      // "Sigma: " first — an artifact name part may not start with a digit, and the launcher
+      // derives the name from this description exactly as the dashboard's Sigma card does.
+      const h = await client.launchHunt(c.vql, `Sigma: live fixture ${key}`, { expirySeconds: 1800 });
+      console.log(`launched ${key}: ${h.huntId} (${h.sources.join(", ")})`);
+      launched.push({ key, huntId: h.huntId, artifact: h.artifact, sources: h.sources });
+    }
+    for (const [key, text] of Object.entries(LIVE_PROBES)) {
+      const h = await client.launchHunt(text, `Sigma: live probe ${key}`, { expirySeconds: 1800 });
+      console.log(`launched probe ${key}: ${h.huntId} (${h.sources.join(", ")})`);
+      launched.push({ key, huntId: h.huntId, artifact: h.artifact, sources: h.sources, probe: true });
+    }
   }
 
   const hunts: Record<string, unknown> = {};
@@ -170,7 +212,8 @@ async function main(): Promise<void> {
           `SELECT Flow.state AS State, Flow.status AS Status FROM hunt_flows(hunt_id='${h.huntId}')`,
         )
       ).rows as Row[];
-      if (!flows.length || flows.some((f) => f.State === "RUNNING")) continue;
+      // WAITING: scheduled, the client has not checked in yet. RUNNING: collecting.
+      if (!flows.length || flows.some((f) => f.State === "RUNNING" || f.State === "WAITING")) continue;
       const failed = flows.filter((f) => f.State !== "FINISHED");
       if (failed.length) throw new Error(`${h.key}: flow ${JSON.stringify(failed[0])}`);
       const sources: Record<string, Row[]> = {};
