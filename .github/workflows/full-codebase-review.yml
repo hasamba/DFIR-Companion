@@ -6,8 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
-      contents: write
-      pull-requests: write
+      contents: read
       issues: write
     steps:
       - uses: actions/checkout@v6
@@ -19,10 +18,19 @@ jobs:
           model: "ollama-cloud/kimi-k2.7-code:cloud"
           use_github_token: true
           prompt: |
-            Perform a full code review of the entire repository as it exists
-            on this branch. Walk through all source files (ignore build
-            artifacts, dependencies, and generated files). Identify bugs,
-            security issues, code smells, and design problems. Produce a
-            structured markdown report grouped by file and severity, then
-            commit it as CODE_REVIEW_REPORT.md on a new branch and open a
-            pull request with the results.
+            Perform a full code review of the entire repository as checked
+            out on this branch. Ignore build artifacts, dependencies, and
+            generated files. For every distinct finding, open a separate
+            GitHub Issue using the GitHub CLI (gh issue create) with:
+
+            - Title prefixed by category in brackets: "[Bug]", "[Suggestion]",
+              or "[Feature Request]", followed by a short description.
+            - Body including: file path and line number, a clear explanation
+              of the finding, a severity rating (Critical, High, Medium, or
+              Low), and a recommended fix or next step.
+            - A label matching the category (bug, suggestion, feature-request)
+              and a label matching the severity (severity:critical,
+              severity:high, severity:medium, severity:low).
+
+            Do not create a summary file or single combined report — every
+            finding must be its own issue.
