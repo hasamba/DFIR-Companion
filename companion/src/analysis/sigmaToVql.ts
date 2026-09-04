@@ -480,11 +480,21 @@ const mergeNeeds = (into: Needs, from: Needs): void => {
 // ── Mixed-category rules: one source per category (#802) ─────────────────────────────────────
 
 // Sigma puts the acting process on every event: a file write, a registry set and a connection all
-// carry the Image (and User, ProcessId) that did it. A selection made only of those fields describes
-// that process, not a process_creation event, so on its own it never moves a block to pslist(). A
-// field that belongs to another category — DestinationIp, TargetFilename, TargetObject… — is what
-// moves a block there.
-const PROCESS_CONTEXT_FIELDS: ReadonlySet<string> = new Set(["image", "user", "processid"]);
+// carry the Image (and User, ProcessId) that did it, and a rule may describe that process further
+// by its CommandLine or its parent. A selection made only of those fields describes that process,
+// not a process_creation event, so on its own it never moves a block to pslist() — a CommandLine
+// block under a file_event rule is still a file question, not a live process hunt for the same
+// keyword (#816). A field that belongs to another category — DestinationIp, TargetFilename,
+// TargetObject… — is what moves a block there.
+const PROCESS_CONTEXT_FIELDS: ReadonlySet<string> = new Set([
+  "image",
+  "user",
+  "processid",
+  "commandline",
+  "parentimage",
+  "parentcommandline",
+  "parentprocessid",
+]);
 
 const selectionFields = (sel: SigmaSelection): readonly SigmaFieldMatch[] =>
   sel.kind === "map" ? sel.fields : sel.kind === "list" ? sel.alternatives.flat() : [];

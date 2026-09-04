@@ -740,6 +740,42 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
     ]);
   });
 
+  it("keeps a CommandLine or parent-only block with its declared category too, instead of making it a pslist() hunt (#816)", () => {
+    // The acting process behind a file, registry or network event is described by its command
+    // line and its parent as much as by its Image; none of them turns a file question into a live
+    // process hunt for the same keyword.
+    for (const field of [
+      "CommandLine|contains: 'urlcache'",
+      String.raw`ParentImage|endswith: '\explorer.exe'`,
+      "ParentCommandLine|contains: 'x'",
+      "ParentProcessId: 4",
+    ]) {
+      const yaml = rule(
+        "file_event",
+        `  sel_path:\n    TargetFilename|startswith: 'C:\\Temp\\'\n  sel_cmd:\n    ${field}`,
+        "1 of sel_*",
+      );
+      const r = refusals(yaml);
+      expect(r).toHaveLength(1);
+      expect(r[0].path).toBe(`detection.sel_cmd.${field.split(":")[0]}`);
+      expect(r[0].message).toMatch(/glob\(\).*names the process behind a file_event event/);
+      expect(JSON.stringify(compileSigmaText(yaml))).not.toContain("pslist()");
+    }
+  });
+
+  it("still lets a network rule answer a bare Image through the ByPid lookup while a parent-only block refuses", () => {
+    const yaml = (ctx: string) =>
+      rule(
+        "network_connection",
+        `  sel_ip:\n    DestinationIp: '10.0.0.1'\n  sel_ctx:\n    ${ctx}`,
+        "1 of sel_*",
+      );
+    expect(stagesOf(vql(yaml(String.raw`Image|endswith: '\x.exe'`)))).toEqual(["Conns"]);
+    const r = refusals(yaml(String.raw`ParentImage|endswith: '\x.exe'`));
+    expect(r.map((x) => x.path)).toEqual(["detection.sel_ctx.ParentImage|endswith"]);
+    expect(r[0].message).toMatch(/netstat\(\).*names the process behind a network_connection event/);
+  });
+
   it("moves a selection to another category when a field only that category answers anchors it", () => {
     // DestinationIp exists on netstat() alone, so this block is a connection block even though it
     // also names the Image; the netstat source gains the ByPid lookup to answer Image there.
