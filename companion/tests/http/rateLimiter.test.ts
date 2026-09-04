@@ -103,6 +103,97 @@ describe("AttemptLimiter", () => {
   // #244 shipped with no key eviction at all: this limiter runs BEFORE any caseId-existence
   // check (it gates /unlock itself), so a stream of distinct garbage/enumerated caseIds grows
   // its Map forever on a long-running server. sweep() bounds that.
+  // attempt() is the check → verify → record sequence as ONE serialized step per key. It exists
+  // because the verification moved off the event loop: a burst could otherwise pass the lockout
+  // check together, pay for every derivation, and only then be counted.
+  describe("attempt (serialized check → verify → record)", () => {
+    it("lets a burst of wrong guesses reach the check at most maxAttempts times", async () => {
+      const burst = new AttemptLimiter(5, 30_000);
+      let derivations = 0;
+      const wrong = async (): Promise<boolean> => {
+        derivations++;
+        await new Promise((r) => setTimeout(r, 2));
+        return false;
+      };
+      const outcomes = await Promise.all(Array.from({ length: 20 }, () => burst.attempt("k", wrong)));
+      expect(derivations).toBe(5);
+      expect(outcomes.filter((o) => o.kind === "failed" && o.lockoutMs === 0)).toHaveLength(4);
+      expect(outcomes.filter((o) => o.kind === "failed" && o.lockoutMs > 0)).toHaveLength(1);
+      expect(outcomes.filter((o) => o.kind === "locked")).toHaveLength(15);
+      expect(burst.remainingLockout("k")).toBeGreaterThan(0);
+    });
+
+    it("runs one key's checks one at a time, so no two derivations overlap", async () => {
+      let inFlight = 0;
+      let peak = 0;
+      const check = async (): Promise<boolean> => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        inFlight--;
+        return true;
+      };
+      await Promise.all(Array.from({ length: 4 }, () => limiter.attempt("k", check)));
+      expect(peak).toBe(1);
+    });
+
+    it("does not make different keys wait on each other", async () => {
+      let inFlight = 0;
+      let peak = 0;
+      const check = async (): Promise<boolean> => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return true;
+      };
+      await Promise.all([limiter.attempt("a", check), limiter.attempt("b", check)]);
+      expect(peak).toBe(2);
+    });
+
+    it("a success clears only the failures counted before it, never ones still to run", async () => {
+      const burst = new AttemptLimiter(5, 30_000);
+      const wrong = async (): Promise<boolean> => false;
+      const right = async (): Promise<boolean> => true;
+      // Three wrong, one right, then five wrong — all fired at once. The right one lands in
+      // sequence, clears the three before it, and the five after it lock the key out on their own.
+      const outcomes = await Promise.all([
+        ...Array.from({ length: 3 }, () => burst.attempt("k", wrong)),
+        burst.attempt("k", right),
+        ...Array.from({ length: 5 }, () => burst.attempt("k", wrong)),
+      ]);
+      expect(outcomes[3]).toEqual({ kind: "ok" });
+      expect(outcomes.slice(0, 3).every((o) => o.kind === "failed" && o.lockoutMs === 0)).toBe(true);
+      expect(outcomes.slice(4, 8).every((o) => o.kind === "failed" && o.lockoutMs === 0)).toBe(true);
+      expect(outcomes[8].kind).toBe("failed");
+      expect((outcomes[8] as { lockoutMs: number }).lockoutMs).toBeGreaterThan(0);
+      expect(burst.remainingLockout("k")).toBeGreaterThan(0);
+    });
+
+    it("a correct guess that arrives after the lockout is refused without running the check", async () => {
+      const burst = new AttemptLimiter(5, 30_000);
+      let rightRan = false;
+      const outcomes = await Promise.all([
+        ...Array.from({ length: 5 }, () => burst.attempt("k", async () => false)),
+        burst.attempt("k", async () => {
+          rightRan = true;
+          return true;
+        }),
+      ]);
+      expect(outcomes[5].kind).toBe("locked");
+      expect(rightRan).toBe(false);
+    });
+
+    it("a check that throws surfaces to its caller and does not poison later attempts", async () => {
+      await expect(
+        limiter.attempt("k", async () => {
+          throw new Error("kdf exploded");
+        }),
+      ).rejects.toThrow(/kdf exploded/);
+      expect(await limiter.attempt("k", async () => true)).toEqual({ kind: "ok" });
+    });
+  });
+
   describe("sweep (memory bound against an unbounded key stream)", () => {
     it("removes an entry that has been idle past maxIdleMs", () => {
       limiter.recordFailure("stale-key", 0);

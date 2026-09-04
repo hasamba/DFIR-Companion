@@ -111,34 +111,41 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
           // lockout (the unlock limiter only covered POST /cases/:id/unlock). The scrypt KDF
           // was kept weak (N=2^14) on the documented assumption that online attempts are
           // rate-limited — so leaving /captures unthrottled defeated that assumption too.
+          //
+          // The lockout check, the derivation and the count run as ONE serialized step per case
+          // through the SHARED limiter (AttemptLimiter.attempt), so /captures and /unlock guesses
+          // count together toward lockout and a burst split across the two endpoints cannot slip
+          // past the check before its failures are counted.
           const limiter = getUnlockLimiter();
-          const remaining = limiter.remainingLockout(rawCaseId);
-          if (remaining > 0) {
-            res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
-            return res
-              .status(429)
-              .json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
-          }
           const cookies = parseCookieHeader(req.headers.cookie);
           const token = cookies[unlockCookieName(rawCaseId)];
-          const cookieOk =
-            token && verifyUnlockToken(token, rawCaseId, caseMeta.password.salt, ctx.instanceSecret);
+          const stored = caseMeta.password;
+          const cookieOk = token && verifyUnlockToken(token, rawCaseId, stored.salt, ctx.instanceSecret);
           const bodyPassword = typeof req.body?.casePassword === "string" ? req.body.casePassword : "";
-          const passwordOk = bodyPassword && (await verifyCasePassword(bodyPassword, caseMeta.password));
-          if (!cookieOk && !passwordOk) {
-            // Record the failure in the SHARED limiter so /captures and /unlock attempts count
-            // together toward lockout — an attacker can't rotate endpoints to reset the budget.
-            const lockout = limiter.recordFailure(rawCaseId);
-            if (lockout > 0) {
-              res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
+          // A valid unlock cookie is proof already; only a body password costs a derivation.
+          const outcome = await limiter.attempt(rawCaseId, () =>
+            cookieOk
+              ? Promise.resolve(true)
+              : bodyPassword
+                ? verifyCasePassword(bodyPassword, stored)
+                : Promise.resolve(false),
+          );
+          if (outcome.kind === "locked") {
+            res.setHeader("Retry-After", String(Math.ceil(outcome.retryAfterMs / 1000)));
+            return res.status(429).json({
+              error: "too many failed attempts, try again later",
+              retryAfterMs: outcome.retryAfterMs,
+            });
+          }
+          if (outcome.kind === "failed") {
+            if (outcome.lockoutMs > 0) {
+              res.setHeader("Retry-After", String(Math.ceil(outcome.lockoutMs / 1000)));
               return res
                 .status(429)
-                .json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
+                .json({ error: "too many failed attempts, locked out", retryAfterMs: outcome.lockoutMs });
             }
             return res.status(401).json({ error: "locked", caseId: rawCaseId });
           }
-          // A successful auth clears the limiter for this case (mirrors /unlock).
-          limiter.clear(rawCaseId);
         }
       }
       const metadata = await ingestCapture(store, req.body);

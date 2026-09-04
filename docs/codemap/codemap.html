@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DFIR Companion code map</title>
 <style>body{font:14px system-ui;margin:24px;background:#10151d;color:#e7edf5}input{width:100%;padding:10px;box-sizing:border-box;background:#18212d;color:inherit;border:1px solid #44536a;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{padding:8px;border-bottom:1px solid #2b3544;text-align:left;vertical-align:top}code{color:#a8d8ff}.muted{color:#99a6b7}</style></head>
-<body><h1>DFIR Companion code map</h1><p class="muted">847 modules · 487 routes. Search a path, route, dependency, or test.</p><input id="q" type="search" placeholder="Search code map…"><table><thead><tr><th>Module</th><th>Calls / imports</th><th>Affects / imported by</th><th>Tests</th></tr></thead><tbody id="rows"></tbody></table>
+<body><h1>DFIR Companion code map</h1><p class="muted">866 modules · 488 routes. Search a path, route, dependency, or test.</p><input id="q" type="search" placeholder="Search code map…"><table><thead><tr><th>Module</th><th>Calls / imports</th><th>Affects / imported by</th><th>Tests</th></tr></thead><tbody id="rows"></tbody></table>
 <script type="application/json" id="data">{
   "schemaVersion": 1,
   "roots": [
@@ -11,8 +11,8 @@
     "extension/src",
     "public/dashboard.html"
   ],
-  "moduleCount": 847,
-  "routeCount": 487,
+  "moduleCount": 866,
+  "routeCount": 488,
   "modules": [
     {
       "path": "companion/src/analysis/accountUsageImport.ts",
@@ -86,10 +86,11 @@
     {
       "path": "companion/src/analysis/activityWaves.ts",
       "kind": "module",
-      "lines": 304,
+      "lines": 305,
       "imports": [
         "companion/src/analysis/forensicSort.ts",
         "companion/src/analysis/gapDetect.ts",
+        "companion/src/analysis/responseSchema.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
@@ -101,7 +102,9 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/activityWaves.test.ts"
+        "companion/tests/analysis/activityWaves.test.ts",
+        "companion/tests/analysis/deterministicFindingIds.test.ts",
+        "companion/tests/helpers/deterministicBackfills.ts"
       ]
     },
     {
@@ -189,6 +192,7 @@
       "importedBy": [
         "companion/src/analysis/binaryRenameImport.ts",
         "companion/src/analysis/hijackLibImport.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/veloAggKeys.ts",
         "companion/src/analysis/yaraGrade.ts",
         "companion/src/analysis/yaraImport.ts"
@@ -313,7 +317,7 @@
     {
       "path": "companion/src/analysis/ai/extraction.ts",
       "kind": "module",
-      "lines": 414,
+      "lines": 422,
       "imports": [
         "companion/src/analysis/ai/aiContext.ts",
         "companion/src/analysis/ai/prompts/index.ts",
@@ -322,6 +326,7 @@
         "companion/src/analysis/importResume.ts",
         "companion/src/analysis/logAggregate.ts",
         "companion/src/analysis/logImport.ts",
+        "companion/src/analysis/naiveTimestamp.ts",
         "companion/src/analysis/promptBudget.ts",
         "companion/src/analysis/responseSchema.ts",
         "companion/src/analysis/severityFloor.ts",
@@ -645,7 +650,7 @@
     {
       "path": "companion/src/analysis/ai/synthesis.ts",
       "kind": "module",
-      "lines": 785,
+      "lines": 788,
       "imports": [
         "companion/src/analysis/ai/aiContext.ts",
         "companion/src/analysis/ai/hunts.ts",
@@ -703,7 +708,7 @@
     {
       "path": "companion/src/analysis/ai/synthesisInputs.ts",
       "kind": "module",
-      "lines": 205,
+      "lines": 198,
       "imports": [
         "companion/src/analysis/ai/hunts.ts",
         "companion/src/analysis/aiControl.ts",
@@ -728,7 +733,7 @@
     {
       "path": "companion/src/analysis/ai/synthesisMerge.ts",
       "kind": "module",
-      "lines": 516,
+      "lines": 528,
       "imports": [
         "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/answerContradiction.ts",
@@ -756,7 +761,9 @@
         "companion/src/analysis/ai/synthesis.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/analysis/deterministicFindingIds.test.ts"
+      ]
     },
     {
       "path": "companion/src/analysis/ai/synthesisPersist.ts",
@@ -1260,8 +1267,9 @@
     {
       "path": "companion/src/analysis/artifactBundleStore.ts",
       "kind": "module",
-      "lines": 463,
+      "lines": 464,
       "imports": [
+        "companion/src/analysis/vqlInput.ts",
         "companion/src/storage/atomicWrite.ts",
         "companion/src/storage/safeStoreId.ts"
       ],
@@ -1456,13 +1464,14 @@
     {
       "path": "companion/src/analysis/bashHistoryImport.ts",
       "kind": "module",
-      "lines": 290,
+      "lines": 300,
       "imports": [
         "companion/src/analysis/reconTechniques.ts",
         "companion/src/analysis/secretSpillRules.ts",
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/stateTypes.ts",
-        "companion/src/analysis/tradecraftRules.ts"
+        "companion/src/analysis/tradecraftRules.ts",
+        "companion/src/ingest/textUriTrim.ts"
       ],
       "importedBy": [
         "companion/src/analysis/importDetect.ts",
@@ -1470,7 +1479,8 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/bashHistoryImport.test.ts"
+        "companion/tests/analysis/bashHistoryImport.test.ts",
+        "companion/tests/analysis/urlScraperAgreement.test.ts"
       ]
     },
     {
@@ -1556,6 +1566,7 @@
         "companion/src/analysis/ecarImport.ts",
         "companion/src/analysis/emailImport.ts",
         "companion/src/analysis/evidenceGraph.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/loginGraph.ts",
         "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/networkImport.ts",
@@ -1593,7 +1604,7 @@
     {
       "path": "companion/src/analysis/caseEncryption.ts",
       "kind": "module",
-      "lines": 112,
+      "lines": 122,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/caseExportArchive.ts",
@@ -1637,7 +1648,9 @@
       ],
       "importedBy": [
         "companion/src/routes/caseLifecycle.ts",
-        "companion/src/routes/encryptedImport.ts"
+        "companion/src/routes/encryptedImport.ts",
+        "companion/src/routes/reportVersions.ts",
+        "companion/src/routes/reportsExport.ts"
       ],
       "routes": [],
       "tests": [
@@ -1680,7 +1693,7 @@
     {
       "path": "companion/src/analysis/casePassword.ts",
       "kind": "module",
-      "lines": 169,
+      "lines": 179,
       "imports": [
         "companion/src/types.ts"
       ],
@@ -1703,7 +1716,8 @@
         "companion/tests/http/rateLimiter.test.ts",
         "companion/tests/live/attachLiveSocket.test.ts",
         "companion/tests/live/wsGate.test.ts",
-        "companion/tests/server/capturesLockGate.test.ts"
+        "companion/tests/server/capturesLockGate.test.ts",
+        "companion/tests/server/unlockBurst.test.ts"
       ]
     },
     {
@@ -2065,6 +2079,7 @@
         "companion/tests/server/captureFormats.test.ts",
         "companion/tests/server/caseLifecycleRoutes.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
+        "companion/tests/server/evidenceSymlink.test.ts",
         "companion/tests/server/settingsEnvRoute.test.ts"
       ]
     },
@@ -2404,7 +2419,7 @@
     {
       "path": "companion/src/analysis/cybertriageImport.ts",
       "kind": "module",
-      "lines": 392,
+      "lines": 399,
       "imports": [
         "companion/src/analysis/csvImport.ts",
         "companion/src/analysis/siemImport.ts",
@@ -2417,7 +2432,8 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/cybertriageImport.test.ts"
+        "companion/tests/analysis/cybertriageImport.test.ts",
+        "companion/tests/analysis/urlScraperAgreement.test.ts"
       ]
     },
     {
@@ -2558,7 +2574,7 @@
     {
       "path": "companion/src/analysis/deobfuscate.ts",
       "kind": "module",
-      "lines": 145,
+      "lines": 152,
       "imports": [
         "companion/src/analysis/stateTypes.ts",
         "companion/src/ingest/textUriTrim.ts"
@@ -2568,8 +2584,21 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/deobfuscate.test.ts"
+        "companion/tests/analysis/deobfuscate.test.ts",
+        "companion/tests/analysis/urlScraperAgreement.test.ts"
       ]
+    },
+    {
+      "path": "companion/src/analysis/detectionStackPaths.ts",
+      "kind": "module",
+      "lines": 129,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/ransomwareDetect.ts",
+        "companion/src/analysis/veloDetectionNoise.ts"
+      ],
+      "routes": [],
+      "tests": []
     },
     {
       "path": "companion/src/analysis/diagnostics.ts",
@@ -3135,9 +3164,10 @@
     {
       "path": "companion/src/analysis/gapDetect.ts",
       "kind": "module",
-      "lines": 482,
+      "lines": 483,
       "imports": [
         "companion/src/analysis/forensicSort.ts",
+        "companion/src/analysis/responseSchema.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
@@ -3156,7 +3186,8 @@
         "companion/tests/analysis/activityWaves.test.ts",
         "companion/tests/analysis/gapDetect.test.ts",
         "companion/tests/analysis/gapHypothesis.test.ts",
-        "companion/tests/analysis/shadowArtifacts.test.ts"
+        "companion/tests/analysis/shadowArtifacts.test.ts",
+        "companion/tests/helpers/deterministicBackfills.ts"
       ]
     },
     {
@@ -3260,8 +3291,9 @@
     {
       "path": "companion/src/analysis/highSeverityFindings.ts",
       "kind": "module",
-      "lines": 209,
+      "lines": 210,
       "imports": [
+        "companion/src/analysis/responseSchema.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
@@ -3269,7 +3301,8 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/highSeverityFindings.test.ts"
+        "companion/tests/analysis/highSeverityFindings.test.ts",
+        "companion/tests/helpers/deterministicBackfills.ts"
       ]
     },
     {
@@ -3580,7 +3613,7 @@
     {
       "path": "companion/src/analysis/huntOutcomes.ts",
       "kind": "module",
-      "lines": 329,
+      "lines": 378,
       "imports": [
         "companion/src/analysis/huntRunDiff.ts"
       ],
@@ -3590,8 +3623,8 @@
         "companion/src/analysis/huntOutcomeStore.ts",
         "companion/src/composition/veloHunts.ts",
         "companion/src/routes/context.ts",
-        "companion/src/routes/playbookHunts.ts",
-        "companion/src/routes/velociraptor.ts"
+        "companion/src/routes/huntDeployBody.ts",
+        "companion/src/routes/playbookHunts.ts"
       ],
       "routes": [],
       "tests": [
@@ -3885,7 +3918,7 @@
     {
       "path": "companion/src/analysis/importDetect.ts",
       "kind": "module",
-      "lines": 794,
+      "lines": 800,
       "imports": [
         "companion/src/analysis/bashHistoryImport.ts",
         "companion/src/analysis/ciscoAsaImport.ts",
@@ -3896,6 +3929,7 @@
         "companion/src/analysis/evtxXmlImport.ts",
         "companion/src/analysis/importDetectSources.ts",
         "companion/src/analysis/importerSpec.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/journaldImport.ts",
         "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/siemImport.ts",
@@ -3912,6 +3946,7 @@
         "companion/tests/analysis/evalFixes.test.ts",
         "companion/tests/analysis/importDetect.test.ts",
         "companion/tests/analysis/importerSpec.test.ts",
+        "companion/tests/analysis/intactImport.test.ts",
         "companion/tests/analysis/k8sAuditImport.test.ts",
         "companion/tests/analysis/osqueryImport.test.ts",
         "companion/tests/analysis/yaraImport.test.ts"
@@ -3983,6 +4018,8 @@
         "companion/tests/server/importReimportIdempotence.test.ts",
         "companion/tests/server/importUndoRoutes.test.ts",
         "companion/tests/server/importWriterExclusion.test.ts",
+        "companion/tests/server/intactImportEndToEnd.test.ts",
+        "companion/tests/server/memoryMergeFidelity.test.ts",
         "companion/tests/server/pushRoute.test.ts",
         "companion/tests/server/superTimeline.test.ts",
         "companion/tests/server/veloBundle.test.ts",
@@ -4314,15 +4351,15 @@
     {
       "path": "companion/src/analysis/ingest/platformImports.ts",
       "kind": "module",
-      "lines": 547,
+      "lines": 552,
       "imports": [
         "companion/src/analysis/declarativeImporter.ts",
         "companion/src/analysis/emailImport.ts",
         "companion/src/analysis/evtxXmlImport.ts",
         "companion/src/analysis/ingest/importContext.ts",
         "companion/src/analysis/ingest/importState.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/irisImport.ts",
-        "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/responseSchema.ts",
         "companion/src/analysis/sandboxImport.ts",
         "companion/src/analysis/severityFloor.ts",
@@ -4386,6 +4423,28 @@
       "tests": [
         "companion/tests/analysis/instanceSecret.test.ts",
         "companion/tests/server/custodyManifestRoutes.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/intactImport.ts",
+      "kind": "module",
+      "lines": 531,
+      "imports": [
+        "companion/src/analysis/aggKey.ts",
+        "companion/src/analysis/canonicalEvent.ts",
+        "companion/src/analysis/memoryImport.ts",
+        "companion/src/analysis/siemImport.ts",
+        "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/yaraImport.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/importDetect.ts",
+        "companion/src/analysis/ingest/platformImports.ts",
+        "companion/src/routes/import.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/intactImport.test.ts"
       ]
     },
     {
@@ -4618,7 +4677,8 @@
         "companion/src/analysis/manualEntry.ts",
         "companion/src/analysis/stateMerge.ts",
         "companion/src/enrichment/enrichService.ts",
-        "companion/src/integrations/misp/mispPush.ts"
+        "companion/src/integrations/misp/mispPush.ts",
+        "companion/src/routes/outboundFetchGuard.ts"
       ],
       "routes": [],
       "tests": [
@@ -4891,7 +4951,7 @@
     {
       "path": "companion/src/analysis/kevStore.ts",
       "kind": "module",
-      "lines": 90,
+      "lines": 108,
       "imports": [
         "companion/src/analysis/kev.ts",
         "companion/src/storage/atomicWrite.ts"
@@ -4902,10 +4962,13 @@
         "companion/src/composition/aiRuntime.ts",
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/runtimeStores.ts",
-        "companion/src/reports/reportWriter.ts"
+        "companion/src/reports/reportWriter.ts",
+        "companion/src/routes/kev.ts"
       ],
       "routes": [],
-      "tests": []
+      "tests": [
+        "companion/tests/server/kevImportUrl.test.ts"
+      ]
     },
     {
       "path": "companion/src/analysis/knownPlaybooksData.ts",
@@ -5139,12 +5202,28 @@
       ]
     },
     {
+      "path": "companion/src/analysis/memoryFields.ts",
+      "kind": "module",
+      "lines": 219,
+      "imports": [
+        "companion/src/analysis/siemImport.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/memoryImport.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/memoryFields.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/memoryImport.ts",
       "kind": "module",
-      "lines": 1577,
+      "lines": 1540,
       "imports": [
         "companion/src/analysis/canonicalEvent.ts",
         "companion/src/analysis/csvImport.ts",
+        "companion/src/analysis/memoryFields.ts",
         "companion/src/analysis/pstreeDepth.ts",
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/stateTypes.ts",
@@ -5152,8 +5231,7 @@
       ],
       "importedBy": [
         "companion/src/analysis/importDetect.ts",
-        "companion/src/analysis/ingest/platformImports.ts",
-        "companion/src/routes/import.ts"
+        "companion/src/analysis/intactImport.ts"
       ],
       "routes": [],
       "tests": [
@@ -5248,6 +5326,21 @@
       "routes": [],
       "tests": [
         "companion/tests/analysis/evalFollowups.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/naiveTimestamp.ts",
+      "kind": "module",
+      "lines": 36,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/ai/extraction.ts",
+        "companion/src/analysis/responseSchema.ts",
+        "companion/src/analysis/timeYearClamp.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/naiveTimestamp.test.ts"
       ]
     },
     {
@@ -5394,7 +5487,7 @@
     {
       "path": "companion/src/analysis/nsrlDb.ts",
       "kind": "module",
-      "lines": 182,
+      "lines": 195,
       "imports": [
         "companion/src/analysis/sqliteRuntime.ts",
         "companion/src/storage/atomicWrite.ts"
@@ -5737,6 +5830,7 @@
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/analysis/timeYearClamp.test.ts",
+        "companion/tests/analysis/timeZoneIndependence.test.ts",
         "companion/tests/architecture/pipelineEncapsulation.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/hostDuplicateGateStatus.test.ts",
@@ -6200,8 +6294,9 @@
     {
       "path": "companion/src/analysis/ransomwareDetect.ts",
       "kind": "module",
-      "lines": 123,
+      "lines": 238,
       "imports": [
+        "companion/src/analysis/detectionStackPaths.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
@@ -6334,6 +6429,7 @@
         "companion/src/analysis/importerSpec.ts",
         "companion/src/analysis/iocExclude.ts",
         "companion/src/analysis/iocWhitelist.ts",
+        "companion/src/analysis/sigmaRule.ts",
         "companion/src/analysis/taggerRules.ts"
       ],
       "routes": [],
@@ -6344,16 +6440,20 @@
     {
       "path": "companion/src/analysis/responseSchema.ts",
       "kind": "module",
-      "lines": 304,
+      "lines": 488,
       "imports": [
-        "companion/src/analysis/canonicalEvent.ts"
+        "companion/src/analysis/canonicalEvent.ts",
+        "companion/src/analysis/naiveTimestamp.ts"
       ],
       "importedBy": [
+        "companion/src/analysis/activityWaves.ts",
         "companion/src/analysis/ai/analystQueries.ts",
         "companion/src/analysis/ai/caseReports.ts",
         "companion/src/analysis/ai/extraction.ts",
         "companion/src/analysis/ai/synthesis.ts",
         "companion/src/analysis/ai/synthesisMerge.ts",
+        "companion/src/analysis/gapDetect.ts",
+        "companion/src/analysis/highSeverityFindings.ts",
         "companion/src/analysis/ingest/cloudImports.ts",
         "companion/src/analysis/ingest/endpointImports.ts",
         "companion/src/analysis/ingest/importState.ts",
@@ -6368,9 +6468,11 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/deterministicFindingIds.test.ts",
         "companion/tests/analysis/iocValueIngest.test.ts",
         "companion/tests/analysis/responseSchema.test.ts",
         "companion/tests/analysis/stateMerge.test.ts",
+        "companion/tests/architecture/deterministicFindingMint.test.ts",
         "companion/tests/e2e/aiStub.ts",
         "companion/tests/e2e/workflows/synthesis.spec.ts"
       ]
@@ -6764,7 +6866,7 @@
     {
       "path": "companion/src/analysis/siemImport.ts",
       "kind": "module",
-      "lines": 1669,
+      "lines": 1679,
       "imports": [
         "companion/src/analysis/bsdTime.ts",
         "companion/src/analysis/canonicalEvent.ts",
@@ -6777,7 +6879,8 @@
         "companion/src/analysis/textDomains.ts",
         "companion/src/analysis/timeUtc.ts",
         "companion/src/analysis/tradecraftRules.ts",
-        "companion/src/analysis/winProcessBaseline.ts"
+        "companion/src/analysis/winProcessBaseline.ts",
+        "companion/src/ingest/textUriTrim.ts"
       ],
       "importedBy": [
         "companion/src/analysis/accountUsageImport.ts",
@@ -6807,6 +6910,7 @@
         "companion/src/analysis/ingest/logImports.ts",
         "companion/src/analysis/ingest/networkImports.ts",
         "companion/src/analysis/ingest/platformImports.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/irisImport.ts",
         "companion/src/analysis/journaldImport.ts",
         "companion/src/analysis/k8sAuditImport.ts",
@@ -6814,6 +6918,7 @@
         "companion/src/analysis/loginGraph.ts",
         "companion/src/analysis/m365Import.ts",
         "companion/src/analysis/macosImport.ts",
+        "companion/src/analysis/memoryFields.ts",
         "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/mobileLeappImport.ts",
         "companion/src/analysis/networkImport.ts",
@@ -6860,8 +6965,98 @@
         "companion/tests/analysis/snortImport.test.ts",
         "companion/tests/analysis/syslogImport.test.ts",
         "companion/tests/analysis/tagsYamlDefault.test.ts",
+        "companion/tests/analysis/urlScraperAgreement.test.ts",
         "companion/tests/e2e/workflows/importOperations.spec.ts"
       ]
+    },
+    {
+      "path": "companion/src/analysis/sigmaCondition.ts",
+      "kind": "module",
+      "lines": 159,
+      "imports": [
+        "companion/src/analysis/sigmaRuleTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/sigmaRule.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
+      "path": "companion/src/analysis/sigmaRule.ts",
+      "kind": "module",
+      "lines": 381,
+      "imports": [
+        "companion/src/analysis/regexSafety.ts",
+        "companion/src/analysis/sigmaCondition.ts",
+        "companion/src/analysis/sigmaRuleTypes.ts"
+      ],
+      "importedBy": [
+        "companion/src/analysis/sigmaToVql.ts",
+        "companion/src/routes/sigmaCompile.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/sigmaRule.test.ts",
+        "companion/tests/analysis/sigmaToVql.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/sigmaRuleTypes.ts",
+      "kind": "module",
+      "lines": 81,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/sigmaCondition.ts",
+        "companion/src/analysis/sigmaRule.ts",
+        "companion/src/analysis/sigmaToVql.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/sigmaRule.test.ts",
+        "companion/tests/analysis/sigmaToVql.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/sigmaToVql.ts",
+      "kind": "module",
+      "lines": 757,
+      "imports": [
+        "companion/src/analysis/sigmaRule.ts",
+        "companion/src/analysis/sigmaRuleTypes.ts",
+        "companion/src/analysis/sigmaVqlTemplates.ts",
+        "companion/src/analysis/sigmaVqlValues.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/sigmaCompile.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/sigmaToVql.test.ts",
+        "companion/tests/analysis/sigmaVqlLive.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/analysis/sigmaVqlTemplates.ts",
+      "kind": "module",
+      "lines": 266,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/sigmaToVql.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
+      "path": "companion/src/analysis/sigmaVqlValues.ts",
+      "kind": "module",
+      "lines": 133,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/sigmaToVql.ts"
+      ],
+      "routes": [],
+      "tests": []
     },
     {
       "path": "companion/src/analysis/slackSocketMode.ts",
@@ -6896,7 +7091,7 @@
     {
       "path": "companion/src/analysis/slashCommandAuth.ts",
       "kind": "module",
-      "lines": 124,
+      "lines": 140,
       "imports": [
         "companion/src/analysis/pushAuth.ts"
       ],
@@ -7141,7 +7336,7 @@
     {
       "path": "companion/src/analysis/stateMerge.ts",
       "kind": "module",
-      "lines": 394,
+      "lines": 405,
       "imports": [
         "companion/src/analysis/canonicalEvent.ts",
         "companion/src/analysis/correlate.ts",
@@ -7167,6 +7362,7 @@
       ],
       "routes": [],
       "tests": [
+        "companion/tests/analysis/deterministicFindingIds.test.ts",
         "companion/tests/analysis/iocValueIngest.test.ts",
         "companion/tests/analysis/stateMerge.test.ts",
         "companion/tests/server/importReimportIdempotence.test.ts"
@@ -7235,6 +7431,7 @@
         "companion/tests/analysis/synthesizeCaseMemory.test.ts",
         "companion/tests/analysis/synthesizeCharacterisation.test.ts",
         "companion/tests/analysis/taggerAuto.test.ts",
+        "companion/tests/analysis/timeZoneIndependence.test.ts",
         "companion/tests/composition/gatedSynthesisAnnounce.test.ts",
         "companion/tests/composition/ocrlessBackfill.test.ts",
         "companion/tests/eval/harness.ts",
@@ -7269,6 +7466,7 @@
         "companion/tests/server/dropFolderSymlink.test.ts",
         "companion/tests/server/dwellWindows.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
+        "companion/tests/server/evidenceSymlink.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
         "companion/tests/server/falsePositiveSuggest.test.ts",
         "companion/tests/server/forensicGate.test.ts",
@@ -7289,6 +7487,7 @@
         "companion/tests/server/importWriterExclusion.test.ts",
         "companion/tests/server/importerRoutes.test.ts",
         "companion/tests/server/incidentTypeRoutes.test.ts",
+        "companion/tests/server/intactImportEndToEnd.test.ts",
         "companion/tests/server/interactiveReportRoute.test.ts",
         "companion/tests/server/iocBulkRoutes.test.ts",
         "companion/tests/server/iocExcludeRoutes.test.ts",
@@ -7306,6 +7505,7 @@
         "companion/tests/server/learnedPatterns.test.ts",
         "companion/tests/server/loginGraph.test.ts",
         "companion/tests/server/mcpRunRoutes.test.ts",
+        "companion/tests/server/memoryMergeFidelity.test.ts",
         "companion/tests/server/memoryNextSteps.test.ts",
         "companion/tests/server/notificationRoutes.test.ts",
         "companion/tests/server/nsrlRoutes.test.ts",
@@ -7460,6 +7660,7 @@
         "companion/src/analysis/ingest/platformImports.ts",
         "companion/src/analysis/ingest/timelineImports.ts",
         "companion/src/analysis/initialAccess.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/iocAnchors.ts",
         "companion/src/analysis/iocBulkOps.ts",
         "companion/src/analysis/iocCorroboration.ts",
@@ -7646,6 +7847,7 @@
         "companion/tests/analysis/deepPass.test.ts",
         "companion/tests/analysis/deepPassRun.test.ts",
         "companion/tests/analysis/deobfuscate.test.ts",
+        "companion/tests/analysis/deterministicFindingIds.test.ts",
         "companion/tests/analysis/eventRelevance.test.ts",
         "companion/tests/analysis/evidenceGraph.test.ts",
         "companion/tests/analysis/exfilCorrelate.test.ts",
@@ -7751,6 +7953,7 @@
         "companion/tests/analysis/taggerRules.test.ts",
         "companion/tests/analysis/tagsYamlDefault.test.ts",
         "companion/tests/analysis/timeYearClamp.test.ts",
+        "companion/tests/analysis/timeZoneIndependence.test.ts",
         "companion/tests/analysis/timelineAnomalies.test.ts",
         "companion/tests/analysis/timelineDiff.test.ts",
         "companion/tests/analysis/workLogFilter.test.ts",
@@ -7768,6 +7971,7 @@
         "companion/tests/eval/qualityScorer.ts",
         "companion/tests/eval/scorer.ts",
         "companion/tests/helpers/caseWaits.ts",
+        "companion/tests/helpers/deterministicBackfills.ts",
         "companion/tests/integrations/iris.test.ts",
         "companion/tests/integrations/jiraPush.test.ts",
         "companion/tests/integrations/misp.test.ts",
@@ -7928,9 +8132,11 @@
         "companion/tests/server/importQueuedDiffAttribution.test.ts",
         "companion/tests/server/importReimportIdempotence.test.ts",
         "companion/tests/server/importWriterExclusion.test.ts",
+        "companion/tests/server/intactImportEndToEnd.test.ts",
         "companion/tests/server/iocProvenance.test.ts",
         "companion/tests/server/iocProvenanceChain.test.ts",
         "companion/tests/server/loginGraph.test.ts",
+        "companion/tests/server/memoryMergeFidelity.test.ts",
         "companion/tests/server/starredReport.test.ts",
         "companion/tests/server/superTimeline.test.ts",
         "companion/tests/server/taggerRoutes.test.ts",
@@ -8410,7 +8616,7 @@
     {
       "path": "companion/src/analysis/timeUtc.ts",
       "kind": "module",
-      "lines": 31,
+      "lines": 34,
       "imports": [],
       "importedBy": [
         "companion/src/analysis/manualEntry.ts",
@@ -8425,8 +8631,9 @@
     {
       "path": "companion/src/analysis/timeYearClamp.ts",
       "kind": "module",
-      "lines": 174,
+      "lines": 155,
       "imports": [
+        "companion/src/analysis/naiveTimestamp.ts",
         "companion/src/analysis/stateTypes.ts"
       ],
       "importedBy": [
@@ -8436,7 +8643,8 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/timeYearClamp.test.ts"
+        "companion/tests/analysis/timeYearClamp.test.ts",
+        "companion/tests/analysis/timeZoneIndependence.test.ts"
       ]
     },
     {
@@ -8632,8 +8840,9 @@
     {
       "path": "companion/src/analysis/veloDetectionNoise.ts",
       "kind": "module",
-      "lines": 328,
+      "lines": 224,
       "imports": [
+        "companion/src/analysis/detectionStackPaths.ts",
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/tradecraftRules.ts"
       ],
@@ -8653,7 +8862,7 @@
     {
       "path": "companion/src/analysis/veloHuntStore.ts",
       "kind": "module",
-      "lines": 173,
+      "lines": 204,
       "imports": [
         "companion/src/analysis/stateLock.ts",
         "companion/src/analysis/stateTypes.ts",
@@ -8664,8 +8873,10 @@
       "importedBy": [
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/runtimeStores.ts",
+        "companion/src/composition/veloHuntStatusTimers.ts",
         "companion/src/composition/veloHunts.ts",
         "companion/src/integrations/velociraptor/huntStatusPoller.ts",
+        "companion/src/routes/context.ts",
         "companion/src/routes/velociraptor.ts"
       ],
       "routes": [],
@@ -8770,7 +8981,7 @@
     {
       "path": "companion/src/analysis/veloTextIocs.ts",
       "kind": "module",
-      "lines": 108,
+      "lines": 115,
       "imports": [
         "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/textDomains.ts",
@@ -8781,7 +8992,8 @@
       ],
       "routes": [],
       "tests": [
-        "companion/tests/analysis/evalFixes.test.ts"
+        "companion/tests/analysis/evalFixes.test.ts",
+        "companion/tests/analysis/urlScraperAgreement.test.ts"
       ]
     },
     {
@@ -8923,6 +9135,21 @@
       "tests": []
     },
     {
+      "path": "companion/src/analysis/vqlInput.ts",
+      "kind": "module",
+      "lines": 123,
+      "imports": [],
+      "importedBy": [
+        "companion/src/analysis/artifactBundleStore.ts",
+        "companion/src/integrations/velociraptor/velociraptorApi.ts",
+        "companion/src/routes/velociraptor.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/analysis/vqlInput.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/analysis/wazuhImport.ts",
       "kind": "module",
       "lines": 276,
@@ -9007,7 +9234,8 @@
       ],
       "importedBy": [
         "companion/src/analysis/importDetect.ts",
-        "companion/src/analysis/ingest/platformImports.ts"
+        "companion/src/analysis/ingest/platformImports.ts",
+        "companion/src/analysis/intactImport.ts"
       ],
       "routes": [],
       "tests": [
@@ -9193,7 +9421,7 @@
     {
       "path": "companion/src/auth/oidcClient.ts",
       "kind": "module",
-      "lines": 369,
+      "lines": 383,
       "imports": [
         "companion/src/auth/authConfig.ts"
       ],
@@ -9556,6 +9784,7 @@
         "companion/src/composition/importIngest.ts",
         "companion/src/composition/settingsReload.ts",
         "companion/src/composition/veloExternalIngest.ts",
+        "companion/src/composition/veloHuntStatusTimers.ts",
         "companion/src/composition/veloHunts.ts",
         "companion/src/composition/veloMonitors.ts",
         "companion/src/server.ts"
@@ -10133,7 +10362,7 @@
     {
       "path": "companion/src/composition/settingsReload.ts",
       "kind": "module",
-      "lines": 121,
+      "lines": 125,
       "imports": [
         "companion/src/composition/appOptions.ts",
         "companion/src/composition/enrichmentProviders.ts",
@@ -10193,9 +10422,26 @@
       "tests": []
     },
     {
+      "path": "companion/src/composition/veloHuntStatusTimers.ts",
+      "kind": "module",
+      "lines": 151,
+      "imports": [
+        "companion/src/analysis/veloHuntStore.ts",
+        "companion/src/composition/appOptions.ts",
+        "companion/src/integrations/velociraptor/huntStatusPoller.ts",
+        "companion/src/logging/serverLogger.ts",
+        "companion/src/storage/caseStore.ts"
+      ],
+      "importedBy": [
+        "companion/src/composition/veloHunts.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/composition/veloHunts.ts",
       "kind": "module",
-      "lines": 798,
+      "lines": 748,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/huntOutcomes.ts",
@@ -10211,6 +10457,7 @@
         "companion/src/analysis/veloHuntStore.ts",
         "companion/src/analysis/velociraptorImport.ts",
         "companion/src/composition/appOptions.ts",
+        "companion/src/composition/veloHuntStatusTimers.ts",
         "companion/src/integrations/velociraptor/huntStatusPoller.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts",
         "companion/src/logging/serverLogger.ts",
@@ -10724,7 +10971,7 @@
     {
       "path": "companion/src/http/rateLimiter.ts",
       "kind": "module",
-      "lines": 315,
+      "lines": 368,
       "imports": [],
       "importedBy": [
         "companion/src/auth/authRoutes.ts",
@@ -10745,7 +10992,8 @@
         "companion/tests/server/capturesLockGate.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
         "companion/tests/server/importKinds.test.ts",
-        "companion/tests/server/slashCommandRoutes.test.ts"
+        "companion/tests/server/slashCommandRoutes.test.ts",
+        "companion/tests/server/unlockBurst.test.ts"
       ]
     },
     {
@@ -10777,7 +11025,7 @@
     {
       "path": "companion/src/http/staticAssets.ts",
       "kind": "module",
-      "lines": 351,
+      "lines": 352,
       "imports": [
         "companion/src/serverAssets.ts"
       ],
@@ -10824,7 +11072,8 @@
         "companion/tests/server/captureFormats.test.ts",
         "companion/tests/server/capturesLockGate.test.ts",
         "companion/tests/server/custodyAutoRecord.test.ts",
-        "companion/tests/server/ocrSearchRoute.test.ts"
+        "companion/tests/server/ocrSearchRoute.test.ts",
+        "companion/tests/server/unlockBurst.test.ts"
       ]
     },
     {
@@ -10846,8 +11095,10 @@
       "lines": 79,
       "imports": [],
       "importedBy": [
+        "companion/src/analysis/bashHistoryImport.ts",
         "companion/src/analysis/cybertriageImport.ts",
         "companion/src/analysis/deobfuscate.ts",
+        "companion/src/analysis/siemImport.ts",
         "companion/src/analysis/veloTextIocs.ts"
       ],
       "routes": [],
@@ -11259,7 +11510,7 @@
     {
       "path": "companion/src/integrations/mcp/mcpServerStore.ts",
       "kind": "module",
-      "lines": 267,
+      "lines": 282,
       "imports": [
         "companion/src/analysis/stateLock.ts",
         "companion/src/storage/atomicWrite.ts"
@@ -11958,6 +12209,7 @@
         "companion/src/analysis/veloHuntStore.ts"
       ],
       "importedBy": [
+        "companion/src/composition/veloHuntStatusTimers.ts",
         "companion/src/composition/veloHunts.ts"
       ],
       "routes": [],
@@ -11983,8 +12235,9 @@
     {
       "path": "companion/src/integrations/velociraptor/velociraptorApi.ts",
       "kind": "module",
-      "lines": 1250,
+      "lines": 1245,
       "imports": [
+        "companion/src/analysis/vqlInput.ts",
         "companion/src/integrations/childOutput.ts",
         "companion/src/integrations/velociraptor/artifactCatalog.ts",
         "companion/src/integrations/velociraptor/artifactRefs.ts",
@@ -12148,6 +12401,7 @@
         "companion/src/composition/settingsReload.ts",
         "companion/src/composition/tlsFetch.ts",
         "companion/src/composition/veloExternalIngest.ts",
+        "companion/src/composition/veloHuntStatusTimers.ts",
         "companion/src/composition/veloHunts.ts",
         "companion/src/composition/veloMonitors.ts",
         "companion/src/logging/uncaughtExceptionNet.ts",
@@ -12249,12 +12503,28 @@
         "companion/src/providers/anthropic.ts",
         "companion/src/providers/gemini.ts",
         "companion/src/providers/modelCatalog.ts",
-        "companion/src/providers/openai.ts"
+        "companion/src/providers/openai.ts",
+        "companion/src/routes/kev.ts"
       ],
       "routes": [],
       "tests": [
         "companion/tests/integrations/timesketch.test.ts",
         "companion/tests/providers/boundedResponse.test.ts"
+      ]
+    },
+    {
+      "path": "companion/src/providers/childStreamBuffer.ts",
+      "kind": "module",
+      "lines": 212,
+      "imports": [],
+      "importedBy": [
+        "companion/src/providers/claudeRunner.ts",
+        "companion/src/providers/codexRunner.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/providers/childStreamBuffer.test.ts",
+        "companion/tests/providers/runnerDefaultCaps.test.ts"
       ]
     },
     {
@@ -12293,8 +12563,10 @@
     {
       "path": "companion/src/providers/claudeRunner.ts",
       "kind": "module",
-      "lines": 114,
-      "imports": [],
+      "lines": 127,
+      "imports": [
+        "companion/src/providers/childStreamBuffer.ts"
+      ],
       "importedBy": [
         "companion/src/composition/appOptions.ts",
         "companion/src/integrations/mcp/mcpAgentRunner.ts",
@@ -12311,6 +12583,7 @@
         "companion/tests/providers/claudeCode.test.ts",
         "companion/tests/providers/claudeCodeStatus.test.ts",
         "companion/tests/providers/claudeRunner.test.ts",
+        "companion/tests/providers/runnerDefaultCaps.test.ts",
         "companion/tests/server/mcpRoutes.test.ts",
         "companion/tests/server/mcpRunRoutes.test.ts"
       ]
@@ -12335,8 +12608,10 @@
     {
       "path": "companion/src/providers/codexRunner.ts",
       "kind": "module",
-      "lines": 93,
-      "imports": [],
+      "lines": 135,
+      "imports": [
+        "companion/src/providers/childStreamBuffer.ts"
+      ],
       "importedBy": [
         "companion/src/providers/codex.ts",
         "companion/src/providers/codexStatus.ts",
@@ -12347,7 +12622,8 @@
         "companion/tests/providers/codex.test.ts",
         "companion/tests/providers/codexRunner.test.ts",
         "companion/tests/providers/codexStatus.test.ts",
-        "companion/tests/providers/modelCatalog.test.ts"
+        "companion/tests/providers/modelCatalog.test.ts",
+        "companion/tests/providers/runnerDefaultCaps.test.ts"
       ]
     },
     {
@@ -13526,7 +13802,7 @@
     {
       "path": "companion/src/routes/captures.ts",
       "kind": "module",
-      "lines": 249,
+      "lines": 266,
       "imports": [
         "companion/src/analysis/casePassword.ts",
         "companion/src/analysis/ocrSearch.ts",
@@ -13534,7 +13810,8 @@
         "companion/src/ingest/captureIngest.ts",
         "companion/src/ingest/imageFormat.ts",
         "companion/src/routes/context.ts",
-        "companion/src/storage/caseStore.ts"
+        "companion/src/storage/caseStore.ts",
+        "companion/src/storage/noFollowRead.ts"
       ],
       "importedBy": [
         "companion/src/composition/routeRegistry.ts"
@@ -13583,7 +13860,7 @@
     {
       "path": "companion/src/routes/caseLifecycle.ts",
       "kind": "module",
-      "lines": 903,
+      "lines": 904,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/caseArchive.ts",
@@ -13658,7 +13935,7 @@
     {
       "path": "companion/src/routes/casePassword.ts",
       "kind": "module",
-      "lines": 170,
+      "lines": 173,
       "imports": [
         "companion/src/analysis/casePassword.ts",
         "companion/src/http/rateLimiter.ts",
@@ -13850,7 +14127,7 @@
     {
       "path": "companion/src/routes/context.ts",
       "kind": "module",
-      "lines": 353,
+      "lines": 358,
       "imports": [
         "companion/src/analysis/aiControl.ts",
         "companion/src/analysis/diagnostics.ts",
@@ -13862,6 +14139,7 @@
         "companion/src/analysis/playbook.ts",
         "companion/src/analysis/playbookControl.ts",
         "companion/src/analysis/stateTypes.ts",
+        "companion/src/analysis/veloHuntStore.ts",
         "companion/src/analysis/veloMonitorStore.ts",
         "companion/src/enrichment/provider.ts",
         "companion/src/enrichment/providerHealth.ts",
@@ -13916,6 +14194,7 @@
         "companion/src/routes/incidentTypes.ts",
         "companion/src/routes/interactiveReport.ts",
         "companion/src/routes/jobs.ts",
+        "companion/src/routes/kev.ts",
         "companion/src/routes/mcp.ts",
         "companion/src/routes/mcpServers.ts",
         "companion/src/routes/playbookHunts.ts",
@@ -13946,7 +14225,7 @@
     {
       "path": "companion/src/routes/crossCase.ts",
       "kind": "module",
-      "lines": 268,
+      "lines": 276,
       "imports": [
         "companion/src/analysis/crossCaseIndex.ts",
         "companion/src/analysis/stateStore.ts",
@@ -14217,6 +14496,19 @@
       ]
     },
     {
+      "path": "companion/src/routes/huntDeployBody.ts",
+      "kind": "module",
+      "lines": 64,
+      "imports": [
+        "companion/src/analysis/huntOutcomes.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/velociraptor.ts"
+      ],
+      "routes": [],
+      "tests": []
+    },
+    {
       "path": "companion/src/routes/huntWorkbench.ts",
       "kind": "module",
       "lines": 338,
@@ -14266,12 +14558,12 @@
         "companion/src/analysis/fpPropagation.ts",
         "companion/src/analysis/hayabusaImport.ts",
         "companion/src/analysis/importUndo.ts",
+        "companion/src/analysis/intactImport.ts",
         "companion/src/analysis/iocsDiff.ts",
         "companion/src/analysis/journaldImport.ts",
         "companion/src/analysis/kapeImport.ts",
         "companion/src/analysis/logImport.ts",
         "companion/src/analysis/m365Import.ts",
-        "companion/src/analysis/memoryImport.ts",
         "companion/src/analysis/mobileLeappImport.ts",
         "companion/src/analysis/networkImport.ts",
         "companion/src/analysis/plasoImport.ts",
@@ -14506,6 +14798,27 @@
       ]
     },
     {
+      "path": "companion/src/routes/kev.ts",
+      "kind": "module",
+      "lines": 138,
+      "imports": [
+        "companion/src/analysis/kevStore.ts",
+        "companion/src/providers/boundedResponse.ts",
+        "companion/src/routes/context.ts",
+        "companion/src/routes/outboundFetchGuard.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/threatIntel.ts"
+      ],
+      "routes": [
+        "GET /kev",
+        "POST /kev/import-url",
+        "POST /kev/import-file",
+        "DELETE /kev"
+      ],
+      "tests": []
+    },
+    {
       "path": "companion/src/routes/mcp.ts",
       "kind": "module",
       "lines": 913,
@@ -14563,6 +14876,22 @@
         "POST /mcp/reconnect"
       ],
       "tests": []
+    },
+    {
+      "path": "companion/src/routes/outboundFetchGuard.ts",
+      "kind": "module",
+      "lines": 317,
+      "imports": [
+        "companion/src/analysis/iocValue.ts",
+        "companion/src/routes/publicAddress.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/kev.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/server/outboundFetchGuard.test.ts"
+      ]
     },
     {
       "path": "companion/src/routes/playbookHunts.ts",
@@ -14651,6 +14980,19 @@
       ]
     },
     {
+      "path": "companion/src/routes/publicAddress.ts",
+      "kind": "module",
+      "lines": 210,
+      "imports": [],
+      "importedBy": [
+        "companion/src/routes/outboundFetchGuard.ts"
+      ],
+      "routes": [],
+      "tests": [
+        "companion/tests/server/publicAddress.test.ts"
+      ]
+    },
+    {
       "path": "companion/src/routes/pushNotify.ts",
       "kind": "module",
       "lines": 250,
@@ -14686,9 +15028,10 @@
     {
       "path": "companion/src/routes/reportVersions.ts",
       "kind": "module",
-      "lines": 484,
+      "lines": 488,
       "imports": [
         "companion/src/analysis/activityLog.ts",
+        "companion/src/analysis/caseExportArchive.ts",
         "companion/src/analysis/findingsDiff.ts",
         "companion/src/analysis/iocsDiff.ts",
         "companion/src/analysis/timelineDiff.ts",
@@ -14724,9 +15067,10 @@
     {
       "path": "companion/src/routes/reportsExport.ts",
       "kind": "module",
-      "lines": 393,
+      "lines": 390,
       "imports": [
         "companion/src/analysis/activityLog.ts",
+        "companion/src/analysis/caseExportArchive.ts",
         "companion/src/analysis/custodyManifest.ts",
         "companion/src/analysis/notifications.ts",
         "companion/src/http/securityHeaders.ts",
@@ -14798,6 +15142,22 @@
       "tests": [
         "companion/tests/analysis/sessionSegmentation.test.ts"
       ]
+    },
+    {
+      "path": "companion/src/routes/sigmaCompile.ts",
+      "kind": "module",
+      "lines": 37,
+      "imports": [
+        "companion/src/analysis/sigmaRule.ts",
+        "companion/src/analysis/sigmaToVql.ts"
+      ],
+      "importedBy": [
+        "companion/src/routes/timeline.ts"
+      ],
+      "routes": [
+        "POST /cases/:id/sigma/compile"
+      ],
+      "tests": []
     },
     {
       "path": "companion/src/routes/slashCommand.ts",
@@ -14915,7 +15275,7 @@
     {
       "path": "companion/src/routes/templatesViews.ts",
       "kind": "module",
-      "lines": 273,
+      "lines": 275,
       "imports": [
         "companion/src/analysis/dashboardViews.ts",
         "companion/src/routes/context.ts",
@@ -14946,7 +15306,7 @@
     {
       "path": "companion/src/routes/threatIntel.ts",
       "kind": "module",
-      "lines": 952,
+      "lines": 892,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/customerExposure.ts",
@@ -14967,7 +15327,8 @@
         "companion/src/enrichment/enrichControl.ts",
         "companion/src/enrichment/enrichService.ts",
         "companion/src/enrichment/provider.ts",
-        "companion/src/routes/context.ts"
+        "companion/src/routes/context.ts",
+        "companion/src/routes/kev.ts"
       ],
       "importedBy": [
         "companion/src/composition/routeRegistry.ts"
@@ -15000,10 +15361,6 @@
         "POST /nsrl/clear",
         "GET /nsrl/export",
         "POST /cases/:id/nsrl/apply",
-        "GET /kev",
-        "POST /kev/import-url",
-        "POST /kev/import-file",
-        "DELETE /kev",
         "GET /cases/:id/enrich-control",
         "GET /enrich-health",
         "POST /cases/:id/enrich-control",
@@ -15016,14 +15373,15 @@
     {
       "path": "companion/src/routes/timeline.ts",
       "kind": "module",
-      "lines": 268,
+      "lines": 270,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/stateTypes.ts",
         "companion/src/integrations/timesketch/timesketchMap.ts",
         "companion/src/routes/context.ts",
         "companion/src/routes/huntWorkbench.ts",
-        "companion/src/routes/presidioApproval.ts"
+        "companion/src/routes/presidioApproval.ts",
+        "companion/src/routes/sigmaCompile.ts"
       ],
       "importedBy": [
         "companion/src/composition/routeRegistry.ts"
@@ -15084,20 +15442,21 @@
     {
       "path": "companion/src/routes/velociraptor.ts",
       "kind": "module",
-      "lines": 1114,
+      "lines": 1113,
       "imports": [
         "companion/src/analysis/activityLog.ts",
         "companion/src/analysis/artifactBundleStore.ts",
         "companion/src/analysis/collectDirectiveResolve.ts",
-        "companion/src/analysis/huntOutcomes.ts",
         "companion/src/analysis/severityFloor.ts",
         "companion/src/analysis/veloHuntStore.ts",
         "companion/src/analysis/veloRef.ts",
         "companion/src/analysis/veloTimeScope.ts",
+        "companion/src/analysis/vqlInput.ts",
         "companion/src/integrations/velociraptor/artifactTools.ts",
         "companion/src/integrations/velociraptor/bundlePreflight.ts",
         "companion/src/integrations/velociraptor/velociraptorApi.ts",
         "companion/src/routes/context.ts",
+        "companion/src/routes/huntDeployBody.ts",
         "companion/src/routes/presidioApproval.ts",
         "companion/src/routes/velociraptorMonitors.ts",
         "companion/src/settings/envManager.ts"
@@ -15182,7 +15541,7 @@
     {
       "path": "companion/src/server.ts",
       "kind": "module",
-      "lines": 651,
+      "lines": 652,
       "imports": [
         "companion/src/analysis/importLock.ts",
         "companion/src/analysis/instanceSecret.ts",
@@ -15295,6 +15654,7 @@
         "companion/tests/server/dwellWindows.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
         "companion/tests/server/enrichmentConnectionTest.test.ts",
+        "companion/tests/server/evidenceSymlink.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
         "companion/tests/server/falsePositiveSuggest.test.ts",
         "companion/tests/server/findingWorkflow.test.ts",
@@ -15317,6 +15677,7 @@
         "companion/tests/server/importWriterExclusion.test.ts",
         "companion/tests/server/importerRoutes.test.ts",
         "companion/tests/server/incidentTypeRoutes.test.ts",
+        "companion/tests/server/intactImportEndToEnd.test.ts",
         "companion/tests/server/integrationConnectionTest.test.ts",
         "companion/tests/server/interactiveReportRoute.test.ts",
         "companion/tests/server/iocBulkRoutes.test.ts",
@@ -15331,6 +15692,7 @@
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
         "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/jobs.test.ts",
+        "companion/tests/server/kevImportUrl.test.ts",
         "companion/tests/server/knownUnknowns.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts",
         "companion/tests/server/learnedPatterns.test.ts",
@@ -15338,6 +15700,7 @@
         "companion/tests/server/loginGraph.test.ts",
         "companion/tests/server/mcpRoutes.test.ts",
         "companion/tests/server/mcpRunRoutes.test.ts",
+        "companion/tests/server/memoryMergeFidelity.test.ts",
         "companion/tests/server/memoryNextSteps.test.ts",
         "companion/tests/server/notificationRoutes.test.ts",
         "companion/tests/server/notionPushOptions.test.ts",
@@ -15362,6 +15725,7 @@
         "companion/tests/server/settingsEnvRoute.test.ts",
         "companion/tests/server/settingsReloadRebuild.test.ts",
         "companion/tests/server/setupWizard.test.ts",
+        "companion/tests/server/sigmaCompile.test.ts",
         "companion/tests/server/slashCommandRoutes.test.ts",
         "companion/tests/server/socratesRoutes.test.ts",
         "companion/tests/server/sourceTrust.test.ts",
@@ -15380,6 +15744,7 @@
         "companion/tests/server/tlsFetchForWiring.test.ts",
         "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts",
+        "companion/tests/server/unlockBurst.test.ts",
         "companion/tests/server/updateCheckRoutes.test.ts",
         "companion/tests/server/veloBundle.test.ts",
         "companion/tests/server/veloCollectImportSlot.test.ts",
@@ -15412,7 +15777,7 @@
     {
       "path": "companion/src/settings/envManager.ts",
       "kind": "module",
-      "lines": 408,
+      "lines": 436,
       "imports": [
         "companion/src/config/aiEnv.ts",
         "companion/src/serverAssets.ts",
@@ -15647,6 +16012,7 @@
         "companion/src/composition/maintenanceTasks.ts",
         "companion/src/composition/ocrIndexer.ts",
         "companion/src/composition/runtimeStores.ts",
+        "companion/src/composition/veloHuntStatusTimers.ts",
         "companion/src/composition/veloHunts.ts",
         "companion/src/composition/veloMonitors.ts",
         "companion/src/enrichment/enrichControl.ts",
@@ -15757,6 +16123,7 @@
         "companion/tests/analysis/taggerAuthorship.test.ts",
         "companion/tests/analysis/taggerAuto.test.ts",
         "companion/tests/analysis/tags.test.ts",
+        "companion/tests/analysis/timeZoneIndependence.test.ts",
         "companion/tests/analysis/veloHuntStore.test.ts",
         "companion/tests/analysis/veloMonitorStore.test.ts",
         "companion/tests/architecture/routeInventory.test.ts",
@@ -15828,6 +16195,7 @@
         "companion/tests/server/dwellWindows.test.ts",
         "companion/tests/server/encryptedCaseRoutes.test.ts",
         "companion/tests/server/enrichmentConnectionTest.test.ts",
+        "companion/tests/server/evidenceSymlink.test.ts",
         "companion/tests/server/explainEventRoute.test.ts",
         "companion/tests/server/falsePositiveSuggest.test.ts",
         "companion/tests/server/findingWorkflow.test.ts",
@@ -15850,6 +16218,7 @@
         "companion/tests/server/importWriterExclusion.test.ts",
         "companion/tests/server/importerRoutes.test.ts",
         "companion/tests/server/incidentTypeRoutes.test.ts",
+        "companion/tests/server/intactImportEndToEnd.test.ts",
         "companion/tests/server/integrationConnectionTest.test.ts",
         "companion/tests/server/interactiveReportRoute.test.ts",
         "companion/tests/server/iocBulkRoutes.test.ts",
@@ -15864,6 +16233,7 @@
         "companion/tests/server/jobCancelUnhandledRejection.test.ts",
         "companion/tests/server/jobModelRoute.test.ts",
         "companion/tests/server/jobs.test.ts",
+        "companion/tests/server/kevImportUrl.test.ts",
         "companion/tests/server/knownUnknowns.test.ts",
         "companion/tests/server/lateralPathDismiss.test.ts",
         "companion/tests/server/learnedPatterns.test.ts",
@@ -15871,6 +16241,7 @@
         "companion/tests/server/loginGraph.test.ts",
         "companion/tests/server/mcpRoutes.test.ts",
         "companion/tests/server/mcpRunRoutes.test.ts",
+        "companion/tests/server/memoryMergeFidelity.test.ts",
         "companion/tests/server/memoryNextSteps.test.ts",
         "companion/tests/server/notificationRoutes.test.ts",
         "companion/tests/server/nsrlRoutes.test.ts",
@@ -15895,6 +16266,7 @@
         "companion/tests/server/settingsEnvRoute.test.ts",
         "companion/tests/server/settingsReloadRebuild.test.ts",
         "companion/tests/server/setupWizard.test.ts",
+        "companion/tests/server/sigmaCompile.test.ts",
         "companion/tests/server/slashCommandRoutes.test.ts",
         "companion/tests/server/socratesRoutes.test.ts",
         "companion/tests/server/sourceTrust.test.ts",
@@ -15912,6 +16284,7 @@
         "companion/tests/server/timerLifecycle.test.ts",
         "companion/tests/server/toolRunProvenance.test.ts",
         "companion/tests/server/tools.test.ts",
+        "companion/tests/server/unlockBurst.test.ts",
         "companion/tests/server/updateCheckRoutes.test.ts",
         "companion/tests/server/veloBundle.test.ts",
         "companion/tests/server/veloCollectImportSlot.test.ts",
@@ -15944,7 +16317,8 @@
       "imports": [],
       "importedBy": [
         "companion/src/analysis/caseExportArchive.ts",
-        "companion/src/composition/dropFolder.ts"
+        "companion/src/composition/dropFolder.ts",
+        "companion/src/routes/captures.ts"
       ],
       "routes": [],
       "tests": [
@@ -16630,7 +17004,7 @@
     {
       "path": "public/dashboard.html",
       "kind": "page",
-      "lines": 5587,
+      "lines": 5594,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17003,7 +17377,7 @@
     {
       "path": "public/js/dashboard-case-connect.js",
       "kind": "browser",
-      "lines": 688,
+      "lines": 693,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17082,7 +17456,7 @@
     {
       "path": "public/js/dashboard-collapsible.js",
       "kind": "browser",
-      "lines": 157,
+      "lines": 162,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17274,7 +17648,7 @@
     {
       "path": "public/js/dashboard-env-settings.js",
       "kind": "browser",
-      "lines": 507,
+      "lines": 551,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17355,7 +17729,7 @@
     {
       "path": "public/js/dashboard-facade.js",
       "kind": "browser",
-      "lines": 649,
+      "lines": 651,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17407,7 +17781,7 @@
     {
       "path": "public/js/dashboard-filters.js",
       "kind": "browser",
-      "lines": 212,
+      "lines": 218,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17537,13 +17911,22 @@
     {
       "path": "public/js/dashboard-hunt-profile.js",
       "kind": "browser",
-      "lines": 163,
+      "lines": 171,
       "imports": [],
       "importedBy": [],
       "routes": [],
       "tests": [
         "companion/tests/dashboard/featureManifest.ts"
       ]
+    },
+    {
+      "path": "public/js/dashboard-hunt-snapshot.js",
+      "kind": "browser",
+      "lines": 60,
+      "imports": [],
+      "importedBy": [],
+      "routes": [],
+      "tests": []
     },
     {
       "path": "public/js/dashboard-hunts-jumps.js",
@@ -17852,7 +18235,7 @@
     {
       "path": "public/js/dashboard-palette-registry.js",
       "kind": "browser",
-      "lines": 294,
+      "lines": 316,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17875,7 +18258,7 @@
     {
       "path": "public/js/dashboard-playbook.js",
       "kind": "browser",
-      "lines": 715,
+      "lines": 717,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -17933,7 +18316,7 @@
     {
       "path": "public/js/dashboard-query-translator.js",
       "kind": "browser",
-      "lines": 193,
+      "lines": 206,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -18070,7 +18453,7 @@
     {
       "path": "public/js/dashboard-section-order.js",
       "kind": "browser",
-      "lines": 160,
+      "lines": 208,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -18145,7 +18528,7 @@
     {
       "path": "public/js/dashboard-sigma-hunt.js",
       "kind": "browser",
-      "lines": 588,
+      "lines": 765,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -18187,7 +18570,7 @@
     {
       "path": "public/js/dashboard-super-timeline.js",
       "kind": "browser",
-      "lines": 652,
+      "lines": 687,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -18421,7 +18804,7 @@
     {
       "path": "public/js/dashboard-velo-coverage.js",
       "kind": "browser",
-      "lines": 85,
+      "lines": 129,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -18465,7 +18848,7 @@
     {
       "path": "public/js/dashboard-velo-triage.js",
       "kind": "browser",
-      "lines": 795,
+      "lines": 799,
       "imports": [],
       "importedBy": [],
       "routes": [],
@@ -18477,7 +18860,7 @@
     {
       "path": "public/js/dashboard-view-presets.js",
       "kind": "browser",
-      "lines": 265,
+      "lines": 279,
       "imports": [],
       "importedBy": [],
       "routes": [],

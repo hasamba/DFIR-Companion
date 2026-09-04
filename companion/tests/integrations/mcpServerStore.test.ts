@@ -5,6 +5,8 @@ import { join, dirname } from "node:path";
 import {
   McpServerStore,
   isToolAllowed,
+  isSafeIdentityFile,
+  validateDelivery,
   DEFAULT_DELIVERY,
   type McpServer,
 } from "../../src/integrations/mcp/mcpServerStore.js";
@@ -206,27 +208,47 @@ describe("McpServerStore delivery config", () => {
   });
 
   // `-i` reaches ssh as one argv element, so the risk is not injection but which file a relative
-  // or traversing path resolves to from the server's working directory (#850).
-  it("requires the identity file to be an absolute path with no traversal", async () => {
+  // or traversing path resolves to from the server's working directory (#850). "Absolute" is
+  // judged for the platform scp runs on: a drive-letter path is a relative filename to a Linux
+  // scp, and a POSIX one is drive-relative on Windows.
+  it("requires the identity file to be an absolute path for THIS platform, with no traversal", async () => {
     await expect(
       store.add({ id: "a", delivery: { ...SCP, identityFile: "keys/id_ed25519" } }),
-    ).rejects.toThrow(/identity file .* must be an absolute path/);
+    ).rejects.toThrow(/identity file .* must be an absolute/);
     await expect(
       store.add({ id: "b", delivery: { ...SCP, identityFile: "/home/analyst/../../tmp/id_rsa" } }),
-    ).rejects.toThrow(/identity file .* must be an absolute path/);
+    ).rejects.toThrow(/identity file .* must be an absolute/);
     await expect(store.add({ id: "c", delivery: { ...SCP, identityFile: "/tmp/id$(x)" } })).rejects.toThrow(
-      /identity file .* must be an absolute path/,
+      /identity file .* must be an absolute/,
     );
-    const posix = await store.add({
-      id: "d",
-      delivery: { ...SCP, identityFile: "/home/analyst/.ssh/id_ed25519" },
-    });
-    expect(posix.delivery.identityFile).toBe("/home/analyst/.ssh/id_ed25519");
-    const windows = await store.add({
-      id: "e",
-      delivery: { ...SCP, identityFile: "C:\\Users\\analyst\\.ssh\\id_ed25519" },
-    });
-    expect(windows.delivery.identityFile).toBe("C:\\Users\\analyst\\.ssh\\id_ed25519");
+    const here =
+      process.platform === "win32" ? "C:\\Users\\analyst\\.ssh\\id_ed25519" : "/home/analyst/.ssh/id_ed25519";
+    const other =
+      process.platform === "win32" ? "/home/analyst/.ssh/id_ed25519" : "C:\\Users\\analyst\\.ssh\\id_ed25519";
+    expect(
+      (await store.add({ id: "d", delivery: { ...SCP, identityFile: here } })).delivery.identityFile,
+    ).toBe(here);
+    await expect(store.add({ id: "e", delivery: { ...SCP, identityFile: other } })).rejects.toThrow(
+      /identity file .* must be an absolute/,
+    );
+  });
+
+  it("judges an identity path for the platform it is given, deterministically on any CI host", () => {
+    const posix = (identityFile: string) =>
+      validateDelivery({ ...DEFAULT_DELIVERY, ...SCP, identityFile }, "linux");
+    const win = (identityFile: string) =>
+      validateDelivery({ ...DEFAULT_DELIVERY, ...SCP, identityFile }, "win32");
+    expect(posix("/home/analyst/.ssh/id_ed25519")).toBeNull();
+    expect(posix("C:\\Users\\analyst\\.ssh\\id_ed25519")).toMatch(/must be an absolute POSIX path/);
+    expect(posix("keys/id_ed25519")).toMatch(/must be an absolute POSIX path/);
+    expect(posix("/home/analyst/../root/.ssh/id_ed25519")).toMatch(/must be an absolute POSIX path/);
+    expect(win("C:\\Users\\analyst\\.ssh\\id_ed25519")).toBeNull();
+    expect(win("D:/keys/id_ed25519")).toBeNull();
+    expect(win("/home/analyst/.ssh/id_ed25519")).toMatch(/must be an absolute Windows path/);
+    expect(win("keys\\id_ed25519")).toMatch(/must be an absolute Windows path/);
+    expect(win("C:\\Users\\analyst\\..\\other\\id_ed25519")).toMatch(/must be an absolute Windows path/);
+    expect(isSafeIdentityFile("/tmp/id", "darwin")).toBe(true);
+    expect(isSafeIdentityFile("C:\\id", "darwin")).toBe(false);
   });
 
   it("rejects an impossible port", async () => {

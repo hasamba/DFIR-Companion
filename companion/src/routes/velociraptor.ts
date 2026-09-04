@@ -20,7 +20,7 @@ import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
-import { MAX_VQL_LENGTH, VQL_TOO_LONG } from "../analysis/vqlInput.js";
+import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 /**
  * Velociraptor endpoint-integration routes: the top-level /velociraptor/* API surface (run VQL, launch
@@ -101,7 +101,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
     if (!vql) return res.status(400).json({ error: "vql is required" });
-    if (vql.length > MAX_VQL_LENGTH) return res.status(400).json({ error: VQL_TOO_LONG });
+    if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
     try {
       logLine(`[velociraptor] run query (${vql.length} chars)`);
       const result = await options.velociraptorClient.run(vql);
@@ -123,7 +123,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
     const description = typeof req.body?.description === "string" ? req.body.description : "";
     if (!vql) return res.status(400).json({ error: "vql is required" });
-    if (vql.length > MAX_VQL_LENGTH) return res.status(400).json({ error: VQL_TOO_LONG });
+    if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
     const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds); // relative; defaults to one hour
     try {
       logLine(`[velociraptor] launch hunt: ${description.slice(0, 80)} (expires in ${expirySeconds}s)`);
@@ -271,7 +271,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const description = typeof req.body?.description === "string" ? req.body.description : "";
     if (!hostname) return res.status(400).json({ error: "hostname is required" });
     if (!vql) return res.status(400).json({ error: "vql is required" });
-    if (vql.length > MAX_VQL_LENGTH) return res.status(400).json({ error: VQL_TOO_LONG });
+    if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
     try {
       logLine(`[velociraptor] collect on host ${hostname}: ${description.slice(0, 80)}`);
       const result = await collectHostResolved(hostname, vql, description);
