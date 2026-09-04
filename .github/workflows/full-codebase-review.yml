@@ -55,7 +55,7 @@ jobs:
           # CI-only permission overrides: no interactive prompts in headless runs.
           OPENCODE_CONFIG: ${{ github.workspace }}/.github/opencode/ci.json
         with:
-          model: "ollama-cloud/kimi-k2.7-code"
+          model: "ollama-cloud/kimi-k3"
           use_github_token: true
           prompt: |
             Perform a full code review of the entire repository checked out
