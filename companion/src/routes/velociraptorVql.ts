@@ -1,5 +1,4 @@
 import type { Express, Request, Response } from "express";
-import { logActivity } from "../analysis/activityLog.js";
 import { normalizeHuntExpirySeconds } from "../integrations/velociraptor/velociraptorApi.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 import { isValidCaseId } from "../storage/caseStore.js";
@@ -15,9 +14,13 @@ import type { RouteContext } from "./context.js";
 // How much of the VQL an activity entry keeps. Enough to recognise the query, small enough that a
 // compiled Sigma rule (tens of KB) cannot turn the append-only log into a copy of every hunt.
 export const VQL_DETAIL_LIMIT = 500;
+// The hunt description is analyst-typed and reaches the entry unchanged, so it gets the same cap
+// launchHunt() applies to it before it reaches Velociraptor — one request cannot persist a
+// megabyte line that every later load of the log must parse.
+export const DESCRIPTION_DETAIL_LIMIT = 200;
 
-export function truncateVql(vql: string): string {
-  return vql.length > VQL_DETAIL_LIMIT ? vql.slice(0, VQL_DETAIL_LIMIT) + "…" : vql;
+export function clip(text: string, limit: number): string {
+  return text.length > limit ? text.slice(0, limit) + "…" : text;
 }
 
 export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): void {
@@ -43,23 +46,36 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
   }
 
   // Awaited, not fire-and-forget: the response must not leave before the audit line has landed,
-  // or a caller that reads the log right after gets a fleet action with no record of it.
-  function record(
+  // or a caller that reads the log right after gets a fleet action with no record of it. Appends
+  // through the store directly rather than the shared logActivity helper, because that helper
+  // swallows a failed append (it is a side channel elsewhere) — here the caller asked for the line,
+  // so a failure is returned as a warning the response carries, never as silence.
+  async function record(
     caseId: string,
     action: "run-vql" | "launch-hunt",
     detail: string,
     outcome: "success" | "error",
     targetId?: string,
-  ): Promise<void> {
-    if (!caseId) return Promise.resolve();
-    return logActivity(options.activityLogStore, options.onActivity, caseId, {
-      category: "hunt",
-      action,
-      detail,
-      outcome,
-      ...(targetId ? { targetType: "hunt", targetId } : {}),
-    });
+  ): Promise<string | undefined> {
+    if (!caseId || !options.activityLogStore) return undefined;
+    try {
+      await options.activityLogStore.add(caseId, {
+        category: "hunt",
+        action,
+        detail,
+        outcome,
+        ...(targetId ? { targetType: "hunt", targetId } : {}),
+      });
+      options.onActivity?.(caseId);
+      return undefined;
+    } catch (err) {
+      const warning = `activity log append failed for case ${caseId}: ${(err as Error).message}`;
+      logLine(`[velociraptor] AUDIT NOT WRITTEN — ${warning}`);
+      return warning;
+    }
   }
+  const withWarning = <T extends object>(body: T, auditWarning?: string): T =>
+    auditWarning ? { ...body, auditWarning } : body;
 
   // Run a VQL query against the configured Velociraptor server (via its API) and return the rows.
   // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when not configured. The VQL is
@@ -78,17 +94,22 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       logLine(`[velociraptor] run query (${vql.length} chars)`);
       const result = await options.velociraptorClient.run(vql);
       logLine(`[velociraptor] query DONE -> ${result.total} rows${result.truncated ? " (truncated)" : ""}`);
-      await record(
+      const auditWarning = await record(
         caseId,
         "run-vql",
-        `ran VQL on the server -> ${result.total} row(s)${result.truncated ? " (truncated)" : ""}: ${truncateVql(vql)}`,
+        `ran VQL on the server -> ${result.total} row(s)${result.truncated ? " (truncated)" : ""}: ${clip(vql, VQL_DETAIL_LIMIT)}`,
         "success",
       );
-      return res.status(200).json(result);
+      return res.status(200).json(withWarning(result, auditWarning));
     } catch (err) {
       logLine(`[velociraptor] query ERROR: ${(err as Error).message}`);
-      await record(caseId, "run-vql", `VQL failed: ${(err as Error).message} — ${truncateVql(vql)}`, "error");
-      return res.status(502).json({ error: (err as Error).message });
+      const auditWarning = await record(
+        caseId,
+        "run-vql",
+        `VQL failed: ${(err as Error).message} — ${clip(vql, VQL_DETAIL_LIMIT)}`,
+        "error",
+      );
+      return res.status(502).json(withWarning({ error: (err as Error).message }, auditWarning));
     }
   });
 
@@ -112,23 +133,23 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       logLine(
         `[velociraptor] hunt launched -> ${result.huntId} (artifact ${result.artifact}, ${result.sources.length} source(s))`,
       );
-      await record(
+      const auditWarning = await record(
         caseId,
         "launch-hunt",
-        `fleet hunt ${result.huntId} "${description}" launched on all clients: ${truncateVql(vql)}`,
+        `fleet hunt ${result.huntId} "${clip(description, DESCRIPTION_DETAIL_LIMIT)}" launched on all clients: ${clip(vql, VQL_DETAIL_LIMIT)}`,
         "success",
         result.huntId,
       );
-      return res.status(200).json(result);
+      return res.status(200).json(withWarning(result, auditWarning));
     } catch (err) {
       logLine(`[velociraptor] hunt ERROR: ${(err as Error).message}`);
-      await record(
+      const auditWarning = await record(
         caseId,
         "launch-hunt",
-        `fleet hunt "${description}" failed: ${(err as Error).message} — ${truncateVql(vql)}`,
+        `fleet hunt "${clip(description, DESCRIPTION_DETAIL_LIMIT)}" failed: ${(err as Error).message} — ${clip(vql, VQL_DETAIL_LIMIT)}`,
         "error",
       );
-      return res.status(502).json({ error: (err as Error).message });
+      return res.status(502).json(withWarning({ error: (err as Error).message }, auditWarning));
     }
   });
 }

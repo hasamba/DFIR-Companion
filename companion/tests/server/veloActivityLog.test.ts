@@ -25,10 +25,10 @@ const veloCfg: VelociraptorApiConfig = {
   maxOutputBytes: 1024 * 1024,
 };
 
-async function makeApp(runner: VqlRunner) {
+async function makeApp(runner: VqlRunner, activityLogStoreOverride?: ActivityLogStore) {
   const root = await mkdtemp(join(tmpdir(), "dfir-velo-activity-"));
   const store = new CaseStore(root);
-  const activityLogStore = new ActivityLogStore(store);
+  const activityLogStore = activityLogStoreOverride ?? new ActivityLogStore(store);
   const app = createApp(store, {
     activityLogStore,
     velociraptorClient: new VelociraptorClient(veloCfg, runner),
@@ -121,6 +121,35 @@ describe("Velociraptor VQL routes write to the case activity log (#832)", () => 
       .send({ vql: "SELECT 1 FROM scope()", caseId: "../etc" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/caseId/);
+  });
+
+  it("caps a huge description so one hunt cannot bloat every later activity-log load", async () => {
+    const { app, activityLogStore } = await makeApp(okRunner);
+    const description = "d".repeat(50_000);
+    const res = await request(app)
+      .post("/velociraptor/hunt")
+      .send({ vql: "SELECT 1 FROM scope()", description, caseId: "c1" });
+    expect(res.status).toBe(200);
+    const [entry] = await activityLogStore.load("c1", { category: "hunt" });
+    expect(entry.detail.length).toBeLessThan(1_000);
+  });
+
+  it("reports an audit append that failed instead of answering as if the line were written", async () => {
+    // The shared logActivity helper swallows a rejected append (it is a side channel elsewhere). For
+    // an audit line the caller asked for, silence is the one wrong answer: the response says so.
+    class BrokenStore extends ActivityLogStore {
+      override add(): Promise<never> {
+        return Promise.reject(new Error("EACCES: activity.jsonl"));
+      }
+    }
+    const root = await mkdtemp(join(tmpdir(), "dfir-velo-activity-broken-"));
+    const { app } = await makeApp(okRunner, new BrokenStore(new CaseStore(root)));
+    const res = await request(app)
+      .post("/velociraptor/run")
+      .send({ vql: "SELECT * FROM pslist()", caseId: "c1" });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+    expect(res.body.auditWarning).toMatch(/activity log.*EACCES/);
   });
 
   it("still runs without a caseId and writes nothing — the pre-existing case-less contract holds", async () => {
