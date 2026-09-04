@@ -372,6 +372,28 @@ describe("compileSigmaToVql — a selection the condition never names stays out 
     expect(r).toEqual([{ path: "detection", message: expect.stringMatching(/no TargetObject value/) }]);
   });
 
+  it("still refuses a glob rule with no root when an ignorable unused block also refused, instead of running an empty glob() (#815)", () => {
+    // The unused file block refuses against the registry template but glob() could answer it, so
+    // it is ignorable — and its refusal must not stand in for the missing-root one.
+    const yaml = two("registry_set", "    Details: 'RunOnce'", "    TargetFilename|contains: 'foo'");
+    const r = refusals(yaml);
+    expect(r).toEqual([{ path: "detection", message: expect.stringMatching(/no TargetObject value/) }]);
+    expect(JSON.stringify(compileSigmaText(yaml))).not.toContain("globs=[]");
+  });
+
+  it("compiles a glob rule whose named block has a root while an ignorable unused block refuses", () => {
+    const r = compiled(
+      two(
+        "registry_set",
+        "    TargetObject|startswith: 'HKLM\\SOFTWARE\\a'",
+        "    TargetFilename|contains: 'foo'",
+      ),
+    );
+    expect(r.vql).toContain('accessor="registry")');
+    expect(r.vql).not.toContain("globs=[]");
+    expect(r.vql).toContain("-- Not in the condition, so not in this hunt: unused");
+  });
+
   it("counts a selection reached through not / and / 1 of / all of as used", () => {
     const sel = "    Image|endswith: '\\cmd.exe'";
     const parent = "    ParentImage|endswith: '\\x.exe'";

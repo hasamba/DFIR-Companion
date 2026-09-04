@@ -666,13 +666,6 @@ function compileWhole(
     if (expr !== null) exprs.set(sel.name, expr);
     if (referenced.has(sel.name)) mergeNeeds(needs, own);
   }
-  if (template.globFrom && needs.globs.length === 0 && out.length === 0) {
-    const source = Object.entries(template.fields).find(([, c]) => c.globSource)?.[0] ?? "a path";
-    out.push({
-      path: "detection",
-      message: `no ${source} value to derive a path from; the hunt needs at least one to know where to look`,
-    });
-  }
   const unreferenced = unreferencedSelectionNames(rule);
   const order = [...declared, ...VQL_TEMPLATES.filter((t) => !declared.has(t))];
   const ignorable = unreferenced.filter((n) => {
@@ -680,6 +673,16 @@ function compileWhole(
     return !!sel && resolveSelection(order, declared, sel).ok;
   });
   const live = out.filter((r) => !ignorable.some((n) => belongsTo(r, n)));
+  // A glob template with no root would run an empty glob() and return nothing, silently. The check
+  // runs on the live refusals, after the ignorable ones are dropped: an unused block's refusal that
+  // is about to be discarded must not stand in for the root refusal and let the rule compile (#815).
+  if (template.globFrom && needs.globs.length === 0 && live.length === 0) {
+    const source = Object.entries(template.fields).find(([, c]) => c.globSource)?.[0] ?? "a path";
+    live.push({
+      path: "detection",
+      message: `no ${source} value to derive a path from; the hunt needs at least one to know where to look`,
+    });
+  }
   if (live.length) return { ok: false, refusals: live };
   return {
     ok: true,
