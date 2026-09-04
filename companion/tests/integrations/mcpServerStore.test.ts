@@ -153,6 +153,12 @@ describe("McpServerStore file handling", () => {
 
 describe("McpServerStore delivery config", () => {
   const SCP = { mode: "scp" as const, host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" };
+  // The store validates against process.platform, so a fixture that must be ACCEPTED has to be
+  // absolute for the host the suite runs on: a POSIX path fails the Windows CI job (#850 follow-up).
+  const LOCAL_KEY =
+    process.platform === "win32" ? "C:\\Users\\analyst\\.ssh\\id_ed25519" : "/home/analyst/.ssh/id_ed25519";
+  const FOREIGN_KEY =
+    process.platform === "win32" ? "/home/analyst/.ssh/id_ed25519" : "C:\\Users\\analyst\\.ssh\\id_ed25519";
 
   it("defaults to remote-path with nothing configured", async () => {
     expect((await store.add({ id: "sift-mcp" })).delivery).toMatchObject({
@@ -221,14 +227,10 @@ describe("McpServerStore delivery config", () => {
     await expect(store.add({ id: "c", delivery: { ...SCP, identityFile: "/tmp/id$(x)" } })).rejects.toThrow(
       /identity file .* must be an absolute/,
     );
-    const here =
-      process.platform === "win32" ? "C:\\Users\\analyst\\.ssh\\id_ed25519" : "/home/analyst/.ssh/id_ed25519";
-    const other =
-      process.platform === "win32" ? "/home/analyst/.ssh/id_ed25519" : "C:\\Users\\analyst\\.ssh\\id_ed25519";
     expect(
-      (await store.add({ id: "d", delivery: { ...SCP, identityFile: here } })).delivery.identityFile,
-    ).toBe(here);
-    await expect(store.add({ id: "e", delivery: { ...SCP, identityFile: other } })).rejects.toThrow(
+      (await store.add({ id: "d", delivery: { ...SCP, identityFile: LOCAL_KEY } })).delivery.identityFile,
+    ).toBe(LOCAL_KEY);
+    await expect(store.add({ id: "e", delivery: { ...SCP, identityFile: FOREIGN_KEY } })).rejects.toThrow(
       /identity file .* must be an absolute/,
     );
   });
@@ -268,14 +270,14 @@ describe("McpServerStore delivery config", () => {
   });
 
   it("merges a delivery update field-wise instead of resetting the rest", async () => {
-    await store.add({ id: "sift-mcp", delivery: { ...SCP, identityFile: "/home/dfir/.ssh/lab" } });
+    await store.add({ id: "sift-mcp", delivery: { ...SCP, identityFile: LOCAL_KEY } });
 
     const updated = await store.update("sift-mcp", { delivery: { remoteDir: "/cases/staging" } });
 
     expect(updated?.delivery).toMatchObject({
       mode: "scp",
       host: "sift.lab",
-      identityFile: "/home/dfir/.ssh/lab",
+      identityFile: LOCAL_KEY,
       remoteDir: "/cases/staging",
     });
   });
