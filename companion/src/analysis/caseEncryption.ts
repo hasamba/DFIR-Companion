@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from "node:crypto";
+import { randomBytes, scrypt, createCipheriv, createDecipheriv } from "node:crypto";
 
 // The .dfircase container format: [8B magic][16B salt][12B IV][16B GCM auth tag][ciphertext].
 // AES-256-GCM authenticates the WHOLE archive — a wrong password or any tampering/corruption
@@ -68,16 +68,26 @@ export function readFormatVersion(container: Buffer): number | undefined {
   return findFormat(container)?.version;
 }
 
-function deriveKey(password: string, salt: Buffer, params: ScryptParams): Buffer {
-  return scryptSync(password, salt, KEY_LEN, params);
+// Async on purpose: at N=2^17 one derivation is about a second of CPU, and scryptSync spent that
+// second on the event loop — every export or import froze every other request, WebSocket update
+// and timer for its duration (#862). The callback form runs it on libuv's threadpool instead; the
+// parameters and the container bytes are unchanged, so every archive already written still opens.
+function scryptAsync(password: string, salt: Buffer, keyLen: number, params: ScryptParams): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keyLen, params, (err, key) => (err ? reject(err) : resolve(key)));
+  });
+}
+
+function deriveKey(password: string, salt: Buffer, params: ScryptParams): Promise<Buffer> {
+  return scryptAsync(password, salt, KEY_LEN, params);
 }
 
 /** Encrypt `data` under `password`, in the current container version. Each call uses a fresh
  * random salt + IV. */
-export function encryptBuffer(data: Buffer, password: string): Buffer {
+export async function encryptBuffer(data: Buffer, password: string): Promise<Buffer> {
   const salt = randomBytes(SALT_LEN);
   const iv = randomBytes(IV_LEN);
-  const key = deriveKey(password, salt, CURRENT_FORMAT.scrypt);
+  const key = await deriveKey(password, salt, CURRENT_FORMAT.scrypt);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const ciphertext = Buffer.concat([cipher.update(data), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -88,7 +98,7 @@ export function encryptBuffer(data: Buffer, password: string): Buffer {
  * Throws {@link DecryptionError} on a wrong password, corrupted/tampered bytes, or a buffer that
  * isn't a .dfircase container (including one written by a NEWER build — an unknown version is
  * reported as such rather than as a wrong password). */
-export function decryptBuffer(container: Buffer, password: string): Buffer {
+export async function decryptBuffer(container: Buffer, password: string): Promise<Buffer> {
   const format = findFormat(container);
   if (!format) throw new DecryptionError("not a valid .dfircase archive");
   let offset = MAGIC_LEN;
@@ -100,7 +110,7 @@ export function decryptBuffer(container: Buffer, password: string): Buffer {
   offset += TAG_LEN;
   const ciphertext = container.subarray(offset);
 
-  const key = deriveKey(password, salt, format.scrypt);
+  const key = await deriveKey(password, salt, format.scrypt);
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   try {

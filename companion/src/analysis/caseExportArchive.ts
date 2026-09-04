@@ -354,7 +354,7 @@ async function archiveGeneration(
     data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"),
   });
 
-  return encryptBuffer(createZip(entries), password);
+  return await encryptBuffer(createZip(entries), password);
 }
 
 // Defense-in-depth against a crafted/corrupted archive writing outside the target case
@@ -503,7 +503,7 @@ export async function importEncryptedCase(
   // let decryptBuffer be the thing that rejects an unknown/short container. readFormatVersion
   // cannot return undefined past that call — decryptBuffer would already have thrown.
   const formatVersion = readFormatVersion(fileBuffer);
-  const zip = decryptBuffer(fileBuffer, password);
+  const zip = await decryptBuffer(fileBuffer, password);
   const archiveEntries = readZip(zip);
   const manifestCounts = countsFromManifest(
     archiveEntries.find((entry) => entry.path === "archive-manifest.json"),

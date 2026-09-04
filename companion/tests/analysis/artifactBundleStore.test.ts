@@ -57,6 +57,29 @@ describe("ArtifactBundleStore", () => {
       expect(b.artifacts).toEqual(["Windows.System.Pslist"]);
     });
 
+    // The client inlines a filter as `WHERE (${filter})`, so one able to close that parenthesis
+    // would smuggle a second statement into every hunt read (#843). Refused here, by name.
+    it("refuses a WHERE filter that is not one contained boolean expression", async () => {
+      await expect(
+        store.save({
+          name: "A",
+          description: "",
+          artifacts: ["Windows.System.Pslist"],
+          filters: { "Windows.System.Pslist": "1=1) LIMIT 1; SELECT * FROM execve(argv=['id']) WHERE (1=1" },
+        }),
+      ).rejects.toThrow(/invalid WHERE filter for Windows\.System\.Pslist/);
+      await expect(
+        store.save({ name: "A", description: "", artifacts: ["X"], filters: { X: "Name =~ 'open" } }),
+      ).rejects.toThrow(/invalid WHERE filter/);
+      const ok = await store.save({
+        name: "A",
+        description: "",
+        artifacts: ["X"],
+        filters: { X: "NOT OSPath =~ 'pagefile' AND (Size > 1 OR Size < 0);" },
+      });
+      expect(ok.filters).toEqual({ X: "NOT OSPath =~ 'pagefile' AND (Size > 1 OR Size < 0)" });
+    });
+
     it("persists so a new store instance can read it", async () => {
       await store.save({
         id: "persistent",

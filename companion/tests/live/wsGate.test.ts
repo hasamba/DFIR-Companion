@@ -26,7 +26,7 @@ const upgrade = (url: string, headers: Record<string, string> = {}) =>
   authorizeWsUpgrade({ url, headers: { host: "127.0.0.1:4773", ...headers } }, deps());
 
 async function lockCase(): Promise<string> {
-  const password = hashCasePassword("secret123");
+  const password = await hashCasePassword("secret123");
   await store.updateCaseMeta("locked", { password });
   return signUnlockToken("locked", password.salt, secret, 60_000, false);
 }
@@ -61,7 +61,7 @@ describe("authorizeWsUpgrade (#212)", () => {
 
   it("refuses an unlock cookie minted for a DIFFERENT case", async () => {
     const token = await lockCase();
-    await store.updateCaseMeta("open", { password: hashCasePassword("other") });
+    await store.updateCaseMeta("open", { password: await hashCasePassword("other") });
     const result = await upgrade("/ws?caseId=open", { cookie: `${unlockCookieName("open")}=${token}` });
     expect(result.ok).toBe(false);
   });

@@ -1,6 +1,6 @@
 import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { OidcClient } from "../../src/auth/oidcClient.js";
+import { OidcClient, safeReturnTo } from "../../src/auth/oidcClient.js";
 
 const ISSUER = "https://identity.example.test";
 const CLIENT_ID = "dfir-companion";
@@ -296,5 +296,36 @@ describe("OIDC flow storage is bounded", () => {
 
     expect(flows().has(stale.state)).toBe(false);
     expect(flows().has(fresh.state)).toBe(true);
+  });
+});
+
+// The post-login destination is caller-supplied and lands in res.redirect(), so anything a browser
+// takes off-site is an open redirect (#839). The parser NORMALIZES `..`, so the result is checked
+// with the same rules as the input.
+describe("safeReturnTo", () => {
+  it("keeps a same-origin path, query and fragment", () => {
+    expect(safeReturnTo("/dashboard?caseId=c1#findings")).toBe("/dashboard?caseId=c1#findings");
+    expect(safeReturnTo("/cases/c1/present")).toBe("/cases/c1/present");
+  });
+
+  it("falls back to the dashboard for an absolute or scheme-relative URL", () => {
+    expect(safeReturnTo("https://evil.example/")).toBe("/dashboard");
+    expect(safeReturnTo("//evil.example/x")).toBe("/dashboard");
+    expect(safeReturnTo("/\\evil.example")).toBe("/dashboard");
+    expect(safeReturnTo("dashboard")).toBe("/dashboard");
+    expect(safeReturnTo(undefined)).toBe("/dashboard");
+    expect(safeReturnTo("")).toBe("/dashboard");
+  });
+
+  it("falls back when dot-segment normalization would re-create a scheme-relative URL", () => {
+    expect(safeReturnTo("/..//evil.example")).toBe("/dashboard");
+    expect(safeReturnTo("/a/..//evil.example/x")).toBe("/dashboard");
+    expect(safeReturnTo("/./..//evil.example")).toBe("/dashboard");
+  });
+
+  it("normalizes a benign dot segment onto this origin", () => {
+    expect(safeReturnTo("/cases/../dashboard?caseId=c1")).toBe("/dashboard?caseId=c1");
+    // A backslash is a slash to the parser; the result is a local path, not another host.
+    expect(safeReturnTo("/..\\evil.example")).toBe("/evil.example");
   });
 });

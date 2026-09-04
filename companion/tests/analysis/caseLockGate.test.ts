@@ -38,7 +38,7 @@ describe("createCaseLockGate", () => {
   });
 
   it("always exempts lock-status, unlock, lock, import, and push even when a password is set", async () => {
-    await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     expect((await request(app).get("/cases/c1/lock-status")).status).toBe(200);
     expect((await request(app).post("/cases/c1/unlock")).status).toBe(200);
     expect((await request(app).post("/cases/c1/lock")).status).toBe(200);
@@ -47,14 +47,14 @@ describe("createCaseLockGate", () => {
   });
 
   it("blocks a gated route with a 401 JSON error when locked", async () => {
-    await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const res = await request(app).get("/cases/c1/state");
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("locked");
   });
 
   it("blocks /present with a 401 HTML lock prompt instead of a JSON error", async () => {
-    await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const res = await request(app).get("/cases/c1/present");
     expect(res.status).toBe(401);
     expect(res.type).toBe("text/html");
@@ -64,7 +64,7 @@ describe("createCaseLockGate", () => {
   });
 
   it("allows a gated route through with a valid unlock cookie", async () => {
-    const meta = await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    const meta = await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const token = signUnlockToken("c1", meta.password!.salt, secret, 60_000, false);
     const res = await request(app)
       .get("/cases/c1/state")
@@ -73,9 +73,9 @@ describe("createCaseLockGate", () => {
   });
 
   it("rejects a cookie signed under the previous (pre-change) password", async () => {
-    const meta = await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    const meta = await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const staleToken = signUnlockToken("c1", meta.password!.salt, secret, 60_000, false);
-    await store.updateCaseMeta("c1", { password: hashCasePassword("new-password") }); // new salt
+    await store.updateCaseMeta("c1", { password: await hashCasePassword("new-password") }); // new salt
     const res = await request(app)
       .get("/cases/c1/state")
       .set("Cookie", `${unlockCookieName("c1")}=${staleToken}`);

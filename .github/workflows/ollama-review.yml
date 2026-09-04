@@ -12,7 +12,10 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v6
-      - uses: anomalyco/opencode/github@latest
+      # Pinned to a commit, not a moving ref (#817): whatever `@latest` points at tomorrow would run
+      # here with issues:write and an OIDC token. This is the commit `latest` resolved to on
+      # 2026-09-04 (tag github-v1.2.19). Bump deliberately, checking the action's diff.
+      - uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # github-v1.2.19
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

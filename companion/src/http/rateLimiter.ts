@@ -6,12 +6,23 @@
 
 import type { Request, Response, NextFunction } from "express";
 
+/** What one serialized {@link AttemptLimiter.attempt} decided. */
+export type AttemptOutcome =
+  /** The key was locked out before the check ran; nothing was tried. */
+  | { kind: "locked"; retryAfterMs: number }
+  /** The check passed; the key's failure count was cleared. */
+  | { kind: "ok" }
+  /** The check failed; `lockoutMs` > 0 means this failure locked the key out. */
+  | { kind: "failed"; lockoutMs: number };
+
 /** Per-key attempt tracker with exponential backoff + lockout. */
 export class AttemptLimiter {
   private attempts = new Map<
     string,
     { count: number; lockedUntil: number; cycles: number; lastSeen: number }
   >();
+  /** The tail of each key's in-flight {@link attempt} chain; see that method. */
+  private inflight = new Map<string, Promise<unknown>>();
   private readonly maxAttempts: number;
   private readonly lockoutMs: number;
 
@@ -58,6 +69,48 @@ export class AttemptLimiter {
   /** Clear the attempt counter for a key (call on success). */
   clear(key: string): void {
     this.attempts.delete(key);
+  }
+
+  /**
+   * Check the lockout, run `check`, and record its outcome — as ONE step per key.
+   *
+   * The three calls this replaces (remainingLockout → verify → recordFailure/clear) were only ever
+   * atomic by accident: the verification was a synchronous scrypt that held the event loop, so no
+   * second request could reach the check before the first had recorded its failure. With the
+   * derivation on the threadpool (#863) that ordering is gone — a burst of N wrong guesses would
+   * all pass the lockout check, all pay for a derivation, and only then count, so the "five
+   * attempts" budget bounded nothing and a lucky success could clear failures still in flight.
+   *
+   * Attempts on one key are therefore chained: each waits for the previous to finish before it
+   * looks at the lockout, so the sixth wrong guess in a burst is refused without a derivation, a
+   * correct guess clears only the failures that were counted before it, and one key can hold at
+   * most one derivation on the threadpool at a time. Keys never wait on each other. Every caller
+   * that verifies against the same key — /unlock and /captures share this limiter on purpose —
+   * has to come through here, or the budget is shared in name only.
+   */
+  async attempt(key: string, check: () => Promise<boolean>): Promise<AttemptOutcome> {
+    const previous = this.inflight.get(key) ?? Promise.resolve();
+    const run = previous.then(async (): Promise<AttemptOutcome> => {
+      const retryAfterMs = this.remainingLockout(key);
+      if (retryAfterMs > 0) return { kind: "locked", retryAfterMs };
+      if (await check()) {
+        this.clear(key);
+        return { kind: "ok" };
+      }
+      return { kind: "failed", lockoutMs: this.recordFailure(key) };
+    });
+    // The chain link must never reject, or every later attempt on the key would fail with the
+    // first one's error; the caller still sees its own rejection through `run`.
+    const link = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.inflight.set(key, link);
+    try {
+      return await run;
+    } finally {
+      if (this.inflight.get(key) === link) this.inflight.delete(key);
+    }
   }
 
   /** Drop entries idle for longer than `maxIdleMs` (default 1h — well past the 10min lockout

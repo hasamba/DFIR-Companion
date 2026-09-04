@@ -8,44 +8,48 @@ import {
 } from "../../src/analysis/caseEncryption.js";
 
 describe("encryptBuffer / decryptBuffer", () => {
-  it("round-trips arbitrary bytes", () => {
+  it("round-trips arbitrary bytes", async () => {
     const data = Buffer.from("the quick brown fox jumps over the lazy dog", "utf8");
-    const container = encryptBuffer(data, "correct horse battery staple");
-    const back = decryptBuffer(container, "correct horse battery staple");
+    const container = await encryptBuffer(data, "correct horse battery staple");
+    const back = await decryptBuffer(container, "correct horse battery staple");
     expect(back.equals(data)).toBe(true);
   });
 
-  it("produces different ciphertext for the same input on each call (random salt/IV)", () => {
+  it("produces different ciphertext for the same input on each call (random salt/IV)", async () => {
     const data = Buffer.from("same input", "utf8");
-    const a = encryptBuffer(data, "pw12345678");
-    const b = encryptBuffer(data, "pw12345678");
+    const a = await encryptBuffer(data, "pw12345678");
+    const b = await encryptBuffer(data, "pw12345678");
     expect(a.equals(b)).toBe(false);
   });
 
-  it("throws DecryptionError on the wrong password", () => {
-    const container = encryptBuffer(Buffer.from("secret data"), "correct-password");
-    expect(() => decryptBuffer(container, "wrong-password")).toThrow(DecryptionError);
+  it("throws DecryptionError on the wrong password", async () => {
+    const container = await encryptBuffer(Buffer.from("secret data"), "correct-password");
+    await expect(decryptBuffer(container, "wrong-password")).rejects.toThrow(DecryptionError);
   });
 
-  it("throws DecryptionError on a tampered ciphertext", () => {
-    const container = encryptBuffer(Buffer.from("secret data"), "correct-password");
+  it("throws DecryptionError on a tampered ciphertext", async () => {
+    const container = await encryptBuffer(Buffer.from("secret data"), "correct-password");
     const tampered = Buffer.from(container);
     tampered[tampered.length - 1] ^= 0xff; // flip a byte at the end of the ciphertext
-    expect(() => decryptBuffer(tampered, "correct-password")).toThrow(DecryptionError);
+    await expect(decryptBuffer(tampered, "correct-password")).rejects.toThrow(DecryptionError);
   });
 
-  it("throws DecryptionError on a buffer that isn't a .dfircase container", () => {
-    expect(() => decryptBuffer(Buffer.from("not a dfircase file"), "any-password")).toThrow(DecryptionError);
+  it("throws DecryptionError on a buffer that isn't a .dfircase container", async () => {
+    await expect(decryptBuffer(Buffer.from("not a dfircase file"), "any-password")).rejects.toThrow(
+      DecryptionError,
+    );
   });
 
-  it("throws DecryptionError on a truncated container", () => {
-    const container = encryptBuffer(Buffer.from("secret data"), "correct-password");
-    expect(() => decryptBuffer(container.subarray(0, 10), "correct-password")).toThrow(DecryptionError);
+  it("throws DecryptionError on a truncated container", async () => {
+    const container = await encryptBuffer(Buffer.from("secret data"), "correct-password");
+    await expect(decryptBuffer(container.subarray(0, 10), "correct-password")).rejects.toThrow(
+      DecryptionError,
+    );
   });
 
-  it("handles empty input", () => {
-    const container = encryptBuffer(Buffer.alloc(0), "pw12345678");
-    expect(decryptBuffer(container, "pw12345678").length).toBe(0);
+  it("handles empty input", async () => {
+    const container = await encryptBuffer(Buffer.alloc(0), "pw12345678");
+    expect((await decryptBuffer(container, "pw12345678")).length).toBe(0);
   });
 });
 
@@ -62,26 +66,28 @@ describe("container versioning", () => {
     "44464952435a30310123456789abcdef0123456789abcdeffedcba9876543210fedcba98" +
     "8d43145e792b5fe7931961f60a9c76f3fae0a2d211d264e4b5978fc8fdb983adfb852092e70093b5619619c2525d";
 
-  it("still opens a v1 archive written before the scrypt bump", () => {
-    const back = decryptBuffer(Buffer.from(V1_CONTAINER_HEX, "hex"), V1_PASSWORD);
+  it("still opens a v1 archive written before the scrypt bump", async () => {
+    const back = await decryptBuffer(Buffer.from(V1_CONTAINER_HEX, "hex"), V1_PASSWORD);
     expect(back.toString("utf8")).toBe(V1_PLAINTEXT);
   });
 
-  it("rejects a wrong password against a v1 archive", () => {
-    expect(() => decryptBuffer(Buffer.from(V1_CONTAINER_HEX, "hex"), "wrong-password")).toThrow(
+  it("rejects a wrong password against a v1 archive", async () => {
+    await expect(decryptBuffer(Buffer.from(V1_CONTAINER_HEX, "hex"), "wrong-password")).rejects.toThrow(
       DecryptionError,
     );
   });
 
-  it("writes new archives in v2", () => {
-    const container = encryptBuffer(Buffer.from("fresh export"), "pw12345678");
+  it("writes new archives in v2", async () => {
+    const container = await encryptBuffer(Buffer.from("fresh export"), "pw12345678");
     expect(container.subarray(0, 8).toString("utf8")).toBe("DFIRCZ02");
   });
 
-  it("reports an unknown (newer) container version as not a valid archive, not a wrong password", () => {
-    const fromTheFuture = encryptBuffer(Buffer.from("written by a later build"), "pw12345678");
+  it("reports an unknown (newer) container version as not a valid archive, not a wrong password", async () => {
+    const fromTheFuture = await encryptBuffer(Buffer.from("written by a later build"), "pw12345678");
     Buffer.from("DFIRCZ99", "utf8").copy(fromTheFuture, 0);
-    expect(() => decryptBuffer(fromTheFuture, "pw12345678")).toThrow(/not a valid \.dfircase archive/);
+    await expect(decryptBuffer(fromTheFuture, "pw12345678")).rejects.toThrow(
+      /not a valid \.dfircase archive/,
+    );
   });
   // readFormatVersion is what lets the import flow TELL the analyst the archive was written under
   // the weaker v1 derivation (#672). It reads the magic only — no password, no derivation — so it
@@ -92,12 +98,12 @@ describe("container versioning", () => {
     expect(readFormatVersion(Buffer.from(V1_CONTAINER_HEX, "hex"))).toBe(1);
   });
 
-  it("reports version 2 for a freshly written archive", () => {
-    expect(readFormatVersion(encryptBuffer(Buffer.from("fresh export"), "pw12345678"))).toBe(2);
+  it("reports version 2 for a freshly written archive", async () => {
+    expect(readFormatVersion(await encryptBuffer(Buffer.from("fresh export"), "pw12345678"))).toBe(2);
   });
 
-  it("CURRENT_FORMAT_VERSION is the version encryptBuffer actually writes", () => {
-    const container = encryptBuffer(Buffer.from("fresh export"), "pw12345678");
+  it("CURRENT_FORMAT_VERSION is the version encryptBuffer actually writes", async () => {
+    const container = await encryptBuffer(Buffer.from("fresh export"), "pw12345678");
     expect(readFormatVersion(container)).toBe(CURRENT_FORMAT_VERSION);
   });
 
@@ -113,14 +119,14 @@ describe("container versioning", () => {
     expect(readFormatVersion(Buffer.from("not a dfircase file"))).toBeUndefined();
   });
 
-  it("returns undefined for a container written by a newer build", () => {
-    const fromTheFuture = encryptBuffer(Buffer.from("written by a later build"), "pw12345678");
+  it("returns undefined for a container written by a newer build", async () => {
+    const fromTheFuture = await encryptBuffer(Buffer.from("written by a later build"), "pw12345678");
     Buffer.from("DFIRCZ99", "utf8").copy(fromTheFuture, 0);
     expect(readFormatVersion(fromTheFuture)).toBeUndefined();
   });
 
-  it("returns undefined for a truncated container", () => {
-    const container = encryptBuffer(Buffer.from("secret data"), "correct-password");
+  it("returns undefined for a truncated container", async () => {
+    const container = await encryptBuffer(Buffer.from("secret data"), "correct-password");
     expect(readFormatVersion(container.subarray(0, 10))).toBeUndefined();
   });
 });

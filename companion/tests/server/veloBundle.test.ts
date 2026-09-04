@@ -192,6 +192,73 @@ describe("Velociraptor triage bundles — routes", () => {
     expect((await request(app).delete("/bundles/super-timeline-triage")).status).toBe(204); // reset to default
   });
 
+  // The program reaches the CLI as argv, which Linux caps at 128 KiB PER ARGUMENT — in bytes. An
+  // oversized body could never run and used to surface only as an E2BIG spawn failure (#825,
+  // #828); the routes now refuse it with a 400 before the client is touched, and they measure
+  // UTF-8 bytes, because a character count under-reads a multibyte query by up to three times.
+  describe("VQL size limit on /velociraptor/run, /hunt and /collect-host", () => {
+    const ROUTES = (vql: string) =>
+      [
+        ["/velociraptor/run", { vql }],
+        ["/velociraptor/hunt", { vql, description: "size test" }],
+        ["/velociraptor/collect-host", { vql, hostname: "WS-1" }],
+      ] as const;
+
+    it("refuses an ASCII body past the byte limit with a 400 and never invokes the client", async () => {
+      const calls: string[][] = [];
+      const { app: spyApp } = await makeApp(async (statements) => {
+        calls.push(statements);
+        return { rows: [], raw: "" };
+      });
+      for (const [path, body] of ROUTES("SELECT 1 FROM scope() -- " + "x".repeat(100_001))) {
+        const res = await request(spyApp).post(path).send(body);
+        expect(res.status, path).toBe(400);
+        expect(res.body.error).toMatch(/vql is too long/);
+      }
+      expect(calls).toHaveLength(0);
+    });
+
+    it("refuses a multibyte body whose character count is under the limit but whose bytes are not", async () => {
+      const calls: string[][] = [];
+      const { app: spyApp } = await makeApp(async (statements) => {
+        calls.push(statements);
+        return { rows: [], raw: "" };
+      });
+      const vql = "SELECT '" + "€".repeat(40_000) + "' AS s FROM scope()"; // ~40k chars, ~120k bytes
+      expect(vql.length).toBeLessThan(100_000);
+      for (const [path, body] of ROUTES(vql)) {
+        const res = await request(spyApp).post(path).send(body);
+        expect(res.status, path).toBe(400);
+        expect(res.body.error).toMatch(/vql is too long/);
+      }
+      expect(calls).toHaveLength(0);
+    });
+
+    it("accepts a large ASCII body under the byte limit and hands it to the client", async () => {
+      const calls: string[][] = [];
+      const { app: spyApp } = await makeApp(async (statements) => {
+        calls.push(statements);
+        return { rows: [], raw: "" };
+      });
+      const vql = "SELECT 1 FROM scope() -- " + "x".repeat(90_000);
+      const res = await request(spyApp).post("/velociraptor/run").send({ vql });
+      expect(res.status).toBe(200);
+      expect(calls).toHaveLength(1);
+    });
+  });
+
+  it("POST /bundles refuses a WHERE filter that could smuggle a statement, as a 400", async () => {
+    const res = await request(app)
+      .post("/bundles")
+      .send({
+        name: "Smuggle",
+        artifacts: ["Windows.NTFS.MFT"],
+        filters: { "Windows.NTFS.MFT": "1=1) LIMIT 1; SELECT * FROM execve(argv=['id']) WHERE (1=1" },
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid WHERE filter for Windows\.NTFS\.MFT/);
+  });
+
   it("POST /bundles rejects a bundle with no artifacts", async () => {
     const res = await request(app).post("/bundles").send({ name: "Empty", artifacts: [] });
     expect(res.status).toBe(400);

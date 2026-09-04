@@ -14,17 +14,17 @@ import {
 import type { CaseMeta } from "../../src/types.js";
 
 describe("hashCasePassword / verifyCasePassword", () => {
-  it("verifies the correct password", () => {
-    const hash = hashCasePassword("correct horse battery staple");
-    expect(verifyCasePassword("correct horse battery staple", hash)).toBe(true);
+  it("verifies the correct password", async () => {
+    const hash = await hashCasePassword("correct horse battery staple");
+    expect(await verifyCasePassword("correct horse battery staple", hash)).toBe(true);
   });
-  it("rejects the wrong password", () => {
-    const hash = hashCasePassword("correct horse battery staple");
-    expect(verifyCasePassword("wrong password", hash)).toBe(false);
+  it("rejects the wrong password", async () => {
+    const hash = await hashCasePassword("correct horse battery staple");
+    expect(await verifyCasePassword("wrong password", hash)).toBe(false);
   });
-  it("produces a different salt and hash each call, even for the same password", () => {
-    const a = hashCasePassword("same-password");
-    const b = hashCasePassword("same-password");
+  it("produces a different salt and hash each call, even for the same password", async () => {
+    const a = await hashCasePassword("same-password");
+    const b = await hashCasePassword("same-password");
     expect(a.salt).not.toBe(b.salt);
     expect(a.hash).not.toBe(b.hash);
   });
@@ -33,8 +33,8 @@ describe("hashCasePassword / verifyCasePassword", () => {
 describe("sanitizeCaseMeta", () => {
   const base: CaseMeta = { caseId: "c1", name: "n", createdAt: "t", investigator: "i", aiProvider: null };
 
-  it("replaces password with hasPassword:true and never leaks the hash", () => {
-    const meta: CaseMeta = { ...base, password: hashCasePassword("secret") };
+  it("replaces password with hasPassword:true and never leaks the hash", async () => {
+    const meta: CaseMeta = { ...base, password: await hashCasePassword("secret") };
     const out = sanitizeCaseMeta(meta);
     expect(out.hasPassword).toBe(true);
     expect((out as Record<string, unknown>).password).toBeUndefined();

@@ -8,6 +8,7 @@ import { reloadEnvPrefix } from "../settings/envManager.js";
 import { fetchIrisCase } from "../integrations/iris/irisImportFetch.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
+import { attachmentContentDisposition } from "../analysis/caseExportArchive.js";
 import type { RouteContext } from "./context.js";
 import { withNonce } from "../http/securityHeaders.js";
 
@@ -149,7 +150,7 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
     try {
       const buf = await options.reportWriter.docx(req.params.id);
       res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-      res.setHeader("Content-Disposition", `attachment; filename="report-${req.params.id}.docx"`);
+      res.setHeader("Content-Disposition", attachmentContentDisposition(`report-${req.params.id}.docx`));
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(buf);
     } catch (err) {
@@ -165,7 +166,7 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
     try {
       const bundle = await options.reportWriter.stixBundle(req.params.id);
       res.type("application/json; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="stix-bundle-${req.params.id}.json"`);
+      res.setHeader("Content-Disposition", attachmentContentDisposition(`stix-bundle-${req.params.id}.json`));
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(JSON.stringify(bundle, null, 2));
     } catch (err) {
@@ -222,12 +223,10 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
 
   // Whether a DFIR-IRIS push/import target is configured (so the dashboard can show/hide the buttons).
   app.get("/iris/status", (_req: Request, res: Response) => {
-    res
-      .status(200)
-      .json({
-        configured: !!ctx.irisClient(),
-        baseUrl: process.env.DFIR_IRIS_URL || options.irisOptions?.baseUrl,
-      });
+    res.status(200).json({
+      configured: !!ctx.irisClient(),
+      baseUrl: process.env.DFIR_IRIS_URL || options.irisOptions?.baseUrl,
+    });
   });
 
   // Re-read DFIR_IRIS_* from .env (settings saved via the dashboard only write the file), rebuild
@@ -247,14 +246,12 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
         await client.ping();
         return res.status(200).json({ configured: true, ok: true, baseUrl: process.env.DFIR_IRIS_URL });
       } catch (err) {
-        return res
-          .status(200)
-          .json({
-            configured: true,
-            ok: false,
-            baseUrl: process.env.DFIR_IRIS_URL,
-            error: (err as Error).message,
-          });
+        return res.status(200).json({
+          configured: true,
+          ok: false,
+          baseUrl: process.env.DFIR_IRIS_URL,
+          error: (err as Error).message,
+        });
       }
     } catch (err) {
       return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });

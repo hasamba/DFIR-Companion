@@ -66,9 +66,22 @@ export const DEFAULT_DELIVERY: McpDelivery = {
  */
 const SAFE_HOSTPART = /^[A-Za-z0-9._-]+$/;
 const SAFE_REMOTE_DIR = /^\/[A-Za-z0-9._\-/]*$/;
+// The `-i` operand. It reaches ssh/scp as one argv element (no shell), so the question is not
+// injection but WHICH file: an absolute path with no `..` segment names one key unambiguously,
+// where a relative one would resolve against whatever the server's working directory happens to be
+// (#850). "Absolute" is judged for the platform the companion runs scp ON: `C:\keys\id` is a
+// relative filename to a Linux scp, and `/home/x/id` is drive-relative to a Windows one.
+const SAFE_IDENTITY_FILE_POSIX = /^\/[A-Za-z0-9._\-/ ]*$/;
+const SAFE_IDENTITY_FILE_WINDOWS = /^[A-Za-z]:[\\/][A-Za-z0-9._\-/\\ ]*$/;
+
+/** Is `path` an absolute, traversal-free identity-file path on `platform` (a `process.platform`)? */
+export function isSafeIdentityFile(path: string, platform: string = process.platform): boolean {
+  const shape = platform === "win32" ? SAFE_IDENTITY_FILE_WINDOWS : SAFE_IDENTITY_FILE_POSIX;
+  return shape.test(path) && !path.split(/[\\/]/).includes("..");
+}
 
 /** Validate a delivery block. Returns an error message when unusable, null when fine. */
-export function validateDelivery(d: McpDelivery): string | null {
+export function validateDelivery(d: McpDelivery, platform: string = process.platform): string | null {
   if (d.mode === "scp") {
     if (!d.host.trim()) return "scp delivery needs a host";
     if (!SAFE_HOSTPART.test(d.host))
@@ -80,6 +93,8 @@ export function validateDelivery(d: McpDelivery): string | null {
       return `remote directory "${d.remoteDir}" must be an absolute POSIX path of letters, digits, dot, dash, underscore and slash`;
     if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535)
       return `delivery port ${d.port} is not a valid port`;
+    if (d.identityFile && !isSafeIdentityFile(d.identityFile, platform))
+      return `identity file "${d.identityFile}" must be an absolute ${platform === "win32" ? "Windows" : "POSIX"} path with no ".." segment`;
     return null;
   }
   // remote-path: a rewrite needs both halves or neither. One alone silently maps everything to the

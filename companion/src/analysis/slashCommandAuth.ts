@@ -92,7 +92,16 @@ export const DEFAULT_RESPONSE_HOSTS: Record<"slack" | "teams", readonly string[]
   teams: [".webhook.office.com", ".logic.azure.com", ".office.com"],
 };
 
-/** Does `url` point somewhere we are willing to POST a case result to? https only. */
+/**
+ * Does `url` point somewhere we are willing to POST a case result to? https only, on the
+ * platform's default port, to an allowlisted host.
+ *
+ * The hostname is compared in the spelling the resolver would use: lowercased and with a trailing
+ * root dot removed, so `hooks.slack.com.` names the same host as `hooks.slack.com` rather than
+ * slipping past an exact match either way. An explicit port is refused unless it is 443 — an
+ * allowlisted host means that host's HTTPS endpoint, not any service that happens to listen on it
+ * (#840).
+ */
 export function isAllowedResponseUrl(
   platform: "slack" | "teams",
   url: string,
@@ -105,13 +114,20 @@ export function isAllowedResponseUrl(
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  const host = parsed.hostname.toLowerCase();
+  if (parsed.port !== "" && parsed.port !== "443") return false;
+  const host = normalizeHost(parsed.hostname);
+  if (!host) return false;
   return [...DEFAULT_RESPONSE_HOSTS[platform], ...extraHosts]
-    .map((h) => h.trim().toLowerCase())
+    .map(normalizeHost)
     .filter(Boolean)
     .some((allowed) =>
       allowed.startsWith(".") ? host === allowed.slice(1) || host.endsWith(allowed) : host === allowed,
     );
+}
+
+/** Lowercased, trimmed, without the trailing root dot a fully-qualified spelling may carry. */
+function normalizeHost(host: string): string {
+  return host.trim().toLowerCase().replace(/\.+$/, "");
 }
 
 /** Parse a comma-separated env var into a trimmed, non-empty list. */

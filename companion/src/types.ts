@@ -13,8 +13,8 @@ export interface CaptureMetadata {
 }
 
 export interface CasePasswordHash {
-  salt: string; // hex-encoded, from scryptSync
-  hash: string; // hex-encoded, from scryptSync
+  salt: string; // hex-encoded, scrypt salt
+  hash: string; // hex-encoded, scrypt output
 }
 
 export interface CaseMeta {

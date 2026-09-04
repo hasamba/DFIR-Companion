@@ -87,8 +87,8 @@ describe("exportEncryptedCase", () => {
 // and the manifest's entity counts were queried from the LIVE database after those bytes had
 // already been captured — describing a case that had since moved on.
 describe("exportEncryptedCase — single-generation snapshot (#3)", () => {
-  function entriesOf(archive: Buffer): Map<string, Buffer> {
-    return new Map(readZip(decryptBuffer(archive, PASSWORD)).map((e) => [e.path, e.data]));
+  async function entriesOf(archive: Buffer): Promise<Map<string, Buffer>> {
+    return new Map(readZip(await decryptBuffer(archive, PASSWORD)).map((e) => [e.path, e.data]));
   }
 
   async function seedDatabase(store: CaseStore, caseId: string): Promise<void> {
@@ -114,7 +114,7 @@ describe("exportEncryptedCase — single-generation snapshot (#3)", () => {
     const store = await harness();
     await seedDatabase(store, "SNAP-1");
 
-    const files = entriesOf(await exportEncryptedCase(store, "SNAP-1", PASSWORD));
+    const files = await entriesOf(await exportEncryptedCase(store, "SNAP-1", PASSWORD));
     const archived = files.get(`state/${INVESTIGATION_DB_FILENAME}`);
     expect(archived).toBeDefined();
 
@@ -134,7 +134,7 @@ describe("exportEncryptedCase — single-generation snapshot (#3)", () => {
     const store = await harness();
     await seedDatabase(store, "SNAP-2");
 
-    const files = entriesOf(await exportEncryptedCase(store, "SNAP-2", PASSWORD));
+    const files = await entriesOf(await exportEncryptedCase(store, "SNAP-2", PASSWORD));
     const manifest = JSON.parse((files.get("archive-manifest.json") as Buffer).toString("utf8"));
 
     expect(manifest.counts).toMatchObject({ forensicEvents: 3, findings: 2, iocs: 1 });
@@ -277,7 +277,7 @@ describe.skipIf(process.platform === "win32")("exportEncryptedCase — portable 
     await seedHostileNames(store, "INC-PORTM", ["evidence:2026.evtx"]);
 
     const archive = await exportEncryptedCase(store, "INC-PORTM", PASSWORD);
-    const files = new Map(readZip(decryptBuffer(archive, PASSWORD)).map((e) => [e.path, e.data]));
+    const files = new Map(readZip(await decryptBuffer(archive, PASSWORD)).map((e) => [e.path, e.data]));
     const manifest = JSON.parse((files.get("archive-manifest.json") as Buffer).toString("utf8"));
 
     const renamed = manifest.files.filter((f: { originalPath?: string }) => f.originalPath);
@@ -347,7 +347,7 @@ describe("exportEncryptedCase — portable entry paths, ordinary case (#675)", (
     await seedCase(store, "INC-PORTN");
     const archive = await exportEncryptedCase(store, "INC-PORTN", PASSWORD);
     const manifest = JSON.parse(
-      readZip(decryptBuffer(archive, PASSWORD))
+      readZip(await decryptBuffer(archive, PASSWORD))
         .find((e) => e.path === "archive-manifest.json")!
         .data.toString("utf8"),
     );
@@ -516,7 +516,7 @@ describe("importEncryptedCase", () => {
       { path: "case.json", data: caseJson },
       { path: "../../evil.txt", data: Buffer.from("pwned") },
     ]);
-    const archive = encryptBuffer(malicious, PASSWORD);
+    const archive = await encryptBuffer(malicious, PASSWORD);
 
     await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-EVIL" })).rejects.toThrow(
       /unsafe entry path/,
@@ -526,7 +526,7 @@ describe("importEncryptedCase", () => {
 
   it("throws on an archive missing case.json", async () => {
     const store = await harness();
-    const archive = encryptBuffer(
+    const archive = await encryptBuffer(
       createZip([{ path: "state/investigation.json", data: Buffer.from("{}") }]),
       PASSWORD,
     );
@@ -541,7 +541,7 @@ describe("importEncryptedCase", () => {
       { path: "case.json", data: caseJson },
       { path: "screenshots/shot.jpg:hidden.exe", data: Buffer.from("pwned") },
     ]);
-    const archive = encryptBuffer(malicious, PASSWORD);
+    const archive = await encryptBuffer(malicious, PASSWORD);
 
     await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-ADS" })).rejects.toThrow(
       /unsafe entry path/,
@@ -557,7 +557,7 @@ describe("importEncryptedCase", () => {
       { path: "case.json", data: caseJson },
       { path: "state/investigation.json", data: Buffer.from("{ not valid json") },
     ]);
-    const archive = encryptBuffer(malicious, PASSWORD);
+    const archive = await encryptBuffer(malicious, PASSWORD);
 
     await expect(
       importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-CORRUPT" }),
@@ -569,7 +569,7 @@ describe("importEncryptedCase", () => {
       { path: "case.json", data: caseJson },
       { path: "state/investigation.json", data: Buffer.from("{}") },
     ]);
-    const fixedArchive = encryptBuffer(fixed, PASSWORD);
+    const fixedArchive = await encryptBuffer(fixed, PASSWORD);
     const { meta } = await importEncryptedCase(store, fixedArchive, PASSWORD, {
       targetCaseId: "INC-CORRUPT",
     });
@@ -578,7 +578,7 @@ describe("importEncryptedCase", () => {
 
   it("throws a clean Error when case.json parses but has no caseId field", async () => {
     const store = await harness();
-    const archive = encryptBuffer(
+    const archive = await encryptBuffer(
       createZip([{ path: "case.json", data: Buffer.from(JSON.stringify({ name: "no id" })) }]),
       PASSWORD,
     );
@@ -598,7 +598,7 @@ describe("importEncryptedCase", () => {
       const store = await harness();
       await seedCase(store, "INC-1");
       const caseJson = await readFile(store.caseMetaPath("INC-1"));
-      const archive = encryptBuffer(
+      const archive = await encryptBuffer(
         createZip([
           { path: "case.json", data: caseJson },
           ...paths.map((path, i) => ({ path, data: Buffer.from(`entry ${i}`) })),
@@ -669,7 +669,7 @@ describe("importEncryptedCase", () => {
       { path: "state/investigation.json", data: Buffer.from("{}") },
       { path: "state/investigation.json", data: Buffer.from('{"other":true}') },
     ]);
-    const archive = encryptBuffer(malicious, PASSWORD);
+    const archive = await encryptBuffer(malicious, PASSWORD);
 
     await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-DUP" })).rejects.toThrow(
       /duplicate entry path/,
@@ -695,7 +695,7 @@ describe("importEncryptedCase", () => {
     const store = await harness();
     await seedCase(store, "INC-1");
     const v1Archive = encryptAsV1(
-      decryptBuffer(await exportEncryptedCase(store, "INC-1", PASSWORD), PASSWORD),
+      await decryptBuffer(await exportEncryptedCase(store, "INC-1", PASSWORD), PASSWORD),
       PASSWORD,
     );
 
@@ -756,7 +756,9 @@ describe("exportEncryptedCase — concurrent writes into the case directory", ()
     // archiving it would also make the manifest differ run to run.
     await writeFile(join(stateDir, "notebook.json.3f2504e0-4f89-41d3-9a0c-0305e82c3301.tmp"), "{}");
 
-    const entries = readZip(decryptBuffer(await exportEncryptedCase(store, "INC-TMP", PASSWORD), PASSWORD));
+    const entries = readZip(
+      await decryptBuffer(await exportEncryptedCase(store, "INC-TMP", PASSWORD), PASSWORD),
+    );
 
     expect(entries.map((e) => e.path).filter((p) => p.endsWith(".tmp"))).toEqual([]);
   });
@@ -768,7 +770,9 @@ describe("exportEncryptedCase — concurrent writes into the case directory", ()
     await mkdir(importsDir, { recursive: true });
     await writeFile(join(importsDir, "payload.tmp"), "MZ evidence bytes");
 
-    const entries = readZip(decryptBuffer(await exportEncryptedCase(store, "INC-EVID", PASSWORD), PASSWORD));
+    const entries = readZip(
+      await decryptBuffer(await exportEncryptedCase(store, "INC-EVID", PASSWORD), PASSWORD),
+    );
 
     const evidence = entries.find((e) => e.path === "imports/payload.tmp");
     expect(

@@ -249,8 +249,10 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       });
       return res.status(201).json(saved);
     } catch (err) {
-      if ((err as Error).message.includes("built-in"))
-        return res.status(400).json({ error: (err as Error).message });
+      const message = (err as Error).message;
+      // A refused WHERE filter is the caller's input, named by artifact — a 400, not a store failure.
+      if (message.includes("built-in") || message.startsWith("invalid WHERE filter"))
+        return res.status(400).json({ error: message });
       return storeFailure(res, err);
     }
   });
