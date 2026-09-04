@@ -55,7 +55,10 @@ test("US-361: a pasted Sigma rule compiles to VQL with its coverage line, and Ru
   const text = await vql.inputValue();
   expect(text, "the VQL must run on the endpoint's process list").toContain("FROM pslist()");
   expect(text, "the analyst's value must be in the WHERE clause").toMatch(/certutil/);
-  expect(text, "the launcher splits on blank lines, so there must be none").not.toMatch(/\n\s*\n/);
+  const sources = text.split(/\n\s*\n/);
+  expect(sources.length, "the launcher should receive every matching source").toBeGreaterThanOrEqual(2);
+  expect(sources.some((source) => source.includes("FROM pslist()"))).toBe(true);
+  expect(sources.some((source) => source.includes("FROM parse_evtx"))).toBe(true);
 
   // No Velociraptor API in this harness: the Run button must not appear, and the card must say why.
   await expect(page.locator("#sigmaRunBtn")).toHaveCount(0);
