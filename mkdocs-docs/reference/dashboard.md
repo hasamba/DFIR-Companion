@@ -544,7 +544,7 @@ Each step in a matched playbook shows one of:
 - 🟡 **out of order** — the technique appears in the case, just not at a point that keeps the chain together; check host clock skew and collection lag before reading anything into it.
 - ❌ **not observed** — never evidenced, either because it didn't happen or because the evidence wasn't collected. Missing steps become [Evidence Gaps](#evidence-gaps) items with a collection directive.
 
-Tune the result list with `DFIR_PLAYBOOK_TOP_N` (how many ranked matches to return, default 5) and `DFIR_PLAYBOOK_MIN_SCORE` (minimum score to be shown at all, default 40); both can also be overridden per request.
+Tune the result list with `DFIR_PLAYBOOK_TOP_N` (how many ranked matches to return, default 3) and `DFIR_PLAYBOOK_MIN_SCORE` (minimum score to be shown at all, default 40); both can also be overridden per request.
 
 !!! warning "Matches the playbook, not the actor"
     A high score says the case's technique sequence resembles a published chain — never that the named group did it. The caveat renders with every match, not as a tooltip.
