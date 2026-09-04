@@ -16,6 +16,8 @@ jobs:
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CI-only permission overrides: no interactive prompts in headless runs.
+          OPENCODE_CONFIG: ${{ github.workspace }}/.github/opencode/ci.json
         with:
           model: "ollama-cloud/kimi-k2.7-code"
           use_github_token: true

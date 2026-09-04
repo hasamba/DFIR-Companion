@@ -1,37 +1,92 @@
 name: opencode-full-review
+# Manual review of the entire repository that files one GitHub issue per finding.
+#
+# Lessons from the first runs (all four produced zero issues):
+#   - The agent explored everything before creating any issue, so a timeout
+#     meant no output at all. The prompt now asks for each issue to be created
+#     as soon as it is found, and the job uses the maximum hosted-runner
+#     timeout of 6 hours.
+#   - opencode hung for 25 minutes on an interactive "ask" permission prompt
+#     after the model tried a path outside the workspace, and once after a
+#     subagent hit context compaction. Nobody can answer a prompt in CI, so
+#     .github/opencode/ci.json turns those prompts into denials and disables
+#     subagents (see OPENCODE_CONFIG below).
+#   - The labels the prompt asks for did not exist, which makes
+#     `gh issue create --label ...` fail. The first step creates them.
 on:
   workflow_dispatch: {}
+
+concurrency:
+  group: opencode-full-review
+  cancel-in-progress: false
+
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
     permissions:
       id-token: write
       contents: read
       issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Ensure issue labels exist
+        run: |
+          set -euo pipefail
+          gh label create bug               --color d73a4a --description "Something is broken"                  --force
+          gh label create suggestion        --color 0075ca --description "Improvement to existing code"         --force
+          gh label create feature-request   --color a2eeef --description "New capability"                       --force
+          gh label create severity:critical --color b60205 --description "Exploitable or data-loss severity"    --force
+          gh label create severity:high     --color d93f0b --description "High severity"                        --force
+          gh label create severity:medium   --color fbca04 --description "Medium severity"                      --force
+          gh label create severity:low      --color c2e0c6 --description "Low severity"                         --force
+
       - uses: anomalyco/opencode/github@latest
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CI-only permission overrides: no interactive prompts in headless runs.
+          OPENCODE_CONFIG: ${{ github.workspace }}/.github/opencode/ci.json
         with:
           model: "ollama-cloud/kimi-k2.7-code"
           use_github_token: true
           prompt: |
-            Perform a full code review of the entire repository as checked
-            out on this branch. Ignore build artifacts, dependencies, and
-            generated files. For every distinct finding, open a separate
-            GitHub Issue using the GitHub CLI (gh issue create) with:
+            Perform a full code review of the entire repository checked out
+            in the current working directory.
 
-            - Title prefixed by category in brackets: "[Bug]", "[Suggestion]",
-              or "[Feature Request]", followed by a short description.
-            - Body including: file path and line number, a clear explanation
-              of the finding, a severity rating (Critical, High, Medium, or
-              Low), and a recommended fix or next step.
-            - A label matching the category (bug, suggestion, feature-request)
-              and a label matching the severity (severity:critical,
-              severity:high, severity:medium, severity:low).
+            Rules:
+            - Stay inside the repository working directory. Never read,
+              list, or reference any path outside it.
+            - Ignore build artifacts, node_modules, lockfiles, generated
+              files, and test fixtures.
+            - Start by running `git ls-files` to see the full file list,
+              then work through the repository one directory at a time,
+              file by file, until every source file has been reviewed.
+            - As soon as you have confirmed one distinct finding, create its
+              GitHub issue IMMEDIATELY with the GitHub CLI, then continue
+              reviewing. Do not collect findings to file later, and do not
+              write any summary file or combined report.
+            - Before creating an issue, run
+              `gh issue list --state all --limit 5 --search "<key words from the title>"`
+              and skip the finding if an equivalent issue already exists.
+            - Create each issue with this exact command shape:
+              gh issue create --title "<title>" --label <category> --label <severity> --body "<body>"
+              where:
+              - <title> starts with "[Bug]", "[Suggestion]", or
+                "[Feature Request]" followed by a short description.
+              - <category> is the matching label: bug, suggestion, or
+                feature-request.
+              - <severity> is one of: severity:critical, severity:high,
+                severity:medium, severity:low.
+              - <body> includes the file path and line number, a clear
+                explanation of the finding, the severity rating, and a
+                recommended fix or next step.
+            - If a `gh` command fails, print the error and move on to the
+              next finding. Never stop the review because one issue failed.
 
-            Do not create a summary file or single combined report — every
-            finding must be its own issue.
+            When you have covered every file, finish with a single line
+            stating how many issues you created.
