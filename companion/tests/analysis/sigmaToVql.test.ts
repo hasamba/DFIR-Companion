@@ -372,6 +372,28 @@ describe("compileSigmaToVql — a selection the condition never names stays out 
     expect(r).toEqual([{ path: "detection", message: expect.stringMatching(/no TargetObject value/) }]);
   });
 
+  it("still refuses a glob rule with no root when an ignorable unused block also refused, instead of running an empty glob() (#815)", () => {
+    // The unused file block refuses against the registry template but glob() could answer it, so
+    // it is ignorable — and its refusal must not stand in for the missing-root one.
+    const yaml = two("registry_set", "    Details: 'RunOnce'", "    TargetFilename|contains: 'foo'");
+    const r = refusals(yaml);
+    expect(r).toEqual([{ path: "detection", message: expect.stringMatching(/no TargetObject value/) }]);
+    expect(JSON.stringify(compileSigmaText(yaml))).not.toContain("globs=[]");
+  });
+
+  it("compiles a glob rule whose named block has a root while an ignorable unused block refuses", () => {
+    const r = compiled(
+      two(
+        "registry_set",
+        "    TargetObject|startswith: 'HKLM\\SOFTWARE\\a'",
+        "    TargetFilename|contains: 'foo'",
+      ),
+    );
+    expect(r.vql).toContain('accessor="registry")');
+    expect(r.vql).not.toContain("globs=[]");
+    expect(r.vql).toContain("-- Not in the condition, so not in this hunt: unused");
+  });
+
   it("counts a selection reached through not / and / 1 of / all of as used", () => {
     const sel = "    Image|endswith: '\\cmd.exe'";
     const parent = "    ParentImage|endswith: '\\x.exe'";
@@ -716,6 +738,42 @@ describe("compileSigmaToVql — mixed-category rules become several hunt sources
         message: expect.stringMatching(/Image.*glob\(\)/),
       },
     ]);
+  });
+
+  it("keeps a CommandLine or parent-only block with its declared category too, instead of making it a pslist() hunt (#816)", () => {
+    // The acting process behind a file, registry or network event is described by its command
+    // line and its parent as much as by its Image; none of them turns a file question into a live
+    // process hunt for the same keyword.
+    for (const field of [
+      "CommandLine|contains: 'urlcache'",
+      String.raw`ParentImage|endswith: '\explorer.exe'`,
+      "ParentCommandLine|contains: 'x'",
+      "ParentProcessId: 4",
+    ]) {
+      const yaml = rule(
+        "file_event",
+        `  sel_path:\n    TargetFilename|startswith: 'C:\\Temp\\'\n  sel_cmd:\n    ${field}`,
+        "1 of sel_*",
+      );
+      const r = refusals(yaml);
+      expect(r).toHaveLength(1);
+      expect(r[0].path).toBe(`detection.sel_cmd.${field.split(":")[0]}`);
+      expect(r[0].message).toMatch(/glob\(\).*names the process behind a file_event event/);
+      expect(JSON.stringify(compileSigmaText(yaml))).not.toContain("pslist()");
+    }
+  });
+
+  it("still lets a network rule answer a bare Image through the ByPid lookup while a parent-only block refuses", () => {
+    const yaml = (ctx: string) =>
+      rule(
+        "network_connection",
+        `  sel_ip:\n    DestinationIp: '10.0.0.1'\n  sel_ctx:\n    ${ctx}`,
+        "1 of sel_*",
+      );
+    expect(stagesOf(vql(yaml(String.raw`Image|endswith: '\x.exe'`)))).toEqual(["Conns"]);
+    const r = refusals(yaml(String.raw`ParentImage|endswith: '\x.exe'`));
+    expect(r.map((x) => x.path)).toEqual(["detection.sel_ctx.ParentImage|endswith"]);
+    expect(r[0].message).toMatch(/netstat\(\).*names the process behind a network_connection event/);
   });
 
   it("moves a selection to another category when a field only that category answers anchors it", () => {

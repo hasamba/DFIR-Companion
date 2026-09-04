@@ -480,11 +480,21 @@ const mergeNeeds = (into: Needs, from: Needs): void => {
 // ── Mixed-category rules: one source per category (#802) ─────────────────────────────────────
 
 // Sigma puts the acting process on every event: a file write, a registry set and a connection all
-// carry the Image (and User, ProcessId) that did it. A selection made only of those fields describes
-// that process, not a process_creation event, so on its own it never moves a block to pslist(). A
-// field that belongs to another category — DestinationIp, TargetFilename, TargetObject… — is what
-// moves a block there.
-const PROCESS_CONTEXT_FIELDS: ReadonlySet<string> = new Set(["image", "user", "processid"]);
+// carry the Image (and User, ProcessId) that did it, and a rule may describe that process further
+// by its CommandLine or its parent. A selection made only of those fields describes that process,
+// not a process_creation event, so on its own it never moves a block to pslist() — a CommandLine
+// block under a file_event rule is still a file question, not a live process hunt for the same
+// keyword (#816). A field that belongs to another category — DestinationIp, TargetFilename,
+// TargetObject… — is what moves a block there.
+const PROCESS_CONTEXT_FIELDS: ReadonlySet<string> = new Set([
+  "image",
+  "user",
+  "processid",
+  "commandline",
+  "parentimage",
+  "parentcommandline",
+  "parentprocessid",
+]);
 
 const selectionFields = (sel: SigmaSelection): readonly SigmaFieldMatch[] =>
   sel.kind === "map" ? sel.fields : sel.kind === "list" ? sel.alternatives.flat() : [];
@@ -666,13 +676,6 @@ function compileWhole(
     if (expr !== null) exprs.set(sel.name, expr);
     if (referenced.has(sel.name)) mergeNeeds(needs, own);
   }
-  if (template.globFrom && needs.globs.length === 0 && out.length === 0) {
-    const source = Object.entries(template.fields).find(([, c]) => c.globSource)?.[0] ?? "a path";
-    out.push({
-      path: "detection",
-      message: `no ${source} value to derive a path from; the hunt needs at least one to know where to look`,
-    });
-  }
   const unreferenced = unreferencedSelectionNames(rule);
   const order = [...declared, ...VQL_TEMPLATES.filter((t) => !declared.has(t))];
   const ignorable = unreferenced.filter((n) => {
@@ -680,6 +683,16 @@ function compileWhole(
     return !!sel && resolveSelection(order, declared, sel).ok;
   });
   const live = out.filter((r) => !ignorable.some((n) => belongsTo(r, n)));
+  // A glob template with no root would run an empty glob() and return nothing, silently. The check
+  // runs on the live refusals, after the ignorable ones are dropped: an unused block's refusal that
+  // is about to be discarded must not stand in for the root refusal and let the rule compile (#815).
+  if (template.globFrom && needs.globs.length === 0 && live.length === 0) {
+    const source = Object.entries(template.fields).find(([, c]) => c.globSource)?.[0] ?? "a path";
+    live.push({
+      path: "detection",
+      message: `no ${source} value to derive a path from; the hunt needs at least one to know where to look`,
+    });
+  }
   if (live.length) return { ok: false, refusals: live };
   return {
     ok: true,
