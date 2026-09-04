@@ -484,6 +484,14 @@
     const caseEl = document.getElementById("caseId");
     return ((caseEl && caseEl.value) || "").trim();
   }
+  // A fleet action can succeed after the case activity-log append fails. Keep that forensic-integrity
+  // warning visible beside the result instead of presenting the launch as a clean success.
+  function huntAuditWarningHtml(result) {
+    const warning = result && typeof result.auditWarning === "string" ? result.auditWarning.trim() : "";
+    return warning
+      ? `<div data-safe-style="color:var(--sev-high);font-size:12px;margin-bottom:6px">⚠ ${esc(warning)}</div>`
+      : "";
+  }
   function launchHuntInto(vql, description, res, btn, ctx) {
     if (!res) return;
     res.innerHTML =
@@ -526,7 +534,9 @@
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (!ok || j.error) {
-          res.innerHTML = `<div data-safe-style="color:var(--sev-high);font-size:12px">error: ${esc(j.error || "hunt failed")}</div>`;
+          res.innerHTML =
+            huntAuditWarningHtml(j) +
+            `<div data-safe-style="color:var(--sev-high);font-size:12px">error: ${esc(j.error || "hunt failed")}</div>`;
           return;
         }
         const link = j.guiUrl
@@ -536,6 +546,7 @@
           ? ` · <span data-safe-style="color:var(--text-muted)">live snapshot — an empty result is not a miss and is not linked to a hypothesis</span>`
           : "";
         res.innerHTML =
+          huntAuditWarningHtml(j) +
           `<div data-safe-style="font-size:12px;margin-bottom:6px">🎯 Hunt <strong>${esc(j.huntId)}</strong> launched on all clients · ${esc(j.state)}${link}${snapNote} ` +
           `<button class="hunt-refresh" data-hid="${escAttr(j.huntId)}" data-art="${escAttr(j.artifact)}" data-src="${escAttr((j.sources || []).join(","))}">↻ Refresh results</button></div>` +
           `<div class="hunt-results-rows" data-safe-style="color:var(--text-muted);font-size:12px">waiting for endpoints to respond…</div>`;

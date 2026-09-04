@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { reloadEnvPrefix } from "../settings/envManager.js";
-import { logActivity } from "../analysis/activityLog.js";
+import { logActivity, logActivityWithWarning, type NewActivityEntry } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { parseVeloRef, EXTERNAL_IMPORT_NEEDS_SERVER } from "../analysis/veloRef.js";
 import { preflightBundleArtifacts } from "../integrations/velociraptor/bundlePreflight.js";
@@ -45,10 +45,12 @@ import { vqlSizeProblem } from "../analysis/vqlInput.js";
  */
 export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
-  // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
-  // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
-  // Normalize a label/tag input that may arrive as a comma-separated string or an array of strings.
+  const recordAuditedActivity = async (caseId: string, input: NewActivityEntry) => {
+    const warning = await logActivityWithWarning(options.activityLogStore, options.onActivity, caseId, input);
+    if (warning) logLine(`[velociraptor] AUDIT NOT WRITTEN — ${warning}`);
+    return warning;
+  };
   // Module-private copy of createApp's toStringArray (a non-exported server.ts helper) so the moved
   // run-bundle / deploy-hunt bodies keep their original calls without importing across the route seam.
   const toStringArray = (v: unknown): string[] => {
@@ -870,14 +872,6 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     return res.status(200).json(job);
   });
 
-  // ── Hunting feedback loop (#157) ─────────────────────────────────────────────────────────────
-
-  // Deploy a SUGGESTED hunt for a case and record it in the hunting feedback loop. Two modes:
-  //  - "hunt" (default): launch a fleet HUNT, register a VeloHuntJob, and schedule auto-collect after
-  //    DFIR_VELO_HUNT_WAIT_MIN (like a bundle) so the outcome fills on its own; "Collect now" pulls early.
-  //  - "collection": run a single-host COLLECTION (the playbook per-endpoint deploy path).
-  // Either way the deployed VQL is recorded (so it's never re-proposed) and shows in the profile.
-  // Body: { vql, title, description?, source?, mitreTechniques?, mode?, hostname?, waitMinutes? }.
   app.post("/cases/:id/velociraptor/deploy-hunt", async (req: Request, res: Response) => {
     if (!options.velociraptorClient)
       return res
@@ -903,8 +897,6 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         if (!hostname) return res.status(400).json({ error: "hostname is required for a collection" });
         logLine(`[velociraptor] deploy-hunt collection "${title}" on ${hostname}`);
         const result = await collectHostResolved(hostname, vql, description);
-        // A collection is a per-host FLOW (no huntId), so its outcome isn't auto-collected — but recording
-        // the deploy still excludes it from re-proposal and surfaces it in the hunting profile.
         await ctx.recordHuntDeploy(caseId, {
           source,
           title,
@@ -915,19 +907,16 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           ...(coverage ? { coverage } : {}),
         });
         options.onVeloHunt?.(caseId);
-        void logActivity(options.activityLogStore, options.onActivity, caseId, {
+        const auditWarning = await recordAuditedActivity(caseId, {
           category: "hunt",
           action: "deploy-collection",
           detail: `collection "${title}" on ${hostname}`,
         });
-        return res.status(200).json({ mode, ...result });
+        return res.status(200).json({ mode, ...result, ...(auditWarning ? { auditWarning } : {}) });
       }
       const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds); // relative; defaults to one hour
       logLine(`[velociraptor] deploy-hunt fleet "${title}" (expires in ${expirySeconds}s)`);
       const launch = await options.velociraptorClient.launchHunt(vql, description, { expirySeconds });
-      // Register a collectible job AND schedule auto-collect (the same flow bundle hunts use) so the
-      // outcome fills by huntId without the analyst remembering to collect — fleet hunt results trickle
-      // in as clients check in, so we pull after the wait (and "Collect now" can pull early / re-pull).
       const reqWait = Number(req.body?.waitMinutes);
       const waitMinutes = Math.min(
         1440,
@@ -972,15 +961,26 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         ...(coverage ? { coverage } : {}),
       });
       options.onVeloHunt?.(caseId);
-      void logActivity(options.activityLogStore, options.onActivity, caseId, {
+      const auditWarning = await recordAuditedActivity(caseId, {
         category: "hunt",
         action: "deploy-hunt",
         detail: `fleet hunt "${title}" deployed (${source})`,
+        targetType: "hunt",
+        targetId: launch.huntId,
       });
-      return res.status(200).json({ mode, waitMinutes, ...launch });
+      return res
+        .status(200)
+        .json({ mode, waitMinutes, ...launch, ...(auditWarning ? { auditWarning } : {}) });
     } catch (err) {
-      logLine(`[velociraptor] deploy-hunt ERROR: ${(err as Error).message}`);
-      return res.status(502).json({ error: (err as Error).message });
+      const message = (err as Error).message;
+      logLine(`[velociraptor] deploy-hunt ERROR: ${message}`);
+      const auditWarning = await recordAuditedActivity(caseId, {
+        category: "hunt",
+        action: mode === "collection" ? "deploy-collection" : "deploy-hunt",
+        detail: `${mode === "collection" ? "collection" : "fleet hunt"} "${title}" failed: ${message}`,
+        outcome: "error",
+      });
+      return res.status(502).json({ error: message, ...(auditWarning ? { auditWarning } : {}) });
     }
   });
 

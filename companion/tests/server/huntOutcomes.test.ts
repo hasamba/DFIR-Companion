@@ -6,6 +6,7 @@ import request from "supertest";
 import type { Express } from "express";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
+import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
@@ -41,7 +42,14 @@ const runner: VqlRunner = async (statements) => {
   return { rows: [], raw: "" };
 };
 
-async function makeApp(opts: { provider?: MockProvider; runner?: VqlRunner; withVelo?: boolean } = {}) {
+async function makeApp(
+  opts: {
+    provider?: MockProvider;
+    runner?: VqlRunner;
+    withVelo?: boolean;
+    activityLogStore?: (store: CaseStore) => ActivityLogStore;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-huntoutcomes-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -63,6 +71,7 @@ async function makeApp(opts: { provider?: MockProvider; runner?: VqlRunner; with
     huntOutcomeStore,
     huntRunSnapshotStore,
     aiConfigured: Boolean(provider),
+    ...(opts.activityLogStore ? { activityLogStore: opts.activityLogStore(store) } : {}),
     ...(opts.withVelo === false
       ? {}
       : { velociraptorClient: new VelociraptorClient(veloCfg, opts.runner ?? runner) }),
@@ -71,6 +80,12 @@ async function makeApp(opts: { provider?: MockProvider; runner?: VqlRunner; with
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
   return { app, stateStore, store, huntOutcomeStore };
+}
+
+class BrokenActivityLogStore extends ActivityLogStore {
+  override add(): Promise<never> {
+    return Promise.reject(new Error("EACCES: activity.jsonl"));
+  }
 }
 
 describe("hunting feedback loop — routes (#157)", () => {
@@ -101,6 +116,35 @@ describe("hunting feedback loop — routes (#157)", () => {
     // It is also registered as a collectible hunt job (so "Collect now" works).
     const jobs = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body;
     expect(jobs.some((j: { huntId: string }) => j.huntId === "H.DEPLOY1")).toBe(true);
+  });
+
+  it("returns a warning when a deployed hunt launches but its activity-log append fails", async () => {
+    const { app } = await makeApp({
+      activityLogStore: (store) => new BrokenActivityLogStore(store),
+    });
+    const res = await request(app)
+      .post("/cases/c1/velociraptor/deploy-hunt")
+      .send({ vql: "SELECT * FROM pslist()", title: "ps hunt", source: "fleet" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.huntId).toBe("H.DEPLOY1");
+    expect(res.body.auditWarning).toMatch(/activity log.*EACCES/);
+  });
+
+  it("returns both errors when a deployed hunt and its activity-log append fail", async () => {
+    const { app } = await makeApp({
+      runner: async () => {
+        throw new Error("Velociraptor unavailable");
+      },
+      activityLogStore: (store) => new BrokenActivityLogStore(store),
+    });
+    const res = await request(app)
+      .post("/cases/c1/velociraptor/deploy-hunt")
+      .send({ vql: "SELECT * FROM pslist()", title: "ps hunt", source: "fleet" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("Velociraptor unavailable");
+    expect(res.body.auditWarning).toMatch(/activity log.*EACCES/);
   });
 
   it(
