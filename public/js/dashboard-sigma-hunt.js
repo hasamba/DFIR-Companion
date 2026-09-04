@@ -479,6 +479,11 @@
   // `btn` (optional) is disabled while in flight. When `ctx` ({caseId,title,source,mitre}) is given
   // — i.e. deploying an AI SUGGESTION — it routes through the case-scoped /deploy-hunt so the hunt is
   // recorded in the feedback loop (#157); the bare per-entity hunt uses the global /velociraptor/hunt.
+  // The case the page is showing, for the bare hunt's audit line (#832); "" when there is none.
+  function bareHuntCaseId() {
+    const caseEl = document.getElementById("caseId");
+    return ((caseEl && caseEl.value) || "").trim();
+  }
   function launchHuntInto(vql, description, res, btn, ctx) {
     if (!res) return;
     res.innerHTML =
@@ -507,7 +512,12 @@
           ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
           ...(snapshot ? { coverage: "snapshot" } : {}),
         }
-      : { vql, description: description || "DFIR hunt" };
+      : {
+          vql,
+          description: description || "DFIR hunt",
+          // #832: name the case the analyst is in, so the server records this hunt in its activity log.
+          ...(bareHuntCaseId() ? { caseId: bareHuntCaseId() } : {}),
+        };
     fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
