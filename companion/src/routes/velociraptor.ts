@@ -20,6 +20,7 @@ import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
+import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 /**
@@ -91,52 +92,9 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     return await client.collectFromHost(hostname, vql, description);
   }
 
-  // Run a VQL query against the configured Velociraptor server (via its API) and return the rows.
-  // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when not configured. The VQL is
-  // analyst-authored (from the generated pivots) — localhost only, opt-in via DFIR_VELOCIRAPTOR_*.
-  app.post("/velociraptor/run", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
-    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
-    if (!vql) return res.status(400).json({ error: "vql is required" });
-    if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
-    try {
-      logLine(`[velociraptor] run query (${vql.length} chars)`);
-      const result = await options.velociraptorClient.run(vql);
-      logLine(`[velociraptor] query DONE -> ${result.total} rows${result.truncated ? " (truncated)" : ""}`);
-      return res.status(200).json(result);
-    } catch (err) {
-      logLine(`[velociraptor] query ERROR: ${(err as Error).message}`);
-      return res.status(502).json({ error: (err as Error).message });
-    }
-  });
-
-  // Launch a HUNT that runs the pivot VQL on ALL enrolled endpoints (packages it as a CLIENT
-  // artifact, then creates the hunt). This is the dashboard's "Run hunt on all clients" action.
-  app.post("/velociraptor/hunt", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
-    const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
-    const description = typeof req.body?.description === "string" ? req.body.description : "";
-    if (!vql) return res.status(400).json({ error: "vql is required" });
-    if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
-    const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds); // relative; defaults to one hour
-    try {
-      logLine(`[velociraptor] launch hunt: ${description.slice(0, 80)} (expires in ${expirySeconds}s)`);
-      const result = await options.velociraptorClient.launchHunt(vql, description, { expirySeconds });
-      logLine(
-        `[velociraptor] hunt launched -> ${result.huntId} (artifact ${result.artifact}, ${result.sources.length} source(s))`,
-      );
-      return res.status(200).json(result);
-    } catch (err) {
-      logLine(`[velociraptor] hunt ERROR: ${(err as Error).message}`);
-      return res.status(502).json({ error: (err as Error).message });
-    }
-  });
+  // The bare VQL run + fleet-hunt routes live in routes/velociraptorVql.ts (#832): they take an
+  // optional caseId and record the action in that case's activity log.
+  registerVelociraptorVqlRoutes(app, ctx);
 
   // Read a launched hunt's results (rows collected from the endpoints so far). Polled by the dashboard.
   app.post("/velociraptor/hunt-results", async (req: Request, res: Response) => {
