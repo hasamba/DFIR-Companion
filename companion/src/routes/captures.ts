@@ -6,6 +6,7 @@ import { ingestCapture, CaseNotFoundError, InvalidImageError } from "../ingest/c
 import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { detectImageFormat } from "../ingest/imageFormat.js";
+import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
 import {
   parseCookieHeader,
   unlockCookieName,
@@ -208,7 +209,12 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
     ];
     for (const path of candidates) {
       try {
-        const buf = await readFile(path);
+        // The link check and the read are ONE operation on ONE descriptor (see
+        // storage/noFollowRead.ts). The filename above is a safe path component, but the FILE it
+        // names is whatever is in the case directory right now: a plain readFile follows a symlink
+        // planted there (or swapped in after any path check) and serves the target — /etc/shadow,
+        // another case's files — to the dashboard as this case's evidence (#818).
+        const buf = await readFileNoFollow(path);
         // Bytes first, name second. The extension map below is right for imports (csv/json/log),
         // but a screenshot written before ingest preserved the source format carries a ".webp"
         // suffix over PNG/JPEG/GIF bytes, and serving those as image/webp is how the browser gets
@@ -218,6 +224,12 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
         res.setHeader("Cache-Control", "private, max-age=300");
         return res.send(buf);
       } catch (err) {
+        if (err instanceof LinkGuardError) {
+          // Named by the filename the client asked for, not the on-disk path the error carries.
+          return res
+            .status(403)
+            .json({ error: `${err.kind} detected at "${file}" — refusing to serve as evidence (security)` });
+        }
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
           return res.status(500).json({ error: (err as Error).message });
         }
