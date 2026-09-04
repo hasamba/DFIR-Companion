@@ -40,6 +40,10 @@ async function envFields(): Promise<EnvField[]> {
   return out;
 }
 
+function documentedEnvKeys(example: string): Set<string> {
+  return new Set([...example.matchAll(/^#?\s*(DFIR_[A-Z0-9_]+)=/gm)].map((m) => m[1]));
+}
+
 describe("Settings modal group placement", () => {
   it("labels the vision model and places synthesis grouping after every model", async () => {
     const ai = settingsPane(await dashboardHtml(), "ai");
@@ -95,7 +99,7 @@ describe("Settings modal \u21c4 .env.example", () => {
   // place.
   it("renders every DFIR_* setting documented in .env.example", async () => {
     const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
-    const documented = new Set([...example.matchAll(/^#?\s*(DFIR_[A-Z0-9_]+)=/gm)].map((m) => m[1]));
+    const documented = documentedEnvKeys(example);
 
     const html = await dashboardHtml();
     const wizard = await readFile(
@@ -109,6 +113,33 @@ describe("Settings modal \u21c4 .env.example", () => {
 
     const missing = [...documented].filter((k) => !reachable.has(k)).sort();
     expect(missing, `documented in .env.example but nowhere in the UI: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("documents every Presidio setting offered by the integration pane", async () => {
+    const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
+    const integrations = settingsPane(await dashboardHtml(), "integrations");
+    const keys = new Set(
+      [...integrations.matchAll(/env-(DFIR_PRESIDIO_[A-Z0-9_]+)/g)].map((match) => match[1]),
+    );
+    expect(keys.size, "the integration pane no longer exposes any Presidio settings").toBeGreaterThan(0);
+    const missing = [...keys].filter((key) => !documentedEnvKeys(example).has(key)).sort();
+    expect(missing, `Presidio settings missing from .env.example: ${missing.join(", ")}`).toEqual([]);
+  });
+});
+
+describe("Settings field labels", () => {
+  it("associates every standard settings label with its sibling control", async () => {
+    const html = await dashboardHtml();
+    const fields = [
+      ...html.matchAll(
+        /<div class="sfield"[^>]*>\s*<label\b([^>]*)>(?:(?!<\/div>)[\s\S])*?<\/label>\s*<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"/g,
+      ),
+    ];
+    expect(fields.length, "the settings-field matcher no longer covers the form").toBeGreaterThan(300);
+    const mismatched = fields
+      .filter((match) => match[1].match(/\bfor="([^"]+)"/)?.[1] !== match[2])
+      .map((match) => match[2]);
+    expect(mismatched, `controls without their visible label: ${mismatched.join(", ")}`).toEqual([]);
   });
 });
 
