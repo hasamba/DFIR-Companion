@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { randomBytes, scrypt, timingSafeEqual, createHmac } from "node:crypto";
 import type { CaseMeta, CasePasswordHash } from "../types.js";
 
 // Minimum length for a case-lock password (the dashboard's open-case gate). Distinct from
@@ -9,21 +9,31 @@ export const MIN_CASE_PASSWORD_LENGTH = 6;
 const SALT_LEN = 16;
 const HASH_LEN = 32;
 
+// The async form, on libuv's threadpool. scryptSync ran the derivation on the event loop, so every
+// unlock attempt — including each wrong guess the limiter still admits — stalled every other
+// request, WebSocket frame and timer for the derivation's duration (#863). Same cost, same output;
+// only the thread it runs on changes, so stored hashes stay valid.
+function scryptAsync(password: string, salt: Buffer, keyLen: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keyLen, (err, key) => (err ? reject(err) : resolve(key)));
+  });
+}
+
 // CasePasswordHash ({ salt, hash }, both hex) is defined in ../types.js — it's the shape of
 // CaseMeta.password, so it lives with CaseMeta rather than being redefined here.
 
 /** Hash `password` under a fresh random salt. */
-export function hashCasePassword(password: string): CasePasswordHash {
+export async function hashCasePassword(password: string): Promise<CasePasswordHash> {
   const salt = randomBytes(SALT_LEN);
-  const hash = scryptSync(password, salt, HASH_LEN);
+  const hash = await scryptAsync(password, salt, HASH_LEN);
   return { salt: salt.toString("hex"), hash: hash.toString("hex") };
 }
 
 /** Constant-time check of `password` against a stored hash. */
-export function verifyCasePassword(password: string, stored: CasePasswordHash): boolean {
+export async function verifyCasePassword(password: string, stored: CasePasswordHash): Promise<boolean> {
   const salt = Buffer.from(stored.salt, "hex");
   const expected = Buffer.from(stored.hash, "hex");
-  const actual = scryptSync(password, salt, expected.length);
+  const actual = await scryptAsync(password, salt, expected.length);
   return timingSafeEqual(actual, expected);
 }
 

@@ -12,6 +12,7 @@ import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } fro
 // Re-exported so the inventory record/normalizer/matcher keep their long-standing import path.
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
+import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
 
@@ -495,16 +496,10 @@ function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
   return v === "windows" || v === "linux" || v === "darwin" ? v : undefined;
 }
 
-// Normalize an analyst-authored VQL WHERE expression for inlining into a hunt_results query: one line,
-// no trailing ';', length-capped. Localhost/trusted analyst (same as the pivot-hunt VQL); it's wrapped
-// in parentheses at the call site so it stays a contained boolean expression.
+// An analyst-authored VQL WHERE expression, inlined as `WHERE (${where})`: normalized, and REFUSED
+// unless it is one contained boolean expression — see analysis/vqlInput.ts (#843, #853).
 function sanitizeWhere(where?: string): string {
-  if (!where) return "";
-  return String(where)
-    .replace(/[\r\n]+/g, " ")
-    .replace(/;+\s*$/, "")
-    .trim()
-    .slice(0, 1000);
+  return where ? containedWhereOrThrow(String(where)) : "";
 }
 
 const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // valid Velociraptor parameter name

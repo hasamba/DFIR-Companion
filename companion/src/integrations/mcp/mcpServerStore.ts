@@ -66,6 +66,15 @@ export const DEFAULT_DELIVERY: McpDelivery = {
  */
 const SAFE_HOSTPART = /^[A-Za-z0-9._-]+$/;
 const SAFE_REMOTE_DIR = /^\/[A-Za-z0-9._\-/]*$/;
+// The `-i` operand. It reaches ssh/scp as one argv element (no shell), so the question is not
+// injection but WHICH file: an absolute path with no `..` segment names one key unambiguously,
+// where a relative one would resolve against whatever the server's working directory happens to be
+// (#850). Windows drive-letter paths are accepted for a companion that runs there.
+const SAFE_IDENTITY_FILE = /^(?:\/|[A-Za-z]:[\\/])[A-Za-z0-9._\-/\\ ]*$/;
+
+function isSafeIdentityFile(path: string): boolean {
+  return SAFE_IDENTITY_FILE.test(path) && !path.split(/[\\/]/).includes("..");
+}
 
 /** Validate a delivery block. Returns an error message when unusable, null when fine. */
 export function validateDelivery(d: McpDelivery): string | null {
@@ -80,6 +89,8 @@ export function validateDelivery(d: McpDelivery): string | null {
       return `remote directory "${d.remoteDir}" must be an absolute POSIX path of letters, digits, dot, dash, underscore and slash`;
     if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535)
       return `delivery port ${d.port} is not a valid port`;
+    if (d.identityFile && !isSafeIdentityFile(d.identityFile))
+      return `identity file "${d.identityFile}" must be an absolute path with no ".." segment`;
     return null;
   }
   // remote-path: a rewrite needs both halves or neither. One alone silently maps everything to the

@@ -205,6 +205,30 @@ describe("McpServerStore delivery config", () => {
     );
   });
 
+  // `-i` reaches ssh as one argv element, so the risk is not injection but which file a relative
+  // or traversing path resolves to from the server's working directory (#850).
+  it("requires the identity file to be an absolute path with no traversal", async () => {
+    await expect(
+      store.add({ id: "a", delivery: { ...SCP, identityFile: "keys/id_ed25519" } }),
+    ).rejects.toThrow(/identity file .* must be an absolute path/);
+    await expect(
+      store.add({ id: "b", delivery: { ...SCP, identityFile: "/home/analyst/../../tmp/id_rsa" } }),
+    ).rejects.toThrow(/identity file .* must be an absolute path/);
+    await expect(store.add({ id: "c", delivery: { ...SCP, identityFile: "/tmp/id$(x)" } })).rejects.toThrow(
+      /identity file .* must be an absolute path/,
+    );
+    const posix = await store.add({
+      id: "d",
+      delivery: { ...SCP, identityFile: "/home/analyst/.ssh/id_ed25519" },
+    });
+    expect(posix.delivery.identityFile).toBe("/home/analyst/.ssh/id_ed25519");
+    const windows = await store.add({
+      id: "e",
+      delivery: { ...SCP, identityFile: "C:\\Users\\analyst\\.ssh\\id_ed25519" },
+    });
+    expect(windows.delivery.identityFile).toBe("C:\\Users\\analyst\\.ssh\\id_ed25519");
+  });
+
   it("rejects an impossible port", async () => {
     await expect(store.add({ id: "a", delivery: { ...SCP, port: 70000 } })).rejects.toThrow(
       /not a valid port/,

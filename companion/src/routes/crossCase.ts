@@ -180,6 +180,14 @@ export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
   /** The cases this request may read, after BOTH halves of the gate. */
   async function visibleCases(req: Request): Promise<CaseMeta[]> {
     const listed = await store.listCases();
+    // A deleted case is gone from the listing but its slimmed IOCs would otherwise stay pinned in
+    // `snapshots` for the life of the process (#822). The listing is the one complete view of what
+    // still exists, so dropping everything it no longer names is the eviction — no hook into the
+    // delete path, which does not know this cache exists.
+    const listedIds = new Set(listed.map((meta) => meta.caseId));
+    for (const cachedId of snapshots.keys()) {
+      if (!listedIds.has(cachedId)) snapshots.delete(cachedId);
+    }
     const visible = options.teamAuth?.visibleCaseIds(req); // null = global administrator
     return listed.filter((meta) => {
       if (visible && !visible.has(meta.caseId)) return false;

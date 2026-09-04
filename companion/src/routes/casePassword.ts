@@ -92,7 +92,7 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
       const password = (req.body as { password?: unknown })?.password;
       const remember = (req.body as { remember?: unknown })?.remember === true;
-      if (typeof password !== "string" || !verifyCasePassword(password, meta.password)) {
+      if (typeof password !== "string" || !(await verifyCasePassword(password, meta.password))) {
         const lockout = limiter.recordFailure(id);
         if (lockout > 0) {
           res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
@@ -129,7 +129,7 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
           .status(400)
           .json({ error: `password must be at least ${MIN_CASE_PASSWORD_LENGTH} characters` });
       }
-      const password = hashCasePassword(newPassword);
+      const password = await hashCasePassword(newPassword);
       const updated = await store.updateCaseMeta(id, { password });
       // Deliberately does NOT auto-unlock the browser that just set/changed it: setting a
       // password (or changing one, which rotates the salt and invalidates the caller's own

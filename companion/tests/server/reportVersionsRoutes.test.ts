@@ -198,9 +198,12 @@ describe("report-versions routes", () => {
     expect(released.body.manifestHash).toMatch(/^[a-f0-9]{64}$/);
     expect(released.body.snapshot.meta.organization).toBe("ExampleCorp");
     expect((await request(app).get("/cases/c1/report-releases/integrity")).body.ok).toBe(true);
-    expect(
-      (await request(app).get(`/cases/c1/report-releases/${released.body.id}/packs/technical`)).text,
-    ).toContain("ExampleCorp");
+    const pack = await request(app).get(`/cases/c1/report-releases/${released.body.id}/packs/technical`);
+    expect(pack.text).toContain("ExampleCorp");
+    // Built through the shared attachment helper, like every other download (#845, #849).
+    expect(pack.headers["content-disposition"]).toBe(
+      `attachment; filename="technical-${released.body.id}.md"`,
+    );
   });
 
   it("requires explicit supersession and leaves the prior released snapshot unchanged", async () => {

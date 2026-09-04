@@ -497,6 +497,21 @@ describe("isAllowedResponseUrl", () => {
     expect(isAllowedResponseUrl("slack", "")).toBe(false);
   });
 
+  // The host is compared in the spelling the resolver uses (#840): a trailing root dot names the
+  // same host, and an allowlisted host means its HTTPS endpoint — not any port on it.
+  it("normalizes a trailing root dot and refuses a non-default port", () => {
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com./commands/T1/123/abc")).toBe(true);
+    expect(isAllowedResponseUrl("slack", "https://HOOKS.SLACK.COM/commands/T1/123/abc")).toBe(true);
+    expect(isAllowedResponseUrl("teams", "https://outlook.webhook.office.com./webhookb2/x")).toBe(true);
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com:443/commands/T1/123/abc")).toBe(true);
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com:8443/commands/T1/123/abc")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com:9999/x")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com@evil.example/x")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "https://chat.corp.example./hooks/x", ["chat.corp.example."])).toBe(
+      true,
+    );
+  });
+
   it("honors an operator-configured extra host (self-hosted Mattermost)", () => {
     expect(isAllowedResponseUrl("slack", "https://chat.corp.example/hooks/x", ["chat.corp.example"])).toBe(
       true,

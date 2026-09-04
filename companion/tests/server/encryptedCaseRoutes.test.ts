@@ -193,7 +193,7 @@ describe("POST /cases/import/encrypted", () => {
   it("reports formatVersion 1 below currentFormatVersion for a pre-#268 archive", async () => {
     const { app, stateStore, store } = await harness();
     await seedCase(app, stateStore, store);
-    const plain = decryptBuffer(Buffer.from(await exportArchive(app, "INC-1"), "base64"), PASSWORD);
+    const plain = await decryptBuffer(Buffer.from(await exportArchive(app, "INC-1"), "base64"), PASSWORD);
 
     // Re-wrap in the v1 container 0.31.0 wrote. Nothing in production writes v1 any more, so a
     // test that needs one has to build it; the parameters are spelled out as an independent
@@ -307,9 +307,9 @@ describe("POST /cases/import/encrypted", () => {
       const { app } = await harness();
       // Valid container, correct password, contents that are not a ZIP. Decryption succeeds; the
       // ZIP parse is what fails.
-      const data = encryptBuffer(Buffer.from("valid container, contents are not a ZIP"), PASSWORD).toString(
-        "base64",
-      );
+      const data = (
+        await encryptBuffer(Buffer.from("valid container, contents are not a ZIP"), PASSWORD)
+      ).toString("base64");
 
       for (let i = 0; i < 4; i++) {
         const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
@@ -325,7 +325,7 @@ describe("POST /cases/import/encrypted", () => {
     const { app, stateStore, store } = await harness();
     await seedCase(app, stateStore, store);
     const good = await exportArchive(app, "INC-1");
-    const bad = encryptBuffer(Buffer.from("not a ZIP"), PASSWORD).toString("base64");
+    const bad = (await encryptBuffer(Buffer.from("not a ZIP"), PASSWORD)).toString("base64");
 
     for (let i = 0; i < 4; i++) {
       expect(

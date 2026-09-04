@@ -778,6 +778,23 @@ describe("VelociraptorClient.huntResults", () => {
     expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot1'");
   });
 
+  // sanitizeWhere used to strip only a TRAILING ';', so a filter could close the `WHERE (` wrapper
+  // and append a statement (#843, #853). It is refused now, in both result readers.
+  it("refuses a WHERE filter that breaks out of its parentheses or carries a statement separator", async () => {
+    const runner: VqlRunner = async () => ({ rows: [], raw: "" });
+    const c = new VelociraptorClient(cfg, runner);
+    const smuggled = "1=1) LIMIT 1; SELECT * FROM execve(argv=['sh','-c','id']) WHERE (1=1";
+    await expect(c.huntResults("H.ABC123", "DetectRaptor.X", [], smuggled)).rejects.toThrow(
+      /invalid WHERE filter/,
+    );
+    await expect(c.huntResults("H.ABC123", "DetectRaptor.X", [], "a = 1; SELECT 1")).rejects.toThrow(
+      /invalid WHERE filter/,
+    );
+    await expect(
+      c.collectionResults("C.abc", "F.def", "DetectRaptor.X", [], "Name =~ 'unterminated"),
+    ).rejects.toThrow(/invalid WHERE filter/);
+  });
+
   it("rejects malformed ids (no VQL-string injection)", async () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
     const c = new VelociraptorClient(cfg, runner);

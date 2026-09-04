@@ -96,11 +96,9 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
         const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
         if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
           const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-          return res
-            .status(423)
-            .json({
-              error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots`,
-            });
+          return res.status(423).json({
+            error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots`,
+          });
         }
         // Case-password gate: when a case has a password, verify the unlock cookie OR the
         // case password in the request body. The browser extension sends the password the
@@ -126,7 +124,7 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
           const cookieOk =
             token && verifyUnlockToken(token, rawCaseId, caseMeta.password.salt, ctx.instanceSecret);
           const bodyPassword = typeof req.body?.casePassword === "string" ? req.body.casePassword : "";
-          const passwordOk = bodyPassword && verifyCasePassword(bodyPassword, caseMeta.password);
+          const passwordOk = bodyPassword && (await verifyCasePassword(bodyPassword, caseMeta.password));
           if (!cookieOk && !passwordOk) {
             // Record the failure in the SHARED limiter so /captures and /unlock attempts count
             // together toward lockout — an attacker can't rotate endpoints to reset the budget.

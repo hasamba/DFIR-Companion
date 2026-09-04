@@ -20,7 +20,7 @@ let secret: Buffer;
 beforeEach(async () => {
   store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-wsattach-")));
   await store.createCase({ caseId: "locked", name: "n", investigator: "i", aiProvider: null });
-  await store.updateCaseMeta("locked", { password: hashCasePassword("secret123") });
+  await store.updateCaseMeta("locked", { password: await hashCasePassword("secret123") });
   secret = randomBytes(32);
   hub = new LiveHub();
   server = createServer();

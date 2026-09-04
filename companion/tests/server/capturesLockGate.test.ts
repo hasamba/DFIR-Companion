@@ -44,14 +44,14 @@ describe("POST /captures — case-password gate", () => {
   });
 
   it("401s with no unlock cookie and no casePassword", async () => {
-    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await cases.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const res = await request(app).post("/captures").send(CAPTURE_BODY);
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("locked");
   });
 
   it("401s with a wrong casePassword in the body", async () => {
-    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await cases.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const res = await request(app)
       .post("/captures")
       .send({ ...CAPTURE_BODY, casePassword: "wrong" });
@@ -59,7 +59,7 @@ describe("POST /captures — case-password gate", () => {
   });
 
   it("accepts the right casePassword in the body (browser-extension flow)", async () => {
-    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await cases.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     const res = await request(app)
       .post("/captures")
       .send({ ...CAPTURE_BODY, casePassword: "secret123" });
@@ -67,7 +67,7 @@ describe("POST /captures — case-password gate", () => {
   });
 
   it("accepts a valid unlock cookie (dashboard flow)", async () => {
-    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await cases.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     // Get a REAL signed cookie the same way the dashboard does, rather than forging a token —
     // this also incidentally proves /cases/:id/unlock and POST /captures agree on the secret.
     const login = await request(app).post("/cases/c1/unlock").send({ password: "secret123" });
@@ -86,7 +86,7 @@ describe("POST /captures — case-password gate", () => {
   });
 
   it("rate-limits brute-force: 5 wrong passwords via /captures then 429 lockout", async () => {
-    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await cases.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     // Hammer /captures with wrong passwords (the previously-unthrottled second entry point).
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) {
@@ -106,7 +106,7 @@ describe("POST /captures — case-password gate", () => {
   });
 
   it("shares the limiter with /unlock so /captures failures count toward /unlock lockout", async () => {
-    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    await cases.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     // Burn attempts on /captures, then /unlock should already be locked out (shared counter).
     for (let i = 0; i < 6; i++) {
       await request(app)

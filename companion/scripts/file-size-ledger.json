@@ -2,11 +2,11 @@
   "analysis/anonymize.ts": 848,
   "analysis/caseSqliteWorker.ts": 812,
   "analysis/evidenceGraph.ts": 855,
-  "analysis/memoryImport.ts": 1541,
+  "analysis/memoryImport.ts": 1540,
   "analysis/seedDemoCase.ts": 2700,
   "analysis/siemImport.ts": 1679,
   "analysis/velociraptorImport.ts": 1869,
-  "integrations/velociraptor/velociraptorApi.ts": 1250,
+  "integrations/velociraptor/velociraptorApi.ts": 1245,
   "public/dashboard.html#inline-js": 1955,
   "reports/markdown.ts": 1597,
   "reports/reportWriter.ts": 837,
@@ -16,5 +16,5 @@
   "routes/import.ts": 3203,
   "routes/mcp.ts": 913,
   "routes/threatIntel.ts": 892,
-  "routes/velociraptor.ts": 1114
+  "routes/velociraptor.ts": 1113
 }

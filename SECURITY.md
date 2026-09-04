@@ -10,6 +10,31 @@ on a trusted analyst workstation or a trusted LAN segment; there is **no built-i
 authentication** — if you expose it beyond localhost (`DFIR_HOST=0.0.0.0`), put it behind your
 own auth/reverse proxy.
 
+## Trust boundaries that are deliberate
+
+Findings against these come up in every automated review; they are design decisions, not gaps.
+
+- **Operator-configured service URLs are trusted.** The base URLs of integrations and
+  enrichment providers (SO-CRATES, MISP, YETI, OpenCTI, DFIR-IRIS, Timesketch, Jira, ServiceNow,
+  the notification webhooks and SMTP host, and the rest) are set by the global administrator in
+  Settings or the environment, and are used as given — including plain `http://`, loopback and
+  private addresses, because SO-CRATES binds `127.0.0.1` by design and a self-hosted MISP or
+  Mattermost usually lives on the LAN. The outbound-fetch guard
+  (`companion/src/routes/outboundFetchGuard.ts`) exists for the one place a URL comes from a
+  request body rather than from the operator (`POST /kev/import-url`). Someone who can rewrite
+  the companion's integration settings already holds the credentials those settings carry; the
+  control that matters is who may edit Settings — global administrators only in team mode.
+- **Single-user mode has no CSRF token.** The dashboard and the capture extension are the
+  trusted callers. A cross-origin page is stopped by the origin guard
+  (`companion/src/http/originGuard.ts`) before any route runs, the unlock cookie is
+  `SameSite=Strict`, and a request with no `Origin` header is by definition not a browser page.
+  Team mode adds a per-session CSRF token on top (`X-DFIR-CSRF`).
+- **A locked case still accepts evidence.** `POST /cases/:id/import` and `POST /cases/:id/push`
+  are exempt from the case-lock gate on purpose: the lock is a dashboard read gate, and a
+  background capture or a SIEM webhook must keep recording while the analyst is away. Both routes
+  are write-only and return nothing about the case. `/push` additionally requires its shared
+  secret; in team mode both require an authenticated session holding write on the case.
+
 ## Reporting a vulnerability
 
 Please report security issues privately via a **GitHub security advisory**

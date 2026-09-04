@@ -75,14 +75,28 @@ function httpsEndpoint(value: string, field: string): string {
   return parsed.toString();
 }
 
-function safeReturnTo(value: string | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
+/**
+ * The post-login destination, kept on this origin.
+ *
+ * The value is caller-supplied (the `returnTo` query of /auth/oidc/login) and lands in
+ * `res.redirect()` after a successful login, so anything that a browser would take off-site is an
+ * open redirect. The input checks refuse an absolute URL and a scheme-relative one, but the URL
+ * parser NORMALIZES: `/..//evil.example` has a single leading slash and the local origin, yet its
+ * resolved pathname is `//evil.example` — which `Location:` then sends the browser to (#839). So
+ * the RESULT is checked again with the same rules as the input: it must start with exactly one
+ * `/`, and the second character may not be `/` or `\` (browsers treat a backslash as a slash).
+ */
+export function safeReturnTo(value: string | undefined): string {
+  const fallback = "/dashboard";
+  if (!value || !value.startsWith("/") || /^\/[\/\\]/.test(value)) return fallback;
   try {
     const parsed = new URL(value, "https://dfir.invalid");
-    if (parsed.origin !== "https://dfir.invalid") return "/dashboard";
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    if (parsed.origin !== "https://dfir.invalid") return fallback;
+    const target = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    if (!target.startsWith("/") || /^\/[\/\\]/.test(target)) return fallback;
+    return target;
   } catch {
-    return "/dashboard";
+    return fallback;
   }
 }
 

@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { logActivity } from "../analysis/activityLog.js";
+import { attachmentContentDisposition } from "../analysis/caseExportArchive.js";
 import { diffFindings } from "../analysis/findingsDiff.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
@@ -473,7 +474,10 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
       const typedPack = pack as (typeof REPORT_PACK_TYPES)[number];
       const extension = typedPack === "ioc" ? "csv" : "md";
       res.type(typedPack === "ioc" ? "text/csv; charset=utf-8" : "text/markdown; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="${typedPack}-${release.id}.${extension}"`);
+      res.setHeader(
+        "Content-Disposition",
+        attachmentContentDisposition(`${typedPack}-${release.id}.${extension}`),
+      );
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(release.packs[typedPack]);
     } catch (err) {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { storeFilePath } from "../storage/safeStoreId.js";
+import { containedWhereOrThrow } from "./vqlInput.js";
 
 // A "triage bundle" (a.k.a. blueprint / triage pack) is a named, reusable selection of Velociraptor
 // CLIENT artifacts. The analyst picks one, runs it as a hunt, and the collected results auto-import +
@@ -38,7 +39,11 @@ export interface ArtifactBundle {
   superTimelineOnly?: boolean;
 }
 
-// Per-artifact VQL WHERE filters: keep string values, strip newlines/trailing ';', cap length.
+// Per-artifact VQL WHERE filters: keep string values, strip newlines/trailing ';', cap length, and
+// refuse one that is not a single contained boolean expression — the Velociraptor client inlines it
+// as `WHERE (${filter})`, so a filter able to close that parenthesis or carry a `;` would smuggle a
+// second statement into the read (#843). Refused at save time so the analyst sees which filter,
+// rather than at hunt-read time where the whole bundle would fail.
 // Null-prototype accumulator: the keys are untrusted artifact names, and on a plain `{}` an
 // `out["__proto__"] = …` assignment goes through the inherited Object.prototype setter instead of
 // creating an own property — silently dropping the entry. Same reason in the two loops below.
@@ -47,11 +52,7 @@ function sanitizeBundleFilters(raw: unknown): Record<string, string> | undefined
   const out: Record<string, string> = Object.create(null);
   for (const [artifact, where] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof where !== "string") continue;
-    const w = where
-      .replace(/[\r\n]+/g, " ")
-      .replace(/;+\s*$/, "")
-      .trim()
-      .slice(0, 1000);
+    const w = containedWhereOrThrow(where, `invalid WHERE filter for ${artifact}`);
     if (w) out[artifact] = w;
   }
   return Object.keys(out).length ? out : undefined;

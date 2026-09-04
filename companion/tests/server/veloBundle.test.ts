@@ -192,6 +192,33 @@ describe("Velociraptor triage bundles — routes", () => {
     expect((await request(app).delete("/bundles/super-timeline-triage")).status).toBe(204); // reset to default
   });
 
+  // The program reaches the CLI as argv, which Linux caps at 128 KiB per argument, so an oversized
+  // body could never run and used to surface only as an E2BIG spawn failure (#825, #828).
+  it("POST /velociraptor/run, /hunt and /collect-host refuse an oversized VQL body with a 400", async () => {
+    const vql = "SELECT 1 FROM scope() -- " + "x".repeat(100_001);
+    for (const [path, body] of [
+      ["/velociraptor/run", { vql }],
+      ["/velociraptor/hunt", { vql, description: "too big" }],
+      ["/velociraptor/collect-host", { vql, hostname: "WS-1" }],
+    ] as const) {
+      const res = await request(app).post(path).send(body);
+      expect(res.status, path).toBe(400);
+      expect(res.body.error).toMatch(/vql is too long/);
+    }
+  });
+
+  it("POST /bundles refuses a WHERE filter that could smuggle a statement, as a 400", async () => {
+    const res = await request(app)
+      .post("/bundles")
+      .send({
+        name: "Smuggle",
+        artifacts: ["Windows.NTFS.MFT"],
+        filters: { "Windows.NTFS.MFT": "1=1) LIMIT 1; SELECT * FROM execve(argv=['id']) WHERE (1=1" },
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid WHERE filter for Windows\.NTFS\.MFT/);
+  });
+
   it("POST /bundles rejects a bundle with no artifacts", async () => {
     const res = await request(app).post("/bundles").send({ name: "Empty", artifacts: [] });
     expect(res.status).toBe(400);

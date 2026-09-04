@@ -487,6 +487,7 @@
     "velociraptorImport.ts": "analysis/ingest",
     "velociraptorRelease.ts": "analysis/case",
     "velociraptorTitle.ts": "analysis/ingest",
+    "vqlInput.ts": "analysis/hunt",
     "wazuhImport.ts": "analysis/ingest",
     "winProcessBaseline.ts": "analysis/ingest",
     "workLogFilter.ts": "analysis/workflow",
