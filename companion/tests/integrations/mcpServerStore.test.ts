@@ -268,14 +268,17 @@ describe("McpServerStore delivery config", () => {
   });
 
   it("merges a delivery update field-wise instead of resetting the rest", async () => {
-    await store.add({ id: "sift-mcp", delivery: { ...SCP, identityFile: "/home/dfir/.ssh/lab" } });
+    // An absolute path for the platform the suite runs on: the identity file is validated against
+    // process.platform, so a POSIX path is refused by a Windows runner (see #850).
+    const identityFile = process.platform === "win32" ? "C:\\Users\\dfir\\.ssh\\lab" : "/home/dfir/.ssh/lab";
+    await store.add({ id: "sift-mcp", delivery: { ...SCP, identityFile } });
 
     const updated = await store.update("sift-mcp", { delivery: { remoteDir: "/cases/staging" } });
 
     expect(updated?.delivery).toMatchObject({
       mode: "scp",
       host: "sift.lab",
-      identityFile: "/home/dfir/.ssh/lab",
+      identityFile,
       remoteDir: "/cases/staging",
     });
   });
