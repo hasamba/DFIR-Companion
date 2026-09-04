@@ -1,31 +1,20 @@
 name: opencode-full-review
-# Manual, scoped code review that files one GitHub issue per finding.
+# Manual review of the entire repository that files one GitHub issue per finding.
 #
 # Lessons from the first runs (all four produced zero issues):
-#   - A whole-repo review never finished inside the job timeout, and the agent
-#     did all its exploring before creating any issue, so a timeout meant no
-#     output at all. The review is now scoped to the paths you pass in and the
-#     prompt asks for each issue to be created as soon as it is found.
+#   - The agent explored everything before creating any issue, so a timeout
+#     meant no output at all. The prompt now asks for each issue to be created
+#     as soon as it is found, and the job uses the maximum hosted-runner
+#     timeout of 6 hours.
 #   - opencode hung for 25 minutes on an interactive "ask" permission prompt
-#     after the model tried a path outside the workspace. Nobody can answer a
-#     prompt in CI, so .github/opencode/ci.json turns those prompts into
-#     denials (see OPENCODE_CONFIG below).
+#     after the model tried a path outside the workspace, and once after a
+#     subagent hit context compaction. Nobody can answer a prompt in CI, so
+#     .github/opencode/ci.json turns those prompts into denials and disables
+#     subagents (see OPENCODE_CONFIG below).
 #   - The labels the prompt asks for did not exist, which makes
 #     `gh issue create --label ...` fail. The first step creates them.
 on:
-  workflow_dispatch:
-    inputs:
-      scope:
-        description: >-
-          Paths to review, space-separated, relative to the repo root
-          (for example "companion/src/routes companion/src/analysis").
-          Keep it small enough to finish inside the timeout.
-        required: true
-        default: "companion/src/routes"
-      timeout_minutes:
-        description: Job timeout in minutes
-        required: false
-        default: "60"
+  workflow_dispatch: {}
 
 concurrency:
   group: opencode-full-review
@@ -34,7 +23,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
+    timeout-minutes: 360
     permissions:
       id-token: write
       contents: read
@@ -66,18 +55,21 @@ jobs:
           model: "ollama-cloud/kimi-k2.7-code"
           use_github_token: true
           prompt: |
-            Review ONLY these paths of the repository checked out in the
-            current working directory: ${{ inputs.scope }}
+            Perform a full code review of the entire repository checked out
+            in the current working directory.
 
             Rules:
             - Stay inside the repository working directory. Never read,
               list, or reference any path outside it.
             - Ignore build artifacts, node_modules, lockfiles, generated
               files, and test fixtures.
-            - Work file by file. As soon as you have confirmed one distinct
-              finding, create its GitHub issue IMMEDIATELY with the GitHub
-              CLI, then continue reviewing. Do not collect findings to file
-              later, and do not write any summary file or combined report.
+            - Start by running `git ls-files` to see the full file list,
+              then work through the repository one directory at a time,
+              file by file, until every source file has been reviewed.
+            - As soon as you have confirmed one distinct finding, create its
+              GitHub issue IMMEDIATELY with the GitHub CLI, then continue
+              reviewing. Do not collect findings to file later, and do not
+              write any summary file or combined report.
             - Before creating an issue, run
               `gh issue list --state all --limit 5 --search "<key words from the title>"`
               and skip the finding if an equivalent issue already exists.
@@ -96,5 +88,5 @@ jobs:
             - If a `gh` command fails, print the error and move on to the
               next finding. Never stop the review because one issue failed.
 
-            When you have covered every file in scope, finish with a single
-            line stating how many issues you created.
+            When you have covered every file, finish with a single line
+            stating how many issues you created.
