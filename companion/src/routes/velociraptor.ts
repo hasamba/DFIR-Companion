@@ -13,7 +13,7 @@ import {
   type VeloArtifactInfo,
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
-import { parseDeployHuntBody } from "./huntDeployBody.js";
+import { parseDeployHuntBody, deployHuntBodyProblem } from "./huntDeployBody.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
 import { resolveTimeScope, buildTimeScopePlan, type TimeScope } from "../analysis/veloTimeScope.js";
 import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
@@ -896,11 +896,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       relatedHypothesisId,
       coverage,
     } = parseDeployHuntBody(req.body);
-    if (!vql) return res.status(400).json({ error: "vql is required" });
-    if (!title) return res.status(400).json({ error: "title is required" });
+    const bodyProblem = deployHuntBodyProblem({ vql, title, mode, hostname });
+    if (bodyProblem) return res.status(400).json({ error: bodyProblem });
     try {
       if (mode === "collection") {
-        if (!hostname) return res.status(400).json({ error: "hostname is required for a collection" });
         logLine(`[velociraptor] deploy-hunt collection "${title}" on ${hostname}`);
         const result = await collectHostResolved(hostname, vql, description);
         // A collection is a per-host FLOW (no huntId), so its outcome isn't auto-collected — but recording

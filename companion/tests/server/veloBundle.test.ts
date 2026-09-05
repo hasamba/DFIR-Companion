@@ -196,7 +196,7 @@ describe("Velociraptor triage bundles — routes", () => {
   // oversized body could never run and used to surface only as an E2BIG spawn failure (#825,
   // #828); the routes now refuse it with a 400 before the client is touched, and they measure
   // UTF-8 bytes, because a character count under-reads a multibyte query by up to three times.
-  describe("VQL size limit on /velociraptor/run, /hunt and /collect-host", () => {
+  describe("VQL size limit on /velociraptor/run, /hunt, /collect-host and deploy-hunt", () => {
     const ROUTES = (vql: string) =>
       [
         ["/velociraptor/run", { vql }],
@@ -244,6 +244,42 @@ describe("Velociraptor triage bundles — routes", () => {
       const res = await request(spyApp).post("/velociraptor/run").send({ vql });
       expect(res.status).toBe(200);
       expect(calls).toHaveLength(1);
+    });
+
+    // The case-scoped deploy path was the one VQL-carrying route the limit missed (#871). It takes
+    // its VQL from the same body and — in hunt mode — splits it into statements and embeds each
+    // into a generated artifact before the spawn, so an oversized program is duplicated several
+    // times over on its way to an E2BIG nobody can act on.
+    it("refuses an oversized deploy-hunt body in BOTH modes and never invokes the client", async () => {
+      const calls: string[][] = [];
+      const { app: spyApp } = await makeApp(async (statements) => {
+        calls.push(statements);
+        return { rows: [], raw: "" };
+      });
+      const vql = "SELECT 1 FROM scope() -- " + "x".repeat(100_001);
+      for (const body of [
+        { vql, title: "oversized", mode: "hunt" },
+        { vql, title: "oversized", mode: "collection", hostname: "WS-1" },
+      ]) {
+        const res = await request(spyApp).post("/cases/c1/velociraptor/deploy-hunt").send(body);
+        expect(res.status, body.mode).toBe(400);
+        expect(res.body.error, body.mode).toMatch(/vql is too long/);
+      }
+      expect(calls).toHaveLength(0);
+    });
+
+    it("accepts a deploy-hunt body under the byte limit", async () => {
+      // This suite's default runner answers the bundle-launch shape (`artifacts=[`); a deploy-hunt
+      // launches a generated single artifact, so it needs a runner that answers that one.
+      const { app: spyApp } = await makeApp(async (statements) =>
+        statements[0].includes("hunt(") && statements[0].includes("artifacts=")
+          ? { rows: [{ Hunt: { HuntId: "H.SIZE1", state: "RUNNING" } }], raw: "" }
+          : { rows: [], raw: "" },
+      );
+      const res = await request(spyApp)
+        .post("/cases/c1/velociraptor/deploy-hunt")
+        .send({ vql: "SELECT 1 FROM scope() -- " + "x".repeat(90_000), title: "large", mode: "hunt" });
+      expect(res.status).toBe(200);
     });
   });
 
