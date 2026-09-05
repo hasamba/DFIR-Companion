@@ -22,15 +22,18 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
   // corrupt archive, or malformed payload.
   //
   // Rate-limited like /unlock, and for a sharper reason: opening an archive costs a deliberate
-  // ~1s scrypt derivation (caseEncryption.ts) on the SYNCHRONOUS path, so an unauthenticated
-  // caller looping wrong-password imports holds the event loop — the whole server, not just this
-  // route — for as long as it cares to. The origin guard doesn't stop it (a caller with no Origin
-  // header is allowed by design, see http/originGuard.ts) and in container mode the port is on the
-  // network. Keyed by client IP because an import names no case until it has been decrypted; the
-  // key is coarse behind a reverse proxy that doesn't strip its own address, where every caller
-  // shares one bucket. That's the deliberate trade: a shared 30s import lockout is a far smaller
-  // failure than a wedged event loop, and refusing to trust a spoofable X-Forwarded-For is worth
-  // more than a per-caller bucket.
+  // ~1s scrypt derivation (caseEncryption.ts). Since #862 that derivation runs on libuv's
+  // threadpool rather than on the event loop, so a caller looping wrong-password imports no longer
+  // wedges the whole server outright — but the pool is four threads by default and is shared with
+  // every other user of it (file I/O, zlib, every OTHER derivation), so filling it still stalls
+  // unrelated work server-wide for as long as the caller cares to. That pool is the resource these
+  // limits protect. The origin guard doesn't stop it (a caller with no Origin header is allowed by
+  // design, see http/originGuard.ts) and in container mode the port is on the network. Keyed by
+  // client IP because an import names no case until it has been decrypted; the key is coarse
+  // behind a reverse proxy that doesn't strip its own address, where every caller shares one
+  // bucket. That's the deliberate trade: a shared 30s import lockout is a far smaller failure than
+  // a threadpool no other request can get onto, and refusing to trust a spoofable X-Forwarded-For
+  // is worth more than a per-caller bucket.
   app.post("/cases/import/encrypted", async (req: Request, res: Response) => {
     const limiter = getImportLimiter();
     const limiterKey = req.ip ?? "unknown";
@@ -50,11 +53,20 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
       if (typeof password !== "string" || !password) {
         return res.status(400).json({ error: "password is required" });
       }
-      // Everything past here reaches decryptBuffer, whose scrypt derivation blocks the event loop
-      // for about a second. The failure limiter above cannot bound that on its own: it counts only
-      // outcomes the catch classifies as failures, and deliberately never counts a conflict. This
-      // budget is charged per REQUEST, so no outcome — conflict, malformed archive, or success —
-      // is an unmetered way to buy another derivation (#424).
+      // Everything past here reaches decryptBuffer, whose scrypt derivation holds a threadpool
+      // thread for about a second. The failure limiter above cannot bound that on its own: it
+      // counts only outcomes the catch classifies as failures, and deliberately never counts a
+      // conflict. This budget is charged per REQUEST, so no outcome — conflict, malformed archive,
+      // or success — is an unmetered way to buy another derivation (#424).
+      //
+      // It is also why the failure limiter above may keep its three-step shape (check the lockout,
+      // decrypt, count in the catch) now that the derivation is async. /unlock and
+      // /auth/local/login had to move to AttemptLimiter.attemptFor when theirs did (#866, #872),
+      // because there the per-key failure budget was the ONLY bound and a burst slipped past the
+      // check before anything was counted. Here it is not: this per-request window is charged
+      // BEFORE the derivation rather than after it, so a burst is capped at 10/min per IP whatever
+      // order the failures land in. The serialized form would not fit anyway — it counts every
+      // non-success, and a conflict must stay uncounted (#424).
       if (!getImportIpLimiter().tryAcquire(limiterKey)) {
         res.setHeader("Retry-After", "60");
         return res.status(429).json({ error: "too many import attempts, try again later" });
