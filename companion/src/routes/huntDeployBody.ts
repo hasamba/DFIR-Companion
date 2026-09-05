@@ -2,6 +2,7 @@
 // routes/velociraptor.ts, which sits at its file-size cap. Pure: no I/O, no request object.
 
 import type { HuntCoverage, HuntOutcomeSource } from "../analysis/huntOutcomes.js";
+import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 export interface DeployHuntBody {
   vql: string;
@@ -60,4 +61,22 @@ export function parseDeployHuntBody(raw: unknown): DeployHuntBody {
     ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
     ...(coverage ? { coverage } : {}),
   };
+}
+
+/**
+ * The 400 this body earns, or null when it is usable.
+ *
+ * Lives here rather than in the route because routes/velociraptor.ts is at its file-size cap, and
+ * because the size check belongs with the parse: deploy-hunt was the one VQL-carrying route that
+ * never got `vqlSizeProblem` (#871), so an oversized program was packaged into a generated
+ * artifact — embedded into the outer program, so duplicated several times over — and only failed
+ * at the spawn, as an E2BIG the analyst could do nothing with.
+ */
+export function deployHuntBodyProblem(
+  body: Pick<DeployHuntBody, "vql" | "title" | "mode" | "hostname">,
+): string | null {
+  if (!body.vql) return "vql is required";
+  if (!body.title) return "title is required";
+  if (body.mode === "collection" && !body.hostname) return "hostname is required for a collection";
+  return vqlSizeProblem(body.vql);
 }
