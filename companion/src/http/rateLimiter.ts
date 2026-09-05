@@ -6,6 +6,10 @@
 
 import type { Request, Response, NextFunction } from "express";
 
+/** What one serialized {@link AttemptLimiter.attemptFor} decided; `value` is what the check proved. */
+export type AttemptResult<T> =
+  { kind: "locked"; retryAfterMs: number } | { kind: "ok"; value: T } | { kind: "failed"; lockoutMs: number };
+
 /** What one serialized {@link AttemptLimiter.attempt} decided. */
 export type AttemptOutcome =
   /** The key was locked out before the check ran; nothing was tried. */
@@ -89,13 +93,28 @@ export class AttemptLimiter {
    * has to come through here, or the budget is shared in name only.
    */
   async attempt(key: string, check: () => Promise<boolean>): Promise<AttemptOutcome> {
+    const result = await this.attemptFor(key, async () => ((await check()) ? true : null));
+    return result.kind === "ok" ? { kind: "ok" } : result;
+  }
+
+  /**
+   * {@link attempt} for a check whose success carries something the caller needs — the identity a
+   * login just verified, say (#872). A non-null result IS the success; `null` is a failed attempt.
+   *
+   * This is where both forms are actually serialized. Returning the value through the limiter is
+   * what lets a caller that needs it still come through here: the alternative is assigning it to a
+   * variable from inside the check, which reads as the same code and quietly reopens the ordering
+   * hole the moment someone moves the lockout test back out of the chain.
+   */
+  async attemptFor<T>(key: string, check: () => Promise<T | null>): Promise<AttemptResult<T>> {
     const previous = this.inflight.get(key) ?? Promise.resolve();
-    const run = previous.then(async (): Promise<AttemptOutcome> => {
+    const run = previous.then(async (): Promise<AttemptResult<T>> => {
       const retryAfterMs = this.remainingLockout(key);
       if (retryAfterMs > 0) return { kind: "locked", retryAfterMs };
-      if (await check()) {
+      const value = await check();
+      if (value !== null) {
         this.clear(key);
-        return { kind: "ok" };
+        return { kind: "ok", value };
       }
       return { kind: "failed", lockoutMs: this.recordFailure(key) };
     });
