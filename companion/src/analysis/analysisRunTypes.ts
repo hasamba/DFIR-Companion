@@ -167,14 +167,30 @@ export const analysisRunManifestSchema: z.ZodType<AnalysisRunManifest> = z.objec
 
 export interface AnalysisRunHead {
   schemaVersion: typeof ANALYSIS_RUN_SCHEMA_VERSION;
+  /**
+   * Case the pinned tip belongs to. Optional only to read ledgers written before the
+   * field existed; a head without it is not trusted and forces a rebuild, which then
+   * writes one carrying the owner.
+   */
+  caseId?: string;
   sequence: number;
   manifestHash: string;
 }
 
 export const analysisRunHeadSchema: z.ZodType<AnalysisRunHead> = z.object({
   schemaVersion: z.literal(ANALYSIS_RUN_SCHEMA_VERSION),
+  caseId: z.string().min(1).optional(),
   sequence: z.number().int().positive(),
   manifestHash: sha256Schema,
+});
+
+/** Marker written before a manifest and removed after the head is pinned. */
+export interface AnalysisRunPendingAppend {
+  id: string;
+}
+
+export const analysisRunPendingAppendSchema: z.ZodType<AnalysisRunPendingAppend> = z.object({
+  id: z.string().min(1),
 });
 
 export interface AnalysisRunRecordInput {
@@ -196,4 +212,10 @@ export interface AnalysisRunIntegrity {
   ok: boolean;
   manifests: number;
   problems: string[];
+  /**
+   * Manifests in the case directory that name a different case, as a renamed archive
+   * import leaves behind. They are retained for provenance but form no part of this
+   * case's chain, so they are counted rather than verified or hidden.
+   */
+  foreignManifests: number;
 }

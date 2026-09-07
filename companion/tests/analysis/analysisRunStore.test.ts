@@ -201,6 +201,35 @@ describe("AnalysisRunStore", () => {
 
       expect(await store.list("c2")).toEqual([]);
     });
+
+    it("starts a fresh chain when the directory holds another case's ledger", async () => {
+      await store.record("c1", { ...BASE_RUN, id: "src-1" });
+      await store.record("c1", { ...BASE_RUN, id: "src-2" });
+      // A renamed import copies head.json in too, so the head names the source case
+      // and its sequence still matches the manifest count.
+      await copyLedgerToC2("src-1");
+      await cp(join(ledgerDir("c1"), "src-2.json"), join(ledgerDir("c2"), "src-2.json"));
+      await cp(join(ledgerDir("c1"), "head.json"), join(ledgerDir("c2"), "head.json"));
+
+      const own = await store.record("c2", { ...BASE_RUN, id: "own-1" });
+
+      expect(own.sequence).toBe(1);
+      expect(own.previousManifestHash).toBeNull();
+      expect((await store.list("c2")).map((run) => run.id)).toEqual(["own-1"]);
+    });
+
+    it("scopes integrity reporting to the runs the case owns", async () => {
+      await store.record("c1", { ...BASE_RUN, id: "src-1" });
+      await copyLedgerToC2("src-1");
+      await cp(join(ledgerDir("c1"), "head.json"), join(ledgerDir("c2"), "head.json"));
+      await store.record("c2", { ...BASE_RUN, id: "own-1" });
+
+      const result = await store.verify("c2");
+
+      expect(result.ok).toBe(true);
+      expect(result.manifests).toBe(1);
+      expect(result.foreignManifests).toBe(1);
+    });
   });
 
   describe("append cost", () => {
@@ -229,16 +258,46 @@ describe("AnalysisRunStore", () => {
       expect((await store.verify("c1")).ok).toBe(true);
     });
 
-    it("does not reuse a sequence when the pinned head is ahead of the manifests", async () => {
+    it("recovers the tip when a crash left the head one behind the manifests", async () => {
       const first = await store.record("c1", { ...BASE_RUN, id: "run-1" });
-      await store.record("c1", { ...BASE_RUN, id: "run-2" });
+      const second = await store.record("c1", { ...BASE_RUN, id: "run-2" });
+      // Rewind to the state a crash between the manifest write and the head write
+      // leaves behind: run-2 on disk, head still pinned to run-1, marker outstanding.
+      await writeFile(
+        join(ledgerDir("c1"), "head.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          caseId: "c1",
+          sequence: first.sequence,
+          manifestHash: first.manifestHash,
+        }),
+        "utf8",
+      );
+      await writeFile(join(ledgerDir("c1"), "pending.json"), JSON.stringify({ id: "run-2" }), "utf8");
+
+      const third = await store.record("c1", { ...BASE_RUN, id: "run-3" });
+
+      expect(third.sequence).toBe(3);
+      expect(third.previousManifestHash).toBe(second.manifestHash);
+      expect((await store.verify("c1")).ok).toBe(true);
+    });
+
+    it("leaves a deleted manifest visible instead of backfilling its sequence", async () => {
+      await store.record("c1", { ...BASE_RUN, id: "run-1" });
+      const second = await store.record("c1", { ...BASE_RUN, id: "run-2" });
       await unlink(join(ledgerDir("c1"), "run-2.json"));
 
       const next = await store.record("c1", { ...BASE_RUN, id: "run-3" });
 
-      expect(next.sequence).toBe(2);
-      expect(next.previousManifestHash).toBe(first.manifestHash);
-      expect((await store.verify("c1")).ok).toBe(true);
+      // Reusing the vacated sequence would erase the evidence that run-2 ever
+      // existed. The new run keeps its own place and still names the missing
+      // manifest as its predecessor, so verify() reports the gap permanently.
+      expect(next.sequence).toBe(3);
+      expect(next.previousManifestHash).toBe(second.manifestHash);
+      const result = await store.verify("c1");
+      expect(result.ok).toBe(false);
+      expect(result.problems).toContain("run-3: ledger sequence mismatch");
+      expect(result.problems).toContain("run-3: previous manifest hash mismatch");
     });
   });
 });
