@@ -13,6 +13,7 @@ import type { SynthesisCoverage, ModelPerfSnapshot } from "../analysis/synthMeta
 import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { renderScopeSection } from "./scopeSection.js";
+import { caseDomains, defangIndicators } from "./defang.js";
 import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
@@ -47,7 +48,8 @@ export function renderReportContents(
 ): RedactedReportContents {
   const scopeSection = hostScope ? `\n\n${renderScopeSection(hostScope)}` : "";
   return {
-    markdown:
+    // Defanged after the scope section is appended — see html.ts for why this sits at the seam.
+    markdown: defangIndicators(
       renderMarkdownReport(
         state,
         meta,
@@ -65,6 +67,8 @@ export function renderReportContents(
         complianceControl,
         custody,
       ) + scopeSection,
+      caseDomains(state),
+    ),
     html: renderHtmlReport(
       state,
       meta,

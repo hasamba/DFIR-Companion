@@ -238,11 +238,15 @@ export class AnalysisRunStore {
         await handle.writeFile(JSON.stringify(manifest, null, 2), "utf8");
         await handle.sync();
       } catch (err) {
+        // The marker is deliberately LEFT in place on failure. It may predate this attempt — a
+        // retry of an id whose first attempt wrote the manifest but died before pinning the head
+        // hits EEXIST here, and the marker is then the only remaining signal that the head is
+        // stale. Clearing it would let the next append trust that head and reuse a sequence that
+        // is already on disk, forking the chain permanently. A stale marker only costs the next
+        // append one rescan, and the next successful append clears it.
         if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-          await rm(this.pendingPath(caseId), { force: true });
           throw new Error(`analysis run ${manifest.id} already exists`);
         }
-        await rm(this.pendingPath(caseId), { force: true });
         throw err;
       } finally {
         await handle?.close();

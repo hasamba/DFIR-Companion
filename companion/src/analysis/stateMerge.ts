@@ -18,6 +18,7 @@ import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalEvent.js";
+import { unionEventTechniques } from "./attackTechniqueNames.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -345,6 +346,14 @@ export function mergeDelta(
   // during synthesis. Idempotent.
   const correlated = correlateEvents(withExfil).sort(byEventTime);
 
+  // Deterministic importers hardcode the delta's top-level mitreTechniques to [] and carry the real
+  // technique IDs on the forensic events instead, so the aggregate above sees nothing to collect.
+  // The MITRE panel and the report's MITRE section both read that aggregate, which is why they
+  // stayed empty while Kill Chain and the ATT&CK Navigator export — which read the events directly
+  // — showed the techniques. Union from the merged timeline so any delta contributes, and so an
+  // existing case heals on its next merge. Idempotent: ids already present are skipped. #878.
+  const mitreWithEvents = unionEventTechniques(mitreTechniques, correlated);
+
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
   const keyQuestions =
@@ -387,7 +396,7 @@ export function mergeDelta(
     openThreads,
     timeline,
     forensicTimeline: correlated,
-    mitreTechniques,
+    mitreTechniques: mitreWithEvents,
     keyQuestions,
     nextSteps,
     uncertainties,

@@ -954,3 +954,58 @@ describe("mergeDelta year-clamp eligibility (#739)", () => {
     expect(state.forensicTimeline[0].yearInferred).toBe(true);
   });
 });
+
+// Every deterministic importer emits a delta whose top-level mitreTechniques is hardcoded empty,
+// while the real technique IDs ride on the forensic events it produces. The dashboard MITRE panel
+// and the report's MITRE section both read the aggregate, so both showed nothing until an AI
+// synthesis pass happened to union the per-event tags in. Kill Chain and the ATT&CK Navigator
+// export read the events directly, which is why only those two surfaces looked correct. #878.
+describe("mergeDelta MITRE aggregate (#878)", () => {
+  const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
+
+  const event = (id: string, techniques: string[]) => ({
+    id,
+    timestamp: "2026-06-01T10:00:00Z",
+    description: `event ${id}`,
+    severity: "High" as const,
+    mitreTechniques: techniques,
+    relatedFindingIds: [],
+  });
+
+  it("collects techniques carried by forensic events, with no AI synthesis involved", () => {
+    const next = mergeDelta(
+      emptyState("c1"),
+      {
+        ...baseDelta,
+        mitreTechniques: [],
+        forensicEvents: [event("e1", ["T1003.003"]), event("e2", ["T1021.002", "T1570"])],
+      },
+      ctx,
+    );
+
+    expect(next.mitreTechniques.map((t) => t.id).sort()).toEqual(["T1003.003", "T1021.002", "T1570"]);
+    expect(next.mitreTechniques.every((t) => t.name.length > 0)).toBe(true);
+  });
+
+  it("does not duplicate a technique the delta already names at the top level", () => {
+    const next = mergeDelta(
+      emptyState("c1"),
+      {
+        ...baseDelta,
+        mitreTechniques: [{ id: "T1003.003", name: "NTDS" }],
+        forensicEvents: [event("e1", ["T1003.003"])],
+      },
+      ctx,
+    );
+
+    expect(next.mitreTechniques.filter((t) => t.id === "T1003.003")).toHaveLength(1);
+  });
+
+  it("stays stable when the same events are merged again", () => {
+    const delta = { ...baseDelta, forensicEvents: [event("e1", ["T1003.003"])] };
+    let state = mergeDelta(emptyState("c1"), delta, ctx);
+    state = mergeDelta(state, delta, ctx);
+
+    expect(state.mitreTechniques.map((t) => t.id)).toEqual(["T1003.003"]);
+  });
+});
