@@ -19,7 +19,7 @@ import type { Tokens, TokensList } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
-import { defangIndicators } from "./defang.js";
+import { caseDomains, defangIndicators } from "./defang.js";
 import { renderScopeSection } from "./scopeSection.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
@@ -484,8 +484,18 @@ export async function renderDocxReport(
 
 ${renderScopeSection(hostScope)}`
       : md,
+    caseDomains(state),
   );
   const marked = new Marked({ gfm: true });
+  // Same autolink kill-switch as html.ts — a bare `www.` host must not become a hyperlink here
+  // either, and the .docx is the copy an executive is most likely to click in.
+  marked.use({
+    tokenizer: {
+      url(): undefined {
+        return undefined;
+      },
+    },
+  });
   const tokens = marked.lexer(mdWithScope);
   const children = tokensToDocxChildren(tokens);
   // Brand the headings with the template's accent colour (a validated #rrggbb). The default

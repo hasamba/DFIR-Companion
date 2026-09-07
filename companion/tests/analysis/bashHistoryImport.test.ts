@@ -151,6 +151,22 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
     expect(r.events[0]?.severity).toBe("Info");
   });
 
+  it("leaves a permission change that grants no execute bit at Info", () => {
+    // 644 and 1777 add no execute bit to a file, and nothing ran — grading them Medium and
+    // tagging them as shell execution would manufacture an attacker narrative from routine admin.
+    for (const cmd of ["chmod 644 /tmp/config", "chmod 1777 /tmp/", "chmod 666 /tmp/sock"]) {
+      const r = parseShellHistoryFile(cmd, { user: "ops" });
+      expect(r.events[0]?.severity, cmd).toBe("Info");
+    }
+  });
+
+  it("grades a chmod that grants execute in a world-writable path without claiming it ran", () => {
+    const r = parseShellHistoryFile("chmod 755 /tmp/.x", { user: "svc" });
+    expect(r.events[0]?.severity).toBe("Medium");
+    expect(r.events[0]?.mitreTechniques).toContain("T1222.002");
+    expect(r.events[0]?.mitreTechniques).not.toContain("T1059.004");
+  });
+
   it("keeps the worse of the two tables when both fire", () => {
     // CMD_RULES grades history-tampering High; the shared table grades it strong (also High). The
     // union of techniques must survive, and a High from either side must not be softened to Medium.

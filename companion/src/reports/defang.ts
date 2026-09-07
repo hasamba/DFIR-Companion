@@ -17,10 +17,24 @@
 // the real indicator.
 
 // One combined pattern so each indicator is rewritten exactly once, and text between matches is
-// never touched. Order matters: a URL is tried before the email and bare-IPv4 forms, so an IPv4
-// host inside a URL is handled by the URL branch rather than being defanged twice.
+// never touched. Order matters: a URL is tried before the email, bare-IPv4 and bare-domain forms,
+// so a host inside a URL is handled by the URL branch — which leaves the path alone — rather than
+// being matched again by the domain branch further along the same span.
+import type { InvestigationState } from "../analysis/stateTypes.js";
+
+/**
+ * Domain values the case itself records as indicators, for defangIndicators' second argument.
+ * Keeps the "is this a domain" decision on data the case already asserted, rather than on a guess
+ * about the shape of a dotted token.
+ */
+export function caseDomains(state: InvestigationState): string[] {
+  return state.iocs.filter((ioc) => ioc.type === "domain").map((ioc) => ioc.value);
+}
+
 const INDICATOR_RE =
-  /\bhttps?:\/\/[^\s<>"'`|\]),]+|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|\b(?:\d{1,3}\.){3}\d{1,3}\b/gi;
+  /\bhttps?:\/\/[^\s<>"'`|\]),]+|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/gi;
+
+const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 // Punctuation that ends a sentence rather than the indicator, so it is put back untouched.
 const TRAILING_PUNCTUATION_RE = /[.,;:!?'")\]}>]+$/;
@@ -52,12 +66,22 @@ function defangEmail(email: string): string {
  * Idempotent: already-defanged text contains no bare scheme, `@` or dotted quad for the pattern to
  * match, so running it twice is the same as running it once.
  */
-export function defangIndicators(text: string): string {
+export function defangIndicators(text: string, knownDomains: Iterable<string> = []): string {
+  const known = new Set([...knownDomains].map((d) => d.trim().toLowerCase()).filter(Boolean));
   return text.replace(INDICATOR_RE, (match) => {
     const trailing = TRAILING_PUNCTUATION_RE.exec(match)?.[0] ?? "";
     const indicator = trailing ? match.slice(0, -trailing.length) : match;
     if (/^https?:\/\//i.test(indicator)) return defangUrl(indicator) + trailing;
     if (indicator.includes("@")) return defangEmail(indicator) + trailing;
-    return defangHost(indicator) + trailing;
+    if (IPV4_RE.test(indicator)) return defangHost(indicator) + trailing;
+    // A bare dotted token is only a domain when we can say so without guessing. Two cases qualify:
+    // a `www.` host, which the Markdown autolinker turns into a live link on sight, and a value the
+    // case itself records as a domain IOC. Guessing more widely would mangle the filenames a
+    // forensic report is full of — `vitest.config.ts` and `History.db` have the shape of a domain
+    // and a two-letter TLD, and analysis/textDomains deliberately accepts that class because for
+    // IOC extraction a false positive is cheap. In a deliverable it is not.
+    const lower = indicator.toLowerCase();
+    if (lower.startsWith("www.") || known.has(lower)) return defangHost(indicator) + trailing;
+    return match;
   });
 }

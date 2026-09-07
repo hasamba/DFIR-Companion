@@ -32,6 +32,23 @@ describe("defangIndicators", () => {
     );
   });
 
+  it("always defangs a www host, which GFM autolinks on sight", () => {
+    expect(defangIndicators("beaconing to www.evil.com daily")).toBe("beaconing to www[.]evil[.]com daily");
+  });
+
+  it("defangs a bare hostname the case records as a domain IOC", () => {
+    expect(defangIndicators("callback to evil.test observed", ["evil.test"])).toBe(
+      "callback to evil[.]test observed",
+    );
+  });
+
+  it("does not guess at dotted tokens the case never called domains", () => {
+    // A forensic report is full of filenames shaped exactly like a domain with a two-letter TLD.
+    // Mangling them in a deliverable costs more than leaving an inert, unlinked hostname fanged.
+    const text = "System.Net.WebClient wrote vitest.config.ts and History.db to disk";
+    expect(defangIndicators(text)).toBe(text);
+  });
+
   it("leaves ordinary prose, filenames and version strings alone", () => {
     const prose = "Version 0.36.0 wrote report.md and report.html at 10.5 MB/s.";
     expect(defangIndicators(prose)).toBe(prose);

@@ -13,7 +13,7 @@ import type { SynthesisCoverage, ModelPerfSnapshot } from "../analysis/synthMeta
 import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { renderScopeSection } from "./scopeSection.js";
-import { defangIndicators } from "./defang.js";
+import { caseDomains, defangIndicators } from "./defang.js";
 import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
@@ -67,6 +67,7 @@ export function renderReportContents(
         complianceControl,
         custody,
       ) + scopeSection,
+      caseDomains(state),
     ),
     html: renderHtmlReport(
       state,

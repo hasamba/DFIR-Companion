@@ -155,22 +155,34 @@ const CMD_RULES: CmdRule[] = [
     severity: "Medium",
     mitre: ["T1548.001"],
   },
-  // Staging a payload in a world-writable directory and making it runnable. The fetch itself is
-  // graded separately (ingress tool transfer, below); this is the step that turns a downloaded file
-  // into an executable one. Grading it Info kept the whole execution off the forensic timeline, so
-  // a synthesis pass could see the download and never see that it ran. #877.
+  // Staging a payload in a world-writable directory and running it, on one line. Graded first so
+  // the combined form keeps BOTH the permission change and the execution; the two rules below
+  // catch each half on its own. Grading this Info kept the execution off the forensic timeline
+  // entirely, so a synthesis pass could see the download and never see that it ran. #877.
   {
-    re: /\bchmod\s+(?:[+ugoa]*\+x|[0-7]{3,4})[^\n]*(?:\/tmp\/|\/var\/tmp\/|\/dev\/shm\/)/i,
+    re: /\bchmod\s+(?:[+ugoa]*\+x|[0-7]?(?:[1357][0-7]{2}|[0-7][1357][0-7]|[0-7]{2}[1357]))\b[^\n]*[;&|]+\s*(?:\/tmp\/|\/var\/tmp\/|\/dev\/shm\/)[^\s;&|]/i,
     severity: "Medium",
     mitre: ["T1222.002", "T1059.004"],
   },
   // Running a binary straight out of a world-writable directory. Anchored to command position
   // (line start or after a separator) so an ordinary `cat /tmp/notes.txt` or `curl -o /tmp/x`,
-  // where the path is just an argument, stays untouched.
+  // where the path is only an argument, stays untouched.
   {
     re: /(?:^|[;&|]+\s*)(?:\/tmp\/|\/var\/tmp\/|\/dev\/shm\/)[^\s;&|]+/i,
     severity: "Medium",
     mitre: ["T1059.004"],
+  },
+  // Granting execute on a file in a world-writable directory, with nothing run on the same line.
+  // A permission change is NOT execution, so this carries no T1059 tag — claiming one would let a
+  // routine `chmod` manufacture an attacker-execution narrative in synthesis. The numeric form
+  // must actually set an execute bit (an odd digit in one of the three permission positions), so
+  // `chmod 644 /tmp/config` and `chmod 666 /tmp/sock` match nothing. A trailing character after
+  // the directory is required too, so `chmod 1777 /tmp/` — sticky-bitting the directory itself,
+  // routine administration — is left alone.
+  {
+    re: /\bchmod\s+(?:[+ugoa]*\+x|[0-7]?(?:[1357][0-7]{2}|[0-7][1357][0-7]|[0-7]{2}[1357]))\b[^\n]*(?:\/tmp\/|\/var\/tmp\/|\/dev\/shm\/)[^\s;&|]/i,
+    severity: "Medium",
+    mitre: ["T1222.002"],
   },
   // Exfiltration over web — curl/wget UPLOADING a file (POST form / --upload-file / --data-binary),
   // distinct from (and worse than) a plain download below. #199. T1567.002 (Exfiltration to Cloud

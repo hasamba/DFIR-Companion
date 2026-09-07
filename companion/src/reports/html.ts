@@ -3,7 +3,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
-import { defangIndicators } from "./defang.js";
+import { caseDomains, defangIndicators } from "./defang.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { escapeHtml } from "./escapeHtml.js";
 import type { CustodyRecord } from "../analysis/custody.js";
@@ -165,11 +165,19 @@ export function renderHtmlReport(
 
 ${renderScopeSection(hostScope)}`
       : markdown,
+    caseDomains(state),
   );
 
   const marked = new Marked({ gfm: true });
-  // Escape any raw HTML tokens in the source instead of emitting them verbatim.
+  // Escape any raw HTML tokens in the source instead of emitting them verbatim, and switch off GFM
+  // autolinking entirely: report text is untrusted evidence, and a bare `www.` host becomes a live
+  // anchor on sight. Explicit [text](url) links, tables and strikethrough are unaffected. #883.
   marked.use({
+    tokenizer: {
+      url(): undefined {
+        return undefined;
+      },
+    },
     renderer: {
       html(token: string | { text?: string }): string {
         return escapeHtml(typeof token === "string" ? token : (token.text ?? ""));

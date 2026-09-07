@@ -160,4 +160,17 @@ describe("renderHtmlReport indicator defanging (#883)", () => {
     expect(html).toContain("root[@]evil[.]example");
     expect(html).toContain("203[.]0[.]113[.]10");
   });
+
+  it("emits no live anchor for a bare domain indicator", () => {
+    const state = emptyState("c1");
+    state.lastSummary = "Callback to www.evil.com observed.";
+    state.iocs.push({ id: "i1", type: "domain", value: "evil.example", firstSeen: "2026-05-20T09:00:00Z" });
+
+    const html = renderHtmlReport(state);
+
+    // GFM autolinks a bare www. host into http://www.evil.com even with no scheme in the source.
+    expect(html).not.toMatch(/<a\s+href="https?:/i);
+    expect(html).toContain("www[.]evil[.]com");
+    expect(html).toContain("evil[.]example");
+  });
 });

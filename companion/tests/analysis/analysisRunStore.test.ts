@@ -282,6 +282,34 @@ describe("AnalysisRunStore", () => {
       expect((await store.verify("c1")).ok).toBe(true);
     });
 
+    it("does not fork the chain when a retry of an interrupted append hits the existing manifest", async () => {
+      const first = await store.record("c1", { ...BASE_RUN, id: "run-1" });
+      const second = await store.record("c1", { ...BASE_RUN, id: "run-2" });
+      // The state a crash between the manifest write and the head write leaves behind.
+      await writeFile(
+        join(ledgerDir("c1"), "head.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          caseId: "c1",
+          sequence: first.sequence,
+          manifestHash: first.manifestHash,
+        }),
+        "utf8",
+      );
+      await writeFile(join(ledgerDir("c1"), "pending.json"), JSON.stringify({ id: "run-2" }), "utf8");
+
+      // A caller retrying the SAME id must fail, because that manifest is already on disk. The
+      // failure must not clear the marker: it is the only remaining signal that the head is stale,
+      // and without it the next append trusts the head and reuses run-2's sequence.
+      await expect(store.record("c1", { ...BASE_RUN, id: "run-2" })).rejects.toThrow(/already exists/i);
+
+      const third = await store.record("c1", { ...BASE_RUN, id: "run-3" });
+
+      expect(third.sequence).toBe(3);
+      expect(third.previousManifestHash).toBe(second.manifestHash);
+      expect((await store.verify("c1")).ok).toBe(true);
+    });
+
     it("leaves a deleted manifest visible instead of backfilling its sequence", async () => {
       await store.record("c1", { ...BASE_RUN, id: "run-1" });
       const second = await store.record("c1", { ...BASE_RUN, id: "run-2" });
