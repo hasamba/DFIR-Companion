@@ -480,9 +480,13 @@ describe("dashboard.html", () => {
 
   it("visually distinguishes an already-marked-false-positive IOC in the main IOC list, independent of the Hide FP/no-intel toggle (#227)", async () => {
     const html = dashboardClientSource();
-    // fpVals must be computed unconditionally (not just inside the hideFpNoIntel branch), so a
+    // fpVals must be computed unconditionally (not just when the hideFpNoIntel lens is on), so a
     // marked-but-visible IOC (toggle off, or it also has enrichment data) can still show its state.
-    expect(html).toMatch(/const fpVals = fpIocValueSet\(\);\s*\n\s*if \(hideFpNoIntel\)/);
+    // Since #876 the lenses live in DfirIoc.applyIocNoiseFilters and fpVals is handed to it as a
+    // predicate — computed once, outside, and reused by the row rendering below.
+    expect(html).toMatch(
+      /const fpVals = fpIocValueSet\(\);[\s\S]{0,1200}isFalsePositive: i => fpVals\.has\(/,
+    );
     expect(html).toContain("const isFp = fpVals.has(");
     // Struck-through value + an inline un-mark affordance, instead of an unmarked-looking row.
     expect(html).toMatch(/isFp[\s\S]{0,200}text-decoration:line-through/);

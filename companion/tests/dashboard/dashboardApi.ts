@@ -157,6 +157,19 @@ export interface IocApi {
   iocFlagged(i: IocLike): boolean;
   dedupeIocsById(iocs: IocLike[]): IocLike[];
   sortIocsForDisplay(iocs: IocLike[]): IocLike[];
+  applyIocNoiseFilters(
+    list: IocLike[],
+    opts: {
+      hideFpNoIntel?: boolean;
+      showSignalIocsOnly?: boolean;
+      hideSystemPaths?: boolean;
+      isFalsePositive?: (i: IocLike) => boolean;
+      isFlagged?: (i: IocLike) => boolean;
+      corroboration?: (i: IocLike) => number;
+      isSystemPath?: (i: IocLike) => boolean;
+    },
+  ): { visible: IocLike[]; suppressed: boolean };
+  iocNoiseNoticeHtml(suppressed: boolean, total: number): string;
 }
 
 /** The two element shapes the value helpers read off a node they are handed. */

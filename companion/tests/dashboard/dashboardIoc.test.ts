@@ -204,3 +204,85 @@ describe("enrichBadges", () => {
     expect(many).not.toContain("t4");
   });
 });
+
+// The three noise lenses default ON. On a fresh case nothing is enriched, corroborated or flagged
+// yet, so each of them independently matches nothing — and together they hid every IOC the import
+// had just extracted. The panel then counted them in its heading and listed none: "0 of 7 IOCs".
+// They are a de-noising aid the product turns on by itself, not a filter the analyst asked for, so
+// when they would empty a non-empty set they stand down. #876
+describe("applyIocNoiseFilters", () => {
+  const fresh = [
+    { id: "i1", value: "203.0.113.10", enrichments: [] },
+    { id: "i2", value: "evil.test", enrichments: [] },
+  ];
+  const allOn = {
+    hideFpNoIntel: true,
+    showSignalIocsOnly: true,
+    hideSystemPaths: false,
+    isFalsePositive: () => false,
+    isFlagged: () => false,
+    corroboration: () => 0,
+    isSystemPath: () => false,
+  };
+
+  it("stands down when the lenses would hide every IOC", () => {
+    const out = ioc.applyIocNoiseFilters(fresh, allOn);
+    expect(out.visible).toHaveLength(2);
+    expect(out.suppressed).toBe(true);
+  });
+
+  it("filters normally when something survives", () => {
+    const mixed = [...fresh, { id: "i3", value: "bad.test", enrichments: [{ verdict: "malicious" }] }];
+    const out = ioc.applyIocNoiseFilters(mixed, allOn);
+    expect(out.visible.map((i) => i.id)).toEqual(["i3"]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("does not claim to have suppressed anything when the input was already empty", () => {
+    // Nothing to reveal — an empty case is empty, and saying a filter hid it would be a lie.
+    const out = ioc.applyIocNoiseFilters([], allOn);
+    expect(out.visible).toEqual([]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("leaves the list untouched when every lens is off", () => {
+    const out = ioc.applyIocNoiseFilters(fresh, {
+      ...allOn,
+      hideFpNoIntel: false,
+      showSignalIocsOnly: false,
+    });
+    expect(out.visible).toHaveLength(2);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("still hides OS system paths when other IOCs survive", () => {
+    const list = [
+      { id: "i1", value: "C:/Windows/System32/svchost.exe", enrichments: [{ verdict: "harmless" }] },
+      { id: "i2", value: "evil.test", enrichments: [{ verdict: "malicious" }] },
+    ];
+    const out = ioc.applyIocNoiseFilters(list, {
+      ...allOn,
+      hideSystemPaths: true,
+      isSystemPath: (i) => String(i.value).includes("System32"),
+    });
+    expect(out.visible.map((i) => i.id)).toEqual(["i2"]);
+    expect(out.suppressed).toBe(false);
+  });
+});
+
+describe("iocNoiseNoticeHtml", () => {
+  it("says nothing when the lenses did their normal job", () => {
+    expect(ioc.iocNoiseNoticeHtml(false, 7)).toBe("");
+  });
+
+  it("names the count and why the filters stood down", () => {
+    const html = ioc.iocNoiseNoticeHtml(true, 7);
+    expect(html).toContain("Showing all 7 IOCs");
+    expect(html).toContain("would have hidden");
+    expect(html).toContain("ioc-noise-notice");
+  });
+
+  it("keeps the singular readable", () => {
+    expect(ioc.iocNoiseNoticeHtml(true, 1)).toContain("Showing all 1 IOC —");
+  });
+});
