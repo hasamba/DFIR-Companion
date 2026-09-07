@@ -119,7 +119,7 @@ describe("ReportReleaseStore", () => {
       workflow: workflow(),
       actor,
       analysisRuns: [analysisRun()],
-      analysisIntegrity: { ok: true, manifests: 1, problems: [] },
+      analysisIntegrity: { ok: true, manifests: 1, problems: [], foreignManifests: 0 },
       custody: {
         head: { records: 0, headSeq: null, headHash: "" },
         chainBreaks: [],
@@ -146,7 +146,7 @@ describe("ReportReleaseStore", () => {
         workflow: workflow(),
         actor,
         analysisRuns: [analysisRun()],
-        analysisIntegrity: { ok: true, manifests: 1, problems: [] },
+        analysisIntegrity: { ok: true, manifests: 1, problems: [], foreignManifests: 0 },
         custody: {
           head: { records: 0, headSeq: null, headHash: "" },
           chainBreaks: [],
@@ -162,7 +162,7 @@ describe("ReportReleaseStore", () => {
       workflow: workflow(),
       actor,
       analysisRuns: [analysisRun()],
-      analysisIntegrity: { ok: true, manifests: 1, problems: [] },
+      analysisIntegrity: { ok: true, manifests: 1, problems: [], foreignManifests: 0 },
       custody: {
         head: { records: 1, headSeq: 1, headHash: HASH },
         chainBreaks: [{ line: 1, seq: 1, reason: "prev-hash-mismatch" as const }],
@@ -190,7 +190,7 @@ describe("ReportReleaseStore", () => {
     await expect(
       releases.create("c1", {
         ...base,
-        analysisIntegrity: { ok: false, manifests: 1, problems: ["head mismatch"] },
+        analysisIntegrity: { ok: false, manifests: 1, problems: ["head mismatch"], foreignManifests: 0 },
         custody: { ...base.custody, chainBreaks: [] },
       }),
     ).rejects.toThrow("analysis run ledger");
@@ -200,7 +200,7 @@ describe("ReportReleaseStore", () => {
     const common = {
       actor,
       analysisRuns: [analysisRun()],
-      analysisIntegrity: { ok: true, manifests: 1, problems: [] },
+      analysisIntegrity: { ok: true, manifests: 1, problems: [], foreignManifests: 0 },
       custody: {
         head: { records: 0, headSeq: null, headHash: "" },
         chainBreaks: [],
@@ -238,7 +238,7 @@ describe("ReportReleaseStore", () => {
       workflow: workflow(),
       actor,
       analysisRuns: [analysisRun()],
-      analysisIntegrity: { ok: true, manifests: 1, problems: [] },
+      analysisIntegrity: { ok: true, manifests: 1, problems: [], foreignManifests: 0 },
       custody: {
         head: { records: 0, headSeq: null, headHash: "" },
         chainBreaks: [],
