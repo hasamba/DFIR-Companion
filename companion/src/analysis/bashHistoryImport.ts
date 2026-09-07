@@ -155,6 +155,23 @@ const CMD_RULES: CmdRule[] = [
     severity: "Medium",
     mitre: ["T1548.001"],
   },
+  // Staging a payload in a world-writable directory and making it runnable. The fetch itself is
+  // graded separately (ingress tool transfer, below); this is the step that turns a downloaded file
+  // into an executable one. Grading it Info kept the whole execution off the forensic timeline, so
+  // a synthesis pass could see the download and never see that it ran. #877.
+  {
+    re: /\bchmod\s+(?:[+ugoa]*\+x|[0-7]{3,4})[^\n]*(?:\/tmp\/|\/var\/tmp\/|\/dev\/shm\/)/i,
+    severity: "Medium",
+    mitre: ["T1222.002", "T1059.004"],
+  },
+  // Running a binary straight out of a world-writable directory. Anchored to command position
+  // (line start or after a separator) so an ordinary `cat /tmp/notes.txt` or `curl -o /tmp/x`,
+  // where the path is just an argument, stays untouched.
+  {
+    re: /(?:^|[;&|]+\s*)(?:\/tmp\/|\/var\/tmp\/|\/dev\/shm\/)[^\s;&|]+/i,
+    severity: "Medium",
+    mitre: ["T1059.004"],
+  },
   // Exfiltration over web — curl/wget UPLOADING a file (POST form / --upload-file / --data-binary),
   // distinct from (and worse than) a plain download below. #199. T1567.002 (Exfiltration to Cloud
   // Storage) is the historically-accurate label for an HTTP(S) upload; T1041 is kept alongside it

