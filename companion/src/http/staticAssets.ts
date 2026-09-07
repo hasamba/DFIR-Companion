@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { readPublicAsset } from "../serverAssets.js";
+import { sendMaybeGzipped } from "./compressibleResponse.js";
 
 /**
  * Whitelisted static client assets: vendored libraries (Leaflet for the Geographic map, #133;
@@ -329,7 +330,7 @@ export const STATIC_ASSETS: Record<string, string> = {
  */
 export function registerStaticAssets(app: Express): void {
   for (const [route, type] of Object.entries(STATIC_ASSETS)) {
-    app.get(route, async (_req, res) => {
+    app.get(route, async (req, res) => {
       try {
         const buf = await readPublicAsset(route.slice(1)); // strip leading "/"
         // "no-cache" means STORE IT, BUT ASK FIRST — not "do not cache". Express already computes
@@ -342,7 +343,10 @@ export function registerStaticAssets(app: Express): void {
         // no module wires and no rule styles. That is indistinguishable from a broken feature, it
         // survives an ordinary reload, and it lands on every analyst who upgrades the companion,
         // not only on whoever edited the file.
-        res.type(type).set("Cache-Control", "no-cache").send(buf);
+        // Compressed when the client allows it (#882): these are ~140 first-party JS files plus
+        // the stylesheet, and they were all going out as identity bytes.
+        res.set("Cache-Control", "no-cache");
+        await sendMaybeGzipped(req, res, type, buf);
       } catch {
         res.status(404).end();
       }

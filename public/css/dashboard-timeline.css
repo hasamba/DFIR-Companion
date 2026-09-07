@@ -260,7 +260,11 @@
 .report-links { font-size: 12px; }
 .report-links a { color: var(--accent); text-decoration: none; }
 .report-links a:hover { text-decoration: underline; }
-#aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
+/* min-width reserves the pill's footprint before its text arrives. The AI status resolves about
+   seven seconds after load, and without a reserved width it grows from empty to its label and
+   shoves the rest of the toolbar — and <main> under it — down the page. #884 */
+#aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; min-width: 92px;
+  display: inline-block; text-align: center; }
 /* Deep pass (#204) — pre-flight cost table, run control, and the result card. */
 .dp-table { border-collapse: collapse; font-size: 12px; margin: 6px 0 10px; }
 .dp-table th { text-align: right; padding: 4px 10px; color: var(--text-muted); font-weight: normal; border-bottom: 1px solid var(--border-color); }

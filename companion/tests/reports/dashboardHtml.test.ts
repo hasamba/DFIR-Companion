@@ -1283,3 +1283,61 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toMatch(/const remembered = \(\s*localStorage\.getItem\("dfir\.caseId"\)/);
   });
 });
+
+// Four defects from one end-to-end UI QA pass of 0.36.0, all in the page shell rather than in any
+// panel's logic: #880 (no viewport), #882 (no visible loading state), #879 (view picker is
+// mouse-only) and #884 (toolbar reflow shifts main).
+describe("dashboard page shell", () => {
+  it("declares a viewport so the responsive CSS actually runs — #880", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Without this every phone lays the page out at 980px and scales the result down to ~0.38,
+    // which also means no narrow breakpoint in the stylesheet has ever executed in a browser.
+    expect(html).toMatch(/<meta\s+name="viewport"\s+content="width=device-width,\s*initial-scale=1"/);
+  });
+
+  it("paints a loading state before the app is ready — #882", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // The blank window is deliberate: safe-dom hides <body> until it has hydrated styles, to avoid
+    // a flash of unstyled content. That is right, but on a slow link it means nothing at all is on
+    // screen for the best part of a minute. The splash has to survive that same rule, so it needs
+    // its own visibility, and it must be plain markup — no JS runs this early.
+    expect(html).toContain('id="bootSplash"');
+    expect(html).toMatch(/html\[data-safe-dom\][^{]*#bootSplash[^{]*\{[^}]*visibility:\s*visible/);
+    expect(html).toMatch(/dfir-styles-ready[^{]*#bootSplash[^{]*\{[^}]*display:\s*none/);
+  });
+
+  it("gives the dashboard-view menu keyboard-operable entries — #879", () => {
+    const src = dashboardClientSource();
+    // Entries were bare <div>s with a click listener: no role, no tab stop, nothing operable for a
+    // keyboard or a screen reader, under a trigger that announces itself as a menu.
+    expect(src).toMatch(/<button[^>]+class="dv-item/);
+    expect(src).toMatch(/role="menuitem"/);
+    expect(src).toContain('role="menu"');
+    // Arrow keys move between entries and Escape closes, as a menu is expected to behave.
+    expect(src).toMatch(/ArrowDown/);
+    expect(src).toMatch(/ArrowUp/);
+    expect(src).toMatch(/dashViewMenuKeydown|Escape/);
+  });
+});
+
+// Follow-ups from review of the page-shell batch.
+describe("dashboard page shell — review follow-ups", () => {
+  it("paints the splash before the parser-blocking module scripts", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // 144 <script src> tags, none deferred. Markup placed after them is not parsed until every one
+    // has downloaded and executed — which on a slow link is DOMContentLoaded, the exact moment the
+    // splash is hidden again. Sitting after only safe-dom.js is what makes it visible at all.
+    const splash = html.indexOf('id="bootSplash"');
+    const firstModuleScript = html.indexOf('<script src="/js/dashboard-');
+    expect(splash).toBeGreaterThan(-1);
+    expect(firstModuleScript).toBeGreaterThan(-1);
+    expect(splash).toBeLessThan(firstModuleScript);
+  });
+
+  it("moves focus into the view menu when it opens", () => {
+    const src = dashboardClientSource();
+    // The keydown handler is on the menu, so with focus left on the trigger the arrow keys never
+    // reach it until the user presses Tab — the menu announces behaviour it does not have.
+    expect(src).toMatch(/menu\.style\.display = "block"[\s\S]{0,400}focusFirstDashViewItem\(\)/);
+  });
+});
