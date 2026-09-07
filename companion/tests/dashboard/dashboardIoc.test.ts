@@ -204,3 +204,120 @@ describe("enrichBadges", () => {
     expect(many).not.toContain("t4");
   });
 });
+
+// The three noise lenses default ON. On a fresh case nothing is enriched, corroborated or flagged
+// yet, so each of them independently matches nothing — and together they hid every IOC the import
+// had just extracted. The panel then counted them in its heading and listed none: "0 of 7 IOCs".
+// They are a de-noising aid the product turns on by itself, not a filter the analyst asked for, so
+// when they would empty a non-empty set they stand down. #876
+describe("applyIocNoiseFilters", () => {
+  const fresh = [
+    { id: "i1", value: "203.0.113.10", enrichments: [] },
+    { id: "i2", value: "evil.test", enrichments: [] },
+  ];
+  const allOn = {
+    hideFpNoIntel: true,
+    showSignalIocsOnly: true,
+    hideSystemPaths: false,
+    isFalsePositive: () => false,
+    isFlagged: () => false,
+    corroboration: () => 0,
+    isSystemPath: () => false,
+  };
+
+  it("stands down when the lenses would hide every IOC", () => {
+    const out = ioc.applyIocNoiseFilters(fresh, allOn);
+    expect(out.visible).toHaveLength(2);
+    expect(out.suppressed).toBe(true);
+  });
+
+  it("filters normally when something survives", () => {
+    const mixed = [...fresh, { id: "i3", value: "bad.test", enrichments: [{ verdict: "malicious" }] }];
+    const out = ioc.applyIocNoiseFilters(mixed, allOn);
+    expect(out.visible.map((i) => i.id)).toEqual(["i3"]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("does not claim to have suppressed anything when the input was already empty", () => {
+    // Nothing to reveal — an empty case is empty, and saying a filter hid it would be a lie.
+    const out = ioc.applyIocNoiseFilters([], allOn);
+    expect(out.visible).toEqual([]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("leaves the list untouched when every lens is off", () => {
+    const out = ioc.applyIocNoiseFilters(fresh, {
+      ...allOn,
+      hideFpNoIntel: false,
+      showSignalIocsOnly: false,
+    });
+    expect(out.visible).toHaveLength(2);
+    expect(out.suppressed).toBe(false);
+  });
+
+  // The fallback exists because "nothing is enriched yet" is a state of the CASE. An IOC the
+  // analyst marked false positive is a judgement about that IOC, and no amount of missing
+  // enrichment makes it an indicator again — restoring it would also hand it back to bulk copy,
+  // enrichment and hunt actions.
+  it("never restores an IOC the analyst marked false positive", () => {
+    const fps = [
+      { id: "i1", value: "known-good.test", enrichments: [] },
+      { id: "i2", value: "also-good.test", enrichments: [] },
+    ];
+    const out = ioc.applyIocNoiseFilters(fps, { ...allOn, isFalsePositive: () => true });
+    expect(out.visible).toEqual([]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("keeps a false positive hidden while restoring the rest", () => {
+    const mixed = [
+      { id: "fp", value: "known-good.test", enrichments: [] },
+      { id: "i2", value: "203.0.113.10", enrichments: [] },
+    ];
+    const out = ioc.applyIocNoiseFilters(mixed, { ...allOn, isFalsePositive: (i) => i.id === "fp" });
+    expect(out.visible.map((i) => i.id)).toEqual(["i2"]);
+    expect(out.suppressed).toBe(true);
+  });
+
+  // Unlike "signal only" on a fresh case, this lens DID have something to match. Reporting nothing
+  // is the honest answer, and the panel already offers the toggle to turn it off.
+  it("never restores an IOC hidden by the system-path lens", () => {
+    const sys = [{ id: "i1", value: "C:/Windows/System32/svchost.exe", enrichments: [] }];
+    const out = ioc.applyIocNoiseFilters(sys, { ...allOn, hideSystemPaths: true, isSystemPath: () => true });
+    expect(out.visible).toEqual([]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("still hides OS system paths when other IOCs survive", () => {
+    const list = [
+      { id: "i1", value: "C:/Windows/System32/svchost.exe", enrichments: [{ verdict: "harmless" }] },
+      { id: "i2", value: "evil.test", enrichments: [{ verdict: "malicious" }] },
+    ];
+    const out = ioc.applyIocNoiseFilters(list, {
+      ...allOn,
+      hideSystemPaths: true,
+      isSystemPath: (i) => String(i.value).includes("System32"),
+    });
+    expect(out.visible.map((i) => i.id)).toEqual(["i2"]);
+    expect(out.suppressed).toBe(false);
+  });
+});
+
+describe("iocNoiseNoticeHtml", () => {
+  it("says nothing when the lenses did their normal job", () => {
+    expect(ioc.iocNoiseNoticeHtml(false, 7)).toBe("");
+  });
+
+  it("names the count and why the filters stood down", () => {
+    // The count is what is ON SCREEN. With false positives still excluded that can be fewer than
+    // the case total, and claiming "all 7" over five rows would be wrong.
+    const html = ioc.iocNoiseNoticeHtml(true, 5);
+    expect(html).toContain("Showing 5 IOCs");
+    expect(html).toContain("would have hidden");
+    expect(html).toContain("ioc-noise-notice");
+  });
+
+  it("keeps the singular readable", () => {
+    expect(ioc.iocNoiseNoticeHtml(true, 1)).toContain("Showing 1 IOC —");
+  });
+});

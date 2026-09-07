@@ -101,6 +101,66 @@ function sortIocsForDisplay(iocs) {
     (a.type || "").localeCompare(b.type || "") || (a.value || "").localeCompare(b.value || "", undefined, { sensitivity: "base" }));
 }
 
+// The IOC panel's three "noise" lenses, applied in two layers so that the lenses which depend on
+// how far the CASE has got can stand down, while the exclusions that record a JUDGEMENT cannot.
+//
+// All three default ON. On a fresh case nothing has been enriched, corroborated or flagged yet, so
+// "Hide FP/no-intel" and "Signal only" each match nothing on their own terms and together hid every
+// IOC the import had just extracted — the heading counted seven and the body listed none, which
+// reads as a broken panel rather than an active filter (#876).
+//
+// The line is NOT product-default vs analyst-set, which is where an earlier version of this drew it
+// and got it wrong: "Hide FP/no-intel" is one toggle carrying two very different things. Dropping
+// an IOC because nothing has enriched it yet is a statement about the case; dropping one the
+// analyst marked false positive is a statement about that IOC, and restoring it would put it back
+// in front of the analyst AND back into the bulk copy / enrich / hunt actions. So the fallback
+// returns the FLOOR — the list with the judgement-bearing exclusions still applied — never the raw
+// list. A case whose only IOCs are false positives, or are all system paths, correctly shows none.
+//
+// The filters the analyst sets elsewhere (search text, type facets, corroboration, provenance,
+// flagged-only) are applied by the caller before this runs and are never touched here.
+//
+// `suppressed` tells the caller the enrichment-dependent lenses stood down, so the panel can say so
+// rather than silently appearing to ignore its own toggles.
+function applyIocNoiseFilters(list, opts) {
+  const o = opts || {};
+  const isFalsePositive = o.isFalsePositive || (() => false);
+  const isFlagged = o.isFlagged || (() => false);
+  const corroboration = o.corroboration || (() => 0);
+  const isSystemPath = o.isSystemPath || (() => false);
+  const enriched = (i) => Array.isArray(i.enrichments) && i.enrichments.length > 0;
+  const neverEnriched = (i) => Array.isArray(i.enrichments) && i.enrichments.length === 0;
+
+  // The floor: exclusions that survive the fallback because they are not about how far the case has
+  // got. A false-positive mark is a judgement the analyst made about THAT IOC — no amount of
+  // missing enrichment turns it back into an indicator, and restoring it would also hand it back to
+  // the bulk copy / enrich / hunt actions. The system-path lens is a category the analyst chose to
+  // hide and one that genuinely matched, so "nothing to show" is the honest answer there; the panel
+  // already offers the toggle.
+  let floor = list;
+  if (o.hideFpNoIntel) floor = floor.filter((i) => !isFalsePositive(i));
+  if (o.hideSystemPaths) floor = floor.filter((i) => !isSystemPath(i));
+
+  // Above the floor sit the two lenses that only ask how far enrichment has got. On a fresh case
+  // neither can match anything, which is why they must be able to stand down.
+  let out = floor;
+  if (o.hideFpNoIntel) out = out.filter((i) => !neverEnriched(i));
+  if (o.showSignalIocsOnly) out = out.filter((i) => isFlagged(i) || corroboration(i) >= 2 || enriched(i));
+
+  // Fall back to the FLOOR, never to the raw list.
+  if (!out.length && floor.length) return { visible: floor, suppressed: true };
+  return { visible: out, suppressed: false };
+}
+
+// Said out loud when the lenses above stand down, because their toggles still read as ON: without
+// it the panel looks like it is ignoring its own filters. Empty string when nothing was suppressed.
+function iocNoiseNoticeHtml(suppressed, shown) {
+  if (!suppressed) return "";
+  return `<div class="ioc-noise-notice">Showing ${shown} IOC${shown !== 1 ? "s" : ""} — ` +
+    `\u201CSignal only\u201D / \u201CHide FP/no-intel\u201D / \u201CHide OS system paths\u201D would have hidden ` +
+    `every one. Enrich the IOCs to make those filters meaningful.</div>`;
+}
+
 // Published for the inline script and the other helper modules. EVERY function this file
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
@@ -112,6 +172,8 @@ window.DfirIoc = {
   iocFlagged,
   dedupeIocsById,
   sortIocsForDisplay,
+  applyIocNoiseFilters,
+  iocNoiseNoticeHtml,
   scoreCoversTag,
   enrichBadges,
 };
