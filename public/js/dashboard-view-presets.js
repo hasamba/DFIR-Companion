@@ -64,6 +64,43 @@
     const b = document.getElementById("dashViewBtn");
     if (b) b.setAttribute("aria-expanded", "false");
   }
+  // Opening with the keyboard has to land focus INSIDE the menu: the key handler below is attached
+  // to the menu, so while focus sits on the trigger the arrow keys never reach it. Prefers the
+  // active view so the menu opens on the entry that is currently in effect. #879
+  function focusFirstDashViewItem() {
+    const m = document.getElementById("dashViewMenu");
+    if (!m) return;
+    const items = [...m.querySelectorAll(".dv-item")];
+    if (!items.length) return;
+    (items.find((el) => el.classList.contains("dv-active")) || items[0]).focus();
+  }
+
+  // Arrow keys move between entries, Home/End jump to the ends, Escape closes and hands focus back
+  // to the trigger. Enter and Space need no handling — the entries are real <button>s, so the
+  // browser activates them and the existing click listener runs. #879
+  function dashViewMenuKeydown(ev) {
+    const menu = document.getElementById("dashViewMenu");
+    if (!menu) return;
+    const items = [...menu.querySelectorAll(".dv-item")];
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeDashViewMenu();
+      const b = document.getElementById("dashViewBtn");
+      if (b) b.focus();
+      return;
+    }
+    let next = -1;
+    if (ev.key === "ArrowDown") next = at < 0 ? 0 : (at + 1) % items.length;
+    else if (ev.key === "ArrowUp") next = at <= 0 ? items.length - 1 : at - 1;
+    else if (ev.key === "Home") next = 0;
+    else if (ev.key === "End") next = items.length - 1;
+    if (next < 0) return;
+    ev.preventDefault();
+    items[next].focus();
+  }
+
   // Build the popover: Custom + every view (active ticked), then a divider, the matching-report
   // action (only when the active view has one), and "Edit views…".
   function renderDashViewMenu() {
@@ -73,7 +110,7 @@
     const rows = [];
     const view = DfirState.activeView();
     rows.push(
-      `<div class="dv-item ${!view ? "dv-active" : ""}" data-view="">${tick(!view)}Custom <small>(your layout)</small></div>`,
+      `<button type="button" role="menuitem" class="dv-item ${!view ? "dv-active" : ""}" data-view="">${tick(!view)}Custom <small>(your layout)</small></button>`,
     );
     for (const v of DASHBOARD_VIEWS) {
       const active = !!view && view.id === v.id;
@@ -83,19 +120,21 @@
           ? ""
           : " <small>(custom)</small>";
       rows.push(
-        `<div class="dv-item ${active ? "dv-active" : ""}" data-view="${escAttr(v.id)}" title="${escAttr(v.description || "")}">${tick(active)}${esc(v.name)}${tag}</div>`,
+        `<button type="button" role="menuitem" class="dv-item ${active ? "dv-active" : ""}" data-view="${escAttr(v.id)}" title="${escAttr(v.description || "")}">${tick(active)}${esc(v.name)}${tag}</button>`,
       );
     }
-    rows.push(`<div class="dv-sep"></div>`);
+    rows.push(`<div class="dv-sep" role="separator"></div>`);
     const repLabel = dashViewReportLabel();
     if (repLabel)
       rows.push(
-        `<div class="dv-item dv-item-action" data-action="report">↳ Generate ${esc(repLabel)}</div>`,
+        `<button type="button" role="menuitem" class="dv-item dv-item-action" data-action="report">↳ Generate ${esc(repLabel)}</button>`,
       );
     rows.push(
-      `<div class="dv-item dv-item-action" data-action="edit">✎ Edit views…</div>`,
+      `<button type="button" role="menuitem" class="dv-item dv-item-action" data-action="edit">✎ Edit views…</button>`,
     );
     m.innerHTML = rows.join("");
+    // Same function reference every render, so repeated calls do not stack listeners.
+    m.addEventListener("keydown", dashViewMenuKeydown);
     m.querySelectorAll(".dv-item").forEach((el) =>
       el.addEventListener("click", () => {
         const action = el.dataset.action;
@@ -251,6 +290,7 @@
           renderDashViewMenu();
           menu.style.display = "block";
           btn.setAttribute("aria-expanded", "true");
+          focusFirstDashViewItem();
         });
         document.addEventListener("click", (e) => {
           if (

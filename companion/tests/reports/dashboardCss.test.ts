@@ -94,3 +94,39 @@ describe("the split stylesheet is wired the way the cascade needs", () => {
     expect(used, "the data-safe-style spinner is the reason this reads the markup too").toContain("spin");
   });
 });
+
+// The toolbar settles ~7.5s after load — the AI status text arrives and the scope group reflows —
+// and pushes <main> down under a reader who has already started reading. CLS measured 0.744 on
+// desktop. The two toolbar selects already reserve a width; these two did not. #884.
+describe("late-arriving toolbar content reserves its space", () => {
+  it("reserves a width for the AI status pill", () => {
+    expect(css).toMatch(/#aiStatus\s*\{[^}]*min-width:/);
+  });
+
+  it("reserves a height for the scope group, which can wrap to a second row", () => {
+    expect(css).toMatch(/\.scope-group\s*\{[^}]*min-height:/);
+  });
+});
+
+// Adding the viewport meta (#880) makes the narrow layout execute for the first time. Several
+// children already collapsed at a breakpoint (.now-group, .hyp-rev-cols, .wiz-row) but the page's
+// own two-column grid never did — at 375px it resolved to a 291px and a 112px column.
+describe("the page grid collapses once the narrow layout can actually run", () => {
+  it("drops main to a single column on a narrow viewport", () => {
+    expect(css).toMatch(
+      /@media[^{]*max-width:\s*900px[^{]*\{[^}]*main\s*\{[^}]*grid-template-columns:\s*1fr/,
+    );
+  });
+});
+
+// fitToolbar() adds .icons-only when the toolbar would wrap, and the compacting rule sets
+// font-size:0 on its buttons. #dashViewMenu lives inside #toolbarMain, so once its entries became
+// real <button>s that rule started blanking every label in the popover.
+describe("compacting the toolbar does not blank the view menu", () => {
+  it("exempts the view-menu entries from the icons-only font collapse", () => {
+    const rule = /\.toolbar-main\.icons-only button(?::not\([^)]*\))*\s*\{[^}]*font-size:\s*0/;
+    const m = css.match(rule);
+    expect(m, "the icons-only font-size:0 rule was not found").not.toBeNull();
+    expect(m![0]).toContain(":not(.dv-item)");
+  });
+});

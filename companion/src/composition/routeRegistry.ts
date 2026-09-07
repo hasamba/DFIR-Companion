@@ -45,6 +45,7 @@ import { registerReportVersionsRoutes } from "../routes/reportVersions.js";
 import { registerAnalysisRunRoutes } from "../routes/analysisRuns.js";
 import { registerCasePasswordRoutes } from "../routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "../routes/caseLifecycle.js";
+import { registerAppShellRoutes } from "../routes/appShell.js";
 import { registerJobRoutes } from "../routes/jobs.js";
 import { registerDeepPassRoutes } from "../routes/deepPass.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
@@ -155,6 +156,8 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerAnalysisRunRoutes(app, ctx);
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  // Same stack position the shell routes held when they lived inside the call above.
+  registerAppShellRoutes(app);
   registerJobRoutes(app, ctx);
   registerIncidentTypeRoutes(app, ctx);
   registerCollectionPlanRoutes(app, ctx);

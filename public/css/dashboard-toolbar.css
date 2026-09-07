@@ -71,7 +71,10 @@
 /* Tight-mode collapse — when even the labelled actions won't fit, fitToolbar() adds .icons-only
    and the remaining labels go to zero width (icon px size is immune to font-size:0). Export/Push/
    Collapse are already icon-only above, so this only affects the seven labelled buttons. */
-.toolbar-main.icons-only button { font-size: 0; padding-left: 9px; padding-right: 9px; }
+/* :not(.dv-item) — #dashViewMenu is a child of #toolbarMain, so once its entries became real
+   <button>s (#879) this rule started collapsing every label in the popover to nothing. The popover
+   is not part of the row being compacted; only the row's own controls should lose their labels. */
+.toolbar-main.icons-only button:not(.dv-item) { font-size: 0; padding-left: 9px; padding-right: 9px; }
 .toolbar-main.icons-only button::before { margin-right: 0; }
 /* The capture count carries a camera icon (always shown). When space is tight the word
    "Screenshots:" drops and only the camera + number remain, and the AI-status badge is

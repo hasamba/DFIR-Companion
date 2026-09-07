@@ -60,14 +60,25 @@ header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex
 .toolbar-main { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 /* Scope/time controls are always their own row beneath the actions (a top-border divider),
    so the actions row + gear stay together up top. */
+/* min-height holds one full row of controls. The group wraps (flex-wrap above), so as its late
+   content resolves it can gain a row and push everything below it down — the second half of the
+   toolbar reflow that measured CLS 0.744. Reserving one row's height absorbs the common case. #884 */
 .scope-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text-muted);
-  flex-basis: 100%; padding-top: 9px; border-top: 1px solid var(--border-color); }
+  flex-basis: 100%; padding-top: 9px; border-top: 1px solid var(--border-color); min-height: 40px; }
 .scope-group input[type="datetime-local"] { font-size: 12px; padding: 4px; }
 .scope-group button { padding: 4px 9px; font-size: 12px; }
 .scope-preset { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); }
 .scope-preset:hover { color: var(--sev-medium); border-color: var(--sev-medium); }
 .toolbar-sep { width: 1px; height: 16px; background: var(--border-color); margin: 0 4px; flex-shrink: 0; }
 main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+/* The page's primary grid was the one piece of the layout with no narrow override, while several
+   of its children (.now-group, .hyp-rev-cols, .wiz-row) already had one. That asymmetry is a
+   symptom of #880: with no viewport meta the layout never ran below 980px, so nobody could see
+   that two dense panels side by side are unreadable on a phone — 375px wide, they resolved to
+   291px and 112px. One column below 900px; the panels keep their own inner breakpoints. */
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+}
 section { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }
 /* Click a section's header to collapse/expand it; state persists across reloads. */
 h2 { margin: 0 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted);
@@ -81,9 +92,16 @@ h2:hover { color: var(--text-primary); }
 .dv-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 210px;
   background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,.4); padding: 5px; font-size: 13px; }
-.dv-item { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 5px;
+/* The entries are <button>s so they are focusable and activate on Enter/Space without scripting
+   it (#879). These declarations strip the native button chrome so the row renders as it did when
+   it was a <div>. */
+.dv-item { width: 100%; background: none; border: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 5px;
   cursor: pointer; color: var(--text-primary); white-space: nowrap; }
-.dv-item:hover { background: var(--border-subtle); }
+/* Focus gets the same wash as hover plus a ring, matching .theme-item above — a keyboard user has
+   to be able to see which entry is selected, which was the point of making these focusable. */
+.dv-item:hover, .dv-item:focus-visible { background: var(--border-subtle); outline: none; }
+.dv-item:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
 .dv-item .dv-tick { width: 14px; flex: 0 0 14px; color: var(--sev-low); }
 .dv-item.dv-active { color: var(--text-bright); font-weight: bold; }
 .dv-item small { color: var(--text-muted); font-weight: normal; }
