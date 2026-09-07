@@ -18,6 +18,9 @@ import {
 
 const VALID_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/;
 
+/** Cap on manifests opened at once so a large ledger cannot exhaust file descriptors. */
+const LEDGER_READ_CONCURRENCY = 32;
+
 export interface AnalysisRunStoreOptions {
   appVersion: string;
 }
@@ -119,30 +122,72 @@ export class AnalysisRunStore {
     }
   }
 
-  private async readAll(caseId: string): Promise<AnalysisRunManifest[]> {
-    let names: string[];
+  private async manifestNames(caseId: string): Promise<string[]> {
     try {
-      names = (await readdir(this.dir(caseId))).filter(
+      return (await readdir(this.dir(caseId))).filter(
         (name) => name.endsWith(".json") && name !== "head.json",
       );
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;
     }
-    return Promise.all(
-      names.map(async (name) => parseManifest(await readFile(join(this.dir(caseId), name), "utf8"))),
+  }
+
+  private async readAll(caseId: string): Promise<AnalysisRunManifest[]> {
+    const names = await this.manifestNames(caseId);
+    const manifests: AnalysisRunManifest[] = [];
+    for (let start = 0; start < names.length; start += LEDGER_READ_CONCURRENCY) {
+      const batch = names.slice(start, start + LEDGER_READ_CONCURRENCY);
+      manifests.push(
+        ...(await Promise.all(
+          batch.map(async (name) => parseManifest(await readFile(join(this.dir(caseId), name), "utf8"))),
+        )),
+      );
+    }
+    return manifests;
+  }
+
+  /**
+   * Resolve the sequence and hash to chain the next append onto.
+   *
+   * `head.json` already pins both, so the healthy path costs one `readdir` plus one
+   * small read instead of parsing the whole ledger. The manifest count is the cheap
+   * cross-check: it equals the head sequence in an intact ledger, so any mismatch
+   * (missing, corrupt, or stale head after a crash between the two writes) falls
+   * back to rebuilding from the manifests themselves.
+   */
+  private async ledgerTip(caseId: string): Promise<{ sequence: number; manifestHash: string | null }> {
+    const names = await this.manifestNames(caseId);
+    if (names.length === 0) return { sequence: 0, manifestHash: null };
+    let head: AnalysisRunHead | null = null;
+    try {
+      head = await this.readHead(caseId);
+    } catch {
+      head = null;
+    }
+    if (head && head.sequence === names.length) {
+      return { sequence: head.sequence, manifestHash: head.manifestHash };
+    }
+    const latest = (await this.readAll(caseId)).reduce<AnalysisRunManifest | undefined>(
+      (current, run) => (!current || run.sequence > current.sequence ? run : current),
+      undefined,
     );
+    return { sequence: latest?.sequence ?? 0, manifestHash: latest?.manifestHash ?? null };
   }
 
   async list(caseId: string): Promise<AnalysisRunManifest[]> {
-    const runs = await this.readAll(caseId);
+    const runs = (await this.readAll(caseId)).filter((run) => run.caseId === caseId);
     return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
   }
 
   async get(caseId: string, id: string): Promise<AnalysisRunManifest | null> {
     if (!VALID_RUN_ID.test(id)) return null;
     try {
-      return parseManifest(await readFile(this.path(caseId, id), "utf8"));
+      const manifest = parseManifest(await readFile(this.path(caseId, id), "utf8"));
+      // The requested case is authoritative. A renamed archive import copies the
+      // source case's manifests in verbatim, so a manifest naming another case is
+      // not this case's run and must never become a replay target here.
+      return manifest.caseId === caseId ? manifest : null;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
@@ -151,18 +196,13 @@ export class AnalysisRunStore {
 
   async record(caseId: string, input: AnalysisRunRecordInput): Promise<AnalysisRunManifest> {
     return this.lock.runExclusive(caseId, async () => {
-      const existing = await this.readAll(caseId);
-      const latest = existing.reduce<AnalysisRunManifest | undefined>(
-        (current, run) => (!current || run.sequence > current.sequence ? run : current),
-        undefined,
-      );
-      const sequence = (latest?.sequence ?? 0) + 1;
+      const tip = await this.ledgerTip(caseId);
       const manifest = buildManifest(
         caseId,
         input,
         this.options.appVersion,
-        sequence,
-        latest?.manifestHash ?? null,
+        tip.sequence + 1,
+        tip.manifestHash,
       );
       await mkdir(this.dir(caseId), { recursive: true });
       let handle;

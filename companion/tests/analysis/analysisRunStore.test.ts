@@ -1,13 +1,25 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
+import type { AnalysisRunRecordInput } from "../../src/analysis/analysisRunTypes.js";
+
+const BASE_RUN: Omit<AnalysisRunRecordInput, "id"> = {
+  kind: "deterministic",
+  startedAt: "2026-07-31T10:00:00.000Z",
+  finishedAt: "2026-07-31T10:00:01.000Z",
+  versions: {},
+  input: { artifacts: [], eventIds: [], entityIds: [] },
+  output: { entityIds: [], hashes: [], claims: [] },
+};
 
 describe("AnalysisRunStore", () => {
   let cases: CaseStore;
   let store: AnalysisRunStore;
+
+  const ledgerDir = (caseId: string) => join(cases.stateDir(caseId), "analysis-runs");
 
   beforeEach(async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-analysis-runs-"));
@@ -163,5 +175,70 @@ describe("AnalysisRunStore", () => {
     const result = await store.verify("c1");
     expect(result.ok).toBe(false);
     expect(result.problems).toContain("ledger head mismatch");
+  });
+
+  describe("case binding", () => {
+    // A renamed archive import copies state/analysis-runs/*.json verbatim, so the
+    // manifests still name the source case. The requested case is authoritative.
+    async function copyLedgerToC2(runId: string): Promise<void> {
+      await cases.createCase({ caseId: "c2", name: "n2", investigator: "i", aiProvider: null });
+      await mkdir(ledgerDir("c2"), { recursive: true });
+      await cp(join(ledgerDir("c1"), `${runId}.json`), join(ledgerDir("c2"), `${runId}.json`));
+    }
+
+    it("refuses a run whose manifest names a different case", async () => {
+      const run = await store.record("c1", { ...BASE_RUN, id: "foreign-run" });
+      await copyLedgerToC2("foreign-run");
+
+      expect(run.caseId).toBe("c1");
+      expect(await store.get("c2", "foreign-run")).toBeNull();
+      expect(await store.get("c1", "foreign-run")).not.toBeNull();
+    });
+
+    it("omits a manifest that names a different case from the listing", async () => {
+      await store.record("c1", { ...BASE_RUN, id: "foreign-run" });
+      await copyLedgerToC2("foreign-run");
+
+      expect(await store.list("c2")).toEqual([]);
+    });
+  });
+
+  describe("append cost", () => {
+    it("appends without rereading historical manifests", async () => {
+      await store.record("c1", { ...BASE_RUN, id: "run-1" });
+      const second = await store.record("c1", { ...BASE_RUN, id: "run-2" });
+      // An unreadable historical manifest must not block an append: reaching it at
+      // all means the append is still scanning the whole ledger.
+      await writeFile(join(ledgerDir("c1"), "run-1.json"), "{ not valid json", "utf8");
+
+      const third = await store.record("c1", { ...BASE_RUN, id: "run-3" });
+
+      expect(third.sequence).toBe(3);
+      expect(third.previousManifestHash).toBe(second.manifestHash);
+    });
+
+    it("rebuilds the next sequence when the pinned head is missing", async () => {
+      await store.record("c1", { ...BASE_RUN, id: "run-1" });
+      const second = await store.record("c1", { ...BASE_RUN, id: "run-2" });
+      await unlink(join(ledgerDir("c1"), "head.json"));
+
+      const third = await store.record("c1", { ...BASE_RUN, id: "run-3" });
+
+      expect(third.sequence).toBe(3);
+      expect(third.previousManifestHash).toBe(second.manifestHash);
+      expect((await store.verify("c1")).ok).toBe(true);
+    });
+
+    it("does not reuse a sequence when the pinned head is ahead of the manifests", async () => {
+      const first = await store.record("c1", { ...BASE_RUN, id: "run-1" });
+      await store.record("c1", { ...BASE_RUN, id: "run-2" });
+      await unlink(join(ledgerDir("c1"), "run-2.json"));
+
+      const next = await store.record("c1", { ...BASE_RUN, id: "run-3" });
+
+      expect(next.sequence).toBe(2);
+      expect(next.previousManifestHash).toBe(first.manifestHash);
+      expect((await store.verify("c1")).ok).toBe(true);
+    });
   });
 });

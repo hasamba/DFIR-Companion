@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -141,5 +141,37 @@ describe("analysis-run routes", () => {
     expect(replay.status).toBe(409);
     expect(replay.body.blockers).toContain("provider/model unavailable: missing-provider/missing-model");
     expect(await analysisRunStore.list("c1")).toHaveLength(1);
+  });
+
+  it("refuses to read or replay a run whose manifest names another case", async () => {
+    const { app, analysisRunStore, cases } = await harness();
+    await analysisRunStore.record("c1", {
+      id: "foreign-run",
+      kind: "synthesis",
+      startedAt: "2026-07-31T10:00:00.000Z",
+      finishedAt: "2026-07-31T10:00:01.000Z",
+      versions: { schema: "synthesis/v1" },
+      input: { artifacts: [], eventIds: [], entityIds: [] },
+      configuration: { promptHash: hashManifestValue(getSynthesisPrompt()) },
+      output: { entityIds: [], hashes: [], claims: [] },
+    });
+    await request(app).post("/cases").send({
+      caseId: "c2",
+      name: "n2",
+      investigator: "i",
+      aiProvider: null,
+    });
+    // A renamed archive import copies the source ledger in verbatim, so c2 holds a
+    // manifest still naming c1. Authorization is checked against the route's case,
+    // so replay must not accept it as a c2 run and act on c1.
+    await mkdir(join(cases.stateDir("c2"), "analysis-runs"), { recursive: true });
+    await cp(
+      join(cases.stateDir("c1"), "analysis-runs", "foreign-run.json"),
+      join(cases.stateDir("c2"), "analysis-runs", "foreign-run.json"),
+    );
+
+    expect((await request(app).get("/cases/c2/analysis-runs/foreign-run")).status).toBe(404);
+    expect((await request(app).post("/cases/c2/analysis-runs/foreign-run/replay")).status).toBe(404);
+    expect((await request(app).get("/cases/c1/analysis-runs/foreign-run")).status).toBe(200);
   });
 });
