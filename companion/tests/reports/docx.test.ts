@@ -61,7 +61,7 @@ describe("renderDocxReport", () => {
     // Executive summary text from state.lastSummary survives the pipeline.
     expect(xml).toContain("Host compromised via phishing.");
     // IOC table cell value is present (proves GFM tables map to <w:tbl>).
-    expect(xml).toContain("10.0.0.5");
+    expect(xml).toContain("10[.]0[.]0[.]5"); // defanged for the reader, per #883
     expect(xml).toContain("<w:tbl");
     // Finding heading + description are present.
     expect(xml).toContain("Beacon callout");

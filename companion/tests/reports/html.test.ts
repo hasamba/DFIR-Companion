@@ -16,7 +16,7 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("<h1>Incident Investigation Report</h1>");
     expect(html).toContain("Host compromised via phishing.");
     expect(html).toContain("<table>"); // the IOC markdown table is converted to HTML
-    expect(html).toContain("10.0.0.5");
+    expect(html).toContain("10[.]0[.]0[.]5"); // defanged for the reader, per #883
     expect(html).toContain(`<style nonce="${CSP_NONCE_PLACEHOLDER}">`);
     expect(html).not.toMatch(/\sstyle\s*=/i);
     expect(html.trim().endsWith("</html>")).toBe(true);
@@ -140,5 +140,24 @@ describe("injectPrintTrigger", () => {
 
   it("appends the trigger when the document has no </body>", () => {
     expect(injectPrintTrigger("<p>hi</p>")).toContain("window.print()");
+  });
+});
+
+// The incident report travels furthest of any artifact and is read by people who click things.
+// Live anchors to attacker infrastructure are one mis-click away from reaching out from the
+// reader's machine, which in a live incident can burn the investigation. #883.
+describe("renderHtmlReport indicator defanging (#883)", () => {
+  it("emits no live anchor for an attacker URL or address", () => {
+    const state = emptyState("c1");
+    state.lastSummary = "Payload fetched from http://evil.example/stage1.sh by root@evil.example.";
+    state.iocs.push({ id: "i1", type: "ip", value: "203.0.113.10", firstSeen: "2026-05-20T09:00:00Z" });
+
+    const html = renderHtmlReport(state);
+
+    expect(html).not.toMatch(/<a\s+href="https?:/i);
+    expect(html).not.toMatch(/href="mailto:/i);
+    expect(html).toContain("hxxp://evil[.]example/stage1.sh");
+    expect(html).toContain("root[@]evil[.]example");
+    expect(html).toContain("203[.]0[.]113[.]10");
   });
 });

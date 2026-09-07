@@ -3,6 +3,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { defangIndicators } from "./defang.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { escapeHtml } from "./escapeHtml.js";
 import type { CustodyRecord } from "../analysis/custody.js";
@@ -155,11 +156,16 @@ export function renderHtmlReport(
   );
   // The scoping statement is appended rather than threaded through renderMarkdownReport:
   // markdown.ts sits at its size cap, and every format must carry the same canonical report.
-  const markdownWithScope = hostScope
-    ? `${markdown}
+  // Defanged AFTER the scope section is appended, so the hosts and addresses it names are rendered
+  // inert too. Applied at each format's assembly seam rather than inside renderMarkdownReport for
+  // that reason; tests assert it on the .md, .html and .docx outputs so the three cannot diverge.
+  const markdownWithScope = defangIndicators(
+    hostScope
+      ? `${markdown}
 
 ${renderScopeSection(hostScope)}`
-    : markdown;
+      : markdown,
+  );
 
   const marked = new Marked({ gfm: true });
   // Escape any raw HTML tokens in the source instead of emitting them verbatim.

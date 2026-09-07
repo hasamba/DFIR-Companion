@@ -138,3 +138,23 @@ describe("ReportWriter — generation is all-or-nothing", () => {
     expect(await readFile(sidecar, "utf8")).toBe('{"kept":true}');
   });
 });
+
+// report.md goes through reportContents.ts, a different assembly seam from report.html (html.ts)
+// and the .docx (docx.ts). All three defang independently, so all three are asserted — otherwise
+// one could quietly stop defanging while the others kept passing. #883.
+describe("report.md indicator defanging (#883)", () => {
+  it("writes the markdown report with every indicator rendered inert", async () => {
+    const state = emptyState("c1");
+    state.lastSummary = "Stage 1 pulled from http://evil.example/stage1.sh by root@evil.example.";
+    state.iocs.push({ id: "i1", type: "ip", value: "203.0.113.10", firstSeen: "2026-05-20T09:00:00Z" });
+    await stateStore.save(state);
+
+    await new ReportWriter(caseStore, stateStore).writeAll("c1");
+    const markdown = await readFile(join(caseStore.reportsDir("c1"), "report.md"), "utf8");
+
+    expect(markdown).toContain("hxxp://evil[.]example/stage1.sh");
+    expect(markdown).toContain("root[@]evil[.]example");
+    expect(markdown).toContain("203[.]0[.]113[.]10");
+    expect(markdown).not.toMatch(/http:\/\/evil\.example/);
+  });
+});

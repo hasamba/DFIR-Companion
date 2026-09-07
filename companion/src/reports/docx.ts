@@ -19,6 +19,7 @@ import type { Tokens, TokensList } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { defangIndicators } from "./defang.js";
 import { renderScopeSection } from "./scopeSection.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
@@ -476,11 +477,14 @@ export async function renderDocxReport(
   );
   // The scoping statement is appended rather than threaded through renderMarkdownReport:
   // markdown.ts sits at its size cap, and every format must carry the same canonical report.
-  const mdWithScope = hostScope
-    ? `${md}
+  // Defanged after the scope section is appended — see html.ts for why this sits at the seam.
+  const mdWithScope = defangIndicators(
+    hostScope
+      ? `${md}
 
 ${renderScopeSection(hostScope)}`
-    : md;
+      : md,
+  );
   const marked = new Marked({ gfm: true });
   const tokens = marked.lexer(mdWithScope);
   const children = tokensToDocxChildren(tokens);
