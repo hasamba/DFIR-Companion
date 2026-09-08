@@ -174,3 +174,69 @@ describe("renderHtmlReport indicator defanging (#883)", () => {
     expect(html).toContain("evil[.]example");
   });
 });
+
+// The asset graph and the swimlane are built from state directly, so they never passed through the
+// defang applied to the markdown. The graph's right-hand column IS the case's IOC values — every
+// URL, domain and address, live, inside the artifact that travels furthest. #892.
+describe("renderHtmlReport SVG indicator defanging (#892)", () => {
+  function stateWithIndicators() {
+    const state = emptyState("c1");
+    state.iocs.push(
+      {
+        id: "i001",
+        type: "url",
+        value: "http://evil.example/stage1.sh",
+        firstSeen: "2026-05-28T09:00:00Z",
+      },
+      { id: "i002", type: "ip", value: "203.0.113.10", firstSeen: "2026-05-28T09:00:00Z" },
+    );
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Payload staged",
+      description: "Downloaded from the C2",
+      relatedIocs: ["i001", "i002"],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-28T09:00:00Z",
+      lastUpdated: "2026-05-28T09:00:00Z",
+      status: "open",
+    });
+    state.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-28T09:00:00Z",
+      description: "beacon",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+    });
+    return state;
+  }
+
+  /** Just the SVG sections, so an assertion cannot be satisfied by the defanged markdown body. */
+  function svgSections(html: string): string {
+    return [...html.matchAll(/<div class="asset-graph">([\s\S]*?)<\/div>/g)].map((m) => m[1]).join("\n");
+  }
+
+  it("renders the graph's IOC values inert", () => {
+    const svg = svgSections(renderHtmlReport(stateWithIndicators()));
+
+    expect(svg, "the graph section must actually be present").toContain("<svg");
+    // Labels are truncated for layout, so assert on the defanged head of each value.
+    expect(svg).toContain("hxxp://evil[.]example");
+    expect(svg).toContain("203[.]0[.]113[.]10");
+    expect(svg).not.toContain("http://evil.example");
+    expect(svg).not.toContain("203.0.113.10");
+  });
+
+  it("leaves no live scheme or dotted quad anywhere in the rendered report", () => {
+    const html = renderHtmlReport(stateWithIndicators());
+
+    // Ignore the document's own markup URLs (xmlns, CSS) — only evidence text is at issue.
+    const evidence = html.replace(/xmlns="[^"]*"/g, "");
+    expect(evidence).not.toContain("http://evil.example");
+    expect(evidence).not.toContain("203.0.113.10");
+  });
+});
