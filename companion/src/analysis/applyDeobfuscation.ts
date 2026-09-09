@@ -9,6 +9,8 @@
 import type { InvestigationState, ForensicEvent, IOC } from "./stateTypes.js";
 import { deobfuscateText, extractIocsFromText } from "./deobfuscate.js";
 import { decodeLayers, DECODER_VERSION } from "./deobfuscateLayers.js";
+import { scriptBlockSignal } from "./tradecraftRules.js";
+import { SEVERITY_RANK } from "./forensicGate.js";
 
 function padIocId(n: number): string {
   return `i${String(n).padStart(3, "0")}`;
@@ -54,6 +56,12 @@ export function applyDeobfuscation(
   let newIocs = 0;
   const now = new Date().toISOString();
 
+  // Ids a PRIOR deobfuscation result pointed at, and the ids that existed before any decoding —
+  // together they say which indicators this run is allowed to retire. See the prune below.
+  const priorIocIds = new Set<string>();
+  for (const e of state.forensicTimeline) for (const id of e.deobfuscated?.iocs ?? []) priorIocIds.add(id);
+  const preexistingIocIds = new Set(state.iocs.map((i) => i.id).filter((id) => !priorIocIds.has(id)));
+
   const forensicTimeline: ForensicEvent[] = state.forensicTimeline.map((event) => {
     const prior = event.deobfuscated;
     const stale = (prior?.version ?? 0) < DECODER_VERSION;
@@ -91,8 +99,24 @@ export function applyDeobfuscation(
       }
     }
 
+    // Apply the repository's behaviour classifier to the DERIVED text (#909 item 2). Decoding a
+    // payload and then grading only the wrapper is how an Invoke-Mimikatz that arrived base64-encoded
+    // stays at the severity of "a powershell.exe ran". The grade can only go UP: a decoded payload is
+    // additional evidence about the same event, never grounds to soften what was already known.
+    const derived = scriptBlockSignal(result.decoded);
+    const lifted: Partial<ForensicEvent> = {};
+    if (derived) {
+      const want: ForensicEvent["severity"] =
+        derived.weight === "strong" ? "High" : derived.weight === "weak" ? "Medium" : event.severity;
+      if (SEVERITY_RANK[want] > SEVERITY_RANK[event.severity]) lifted.severity = want;
+      if (derived.mitre.length > 0) {
+        lifted.mitreTechniques = [...new Set([...(event.mitreTechniques ?? []), ...derived.mitre])];
+      }
+    }
+
     return {
       ...event,
+      ...lifted,
       deobfuscated: {
         decoded: result.decoded,
         method: result.method,
@@ -108,8 +132,19 @@ export function applyDeobfuscation(
     return { state, deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
   }
 
+  // A re-decode replaces the event's IOC list. Without this, an indicator recovered by the OLD
+  // decoder — possibly from a payload the new one reads differently — stays in the case, visible
+  // and scored, referenced by nothing. Only ids this run orphaned are dropped: an indicator that
+  // predates the deobfuscation pass, or that any surviving event still points at, is left alone.
+  const referenced = new Set<string>();
+  for (const e of forensicTimeline) for (const id of e.deobfuscated?.iocs ?? []) referenced.add(id);
+  const orphaned = new Set(
+    [...priorIocIds].filter((id) => !referenced.has(id) && !preexistingIocIds.has(id)),
+  );
+  const keptIocs = orphaned.size > 0 ? iocs.filter((i) => !orphaned.has(i.id)) : iocs;
+
   return {
-    state: { ...state, forensicTimeline, iocs, updatedAt: now },
+    state: { ...state, forensicTimeline, iocs: keptIocs, updatedAt: now },
     deobfuscated: deobfuscatedCount,
     newIocs,
     reanalyzed,

@@ -65,16 +65,27 @@ const BARE_B64_RE = /(?:^|["'`\s]|[=:]\s*)([A-Za-z0-9+/]{40,}={0,2})(?:["'`]|\s|
 // reported to the analyst as a recovered payload.
 const EXEC_MARKER_RE = /iex\b|invoke-expression|certutil|frombase64string|downloadstring|-enc\b/i;
 
-// `[char]105+[char]101+[char]120`
-const CHAR_CODES_RE = /(?:\[char\]\s*(\d{1,7})\s*\+?\s*){2,}/i;
-// `[char[]](105,101,120)`
-const CHAR_ARRAY_RE = /\[char\[\]\]\s*\(\s*((?:\d{1,7}\s*,\s*){1,}\d{1,7})\s*\)/i;
+// `[char]105+[char]101+[char]120`. The `+` is REQUIRED between terms: PowerShell does not
+// concatenate two adjacent [char] casts, so folding `[char]65 [char]66` into "AB" would invent text.
+const CHAR_CODES_RE = /\[char\]\s*\d{1,7}(?:\s*\+\s*\[char\]\s*\d{1,7})+/i;
+// `[char[]](105,101,120) -join ''` — the join is consumed when present, because a bare [char[]] is
+// an ARRAY, and rendering it as a string is something only the join does.
+const CHAR_ARRAY_RE =
+  /\[char\[\]\]\s*\(\s*((?:\d{1,7}\s*,\s*){1,}\d{1,7})\s*\)(\s*-join\s*(["'])\3)?/i;
 // `"{1}{0}" -f 'X','IE'`
 const FORMAT_RE = /(["'])((?:\{\d+\}){2,})\1\s*-f\s*((?:\s*["'][^"']*["']\s*,)*\s*["'][^"']*["'])/i;
-// `'iXXx' -replace 'XX','e'` — both arguments must be literals.
+// `'iXXx' -replace 'XX','e'` — both arguments must be literals AND the pattern must contain no
+// regex metacharacter. PowerShell's -replace is REGEX-based and case-insensitive; folding it with a
+// literal split/join is only faithful for a pattern that is already literal. `'abc' -replace '.','X'`
+// yields "XXX" in PowerShell and would yield "abc" here, so that shape is refused rather than
+// guessed — see REPLACE_META_RE.
 const REPLACE_RE = /(["'])([^"']*)\1\s*-replace\s*(["'])([^"']*)\3\s*,\s*(["'])([^"']*)\5/i;
-// `$s='xei'; $s[-1..-3] -join ''`
-const REVERSE_RE = /(["'])([^"']{2,})\1\s*;?\s*\$?\w*\s*\[\s*-1\s*\.\.\s*-\s*\d+\s*\]\s*-join/i;
+const REPLACE_META_RE = /[\\^$.|?*+()[\]{}]/;
+// `'xei'[-1..-3] -join ''` — a reversal of a LITERAL, where the range covers the whole string.
+// A form indexing a VARIABLE cannot be folded: binding it means tracking assignments, which is
+// interpretation, not folding. The old pattern matched `$s='abcd'; $s[-1..-2]` and produced
+// `$s=dcba ''`, which is not what PowerShell computes.
+const REVERSE_RE = /(["'])([^"']{2,})\1\s*\[\s*-1\s*\.\.\s*-(\d+)\s*\]\s*-join\s*(["'])\4/i;
 // A -replace or -f whose operands are variables cannot be folded — see the header.
 const NON_CONSTANT_RE = /-replace\s*\$|-f\s*\$|\[char\]\s*\$/i;
 
@@ -87,9 +98,12 @@ function clamp(s: string): { text: string; clipped: boolean } {
 function looksLikeText(s: string): boolean {
   if (!s) return false;
   let printable = 0;
+  // Sample ACROSS the string, not just its head. A prefix-only check passes any value whose first
+  // 2 KB is ASCII and whose remainder is binary.
   const n = Math.min(s.length, 2048);
-  for (let i = 0; i < n; i++) {
-    const c = s.charCodeAt(i);
+  const stride = Math.max(1, Math.floor(s.length / n));
+  for (let k = 0; k < n; k++) {
+    const c = s.charCodeAt(k * stride);
     // ASCII printable only. Counting the 160-65533 range as "printable" made latin1 mojibake pass:
     // a 64-character hex hash is valid base64, decodes to high-byte noise, and was then reported to
     // the analyst as a recovered payload — while destroying the hash IOC that was really there.
@@ -103,6 +117,12 @@ function looksLikeText(s: string): boolean {
 // one loses the hash IOC and invents a payload, so a pure-hex candidate is never a layer.
 function looksLikeHash(s: string): boolean {
   return /^[a-f0-9]+$/i.test(s) && [32, 40, 64, 96, 128].includes(s.length);
+}
+
+// Escape a literal so it can be used as a case-insensitive regex without any metacharacter taking
+// effect. The pattern is already known to be metacharacter-free; this guards the boundary anyway.
+function escapeLiteral(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function b64Bytes(s: string): Buffer | null {
@@ -140,12 +160,29 @@ function inflateBounded(buf: Buffer, kind: "gzip" | "deflate"): { text: string; 
       const out = fn(buf, opts);
       const text = out.toString("utf8");
       return looksLikeText(text) ? { text, clipped: false } : null;
-    } catch {
-      // zlib refused to allocate past the ceiling. That IS the bomb case: say so, do not guess.
-      return { text: "", clipped: true };
+    } catch (err) {
+      // ONLY an output-limit refusal is a bomb. Treating every zlib error as one recorded corrupt
+      // data as a successful empty decode, and — worse — stopped the deflate path from ever trying
+      // inflateRawSync after inflateSync rejected genuinely raw data.
+      if ((err as { code?: string })?.code === "ERR_BUFFER_TOO_LARGE") return { text: "", clipped: true };
+      continue; // wrong format for this decoder: try the next one
     }
   }
   return null;
+}
+
+
+// Splice a folded value back into the surrounding text.
+//
+// Two hazards, both real. `String.replace` interprets `$&`, `` $` ``, `$'` and `$1` inside the
+// REPLACEMENT, and the replacement here is attacker-controlled — so a function replacement is used,
+// which is not scanned for those tokens. And a fold must not be allowed to outgrow the ceiling
+// before clamp() ever runs: `'<2000 A>' -replace '','<2000 B>'` builds four million characters,
+// which is how a legal input near MAX_INPUT can request billions and take the process down.
+function splice(text: string, match: string, built: string): { text: string; clipped: boolean } | null {
+  if (built.length > MAX_OUTPUT) return null;
+  const out = text.replace(match, () => built);
+  return out.length > MAX_OUTPUT ? { text: out.slice(0, MAX_OUTPUT), clipped: true } : { text: out, clipped: false };
 }
 
 // One layer. Returns the text of the next layer in, or null when nothing here decodes.
@@ -186,44 +223,77 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
   }
 
   if ((m = CHAR_ARRAY_RE.exec(text))) {
-    const built = m[1]
-      .split(",")
-      .map((n) => String.fromCharCode(Number(n.trim())))
-      .join("");
-    return { text: text.replace(m[0], built), step: { method: "char-codes", detail: built.slice(0, 40) }, clipped: false };
+    const codes = m[1].split(",").map((n) => Number(n.trim()));
+    // PowerShell throws on a value outside the char range; String.fromCharCode would silently wrap
+    // it modulo 65536 and invent a character. Refuse instead.
+    if (codes.every((c) => Number.isInteger(c) && c >= 0 && c <= 0xffff)) {
+      const built = codes.map((c) => String.fromCharCode(c)).join("");
+      const sp = splice(text, m[0], built);
+      if (sp) return { text: sp.text, step: { method: "char-codes", detail: built.slice(0, 40) }, clipped: sp.clipped };
+    }
   }
 
-  if (CHAR_CODES_RE.test(text)) {
-    const span = CHAR_CODES_RE.exec(text);
-    if (span) {
-      const codes = [...span[0].matchAll(/\[char\]\s*(\d{1,7})/gi)].map((x) => Number(x[1]));
+  if ((m = CHAR_CODES_RE.exec(text))) {
+    const codes = [...m[0].matchAll(/\[char\]\s*(\d{1,7})/gi)].map((x) => Number(x[1]));
+    if (codes.every((c) => c >= 0 && c <= 0xffff)) {
       const built = codes.map((c) => String.fromCharCode(c)).join("");
-      return { text: text.replace(span[0], built), step: { method: "char-codes", detail: built.slice(0, 40) }, clipped: false };
+      const sp = splice(text, m[0], built);
+      if (sp) return { text: sp.text, step: { method: "char-codes", detail: built.slice(0, 40) }, clipped: sp.clipped };
     }
   }
 
   if ((m = FORMAT_RE.exec(text))) {
     const args = [...m[3].matchAll(/["']([^"']*)["']/g)].map((x) => x[1]);
-    const built = m[2].replace(/\{(\d+)\}/g, (_a, i: string) => args[Number(i)] ?? "");
-    return { text: text.replace(m[0], built), step: { method: "format", detail: built.slice(0, 40) }, clipped: false };
+    // A double-quoted argument containing $var or $() is not a constant — its value depends on
+    // state we do not have. And an out-of-range index is a PowerShell formatting ERROR, not an
+    // empty string, so substituting "" would invent a result.
+    const constant = args.every((a) => !/\$/.test(a));
+    const indexes = [...m[2].matchAll(/\{(\d+)\}/g)].map((x) => Number(x[1]));
+    if (constant && indexes.every((i) => i < args.length)) {
+      const built = m[2].replace(/\{(\d+)\}/g, (_a, i: string) => args[Number(i)]);
+      const sp = splice(text, m[0], built);
+      if (sp) return { text: sp.text, step: { method: "format", detail: built.slice(0, 40) }, clipped: sp.clipped };
+    }
   }
 
   if ((m = REPLACE_RE.exec(text))) {
-    // A literal replacement, applied literally — no regex compilation of attacker-supplied text.
-    const built = m[2].split(m[4]).join(m[6]);
-    return { text: text.replace(m[0], built), step: { method: "replace", detail: built.slice(0, 40) }, clipped: false };
+    const [src, pattern, replacement] = [m[2], m[4], m[6]];
+    // PowerShell's -replace is a REGEX match and is case-INSENSITIVE by default. Folding it with a
+    // literal split/join is faithful only when the pattern contains no metacharacter; otherwise the
+    // decoder would produce text PowerShell never would. An empty pattern is refused too: it
+    // inserts the replacement between every character, which is both wrong and quadratic.
+    const foldable =
+      pattern.length > 0 &&
+      !REPLACE_META_RE.test(pattern) &&
+      src.length * Math.max(replacement.length, 1) <= MAX_OUTPUT;
+    if (foldable) {
+      // Case-insensitive literal replacement, matching PowerShell's default.
+      const built = src.split(new RegExp(escapeLiteral(pattern), "gi")).join(replacement);
+      const sp = splice(text, m[0], built);
+      if (sp) return { text: sp.text, step: { method: "replace", detail: built.slice(0, 40) }, clipped: sp.clipped };
+    }
   }
 
   if ((m = REVERSE_RE.exec(text))) {
-    const built = [...m[2]].reverse().join("");
-    return { text: text.replace(m[0], built), step: { method: "reverse", detail: built.slice(0, 40) }, clipped: false };
+    const literalText = m[2];
+    // `[-1..-N]` selects the last N characters in reverse. Only fold when N covers the whole
+    // string, because a partial range yields a SUBSTRING and folding it as a full reversal would
+    // report characters PowerShell never produced.
+    if (Number(m[3]) === literalText.length) {
+      const built = [...literalText].reverse().join("");
+      const sp = splice(text, m[0], built);
+      if (sp) return { text: sp.text, step: { method: "reverse", detail: built.slice(0, 40) }, clipped: sp.clipped };
+    }
   }
 
   if ((depth > 0 || EXEC_MARKER_RE.test(text)) && (m = BARE_B64_RE.exec(text)) && !looksLikeHash(m[1])) {
     const out = decodeB64Text(m[1], "utf16le") ?? decodeB64Text(m[1], "utf8");
     if (out) {
-      const c = clamp(out);
-      return { text: c.text, step: { method: "base64", detail: `${out.length} chars` }, clipped: c.clipped };
+      // SPLICED IN PLACE, never returned as the whole next layer. Replacing the layer let a base64
+      // decoy planted inside a real script discard the script and leave only the decoy's
+      // indicators — which the IOC extractor then persisted as the case's evidence.
+      const sp = splice(text, m[1], out);
+      if (sp) return { text: sp.text, step: { method: "base64", detail: `${out.length} chars` }, clipped: sp.clipped };
     }
   }
 
@@ -260,7 +330,9 @@ export function decodeLayers(raw: string): LayeredResult | null {
 
   // More layers than the cap allows, or an expression whose operands are not constants: say so
   // rather than presenting the half-peeled text as the final answer.
-  if (steps.length >= MAX_DEPTH && peel(current, steps.length)) partial = true;
+  // Reaching the cap is itself the signal. Peeling once more just to LABEL the result partial ran a
+  // seventh transform — the most expensive thing the input can ask for — purely for a boolean.
+  if (steps.length >= MAX_DEPTH) partial = true;
   if (NON_CONSTANT_RE.test(current)) partial = true;
 
   const c = clamp(current);

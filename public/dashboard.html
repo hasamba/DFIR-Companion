@@ -4197,7 +4197,16 @@
       }
       if (e.deobfuscated) {
         const iocRefs = (e.deobfuscated.iocs || []).length ? ` (IOCs: ${e.deobfuscated.iocs.map(i => esc(i)).join(", ")})` : "";
-        parts.push(`<div data-safe-style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
+        // The LAYERS the payload was wrapped in, and whether decoding finished (#909 item 2). A
+        // payload that was truncated, hit the depth cap, or contained an expression we refuse to
+        // evaluate must not be shown as if it were the final answer — the analyst has to know the
+        // decode stopped early before drawing a conclusion from what came out.
+        const steps = (e.deobfuscated.steps || []).map(s => esc(s.method)).join(" -> ");
+        const via = steps ? `<div data-safe-style="opacity:.75">Decoded via: ${steps}</div>` : "";
+        const partial = e.deobfuscated.partial
+          ? `<div data-safe-style="opacity:.9">Partial decode - a limit was reached or an expression could not be resolved without running it. Treat what follows as incomplete.</div>`
+          : "";
+        parts.push(`<div data-safe-style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">${via}${partial}Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
       }
       // Second-look provenance (#11): this raw row was pulled up from the super-timeline by the
       // post-synthesis re-query — show WHY (which open question/hypothesis it answers).

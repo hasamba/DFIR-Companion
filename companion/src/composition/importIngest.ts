@@ -49,7 +49,10 @@ export interface ImportIngestDeps {
   getControl: (caseId: string) => Promise<AiControl>;
   applyWhitelistToCase: (caseId: string) => Promise<{ matched: number; added: number }>;
   applyNsrlToCase: (caseId: string) => Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
-  applyDeobfuscationToCase: (caseId: string) => Promise<{ deobfuscated: number; newIocs: number }>;
+  applyDeobfuscationToCase: (
+    caseId: string,
+    opts?: { reanalyzeStale?: boolean },
+  ) => Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }>;
   resynthesizeInBackground: (caseId: string) => void;
 }
 

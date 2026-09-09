@@ -380,10 +380,16 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     try {
-      const result = await ctx.applyDeobfuscationToCase(caseId);
+      // `reanalyze` re-decodes events whose stored result predates the current decoder (#909
+      // item 2). Without it the sweep is purely idempotent, so a decoder improvement would reach
+      // only cases imported afterwards and every existing case would silently keep its old,
+      // shallower result.
+      const reanalyzeStale = req.body?.reanalyze === true || req.query?.reanalyze === "1";
+      const result = await ctx.applyDeobfuscationToCase(caseId, { reanalyzeStale });
       if (result.deobfuscated > 0) ctx.resynthesizeInBackground(caseId);
       logLine(
-        `[deobfuscate] ${caseId} apply — decoded ${result.deobfuscated} event(s), +${result.newIocs} new IOC(s)`,
+        `[deobfuscate] ${caseId} apply — decoded ${result.deobfuscated} event(s), ` +
+          `re-analyzed ${result.reanalyzed}, +${result.newIocs} new IOC(s)`,
       );
       return res.status(200).json(result);
     } catch (err) {
