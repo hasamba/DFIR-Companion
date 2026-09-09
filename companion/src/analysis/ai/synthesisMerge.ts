@@ -48,6 +48,34 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
  * scope hides them instead of deleting them (#751).
  */
 
+/**
+ * Keep analyst-ACCEPTED techniques across a synthesis, which replaces the MITRE table wholesale.
+ *
+ * `replaceConclusions` empties `mitreTechniques` so each run rebuilds the model's assessment rather
+ * than accumulating it. A technique the analyst accepted from a second opinion is not the model's
+ * assessment — it is them overruling it — and it has no finding or event behind it to be re-derived
+ * from, so the replace simply erased it. Re-accepting was no help either: a later second-opinion
+ * run diffs against a case that no longer holds the technique and produces a fresh PENDING delta,
+ * so the durability re-application had nothing accepted to re-apply.
+ *
+ * Exactly the reason pinned questions are carried across the same replace, one step below. #893.
+ */
+function preserveAcceptedTechniques(
+  before: InvestigationState,
+  next: InvestigationState,
+): InvestigationState {
+  const accepted = before.mitreTechniques.filter((t) => t.analystAccepted);
+  if (accepted.length === 0) return next;
+  const acceptedIds = new Set(accepted.map((t) => t.id));
+  // Re-derived by the model this run: keep its fresh name and finding links, but remember it was
+  // also accepted, so the next replace does not drop it either.
+  const kept = next.mitreTechniques.map((t) =>
+    acceptedIds.has(t.id) && !t.analystAccepted ? { ...t, analystAccepted: true as const } : t,
+  );
+  const present = new Set(kept.map((t) => t.id));
+  return { ...next, mitreTechniques: [...kept, ...accepted.filter((t) => !present.has(t.id))] };
+}
+
 /** Keep analyst-pinned questions across a synthesis (it replaces keyQuestions wholesale). */
 function mergePinnedQuestions(
   pinned: InvestigationQuestion[],
@@ -126,7 +154,7 @@ export async function foldSynthesisDelta(
   // The backfills are restricted to the events synthesis actually considered.
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
   const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts);
-  const pinned = await preservePinnedQuestions(ctx, caseId, netted.state);
+  const pinned = preserveAcceptedTechniques(state, await preservePinnedQuestions(ctx, caseId, netted.state));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
   // union the scoped events' ids into the table so the ones the model didn't echo — especially the

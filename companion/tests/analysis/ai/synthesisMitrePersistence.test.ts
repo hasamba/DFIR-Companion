@@ -76,4 +76,44 @@ describe("synthesis does not persist event-carried techniques (#893)", () => {
 
     expect(next.mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
   });
+
+  it("carries an analyst-accepted technique across the wholesale MITRE replace", async () => {
+    // replaceConclusions empties the table so each run rebuilds the model's assessment. An accepted
+    // technique is not the model's assessment and has no finding or event to be re-derived from, so
+    // the replace erased it — and a later second-opinion run, diffing a case that no longer held it,
+    // produced a fresh PENDING delta rather than re-applying the old acceptance.
+    const state = {
+      ...emptyState("c1"),
+      mitreTechniques: [
+        { id: "T1486", name: "Data Encrypted for Impact", findingIds: [], analystAccepted: true as const },
+      ],
+      forensicTimeline: [event("e1", ["T1003.003"])],
+    };
+
+    const next = await fold(state);
+
+    expect(next.mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
+    expect(next.mitreTechniques[0].analystAccepted).toBe(true);
+  });
+
+  it("keeps the acceptance on a technique the model re-derived this run", async () => {
+    // The model naming it too must not quietly downgrade it back to a model-derived row, or the
+    // NEXT replace drops it.
+    const state = {
+      ...emptyState("c1"),
+      mitreTechniques: [{ id: "T1486", name: "Old", findingIds: [], analystAccepted: true as const }],
+      forensicTimeline: [],
+    };
+
+    const next = await fold(
+      state,
+      delta({ mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact" }] }),
+    );
+
+    expect(next.mitreTechniques).toHaveLength(1);
+    expect(next.mitreTechniques[0]).toMatchObject({
+      name: "Data Encrypted for Impact",
+      analystAccepted: true,
+    });
+  });
 });
