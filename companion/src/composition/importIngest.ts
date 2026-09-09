@@ -253,6 +253,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importCiscoAsa(caseId, text, base));
       case "syslog":
         return observe(pipeline.importSyslog(caseId, text, base));
+      case "wer":
+        return observe(pipeline.importWer(caseId, text, base));
       case "csv":
         return observe(pipeline.analyzeCsv(caseId, text, base));
       case "log":

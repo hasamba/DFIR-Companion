@@ -52,6 +52,17 @@ export interface WerReport {
   processId: string;
 }
 
+// Where each parameter sits, per EventType, when the NAMES are localized and unreadable.
+// Microsoft assigns these orderings; they differ between bucket types, which is exactly why an
+// index cannot be the primary lookup. Only the slots this module reads are listed.
+const SIG_LAYOUTS = {
+  APPCRASH: { appName: 0, appVersion: 1, modName: 3, exceptionCode: 6 },
+  BEX: { appName: 0, appVersion: 1, modName: 3, exceptionCode: 7 },
+  BEX64: { appName: 0, appVersion: 1, modName: 3, exceptionCode: 7 },
+  APPHANGB1: { appName: 0, appVersion: 1, modName: undefined, exceptionCode: undefined },
+  APPHANGXPROCB1: { appName: 0, appVersion: 1, modName: undefined, exceptionCode: undefined },
+} as const;
+
 const MAX_INPUT = 2 * 1024 * 1024;
 const MAX_MODULES = 500;
 
@@ -66,7 +77,9 @@ export function filetimeToIso(raw: string): string {
     const ms = BigInt(s) / 10000n - FILETIME_EPOCH_OFFSET_MS;
     // Reject the zero date and anything outside a plausible range rather than emitting 1601.
     if (ms <= 0n || ms > 4102444800000n) return "";
-    return new Date(Number(ms)).toISOString().replace(/\.\d{3}Z$/, "Z");
+    // Milliseconds are KEPT: they order two crashes in the same second, and the fallback dedup
+    // key uses the timestamp when no identifier was recorded.
+    return new Date(Number(ms)).toISOString();
   } catch {
     return "";
   }
@@ -128,20 +141,35 @@ export function parseWerReport(text: string): WerReport | null {
 
   if (!kv.has("EventType") && sigNames.size === 0) return null;
 
-  // Resolve a signature parameter by its declared name.
-  const sig = (...names: string[]): string => {
+  // Resolve a signature parameter by its declared NAME, then — only if that fails — by the
+  // documented position for this EventType.
+  //
+  // The names are LOCALIZED. A German host writes `Anwendungsname`, not `Application Name`, so a
+  // name-only lookup returns nothing at all on most of the world's Windows installs and the report
+  // silently parses to empty fields. The positional fallback is what rescues those, and it is
+  // scoped per EventType because the ordering differs between them — which is also why it cannot be
+  // the primary strategy.
+  const sig = (slot: keyof (typeof SIG_LAYOUTS)["APPCRASH"], ...names: string[]): string => {
     for (const [idx, n] of sigNames) {
       if (names.some((want) => n.toLowerCase() === want.toLowerCase())) {
         const v = sigValues.get(idx);
         if (v) return v;
       }
     }
-    return "";
+    const layout = SIG_LAYOUTS[(kv.get("EventType") ?? "").toUpperCase() as keyof typeof SIG_LAYOUTS];
+    const pos = layout?.[slot];
+    return pos === undefined ? "" : (sigValues.get(String(pos)) ?? "");
   };
 
-  const appName = sig("Application Name", "AppName");
-  const appPath = kv.get("AppPath") ?? kv.get("TargetAppPath") ?? "";
-  const faultModuleName = sig("Fault Module Name", "ModName");
+  const appName =
+    sig("appName", "Application Name", "AppName") ||
+    kv.get("NsAppName") ||
+    kv.get("OriginalFilename") ||
+    kv.get("AppName") ||
+    "";
+  // AppPath is the usual carrier; UI[2] holds the full path in reports that omit it.
+  const appPath = kv.get("AppPath") || kv.get("TargetAppPath") || kv.get("UI[2]") || "";
+  const faultModuleName = sig("modName", "Fault Module Name", "ModName");
   // The full path of the faulting module is not a signature parameter; it is whichever loaded
   // module carries that basename.
   const faultModulePath =
@@ -159,29 +187,53 @@ export function parseWerReport(text: string): WerReport | null {
     eventType: kv.get("EventType") ?? "",
     appName,
     appPath,
-    appVersion: sig("Application Version", "AppVersion"),
+    appVersion: sig("appVersion", "Application Version", "AppVersion"),
     faultModuleName,
     faultModulePath,
-    exceptionCode: sig("Exception Code", "ExceptionCode"),
-    reportId: kv.get("ReportIdentifier") ?? kv.get("ReportId") ?? "",
+    exceptionCode: sig("exceptionCode", "Exception Code", "ExceptionCode"),
+    // The paired Application Error record's "Report Id" is the INTEGRATOR identifier, not the
+    // report's own ReportIdentifier. Keying on the latter meant the file and its event log record
+    // never matched and the crash appeared twice — the deduplication this item asks for.
+    reportId:
+      kv.get("IntegratorReportIdentifier") || kv.get("ReportIdentifier") || kv.get("ReportId") || "",
     time: filetimeToIso(kv.get("EventTime") ?? ""),
     loadedModules: loaded,
     hashes,
-    processId: kv.get("TargetProcessId") ?? kv.get("ProcessId") ?? "",
+    // Most report types record a session GUID or a sequence number rather than a PID, so this is
+    // usually empty. It is read where present and never inferred from TargetAsId, which Microsoft
+    // documents as a sequence number.
+    processId: kv.get("TargetProcessId") || kv.get("ProcessId") || "",
   };
 }
 
 // ─────────────────────────── grading ───────────────────────────
 
-// Locations a legitimately-installed program does not run from. A crash is only interesting when
-// the thing that crashed, or the module that faulted it, lives somewhere it should not.
+// Locations a legitimately-installed program does not run from.
+//
+// Deliberately NARROWER than the obvious list. `\ProgramData\` holds Windows Defender, most
+// endpoint agents and many updaters — the repo's own fixtures treat a Defender path there as
+// legitimate — and a bare `\temp\` matches every installer's scratch directory. Including either
+// escalated routine crashes across an entire estate, which is precisely what the issue says not to
+// do. What is left is user-writable space that an installed product does not execute from.
 const SUSPICIOUS_LOCATION =
-  /\\(?:users\\[^\\]+\\(?:appdata|downloads|desktop)|windows\\temp|temp|programdata|\$recycle\.bin|perflogs|windows\\tasks|users\\public)\\/i;
+  /\\(?:users\\[^\\]+\\(?:downloads|desktop)|users\\[^\\]+\\appdata\\local\\temp|windows\\temp|windows\\tasks|users\\public|\$recycle\.bin|perflogs)\\/i;
 
 export interface WerSignal {
   severity: Severity;
   mitre: string[];
   reason: string;
+}
+
+/**
+ * What the case already knows, so a crash can be weighed against it.
+ *
+ * The issue asks for crashes to be correlated with execution evidence and activity already under
+ * investigation. Without this the grade rests on a path heuristic alone, which is both noisier and
+ * weaker than the evidence the case already holds.
+ */
+export interface WerCaseContext {
+  processNames?: ReadonlySet<string>; // lowercased binary names already under investigation
+  paths?: ReadonlySet<string>; // lowercased full paths already under investigation
 }
 
 /**
@@ -191,7 +243,25 @@ export interface WerSignal {
  * escalating that would bury the rare real one under every Office hang on the estate. Only the
  * LOCATION of the crashed binary or its faulting module raises the grade.
  */
-export function werSignal(r: WerReport): WerSignal | null {
+export function werSignal(r: WerReport, ctx: WerCaseContext = {}): WerSignal | null {
+  const known = (p: string, n: string): boolean =>
+    (!!p && !!ctx.paths?.has(p.toLowerCase())) || (!!n && !!ctx.processNames?.has(n.toLowerCase()));
+
+  // Already under investigation: the strongest reason to surface a crash, and it needs no path
+  // heuristic at all.
+  const appKnown = known(r.appPath, r.appName || baseName(r.appPath));
+  const modKnown = known(r.faultModulePath, r.faultModuleName);
+  if (appKnown || modKnown) {
+    return {
+      severity: "Medium",
+      mitre: [],
+      reason:
+        `${appKnown ? "the crashed binary" : "the faulting module"} is already under investigation ` +
+        "in this case. A crash shows the application was running and faulted — it does not show " +
+        "exploitation, and it does not show the crash was hostile.",
+    };
+  }
+
   const appSuspicious = SUSPICIOUS_LOCATION.test(r.appPath);
   const modSuspicious = SUSPICIOUS_LOCATION.test(r.faultModulePath);
   if (!appSuspicious && !modSuspicious) return null;
@@ -199,7 +269,10 @@ export function werSignal(r: WerReport): WerSignal | null {
   const where = appSuspicious ? r.appPath : r.faultModulePath;
   return {
     severity: "Medium",
-    mitre: ["T1204"],
+    // No ATT&CK technique. A binary's LOCATION is not a technique: T1204 is user execution, which
+    // describes how something was launched, and a crash report says nothing about that. Tagging it
+    // would put an unsupported technique in the case's MITRE table.
+    mitre: [],
     reason:
       `${appSuspicious ? "the crashed binary" : "the faulting module"} ran from ${where}, which is a ` +
       "user-writable location rather than an install directory. A crash shows the application was " +

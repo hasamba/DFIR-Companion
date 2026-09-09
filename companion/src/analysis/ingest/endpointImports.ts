@@ -8,6 +8,13 @@ import { applySeverityFloor } from "../severityFloor.js";
 import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseThorReport, type ThorImportOptions } from "../thorImport.js";
+import {
+  parseWerReport,
+  werSignal,
+  werDescription,
+  werDedupKey,
+  type WerCaseContext,
+} from "../werImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -379,6 +386,89 @@ export async function importKape(
 
   return ctx.withStateLock(caseId, async () => {
     let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+/**
+ * Import a Windows Error Reporting report (#909 item 5).
+ *
+ * A crash is graded on WHERE the binary or its faulting module lived, or on the case already
+ * investigating them — never on the fact of the crash, which happens constantly on healthy hosts.
+ * The case's existing evidence is passed in as correlation context so a crash of something already
+ * under investigation surfaces without needing the path heuristic at all.
+ */
+export async function importWer(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const report = parseWerReport(text);
+  if (!report) return noteEmptyImport(ctx, caseId, opts, "WER", 0);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+
+    // What the case already knows, so the crash can be weighed against it rather than against a
+    // path pattern alone.
+    const caseCtx: WerCaseContext = {
+      processNames: new Set(
+        state.forensicTimeline.map((e) => (e.processName ?? "").toLowerCase()).filter(Boolean),
+      ),
+      paths: new Set(state.forensicTimeline.map((e) => (e.path ?? "").toLowerCase()).filter(Boolean)),
+    };
+    const signal = werSignal(report, caseCtx);
+
+    const event = {
+      id: `${opts.idPrefix}e1`,
+      timestamp: report.time,
+      description: `${werDescription(report)}${signal ? ` — ${signal.reason}` : ""}`.slice(0, 900),
+      severity: signal ? signal.severity : ("Info" as Severity),
+      mitreTechniques: signal ? signal.mitre : [],
+      sources: ["WER"],
+      // Windows records one crash as an Application Error event, a WER event and this file. The key
+      // is what stops a triage collection containing all three producing three rows.
+      aggKey: werDedupKey(report),
+      ...(report.appPath ? { path: report.appPath } : {}),
+      ...(report.appName ? { processName: report.appName } : {}),
+    };
+    const events = applySeverityFloor([event] as never, opts.minSeverity);
+    if (events.length === 0) return state;
+
+    const iocs = [
+      ...(report.appPath ? [{ type: "file" as const, value: report.appPath }] : []),
+      ...(report.faultModulePath ? [{ type: "file" as const, value: report.faultModulePath }] : []),
+      ...report.hashes.map((h) => ({ type: "hash" as const, value: h })),
+    ];
+
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: events,
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote:
+        `WER import: ${report.eventType || "crash"} of ${report.appName || "an application"}` +
+        `${report.loadedModules.length ? `, ${report.loadedModules.length} loaded module(s) recorded` : ""}`,
+      summary: "",
+    });
+
     state = await ctx.mergeWithAliases(state, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

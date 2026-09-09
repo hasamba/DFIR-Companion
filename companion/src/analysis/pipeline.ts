@@ -524,6 +524,10 @@ export class AnalysisPipeline {
     return ingest.importKape(this.importCtx, ...args);
   }
 
+  importWer(...args: ImporterArgs<typeof ingest.importWer>): Promise<InvestigationState> {
+    return ingest.importWer(this.importCtx, ...args);
+  }
+
   importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
     return ingest.importCybertriage(this.importCtx, ...args);
   }

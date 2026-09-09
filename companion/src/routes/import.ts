@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { decodeImportedText } from "../ingest/decodeText.js";
 import { join, basename } from "node:path";
 import { open, readFile, mkdir, copyFile, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -559,7 +560,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       try {
         const buf = Buffer.alloc(1 << 18); // 256 KB — plenty for the header + many rows
         const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-        sample = buf.subarray(0, bytesRead).toString("utf8");
+        // BOM-aware, so a UTF-16LE artifact is sniffed as text rather than as mojibake.
+        sample = decodeImportedText(buf.subarray(0, bytesRead));
       } finally {
         await fh.close();
       }
