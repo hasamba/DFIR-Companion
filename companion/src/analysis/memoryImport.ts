@@ -61,6 +61,12 @@ import {
 import { pstreeChildren } from "./pstreeDepth.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
+import {
+  psxviewSignal,
+  ldrModulesSignal,
+  hasLdrColumns,
+  hasPsxviewColumns,
+} from "./memoryCrossView.js";
 
 type Row = Record<string, unknown>;
 
@@ -302,11 +308,20 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
             ...(ppid ? { "process.parent.pid": ["PPID"] } : {}),
           },
         });
+        // psxview prints one column per enumeration method, and the reason to run it is that they
+        // can DISAGREE. Flattened to a generic process row those columns were dropped, so the only
+        // thing the plugin is collected for never reached the timeline (#909 item 3). Graded
+        // cautiously — see memoryCrossView.ts for the benign causes it has to rule out first.
+        // Detected by COLUMNS, not by the plugin label: a dotted Volatility id like
+        // `windows.malware.psxview` renders its label as "malware", so a name test silently never
+        // fired. The columns are what the signal reads anyway.
+        const cross = hasPsxviewColumns(r) ? psxviewSignal(r) : null;
+        if (cross) description += ` — ${cross.note}`;
         out.push({
           timestamp: created,
           description: description.slice(0, 600),
-          severity: "Info",
-          mitre: [],
+          severity: cross ? cross.severity : "Info",
+          mitre: cross ? [...cross.mitre] : [],
           canonical,
           aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}${psscan ? "|scan" : ""}`.slice(
             0,
@@ -494,17 +509,20 @@ function mapDll(
     const proc = procName(r);
     const pid = pickPid(r);
     addIoc(sink, "file", filePathIoc(path));
-    if (!telemetry) continue;
+    // ldrmodules reports membership in the three PEB loader lists, and a module mapped in memory
+    // while absent from them was not loaded through the loader. That row is the whole reason to
+    // run the plugin, so it becomes an event even though DLL rows are otherwise pure telemetry
+    // (#909 item 3).
+    const cross = hasLdrColumns(r) ? ldrModulesSignal(r) : null;
+    if (!telemetry && !cross) continue;
     if (!path && !dllName) continue;
     out.push({
       timestamp: pickTime(r, ["LoadTime", "load_time"]),
       description:
-        `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(path || dllName).slice(0, 220)}`.slice(
-          0,
-          600,
-        ),
-      severity: "Info",
-      mitre: [],
+        (`${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(path || dllName).slice(0, 220)}` +
+          (cross ? ` — ${cross.note}` : "")).slice(0, 600),
+      severity: cross ? cross.severity : "Info",
+      mitre: cross ? [...cross.mitre] : [],
       aggKey: `mem|dll|${proc.toLowerCase()}|${(path || dllName).toLowerCase()}`.slice(0, 400),
       sources: [tool],
       ...(proc ? { processName: proc } : {}),
