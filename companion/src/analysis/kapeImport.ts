@@ -30,6 +30,7 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
+import { prefetchSignal } from "./prefetchExecution.js";
 
 type Row = Record<string, unknown>;
 
@@ -107,11 +108,15 @@ const PROFILES: Profile[] = [
       const runCount = firstStr(row, ["RunCount"]);
       const proc = addProc(sink, exe);
       const time = ezTime(getCI(row, "LastRun")) || ezTime(getCI(row, "SourceModified"));
+      // Prefetch carries no command line, so the binary's NAME is all there is to grade — and ungraded it
+      // stays Info, below the forensic floor, where synthesis never reads it. PECmd exports no executable
+      // path column, so the location-dependent rules stay silent. See prefetchExecution.ts.
+      const signal = prefetchSignal(exe);
       return {
         timestamp: time,
         description: `Prefetch: ${exe} executed${runCount ? ` (run ${runCount}×)` : ""}`.slice(0, 600),
-        severity: "Info",
-        mitre: [],
+        severity: signal?.severity ?? "Info",
+        mitre: signal ? signal.mitre : [],
         aggKey: `pf|${exe.toLowerCase()}`,
         sources: ["Prefetch"],
         ...(proc ? { processName: proc } : {}),

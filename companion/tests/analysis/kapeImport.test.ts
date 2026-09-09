@@ -35,6 +35,30 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
     expect(r.iocs.some((i) => i.type === "process" && i.value === "EVIL.EXE")).toBe(true);
   });
 
+  // prefetchExecution.ts exists because Info sits below the forensic floor, so an ungraded execution is
+  // never read by synthesis. The Velociraptor prefetch mapper called it; the KAPE one never did, so the
+  // same execution graded High from one collection tool and Info from the other.
+  it("Prefetch (PECmd): grades named offensive tooling above Info", () => {
+    const text = csv(
+      ["SourceFilename", "ExecutableName", "Hash", "Size", "RunCount", "LastRun", "PreviousRun0"],
+      [
+        [
+          "C:\\Windows\\Prefetch\\MIMIKATZ.EXE-1234.pf",
+          "MIMIKATZ.EXE",
+          "ABCD",
+          "10000",
+          "2",
+          "2023-04-01 10:00:00",
+          "2023-03-31 09:00:00",
+        ],
+      ],
+    );
+    const r = parseKapeCsv(text);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("High");
+    expect(r.events[0].mitreTechniques).toContain("T1003.001");
+  });
+
   it("Amcache: file + SHA1 hash IOC, FullPath as path", () => {
     const text = csv(
       ["ApplicationName", "FullPath", "FileKeyLastWriteTimestamp", "SHA1", "Size"],
