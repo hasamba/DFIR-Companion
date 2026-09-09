@@ -25,9 +25,11 @@
 //     an unreadable column as "not present in that list" manufactures the exact discrepancy this
 //     module is looking for.
 //
-// So: a single false-or-missing column is never a finding on its own. The grade rises only when
-// more than one independent method disagrees, and the description always names which methods
-// disagreed so the analyst can weigh it. Nothing here says "rootkit"; it says which views differ.
+// So: a single false-or-missing column is never a finding on its own — published Volatility output
+// shows ordinary lsass.exe and svchost.exe rows with one column false, and tagging each of those
+// would mark routine processes as rootkit leads on every host. TWO independent methods must
+// disagree, the description names which, and the benign causes are named with it. Nothing here says
+// "rootkit"; it says which views differ and what else produces that.
 //
 // Correlation is confined to one memory image and one process identity, per the issue: these rows
 // describe a single acquisition, and comparing across images would compare different machines'
@@ -42,6 +44,9 @@ const PSXVIEW_METHODS: { key: string; aliases: string[] }[] = [
   { key: "pslist", aliases: ["pslist", "PsActiveProcessHead", "pslist_present"] },
   { key: "psscan", aliases: ["psscan", "PoolScanner", "psscan_present"] },
   { key: "thrdproc", aliases: ["thrdproc", "thrdscan", "ThreadScan", "thrdproc_present"] },
+  // Volatility 2 emits pspcid between thrdproc and csrss. Omitting it did not make a pspcid-only
+  // discrepancy "unreadable" — it made it invisible.
+  { key: "pspcid", aliases: ["pspcid", "PspCidTable", "pspcid_present"] },
   { key: "csrss", aliases: ["csrss", "CsrssHandles", "csrss_present"] },
   { key: "session", aliases: ["session", "Sessions", "session_present"] },
   { key: "deskthrd", aliases: ["deskthrd", "DesktopThreads", "deskthrd_present"] },
@@ -54,9 +59,27 @@ const LDR_LISTS: { key: string; aliases: string[] }[] = [
   { key: "InMem", aliases: ["InMem", "InMemoryOrderModuleList", "in_mem"] },
 ];
 
-// Processes that legitimately fail several views. System has no user-mode CSRSS handle and no
-// desktop thread; smss.exe and csrss.exe itself start before the structures that would list them.
-const EARLY_BOOT = /^(?:system|smss\.exe|csrss\.exe|registry|memory compression)$/i;
+// Early-boot processes legitimately fail SPECIFIC views, and only those.
+//
+// The first version exempted these names from the whole detection, which is a one-line evasion:
+// name a process smss.exe, unlink it from pslist, and nothing is reported. Volatility 2's own rules
+// are method-specific for exactly this reason — they excuse a missing CSRSS handle or desktop
+// thread for a process that starts before those structures exist, and excuse nothing else.
+//
+// `System` additionally has to BE the System process: PID 4. A user-mode process wearing the name
+// gets no exemption at all.
+const EARLY_BOOT_EXCEPTIONS: { name: RegExp; pid?: number; excused: string[] }[] = [
+  { name: /^system$/i, pid: 4, excused: ["csrss", "session", "deskthrd"] },
+  { name: /^smss\.exe$/i, excused: ["csrss", "session", "deskthrd"] },
+  { name: /^csrss\.exe$/i, excused: ["csrss", "deskthrd"] },
+  { name: /^(?:registry|memory compression)$/i, excused: ["csrss", "session", "deskthrd"] },
+];
+
+// A membership row whose path is one of these is DATA, not code. Windows maps resource-only files
+// (LOAD_LIBRARY_AS_DATAFILE / AS_IMAGE_RESOURCE) without entering them in any loader list, so a
+// localized .mui on a clean host is false in all three — the exact shape the "mapped but never
+// loaded" branch was grading as injection.
+const RESOURCE_MAPPING = /\.(?:mui|nls|dat|fon|ttf|ttc|otf|ico|cur|ani|msstyles|tlb|winmd)$/i;
 
 export type Tri = true | false | null; // null = the plugin could not report this column
 
@@ -76,7 +99,8 @@ export function triState(v: unknown): Tri {
   if (v === true || v === false) return v;
   const s = String(v ?? "").trim().toLowerCase();
   if (!s || s === "-" || s === "n/a" || s === "na" || s === "unknown" || s === "?") return null;
-  if (["true", "yes", "y", "1", "ok", "present"].includes(s)) return true;
+  // Volatility 2 --apply-rules prints "Okay", not "Ok".
+  if (["true", "yes", "y", "1", "ok", "okay", "present"].includes(s)) return true;
   if (["false", "no", "n", "0", "absent", "missing"].includes(s)) return false;
   return null;
 }
@@ -92,6 +116,19 @@ function readFlags(row: Row, spec: { key: string; aliases: string[] }[]): Record
     out[f.key] = v === undefined ? null : triState(v);
   }
   return out;
+}
+
+// True only when the row carries a real, parsable exit timestamp.
+function hasExited(row: Row): boolean {
+  const raw = String(
+    getCI(row, "Exit Time") ?? getCI(row, "ExitTime") ?? getCI(row, "process_exit_time") ?? getCI(row, "exit_time") ?? "",
+  ).trim();
+  if (!raw) return false;
+  if (/^(?:n\/?a|-|none|unknown|\?)$/i.test(raw)) return false;
+  if (/^0+$/.test(raw)) return false;
+  // The FILETIME and .NET zero dates both mean "never exited".
+  if (/^(?:1601-01-01|0001-01-01|1970-01-01)/.test(raw)) return false;
+  return !Number.isNaN(Date.parse(raw));
 }
 
 export interface CrossViewSignal {
@@ -129,27 +166,41 @@ export function psxviewSignal(row: Row): CrossViewSignal | null {
   if (absent.length === 0) return null;
 
   const name = String(getCI(row, "Name") ?? getCI(row, "ImageFileName") ?? "").trim();
-  if (EARLY_BOOT.test(name)) return null;
+  const pid = Number(String(getCI(row, "PID") ?? getCI(row, "Pid") ?? "").trim());
+  // Drop the methods this process is legitimately allowed to fail, then re-ask the question.
+  const excused = EARLY_BOOT_EXCEPTIONS.find(
+    (e) => e.name.test(name) && (e.pid === undefined || e.pid === pid),
+  )?.excused;
+  const realAbsent = excused ? absent.filter((k) => !excused.includes(k)) : absent;
+  if (realAbsent.length === 0) return null;
 
   // A process that has EXITED is expected to be gone from the live list and still findable by a
   // pool scan. That is the acquisition catching a race, not concealment.
-  const exited = String(getCI(row, "ExitTime") ?? getCI(row, "process_exit_time") ?? "").trim();
-  if (exited && !/^0*$/.test(exited) && !exited.startsWith("1601-01-01")) return null;
+  //
+  // Volatility 3 spells the column "Exit Time", with a space. Reading only the Volatility 2
+  // spelling meant every terminated process in a V3 capture was graded as a hidden one.
+  //
+  // And only a PARSABLE, non-sentinel date counts. Treating any non-empty value as proof of
+  // termination let "N/A", "-" or corrupt text suppress a real finding — an evasion, not a guard.
+  if (hasExited(row)) return null;
 
-  // One dissenting method is weak — a single structure can be stale for ordinary reasons. Two or
-  // more independent methods disagreeing is the shape that is worth an analyst's time, and even
-  // that is Medium: this is a lead, never a verdict.
-  const severity: Severity = absent.length >= 2 ? "Medium" : "Low";
+  // ONE dissenting method is not a finding. Published Volatility output shows ordinary lsass.exe,
+  // rundll32.exe and svchost.exe rows with deskthrd alone false; emitting a T1014-tagged event for
+  // each would tag routine processes as rootkit leads on every host. The file header always said a
+  // single column was insufficient — this is the code finally agreeing with it.
+  if (realAbsent.length < 2) return null;
+
+  const severity: Severity = "Medium";
   return {
     severity,
     mitre: ["T1014"],
     note:
-      `cross-view: found by ${present.join(", ") || "no method"}; not found by ${absent.join(", ")}` +
+      `cross-view: found by ${present.join(", ") || "no method"}; not found by ${realAbsent.join(", ")}` +
       (unreadable.length ? ` (${unreadable.join(", ")} not reported)` : "") +
       ". Hidden-process indicator only — confirm before concluding, and note the benign causes " +
       "(exited process, early boot, unreadable column).",
     present,
-    absent,
+    absent: realAbsent,
     unreadable,
   };
 }
@@ -170,14 +221,30 @@ export function ldrModulesSignal(row: Row): CrossViewSignal | null {
   if (present.length + absent.length < 2) return null;
   if (absent.length === 0) return null;
 
+  const path = String(
+    getCI(row, "MappedPath") ?? getCI(row, "Path") ?? getCI(row, "FullDllName") ?? "",
+  ).trim();
+
   // A module absent from every readable list, while ldrmodules is nonetheless reporting it, is
-  // mapped-but-not-loaded. That is the strongest thing this table can say.
+  // mapped-but-not-loaded.
   if (present.length === 0) {
+    // ...unless it is a RESOURCE mapping, which is the common benign case and was the first
+    // version's worst false positive. Windows maps localized .mui files and other data with
+    // LOAD_LIBRARY_AS_DATAFILE, entering them in no loader list at all, so a clean host shows rows
+    // like `csrss.exe ... False False False \\Windows\\System32\\pt-BR\\winsrv.dll.mui`. Grading
+    // those as process injection tags routine localization as an attack.
+    if (RESOURCE_MAPPING.test(path)) return null;
+
+    // An UNBACKED region — no path at all — is the strong shape: executable memory that no file
+    // explains, which is what a reflectively-loaded module looks like. A row with a real DLL path
+    // is weaker, because a resource mapping can also carry a .dll name.
+    const unbacked = !path;
     return {
-      severity: "Medium",
+      severity: unbacked ? "Medium" : "Low",
       mitre: ["T1055.001"],
       note:
-        `cross-view: mapped in memory but in none of the loader lists (${absent.join(", ")})` +
+        `cross-view: ${unbacked ? "mapped with no backing file" : `mapped from ${path}`} but in none ` +
+        `of the loader lists (${absent.join(", ")})` +
         (unreadable.length ? ` (${unreadable.join(", ")} not reported)` : "") +
         ". Consistent with a module loaded without the loader; also seen for WOW64 and " +
         "resource-only mappings. Confirm before concluding.",
@@ -187,8 +254,10 @@ export function ldrModulesSignal(row: Row): CrossViewSignal | null {
     };
   }
 
-  // Absent from InInit alone: routine for a mapping that is data rather than code.
-  if (absent.length === 1 && absent[0] === "InInit") return null;
+  // Absent from InInit alone: routine for a mapping that is data rather than code. And a single
+  // dissenting list is not a finding at all, for the same reason one dissenting psxview method
+  // is not — see psxviewSignal.
+  if (absent.length < 2) return null;
 
   return {
     severity: "Low",

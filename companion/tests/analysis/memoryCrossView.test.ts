@@ -49,8 +49,11 @@ describe("psxviewSignal", () => {
     expect(s?.note).toContain("not found by pslist, csrss");
   });
 
-  it("grades a single dissenting method only as a weak lead", () => {
-    expect(psxviewSignal(row({ pslist: false }))?.severity).toBe("Low");
+  // Published Volatility output shows ordinary lsass.exe / rundll32.exe / svchost.exe rows with
+  // deskthrd alone false. Tagging each of those T1014 marks routine processes as rootkit leads.
+  it("says nothing when only one method dissents", () => {
+    expect(psxviewSignal(row({ pslist: false }))).toBeNull();
+    expect(psxviewSignal(row({ deskthrd: false }))).toBeNull();
   });
 
   // An exited process is expected to be gone from the live list and still found by a pool scan.
@@ -58,9 +61,44 @@ describe("psxviewSignal", () => {
     expect(psxviewSignal(row({ pslist: false, csrss: false, ExitTime: "2026-01-01 10:00:00" }))).toBeNull();
   });
 
-  it("stays silent for early-boot processes that legitimately fail several views", () => {
-    expect(psxviewSignal(row({ Name: "System", csrss: false, session: false, deskthrd: false }))).toBeNull();
+  // Volatility 3 spells it with a space. Reading only the V2 name graded every terminated process
+  // in a V3 capture as a hidden one.
+  it("recognises the Volatility 3 spelling of the exit column", () => {
+    expect(psxviewSignal(row({ pslist: false, csrss: false, "Exit Time": "2026-01-01 10:00:00" }))).toBeNull();
+  });
+
+  // Treating any non-empty value as proof of termination let junk suppress a real finding.
+  it("does not accept a sentinel or unparsable exit value as proof of termination", () => {
+    for (const v of ["N/A", "-", "0001-01-01 00:00:00", "1601-01-01 00:00:00", "garbage"]) {
+      expect(psxviewSignal(row({ pslist: false, csrss: false, ExitTime: v }))).not.toBeNull();
+    }
+  });
+
+  it("excuses only the views an early-boot process legitimately fails", () => {
+    expect(psxviewSignal(row({ PID: 4, Name: "System", csrss: false, session: false, deskthrd: false }))).toBeNull();
     expect(psxviewSignal(row({ Name: "smss.exe", csrss: false, deskthrd: false }))).toBeNull();
+  });
+
+  // Exempting these names from the WHOLE detection was a one-line evasion: name a process
+  // smss.exe, unlink it from pslist, and nothing is reported.
+  it("still reports an early-boot name that is missing from views it cannot excuse", () => {
+    const s = psxviewSignal(row({ Name: "smss.exe", pslist: false, psscan: false }));
+    expect(s?.absent).toEqual(["pslist", "psscan"]);
+  });
+
+  it("gives the System name no exemption unless it is really PID 4", () => {
+    expect(
+      psxviewSignal(row({ PID: 6123, Name: "System", csrss: false, session: false, deskthrd: false })),
+    ).not.toBeNull();
+  });
+
+  it("reads the Volatility 2 pspcid column", () => {
+    const s = psxviewSignal(row({ pspcid: false, psscan: false }));
+    expect(s?.absent).toContain("pspcid");
+  });
+
+  it("accepts Volatility 2 --apply-rules wording", () => {
+    expect(triState("Okay")).toBe(true);
   });
 
   it("does not count unreadable columns as absent", () => {
@@ -94,11 +132,30 @@ describe("ldrModulesSignal", () => {
     expect(ldrModulesSignal(row())).toBeNull();
   });
 
-  it("grades a module mapped but in no loader list at all", () => {
-    const s = ldrModulesSignal(row({ InLoad: false, InInit: false, InMem: false }));
+  it("grades an unbacked mapping in no loader list at all", () => {
+    const s = ldrModulesSignal(row({ InLoad: false, InInit: false, InMem: false, MappedPath: "" }));
     expect(s?.severity).toBe("Medium");
     expect(s?.mitre).toContain("T1055.001");
-    expect(s?.note).toContain("none of the loader lists");
+    expect(s?.note).toContain("no backing file");
+  });
+
+  // A clean host maps localized .mui resources with LOAD_LIBRARY_AS_DATAFILE, so they are false in
+  // all three lists. Grading those as injection tags routine localization as an attack.
+  it("stays silent for a resource mapping that is false in every list", () => {
+    const s = ldrModulesSignal(
+      row({
+        InLoad: false,
+        InInit: false,
+        InMem: false,
+        MappedPath: "\\Windows\\System32\\pt-BR\\winsrv.dll.mui",
+      }),
+    );
+    expect(s).toBeNull();
+  });
+
+  it("grades a file-backed module in no loader list only as a weak lead", () => {
+    const s = ldrModulesSignal(row({ InLoad: false, InInit: false, InMem: false }));
+    expect(s?.severity).toBe("Low");
   });
 
   // A resource-only mapping is never initialised, so InInit alone is routine.
@@ -106,10 +163,14 @@ describe("ldrModulesSignal", () => {
     expect(ldrModulesSignal(row({ InInit: false }))).toBeNull();
   });
 
-  it("grades a partial membership mismatch as a weak lead", () => {
-    const s = ldrModulesSignal(row({ InLoad: false }));
+  it("says nothing when only one list dissents", () => {
+    expect(ldrModulesSignal(row({ InLoad: false }))).toBeNull();
+  });
+
+  it("grades two dissenting lists as a weak lead", () => {
+    const s = ldrModulesSignal(row({ InLoad: false, InMem: false }));
     expect(s?.severity).toBe("Low");
-    expect(s?.present).toEqual(["InInit", "InMem"]);
+    expect(s?.present).toEqual(["InInit"]);
   });
 
   it("does not count unreadable columns as absent", () => {
@@ -129,7 +190,7 @@ describe("column detection", () => {
 describe("wired into the memory importer", () => {
   it("raises a psxview row whose views disagree above the Info floor", () => {
     const rows = [
-      { PID: 4321, Name: "evil.exe", pslist: false, psscan: true, thrdproc: true, csrss: false, session: true, deskthrd: true },
+      { PID: 4321, Name: "evil.exe", pslist: false, psscan: true, thrdproc: true, pspcid: true, csrss: false, session: true, deskthrd: true },
       { PID: 900, Name: "explorer.exe", pslist: true, psscan: true, thrdproc: true, csrss: true, session: true, deskthrd: true },
     ];
     const r = parseMemory(JSON.stringify({ "windows.malware.psxview.PsXView": rows }));
@@ -142,13 +203,13 @@ describe("wired into the memory importer", () => {
 
   it("surfaces an unlinked module from ldrmodules even though DLL rows are otherwise silent", () => {
     const rows = [
-      { Pid: 3120, Process: "svchost.exe", Base: "0x7ffb00000000", InLoad: false, InInit: false, InMem: false, MappedPath: "C:\\Temp\\evil.dll" },
+      { Pid: 3120, Process: "svchost.exe", Base: "0x7ffb00000000", InLoad: false, InInit: false, InMem: false, MappedPath: "" },
       { Pid: 3120, Process: "svchost.exe", Base: "0x7ffb10000000", InLoad: true, InInit: true, InMem: true, MappedPath: "C:\\Windows\\System32\\ntdll.dll" },
     ];
     const r = parseMemory(JSON.stringify({ "windows.ldrmodules.LdrModules": rows }));
     // The ordinary module stays telemetry; only the unlinked one becomes an event.
     expect(r.events).toHaveLength(1);
-    expect(r.events[0].description).toContain("evil.dll");
+    expect(r.events[0].description).toContain("no backing file");
     expect(r.events[0].severity).toBe("Medium");
   });
 });

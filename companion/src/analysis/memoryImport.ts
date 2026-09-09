@@ -323,7 +323,9 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
           severity: cross ? cross.severity : "Info",
           mitre: cross ? [...cross.mitre] : [],
           canonical,
-          aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}${psscan ? "|scan" : ""}`.slice(
+          // The process-object offset distinguishes two EPROCESS rows that share a reused PID —
+          // psxview reports one row per object, and collapsing them loses one view's verdict.
+          aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}|${pick(r, ["Offset(V)", "Offset", "offset"])}${psscan ? "|scan" : ""}`.slice(
             0,
             400,
           ),
@@ -515,15 +517,23 @@ function mapDll(
     // (#909 item 3).
     const cross = hasLdrColumns(r) ? ldrModulesSignal(r) : null;
     if (!telemetry && !cross) continue;
-    if (!path && !dllName) continue;
+    // A flagged row with NO path is the strongest case this table produces — executable memory that
+    // no file explains. Dropping it for lacking a name discarded exactly the finding worth keeping,
+    // so a cross-view signal is described by its base address instead.
+    if (!path && !dllName && !cross) continue;
+    const base = pick(r, ["Base", "base", "DllBase"]);
+    const what = path || dllName || `region at ${base || "?"}`;
     out.push({
       timestamp: pickTime(r, ["LoadTime", "load_time"]),
       description:
-        (`${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(path || dllName).slice(0, 220)}` +
+        (`${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(what).slice(0, 220)}` +
           (cross ? ` — ${cross.note}` : "")).slice(0, 600),
       severity: cross ? cross.severity : "Info",
       mitre: cross ? [...cross.mitre] : [],
-      aggKey: `mem|dll|${proc.toLowerCase()}|${(path || dllName).toLowerCase()}`.slice(0, 400),
+      // PID and base included: without them two different svchost.exe PIDs mapping the same path,
+      // or two mappings at different bases in one PID, aggregated into a single event and one of
+      // the cross-view findings disappeared into a count (#909 item 3 requires same-identity only).
+      aggKey: `mem|dll|${proc.toLowerCase()}|${pid}|${base}|${what.toLowerCase()}`.slice(0, 400),
       sources: [tool],
       ...(proc ? { processName: proc } : {}),
       ...(filePathIoc(path) ? { path } : {}),
