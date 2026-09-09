@@ -480,6 +480,7 @@
     "updateCheck.ts": "analysis/case",
     "updateCheckRun.ts": "analysis/case",
     "updateCheckStore.ts": "analysis/case",
+    "usnLifecycle.ts": "analysis/ingest",
     "veloAggKeys.ts": "analysis/ingest",
     "veloDetectionNoise.ts": "analysis/ingest",
     "veloHuntStore.ts": "analysis/case",

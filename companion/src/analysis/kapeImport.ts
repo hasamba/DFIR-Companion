@@ -30,6 +30,12 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
+import {
+  parseReasons,
+  pairRenames,
+  summarizeLifecycle,
+  type UsnRecord,
+} from "./usnLifecycle.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 
 type Row = Record<string, unknown>;
@@ -53,6 +59,23 @@ export interface KapeParseResult {
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
+
+// MFTECmd $J columns → the identity-bearing shape the lifecycle module works on. The volume comes
+// from SourceFile when the export records it: entry 12345 on C: and on D: are different files, and
+// one collection can contain both journals.
+function toUsnRecords(rows: readonly Row[]): UsnRecord[] {
+  return rows.map((row) => ({
+    name: firstStr(row, ["Name"]),
+    entry: firstStr(row, ["EntryNumber", "FileReferenceNumber"]),
+    sequence: firstStr(row, ["SequenceNumber"]),
+    parentEntry: firstStr(row, ["ParentEntryNumber", "ParentFileReferenceNumber"]),
+    parentSequence: firstStr(row, ["ParentSequenceNumber"]),
+    usn: firstStr(row, ["UpdateSequenceNumber", "Usn"]),
+    timestamp: ezTime(getCI(row, "UpdateTimestamp")),
+    reasons: parseReasons(firstStr(row, ["UpdateReasons"])),
+    volume: firstStr(row, ["SourceFile", "Volume"]).replace(/^.*?([A-Za-z]:).*$/, "$1"),
+  }));
+}
 
 // EZ timestamps are UTC "yyyy-MM-dd HH:mm:ss(.fffffff)" (no zone). Truncate the 7-digit
 // fraction to ms, drop the .NET min-date sentinel, then normalize (treats naive as UTC).
@@ -222,15 +245,21 @@ const PROFILES: Profile[] = [
       const name = firstStr(row, ["Name"]);
       const reasons = firstStr(row, ["UpdateReasons"]);
       if (!name) return null;
-      const proc = addProc(sink, name);
+      // The file reference — entry AND sequence — is what identifies the file across renames
+      // (#909 item 7). Keeping only the name meant a rename could not be reconstructed at all.
+      const entry = firstStr(row, ["EntryNumber", "FileReferenceNumber"]);
+      const seq = firstStr(row, ["SequenceNumber"]);
+      addFile(sink, name);
       return {
         timestamp: ezTime(getCI(row, "UpdateTimestamp")),
-        description: `UsnJrnl: ${name} — ${reasons}`.slice(0, 600),
+        description:
+          `UsnJrnl: ${name} — ${reasons}${entry ? ` [file ${entry}-${seq || "?"}]` : ""}`.slice(0, 600),
         severity: "Info",
         mitre: [],
-        aggKey: `usn|${name.toLowerCase()}|${reasons.toLowerCase()}`,
+        // Identity in the key, so two files that happened to share a name stay apart.
+        aggKey: `usn|${entry}-${seq}|${name.toLowerCase()}|${reasons.toLowerCase()}`,
         sources: ["UsnJrnl"],
-        ...(proc ? { processName: proc } : {}),
+        path: name,
       };
     },
   },
@@ -351,6 +380,7 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  const usnRows: Row[] = [];
   for (const cols of rows) {
     const row: Row = {};
     headers.forEach((h, i) => {
@@ -358,6 +388,21 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     });
     const m = profile.map(row, iocSink);
     if (m) mapped.push(m);
+    if (profile.name === "UsnJrnl") usnRows.push(row);
+  }
+
+  // Lifecycle reconstruction needs every record at once: a rename is TWO records, and which names a
+  // file was known under is a property of the whole journal, not of any single row (#909 item 7).
+  for (const pair of pairRenames(toUsnRecords(usnRows))) {
+    mapped.push({
+      timestamp: pair.timestamp,
+      description: `UsnJrnl: ${pair.newName} — ${pair.note}`.slice(0, 600),
+      severity: pair.severity,
+      mitre: [],
+      aggKey: `usn|rename|${pair.reference}|${pair.oldName.toLowerCase()}|${pair.newName.toLowerCase()}`,
+      sources: ["UsnJrnl"],
+      path: pair.newName,
+    });
   }
 
   const { events, groups } = aggregateEvents(mapped, {
