@@ -97,3 +97,55 @@ describe("projectScope", () => {
     expect(s.mitreTechniques[0].findingIds).toEqual(["f1"]);
   });
 });
+
+// An accepted technique came from the analyst overruling both models, not from the evidence a scope
+// window selects — so narrowing the window is not a reason to drop it. And because synthesis folds
+// and then SAVES a projected snapshot, dropping it here would not merely hide it for the duration
+// of the scope: the decision would be gone. #893.
+describe("projectScope keeps an analyst-accepted technique (#893)", () => {
+  const windowed = { start: "2026-06-01T00:00:00Z", end: "2026-06-02T00:00:00Z" };
+
+  function stateWithOutOfScopeFinding(accepted: boolean) {
+    const state = emptyState("c1");
+    state.forensicTimeline.push({
+      id: "old",
+      timestamp: "2026-01-01T00:00:00Z",
+      description: "out of window",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+    });
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "old finding",
+      description: "d",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-01-01T00:00:00Z",
+      lastUpdated: "2026-01-01T00:00:00Z",
+      status: "open",
+    });
+    state.mitreTechniques.push({
+      id: "T1486",
+      name: "Data Encrypted for Impact",
+      findingIds: ["f1"],
+      ...(accepted ? { analystAccepted: true as const } : {}),
+    });
+    return state;
+  }
+
+  it("drops a linked technique whose findings all fall out of the window", () => {
+    const out = projectScope(stateWithOutOfScopeFinding(false), windowed);
+
+    expect(out.mitreTechniques).toEqual([]);
+  });
+
+  it("keeps it when the analyst accepted it, even with every link gone", () => {
+    const out = projectScope(stateWithOutOfScopeFinding(true), windowed);
+
+    expect(out.mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
+  });
+});
