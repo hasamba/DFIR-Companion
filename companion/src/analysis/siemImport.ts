@@ -32,6 +32,7 @@ import {
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tradecraftRules.js";
+import { matchableCommand } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
@@ -737,7 +738,8 @@ function winAccounts(ed: Row): string[] {
 // UNCOMMON LOLBin image), or null. Exported so the memory-forensics importer can bump a Volatility
 // `cmdline` row the same way.
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
-  const blob = `${image} ${cmd}`;
+  // Original first, de-escaped copy second (#908 item 1) — see commandNormalize.ts.
+  const blob = matchableCommand(`${image} ${cmd}`);
   if (STRONG_CMD.test(blob)) return "strong";
   if (SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
   // A LOLBin IMAGE on its own grades only when the binary is not itself an everyday one: cmd.exe and

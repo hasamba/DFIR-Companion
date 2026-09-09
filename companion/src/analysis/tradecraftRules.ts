@@ -22,6 +22,7 @@
 // (siemImport), the ECAR EDR feed and the memory-forensics importer. No AI.
 
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { matchableCommand } from "./commandNormalize.js";
 import { reconTechniques } from "./reconTechniques.js";
 
 export interface TradecraftRule {
@@ -477,7 +478,10 @@ export function tradecraftSignal(
   image: string,
   cmd: string,
 ): { weight: "strong" | "weak"; mitre: string[] } | null {
-  const blob = `${image} ${cmd}`;
+  // The original text first, the de-escaped copy second (#908 item 1) — so a caret/backtick/concat
+  // spelling of a rule matches, and nothing that matched before can stop matching. See
+  // commandNormalize.ts for why this can only widen the result.
+  const blob = matchableCommand(`${image} ${cmd}`);
   let strong = false;
   let weak = false;
   const mitre = new Set<string>();
