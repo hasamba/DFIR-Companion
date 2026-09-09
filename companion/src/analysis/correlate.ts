@@ -162,6 +162,11 @@ function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
 // dedup key — appending to the description used to break exact-duplicate re-matching.
 const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 export function cleanDescription(d: string): string {
+  // The malfind interpretation appended by malfindContext.ts (#909 item 4) is DERIVED, not
+  // evidence, and it did not exist before that change. Re-importing the same artifact after
+  // upgrading would otherwise produce a different key from the stored event and duplicate the row —
+  // the same failure the corroboration suffix below was stripped for.
+  d = d.replace(/ — (?:writable and executable|executable but not writable|protection (?:recorded as|was not recorded)|private memory|file-backed|VAD tag|no content preview|the captured preview|the tool reported)[\s\S]*$/u, "");
   return d.replace(CORRO_NOTE, "").trim();
 }
 

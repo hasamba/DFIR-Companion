@@ -25,10 +25,25 @@ export type Row = Record<string, unknown>;
 /** How much the region's own characteristics corroborate injection. Never a verdict. */
 export type MalfindConfidence = "corroborated" | "baseline" | "uncorroborated";
 
+/**
+ * Evidence about the SAME process from other tables in the SAME memory image. The issue asks for
+ * confidence to be strengthened by process context, network behaviour and independent detections;
+ * without this the note could only ever tell the analyst to go and check those themselves.
+ */
+export interface MalfindCorroboration {
+  networkPid?: boolean; // this PID also appears in the image's connection table
+  suspiciousCommandLine?: boolean; // this PID's command line graded suspicious
+}
+
 export interface MalfindContext {
   confidence: MalfindConfidence;
   observations: string[]; // the facts read off the row, in the order they were checked
-  note: string; // the sentence appended to the event description
+  note: string; // the full sentence: observations then the closing
+  // A SHORT clause placed immediately after the lead, because synthesis and the case reports
+  // truncate a description at 240 characters. With the caveat only at the end, those surfaces saw
+  // the categorical opening and none of the qualification — the exact inconsistency this item is
+  // meant to remove.
+  summary: string;
 }
 
 function getCI(row: Row, key: string): unknown {
@@ -52,19 +67,32 @@ function cell(row: Row, keys: string[]): string {
 const RWX_RE = /execute_?read_?write|\brwx\b|PAGE_EXECUTE_READWRITE/i;
 // Executable but not writable — still private executable memory, but a weaker shape.
 const EXEC_RE = /execute/i;
-// Volatility's VAD tags: VadS is private memory; Vad / VadF are mapped, file-backed.
-const PRIVATE_TAG_RE = /^vads$/i;
-const MAPPED_TAG_RE = /^vad[fm]?$/i;
+// VAD tags are POOL tags, not a private-versus-mapped classification: Volatility casts both VadS
+// and VadF to _MMVAD_SHORT, and only the longer VAD structures carry the mapped-file fields. So the
+// tag is reported as context and never used to decide. `PrivateMemory` is the field malfind itself
+// tests, and it is read INDEPENDENTLY of the tag — gating it behind "no tag" meant that on standard
+// Volatility 3 rows, which always carry a tag, the authoritative value was never consulted.
+const PRIVATE_MEM_KEYS = ["PrivateMemory", "private_memory", "Private"];
 
 // The preview malfind prints. Any of these columns may carry it depending on tool and renderer.
 const PREVIEW_KEYS = ["Hexdump", "hexdump", "Disasm", "disasm", "Data", "data", "Bytes", "bytes"];
+// Volatility 3 also emits a scalar `Notes` column carrying its OWN read of the first bytes —
+// "MZ header", "Function prologue". On a text-rendered import the multiline hexdump is dropped by
+// the row parser, so Notes is often the only content evidence that survives; reading it is what
+// stops the note claiming no preview existed when one did.
+const NOTE_KEYS = ["Notes", "notes", "Note", "note"];
 
 /** True when the captured preview starts with an MZ image header. */
 function startsWithMz(preview: string): boolean {
   const p = preview.trim();
   if (!p) return false;
-  // A hexdump renders it as the bytes 4d 5a; a disassembly or raw capture may show the characters.
-  return /^(?:[0-9a-f]{2}\s+)?4d\s*5a/i.test(p) || /^MZ/.test(p);
+  if (/^MZ/.test(p)) return true;
+  // Volatility's text hexdump prefixes each row with an ADDRESS: "0x1f0000  4d 5a 90 00". Strip a
+  // leading 0x-address and any separator, then require 4d 5a as the FIRST bytes. The previous
+  // pattern allowed one arbitrary leading byte, so "90 4d 5a ..." — a region starting with a NOP —
+  // was reported as beginning with an image header.
+  const body = p.replace(/^0x[0-9a-f]+\s*[:|]?\s*/i, "");
+  return /^4d\s*5a/i.test(body);
 }
 
 /**
@@ -73,84 +101,109 @@ function startsWithMz(preview: string): boolean {
  * Returns the observations and a note. Severity is NOT this module's business: the caller keeps
  * whatever policy it has, and this only explains what the row does and does not show.
  */
-export function malfindContext(row: Row): MalfindContext {
+export function malfindContext(row: Row, corroboration: MalfindCorroboration = {}): MalfindContext {
   const protection = cell(row, ["Protection", "protection", "Prot"]);
   const tag = cell(row, ["Tag", "tag", "VadTag", "vad_tag"]);
   const preview = cell(row, PREVIEW_KEYS);
+  const pluginNote = cell(row, NOTE_KEYS);
   const commit = cell(row, ["CommitCharge", "commit_charge"]);
-  const isFile = cell(row, ["File", "FileObject", "Mapped", "PrivateMemory", "private_memory"]);
+  const privateMem = cell(row, PRIVATE_MEM_KEYS);
 
   const observations: string[] = [];
-  let strong = 0;
+  // Two separate counts, because they are different kinds of evidence.
+  //
+  // `selection` counts the characteristics malfind SELECTED the region on: private, and executable.
+  // Every row it returns has them by construction, so treating them as corroboration made every row
+  // "corroborated" — including MsMpEng.exe, the textbook benign case. They establish the baseline,
+  // not confidence.
+  //
+  // `independent` counts evidence malfind did NOT select on: an image header in the content, a
+  // network connection held by the same process, a suspicious command line. Only these can raise
+  // confidence, which is what the issue means by strengthening it with process context, network
+  // behaviour or independent detections.
+  let selection = 0;
+  let independent = 0;
 
   if (protection) {
     if (RWX_RE.test(protection)) {
       observations.push(`writable and executable (${protection})`);
-      strong++;
+      selection++;
     } else if (EXEC_RE.test(protection)) {
       observations.push(`executable but not writable (${protection})`);
     } else {
-      // NOT "clean". A region malfind reported without an executable protection is unusual enough
-      // to say plainly, and it still does not clear the region.
       observations.push(`protection recorded as ${protection}, which does not corroborate injection`);
     }
   } else {
     observations.push("protection was not recorded");
   }
 
-  if (tag) {
-    if (PRIVATE_TAG_RE.test(tag)) {
-      observations.push(`private memory (${tag}) — no file on disk explains it`);
-      strong++;
-    } else if (MAPPED_TAG_RE.test(tag)) {
-      observations.push(`file-backed mapping (${tag}), which many legitimate loaders produce`);
-    } else {
-      observations.push(`VAD tag ${tag}`);
-    }
-  }
-
-  // `PrivateMemory: 1` is the Volatility 3 spelling of the same fact the VAD tag carries.
-  if (!tag && isFile) {
-    if (/^(?:1|true|yes)$/i.test(isFile)) {
+  // The authoritative field, read on its own terms.
+  if (privateMem) {
+    if (/^(?:1|true|yes)$/i.test(privateMem)) {
       observations.push("private memory — no file on disk explains it");
-      strong++;
-    } else if (/^(?:0|false|no)$/i.test(isFile)) {
+      selection++;
+    } else if (/^(?:0|false|no)$/i.test(privateMem)) {
       observations.push("file-backed, which many legitimate loaders produce");
     }
   }
+  // The tag is context only — see PRIVATE_MEM_KEYS.
+  if (tag) observations.push(`VAD tag ${tag}`);
 
-  if (!preview) {
-    observations.push(
-      "no content preview was captured, so the region's contents are unknown from this row alone",
-    );
-  } else if (startsWithMz(preview)) {
+  if (pluginNote && /mz\s*header/i.test(pluginNote)) {
+    observations.push(`the tool reported "${pluginNote}" for the first bytes`);
+    independent++;
+  } else if (preview && startsWithMz(preview)) {
     observations.push("the captured preview begins with an MZ image header");
-    strong++;
+    independent++;
+  } else if (pluginNote) {
+    observations.push(`the tool reported "${pluginNote}" for the first bytes`);
+  } else if (!preview) {
+    observations.push(
+      "no content preview reached the import, so the region's contents are unknown from this row alone",
+    );
   } else {
-    // The single most important sentence in this file.
     observations.push(
       "the captured preview does not begin with an MZ header — this does not indicate the region " +
         "is clean, because shellcode has no header and the preview covers only the start of the region",
     );
   }
 
+  if (corroboration.networkPid) {
+    observations.push("the same process also holds a network connection in this image");
+    independent++;
+  }
+  if (corroboration.suspiciousCommandLine) {
+    observations.push("the same process also has a suspicious command line in this image");
+    independent++;
+  }
+
   if (commit) observations.push(`commit charge ${commit}`);
 
-  const confidence: MalfindConfidence = strong >= 2 ? "corroborated" : strong === 1 ? "baseline" : "uncorroborated";
+  const confidence: MalfindConfidence =
+    independent >= 1 ? "corroborated" : selection >= 1 ? "baseline" : "uncorroborated";
 
   const closing =
     confidence === "corroborated"
-      ? "Several characteristics line up with injection. Confirm with the process context, its " +
-        "network behaviour, and any independent detection before concluding."
+      ? "Evidence beyond malfind's own selection criteria points the same way. Confirm with the " +
+        "process context, its network behaviour, and any independent detection before concluding."
       : confidence === "baseline"
-        ? "This is suspicious memory requiring interpretation, not a confirmed injection. JIT " +
+        ? "This is suspicious memory requiring interpretation rather than a verdict. JIT " +
           "compilers, .NET and some AV engines produce the same shape."
         : "The region's own characteristics do not corroborate injection, and they do not clear it " +
-          "either. Treat this as a region to examine, not as a finding in itself.";
+          "either. malfind only reports a region it already found suspicious, so this still needs " +
+          "examining — the row simply carries nothing further to weigh it with.";
+
+  const summary =
+    confidence === "corroborated"
+      ? "independent evidence points the same way; confirm before concluding"
+      : confidence === "baseline"
+        ? "suspicious memory requiring interpretation rather than a verdict — JIT, .NET and some AV produce this same shape"
+        : "the region's own characteristics neither corroborate nor clear it";
 
   return {
     confidence,
     observations,
+    summary,
     note: `${observations.join("; ")}. ${closing}`,
   };
 }

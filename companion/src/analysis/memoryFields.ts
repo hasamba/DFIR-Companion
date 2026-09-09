@@ -211,7 +211,10 @@ export function malfindDescription(
   tag: string,
 ): string {
   return (
-    `${tool} ${label}: executable/injected private memory in ${process || "?"} (PID ${pid || "?"})` +
+    // "executable/injected private memory" asserted the conclusion in the first six words, and
+    // "private" is not always true — Volatility 3 also reports a non-private region once it finds a
+    // dirty page. The lead now states what malfind OBSERVED; malfindContext.ts states how far it goes.
+    `${tool} ${label}: executable memory region flagged in ${process || "?"} (PID ${pid || "?"})` +
     `${regionPhrase}${protection ? ` — protection ${protection}` : ""}` +
     `${tag ? `, tag ${tag}` : ""}`
   ).slice(0, 600);

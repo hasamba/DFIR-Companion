@@ -388,7 +388,13 @@ function mapNetscan(label: string, tool: string, rows: Row[], sink: Map<string, 
   return out;
 }
 
-function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, SiemIoc>): MappedEvent[] {
+function mapMalfind(
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+  corroborating: { network: Set<string>; suspiciousCmd: Set<string> },
+): MappedEvent[] {
   const out: MappedEvent[] = [];
   for (const r of rows) {
     const proc = pick(r, ["Process", "ImageFileName", "Name", "name", "_EPROCESS"]);
@@ -402,10 +408,15 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     // of every JIT, .NET and several AV engines, so the row needs its observed characteristics
     // stated alongside it (#909 item 4). Severity policy is unchanged — this adds interpretation,
     // and never says a region is clean.
-    const ctx = malfindContext(r);
+    const ctx = malfindContext(r, {
+      networkPid: corroborating.network.has(pid),
+      suspiciousCommandLine: corroborating.suspiciousCmd.has(pid),
+    });
     out.push({
       timestamp: "",
-      description: `${malfindDescription(tool, label, proc, pid, region.phrase, prot, tag)} — ${ctx.note}`.slice(
+      // The SHORT clause comes first, because synthesis and the case reports truncate a description
+      // at 240 characters — with the caveat only at the end they saw the categorical lead alone.
+      description: `${malfindDescription(tool, label, proc, pid, region.phrase, prot, tag)} — ${ctx.summary} — ${ctx.note}`.slice(
         0,
         900,
       ),
@@ -1515,6 +1526,29 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     processes = 0,
     connections = 0;
 
+  // Evidence about the SAME process from OTHER tables in the SAME image, gathered before the
+  // dispatch loop so malfind can be weighed against it (#909 item 4). The issue asks for confidence
+  // to be strengthened by process context, network behaviour and independent detections; without
+  // this the note could only ever tell the analyst to go and check those themselves. Confined to one
+  // image and one PID, per the issue.
+  const corroborating = { network: new Set<string>(), suspiciousCmd: new Set<string>() };
+  for (const t of tables) {
+    const cat = classify(t.plugin, colSet(t.rows));
+    if (cat === "netscan") {
+      for (const r of t.rows) {
+        const pid = pickPid(r);
+        const foreign = pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr"]);
+        if (pid && foreign && !/^(?:0\.0\.0\.0|::|\*)?$/.test(foreign.trim())) corroborating.network.add(pid);
+      }
+    } else if (cat === "cmdline") {
+      for (const r of t.rows) {
+        const pid = pickPid(r);
+        if (pid && isSuspiciousCmd(pick(r, ["Process", "ImageFileName", "Name"]), pick(r, ["Args", "CommandLine", "args", "cmd"])))
+          corroborating.suspiciousCmd.add(pid);
+      }
+    }
+  }
+
   for (const t of tables) {
     const cols = colSet(t.rows);
     const category = classify(t.plugin, cols);
@@ -1529,7 +1563,7 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
         connections += t.rows.length;
         break;
       case "malfind":
-        mapped.push(...mapMalfind(label, tool, t.rows, sink));
+        mapped.push(...mapMalfind(label, tool, t.rows, sink, corroborating));
         injected += t.rows.length;
         break;
       case "cmdline":
