@@ -38,17 +38,26 @@
  *   node scripts/check-boundaries.mjs --init     # re-baseline; additions are printed, justify them
  *   node scripts/check-boundaries.mjs --json     # the counts ARCHITECTURE.md quotes; read-only
  *
+ * --update AND --init ALSO REWRITE ARCHITECTURE.md (issue #907). Three figures in that document are
+ * outputs of this scan, and moduleMap.test.ts asserts all three, so they could not rot — but nothing
+ * wrote them either, which made every PR that changed the ledger hand-edit numbers it could not know
+ * without running this script, and made two branches touching the same sentence conflict on it. The
+ * gate already rewrites the ledger it derives; the prose quoting that ledger is the same kind of
+ * output. --json stays read-only, because reading the counts must never move anything.
+ *
  * No dependency: like check-imports.mjs, the graph is a regex over the import statements, because
  * the companion imports its own modules exclusively as relative specifiers ending in `.js`.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { architectureWithCounts } from "./architectureCounts.mjs";
 
 const COMPANION = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(COMPANION, "src");
 const MAP = join(COMPANION, "scripts", "module-map.json");
 const LEDGER = join(COMPANION, "scripts", "boundary-violations.json");
+const ARCHITECTURE = join(COMPANION, "..", "ARCHITECTURE.md");
 
 const map = JSON.parse(readFileSync(MAP, "utf8"));
 
@@ -260,10 +269,36 @@ if (process.argv.includes("--json")) {
   process.exit(0);
 }
 
+// Rewrite the figures ARCHITECTURE.md quotes from this pass. Called after the ledger is written, by
+// both flags that write it — the comply figure moves whenever the ledger does, so updating one and
+// not the other just relocates the drift.
+//
+// A missing claim is REPORTED, not repaired: the sentence is the document's, and a script that
+// invents prose to satisfy its own guard test has removed the only signal that the doc changed shape.
+function syncArchitecture(violations) {
+  if (!existsSync(ARCHITECTURE)) return;
+  const before = readFileSync(ARCHITECTURE, "utf8");
+  const doc = architectureWithCounts(before, {
+    complying: crossDomain.size - violations,
+    crossDomain: crossDomain.size,
+    violations,
+  });
+  const where = relative(join(COMPANION, ".."), ARCHITECTURE);
+  if (!doc.pair || doc.violationClaims === 0) {
+    console.warn(
+      `[boundaries] ${where} no longer states ${!doc.pair ? "the comply/total pair" : "a violation count"} — left it alone; check the prose.`,
+    );
+  }
+  if (!doc.changed) return;
+  writeFileSync(ARCHITECTURE, doc.text);
+  console.log(`[boundaries] updated the derived figures in ${where}`);
+}
+
 if (process.argv.includes("--init")) {
   const previous = existsSync(LEDGER) ? JSON.parse(readFileSync(LEDGER, "utf8")) : [];
   const added = found.filter((v) => !previous.includes(v));
   writeFileSync(LEDGER, `${JSON.stringify(found, null, 2)}\n`);
+  syncArchitecture(found.length);
   console.log(`[boundaries] recorded ${found.length} violation(s) in ${relative(COMPANION, LEDGER)}`);
   if (added.length > 0) {
     console.log(`[boundaries] ${added.length} of them are NEW — justify each in the PR:`);
@@ -287,6 +322,7 @@ if (process.argv.includes("--update")) {
     process.exit(1);
   }
   writeFileSync(LEDGER, `${JSON.stringify(found, null, 2)}\n`);
+  syncArchitecture(found.length);
   console.log(`[boundaries] recorded ${found.length} violation(s) — ${removed.length} fewer`);
   process.exit(0);
 }
@@ -294,7 +330,9 @@ if (process.argv.includes("--update")) {
 if (removed.length > 0) {
   console.log(`[boundaries] ${removed.length} recorded violation(s) are gone — nice:`);
   for (const v of removed) console.log(`  - ${v}`);
-  console.log("[boundaries] run `npm run check:boundaries -- --update` to shrink the ledger.");
+  console.log(
+    "[boundaries] run `npm run check:boundaries -- --update` to shrink the ledger and update ARCHITECTURE.md.",
+  );
 }
 
 if (added.length > 0) {
