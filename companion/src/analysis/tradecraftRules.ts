@@ -22,7 +22,7 @@
 // (siemImport), the ECAR EDR feed and the memory-forensics importer. No AI.
 
 import { secretSpillSignal } from "./secretSpillRules.js";
-import { matchableCommand } from "./commandNormalize.js";
+import { commandCandidates } from "./commandNormalize.js";
 import { reconTechniques } from "./reconTechniques.js";
 
 export interface TradecraftRule {
@@ -478,15 +478,15 @@ export function tradecraftSignal(
   image: string,
   cmd: string,
 ): { weight: "strong" | "weak"; mitre: string[] } | null {
-  // The original text first, the de-escaped copy second (#908 item 1) — so a caret/backtick/concat
-  // spelling of a rule matches, and nothing that matched before can stop matching. See
-  // commandNormalize.ts for why this can only widen the result.
-  const blob = matchableCommand(`${image} ${cmd}`);
+  // The original text and its de-escaped reading, as SEPARATE strings (#908 item 1). Each rule is
+  // tested against each in turn, so a match must exist wholly inside one reading — joining them
+  // let `vssadmin\s+delete` match across the join. See commandNormalize.ts.
+  const blobs = commandCandidates(image, cmd);
   let strong = false;
   let weak = false;
   const mitre = new Set<string>();
   for (const rule of TRADECRAFT_RULES) {
-    if (!rule.re.test(blob)) continue;
+    if (!blobs.some((b) => rule.re.test(b))) continue;
     if (rule.weight === "strong") strong = true;
     else weak = true;
     for (const id of rule.ids) mitre.add(id);

@@ -1,5 +1,5 @@
 import { techniqueName, unionEventTechniques } from "./attackTechniqueNames.js";
-import { matchableCommand } from "./commandNormalize.js";
+import { commandCandidates } from "./commandNormalize.js";
 // Re-exported so existing importers keep one entry point for technique naming.
 export { techniqueName, unionEventTechniques };
 
@@ -119,9 +119,11 @@ const RECON_RULES: ReconRule[] = [
 // access plus the action techniques (collection / exfil / anti-forensics / transfer / SSH) that
 // survive in EDR/Sysmon telemetry even when the shell history is cleared.
 export function reconTechniques(image: string, cmd: string): string[] {
-  // Original first, de-escaped copy second (#908 item 1) — see commandNormalize.ts.
-  const blob = matchableCommand(`${image} ${cmd}`);
+  // The original and its de-escaped reading, as separate strings (#908 item 1) — never joined, or
+  // a rule matches across the join. See commandNormalize.ts.
+  const blobs = commandCandidates(image, cmd);
   const out = new Set<string>();
-  for (const rule of RECON_RULES) if (rule.re.test(blob)) for (const id of rule.ids) out.add(id);
+  for (const rule of RECON_RULES)
+    if (blobs.some((b) => rule.re.test(b))) for (const id of rule.ids) out.add(id);
   return [...out];
 }
