@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -8,8 +8,10 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
+import { CustodyStore } from "../../src/analysis/custody.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { encryptBuffer, decryptBuffer } from "../../src/analysis/caseEncryption.js";
+import { createZip, readZip } from "../../src/analysis/zipArchive.js";
 import { scryptSync, createCipheriv, randomBytes } from "node:crypto";
 
 const PASSWORD = "correct horse battery staple";
@@ -19,7 +21,10 @@ async function harness() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const commentsStore = new CommentsStore(store);
-  const app = createApp(store, { stateStore, commentsStore });
+  // Wired the way composition/appWiring.ts wires it. The custody chain is optional in AppOptions,
+  // so a harness that leaves it out silently tests a server with no custody log at all.
+  const custodyStore = new CustodyStore(store);
+  const app = createApp(store, { stateStore, commentsStore, custodyStore });
   return { app, store, stateStore };
 }
 
@@ -346,6 +351,64 @@ describe("POST /cases/import/encrypted", () => {
         (await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status,
       ).toBe(400);
     }
+  });
+
+  // #904: the manifest travels inside every archive with a SHA-256 per file, and import used to
+  // read the counts out of it and drop the rest. The 201 now carries where the package came from,
+  // and the custody chain records that the case arrived rather than being created here.
+  it("returns the archive's provenance on a successful import", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2" });
+    expect(imp.status).toBe(201);
+    expect(imp.body.provenance).toMatchObject({ sourceCaseId: "INC-1" });
+    expect(imp.body.provenance.generatedBy).toBeTruthy();
+    expect(imp.body.provenance.totalFiles).toBeGreaterThan(0);
+  });
+
+  it("records the import in the imported case's custody chain", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2" });
+    expect(imp.status).toBe(201);
+
+    const records = (await readFile(store.custodyLogPath("INC-2"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const arrivals = records.filter((r) => r.event === "transferred");
+    expect(arrivals).toHaveLength(1);
+    expect(arrivals[0].caseId).toBe("INC-2");
+    expect(arrivals[0].source).toContain("INC-1");
+    expect(arrivals[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("rejects an archive whose bytes disagree with its manifest with a 400, not a 500", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const plain = await decryptBuffer(Buffer.from(await exportArchive(app, "INC-1"), "base64"), PASSWORD);
+    // Only the evidence. Garbling the manifest as well would leave it unparseable, which is the
+    // documented "older archive" path and skips verification entirely — the archive has to stay
+    // completely valid apart from the one file that no longer matches what the manifest recorded.
+    const tampered = readZip(plain).map((e) =>
+      e.path.startsWith("screenshots/") ? { path: e.path, data: Buffer.from("swapped") } : e,
+    );
+    const data = (await encryptBuffer(createZip(tampered), PASSWORD)).toString("base64");
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2" });
+    expect(imp.status).toBe(400);
+    expect(imp.body.error).toMatch(/manifest/);
+    expect(await store.caseExists("INC-2")).toBe(false);
   });
 
   // The conflict stays uncounted by the failure limiter — an analyst re-importing is not an

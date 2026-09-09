@@ -38,6 +38,34 @@
     );
   }
 
+  // #904. The archive names the case it was exported from, in the manifest that now travels with
+  // it. That id is worth a sentence only when the import RENAMED the case: a rename rewrites the
+  // handful of caseId-bearing files and copies everything else verbatim, so the package the case
+  // was built from goes on naming an id the case no longer has. When the id is unchanged there is
+  // no disagreement to report, so it says nothing.
+  //
+  // Silence is also the answer for an archive with no manifest (an export from before provenance
+  // travelled with it) and for an older companion that answers with no field at all — neither is
+  // a problem, and neither can be told apart from the other here.
+  //
+  // The rest of the manifest — export time, exporting version, every file and its checksum — is
+  // written into the imported case at metadata/source-manifest.json. This is the pointer, not the
+  // record.
+  function importProvenanceNote(provenance, importedCaseId) {
+    if (!provenance || typeof provenance !== "object") return "";
+    const source = provenance.sourceCaseId;
+    if (typeof source !== "string" || !source || source === importedCaseId) return "";
+    return (
+      "Imported from case " +
+      source +
+      " under a new id. The case record, state, capture log and import log now say " +
+      importedCaseId +
+      ". Anything else in the package still says " +
+      source +
+      "."
+    );
+  }
+
   function initImportCase() {
     const importCaseOverlay = document.getElementById("importCaseOverlay");
     function closeImportCaseModal() {
@@ -156,9 +184,16 @@
           // So the modal the analyst is already looking at stays OPEN and carries the sentence,
           // and the only control left is the one that closes it. Nothing else on the page writes
           // to ipMsg, and dismissing it is a deliberate act rather than a race with the socket.
-          const upgrade = encryptionUpgradeNotice(body.formatVersion, body.currentFormatVersion);
-          if (upgrade) {
-            msg.textContent = upgrade;
+          //
+          // #904 adds a second sentence that has to survive the same way, for the same reason, so
+          // both go to the same place. They are separate facts about the package — how it was
+          // encrypted, and which case it came from — and neither may swallow the other.
+          const notices = [
+            encryptionUpgradeNotice(body.formatVersion, body.currentFormatVersion),
+            importProvenanceNote(body.provenance, body.caseId),
+          ].filter(Boolean);
+          if (notices.length > 0) {
+            msg.textContent = notices.join(" ");
             document.getElementById("ipImport").hidden = true;
             // The import already happened and cannot be undone, so "Cancel" would be a lie.
             cancelBtn.textContent = "Close";
@@ -189,5 +224,6 @@
   }
 
   window.encryptionUpgradeNotice = encryptionUpgradeNotice;
+  window.importProvenanceNote = importProvenanceNote;
   window.initImportCase = initImportCase;
 })();

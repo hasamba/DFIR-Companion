@@ -12,9 +12,11 @@ import type { DashboardGlobals } from "../helpers/dashboardModule.js";
 // part worth pinning, and pinning it needs no DOM at all.
 interface ImportCaseApi {
   encryptionUpgradeNotice(formatVersion: unknown, currentFormatVersion: unknown): string;
+  importProvenanceNote(provenance: unknown, importedCaseId: unknown): string;
 }
 
-const { encryptionUpgradeNotice } = loadDashboardModule<ImportCaseApi>("dashboard-import-case.js");
+const { encryptionUpgradeNotice, importProvenanceNote } =
+  loadDashboardModule<ImportCaseApi>("dashboard-import-case.js");
 
 describe("encryptionUpgradeNotice", () => {
   it("warns when the archive is older than the version this build writes", () => {
@@ -149,6 +151,97 @@ async function runImport(responseBody: Record<string, unknown>) {
 
   return { els, connected };
 }
+
+// #904: the archive names the case it was exported from. That id is only worth a sentence when the
+// import RENAMED the case — which is exactly when the package's embedded ids go stale, and the
+// analyst has to know the case they are now looking at is not the case the archive described.
+describe("importProvenanceNote", () => {
+  it("names the source case when the import renamed it", () => {
+    const note = importProvenanceNote({ sourceCaseId: "INC-1" }, "INC-2");
+    expect(note).toContain("INC-1");
+    // Both ids, because the useful fact is the DISAGREEMENT between them: the case is INC-2 now,
+    // and parts of the package it was built from still say INC-1.
+    expect(note).toContain("INC-2");
+  });
+
+  it("says nothing when the case kept the id the archive gave it", () => {
+    expect(importProvenanceNote({ sourceCaseId: "INC-1" }, "INC-1")).toBe("");
+  });
+
+  // No manifest means an archive written before provenance travelled with it, not a suspicious
+  // one. An older companion answering with no field at all reaches here the same way.
+  it("says nothing when the archive carried no provenance", () => {
+    expect(importProvenanceNote(null, "INC-2")).toBe("");
+    expect(importProvenanceNote(undefined, "INC-2")).toBe("");
+    expect(importProvenanceNote({}, "INC-2")).toBe("");
+  });
+
+  it("says nothing when the source id is not a string", () => {
+    expect(importProvenanceNote({ sourceCaseId: 7 }, "INC-2")).toBe("");
+    expect(importProvenanceNote({ sourceCaseId: "" }, "INC-2")).toBe("");
+  });
+});
+
+// #904, and the same trap #672 fell into. The provenance note first went to `#status`, which
+// connect() overwrites with "connected (live)" milliseconds later — the disclosure was gone before
+// it could be read. It belongs where the weak-encryption warning already lives.
+describe("a renamed import's source case survives the reconnect", () => {
+  it("keeps the source-case note where the automatic reconnect cannot overwrite it", async () => {
+    const { els, connected } = await runImport({
+      caseId: "INC-2",
+      counts: {},
+      formatVersion: 2,
+      currentFormatVersion: 2,
+      provenance: { sourceCaseId: "INC-1" },
+    });
+
+    expect(connected).toBe(1);
+    expect(els.get("status")!.textContent).toBe("connected (live)"); // #status really is clobbered
+    expect(els.get("ipMsg")!.textContent).toContain("INC-1");
+    expect(els.get("importPasswordOverlay")!.classList.contains("open")).toBe(true);
+  });
+
+  it("leaves only a way out once the note is showing", async () => {
+    const { els } = await runImport({
+      caseId: "INC-2",
+      counts: {},
+      formatVersion: 2,
+      currentFormatVersion: 2,
+      provenance: { sourceCaseId: "INC-1" },
+    });
+
+    expect(els.get("ipImport")!.hidden).toBe(true);
+    expect(els.get("ipCancel")!.textContent).toBe("Close");
+  });
+
+  it("closes the modal as before when the case kept the id the archive gave it", async () => {
+    const { els } = await runImport({
+      caseId: "INC-1",
+      counts: {},
+      formatVersion: 2,
+      currentFormatVersion: 2,
+      provenance: { sourceCaseId: "INC-1" },
+    });
+
+    expect(els.get("importPasswordOverlay")!.classList.contains("open")).toBe(false);
+    expect(els.get("ipMsg")!.textContent).toBe("");
+  });
+
+  // A weak archive imported under a new id raises both. Neither may swallow the other — they are
+  // separate facts about the package, and the analyst needs both.
+  it("shows the weak-encryption warning and the source case together", async () => {
+    const { els } = await runImport({
+      caseId: "INC-2",
+      counts: {},
+      formatVersion: 1,
+      currentFormatVersion: 2,
+      provenance: { sourceCaseId: "INC-1" },
+    });
+
+    expect(els.get("ipMsg")!.textContent).toMatch(/weaker key derivation/i);
+    expect(els.get("ipMsg")!.textContent).toContain("INC-1");
+  });
+});
 
 describe("a weak-encryption warning survives the import that raised it", () => {
   it("keeps the warning where the automatic reconnect cannot overwrite it", async () => {
