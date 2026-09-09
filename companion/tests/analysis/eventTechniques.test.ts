@@ -127,4 +127,21 @@ describe("withEventTechniques (#893)", () => {
 
     expect(withEventTechniques(state).mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
   });
+
+  it("is what the hunt prompt uses, so an import-only case still has techniques to pivot from", () => {
+    // hunts.ts reads the case table to tell the model which techniques are in play. Nothing
+    // persists event-carried ones any more, so reading the stored table there offered "(none)" on
+    // exactly the cases — deterministic imports, no synthesis — that #878 was filed about.
+    const state = {
+      ...emptyState("c1"),
+      forensicTimeline: [event("e1", ["T1003.003"]), event("e2", ["T1021.002"])],
+    };
+
+    const text = withEventTechniques(state)
+      .mitreTechniques.map((t) => `${t.id} ${t.name}`)
+      .join(", ");
+
+    expect(text).toContain("T1003.003 OS Credential Dumping: NTDS");
+    expect(text).toContain("T1021.002");
+  });
 });

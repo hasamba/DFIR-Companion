@@ -1,3 +1,4 @@
+import { withEventTechniques } from "../eventTechniques.js";
 import type { AIProvider } from "../../providers/provider.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
@@ -189,7 +190,14 @@ async function buildFleetHuntPrompt(
   const feedback = huntFeedbackBlocks(outcomes);
   const findingsText = renderHuntFindings(loaded.findings);
   const iocText = renderHuntIocs(loaded.iocs);
-  const techText = loaded.mitreTechniques.map((t) => `${t.id} ${t.name}`).join(", ") || "(none)";
+  // Derived, not read straight off the stored table (#893): the techniques a deterministic importer
+  // carries live on its EVENTS and are no longer persisted, so an import-only case would offer the
+  // model "(none)" to pivot from. Built over `scoped` for the same reason the timeline block below
+  // is — the hunt is proposed against the events actually in play.
+  const techText =
+    withEventTechniques({ ...loaded, forensicTimeline: scoped })
+      .mitreTechniques.map((t) => `${t.id} ${t.name}`)
+      .join(", ") || "(none)";
   const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
   const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
   // Causal grounding (#124): serialize the deterministic evidence-chain graph — process spawn
