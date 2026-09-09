@@ -203,6 +203,11 @@ const PROFILES: Profile[] = [
         aggKey: `shim|${path.toLowerCase()}`,
         sources: ["ShimCache"],
         path,
+        // ShimCache keeps its copy of the modification time in the REGISTRY, which a tool that
+        // rewrites the MFT does not necessarily touch. That independence is the whole point.
+        ...(ezTime(getCI(row, "LastModifiedTimeUTC"))
+          ? { fileModified: ezTime(getCI(row, "LastModifiedTimeUTC")) }
+          : {}),
         ...(proc ? { processName: proc } : {}),
       };
     },
@@ -305,6 +310,11 @@ const PROFILES: Profile[] = [
         aggKey: `mft|${path.toLowerCase()}`,
         sources: ["MFT"],
         path,
+        // The MFT's own record of when the file was modified, kept structured so it can be
+        // compared against ShimCache's independent copy (#909 item 8).
+        ...(ezTime(getCI(row, "LastModified0x10"))
+          ? { fileModified: ezTime(getCI(row, "LastModified0x10")) }
+          : {}),
         ...(proc ? { processName: proc } : {}),
       };
     },

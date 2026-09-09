@@ -754,6 +754,8 @@ export interface MappedEvent {
   timestamp: string;
   description: string;
   severity: Severity;
+  // The modification time the source artifact recorded for this file — see ForensicEvent.
+  fileModified?: string;
   mitre: string[];
   aggKey: string;
   canonical?: CanonicalEventEnvelope;

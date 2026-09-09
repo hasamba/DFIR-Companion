@@ -14,6 +14,7 @@ import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
+import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -281,6 +282,7 @@ export function mergeDelta(
       if (incoming.parentName) existing.parentName = incoming.parentName;
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
       if (incoming.commandLine) existing.commandLine = incoming.commandLine;
+      if (incoming.fileModified) existing.fileModified = incoming.fileModified;
       if (incoming.chainSignature) existing.chainSignature = incoming.chainSignature;
       // A re-import may restate whether this source guesses its year; nothing else may clear the
       // mark, because it describes the SOURCE, not this particular merge (#739).
@@ -314,6 +316,7 @@ export function mergeDelta(
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
         ...(incoming.commandLine ? { commandLine: incoming.commandLine } : {}),
+        ...(incoming.fileModified ? { fileModified: incoming.fileModified } : {}),
         ...(incoming.chainSignature ? { chainSignature: incoming.chainSignature } : {}),
         ...(incoming.yearInferred ? { yearInferred: true } : {}),
         ...(incoming.canonical ? { canonical: incoming.canonical } : {}),
@@ -351,7 +354,11 @@ export function mergeDelta(
   // Collapse duplicates / cross-source matches immediately (so re-importing the same
   // report, or two tools flagging one artifact, never doubles the timeline) — not only
   // during synthesis. Idempotent.
-  const correlated = correlateEvents(withParents).sort(byEventTime);
+  // Weigh each MFT timestomp signal against what an INDEPENDENT artifact recorded for the same file
+  // (#909 item 8). Runs here because the MFT and ShimCache arrive as separate imports, so this is
+  // the first point at which both are in hand. Only ever raises.
+  const withTimestomp = corroborateTimestompsOnTimeline(withParents);
+  const correlated = correlateEvents(withTimestomp).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and

@@ -472,6 +472,7 @@
     "timelineAnomalies.ts": "analysis/detect",
     "timelineDiff.ts": "analysis/timeline",
     "ransomwareDetect.ts": "analysis/detect",
+    "timestompCorroborate.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
     "toolDetect.ts": "analysis/detect",
     "tradecraftRules.ts": "analysis/detect",

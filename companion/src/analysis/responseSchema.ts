@@ -144,6 +144,9 @@ export const deltaSchema = z.object({
         parentName: z.string().optional(),
         pid: z.number().int().positive().optional(), // subject pid on process-creation events (cross-tool correlation)
         commandLine: z.string().optional(), // process-creation command line (#68 chainSignature)
+        // The modification time the source artifact recorded for this file (#909 item 8). A field
+        // that is not in this schema is stripped at the merge, so it would never reach the timeline.
+        fileModified: z.string().optional(),
         chainSignature: z.string().optional(), // time-independent process-creation identity (#68)
         // Phase 2 evidence-chain fields.
         action: z.enum(["write", "execute", "network_send", "network_receive"]).optional(),

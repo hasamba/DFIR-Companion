@@ -169,7 +169,7 @@ export function cleanDescription(d: string): string {
   // member's fields, and stripping is what stops the next pass appending a second marker.
   const withoutDerived = d
     // The process-lifetime markers (#909 item 6).
-    .replace(/\s*\[(?:unexpected parent|sacrificial process):[\s\S]*?\]\s*$/u, "")
+    .replace(/\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration):[\s\S]*?\]\s*$/u, "")
     // The malfind interpretation (#909 item 4).
     .replace(
       / — (?:writable and executable|executable but not writable|protection (?:recorded as|was not recorded)|private memory|file-backed|VAD tag|no content preview|the captured preview|the tool reported)[\s\S]*$/u,

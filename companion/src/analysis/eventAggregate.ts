@@ -129,6 +129,7 @@ export function createEventAggregator(
           count: 1,
           aggKey: m.aggKey,
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
+          ...(m.fileModified ? { fileModified: m.fileModified } : {}),
           ...(m.yearInferred ? { yearInferred: true } : {}),
         };
         applyEventIdentity(e, m);
