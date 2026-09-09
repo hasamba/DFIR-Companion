@@ -18,7 +18,6 @@ import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalEvent.js";
-import { unionEventTechniques } from "./attackTechniqueNames.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -346,13 +345,18 @@ export function mergeDelta(
   // during synthesis. Idempotent.
   const correlated = correlateEvents(withExfil).sort(byEventTime);
 
-  // Deterministic importers hardcode the delta's top-level mitreTechniques to [] and carry the real
-  // technique IDs on the forensic events instead, so the aggregate above sees nothing to collect.
-  // The MITRE panel and the report's MITRE section both read that aggregate, which is why they
-  // stayed empty while Kill Chain and the ATT&CK Navigator export — which read the events directly
-  // — showed the techniques. Union from the merged timeline so any delta contributes, and so an
-  // existing case heals on its next merge. Idempotent: ids already present are skipped. #878.
-  const mitreWithEvents = unionEventTechniques(mitreTechniques, correlated);
+  // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
+  // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and
+  // the report correct at the moment of the merge and wrong forever after: the aggregate is
+  // persisted, while scope and the false-positive filter drop events at PROJECTION rather than from
+  // state — so a technique whose only event the analyst later dismissed had no way back out.
+  //
+  // Deriving it at projection instead, from the events that survive those filters, is what
+  // eventTechniques.ts does. Nothing is stored, so nothing can go stale, and the panel and the
+  // report agree with the timeline beside them by construction.
+  //
+  // What IS collected here is what a model asserted at the delta's top level — a conclusion about
+  // the case rather than a restatement of an event tag. That is a claim the case should keep.
 
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
@@ -396,7 +400,7 @@ export function mergeDelta(
     openThreads,
     timeline,
     forensicTimeline: correlated,
-    mitreTechniques: mitreWithEvents,
+    mitreTechniques,
     keyQuestions,
     nextSteps,
     uncertainties,

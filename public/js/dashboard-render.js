@@ -473,8 +473,25 @@
             `<div class="log-row"><span class="log-time">${esc(r.ts)}</span><span>${r.html}</span></div>`,
         )
         .join("") || "—";
+    // MITRE is completed HERE, from the events this view is actually showing — `ft` is the
+    // scope-projected timeline minus the ones the analyst dismissed — rather than read from a
+    // stored aggregate. The client mirror of the server's eventTechniques.ts (#893). Nothing is
+    // persisted, so a dismissal takes effect on the next render and un-marking restores the
+    // technique, with no merge and no healing pass in between.
+    //
+    // A technique a model asserted keeps its name and its finding links. One derived from an event
+    // shows its id as the name, which is exactly what the server's own name table falls back to for
+    // an id it does not know.
+    const mitreRows = (state.mitreTechniques || []).slice();
+    const seenTechniques = new Set(mitreRows.map((m) => m.id));
+    for (const e of ft)
+      for (const id of e.mitreTechniques || [])
+        if (id && !seenTechniques.has(id)) {
+          seenTechniques.add(id);
+          mitreRows.push({ id, name: id, findingIds: [] });
+        }
     document.getElementById("mitre").innerHTML =
-      state.mitreTechniques
+      mitreRows
         .map(
           (m) =>
             `<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`,

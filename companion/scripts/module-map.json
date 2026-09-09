@@ -231,6 +231,7 @@
     "emailImport.ts": "analysis/ingest",
     "eventAggregate.ts": "analysis/ingest",
     "eventRelevance.ts": "analysis/findings",
+    "eventTechniques.ts": "analysis/timeline",
     "evidenceGraph.ts": "analysis/detect",
     "evtxRecordId.ts": "analysis/ingest",
     "evtxXmlImport.ts": "analysis/ingest",

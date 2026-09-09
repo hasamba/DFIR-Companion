@@ -955,12 +955,11 @@ describe("mergeDelta year-clamp eligibility (#739)", () => {
   });
 });
 
-// Every deterministic importer emits a delta whose top-level mitreTechniques is hardcoded empty,
-// while the real technique IDs ride on the forensic events it produces. The dashboard MITRE panel
-// and the report's MITRE section both read the aggregate, so both showed nothing until an AI
-// synthesis pass happened to union the per-event tags in. Kill Chain and the ATT&CK Navigator
-// export read the events directly, which is why only those two surfaces looked correct. #878.
-describe("mergeDelta MITRE aggregate (#878)", () => {
+// The techniques a deterministic importer carries on its EVENTS are no longer collected here.
+// #878 unioned them into this persisted aggregate; #893 moved that to projection, where the scope
+// window and the false-positive filter have already run. See eventTechniques.test.ts and the
+// report-level tests in reportWriter.test.ts — this merge keeps only what a model asserted.
+describe("mergeDelta leaves event-carried techniques to projection (#893)", () => {
   const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
 
   const event = (id: string, techniques: string[]) => ({
@@ -972,40 +971,24 @@ describe("mergeDelta MITRE aggregate (#878)", () => {
     relatedFindingIds: [],
   });
 
-  it("collects techniques carried by forensic events, with no AI synthesis involved", () => {
+  it("does not persist a technique that only an event carries", () => {
     const next = mergeDelta(
       emptyState("c1"),
-      {
-        ...baseDelta,
-        mitreTechniques: [],
-        forensicEvents: [event("e1", ["T1003.003"]), event("e2", ["T1021.002", "T1570"])],
-      },
+      { ...baseDelta, mitreTechniques: [], forensicEvents: [event("e1", ["T1003.003"])] },
       ctx,
     );
 
-    expect(next.mitreTechniques.map((t) => t.id).sort()).toEqual(["T1003.003", "T1021.002", "T1570"]);
-    expect(next.mitreTechniques.every((t) => t.name.length > 0)).toBe(true);
+    expect(next.mitreTechniques).toEqual([]);
+    expect(next.forensicTimeline[0].mitreTechniques).toEqual(["T1003.003"]);
   });
 
-  it("does not duplicate a technique the delta already names at the top level", () => {
+  it("still persists a technique the delta asserts at the top level, with its finding links", () => {
     const next = mergeDelta(
       emptyState("c1"),
-      {
-        ...baseDelta,
-        mitreTechniques: [{ id: "T1003.003", name: "NTDS" }],
-        forensicEvents: [event("e1", ["T1003.003"])],
-      },
+      { ...baseDelta, mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact" }] },
       ctx,
     );
 
-    expect(next.mitreTechniques.filter((t) => t.id === "T1003.003")).toHaveLength(1);
-  });
-
-  it("stays stable when the same events are merged again", () => {
-    const delta = { ...baseDelta, forensicEvents: [event("e1", ["T1003.003"])] };
-    let state = mergeDelta(emptyState("c1"), delta, ctx);
-    state = mergeDelta(state, delta, ctx);
-
-    expect(state.mitreTechniques.map((t) => t.id)).toEqual(["T1003.003"]);
+    expect(next.mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
   });
 });
