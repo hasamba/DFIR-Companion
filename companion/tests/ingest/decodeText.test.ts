@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { decodeImportedText } from "../../src/ingest/decodeText.js";
 import { parseWerReport } from "../../src/analysis/werImport.js";
 
-const WER = "EventType=APPCRASH\nSig[0].Name=Application Name\nSig[0].Value=evil.exe\nAppPath=C:\\Windows\\Temp\\evil.exe\n";
+const WER =
+  "EventType=APPCRASH\nSig[0].Name=Application Name\nSig[0].Value=evil.exe\nAppPath=C:\\Windows\\Temp\\evil.exe\n";
 
 describe("decodeImportedText", () => {
   it("decodes plain UTF-8 unchanged", () => {

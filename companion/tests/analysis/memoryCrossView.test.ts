@@ -64,7 +64,9 @@ describe("psxviewSignal", () => {
   // Volatility 3 spells it with a space. Reading only the V2 name graded every terminated process
   // in a V3 capture as a hidden one.
   it("recognises the Volatility 3 spelling of the exit column", () => {
-    expect(psxviewSignal(row({ pslist: false, csrss: false, "Exit Time": "2026-01-01 10:00:00" }))).toBeNull();
+    expect(
+      psxviewSignal(row({ pslist: false, csrss: false, "Exit Time": "2026-01-01 10:00:00" })),
+    ).toBeNull();
   });
 
   // Treating any non-empty value as proof of termination let junk suppress a real finding.
@@ -75,7 +77,9 @@ describe("psxviewSignal", () => {
   });
 
   it("excuses only the views an early-boot process legitimately fails", () => {
-    expect(psxviewSignal(row({ PID: 4, Name: "System", csrss: false, session: false, deskthrd: false }))).toBeNull();
+    expect(
+      psxviewSignal(row({ PID: 4, Name: "System", csrss: false, session: false, deskthrd: false })),
+    ).toBeNull();
     expect(psxviewSignal(row({ Name: "smss.exe", csrss: false, deskthrd: false }))).toBeNull();
   });
 
@@ -190,8 +194,27 @@ describe("column detection", () => {
 describe("wired into the memory importer", () => {
   it("raises a psxview row whose views disagree above the Info floor", () => {
     const rows = [
-      { PID: 4321, Name: "evil.exe", pslist: false, psscan: true, thrdproc: true, pspcid: true, csrss: false, session: true, deskthrd: true },
-      { PID: 900, Name: "explorer.exe", pslist: true, psscan: true, thrdproc: true, csrss: true, session: true, deskthrd: true },
+      {
+        PID: 4321,
+        Name: "evil.exe",
+        pslist: false,
+        psscan: true,
+        thrdproc: true,
+        pspcid: true,
+        csrss: false,
+        session: true,
+        deskthrd: true,
+      },
+      {
+        PID: 900,
+        Name: "explorer.exe",
+        pslist: true,
+        psscan: true,
+        thrdproc: true,
+        csrss: true,
+        session: true,
+        deskthrd: true,
+      },
     ];
     const r = parseMemory(JSON.stringify({ "windows.malware.psxview.PsXView": rows }));
     const flagged = r.events.filter((e) => e.severity !== "Info");
@@ -203,8 +226,24 @@ describe("wired into the memory importer", () => {
 
   it("surfaces an unlinked module from ldrmodules even though DLL rows are otherwise silent", () => {
     const rows = [
-      { Pid: 3120, Process: "svchost.exe", Base: "0x7ffb00000000", InLoad: false, InInit: false, InMem: false, MappedPath: "" },
-      { Pid: 3120, Process: "svchost.exe", Base: "0x7ffb10000000", InLoad: true, InInit: true, InMem: true, MappedPath: "C:\\Windows\\System32\\ntdll.dll" },
+      {
+        Pid: 3120,
+        Process: "svchost.exe",
+        Base: "0x7ffb00000000",
+        InLoad: false,
+        InInit: false,
+        InMem: false,
+        MappedPath: "",
+      },
+      {
+        Pid: 3120,
+        Process: "svchost.exe",
+        Base: "0x7ffb10000000",
+        InLoad: true,
+        InInit: true,
+        InMem: true,
+        MappedPath: "C:\\Windows\\System32\\ntdll.dll",
+      },
     ];
     const r = parseMemory(JSON.stringify({ "windows.ldrmodules.LdrModules": rows }));
     // The ordinary module stays telemetry; only the unlinked one becomes an event.

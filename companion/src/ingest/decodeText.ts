@@ -25,7 +25,11 @@ export function decodeImportedText(buf: Buffer): string {
       const body = buf.subarray(2);
       const swapped = Buffer.from(body);
       // swap16 needs an even length; an odd trailing byte is truncation, not content.
-      if (swapped.length % 2 === 1) return swapped.subarray(0, swapped.length - 1).swap16().toString("utf16le");
+      if (swapped.length % 2 === 1)
+        return swapped
+          .subarray(0, swapped.length - 1)
+          .swap16()
+          .toString("utf16le");
       return swapped.swap16().toString("utf16le");
     }
   }

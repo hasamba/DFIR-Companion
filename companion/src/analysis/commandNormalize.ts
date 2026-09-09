@@ -133,11 +133,9 @@ export function normalizeCommand(raw: string, shell: ShellKind = "unknown"): Nor
 
   // Which escape characters this text is allowed to honour.
   const caretOk =
-    shell === "cmd" ||
-    (shell === "unknown" && countChar(src, "^") >= UNKNOWN_SHELL_MIN_ESCAPES);
+    shell === "cmd" || (shell === "unknown" && countChar(src, "^") >= UNKNOWN_SHELL_MIN_ESCAPES);
   const backtickOk =
-    shell === "powershell" ||
-    (shell === "unknown" && countChar(src, "`") >= UNKNOWN_SHELL_MIN_ESCAPES);
+    shell === "powershell" || (shell === "unknown" && countChar(src, "`") >= UNKNOWN_SHELL_MIN_ESCAPES);
 
   const found = new Set<ObfuscationTrick>();
 
@@ -242,13 +240,13 @@ export function normalizeCommand(raw: string, shell: ShellKind = "unknown"): Nor
     }
     let end = m;
     while (end < chars.length && literal[end]) end++;
-    masked += `${parts.length}`;
+    masked += `${PH_OPEN}${parts.length}${PH_CLOSE}`;
     parts.push(chars.slice(m, end).join(""));
     m = end;
   }
 
   const rewritten = rewriteUnquoted(masked, found);
-  const text = rewritten.replace(/(\d+)/g, (_a, idx: string) => parts[Number(idx)] ?? "");
+  const text = rewritten.replace(PH_RE, (_a, idx: string) => parts[Number(idx)] ?? "");
   return { text, changed: text !== src, tricks: [...found], truncated: false };
 }
 

@@ -70,8 +70,7 @@ const EXEC_MARKER_RE = /iex\b|invoke-expression|certutil|frombase64string|downlo
 const CHAR_CODES_RE = /\[char\]\s*\d{1,7}(?:\s*\+\s*\[char\]\s*\d{1,7})+/i;
 // `[char[]](105,101,120) -join ''` — the join is consumed when present, because a bare [char[]] is
 // an ARRAY, and rendering it as a string is something only the join does.
-const CHAR_ARRAY_RE =
-  /\[char\[\]\]\s*\(\s*((?:\d{1,7}\s*,\s*){1,}\d{1,7})\s*\)(\s*-join\s*(["'])\3)?/i;
+const CHAR_ARRAY_RE = /\[char\[\]\]\s*\(\s*((?:\d{1,7}\s*,\s*){1,}\d{1,7})\s*\)(\s*-join\s*(["'])\3)?/i;
 // `"{1}{0}" -f 'X','IE'`
 const FORMAT_RE = /(["'])((?:\{\d+\}){2,})\1\s*-f\s*((?:\s*["'][^"']*["']\s*,)*\s*["'][^"']*["'])/i;
 // `'iXXx' -replace 'XX','e'` — both arguments must be literals AND the pattern must contain no
@@ -90,7 +89,9 @@ const REVERSE_RE = /(["'])([^"']{2,})\1\s*\[\s*-1\s*\.\.\s*-(\d+)\s*\]\s*-join\s
 const NON_CONSTANT_RE = /-replace\s*\$|-f\s*\$|\[char\]\s*\$/i;
 
 function clamp(s: string): { text: string; clipped: boolean } {
-  return s.length > MAX_OUTPUT ? { text: s.slice(0, MAX_OUTPUT), clipped: true } : { text: s, clipped: false };
+  return s.length > MAX_OUTPUT
+    ? { text: s.slice(0, MAX_OUTPUT), clipped: true }
+    : { text: s, clipped: false };
 }
 
 // Decoded bytes are only useful if they are text. Binary noise means we guessed wrong about the
@@ -171,7 +172,6 @@ function inflateBounded(buf: Buffer, kind: "gzip" | "deflate"): { text: string; 
   return null;
 }
 
-
 // Splice a folded value back into the surrounding text.
 //
 // Two hazards, both real. `String.replace` interprets `$&`, `` $` ``, `$'` and `$1` inside the
@@ -182,7 +182,9 @@ function inflateBounded(buf: Buffer, kind: "gzip" | "deflate"): { text: string; 
 function splice(text: string, match: string, built: string): { text: string; clipped: boolean } | null {
   if (built.length > MAX_OUTPUT) return null;
   const out = text.replace(match, () => built);
-  return out.length > MAX_OUTPUT ? { text: out.slice(0, MAX_OUTPUT), clipped: true } : { text: out, clipped: false };
+  return out.length > MAX_OUTPUT
+    ? { text: out.slice(0, MAX_OUTPUT), clipped: true }
+    : { text: out, clipped: false };
 }
 
 // One layer. Returns the text of the next layer in, or null when nothing here decodes.
@@ -198,20 +200,34 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
     const out = decodeB64Text(m[1], "utf16le") ?? decodeB64Text(m[1], "utf8");
     if (out) {
       const c = clamp(out);
-      return { text: c.text, step: { method: "powershell-enc", detail: `${out.length} chars` }, clipped: c.clipped };
+      return {
+        text: c.text,
+        step: { method: "powershell-enc", detail: `${out.length} chars` },
+        clipped: c.clipped,
+      };
     }
   }
 
   if ((m = GZIP_RE.exec(text))) {
     const buf = b64Bytes(m[1]);
     const inf = buf && inflateBounded(buf, "gzip");
-    if (inf) return { text: inf.text, step: { method: "gzip", detail: `${inf.text.length} chars` }, clipped: inf.clipped };
+    if (inf)
+      return {
+        text: inf.text,
+        step: { method: "gzip", detail: `${inf.text.length} chars` },
+        clipped: inf.clipped,
+      };
   }
 
   if ((m = DEFLATE_RE.exec(text))) {
     const buf = b64Bytes(m[1]);
     const inf = buf && inflateBounded(buf, "deflate");
-    if (inf) return { text: inf.text, step: { method: "deflate", detail: `${inf.text.length} chars` }, clipped: inf.clipped };
+    if (inf)
+      return {
+        text: inf.text,
+        step: { method: "deflate", detail: `${inf.text.length} chars` },
+        clipped: inf.clipped,
+      };
   }
 
   if ((m = FROM_B64_RE.exec(text))) {
@@ -229,7 +245,12 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
     if (codes.every((c) => Number.isInteger(c) && c >= 0 && c <= 0xffff)) {
       const built = codes.map((c) => String.fromCharCode(c)).join("");
       const sp = splice(text, m[0], built);
-      if (sp) return { text: sp.text, step: { method: "char-codes", detail: built.slice(0, 40) }, clipped: sp.clipped };
+      if (sp)
+        return {
+          text: sp.text,
+          step: { method: "char-codes", detail: built.slice(0, 40) },
+          clipped: sp.clipped,
+        };
     }
   }
 
@@ -238,7 +259,12 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
     if (codes.every((c) => c >= 0 && c <= 0xffff)) {
       const built = codes.map((c) => String.fromCharCode(c)).join("");
       const sp = splice(text, m[0], built);
-      if (sp) return { text: sp.text, step: { method: "char-codes", detail: built.slice(0, 40) }, clipped: sp.clipped };
+      if (sp)
+        return {
+          text: sp.text,
+          step: { method: "char-codes", detail: built.slice(0, 40) },
+          clipped: sp.clipped,
+        };
     }
   }
 
@@ -252,7 +278,8 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
     if (constant && indexes.every((i) => i < args.length)) {
       const built = m[2].replace(/\{(\d+)\}/g, (_a, i: string) => args[Number(i)]);
       const sp = splice(text, m[0], built);
-      if (sp) return { text: sp.text, step: { method: "format", detail: built.slice(0, 40) }, clipped: sp.clipped };
+      if (sp)
+        return { text: sp.text, step: { method: "format", detail: built.slice(0, 40) }, clipped: sp.clipped };
     }
   }
 
@@ -270,7 +297,12 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
       // Case-insensitive literal replacement, matching PowerShell's default.
       const built = src.split(new RegExp(escapeLiteral(pattern), "gi")).join(replacement);
       const sp = splice(text, m[0], built);
-      if (sp) return { text: sp.text, step: { method: "replace", detail: built.slice(0, 40) }, clipped: sp.clipped };
+      if (sp)
+        return {
+          text: sp.text,
+          step: { method: "replace", detail: built.slice(0, 40) },
+          clipped: sp.clipped,
+        };
     }
   }
 
@@ -282,7 +314,12 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
     if (Number(m[3]) === literalText.length) {
       const built = [...literalText].reverse().join("");
       const sp = splice(text, m[0], built);
-      if (sp) return { text: sp.text, step: { method: "reverse", detail: built.slice(0, 40) }, clipped: sp.clipped };
+      if (sp)
+        return {
+          text: sp.text,
+          step: { method: "reverse", detail: built.slice(0, 40) },
+          clipped: sp.clipped,
+        };
     }
   }
 
@@ -293,7 +330,12 @@ function peel(text: string, depth: number): { text: string; step: DecodeStep; cl
       // decoy planted inside a real script discard the script and leave only the decoy's
       // indicators — which the IOC extractor then persisted as the case's evidence.
       const sp = splice(text, m[1], out);
-      if (sp) return { text: sp.text, step: { method: "base64", detail: `${out.length} chars` }, clipped: sp.clipped };
+      if (sp)
+        return {
+          text: sp.text,
+          step: { method: "base64", detail: `${out.length} chars` },
+          clipped: sp.clipped,
+        };
     }
   }
 

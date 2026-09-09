@@ -36,7 +36,9 @@ export interface DeobfuscationApplyResult {
  * domain and this pass lives in the privacy domain, and that edge is not one the module map allows.
  * The composition layer, which may import both, supplies it.
  */
-export type DerivedTextGrader = (text: string) => { weight: "strong" | "weak" | null; mitre: string[] } | null;
+export type DerivedTextGrader = (
+  text: string,
+) => { weight: "strong" | "weak" | null; mitre: string[] } | null;
 
 export interface DeobfuscationApplyOptions {
   // Re-decode events whose stored result came from an OLDER decoder (#909 item 2).

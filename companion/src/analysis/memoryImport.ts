@@ -63,12 +63,7 @@ import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { malfindContext } from "./malfindContext.js";
 import { repeatedShortLifetimes, type ProcessRecord } from "./processLifetime.js";
-import {
-  psxviewSignal,
-  ldrModulesSignal,
-  hasLdrColumns,
-  hasPsxviewColumns,
-} from "./memoryCrossView.js";
+import { psxviewSignal, ldrModulesSignal, hasLdrColumns, hasPsxviewColumns } from "./memoryCrossView.js";
 
 type Row = Record<string, unknown>;
 
@@ -327,10 +322,11 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
           canonical,
           // The process-object offset distinguishes two EPROCESS rows that share a reused PID —
           // psxview reports one row per object, and collapsing them loses one view's verdict.
-          aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}|${pick(r, ["Offset(V)", "Offset", "offset"])}${psscan ? "|scan" : ""}`.slice(
-            0,
-            400,
-          ),
+          aggKey:
+            `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}|${pick(r, ["Offset(V)", "Offset", "offset"])}${psscan ? "|scan" : ""}`.slice(
+              0,
+              400,
+            ),
           sources: [tool],
           ...(name ? { processName: name } : {}),
           ...(parentName ? { parentName } : {}),
@@ -417,10 +413,11 @@ function mapMalfind(
       timestamp: "",
       // The SHORT clause comes first, because synthesis and the case reports truncate a description
       // at 240 characters — with the caveat only at the end they saw the categorical lead alone.
-      description: `${malfindDescription(tool, label, proc, pid, region.phrase, prot, tag)} — ${ctx.summary} — ${ctx.note}`.slice(
-        0,
-        900,
-      ),
+      description:
+        `${malfindDescription(tool, label, proc, pid, region.phrase, prot, tag)} — ${ctx.summary} — ${ctx.note}`.slice(
+          0,
+          900,
+        ),
       severity: "High",
       mitre: ["T1055"],
       aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${region.token}|${prot}`.toLowerCase().slice(0, 400),
@@ -546,9 +543,10 @@ function mapDll(
     const what = path || dllName || `region at ${base || "?"}`;
     out.push({
       timestamp: pickTime(r, ["LoadTime", "load_time"]),
-      description:
-        (`${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(what).slice(0, 220)}` +
-          (cross ? ` — ${cross.note}` : "")).slice(0, 600),
+      description: (
+        `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(what).slice(0, 220)}` +
+        (cross ? ` — ${cross.note}` : "")
+      ).slice(0, 600),
       severity: cross ? cross.severity : "Info",
       mitre: cross ? [...cross.mitre] : [],
       // PID and base included: without them two different svchost.exe PIDs mapping the same path,
@@ -1545,7 +1543,13 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     } else if (cat === "cmdline") {
       for (const r of t.rows) {
         const pid = pickPid(r);
-        if (pid && isSuspiciousCmd(pick(r, ["Process", "ImageFileName", "Name"]), pick(r, ["Args", "CommandLine", "args", "cmd"])))
+        if (
+          pid &&
+          isSuspiciousCmd(
+            pick(r, ["Process", "ImageFileName", "Name"]),
+            pick(r, ["Args", "CommandLine", "args", "cmd"]),
+          )
+        )
           corroborating.suspiciousCmd.add(pid);
       }
     }

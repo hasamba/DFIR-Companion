@@ -62,7 +62,7 @@ describe("decodeLayers — compression", () => {
     const bomb = gzipSync(Buffer.alloc(MAX_OUTPUT * 4, 0x41)).toString("base64");
     const r = decodeLayers(`[IO.Compression.GzipStream] '${bomb}'`);
     expect(r?.partial).toBe(true);
-    expect((r?.decoded.length ?? 0)).toBeLessThanOrEqual(MAX_OUTPUT);
+    expect(r?.decoded.length ?? 0).toBeLessThanOrEqual(MAX_OUTPUT);
   });
 });
 
@@ -123,7 +123,7 @@ describe("decodeLayers — constant folding, never evaluation", () => {
     const big = "A".repeat(2000);
     const rep = "B".repeat(2000);
     const r = decodeLayers(`('${big}' -replace '','${rep}') 'http://bomb.test'`);
-    expect((r?.decoded.length ?? 0)).toBeLessThanOrEqual(MAX_OUTPUT);
+    expect(r?.decoded.length ?? 0).toBeLessThanOrEqual(MAX_OUTPUT);
   });
 
   // A -replace whose arguments are variables is not a constant expression. Guessing at it would
@@ -154,7 +154,7 @@ describe("decodeLayers — bounds and refusals", () => {
   it("never returns more than the output ceiling", () => {
     const big = "A".repeat(MAX_OUTPUT * 2);
     const r = decodeLayers(`powershell -enc ${b64utf16(big)}`);
-    expect((r?.decoded.length ?? 0)).toBeLessThanOrEqual(MAX_OUTPUT);
+    expect(r?.decoded.length ?? 0).toBeLessThanOrEqual(MAX_OUTPUT);
   });
 
   it("does not treat ordinary base64-looking text as a payload without an execution marker", () => {
@@ -173,7 +173,13 @@ describe("applyDeobfuscation — versioned reanalysis", () => {
       caseId: "C1",
       iocs: [],
       forensicTimeline: [
-        { id: "e1", timestamp: "2026-01-01T00:00:00Z", description: desc, severity: "High", ...(deob ? { deobfuscated: deob } : {}) },
+        {
+          id: "e1",
+          timestamp: "2026-01-01T00:00:00Z",
+          description: desc,
+          severity: "High",
+          ...(deob ? { deobfuscated: deob } : {}),
+        },
       ],
     }) as never;
 
@@ -219,7 +225,7 @@ describe("decodeLayers — material that only looks like a layer", () => {
 
   it("does not report latin1 mojibake as a recovered payload", () => {
     const r = decodeLayers(`powershell -enc ${b64utf16(`$sha="${"a".repeat(64)}"; Compare-Hash`)}`);
-    expect(r?.decoded).not.toMatch(/[ -￿]{8,}/);
+    expect(r?.decoded).not.toMatch(/[\u0080-\uFFFF]{8,}/);
   });
 });
 
@@ -265,9 +271,7 @@ describe("applyDeobfuscation — the derived text gets the behaviour checks", ()
       iocs: ["i001"],
       version: 1,
     };
-    const iocs = [
-      { id: "i001", type: "domain", value: "gone.test", firstSeen: "2026-01-01T00:00:00Z" },
-    ];
+    const iocs = [{ id: "i001", type: "domain", value: "gone.test", firstSeen: "2026-01-01T00:00:00Z" }];
     const r = applyDeobfuscation(stateOf("echo nothing recoverable in here at all", iocs, stale), {
       reanalyzeStale: true,
     });
@@ -275,9 +279,7 @@ describe("applyDeobfuscation — the derived text gets the behaviour checks", ()
   });
 
   it("keeps an indicator that existed before any decoding", () => {
-    const iocs = [
-      { id: "i001", type: "domain", value: "kept.test", firstSeen: "2026-01-01T00:00:00Z" },
-    ];
+    const iocs = [{ id: "i001", type: "domain", value: "kept.test", firstSeen: "2026-01-01T00:00:00Z" }];
     const r = applyDeobfuscation(stateOf("echo nothing recoverable in here at all", iocs), {
       reanalyzeStale: true,
     });

@@ -51,12 +51,20 @@ describe("malfindContext — what the region actually shows", () => {
   });
 
   it("matches an MZ header in an address-prefixed hexdump row", () => {
-    const c = malfindContext({ Protection: "PAGE_EXECUTE_READWRITE", PrivateMemory: 1, Hexdump: "0x1f0000  4d 5a 90 00" });
+    const c = malfindContext({
+      Protection: "PAGE_EXECUTE_READWRITE",
+      PrivateMemory: 1,
+      Hexdump: "0x1f0000  4d 5a 90 00",
+    });
     expect(c.note).toContain("MZ image header");
   });
 
   it("does not read a NOP-prefixed region as an image header", () => {
-    const c = malfindContext({ Protection: "PAGE_EXECUTE_READWRITE", PrivateMemory: 1, Hexdump: "90 4d 5a 90" });
+    const c = malfindContext({
+      Protection: "PAGE_EXECUTE_READWRITE",
+      PrivateMemory: 1,
+      Hexdump: "90 4d 5a 90",
+    });
     expect(c.note).toContain("does not begin with an MZ header");
   });
 
@@ -73,7 +81,11 @@ describe("malfindContext — what the region actually shows", () => {
 // absence: malfind previews only the START of a region, and shellcode has no header.
 describe("malfindContext — absence never reads as clean", () => {
   it("says a missing MZ header does not indicate the region is clean", () => {
-    const c = malfindContext({ Protection: "PAGE_EXECUTE_READWRITE", PrivateMemory: 1, Hexdump: "90 90 90 90" });
+    const c = malfindContext({
+      Protection: "PAGE_EXECUTE_READWRITE",
+      PrivateMemory: 1,
+      Hexdump: "90 90 90 90",
+    });
     expect(c.note).toContain("does not indicate the region is clean");
     expect(c.note).not.toMatch(/\bis clean\b(?!,)/);
   });

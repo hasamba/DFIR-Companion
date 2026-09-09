@@ -42,6 +42,7 @@ export interface UsnRecord {
   timestamp: string; // ISO, from the record's UpdateTimestamp
   reasons: string[]; // normalized reason flags carried by this record
   volume: string; // which volume this journal came from
+  parentPath: string; // the directory, when the export recorded one
 }
 
 /** The identity that survives a rename. */
@@ -82,7 +83,10 @@ const REASON_ALIASES: Record<string, string> = {
 export function parseReasons(raw: string): string[] {
   const out = new Set<string>();
   for (const part of String(raw ?? "").split(/[|,;+\s]+/)) {
-    const k = part.trim().toLowerCase().replace(/[^a-z]/g, "");
+    const k = part
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z]/g, "");
     if (!k) continue;
     out.add(REASON_ALIASES[k] ?? part.trim().toUpperCase());
   }
@@ -93,20 +97,54 @@ export interface RenamePair {
   reference: string;
   oldName: string;
   newName: string;
+  oldParent: string; // parent reference before; "" when not recorded
+  newParent: string;
+  oldPath: string; // directory before, when the export recorded one
+  newPath: string;
+  kind: "rename" | "move" | "rename+move";
   timestamp: string;
   volume: string;
   severity: Severity;
   note: string;
 }
 
+// Transfer-in-progress suffixes. A browser writes `x.exe.crdownload` and renames it to `x.exe` on
+// completion; an installer extracts to `.tmp` and renames. Both cross the executable boundary on
+// every ordinary download and install, so grading them would bury the rename that matters.
+const TRANSFER_SUFFIX = /\.(?:crdownload|part|partial|tmp|download|opdownload|!ut)$/i;
+
 // An extension that changes what the operating system will DO with the file. A rename that only
 // changes the stem is housekeeping; one that turns a document into an executable, or an executable
 // into something that looks like a document, is the shape worth reporting.
 const EXECUTABLE_EXT = /\.(?:exe|dll|scr|com|bat|cmd|ps1|vbs|js|jse|wsf|hta|msi|cpl|sys)$/i;
 
-function ext(name: string): string {
-  const m = /\.[^.]+$/.exec(name.trim());
-  return m ? m[0].toLowerCase() : "";
+/**
+ * Journal order, not wall-clock: two records can share a timestamp, and the USN is what orders them.
+ * It is a byte offset into the journal and is NOT a time.
+ *
+ * Compared as BigInt. A USN is a 64-bit value and routinely exceeds what a double holds exactly on a
+ * busy volume, where Number() collapses distinct USNs to the same value and the sort silently loses
+ * the ordering the pairing depends on. A record with no USN keeps its input position rather than
+ * sorting to the front ahead of every real record.
+ */
+export function orderByUsn<T extends { usn: string }>(records: readonly T[]): T[] {
+  const big = (v: string): bigint | null => {
+    const t = String(v ?? "").trim();
+    if (!/^\d+$/.test(t)) return null;
+    try {
+      return BigInt(t);
+    } catch {
+      return null;
+    }
+  };
+  return records
+    .map((r, i) => ({ r, i, u: big(r.usn) }))
+    .sort((a, b) => {
+      if (a.u === null || b.u === null) return a.i - b.i; // keep input order for unusable values
+      if (a.u === b.u) return a.i - b.i;
+      return a.u < b.u ? -1 : 1;
+    })
+    .map((x) => x.r);
 }
 
 /**
@@ -123,16 +161,18 @@ export function pairRenames(records: readonly UsnRecord[]): RenamePair[] {
   const pending = new Map<string, UsnRecord>();
   const out: RenamePair[] = [];
 
-  // Journal order, not wall-clock: two records can share a timestamp, and the USN is what orders
-  // them. It is a byte offset into the journal, and it is NOT a time.
-  const ordered = [...records].sort((a, b) => {
-    const d = (Number(a.usn) || 0) - (Number(b.usn) || 0);
-    return d !== 0 ? d : 0;
-  });
+  const ordered = orderByUsn(records);
 
   for (const r of ordered) {
     const ref = fileReference(r);
-    if (r.reasons.includes("RENAME_OLD_NAME")) {
+    const isOld = r.reasons.includes("RENAME_OLD_NAME");
+    const isNew = r.reasons.includes("RENAME_NEW_NAME");
+    // Reasons accumulate, so ONE record can carry both flags. It then describes a rename whose two
+    // halves the journal folded together, and which name is which is not recoverable from it.
+    // Treating it as an old-name half — as the first version did — either lost it or paired it with
+    // an unrelated later record. It is skipped, and summarizeLifecycle still reports both names.
+    if (isOld && isNew) continue;
+    if (isOld) {
       pending.set(ref, r);
       continue;
     }
@@ -140,30 +180,49 @@ export function pairRenames(records: readonly UsnRecord[]): RenamePair[] {
     const old = pending.get(ref);
     if (!old) continue; // the other half rolled out of the journal — see the header
     pending.delete(ref);
-    if (old.name === r.name) continue; // a hard-link change can look like this; it is not a rename
 
-    const from = ext(old.name);
-    const to = ext(r.name);
-    const becameExecutable = !EXECUTABLE_EXT.test(old.name) && EXECUTABLE_EXT.test(r.name);
-    const stoppedLookingExecutable = EXECUTABLE_EXT.test(old.name) && !EXECUTABLE_EXT.test(r.name);
-    const changedKind = from !== to && (becameExecutable || stoppedLookingExecutable);
+    const renamed = old.name !== r.name;
+    const oldParent = `${old.parentEntry}-${old.parentSequence}`;
+    const newParent = `${r.parentEntry}-${r.parentSequence}`;
+    // A MOVE is a rename whose parent changed and whose name did not. Discarding same-name pairs as
+    // "hard links" threw away every move — a payload moved into Startup, an archive moved into
+    // staging, a file moved to the Recycle Bin — which is most of what this item exists to show.
+    const moved = !!old.parentEntry && !!r.parentEntry && oldParent !== newParent;
+    if (!renamed && !moved) continue; // same name, same parent: a hard-link change, not a move
 
+    const becameExecutable =
+      renamed &&
+      !EXECUTABLE_EXT.test(old.name) &&
+      EXECUTABLE_EXT.test(r.name) &&
+      // ...unless the old name was merely a transfer-in-progress form of the same file.
+      !TRANSFER_SUFFIX.test(old.name);
+    const stoppedLookingExecutable = renamed && EXECUTABLE_EXT.test(old.name) && !EXECUTABLE_EXT.test(r.name);
+
+    const kind: RenamePair["kind"] = renamed && moved ? "rename+move" : moved ? "move" : "rename";
     out.push({
       reference: ref,
       oldName: old.name,
       newName: r.name,
-      // The journal's own timestamp on the record that completed the rename.
+      oldParent,
+      newParent,
+      oldPath: old.parentPath,
+      newPath: r.parentPath,
+      kind,
       timestamp: r.timestamp,
       volume: r.volume,
-      severity: changedKind ? "Low" : "Info",
+      severity: becameExecutable || stoppedLookingExecutable ? "Low" : "Info",
       note:
-        `renamed from ${old.name} to ${r.name}` +
+        (kind === "move"
+          ? `moved from ${old.parentPath || `parent ${oldParent}`} to ${r.parentPath || `parent ${newParent}`}`
+          : kind === "rename+move"
+            ? `renamed from ${old.name} to ${r.name} and moved from ${old.parentPath || `parent ${oldParent}`} to ${r.parentPath || `parent ${newParent}`}`
+            : `renamed from ${old.name} to ${r.name}`) +
         (becameExecutable
           ? " — the file was not executable before the rename and is afterwards"
           : stoppedLookingExecutable
             ? " — an executable was renamed to something that does not look like one"
             : "") +
-        ". Renames are ordinary; this records the pairing, not an intent.",
+        ". Renames and moves are ordinary; this records the pairing, not an intent.",
     });
   }
   return out;
@@ -198,14 +257,17 @@ export function summarizeLifecycle(records: readonly UsnRecord[]): LifecycleSumm
 
   const out: LifecycleSummary[] = [];
   for (const [ref, list] of byRef) {
-    list.sort((a, b) => (Number(a.usn) || 0) - (Number(b.usn) || 0));
+    const ordered = orderByUsn(list);
     const names: string[] = [];
     const reasons = new Set<string>();
-    for (const r of list) {
+    for (const r of ordered) {
       if (!names.includes(r.name)) names.push(r.name);
       for (const x of r.reasons) reasons.add(x);
     }
-    const times = list.map((r) => r.timestamp).filter(Boolean).sort();
+    const times = ordered
+      .map((r) => r.timestamp)
+      .filter(Boolean)
+      .sort();
     const createdSeen = reasons.has("FILE_CREATE");
     const deletedSeen = reasons.has("FILE_DELETE");
 
@@ -218,7 +280,7 @@ export function summarizeLifecycle(records: readonly UsnRecord[]): LifecycleSumm
       createdSeen,
       deletedSeen,
       note:
-        `${names.length > 1 ? `known under ${names.length} names (${names.join(" → ")})` : names[0] ?? "(unnamed)"}` +
+        `${names.length > 1 ? `known under ${names.length} names (${names.join(" → ")})` : (names[0] ?? "(unnamed)")}` +
         `; journal reasons: ${[...reasons].join(", ") || "none recorded"}` +
         (createdSeen ? "" : "; no creation record is present, which the journal's rollover alone explains") +
         (deletedSeen ? "; a deletion record is present" : "") +

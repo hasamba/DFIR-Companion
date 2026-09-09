@@ -20,10 +20,7 @@ const DISPATCHABLE = IMPORT_KINDS.filter((k) => k !== "unknown");
  * would test the harness instead of the wiring.
  */
 describe("import kinds ↔ dispatch", () => {
-  const dispatchSrc = readFileSync(
-    join(process.cwd(), "src/composition/importIngest.ts"),
-    "utf8",
-  );
+  const dispatchSrc = readFileSync(join(process.cwd(), "src/composition/importIngest.ts"), "utf8");
 
   it("has a dispatch case for every registered import kind", () => {
     const missing = DISPATCHABLE.filter((k) => !new RegExp(`case "${k}":`).test(dispatchSrc));

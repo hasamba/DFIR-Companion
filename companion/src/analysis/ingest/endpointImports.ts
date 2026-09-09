@@ -8,13 +8,7 @@ import { applySeverityFloor } from "../severityFloor.js";
 import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseThorReport, type ThorImportOptions } from "../thorImport.js";
-import {
-  parseWerReport,
-  werSignal,
-  werDescription,
-  werDedupKey,
-  type WerCaseContext,
-} from "../werImport.js";
+import { parseWerReport, werSignal, werDescription, werDedupKey, type WerCaseContext } from "../werImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";

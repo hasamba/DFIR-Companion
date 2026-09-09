@@ -97,7 +97,9 @@ function getCI(row: Row, key: string): unknown {
  */
 export function triState(v: unknown): Tri {
   if (v === true || v === false) return v;
-  const s = String(v ?? "").trim().toLowerCase();
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
   if (!s || s === "-" || s === "n/a" || s === "na" || s === "unknown" || s === "?") return null;
   // Volatility 2 --apply-rules prints "Okay", not "Ok".
   if (["true", "yes", "y", "1", "ok", "okay", "present"].includes(s)) return true;
@@ -121,7 +123,11 @@ function readFlags(row: Row, spec: { key: string; aliases: string[] }[]): Record
 // True only when the row carries a real, parsable exit timestamp.
 function hasExited(row: Row): boolean {
   const raw = String(
-    getCI(row, "Exit Time") ?? getCI(row, "ExitTime") ?? getCI(row, "process_exit_time") ?? getCI(row, "exit_time") ?? "",
+    getCI(row, "Exit Time") ??
+      getCI(row, "ExitTime") ??
+      getCI(row, "process_exit_time") ??
+      getCI(row, "exit_time") ??
+      "",
   ).trim();
   if (!raw) return false;
   if (/^(?:n\/?a|-|none|unknown|\?)$/i.test(raw)) return false;

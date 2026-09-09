@@ -4,6 +4,7 @@ import {
   parseReasons,
   pairRenames,
   summarizeLifecycle,
+  orderByUsn,
   type UsnRecord,
 } from "../../src/analysis/usnLifecycle.js";
 import { parseKapeCsv } from "../../src/analysis/kapeImport.js";
@@ -18,6 +19,7 @@ const rec = (over: Partial<UsnRecord> = {}): UsnRecord => ({
   timestamp: "2026-01-01T10:00:00Z",
   reasons: ["FILE_CREATE"],
   volume: "C:",
+  parentPath: "C:\\Users\\jdoe\\Downloads",
   ...over,
 });
 
@@ -163,8 +165,30 @@ describe("wired into the KAPE USN importer", () => {
 
   it("reconstructs a rename from the two halves", () => {
     const text = csv([
-      ["invoice.pdf", ".pdf", "12345", "2", "5", "5", "1000", "2026-01-01 10:00:00", "RenameOldName", "C:\\$Extend\\$J"],
-      ["svchost.exe", ".exe", "12345", "2", "5", "5", "1008", "2026-01-01 10:00:01", "RenameNewName", "C:\\$Extend\\$J"],
+      [
+        "invoice.pdf",
+        ".pdf",
+        "12345",
+        "2",
+        "5",
+        "5",
+        "1000",
+        "2026-01-01 10:00:00",
+        "RenameOldName",
+        "C:\\$Extend\\$J",
+      ],
+      [
+        "svchost.exe",
+        ".exe",
+        "12345",
+        "2",
+        "5",
+        "5",
+        "1008",
+        "2026-01-01 10:00:01",
+        "RenameNewName",
+        "C:\\$Extend\\$J",
+      ],
     ]);
     const r = parseKapeCsv(text);
     expect(r.artifact).toBe("UsnJrnl");
@@ -193,7 +217,18 @@ describe("wired into the KAPE USN importer", () => {
   // purpose. So the correct outcome is NO indicator, rather than a wrong one.
   it("never turns a journal filename into a process indicator", () => {
     const text = csv([
-      ["report.docx", ".docx", "1", "1", "5", "5", "10", "2026-01-01 10:00:00", "FileCreate", "C:\\$Extend\\$J"],
+      [
+        "report.docx",
+        ".docx",
+        "1",
+        "1",
+        "5",
+        "5",
+        "10",
+        "2026-01-01 10:00:00",
+        "FileCreate",
+        "C:\\$Extend\\$J",
+      ],
     ]);
     const r = parseKapeCsv(text);
     expect(r.iocs.some((i) => i.type === "process")).toBe(false);
@@ -202,8 +237,187 @@ describe("wired into the KAPE USN importer", () => {
 
   it("does not invent a rename when only one half survived the journal", () => {
     const text = csv([
-      ["gone.tmp", ".tmp", "9", "1", "5", "5", "10", "2026-01-01 10:00:00", "RenameOldName", "C:\\$Extend\\$J"],
+      [
+        "gone.tmp",
+        ".tmp",
+        "9",
+        "1",
+        "5",
+        "5",
+        "10",
+        "2026-01-01 10:00:00",
+        "RenameOldName",
+        "C:\\$Extend\\$J",
+      ],
     ]);
     expect(parseKapeCsv(text).events.some((e) => /renamed from/.test(e.description))).toBe(false);
+  });
+});
+
+describe("moves and lifecycle, end to end", () => {
+  const csvL = (rows: string[][]) =>
+    [
+      "Name,Extension,EntryNumber,SequenceNumber,ParentEntryNumber,ParentSequenceNumber,ParentPath,UpdateSequenceNumber,UpdateTimestamp,UpdateReasons,Volume",
+      ...rows.map((r) => r.join(",")),
+    ].join("\n");
+
+  // A move keeps the name and changes the parent. Discarding same-name pairs as hard links threw
+  // away every move — which is most of what this item exists to show.
+  it("reports a move as a move, not as a discarded hard link", () => {
+    const text = csvL([
+      [
+        "payload.exe",
+        ".exe",
+        "77",
+        "1",
+        "10",
+        "1",
+        "C:\\Users\\jdoe\\Downloads",
+        "100",
+        "2026-01-01 10:00:00",
+        "RenameOldName",
+        "C",
+      ],
+      [
+        "payload.exe",
+        ".exe",
+        "77",
+        "1",
+        "20",
+        "1",
+        "C:\\ProgramData\\Startup",
+        "101",
+        "2026-01-01 10:00:01",
+        "RenameNewName",
+        "C",
+      ],
+    ]);
+    const move = parseKapeCsv(text).events.find((e) => /moved from/.test(e.description));
+    expect(move).toBeDefined();
+    expect(move!.description).toContain("Downloads");
+    expect(move!.description).toContain("Startup");
+  });
+
+  it("still treats a same-name, same-parent pair as a hard-link change", () => {
+    const text = csvL([
+      [
+        "same.txt",
+        ".txt",
+        "77",
+        "1",
+        "10",
+        "1",
+        "C:\\Temp",
+        "100",
+        "2026-01-01 10:00:00",
+        "RenameOldName",
+        "C",
+      ],
+      [
+        "same.txt",
+        ".txt",
+        "77",
+        "1",
+        "10",
+        "1",
+        "C:\\Temp",
+        "101",
+        "2026-01-01 10:00:01",
+        "RenameNewName",
+        "C",
+      ],
+    ]);
+    expect(parseKapeCsv(text).events.some((e) => /moved from|renamed from/.test(e.description))).toBe(false);
+  });
+
+  // Anti-forensics: Windows does not routinely delete individual Prefetch files.
+  it("raises a deleted Prefetch file as removed execution evidence", () => {
+    const text = csvL([
+      [
+        "EVIL.EXE-1234.pf",
+        ".pf",
+        "88",
+        "1",
+        "10",
+        "1",
+        "C:\\Windows\\Prefetch",
+        "200",
+        "2026-01-01 11:00:00",
+        "FileDelete|Close",
+        "C",
+      ],
+    ]);
+    const e = parseKapeCsv(text).events.find((x) => /lifecycle/.test(x.description));
+    expect(e?.severity).toBe("Medium");
+    expect(e?.mitreTechniques).toContain("T1070.004");
+    expect(e?.description).toContain("removes execution evidence");
+  });
+
+  it("does not raise an ordinary file deletion", () => {
+    const text = csvL([
+      [
+        "notes.txt",
+        ".txt",
+        "88",
+        "1",
+        "10",
+        "1",
+        "C:\\Temp",
+        "200",
+        "2026-01-01 11:00:00",
+        "FileDelete|Close",
+        "C",
+      ],
+    ]);
+    expect(parseKapeCsv(text).events.every((e) => e.severity === "Info")).toBe(true);
+  });
+
+  // A browser writes x.exe.crdownload and renames it on completion; an installer extracts to .tmp.
+  it("does not grade a completed download as a suspicious rename", () => {
+    const text = csvL([
+      [
+        "setup.exe.crdownload",
+        ".crdownload",
+        "99",
+        "1",
+        "10",
+        "1",
+        "C:\\Users\\jdoe\\Downloads",
+        "300",
+        "2026-01-01 12:00:00",
+        "RenameOldName",
+        "C",
+      ],
+      [
+        "setup.exe",
+        ".exe",
+        "99",
+        "1",
+        "10",
+        "1",
+        "C:\\Users\\jdoe\\Downloads",
+        "301",
+        "2026-01-01 12:00:01",
+        "RenameNewName",
+        "C",
+      ],
+    ]);
+    const r = parseKapeCsv(text).events.find((e) => /renamed from/.test(e.description));
+    expect(r?.severity).toBe("Info");
+  });
+});
+
+describe("orderByUsn — a USN is 64-bit", () => {
+  it("orders values beyond the safe-integer range correctly", () => {
+    const a = { usn: "9007199254740993" };
+    const b = { usn: "9007199254740992" };
+    // Number() collapses these two to the same double.
+    expect(Number(a.usn)).toBe(Number(b.usn));
+    expect(orderByUsn([a, b])).toEqual([b, a]);
+  });
+
+  it("keeps an unusable USN in input order rather than sorting it to the front", () => {
+    const rows = [{ usn: "" }, { usn: "5" }, { usn: "1" }];
+    expect(orderByUsn(rows).map((r) => r.usn)).toEqual(["", "1", "5"]);
   });
 });

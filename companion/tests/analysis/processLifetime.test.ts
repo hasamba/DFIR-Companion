@@ -141,7 +141,9 @@ describe("unexpectedParentSignal", () => {
   });
 
   it("says nothing when the parent is the expected one", () => {
-    expect(unexpectedParentSignal(rec({ name: "lsass.exe", parentName: "wininit.exe" }), expected)).toBeNull();
+    expect(
+      unexpectedParentSignal(rec({ name: "lsass.exe", parentName: "wininit.exe" }), expected),
+    ).toBeNull();
   });
 
   // A missing parent is missing evidence — a snapshot taken after the parent exited looks like this.
@@ -156,7 +158,9 @@ describe("unexpectedParentSignal", () => {
   });
 
   it("says nothing about an image with no recorded expectation", () => {
-    expect(unexpectedParentSignal(rec({ name: "unknown.exe", parentName: "winword.exe" }), expected)).toBeNull();
+    expect(
+      unexpectedParentSignal(rec({ name: "unknown.exe", parentName: "winword.exe" }), expected),
+    ).toBeNull();
   });
 
   it("names no tool family from an executable name", () => {

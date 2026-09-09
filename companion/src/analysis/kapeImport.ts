@@ -30,12 +30,7 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
-import {
-  parseReasons,
-  pairRenames,
-  summarizeLifecycle,
-  type UsnRecord,
-} from "./usnLifecycle.js";
+import { parseReasons, pairRenames, summarizeLifecycle, type UsnRecord } from "./usnLifecycle.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 
 type Row = Record<string, unknown>;
@@ -73,8 +68,24 @@ function toUsnRecords(rows: readonly Row[]): UsnRecord[] {
     usn: firstStr(row, ["UpdateSequenceNumber", "Usn"]),
     timestamp: ezTime(getCI(row, "UpdateTimestamp")),
     reasons: parseReasons(firstStr(row, ["UpdateReasons"])),
-    volume: firstStr(row, ["SourceFile", "Volume"]).replace(/^.*?([A-Za-z]:).*$/, "$1"),
+    parentPath: firstStr(row, ["ParentPath"]),
+    // SourceFile names the file the parser READ, which in a KAPE collection is the staging path
+    // (E:\KAPE\Collection\C\$Extend\$J) — its drive letter is the collector's, not the host's.
+    // So a real volume column is preferred, and SourceFile is used only when it is not a staging
+    // path. An empty volume is honest; a wrong one silently merges two volumes' files.
+    volume: usnVolume(firstStr(row, ["Volume", "VolumeName"]), firstStr(row, ["SourceFile"])),
   }));
+}
+
+// The volume a journal record belongs to, or "" when the export does not reliably say.
+function usnVolume(explicit: string, sourceFile: string): string {
+  const v = explicit.trim();
+  if (/^[A-Za-z]:?$/.test(v)) return `${v[0].toUpperCase()}:`;
+  const src = sourceFile.trim();
+  // A staging path has the journal nested under a collection directory; its leading drive letter is
+  // the collector's. Only a path that IS the journal at a volume root is trusted.
+  if (/^[A-Za-z]:\\\$Extend\\\$(?:J|UsnJrnl)/i.test(src)) return `${src[0].toUpperCase()}:`;
+  return "";
 }
 
 // EZ timestamps are UTC "yyyy-MM-dd HH:mm:ss(.fffffff)" (no zone). Truncate the 7-digit
@@ -85,6 +96,10 @@ function ezTime(v: unknown): string {
   t = t.replace(/(\.\d{3})\d+/, "$1");
   return normalizeTime(t);
 }
+
+// How many journal rows lifecycle reconstruction will hold at once. Renames are adjacent in the
+// journal, so a prefix reconstructs the same pairs a whole file would for everything inside it.
+const MAX_LIFECYCLE_ROWS = 200_000;
 
 const HASH40 = /[a-f0-9]{40}/i;
 function addHash(sink: Map<string, SiemIoc>, raw: string): void {
@@ -252,8 +267,10 @@ const PROFILES: Profile[] = [
       addFile(sink, name);
       return {
         timestamp: ezTime(getCI(row, "UpdateTimestamp")),
-        description:
-          `UsnJrnl: ${name} — ${reasons}${entry ? ` [file ${entry}-${seq || "?"}]` : ""}`.slice(0, 600),
+        description: `UsnJrnl: ${name} — ${reasons}${entry ? ` [file ${entry}-${seq || "?"}]` : ""}`.slice(
+          0,
+          600,
+        ),
         severity: "Info",
         mitre: [],
         // Identity in the key, so two files that happened to share a name stay apart.
@@ -388,18 +405,44 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     });
     const m = profile.map(row, iocSink);
     if (m) mapped.push(m);
-    if (profile.name === "UsnJrnl") usnRows.push(row);
+    // Bounded. A real $J export runs to millions of rows, and lifecycle reconstruction holds every
+    // one it is given, sorts a copy, and allocates a record per row — all BEFORE maxEvents applies.
+    // Unbounded, that exhausts the process before any capped result is produced.
+    if (profile.name === "UsnJrnl" && usnRows.length < MAX_LIFECYCLE_ROWS) usnRows.push(row);
   }
 
   // Lifecycle reconstruction needs every record at once: a rename is TWO records, and which names a
   // file was known under is a property of the whole journal, not of any single row (#909 item 7).
-  for (const pair of pairRenames(toUsnRecords(usnRows))) {
+  const usnRecords = toUsnRecords(usnRows);
+  // Files the journal shows being DELETED, and files it knew under several names. This is where the
+  // deleted-Prefetch case surfaces: a .pf record carrying FILE_DELETE is an execution artifact
+  // removed, which is anti-forensics rather than housekeeping.
+  for (const life of summarizeLifecycle(usnRecords)) {
+    const prefetchDeleted = life.deletedSeen && life.names.some((n) => /\.pf$/i.test(n));
+    const multiName = life.names.length > 1;
+    if (!prefetchDeleted && !multiName) continue;
+    mapped.push({
+      timestamp: life.last || life.first,
+      description:
+        `UsnJrnl lifecycle: ${life.note}` +
+        (prefetchDeleted
+          ? " A Prefetch file being deleted removes execution evidence; Windows does not routinely delete them individually."
+          : ""),
+      severity: prefetchDeleted ? "Medium" : "Info",
+      mitre: prefetchDeleted ? ["T1070.004"] : [],
+      aggKey: `usn|life|${life.reference}`,
+      sources: ["UsnJrnl"],
+      path: life.names[life.names.length - 1],
+    });
+  }
+
+  for (const pair of pairRenames(usnRecords)) {
     mapped.push({
       timestamp: pair.timestamp,
       description: `UsnJrnl: ${pair.newName} — ${pair.note}`.slice(0, 600),
       severity: pair.severity,
       mitre: [],
-      aggKey: `usn|rename|${pair.reference}|${pair.oldName.toLowerCase()}|${pair.newName.toLowerCase()}`,
+      aggKey: `usn|${pair.kind}|${pair.reference}|${pair.oldName.toLowerCase()}|${pair.newName.toLowerCase()}|${pair.oldParent}|${pair.newParent}`,
       sources: ["UsnJrnl"],
       path: pair.newName,
     });

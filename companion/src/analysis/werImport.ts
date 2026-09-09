@@ -98,7 +98,10 @@ export function isWerReport(text: string): boolean {
   const head = String(text ?? "").slice(0, 4096);
   // EventType plus either a signature block or the WER-specific report identifier. `Version=` and
   // `Consent=` alone appear in plenty of unrelated INI files.
-  return /^\s*(?:﻿)?[\s\S]{0,2000}?\bEventType=/.test(head) && /\bSig\[\d+\]\.Name=|\bReportIdentifier=|\bConsent=/.test(head);
+  return (
+    /^\s*(?:\uFEFF)?[\s\S]{0,2000}?\bEventType=/.test(head) &&
+    /\bSig\[\d+\]\.Name=|\bReportIdentifier=|\bConsent=/.test(head)
+  );
 }
 
 /**
@@ -116,7 +119,7 @@ export function parseWerReport(text: string): WerReport | null {
   const loaded: WerLoadedModule[] = [];
 
   for (const rawLine of src.split(/\r?\n/)) {
-    const line = rawLine.replace(/^﻿/, "").trim();
+    const line = rawLine.replace(/^\uFEFF/, "").trim();
     if (!line || line.startsWith(";") || line.startsWith("[")) continue;
     const eq = line.indexOf("=");
     if (eq <= 0) continue;
@@ -172,10 +175,9 @@ export function parseWerReport(text: string): WerReport | null {
   const faultModuleName = sig("modName", "Fault Module Name", "ModName");
   // The full path of the faulting module is not a signature parameter; it is whichever loaded
   // module carries that basename.
-  const faultModulePath =
-    faultModuleName
-      ? (loaded.find((l) => l.name.toLowerCase() === faultModuleName.toLowerCase())?.path ?? "")
-      : "";
+  const faultModulePath = faultModuleName
+    ? (loaded.find((l) => l.name.toLowerCase() === faultModuleName.toLowerCase())?.path ?? "")
+    : "";
 
   // Hashes appear only in some report shapes. Reporting one that is not there would invent evidence.
   const hashes: string[] = [];
@@ -194,8 +196,7 @@ export function parseWerReport(text: string): WerReport | null {
     // The paired Application Error record's "Report Id" is the INTEGRATOR identifier, not the
     // report's own ReportIdentifier. Keying on the latter meant the file and its event log record
     // never matched and the crash appeared twice — the deduplication this item asks for.
-    reportId:
-      kv.get("IntegratorReportIdentifier") || kv.get("ReportIdentifier") || kv.get("ReportId") || "",
+    reportId: kv.get("IntegratorReportIdentifier") || kv.get("ReportIdentifier") || kv.get("ReportId") || "",
     time: filetimeToIso(kv.get("EventTime") ?? ""),
     loadedModules: loaded,
     hashes,

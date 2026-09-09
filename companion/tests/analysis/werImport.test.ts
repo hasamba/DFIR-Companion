@@ -146,7 +146,13 @@ describe("werSignal — the crash is not the finding", () => {
   });
 
   it("does not escalate a crash in Program Files", () => {
-    expect(werSignal({ ...parseWerReport(APPCRASH)!, appPath: "C:\\Program Files\\App\\a.exe", faultModulePath: "C:\\Windows\\System32\\ntdll.dll" })).toBeNull();
+    expect(
+      werSignal({
+        ...parseWerReport(APPCRASH)!,
+        appPath: "C:\\Program Files\\App\\a.exe",
+        faultModulePath: "C:\\Windows\\System32\\ntdll.dll",
+      }),
+    ).toBeNull();
   });
 });
 
