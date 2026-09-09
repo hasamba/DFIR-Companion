@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   lifetimeMs,
   processIdentity,
@@ -200,5 +202,28 @@ describe("markUnexpectedParents — the timeline pass", () => {
   it("does not treat an unrecorded parent as an orphan", () => {
     const [e] = markUnexpectedParents([ev({ parentName: undefined })]);
     expect(e.description).not.toContain("[unexpected parent:");
+  });
+});
+
+// The reachability check. Two of these three detections shipped as tested exports with no
+// production caller at all — green suite, no runtime effect.
+describe("reachability — every detection has a production caller", () => {
+  const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+
+  it("runs the parent and sacrificial rules from the merge", () => {
+    const merge = src("src/analysis/stateMerge.ts");
+    expect(merge).toContain("markProcessLifetimeSignals");
+  });
+
+  it("runs the repeated-short-lifetime rule from the memory importer", () => {
+    // It can only run there: a memory image is the one source that records a process's exit.
+    const mem = src("src/analysis/memoryImport.ts");
+    expect(mem).toContain("repeatedShortLifetimes(");
+  });
+
+  it("strips both markers before correlation keys a duplicate", () => {
+    const corr = src("src/analysis/correlate.ts");
+    expect(corr).toContain("unexpected parent");
+    expect(corr).toContain("sacrificial process");
   });
 });

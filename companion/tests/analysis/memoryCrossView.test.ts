@@ -213,3 +213,33 @@ describe("wired into the memory importer", () => {
     expect(r.events[0].severity).toBe("Medium");
   });
 });
+
+describe("repeated short lifetimes, end to end through the memory importer", () => {
+  const burst = (n: number) =>
+    Array.from({ length: n }, (_v, i) => ({
+      PID: 1000 + i,
+      ImageFileName: "beacon.exe",
+      CreateTime: new Date(Date.parse("2026-01-01T10:00:00Z") + i * 1000).toISOString(),
+      ExitTime: new Date(Date.parse("2026-01-01T10:00:00Z") + i * 1000 + 400).toISOString(),
+      PPID: 900,
+    }));
+
+  it("emits one clustered event, not one per execution", () => {
+    const r = parseMemory(JSON.stringify({ "windows.pslist.PsList": burst(15) }));
+    const clusters = r.events.filter((e) => /started and exited within/.test(e.description));
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].description).toContain("beacon.exe");
+    expect(clusters[0].description).toContain("15 times");
+  });
+
+  it("says nothing when the executions are too few", () => {
+    const r = parseMemory(JSON.stringify({ "windows.pslist.PsList": burst(3) }));
+    expect(r.events.some((e) => /started and exited within/.test(e.description))).toBe(false);
+  });
+
+  it("says nothing when the rows carry no exit time", () => {
+    const rows = burst(20).map(({ ExitTime: _drop, ...rest }) => rest);
+    const r = parseMemory(JSON.stringify({ "windows.pslist.PsList": rows }));
+    expect(r.events.some((e) => /started and exited within/.test(e.description))).toBe(false);
+  });
+});

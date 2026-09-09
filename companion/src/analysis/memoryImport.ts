@@ -62,6 +62,7 @@ import { pstreeChildren } from "./pstreeDepth.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { malfindContext } from "./malfindContext.js";
+import { repeatedShortLifetimes, type ProcessRecord } from "./processLifetime.js";
 import {
   psxviewSignal,
   ldrModulesSignal,
@@ -1053,6 +1054,7 @@ function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryPar
 
   const sink = new Map<string, SiemIoc>();
   const mapped = mapFindevil(rows, sink);
+
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -1549,9 +1551,32 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     }
   }
 
+  // Process records with BOTH a start and an exit, which is the only place in the product that has
+  // them: a memory image records CreateTime and ExitTime on the same row (#909 item 6). The
+  // repeated-short-lifetime rule cannot run anywhere else, because every other importer sees a
+  // process creation and never its end.
+  const lifetimeRecords: ProcessRecord[] = [];
+
   for (const t of tables) {
     const cols = colSet(t.rows);
     const category = classify(t.plugin, cols);
+    if (category === "process") {
+      for (const r of t.rows) {
+        const nm = procName(r);
+        if (!nm) continue;
+        lifetimeRecords.push({
+          image: pick(r, ["Path", "path"]) || nm,
+          name: baseName(nm).toLowerCase(),
+          pid: pickPid(r),
+          ppid: pick(r, ["PPID", "ppid"]),
+          parentName: "",
+          start: pickTime(r, ["CreateTime", "process_create_time", "CreatedTime", "start_time"]),
+          exit: pickTime(r, ["ExitTime", "process_exit_time"]),
+          commandLine: pick(r, ["Cmd", "CommandLine", "Args"]),
+          commandLineCaptured: true,
+        });
+      }
+    }
     const label = displayLabel(t.plugin, category, t.rows);
     switch (category) {
       case "process":
@@ -1583,6 +1608,21 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
       default:
         mapped.push(...mapGeneric(label, tool, t.rows, sink));
     }
+  }
+
+  // Repeated short-lived executions of one image (#909 item 6). Emitted as ONE event per image
+  // rather than one per execution: the pattern is the finding, and twenty rows saying "it ran
+  // again" is the noise the pattern was meant to replace.
+  for (const cluster of repeatedShortLifetimes(lifetimeRecords)) {
+    mapped.push({
+      timestamp: "",
+      description: `${tool}: ${cluster.note}`.slice(0, 600),
+      severity: cluster.severity,
+      mitre: [],
+      aggKey: `mem|repeat|${cluster.name}`,
+      sources: [tool],
+      processName: cluster.name,
+    });
   }
 
   const { events, groups } = aggregateEvents(mapped, {

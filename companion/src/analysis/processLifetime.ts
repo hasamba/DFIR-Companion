@@ -70,6 +70,14 @@ const NEEDS_ARGUMENTS = new Set(["rundll32.exe", "regsvr32.exe", "mshta.exe", "m
 // repeat is worth reporting.
 export const SHORT_LIFETIME_MS = 5000;
 export const REPEAT_THRESHOLD = 10;
+/**
+ * The executions must fall inside one window to count as a burst.
+ *
+ * Without it the rule fires as soon as a total is reached, however long it took — and a logon
+ * script that runs ten times over three months is not a beacon. A burst is the observation; a total
+ * is just a count of executions.
+ */
+export const REPEAT_WINDOW_MS = 10 * 60 * 1000;
 
 // Parents that legitimately start almost anything, so an "unexpected parent" finding against them
 // would be noise: the shell, the service host, the scheduler, the installer.
@@ -87,6 +95,12 @@ const PERMISSIVE_PARENTS = new Set([
   "powershell.exe",
   "pwsh.exe",
 ]);
+
+// Escape every regex metacharacter, not just the dot. NEEDS_ARGUMENTS holds four safe names today;
+// this stops the next name added to it from becoming a pattern.
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function ms(iso: string): number | null {
   if (!iso) return null;
@@ -111,8 +125,12 @@ export function lifetimeMs(r: Pick<ProcessRecord, "start" | "exit">): number | n
  * PID alone is not identity: Windows recycles PIDs, so two records sharing one may be two different
  * processes. Image and start time are what make it specific.
  */
-export function processIdentity(r: Pick<ProcessRecord, "name" | "pid" | "start">): string {
-  return `${r.name}|${r.pid}|${r.start}`;
+export function processIdentity(
+  r: Pick<ProcessRecord, "name" | "pid" | "start"> & { image?: string; host?: string },
+): string {
+  // The full image is part of identity: two binaries with the same basename at different paths are
+  // different programs, and one of them being in \Temp\ is usually the point.
+  return `${r.host ?? ""}|${(r.image || r.name).toLowerCase()}|${r.pid}|${r.start}`;
 }
 
 /**
@@ -126,14 +144,16 @@ export function sacrificialSignal(
   r: ProcessRecord,
   corroborating: { shortLived?: boolean; unexpectedParent?: boolean; injectedInto?: boolean } = {},
 ): LifetimeSignal | null {
-  if (!NEEDS_ARGUMENTS.has(r.name)) return null;
+  // The importers' baseName helper preserves source case, so a case-sensitive lookup would miss
+  // RUNDLL32.EXE — which is exactly how an attacker writes it.
+  if (!NEEDS_ARGUMENTS.has(r.name.toLowerCase())) return null;
 
   // The distinction the whole rule rests on.
   if (!r.commandLineCaptured) return null;
   // A captured command line that merely repeats the image is still argument-free.
   const args = r.commandLine
     .replace(/^\s*"[^"]*"\s*/, "")
-    .replace(new RegExp(`^\\s*\\S*${r.name.replace(".", "\\.")}\\s*`, "i"), "")
+    .replace(new RegExp(`^\\s*\\S*${escapeRe(r.name)}\\s*`, "i"), "")
     .trim();
   if (args) return null;
 
@@ -173,10 +193,11 @@ export interface RepeatCluster {
  */
 export function repeatedShortLifetimes(
   records: readonly ProcessRecord[],
-  opts: { shortMs?: number; threshold?: number } = {},
+  opts: { shortMs?: number; threshold?: number; windowMs?: number } = {},
 ): RepeatCluster[] {
   const shortMs = opts.shortMs ?? SHORT_LIFETIME_MS;
   const threshold = opts.threshold ?? REPEAT_THRESHOLD;
+  const windowMs = opts.windowMs ?? REPEAT_WINDOW_MS;
 
   const byName = new Map<string, number[]>();
   const seen = new Set<string>();
@@ -198,15 +219,24 @@ export function repeatedShortLifetimes(
   for (const [name, times] of byName) {
     if (times.length < threshold) continue;
     times.sort((a, b) => a - b);
-    const windowMs = times[times.length - 1] - times[0];
+    // The densest run inside one window, not the total. A logon script that runs ten times over
+    // three months is not a burst, and counting it as one is how this rule would have become noise.
+    let best = { count: 0, span: 0 };
+    let lo = 0;
+    for (let hi = 0; hi < times.length; hi++) {
+      while (times[hi] - times[lo] > windowMs) lo++;
+      const count = hi - lo + 1;
+      if (count > best.count) best = { count, span: times[hi] - times[lo] };
+    }
+    if (best.count < threshold) continue;
     out.push({
       name,
-      count: times.length,
-      windowMs,
+      count: best.count,
+      windowMs: best.span,
       severity: "Low",
       note:
-        `${name} started and exited within ${Math.round(shortMs / 1000)}s, ${times.length} times over ` +
-        `${Math.round(windowMs / 1000)}s. Repeated short-lived executions of one image are consistent ` +
+        `${name} started and exited within ${Math.round(shortMs / 1000)}s, ${best.count} times over ` +
+        `${Math.round(best.span / 1000)}s. Repeated short-lived executions of one image are consistent ` +
         "with a loop — a beacon, a retry, or a tool working through a list — and equally with a " +
         "scheduled task or a health check. The pattern is the observation; what ran is the question.",
     });
@@ -263,15 +293,31 @@ export interface TimelineProcessEvent {
 
 // Which images ordinarily start which. Small and specific on purpose: an expectation that is only
 // roughly right produces a finding that is only roughly right.
+/**
+ * The marker this pass appends.
+ *
+ * Exported because correlate.ts must STRIP it before keying a duplicate: the derived note did not
+ * exist before this change, so a stored marked event and a freshly imported unmarked one would key
+ * differently and the row would duplicate on re-import.
+ */
+export const UNEXPECTED_PARENT_MARKER = "[unexpected parent:";
+
+/** Same contract as UNEXPECTED_PARENT_MARKER — correlate.ts must strip it before keying. */
+export const SACRIFICIAL_MARKER = "[sacrificial process:";
+
 export const EXPECTED_PARENTS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["lsass.exe", new Set(["wininit.exe"])],
   ["services.exe", new Set(["wininit.exe"])],
-  ["smss.exe", new Set(["system"])],
+  // The leader SMSS is started by System; it then spawns a transient per-session copy for session 0
+  // and for every user session, whose parent is smss.exe itself. Listing only "system" flagged every
+  // ordinary session creation on the host.
+  ["smss.exe", new Set(["system", "smss.exe"])],
   ["csrss.exe", new Set(["smss.exe"])],
   ["wininit.exe", new Set(["smss.exe"])],
   ["winlogon.exe", new Set(["smss.exe"])],
   ["spoolsv.exe", new Set(["services.exe"])],
-  ["lsm.exe", new Set(["wininit.exe"])],
+  // lsm.exe is legacy: it does not exist as a standalone process on modern Windows, so an entry for
+  // it can only produce findings on old builds where the expectation is also least certain.
 ]);
 
 /**
@@ -281,35 +327,65 @@ export const EXPECTED_PARENTS: ReadonlyMap<string, ReadonlySet<string>> = new Ma
  * already-marked timeline changes nothing. It only ever RAISES a grade — a process's parentage
  * cannot make other evidence about it less true.
  */
-export function markUnexpectedParents<T extends TimelineProcessEvent>(events: readonly T[]): T[] {
-  const MARKER = "[unexpected parent:";
+export function markProcessLifetimeSignals<T extends TimelineProcessEvent>(events: readonly T[]): T[] {
+  // Processes the case has already flagged as holding executable private memory. That is the
+  // corroboration the sacrificial rule needs: an argument-free host ALONE is a shape Windows
+  // produces itself, and only becomes a lead when something else about the same process is odd.
+  const injected = new Set<string>();
+  for (const e of events) {
+    const n = (e.processName ?? "").toLowerCase();
+    if (n && /executable memory region flagged|malfind/i.test(e.description ?? "")) injected.add(n);
+  }
+
+  const rank: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+
   return events.map((e) => {
     const name = (e.processName ?? "").toLowerCase();
-    const parent = (e.parentName ?? "").toLowerCase();
-    if (!name || !parent) return e;
-    if ((e.description ?? "").includes(MARKER)) return e; // already marked
-    const signal = unexpectedParentSignal(
-      {
-        image: name,
-        name,
-        pid: String(e.pid ?? ""),
-        ppid: "",
-        parentName: parent,
-        start: e.timestamp ?? "",
-        exit: "",
-        commandLine: e.commandLine ?? "",
-        commandLineCaptured: e.commandLine !== undefined,
-      },
-      EXPECTED_PARENTS,
-    );
+    if (!name) return e;
+    if ((e.description ?? "").includes(UNEXPECTED_PARENT_MARKER)) return e;
+    if ((e.description ?? "").includes(SACRIFICIAL_MARKER)) return e;
+
+    const record: ProcessRecord = {
+      image: name,
+      name,
+      pid: String(e.pid ?? ""),
+      ppid: "",
+      parentName: (e.parentName ?? "").toLowerCase(),
+      start: e.timestamp ?? "",
+      exit: "",
+      commandLine: e.commandLine ?? "",
+      // The distinction the sacrificial rule turns on. An event that carries no commandLine field
+      // at all is one where none was CAPTURED — not one captured and found empty.
+      commandLineCaptured: e.commandLine !== undefined,
+    };
+
+    const parentSignal = record.parentName ? unexpectedParentSignal(record, EXPECTED_PARENTS) : null;
+    const sacrificial = sacrificialSignal(record, {
+      unexpectedParent: !!parentSignal,
+      injectedInto: injected.has(name),
+    });
+
+    // The sacrificial finding is the stronger statement, so it wins when both apply.
+    const signal = sacrificial ?? parentSignal;
     if (!signal) return e;
-    const rank: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+    const marker = sacrificial ? SACRIFICIAL_MARKER : UNEXPECTED_PARENT_MARKER;
+
     const severity =
       rank[signal.severity] > rank[e.severity ?? "Info"] ? signal.severity : (e.severity ?? "Info");
+    // The marker is appended AFTER truncating the base text, never before: truncating the joined
+    // string let a long description push the marker off the end while the severity bump still
+    // applied — a raised event with no stated reason.
+    const base = (e.description ?? "").slice(0, 700);
     return {
       ...e,
       severity,
-      description: `${e.description ?? ""} ${MARKER} ${signal.note}]`.trim().slice(0, 900),
+      ...(signal.mitre.length
+        ? { mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...signal.mitre])] }
+        : {}),
+      description: `${base} ${marker} ${signal.note}]`.trim(),
     };
   });
 }
+
+/** Kept as the previous name so existing callers and tests are unaffected. */
+export const markUnexpectedParents = markProcessLifetimeSignals;
