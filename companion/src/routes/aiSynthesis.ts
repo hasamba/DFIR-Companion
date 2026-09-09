@@ -21,6 +21,7 @@ import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js"
 import { sendSynthesisRouteFailure } from "./analystGate.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentation } from "../reports/presentationExport.js";
+import { defangDeck } from "../reports/defangDeck.js";
 
 /**
  * AI synthesis / Q&A / summary domain: the large cluster of LLM-backed (and LLM-adjacent) endpoints
@@ -369,14 +370,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for executive summary" });
     if (!(await reportSectionEnabled(req.params.id, "executiveSummary")))
-      return res
-        .status(409)
-        .json({
-          error:
-            "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).",
-          sectionDisabled: true,
-          section: "executiveSummary",
-        });
+      return res.status(409).json({
+        error:
+          "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).",
+        sectionDisabled: true,
+        section: "executiveSummary",
+      });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
@@ -562,14 +561,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     // major section — so a disabled `timeline` section means the narrative won't appear; skip its
     // AI call to save tokens (issue #168). The analyst's already-saved narrative is left intact.
     if (!(await reportSectionEnabled(req.params.id, "timeline")))
-      return res
-        .status(409)
-        .json({
-          error:
-            "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).",
-          sectionDisabled: true,
-          section: "timeline",
-        });
+      return res.status(409).json({
+        error:
+          "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).",
+        sectionDisabled: true,
+        section: "timeline",
+      });
     try {
       const result = await options.pipeline.generateNarrative(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
@@ -843,7 +840,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // The exported deck stays self-contained: embed the sink guard that the live page loads from
       // /js. Nonces let the attachment survive this response's CSP and are harmless when the saved
       // file is later opened without a CSP header.
-      const html = await renderStandalonePresentation(deck, String(res.locals.cspNonce ?? ""));
+      // Indicators are defanged HERE and not in the deck builder (#892): this file is handed to a
+      // stakeholder and opened from file:// with no CSP, while the live viewer above renders the
+      // same deck and must keep values an analyst can copy into a tool. See defangDeck.ts.
+      const html = await renderStandalonePresentation(defangDeck(deck), String(res.locals.cspNonce ?? ""));
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
       res.type("html").set("Content-Disposition", `attachment; filename="${filename}"`).send(html);
     } catch (err) {

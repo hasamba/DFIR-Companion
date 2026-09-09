@@ -11,6 +11,7 @@ import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
 import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 import { escapeHtml } from "./escapeHtml.js";
+import { caseDomains, defangIndicators } from "./defang.js";
 
 // A self-contained, interactive HTML report (#233). Unlike the canonical print-oriented HTML
 // report (html.ts), this is a single-page app: all case data is embedded as a JSON blob inside a
@@ -103,11 +104,21 @@ function safeJsonForScript(data: unknown): string {
   return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
-function toTimelineRow(e: ForensicEvent): TimelineRow {
+// Indicators are rendered inert in the PROSE fields only (#892). This file is the deliverable —
+// its entire purpose is to be emailed to recipients outside the analyst's org, and the saved copy
+// opens from file:// with no CSP — so the same standard the Markdown/HTML/DOCX reports hold to
+// applies here (see defang.ts).
+//
+// `asset`, `sources` and `artifactName` are deliberately LEFT ALONE. They are not prose: the page
+// builds its Host and Source filter <option> lists from `asset`/`sources` and folds all three into
+// the client-side search haystack, so rewriting a hostname there would change the filter values an
+// analyst picks from and silently break host search. They are also never URLs — an inert, unlinked
+// hostname in a filter dropdown is not the click risk this pass exists to remove.
+function toTimelineRow(e: ForensicEvent, domains: string[]): TimelineRow {
   return {
     id: e.id,
     timestamp: e.timestamp,
-    description: e.description,
+    description: defangIndicators(e.description, domains),
     severity: e.severity,
     mitreTechniques: e.mitreTechniques,
     asset: e.asset,
@@ -116,14 +127,17 @@ function toTimelineRow(e: ForensicEvent): TimelineRow {
   };
 }
 
-function toFindingCard(f: Finding): FindingCard {
+// `relatedIocs` holds IOC IDS, not values (stateTypes.ts) — and this projection embeds no IOC
+// values at all, by design (see the header). So the prose fields are the whole exposure here.
+function toFindingCard(f: Finding, domains: string[]): FindingCard {
   return {
     id: f.id,
     severity: f.severity,
-    title: f.title,
-    description: f.description,
+    title: defangIndicators(f.title, domains),
+    description: defangIndicators(f.description, domains),
     confidence: f.confidence,
-    confidenceReason: f.confidenceReason,
+    confidenceReason:
+      f.confidenceReason === undefined ? undefined : defangIndicators(f.confidenceReason, domains),
     mitreTechniques: f.mitreTechniques,
     relatedIocs: f.relatedIocs,
     firstSeen: f.firstSeen,
@@ -144,9 +158,16 @@ function serializedBytes(value: unknown): number {
  *
  * The first row is admitted unconditionally. Without that, a single event larger than the whole byte
  * budget would yield an empty timeline behind a banner claiming the report had merely been trimmed.
+ *
+ * Rows are defanged on the way in, BEFORE the accounting: defanging GROWS the text (`http` ->
+ * `hxxp`, `.` -> `[.]`), so measuring the live form would under-count the file that actually ships
+ * and let it past MAX_TIMELINE_BYTES.
  */
-function selectTimeline(events: ForensicEvent[]): { rows: TimelineRow[]; truncated: boolean } {
-  const all = events.map(toTimelineRow);
+function selectTimeline(
+  events: ForensicEvent[],
+  domains: string[],
+): { rows: TimelineRow[]; truncated: boolean } {
+  const all = events.map((e) => toTimelineRow(e, domains));
   if (all.length <= SIZE_LIMIT && serializedBytes(all) <= MAX_TIMELINE_BYTES) {
     return { rows: all, truncated: false };
   }
@@ -174,7 +195,8 @@ function buildData(
   caseMeta: CaseMeta | null,
   reportMeta: ReportMeta,
 ): InteractiveCaseData {
-  const { rows, truncated } = selectTimeline(state.forensicTimeline);
+  const domains = caseDomains(state);
+  const { rows, truncated } = selectTimeline(state.forensicTimeline, domains);
   return {
     caseId: state.caseId,
     caseName: caseMeta?.name ?? "",
@@ -183,7 +205,7 @@ function buildData(
     incidentId: reportMeta.incidentId,
     companyName: reportMeta.companyName,
     restrictions: reportMeta.restrictions,
-    findings: state.findings.map(toFindingCard),
+    findings: state.findings.map((f) => toFindingCard(f, domains)),
     timeline: rows,
     truncated,
     totalEvents: state.forensicTimeline.length,
