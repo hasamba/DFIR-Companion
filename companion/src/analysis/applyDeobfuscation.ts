@@ -7,7 +7,8 @@
 // ids are stored in the event's deobfuscated.iocs array.
 
 import type { InvestigationState, ForensicEvent, IOC } from "./stateTypes.js";
-import { deobfuscateText } from "./deobfuscate.js";
+import { deobfuscateText, extractIocsFromText } from "./deobfuscate.js";
+import { decodeLayers, DECODER_VERSION } from "./deobfuscateLayers.js";
 
 function padIocId(n: number): string {
   return `i${String(n).padStart(3, "0")}`;
@@ -26,23 +27,54 @@ export interface DeobfuscationApplyResult {
   state: InvestigationState;
   deobfuscated: number; // events decoded this run
   newIocs: number; // net-new IOCs added from decoded content
+  reanalyzed: number; // events re-decoded because their stored result predated this decoder
+}
+
+export interface DeobfuscationApplyOptions {
+  // Re-decode events whose stored result came from an OLDER decoder (#909 item 2).
+  //
+  // Without this the pass is purely idempotent: an event that already carries a `deobfuscated`
+  // block is skipped forever, so improving the decoder helps only cases imported afterwards and
+  // every existing case keeps its single-layer result. That is a silent staleness, and the analyst
+  // has no way to see it. Re-analysis is opt-in rather than automatic because it rewrites stored
+  // findings — it should be a decision, not a side effect of upgrading.
+  reanalyzeStale?: boolean;
 }
 
 // Apply deobfuscation to every unprocessed event in the case's forensic timeline.
 // Idempotent: events with an existing `deobfuscated` block are skipped.
-export function applyDeobfuscation(state: InvestigationState): DeobfuscationApplyResult {
+export function applyDeobfuscation(
+  state: InvestigationState,
+  options: DeobfuscationApplyOptions = {},
+): DeobfuscationApplyResult {
   const iocs: IOC[] = state.iocs.map((i) => ({ ...i }));
   let nextSeq = nextIocSeq(iocs);
   let deobfuscatedCount = 0;
+  let reanalyzed = 0;
   let newIocs = 0;
   const now = new Date().toISOString();
 
   const forensicTimeline: ForensicEvent[] = state.forensicTimeline.map((event) => {
-    if (event.deobfuscated) return { ...event }; // already processed
+    const prior = event.deobfuscated;
+    const stale = (prior?.version ?? 0) < DECODER_VERSION;
+    if (prior && !(options.reanalyzeStale && stale)) return { ...event }; // already processed
 
-    const result = deobfuscateText(event.description);
+    // The layered decoder first; the single-layer one remains the fallback so a payload shape it
+    // still handles alone keeps working.
+    const layered = decodeLayers(event.description);
+    const result = layered
+      ? {
+          decoded: layered.decoded,
+          method: layered.steps[0]?.method ?? "base64",
+          rawIocs: extractIocsFromText(layered.decoded),
+          steps: layered.steps,
+          partial: layered.partial,
+          version: layered.version,
+        }
+      : deobfuscateText(event.description);
     if (!result) return { ...event };
 
+    if (prior) reanalyzed++;
     deobfuscatedCount++;
 
     // Add extracted IOCs to the case's IOC list, deduping by value.
@@ -65,17 +97,21 @@ export function applyDeobfuscation(state: InvestigationState): DeobfuscationAppl
         decoded: result.decoded,
         method: result.method,
         iocs: extractedIds,
+        ...("steps" in result ? { steps: result.steps } : {}),
+        ...("partial" in result ? { partial: result.partial } : {}),
+        ...("version" in result ? { version: result.version } : { version: 1 }),
       },
     };
   });
 
   if (deobfuscatedCount === 0 && newIocs === 0) {
-    return { state, deobfuscated: 0, newIocs: 0 };
+    return { state, deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
   }
 
   return {
     state: { ...state, forensicTimeline, iocs, updatedAt: now },
     deobfuscated: deobfuscatedCount,
     newIocs,
+    reanalyzed,
   };
 }
