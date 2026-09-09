@@ -113,4 +113,18 @@ describe("withEventTechniques (#893)", () => {
 
     expect(withEventTechniques(state).mitreTechniques).toEqual([]);
   });
+
+  it("keeps a technique the analyst accepted, which by construction has nothing else behind it", () => {
+    // An accepted second-opinion addition is the analyst overruling both models: no finding cites
+    // it and no event carries it, so a support test alone would hide it the moment it was added.
+    const state = {
+      ...emptyState("c1"),
+      mitreTechniques: [
+        { id: "T1486", name: "Data Encrypted for Impact", findingIds: [], analystAccepted: true as const },
+      ],
+      forensicTimeline: [],
+    };
+
+    expect(withEventTechniques(state).mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
+  });
 });

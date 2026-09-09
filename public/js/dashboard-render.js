@@ -489,7 +489,9 @@
     const carriedTechniques = new Set(ft.flatMap((e) => e.mitreTechniques || []));
     const mitreRows = (state.mitreTechniques || []).filter(
       (m) =>
-        (m.findingIds || []).some((id) => survivingFindings.has(id)) || carriedTechniques.has(m.id),
+        m.analystAccepted ||
+        (m.findingIds || []).some((id) => survivingFindings.has(id)) ||
+        carriedTechniques.has(m.id),
     );
     const seenTechniques = new Set(mitreRows.map((m) => m.id));
     for (const e of ft)

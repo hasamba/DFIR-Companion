@@ -31,10 +31,11 @@ export function withEventTechniques(state: InvestigationState): InvestigationSta
   // difference this rework makes. This is a VIEW: state is untouched, so widening the scope window
   // or un-marking the event brings the technique straight back, with no merge and nothing to heal.
   // The old design had to choose between leaving stale rows and deleting analysis for good.
+  // An analyst's accepted addition counts as support in itself — see Technique.analystAccepted.
   const surviving = new Set(state.findings.map((f) => f.id));
   const carried = new Set(state.forensicTimeline.flatMap((e) => e.mitreTechniques));
   const supported = state.mitreTechniques.filter(
-    (t) => t.findingIds.some((id) => surviving.has(id)) || carried.has(t.id),
+    (t) => t.analystAccepted || t.findingIds.some((id) => surviving.has(id)) || carried.has(t.id),
   );
   return { ...state, mitreTechniques: unionEventTechniques(supported, state.forensicTimeline) };
 }
