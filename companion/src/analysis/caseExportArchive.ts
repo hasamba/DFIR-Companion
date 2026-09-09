@@ -17,6 +17,14 @@ import type { CaseMeta } from "../types.js";
 import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
 import { portableArchivePaths, destinationKey } from "../storage/portableFilename.js";
 import { encryptBuffer, decryptBuffer, readFormatVersion, CURRENT_FORMAT_VERSION } from "./caseEncryption.js";
+import {
+  ARCHIVE_MANIFEST_PATH,
+  SOURCE_MANIFEST_PATH,
+  parseArchiveManifest,
+  provenanceOf,
+  verifyArchiveManifest,
+  type CaseArchiveProvenance,
+} from "./caseArchiveManifest.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
@@ -483,6 +491,10 @@ export interface ImportEncryptedCaseResult {
    * v1 stays readable forever, by the rule in caseEncryption.ts. */
   formatVersion: number;
   currentFormatVersion: number;
+  /** Where the archive came from, or null when it carried no usable manifest — an export from
+   * before manifests, or one whose manifest does not parse. Non-null means every entry was checked
+   * against it and matched; see caseArchiveManifest.ts for what that does and does not prove. */
+  provenance: CaseArchiveProvenance | null;
 }
 
 /**
@@ -505,10 +517,10 @@ export async function importEncryptedCase(
   const formatVersion = readFormatVersion(fileBuffer);
   const zip = await decryptBuffer(fileBuffer, password);
   const archiveEntries = readZip(zip);
-  const manifestCounts = countsFromManifest(
-    archiveEntries.find((entry) => entry.path === "archive-manifest.json"),
-  );
-  const entries = archiveEntries.filter((e) => e.path !== "archive-manifest.json");
+  const manifestEntry = archiveEntries.find((entry) => entry.path === ARCHIVE_MANIFEST_PATH);
+  const manifestCounts = countsFromManifest(manifestEntry);
+  const manifest = parseArchiveManifest(manifestEntry);
+  const entries = archiveEntries.filter((e) => e.path !== ARCHIVE_MANIFEST_PATH);
 
   const caseJsonEntry = entries.find((e) => e.path === "case.json");
   if (!caseJsonEntry) throw new Error("not a valid case archive: missing case.json");
@@ -552,6 +564,11 @@ export async function importEncryptedCase(
     }
     seenPaths.set(key, entry.path);
   }
+
+  // Integrity after path safety, and both before anything reaches disk. The order is deliberate: an
+  // unsafe path is a question about where bytes would land, and it has to be settled before the
+  // bytes are worth hashing at all.
+  if (manifest) verifyArchiveManifest(manifest, entries);
 
   const rename = targetCaseId !== originalMeta.caseId;
   const rewrittenByPath = new Map<string, Buffer>();
@@ -601,6 +618,15 @@ export async function importEncryptedCase(
       await writeFile(target, data);
     }
 
+    // The provenance record, kept with the case instead of dropped on the floor (#904). Written
+    // AFTER the entry loop on purpose: a case that was itself imported carries the PREVIOUS
+    // source-manifest.json as an ordinary file, and what belongs on disk afterwards is the manifest
+    // of the archive just opened, not the one that travelled inside it. Verbatim bytes, so the file
+    // still hashes to what the exporter recorded.
+    if (manifestEntry && manifest) {
+      await writeFile(join(staging, SOURCE_MANIFEST_PATH), manifestEntry.data);
+    }
+
     try {
       await renamePath(staging, join(store.casesRoot, targetCaseId)); // `rename` is taken: the id-rewrite flag above
     } catch (err) {
@@ -626,6 +652,7 @@ export async function importEncryptedCase(
     // Non-null: decryptBuffer above already threw on any container this build cannot read.
     formatVersion: formatVersion!,
     currentFormatVersion: CURRENT_FORMAT_VERSION,
+    provenance: manifest ? provenanceOf(manifest) : null,
   };
 }
 

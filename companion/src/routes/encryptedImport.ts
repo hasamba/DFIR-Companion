@@ -3,6 +3,7 @@ import { getImportLimiter, getImportIpLimiter } from "../http/rateLimiter.js";
 import { importEncryptedCase, CaseImportConflictError } from "../analysis/caseExportArchive.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
+import { hashFile } from "../analysis/custody.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -72,7 +73,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         return res.status(429).json({ error: "too many import attempts, try again later" });
       }
       const fileBuffer = Buffer.from(data, "base64");
-      const { meta, counts, formatVersion, currentFormatVersion } = await importEncryptedCase(
+      const { meta, counts, formatVersion, currentFormatVersion, provenance } = await importEncryptedCase(
         store,
         fileBuffer,
         password,
@@ -82,6 +83,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         },
       );
       options.teamAuth?.grantCreator(req, meta.caseId);
+      await recordArrival(ctx, meta.caseId, provenance?.sourceCaseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
@@ -93,7 +95,9 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
       // This is safe to return only because it is the SUCCESS path: the caller has already proven
       // it holds the password. Never answer "what version is this archive?" before a decrypt, or
       // an unauthenticated caller could sort a pile of archives by which are cheapest to crack.
-      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts, formatVersion, currentFormatVersion });
+      return res
+        .status(201)
+        .json({ ...sanitizeCaseMeta(meta), counts, formatVersion, currentFormatVersion, provenance });
     } catch (err) {
       // A conflict means the archive DID open — a real analyst re-importing, not an attacker
       // burning CPU. Deliberately not counted as a failure; the per-request budget above is what
@@ -123,4 +127,43 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
       return res.status(500).json({ error: msg });
     }
   });
+}
+
+/**
+ * Record in the new case's custody chain that it ARRIVED rather than being created here (#904).
+ * `sourceCaseId` is the id the archive's manifest claimed, and is undefined for an archive written
+ * before manifests — the arrival is still worth recording without it.
+ *
+ * Deliberately never throws. It runs after the atomic rename that publishes the case, so the import
+ * has already succeeded by the time it is called; letting a custody append failure escape would turn
+ * a completed import into a 500 and tell the analyst their case did not import when it did. The
+ * failure is logged instead, which is what a missing chain entry needs — someone to notice it.
+ */
+async function recordArrival(ctx: RouteContext, caseId: string, sourceCaseId?: string): Promise<void> {
+  const custody = ctx.options.custodyStore;
+  if (!custody) return;
+  try {
+    // case.json is the artifact: it exists for every imported case, it lives inside the case
+    // directory (so the record stores a relative path and survives archiving), and it is the case
+    // identity the package delivered.
+    const artifactPath = ctx.store.caseMetaPath(caseId);
+    await custody.record(caseId, {
+      artifactPath,
+      sha256: await hashFile(artifactPath),
+      caseId,
+      event: "transferred",
+      collectedBy: "import",
+      collectedAt: new Date().toISOString(),
+      // `source` is the chain's free-text "where". Beside a "transferred" event it reads as where
+      // the evidence came from — see CustodyStore.recordTransfer for the same field read the other way.
+      source: sourceCaseId ? `.dfircase archive of case ${sourceCaseId}` : ".dfircase archive",
+      trigger: "encrypted-case-import",
+    });
+  } catch (err) {
+    ctx.serverLogger.warn(
+      `imported case ${caseId} published but its custody arrival record could not be written: ` +
+        (err as Error).message,
+      { caseId },
+    );
+  }
 }

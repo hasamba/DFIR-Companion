@@ -170,6 +170,7 @@
     "burstDetect.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
     "caseArchive.ts": "analysis/case",
+    "caseArchiveManifest.ts": "analysis/case",
     "caseEncryption.ts": "analysis/privacy",
     "caseExistsGate.ts": "analysis/case",
     "caseExportArchive.ts": "analysis/case",

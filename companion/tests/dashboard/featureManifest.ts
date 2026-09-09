@@ -611,11 +611,12 @@ export const FEATURES: Feature[] = [
     // nothing here can safely sit in the module body.
     file: "dashboard-import-case.js",
     initializer: "initImportCase",
-    // encryptionUpgradeNotice is published even though the inline script never calls it: it is the
-    // one function here that touches no DOM, so it is the one that can be tested without standing
-    // up fifteen elements (#672). Keeping it inside the closure would make the decision it encodes
-    // — warn about a weak archive, or stay quiet — reachable only through the whole import flow.
-    publish: ["initImportCase", "encryptionUpgradeNotice"],
+    // encryptionUpgradeNotice and importProvenanceNote are published even though the inline script
+    // never calls them: they are the two functions here that touch no DOM, so they are the two that
+    // can be tested without standing up fifteen elements (#672, #904). Keeping them inside the
+    // closure would make the decisions they encode — warn about a weak archive or stay quiet, name
+    // the source case or stay quiet — reachable only through the whole import flow.
+    publish: ["initImportCase", "encryptionUpgradeNotice", "importProvenanceNote"],
     private: [],
   },
   {
