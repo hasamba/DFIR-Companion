@@ -32,6 +32,7 @@ import {
 import { detectTimestomp } from "./timestompDetect.js";
 import { parseReasons, pairRenames, summarizeLifecycle, type UsnRecord } from "./usnLifecycle.js";
 import { prefetchSignal } from "./prefetchExecution.js";
+import { readSrumRow, totalSrum, srumSignal, type SrumRow } from "./srumNetwork.js";
 
 type Row = Record<string, unknown>;
 
@@ -326,22 +327,29 @@ const PROFILES: Profile[] = [
   },
   {
     name: "SRUM",
-    match: (h) => has(h, "BytesSent", "BytesReceived"),
+    // BytesRecvd is SrumECmd's spelling. Requiring BytesReceived meant a real export was never
+    // recognised as SRUM at all (#909 item 9).
+    match: (h) => h.has("bytessent") && (h.has("bytesrecvd") || h.has("bytesreceived")),
     map: (row, sink) => {
       const exe = firstStr(row, ["ExeInfo", "AppId", "Application"]);
       if (!exe) return null;
       const proc = addProc(sink, exe);
       const sent = firstStr(row, ["BytesSent"]);
-      const recv = firstStr(row, ["BytesReceived"]);
+      const recv = firstStr(row, ["BytesRecvd", "BytesReceived"]);
+      const user = firstStr(row, ["UserName", "User"]) || firstStr(row, ["Sid", "UserId"]);
       return {
         timestamp: ezTime(getCI(row, "Timestamp")),
-        description: `SRUM network: ${baseName(exe)} sent ${sent || "?"} / recv ${recv || "?"} bytes`.slice(
-          0,
-          600,
-        ),
+        // The per-row event keeps the ATTRIBUTION, not just the numbers: which user, which
+        // interface. A total without them cannot be defended.
+        description:
+          `SRUM network: ${baseName(exe)}${user ? ` as ${user}` : ""} sent ${sent || "?"} / recv ${recv || "?"} bytes`.slice(
+            0,
+            600,
+          ),
         severity: "Info",
         mitre: [],
-        aggKey: `srum|${exe.toLowerCase()}`,
+        // Identity in the key: two users of one application are two facts, and one key merged them.
+        aggKey: `srum|${exe.toLowerCase()}|${user.toLowerCase()}|${firstStr(row, ["InterfaceLuid", "L2ProfileId"])}`,
         sources: ["SRUM"],
         ...(proc ? { processName: proc } : {}),
       };
@@ -413,6 +421,7 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   const usnRows: Row[] = [];
+  const srumRows: SrumRow[] = [];
   for (const cols of rows) {
     const row: Row = {};
     headers.forEach((h, i) => {
@@ -424,10 +433,31 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     // one it is given, sorts a copy, and allocates a record per row — all BEFORE maxEvents applies.
     // Unbounded, that exhausts the process before any capped result is produced.
     if (profile.name === "UsnJrnl" && usnRows.length < MAX_LIFECYCLE_ROWS) usnRows.push(row);
+    if (profile.name === "SRUM") {
+      const r = readSrumRow((k) => getCI(row, k));
+      if (r) srumRows.push({ ...r, timestamp: ezTime(r.timestamp) || r.timestamp });
+    }
   }
 
   // Lifecycle reconstruction needs every record at once: a rename is TWO records, and which names a
   // file was known under is a property of the whole journal, not of any single row (#909 item 7).
+  // Totals per application AND user AND interface, over deduplicated rows (#909 item 9). One row
+  // per hour says nothing; the total is the evidence, and it is only defensible with the
+  // attribution and the interval attached.
+  for (const t of totalSrum(srumRows)) {
+    const signal = srumSignal(t);
+    if (!signal) continue;
+    mapped.push({
+      timestamp: t.last || t.first,
+      description: `SRUM total: ${signal.note}`.slice(0, 900),
+      severity: signal.severity,
+      mitre: signal.mitre,
+      aggKey: `srum|total|${t.app.toLowerCase()}|${(t.sid || t.user).toLowerCase()}|${t.interfaceId}`,
+      sources: ["SRUM"],
+      ...(t.app ? { processName: baseName(t.app) } : {}),
+    });
+  }
+
   const usnRecords = toUsnRecords(usnRows);
   // Files the journal shows being DELETED, and files it knew under several names. This is where the
   // deleted-Prefetch case surfaces: a .pf record carrying FILE_DELETE is an execution artifact

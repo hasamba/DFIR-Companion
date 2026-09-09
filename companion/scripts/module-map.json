@@ -435,6 +435,7 @@
     "sourceTrust.ts": "analysis/intel",
     "sourceTrustStore.ts": "analysis/intel",
     "sqliteRuntime.ts": "storage",
+    "srumNetwork.ts": "analysis/ingest",
     "sshBruteForce.ts": "analysis/detect",
     "stagingPaths.ts": "analysis/ingest",
     "starredReportStore.ts": "analysis/workflow",
