@@ -486,4 +486,29 @@ describe("ReportWriter MITRE table follows the filters (#893)", () => {
     expect(ids).toContain("T1021.002");
     expect(ids).not.toContain("T1003.003");
   });
+
+  it("a technique baked in by a previous synthesis is still removable — nothing persists it", async () => {
+    // The last place event-carried techniques were written into persisted state was the synthesis
+    // fold. A row it had already stored survived every filter afterwards, because projection only
+    // ever ADDS: the analyst dismissed the event and the row stayed. Nothing writes them now, so
+    // the only source is the surviving timeline and the dismissal simply takes effect.
+    const state = emptyState("c1");
+    state.forensicTimeline.push(event("dismissed", "2026-06-01T11:00:00Z", ["T1021.002"]));
+    await stateStore.save(state);
+    expect(await techniques()).toContain("T1021.002");
+
+    await new FalsePositiveStore(caseStore).save("c1", [
+      {
+        id: markerId("event", "dismissed"),
+        kind: "event",
+        ref: "dismissed",
+        reason: "authorized-test",
+        note: "",
+        markedAt: "2026-06-01T12:00:00Z",
+        markedBy: "analyst",
+      },
+    ]);
+
+    expect(await techniques()).not.toContain("T1021.002");
+  });
 });

@@ -17,7 +17,6 @@ import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
-import { unionEventTechniques } from "../reconTechniques.js";
 import { isDeterministicFindingId, renameForgedFindingIds, type deltaSchema } from "../responseSchema.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
@@ -129,11 +128,18 @@ export async function foldSynthesisDelta(
   const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts);
   const pinned = await preservePinnedQuestions(ctx, caseId, netted.state);
   let next = correctKeyQuestions(pinned, state, scopedEvents);
-  // Union the deterministically-identified ATT&CK techniques carried by the (in-scope) timeline into
-  // the synthesized MITRE table, so techniques the model didn't echo — especially the Info/Low
-  // discovery phase (whoami/net group/findstr password/cat .env) tagged by the importers — still
-  // appear in the case's MITRE table and report. Same scoped events synthesis saw; pure + idempotent.
-  next = { ...next, mitreTechniques: unionEventTechniques(next.mitreTechniques, scopedEvents) };
+  // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
+  // union the scoped events' ids into the table so the ones the model didn't echo — especially the
+  // Info/Low discovery phase (whoami/net group/findstr password/cat .env) tagged by the importers —
+  // still reached the MITRE panel and the report. It worked, and it wrote them into PERSISTED
+  // state, where the analyst could no longer get them out: dismissing the only event carrying one
+  // left the row behind, because scope and the false-positive filter drop events at projection
+  // rather than from state and nothing downstream removes an aggregate row.
+  //
+  // Those techniques are derived at projection now (analysis/eventTechniques.ts), from the events
+  // that survive both filters, so they still appear and a dismissal still takes them away. What
+  // this fold persists is what the model ASSERTED — a conclusion about the case rather than a
+  // restatement of an event tag.
   next = demoteCompletedSteps(next, playbookTasks);
 
   return {
