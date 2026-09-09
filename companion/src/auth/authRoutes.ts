@@ -311,14 +311,21 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
     }
     const loginLimiter = getLoginLimiter();
     const key = `${ip}:${username.toLowerCase()}`;
-    const remaining = loginLimiter.remainingLockout(key);
-    if (remaining > 0) {
-      res.setHeader("Retry-After", String(Math.ceil(remaining / 1_000)));
+    // The lockout check, the verification and the failure count are ONE serialized step per key
+    // (AttemptLimiter.attemptFor). The derivation runs on the threadpool (#863), which broke the
+    // old check → verify → record order this route still used: a burst of guesses against one
+    // account all passed the lockout check before any of them was counted, each buying a full
+    // scrypt derivation, so the five-attempt budget bounded nothing during the burst and a lucky
+    // success cleared failures that were counted after it started (#872). The client-wide IP
+    // budget above bounds the burst per CLIENT; this is what bounds it per ACCOUNT.
+    const outcome = await loginLimiter.attemptFor(key, () =>
+      auth.store.verifyLocalCredentials(username, bodyString(body, "password")),
+    );
+    if (outcome.kind === "locked") {
+      res.setHeader("Retry-After", String(Math.ceil(outcome.retryAfterMs / 1_000)));
       return res.status(429).json({ error: "too many attempts, try again later" });
     }
-    const identity = await auth.store.verifyLocalCredentials(username, bodyString(body, "password"));
-    if (!identity) {
-      loginLimiter.recordFailure(key);
+    if (outcome.kind === "failed") {
       // Bounded even though isValidUsername already caps it at 64 — the audit table is permanent,
       // and the detail column should never be the place a length assumption is first tested.
       auth.store.addAudit(
@@ -330,7 +337,7 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
       );
       return res.status(401).json({ error: "invalid username or password" });
     }
-    loginLimiter.clear(key);
+    const identity = outcome.value;
     const created = auth.store.createSession(identity, auth.sessionTtlMs, {
       ip: req.ip,
       userAgent: req.get("user-agent"),

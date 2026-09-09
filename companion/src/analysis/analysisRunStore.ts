@@ -1,4 +1,4 @@
-import { mkdir, open, readdir, readFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -9,14 +9,19 @@ import {
   ANALYSIS_RUN_SCHEMA_VERSION,
   analysisRunHeadSchema,
   analysisRunManifestSchema,
+  analysisRunPendingAppendSchema,
   type AnalysisRunHead,
   type AnalysisRunIntegrity,
   type AnalysisRunManifest,
+  type AnalysisRunPendingAppend,
   type AnalysisRunRecordInput,
   type ManifestValue,
 } from "./analysisRunTypes.js";
 
 const VALID_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/;
+
+/** Cap on manifests opened at once so a large ledger cannot exhaust file descriptors. */
+const LEDGER_READ_CONCURRENCY = 32;
 
 export interface AnalysisRunStoreOptions {
   appVersion: string;
@@ -108,6 +113,10 @@ export class AnalysisRunStore {
     return join(this.dir(caseId), "head.json");
   }
 
+  private pendingPath(caseId: string): string {
+    return join(this.dir(caseId), "pending.json");
+  }
+
   private async readHead(caseId: string): Promise<AnalysisRunHead | null> {
     try {
       return analysisRunHeadSchema.parse(
@@ -119,30 +128,86 @@ export class AnalysisRunStore {
     }
   }
 
-  private async readAll(caseId: string): Promise<AnalysisRunManifest[]> {
-    let names: string[];
+  private async readPending(caseId: string): Promise<AnalysisRunPendingAppend | null> {
     try {
-      names = (await readdir(this.dir(caseId))).filter(
-        (name) => name.endsWith(".json") && name !== "head.json",
+      return analysisRunPendingAppendSchema.parse(
+        JSON.parse(await readFile(this.pendingPath(caseId), "utf8")) as unknown,
+      );
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      // An unreadable marker still means an append was interrupted here.
+      return { id: "" };
+    }
+  }
+
+  private async manifestNames(caseId: string): Promise<string[]> {
+    try {
+      return (await readdir(this.dir(caseId))).filter(
+        (name) => name.endsWith(".json") && name !== "head.json" && name !== "pending.json",
       );
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;
     }
-    return Promise.all(
-      names.map(async (name) => parseManifest(await readFile(join(this.dir(caseId), name), "utf8"))),
-    );
+  }
+
+  private async readAll(caseId: string): Promise<AnalysisRunManifest[]> {
+    const names = await this.manifestNames(caseId);
+    const manifests: AnalysisRunManifest[] = [];
+    for (let start = 0; start < names.length; start += LEDGER_READ_CONCURRENCY) {
+      const batch = names.slice(start, start + LEDGER_READ_CONCURRENCY);
+      manifests.push(
+        ...(await Promise.all(
+          batch.map(async (name) => parseManifest(await readFile(join(this.dir(caseId), name), "utf8"))),
+        )),
+      );
+    }
+    return manifests;
+  }
+
+  /**
+   * Resolve the sequence and hash to chain the next append onto.
+   *
+   * `head.json` pins both and names its owner, so a healthy append reads two small
+   * files and never lists the directory — appending stays flat as a ledger grows.
+   *
+   * The head is trusted only when it names this case and no append marker is
+   * outstanding. A renamed archive import copies the source case's manifests and
+   * head in verbatim, so an owner mismatch means this case has no ledger of its own
+   * yet and must start a fresh chain rather than graft onto the source's. A marker
+   * means an append was interrupted, so the head may sit one behind the manifests.
+   * Either way the tip is rebuilt from the manifests this case actually owns.
+   */
+  private async ledgerTip(caseId: string): Promise<{ sequence: number; manifestHash: string | null }> {
+    const [head, pending] = await Promise.all([
+      this.readHead(caseId).catch(() => null),
+      this.readPending(caseId),
+    ]);
+    if (!pending && head?.caseId === caseId) {
+      return { sequence: head.sequence, manifestHash: head.manifestHash };
+    }
+    const latest = (await this.readAll(caseId))
+      .filter((run) => run.caseId === caseId)
+      .reduce<AnalysisRunManifest | undefined>(
+        (current, run) => (!current || run.sequence > current.sequence ? run : current),
+        undefined,
+      );
+    return { sequence: latest?.sequence ?? 0, manifestHash: latest?.manifestHash ?? null };
   }
 
   async list(caseId: string): Promise<AnalysisRunManifest[]> {
-    const runs = await this.readAll(caseId);
+    const runs = (await this.readAll(caseId)).filter((run) => run.caseId === caseId);
     return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
   }
 
   async get(caseId: string, id: string): Promise<AnalysisRunManifest | null> {
     if (!VALID_RUN_ID.test(id)) return null;
     try {
-      return parseManifest(await readFile(this.path(caseId, id), "utf8"));
+      const manifest = parseManifest(await readFile(this.path(caseId, id), "utf8"));
+      // The requested case is authoritative. A renamed archive import copies the
+      // source case's manifests in verbatim, so a manifest naming another case is
+      // not this case's run and must never become a replay target here.
+      return manifest.caseId === caseId ? manifest : null;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
@@ -151,26 +216,34 @@ export class AnalysisRunStore {
 
   async record(caseId: string, input: AnalysisRunRecordInput): Promise<AnalysisRunManifest> {
     return this.lock.runExclusive(caseId, async () => {
-      const existing = await this.readAll(caseId);
-      const latest = existing.reduce<AnalysisRunManifest | undefined>(
-        (current, run) => (!current || run.sequence > current.sequence ? run : current),
-        undefined,
-      );
-      const sequence = (latest?.sequence ?? 0) + 1;
+      const tip = await this.ledgerTip(caseId);
       const manifest = buildManifest(
         caseId,
         input,
         this.options.appVersion,
-        sequence,
-        latest?.manifestHash ?? null,
+        tip.sequence + 1,
+        tip.manifestHash,
       );
       await mkdir(this.dir(caseId), { recursive: true });
+      // Ordering matters: the marker goes down first, so any crash that leaves the
+      // head behind the manifests also leaves the marker, and the next append knows
+      // to reconcile instead of trusting a stale tip.
+      await atomicWrite(
+        this.pendingPath(caseId),
+        JSON.stringify({ id: manifest.id } satisfies AnalysisRunPendingAppend),
+      );
       let handle;
       try {
         handle = await open(this.path(caseId, manifest.id), "wx");
         await handle.writeFile(JSON.stringify(manifest, null, 2), "utf8");
         await handle.sync();
       } catch (err) {
+        // The marker is deliberately LEFT in place on failure. It may predate this attempt — a
+        // retry of an id whose first attempt wrote the manifest but died before pinning the head
+        // hits EEXIST here, and the marker is then the only remaining signal that the head is
+        // stale. Clearing it would let the next append trust that head and reuse a sequence that
+        // is already on disk, forking the chain permanently. A stale marker only costs the next
+        // append one rescan, and the next successful append clears it.
         if ((err as NodeJS.ErrnoException).code === "EEXIST") {
           throw new Error(`analysis run ${manifest.id} already exists`);
         }
@@ -182,21 +255,33 @@ export class AnalysisRunStore {
         this.headPath(caseId),
         JSON.stringify({
           schemaVersion: ANALYSIS_RUN_SCHEMA_VERSION,
+          caseId,
           sequence: manifest.sequence,
           manifestHash: manifest.manifestHash,
         } satisfies AnalysisRunHead),
       );
+      await rm(this.pendingPath(caseId), { force: true });
       return manifest;
     });
   }
 
   async verify(caseId: string): Promise<AnalysisRunIntegrity> {
-    let runs: AnalysisRunManifest[];
+    let stored: AnalysisRunManifest[];
     try {
-      runs = [...(await this.readAll(caseId))].sort((a, b) => a.sequence - b.sequence);
+      stored = await this.readAll(caseId);
     } catch (err) {
-      return { ok: false, manifests: 0, problems: [`ledger unreadable: ${(err as Error).message}`] };
+      return {
+        ok: false,
+        manifests: 0,
+        problems: [`ledger unreadable: ${(err as Error).message}`],
+        foreignManifests: 0,
+      };
     }
+    // Only the runs this case owns form its chain. Manifests left behind by a renamed
+    // import belong to the source case's chain, so verifying them here would report
+    // failures against a ledger this case never wrote.
+    const runs = stored.filter((run) => run.caseId === caseId).sort((a, b) => a.sequence - b.sequence);
+    const foreignManifests = stored.length - runs.length;
     const problems: string[] = [];
     let head: AnalysisRunHead | null;
     try {
@@ -206,8 +291,12 @@ export class AnalysisRunStore {
         ok: false,
         manifests: runs.length,
         problems: [`ledger head unreadable: ${(err as Error).message}`],
+        foreignManifests,
       };
     }
+    // A head naming another case came in with that import too. A head with no owner
+    // predates the field, so it is read as this case's.
+    if (head && head.caseId !== undefined && head.caseId !== caseId) head = null;
     let previous: string | null = null;
     for (const [index, run] of runs.entries()) {
       if (run.sequence !== index + 1) problems.push(`${run.id}: ledger sequence mismatch`);
@@ -222,6 +311,6 @@ export class AnalysisRunStore {
     if (latest && head && (head.sequence !== latest.sequence || head.manifestHash !== latest.manifestHash)) {
       problems.push("ledger head mismatch");
     }
-    return { ok: problems.length === 0, manifests: runs.length, problems };
+    return { ok: problems.length === 0, manifests: runs.length, problems, foreignManifests };
   }
 }

@@ -274,6 +274,17 @@ export interface Technique {
   id: string; // e.g. "T1059.001"
   name: string;
   findingIds: string[];
+  // The ANALYST added this one, by accepting a second-opinion mitre_added delta.
+  //
+  // The projection shows a technique only while surviving evidence still backs it — a finding that
+  // is still there, or an event still carrying the id (#893). An accepted addition has neither by
+  // construction: it is the analyst overruling both models, so nothing in the case points at it and
+  // it would vanish the moment they accepted it. Their decision IS the support.
+  //
+  // A record of a human choice, not derived provenance: it never has to be re-derived, kept in step
+  // with the timeline, or reconciled through correlation, so it does not reintroduce what #893
+  // removed. `mitre_removed` still deletes the row outright.
+  analystAccepted?: true;
 }
 
 // A STRUCTURED collection directive (investigation-guidance #8). The synthesis prompt already asks the

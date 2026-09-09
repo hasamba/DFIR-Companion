@@ -155,9 +155,11 @@ describe("every moved function still resolves at its call sites", () => {
   // 99 at the extraction; 102 after the prose split (proseParagraphs / proseSentences / proseHtml)
   // joined the text and fragment helpers; 103 since uploadExtOf gave the two import entry points one
   // shared reading of a filename's extension (#673); 104 with yearClampChip, the timeline row's
-  // year-clamp note (#739). The number is a vacuity guard, not a budget.
-  it("moved 104 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(104);
+  // year-clamp note (#739); 106 with applyIocNoiseFilters and iocNoiseNoticeHtml, which took the
+  // IOC panel's three noise lenses out of the inline script so their "never empty a non-empty list"
+  // rule could be tested directly (#876). The number is a vacuity guard, not a budget.
+  it("moved 106 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(106);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

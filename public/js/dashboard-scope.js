@@ -173,9 +173,15 @@
     }
     const iocs = (state.iocs || []).filter((i) => citedBySurviving.has(i.id) || !citedByAny.has(i.id));
 
+    // One the analyst ACCEPTED is kept whatever its links do — see the server's scopeProject.ts.
     const mitreTechniques = (state.mitreTechniques || [])
       .map((t) => ({ ...t, findingIds: (t.findingIds || []).filter((id) => surviving.has(id)) }))
-      .filter((t, idx) => t.findingIds.length > 0 || (state.mitreTechniques[idx].findingIds || []).length === 0);
+      .filter(
+        (t, idx) =>
+          t.analystAccepted ||
+          t.findingIds.length > 0 ||
+          (state.mitreTechniques[idx].findingIds || []).length === 0,
+      );
 
     return { ...state, forensicTimeline, findings, iocs, mitreTechniques };
   }

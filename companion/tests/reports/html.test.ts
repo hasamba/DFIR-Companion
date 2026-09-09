@@ -16,7 +16,7 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("<h1>Incident Investigation Report</h1>");
     expect(html).toContain("Host compromised via phishing.");
     expect(html).toContain("<table>"); // the IOC markdown table is converted to HTML
-    expect(html).toContain("10.0.0.5");
+    expect(html).toContain("10[.]0[.]0[.]5"); // defanged for the reader, per #883
     expect(html).toContain(`<style nonce="${CSP_NONCE_PLACEHOLDER}">`);
     expect(html).not.toMatch(/\sstyle\s*=/i);
     expect(html.trim().endsWith("</html>")).toBe(true);
@@ -140,5 +140,103 @@ describe("injectPrintTrigger", () => {
 
   it("appends the trigger when the document has no </body>", () => {
     expect(injectPrintTrigger("<p>hi</p>")).toContain("window.print()");
+  });
+});
+
+// The incident report travels furthest of any artifact and is read by people who click things.
+// Live anchors to attacker infrastructure are one mis-click away from reaching out from the
+// reader's machine, which in a live incident can burn the investigation. #883.
+describe("renderHtmlReport indicator defanging (#883)", () => {
+  it("emits no live anchor for an attacker URL or address", () => {
+    const state = emptyState("c1");
+    state.lastSummary = "Payload fetched from http://evil.example/stage1.sh by root@evil.example.";
+    state.iocs.push({ id: "i1", type: "ip", value: "203.0.113.10", firstSeen: "2026-05-20T09:00:00Z" });
+
+    const html = renderHtmlReport(state);
+
+    expect(html).not.toMatch(/<a\s+href="https?:/i);
+    expect(html).not.toMatch(/href="mailto:/i);
+    expect(html).toContain("hxxp://evil[.]example/stage1.sh");
+    expect(html).toContain("root[@]evil[.]example");
+    expect(html).toContain("203[.]0[.]113[.]10");
+  });
+
+  it("emits no live anchor for a bare domain indicator", () => {
+    const state = emptyState("c1");
+    state.lastSummary = "Callback to www.evil.com observed.";
+    state.iocs.push({ id: "i1", type: "domain", value: "evil.example", firstSeen: "2026-05-20T09:00:00Z" });
+
+    const html = renderHtmlReport(state);
+
+    // GFM autolinks a bare www. host into http://www.evil.com even with no scheme in the source.
+    expect(html).not.toMatch(/<a\s+href="https?:/i);
+    expect(html).toContain("www[.]evil[.]com");
+    expect(html).toContain("evil[.]example");
+  });
+});
+
+// The asset graph and the swimlane are built from state directly, so they never passed through the
+// defang applied to the markdown. The graph's right-hand column IS the case's IOC values — every
+// URL, domain and address, live, inside the artifact that travels furthest. #892.
+describe("renderHtmlReport SVG indicator defanging (#892)", () => {
+  function stateWithIndicators() {
+    const state = emptyState("c1");
+    state.iocs.push(
+      {
+        id: "i001",
+        type: "url",
+        value: "http://evil.example/stage1.sh",
+        firstSeen: "2026-05-28T09:00:00Z",
+      },
+      { id: "i002", type: "ip", value: "203.0.113.10", firstSeen: "2026-05-28T09:00:00Z" },
+    );
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Payload staged",
+      description: "Downloaded from the C2",
+      relatedIocs: ["i001", "i002"],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-28T09:00:00Z",
+      lastUpdated: "2026-05-28T09:00:00Z",
+      status: "open",
+    });
+    state.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-28T09:00:00Z",
+      description: "beacon",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+    });
+    return state;
+  }
+
+  /** Just the SVG sections, so an assertion cannot be satisfied by the defanged markdown body. */
+  function svgSections(html: string): string {
+    return [...html.matchAll(/<div class="asset-graph">([\s\S]*?)<\/div>/g)].map((m) => m[1]).join("\n");
+  }
+
+  it("renders the graph's IOC values inert", () => {
+    const svg = svgSections(renderHtmlReport(stateWithIndicators()));
+
+    expect(svg, "the graph section must actually be present").toContain("<svg");
+    // Labels are truncated for layout, so assert on the defanged head of each value.
+    expect(svg).toContain("hxxp://evil[.]example");
+    expect(svg).toContain("203[.]0[.]113[.]10");
+    expect(svg).not.toContain("http://evil.example");
+    expect(svg).not.toContain("203.0.113.10");
+  });
+
+  it("leaves no live scheme or dotted quad anywhere in the rendered report", () => {
+    const html = renderHtmlReport(stateWithIndicators());
+
+    // Ignore the document's own markup URLs (xmlns, CSS) — only evidence text is at issue.
+    const evidence = html.replace(/xmlns="[^"]*"/g, "");
+    expect(evidence).not.toContain("http://evil.example");
+    expect(evidence).not.toContain("203.0.113.10");
   });
 });

@@ -365,4 +365,48 @@ describe("second-opinion delta keys are stable across wording changes (issue #69
     expect(deltas.filter((d) => d.kind === "a_only")).toHaveLength(1);
     expect(deltas.filter((d) => d.kind === "b_only")).toHaveLength(1);
   });
+
+  it("marks an accepted technique as the analyst's, so the projection keeps showing it", () => {
+    const so = {
+      ...buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" }),
+      deltas: [
+        {
+          id: "mitre_added:t1486",
+          kind: "mitre_added" as const,
+          title: "T1486",
+          techniqueName: "Data Encrypted for Impact",
+          rationale: "",
+          recommendation: "review" as const,
+          status: "accepted" as const,
+        },
+      ],
+    };
+
+    const out = applyAcceptedSecondOpinion(A, so);
+
+    expect(out.mitreTechniques.find((t) => t.id === "T1486")?.analystAccepted).toBe(true);
+  });
+
+  it("affirms one the case already held, without mutating the input row", () => {
+    const seeded = stateWith({ ...A, mitreTechniques: [tech("T1078")] });
+    const so = {
+      ...buildSecondOpinion({ a: seeded, b: B, modelA: "a", modelB: "b", now: () => "t" }),
+      deltas: [
+        {
+          id: "mitre_added:t1078",
+          kind: "mitre_added" as const,
+          title: "T1078",
+          techniqueName: "Valid Accounts",
+          rationale: "",
+          recommendation: "review" as const,
+          status: "accepted" as const,
+        },
+      ],
+    };
+
+    const out = applyAcceptedSecondOpinion(seeded, so);
+
+    expect(out.mitreTechniques.find((t) => t.id === "T1078")?.analystAccepted).toBe(true);
+    expect(seeded.mitreTechniques[0].analystAccepted).toBeUndefined();
+  });
 });

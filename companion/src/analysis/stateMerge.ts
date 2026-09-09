@@ -345,6 +345,19 @@ export function mergeDelta(
   // during synthesis. Idempotent.
   const correlated = correlateEvents(withExfil).sort(byEventTime);
 
+  // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
+  // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and
+  // the report correct at the moment of the merge and wrong forever after: the aggregate is
+  // persisted, while scope and the false-positive filter drop events at PROJECTION rather than from
+  // state — so a technique whose only event the analyst later dismissed had no way back out.
+  //
+  // Deriving it at projection instead, from the events that survive those filters, is what
+  // eventTechniques.ts does. Nothing is stored, so nothing can go stale, and the panel and the
+  // report agree with the timeline beside them by construction.
+  //
+  // What IS collected here is what a model asserted at the delta's top level — a conclusion about
+  // the case rather than a restatement of an event tag. That is a claim the case should keep.
+
   // Key questions are a holistic reassessment — replace wholesale when synthesis
   // provides them; otherwise keep the existing set (per-window deltas omit them).
   const keyQuestions =

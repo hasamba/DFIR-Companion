@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError } from "../storage/caseStore.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
-import { withNonce } from "../http/securityHeaders.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
@@ -36,7 +35,6 @@ import {
   RELOADABLE_ENV_PREFIXES,
   LIVE_FROM_ENV_PREFIXES,
 } from "../settings/envManager.js";
-import { readPublicAsset } from "../serverAssets.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { Severity } from "../analysis/stateTypes.js";
@@ -61,12 +59,9 @@ import type { RouteContext } from "./context.js";
  *   - declarative importers CRUD — GET/POST/DELETE /importers, /importers/{prompt,reload,precedence}.
  *   - activity log — GET /cases/:id/activity-log.
  *   - settings/env + setup — GET/POST /settings/env, POST /settings/{ai-reload,reload}, GET /setup/status.
- *   - static app shell — GET /, /dashboard, /mobile, /manifest.webmanifest, /sw.js (these five were
- *     registered in startServer AFTER createApp returned; moved here so server.ts holds zero literal
- *     route registrations. The dynamic favicon/vendor loops (app.get(variable, …)) stay put — they are
- *     not literal-path registrations. NOTE: /dashboard and /mobile have no try/catch and now sit BEFORE
- *     the terminal error handler, so an (unreachable in a real install) asset-read failure yields the
- *     standard JSON 500 instead of Express's default HTML page — the only observable delta.)
+ *   - (the static app shell — GET /, /dashboard, /mobile, /manifest.webmanifest, /sw.js — moved out
+ *     to routes/appShell.ts when this file hit its size cap again; it registers at the same point in
+ *     the stack, immediately after this function.)
  *
  * Module-private helpers moved verbatim (used only by routes here): removeCaseFromActiveListBestEffort,
  * deleteCaseFolderBestEffort (case archive/delete plumbing). The /settings/reload allowlist now
@@ -855,49 +850,5 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       // Not reloadable, so this turns true only after a restart: the tick means active, not typed.
       presidio: has("DFIR_PRESIDIO_URL"),
     });
-  });
-  // Redirect root to the dashboard.
-  app.get("/", (_req, res) => {
-    res.redirect("/dashboard");
-  });
-
-  // Serve the dashboard. withNonce stamps this response's CSP nonce into the inline <script>
-  // blocks — without it they carry a placeholder the browser won't match, and none of them run.
-  app.get("/dashboard", async (_req, res) => {
-    const html = await readPublicAsset("dashboard.html", "utf8");
-    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
-  });
-
-  // Mobile companion (#59): a read-only, phone-optimized view (timeline / findings / IOCs / status)
-  // for quick glances during IR away from the workstation. It's a PWA — installable via the
-  // web manifest + a minimal service worker (offline app-shell). All three are static files in
-  // public/; the SW is served at root so its default control scope covers /mobile.
-  app.get("/mobile", async (_req, res) => {
-    const html = await readPublicAsset("mobile.html", "utf8");
-    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
-  });
-
-  app.get("/manifest.webmanifest", async (_req, res) => {
-    try {
-      const json = await readPublicAsset("manifest.webmanifest", "utf8");
-      res.type("application/manifest+json").set("Cache-Control", "no-cache").send(json);
-    } catch {
-      res.status(404).end();
-    }
-  });
-
-  app.get("/sw.js", async (_req, res) => {
-    try {
-      const js = await readPublicAsset("sw.js", "utf8");
-      // no-cache + a same-origin allowed scope so the SW can control /mobile even if it's
-      // ever moved into a subdirectory; browsers re-check sw.js on every navigation anyway.
-      res
-        .type("application/javascript")
-        .set("Cache-Control", "no-cache")
-        .set("Service-Worker-Allowed", "/")
-        .send(js);
-    } catch {
-      res.status(404).end();
-    }
   });
 }

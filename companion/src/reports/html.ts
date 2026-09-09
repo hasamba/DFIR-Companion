@@ -3,6 +3,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { caseDomains, defangIndicators } from "./defang.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { escapeHtml } from "./escapeHtml.js";
 import type { CustodyRecord } from "../analysis/custody.js";
@@ -155,15 +156,29 @@ export function renderHtmlReport(
   );
   // The scoping statement is appended rather than threaded through renderMarkdownReport:
   // markdown.ts sits at its size cap, and every format must carry the same canonical report.
-  const markdownWithScope = hostScope
-    ? `${markdown}
+  // Defanged AFTER the scope section is appended, so the hosts and addresses it names are rendered
+  // inert too. Applied at each format's assembly seam rather than inside renderMarkdownReport for
+  // that reason; tests assert it on the .md, .html and .docx outputs so the three cannot diverge.
+  const domains = caseDomains(state);
+  const markdownWithScope = defangIndicators(
+    hostScope
+      ? `${markdown}
 
 ${renderScopeSection(hostScope)}`
-    : markdown;
+      : markdown,
+    domains,
+  );
 
   const marked = new Marked({ gfm: true });
-  // Escape any raw HTML tokens in the source instead of emitting them verbatim.
+  // Escape any raw HTML tokens in the source instead of emitting them verbatim, and switch off GFM
+  // autolinking entirely: report text is untrusted evidence, and a bare `www.` host becomes a live
+  // anchor on sight. Explicit [text](url) links, tables and strikethrough are unaffected. #883.
   marked.use({
+    tokenizer: {
+      url(): undefined {
+        return undefined;
+      },
+    },
     renderer: {
       html(token: string | { text?: string }): string {
         return escapeHtml(typeof token === "string" ? token : (token.text ?? ""));
@@ -184,12 +199,30 @@ ${renderScopeSection(hostScope)}`
   });
   const body = marked.parse(markdownWithScope, { async: false });
 
-  const graphSvg = renderAssetGraphSvg(buildAssetGraph(state));
+  // The two SVGs are built from `state` directly, so they never passed through the defang above —
+  // and the asset graph renders `ioc.value` as its right-hand column, which is every URL, domain
+  // and address the case holds, live, inside report.html. The report is the artifact that travels
+  // furthest; an indicator is no less live for being drawn as SVG text. #892.
+  //
+  // Defanged on the DATA, not on the finished markup: the pass rewrites URLs and dotted quads, and
+  // the markup is full of coordinates and font stacks it has no business reading.
+  const graph = buildAssetGraph(state);
+  const graphSvg = renderAssetGraphSvg({
+    ...graph,
+    assets: graph.assets.map((a) => ({ ...a, name: defangIndicators(a.name, domains) })),
+    iocs: graph.iocs.map((i) => ({ ...i, value: defangIndicators(i.value, domains) })),
+  });
   const graphSection = graphSvg
     ? `\n<h2>Asset–IoC Graph</h2>\n<div class="asset-graph">\n${graphSvg}\n</div>`
     : "";
 
-  const swimlaneSvg = renderSwimlaneSvg(buildSwimlaneData(state.forensicTimeline, "asset"));
+  // Lane labels are hosts and accounts, which caseDomains leaves alone unless the case itself
+  // recorded one as a domain IOC — the same rule the report body already follows.
+  const swimlane = buildSwimlaneData(state.forensicTimeline, "asset");
+  const swimlaneSvg = renderSwimlaneSvg({
+    ...swimlane,
+    lanes: swimlane.lanes.map((l) => ({ ...l, label: defangIndicators(l.label, domains) })),
+  });
   const swimlaneSection = swimlaneSvg
     ? `\n<h2>Timeline Swimlane</h2>\n<div class="asset-graph">\n${swimlaneSvg}\n</div>`
     : "";

@@ -2,15 +2,61 @@
 <html lang="en" data-safe-dom>
 <head>
   <meta charset="utf-8" />
+  <!-- Without this every phone and tablet lays the page out at 980px and scales the result down to
+       about 0.38, putting body text at roughly four physical pixels. It also masks the responsive
+       CSS entirely: below 980px never happens, so no narrow breakpoint in the stylesheet has ever
+       run in a browser. #880 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DFIR Companion Dashboard</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <!-- Moved ahead of the module scripts with the head/body split (#882). These nine were linked
+       AFTER all 144 of them, so the browser did not discover the page's entire stylesheet until
+       every blocking script had run. Their order relative to each other — which IS the cascade —
+       is unchanged. -->
+  <!-- THE ORDER OF THESE EIGHT IS THE CASCADE, and it is the concatenation order of the single
+       dashboard.css they were cut from (#415). They are a pure byte split: rules that used to
+       resolve a specificity tie by sitting later in one file now resolve it by sitting in a later
+       FILE, so reordering these lines silently changes the page. tests/reports/dashboardCss.test.ts
+       asserts the set and the order against src/http/staticAssets.ts, and that every @keyframes an
+       animation names is defined somewhere in the union — a keyframe resolves by NAME across the
+       whole document, so a dropped link costs an animation with nothing else looking wrong. -->
+  <link rel="stylesheet" href="/css/dashboard-tokens.css" />
+  <link rel="stylesheet" href="/css/dashboard-themes-a.css" />
+  <link rel="stylesheet" href="/css/dashboard-themes-b.css" />
+  <link rel="stylesheet" href="/css/dashboard-layout.css" />
+  <link rel="stylesheet" href="/css/dashboard-panels.css" />
+  <link rel="stylesheet" href="/css/dashboard-timeline.css" />
+  <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
+  <link rel="stylesheet" href="/css/dashboard-sections.css" />
+  <!-- Accessibility layer (#386): skip link, visible focus ring, reduced motion, .visually-hidden.
+       Linked after the dashboard sheets so it is last in the cascade. It was already last against the
+       inline block that used to sit here, and #415 made it last against the other thirteen too —
+       they were interleaved through the body, so until now they came after it. -->
+  <link rel="stylesheet" href="/css/a11y.css" />
   <script src="/js/safe-dom.js"></script>
   <style nonce="__CSP_NONCE__" id="dfir-runtime-styles">
     html[data-safe-dom] body { visibility: hidden; }
     html[data-safe-dom].dfir-styles-ready body { visibility: visible; }
+    /* The hidden body above is deliberate — it prevents a flash of unstyled content while safe-dom
+       hydrates. The cost is that on a slow link NOTHING is on screen until DOMContentLoaded, which
+       is when that class lands; a throttled run measured 57s to first paint and 93s to first
+       contentful paint, with no spinner at any point. This splash is the one element allowed to
+       paint during that window, so it carries its own visibility to override the rule above. It is
+       plain markup and plain CSS on purpose: no script has run this early. #882 */
+    html[data-safe-dom] #bootSplash { visibility: visible; }
+    html[data-safe-dom].dfir-styles-ready #bootSplash { display: none; }
+    #bootSplash { position: fixed; inset: 0; z-index: 9999; display: flex; gap: 10px;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: #0f1115; color: #cbd3df;
+      font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    #bootSplash .boot-msg { color: #9aa4b2; font-size: 13px; }
+    @media (prefers-color-scheme: light) {
+      #bootSplash { background: #f5f7fa; color: #222a35; }
+      #bootSplash .boot-msg { color: #57626f; }
+    }
   </style>
   <script nonce="__CSP_NONCE__">
     // Team mode is optional. When present, bind every same-origin write to the signed-in
@@ -94,6 +140,19 @@
       };
     })();
   </script>
+</head>
+<body>
+<!-- The splash sits ahead of every module script tag on purpose. There are 144 of them, none
+     deferred, so anything placed after them is not parsed until the last one has executed — which
+     on a slow link is DOMContentLoaded, the exact moment safe-dom marks the page ready and this
+     element is hidden again. Ahead of them it costs one small blocking request (safe-dom.js) and
+     is on screen for the whole download. The scripts below are still parser-blocking and still run
+     in document order; only the head/body boundary moved. #882 -->
+<div id="bootSplash" role="status" aria-live="polite">
+  <div class="boot-mark">DFIR Companion</div>
+  <div class="boot-msg">Loading case…</div>
+</div>
+
   <!-- Who owns dashboard state (#415). The store the remaining top-level bindings are meant to
        migrate onto, and the written argument for which of them should and which should not.
        It now owns the case snapshot — the three cells 84 reader functions go through — plus the
@@ -391,28 +450,7 @@
        No angle-bracketed tag names in this comment, on purpose: tests/reports/safeDomPolicy
        finds inline blocks by regex over the raw file, so a literal one written here reads to it
        as a real, un-nonced block. -->
-  <!-- THE ORDER OF THESE EIGHT IS THE CASCADE, and it is the concatenation order of the single
-       dashboard.css they were cut from (#415). They are a pure byte split: rules that used to
-       resolve a specificity tie by sitting later in one file now resolve it by sitting in a later
-       FILE, so reordering these lines silently changes the page. tests/reports/dashboardCss.test.ts
-       asserts the set and the order against src/http/staticAssets.ts, and that every @keyframes an
-       animation names is defined somewhere in the union — a keyframe resolves by NAME across the
-       whole document, so a dropped link costs an animation with nothing else looking wrong. -->
-  <link rel="stylesheet" href="/css/dashboard-tokens.css" />
-  <link rel="stylesheet" href="/css/dashboard-themes-a.css" />
-  <link rel="stylesheet" href="/css/dashboard-themes-b.css" />
-  <link rel="stylesheet" href="/css/dashboard-layout.css" />
-  <link rel="stylesheet" href="/css/dashboard-panels.css" />
-  <link rel="stylesheet" href="/css/dashboard-timeline.css" />
-  <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
-  <link rel="stylesheet" href="/css/dashboard-sections.css" />
-  <!-- Accessibility layer (#386): skip link, visible focus ring, reduced motion, .visually-hidden.
-       Linked after the dashboard sheets so it is last in the cascade. It was already last against the
-       inline block that used to sit here, and #415 made it last against the other thirteen too —
-       they were interleaved through the body, so until now they came after it. -->
-  <link rel="stylesheet" href="/css/a11y.css" />
-</head>
-<body>
+
 <!-- First thing in the tab order (#386). Without it a keyboard user walks the entire toolbar —
      dozens of controls — on every page load before reaching any case content. -->
 <a class="skip-link" href="#main">Skip to main content</a>
@@ -476,10 +514,10 @@
     <button id="presentBtn" type="button" data-tip="Presentation mode — a read-only, step-through slide deck of the case (cover, summary, key findings, then the timeline one event at a time) for handoff briefings and executive walkthroughs. Respects the current severity filter. Opens in a new tab; export a self-contained offline deck via Export → Presentation deck.">Present</button>
     <span id="reportLinks" class="report-links"></span>
     <span id="dashViewWrap" data-safe-style="position:relative;display:inline-flex;align-items:center">
-      <button id="dashViewBtn" type="button" aria-haspopup="true" aria-expanded="false" data-tip="Dashboard view — switch the panel layout + severity filter for a role (Analyst / Lead / Executive) or phase (Triage / Report / Deep-Dive / Hunt-Prep), or edit your own. Remembered per-case.">
+      <button id="dashViewBtn" type="button" aria-haspopup="menu" aria-expanded="false" data-tip="Dashboard view — switch the panel layout + severity filter for a role (Analyst / Lead / Executive) or phase (Triage / Report / Deep-Dive / Hunt-Prep), or edit your own. Remembered per-case.">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
       </button>
-      <div id="dashViewMenu" class="dv-menu" data-safe-style="display:none"></div>
+      <div id="dashViewMenu" class="dv-menu" role="menu" aria-labelledby="dashViewBtn" data-safe-style="display:none"></div>
     </span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
@@ -4483,17 +4521,14 @@
       // marked-but-still-visible row (toggle off, or it also has enrichment data) can still show a
       // struck-through/un-mark state instead of looking identical to an unmarked IOC (#227).
       const fpVals = fpIocValueSet();
-      if (hideFpNoIntel) {
-        visible = visible.filter(i => !fpVals.has(String(i.value).trim().toLowerCase()) && !(Array.isArray(i.enrichments) && i.enrichments.length === 0));
-      }
-      if (showSignalIocsOnly) {
-        visible = visible.filter(i => iocFlagged(i) || _iocCorrob(i.id) >= 2 || (Array.isArray(i.enrichments) && i.enrichments.length > 0));
-      }
-      // "Hide OS system paths" — a file IOC observed under a well-known Windows/Linux/macOS system
-      // binary dir. Independent of the two lenses above: a spoofed-looking system32 path (e.g. an
-      // attacker's binary renamed to a real system filename) is exactly the case an analyst still
-      // wants to catch, so this stays its own opt-out rather than being folded into "signal only".
-      if (hideSystemPaths) visible = visible.filter(i => !isSystemPathIoc(i));
+      // The three noise lenses. The enrichment-dependent ones stand down rather than showing
+      // 0 of 7; false-positive and system-path exclusions always hold — see DfirIoc (#876).
+      const noiseResult = DfirIoc.applyIocNoiseFilters(visible, {
+        hideFpNoIntel, showSignalIocsOnly, hideSystemPaths,
+        isFalsePositive: i => fpVals.has(String(i.value).trim().toLowerCase()),
+        isFlagged: iocFlagged, corroboration: i => _iocCorrob(i.id), isSystemPath: isSystemPathIoc,
+      });
+      visible = noiseResult.visible;
       const noiseFiltersActive = hideFpNoIntel || showSignalIocsOnly || hideSystemPaths;
       // Client-side pagination (mirrors the forensic timeline) — slice the filtered set into pages.
       const totalFiltered = visible.length;
@@ -4571,7 +4606,7 @@
           + `</span>`
           + `</div>`;
       }).join("");
-      el.innerHTML = headerRow + iocPaginationBar + rows;
+      el.innerHTML = DfirIoc.iocNoiseNoticeHtml(noiseResult.suppressed, visible.length) + headerRow + iocPaginationBar + rows;
       const selAll = document.getElementById("iocSelectAll");
       if (selAll && someSel && !allSel) selAll.indeterminate = true;
       updateIocBulkBar();

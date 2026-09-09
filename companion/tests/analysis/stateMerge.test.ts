@@ -954,3 +954,41 @@ describe("mergeDelta year-clamp eligibility (#739)", () => {
     expect(state.forensicTimeline[0].yearInferred).toBe(true);
   });
 });
+
+// The techniques a deterministic importer carries on its EVENTS are no longer collected here.
+// #878 unioned them into this persisted aggregate; #893 moved that to projection, where the scope
+// window and the false-positive filter have already run. See eventTechniques.test.ts and the
+// report-level tests in reportWriter.test.ts — this merge keeps only what a model asserted.
+describe("mergeDelta leaves event-carried techniques to projection (#893)", () => {
+  const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
+
+  const event = (id: string, techniques: string[]) => ({
+    id,
+    timestamp: "2026-06-01T10:00:00Z",
+    description: `event ${id}`,
+    severity: "High" as const,
+    mitreTechniques: techniques,
+    relatedFindingIds: [],
+  });
+
+  it("does not persist a technique that only an event carries", () => {
+    const next = mergeDelta(
+      emptyState("c1"),
+      { ...baseDelta, mitreTechniques: [], forensicEvents: [event("e1", ["T1003.003"])] },
+      ctx,
+    );
+
+    expect(next.mitreTechniques).toEqual([]);
+    expect(next.forensicTimeline[0].mitreTechniques).toEqual(["T1003.003"]);
+  });
+
+  it("still persists a technique the delta asserts at the top level, with its finding links", () => {
+    const next = mergeDelta(
+      emptyState("c1"),
+      { ...baseDelta, mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact" }] },
+      ctx,
+    );
+
+    expect(next.mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
+  });
+});

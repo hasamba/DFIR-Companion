@@ -341,11 +341,23 @@ export function applyAcceptedSecondOpinion(
       const sev = d.bSeverity;
       findings = mapByKey(findings, deltaKey(d), (f) => ({ ...f, severity: sev }));
     } else if (d.kind === "mitre_added") {
-      if (!techniques.some((t) => t.id === d.title)) {
+      // `analystAccepted` is what keeps it visible: the projection drops a technique nothing
+      // surviving supports, and an accepted addition has no finding and no event behind it by
+      // construction — it is the analyst overruling both models (#893).
+      const existing = techniques.find((t) => t.id === d.title);
+      if (!existing) {
         techniques = [
           ...techniques,
-          { id: d.title, name: d.techniqueName || d.title, findingIds: [] } satisfies Technique,
+          {
+            id: d.title,
+            name: d.techniqueName || d.title,
+            findingIds: [],
+            analystAccepted: true,
+          } satisfies Technique,
         ];
+      } else if (!existing.analystAccepted) {
+        // Already present, but now also affirmed by hand — it outlives whatever first put it there.
+        techniques = techniques.map((t) => (t.id === d.title ? { ...t, analystAccepted: true } : t));
       }
     } else if (d.kind === "mitre_removed") {
       techniques = techniques.filter((t) => t.id !== d.title);
