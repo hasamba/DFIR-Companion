@@ -61,6 +61,7 @@ import {
 import { pstreeChildren } from "./pstreeDepth.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
+import { malfindContext } from "./malfindContext.js";
 import {
   psxviewSignal,
   ldrModulesSignal,
@@ -397,9 +398,17 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     const region = malfindRegion(r); // its token and its phrase must agree — see malfindRegion
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
+    // malfind reports a region that is private and executable. That is the shape of injection AND
+    // of every JIT, .NET and several AV engines, so the row needs its observed characteristics
+    // stated alongside it (#909 item 4). Severity policy is unchanged — this adds interpretation,
+    // and never says a region is clean.
+    const ctx = malfindContext(r);
     out.push({
       timestamp: "",
-      description: malfindDescription(tool, label, proc, pid, region.phrase, prot, tag),
+      description: `${malfindDescription(tool, label, proc, pid, region.phrase, prot, tag)} — ${ctx.note}`.slice(
+        0,
+        900,
+      ),
       severity: "High",
       mitre: ["T1055"],
       aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${region.token}|${prot}`.toLowerCase().slice(0, 400),
