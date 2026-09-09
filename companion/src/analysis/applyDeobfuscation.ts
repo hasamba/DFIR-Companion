@@ -9,7 +9,6 @@
 import type { InvestigationState, ForensicEvent, IOC } from "./stateTypes.js";
 import { deobfuscateText, extractIocsFromText } from "./deobfuscate.js";
 import { decodeLayers, DECODER_VERSION } from "./deobfuscateLayers.js";
-import { scriptBlockSignal } from "./tradecraftRules.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 
 function padIocId(n: number): string {
@@ -32,6 +31,13 @@ export interface DeobfuscationApplyResult {
   reanalyzed: number; // events re-decoded because their stored result predated this decoder
 }
 
+/**
+ * Grades a decoded payload. INJECTED rather than imported: the behaviour rules live in the detect
+ * domain and this pass lives in the privacy domain, and that edge is not one the module map allows.
+ * The composition layer, which may import both, supplies it.
+ */
+export type DerivedTextGrader = (text: string) => { weight: "strong" | "weak" | null; mitre: string[] } | null;
+
 export interface DeobfuscationApplyOptions {
   // Re-decode events whose stored result came from an OLDER decoder (#909 item 2).
   //
@@ -41,6 +47,9 @@ export interface DeobfuscationApplyOptions {
   // has no way to see it. Re-analysis is opt-in rather than automatic because it rewrites stored
   // findings — it should be a decision, not a side effect of upgrading.
   reanalyzeStale?: boolean;
+  // Apply the behaviour rules to the DECODED text (#909 item 2). Omitted, the decode still happens
+  // and the payload is still shown — it simply is not re-graded.
+  gradeDerived?: DerivedTextGrader;
 }
 
 // Apply deobfuscation to every unprocessed event in the case's forensic timeline.
@@ -103,7 +112,7 @@ export function applyDeobfuscation(
     // payload and then grading only the wrapper is how an Invoke-Mimikatz that arrived base64-encoded
     // stays at the severity of "a powershell.exe ran". The grade can only go UP: a decoded payload is
     // additional evidence about the same event, never grounds to soften what was already known.
-    const derived = scriptBlockSignal(result.decoded);
+    const derived = options.gradeDerived?.(result.decoded) ?? null;
     const lifted: Partial<ForensicEvent> = {};
     if (derived) {
       const want: ForensicEvent["severity"] =

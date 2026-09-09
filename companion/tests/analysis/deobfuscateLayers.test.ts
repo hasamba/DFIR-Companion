@@ -7,6 +7,7 @@ import {
   MAX_OUTPUT,
 } from "../../src/analysis/deobfuscateLayers.js";
 import { applyDeobfuscation } from "../../src/analysis/applyDeobfuscation.js";
+import { scriptBlockSignal } from "../../src/analysis/tradecraftRules.js";
 
 const b64 = (s: string): string => Buffer.from(s, "utf8").toString("base64");
 const b64utf16 = (s: string): string => Buffer.from(s, "utf16le").toString("base64");
@@ -240,7 +241,11 @@ describe("applyDeobfuscation — the derived text gets the behaviour checks", ()
     }) as never;
 
   it("raises severity and techniques from what the DECODED payload does", () => {
-    const r = applyDeobfuscation(stateOf("Invoke-Mimikatz -DumpCreds ; sekurlsa::logonpasswords"));
+    // The grader is injected, not imported: the behaviour rules are in the detect domain and the
+    // deobfuscation pass is in the privacy domain, an edge the module map does not allow.
+    const r = applyDeobfuscation(stateOf("Invoke-Mimikatz -DumpCreds ; sekurlsa::logonpasswords"), {
+      gradeDerived: scriptBlockSignal,
+    });
     const e = r.state.forensicTimeline[0];
     expect(e.severity).toBe("High");
     expect(e.mitreTechniques ?? []).toContain("T1003");
@@ -249,7 +254,7 @@ describe("applyDeobfuscation — the derived text gets the behaviour checks", ()
   it("never lowers a severity the event already had", () => {
     const s = stateOf("echo just a harmless decoded string here");
     (s as { forensicTimeline: { severity: string }[] }).forensicTimeline[0].severity = "Critical";
-    const r = applyDeobfuscation(s);
+    const r = applyDeobfuscation(s, { gradeDerived: scriptBlockSignal });
     expect(r.state.forensicTimeline[0].severity).toBe("Critical");
   });
 

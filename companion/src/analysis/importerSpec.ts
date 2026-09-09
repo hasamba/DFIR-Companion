@@ -37,6 +37,7 @@ export const IMPORT_KINDS = [
   "plaso",
   "sandbox",
   "memory",
+  "wer",
   "email",
   "auditd",
   "journald",

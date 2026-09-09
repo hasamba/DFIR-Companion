@@ -18,6 +18,7 @@ import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "../analy
 import { whitelistMatches } from "../analysis/iocWhitelist.js";
 import { nsrlMatchIocs, nsrlMatchEvents } from "../analysis/nsrl.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
+import { scriptBlockSignal } from "../analysis/tradecraftRules.js";
 import { applyDeobfuscation } from "../analysis/applyDeobfuscation.js";
 import { pushCheckpoint } from "../analysis/importUndo.js";
 import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/playbookControl.js";
@@ -143,7 +144,10 @@ export function createCaseAppliers({
     if (!options.stateStore) return { deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
     return runStateExclusive(caseId, async () => {
       const state = await options.stateStore!.load(caseId);
-      const result = applyDeobfuscation(state, { reanalyzeStale: opts.reanalyzeStale });
+      const result = applyDeobfuscation(state, {
+        reanalyzeStale: opts.reanalyzeStale,
+        gradeDerived: scriptBlockSignal,
+      });
       if (result.deobfuscated === 0 && result.newIocs === 0)
         return { deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
       await options.stateStore!.save(result.state);

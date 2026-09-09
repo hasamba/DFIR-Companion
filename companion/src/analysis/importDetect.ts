@@ -4,6 +4,7 @@
 // signatures mirroring each importer's own classifier — ordered most-specific → most-generic.
 //
 // Returns a kind that maps 1:1 to a pipeline import method (see server `/cases/:id/import`).
+import { isWerReport } from "./werImport.js";
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
@@ -614,6 +615,12 @@ function isAuditd(text: string): boolean {
 export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
+
+  // Windows Error Reporting report (#909 item 5). Checked early because a Report.wer is a plain
+  // key=value text file and would otherwise be claimed by the generic log path, which reads none of
+  // its structure. isWerReport requires EventType AND a WER-specific marker, so an ordinary INI does
+  // not match.
+  if (isWerReport(t)) return "wer";
 
   // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit
   // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.
