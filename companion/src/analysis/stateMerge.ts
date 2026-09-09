@@ -13,6 +13,7 @@ import { correlateEvents } from "./correlate.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
+import { markUnexpectedParents } from "./processLifetime.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -340,10 +341,16 @@ export function mergeDelta(
   // upload is raised to High and tagged — a deterministic, destination-agnostic "Data Exfiltration"
   // signal instead of relying on the synthesis model to notice the pairing. Conservative + idempotent.
   const withExfil = linkArchiveToExfil(withInitialAccess);
+  // Raise a process whose parent is not the one that ordinarily starts it (#909 item 6). Runs here,
+  // beside the other deterministic correlations, because parentage is only judgeable once the
+  // events from every importer sit in one timeline. Only ever RAISES: parentage cannot make other
+  // evidence about a process less true. A process with NO recorded parent is left alone — a
+  // snapshot taken after the parent exited looks exactly like an orphan.
+  const withParents = markUnexpectedParents(withExfil);
   // Collapse duplicates / cross-source matches immediately (so re-importing the same
   // report, or two tools flagging one artifact, never doubles the timeline) — not only
   // during synthesis. Idempotent.
-  const correlated = correlateEvents(withExfil).sort(byEventTime);
+  const correlated = correlateEvents(withParents).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and

@@ -382,6 +382,7 @@
     "presidioPending.ts": "analysis/privacy",
     "prevalence.ts": "analysis/detect",
     "priorWork.ts": "analysis/workflow",
+    "processLifetime.ts": "analysis/timeline",
     "promptBudget.ts": "analysis/ai",
     "promptCapabilities.ts": "analysis/ai",
     "pstreeDepth.ts": "analysis/ingest",
