@@ -110,22 +110,34 @@ export class ActivityLogStore {
   }
 }
 
-// Best-effort append used at every instrumented route. Never rejects — this is a side channel
-// and must never break the primary action it records. Callers may ignore the returned promise
-// for fire-and-forget logging, or await it when the response promises immediate read-after-write
-// consistency (for example, tag mutations followed by an activity-log refresh). No-ops when the
-// store isn't configured (createApp-only unit tests that don't wire one).
-export function logActivity(
+// Await an append when the response must disclose that the audit side channel failed. The warning
+// is deliberately data, not a rejection: the primary action has already happened and still succeeds.
+export async function logActivityWithWarning(
+  store: ActivityLogStore | undefined,
+  onActivity: ((caseId: string) => void) | undefined,
+  caseId: string,
+  input: NewActivityEntry,
+): Promise<string | undefined> {
+  if (!store) return undefined;
+  try {
+    await store.add(caseId, input);
+  } catch (err) {
+    return `activity log append failed for case ${caseId}: ${(err as Error).message}`;
+  }
+  try {
+    onActivity?.(caseId);
+  } catch {
+    // A failed live-refresh notification does not mean the durable append failed.
+  }
+  return undefined;
+}
+
+// Best-effort append used at instrumented routes. Never rejects or breaks the primary action.
+export async function logActivity(
   store: ActivityLogStore | undefined,
   onActivity: ((caseId: string) => void) | undefined,
   caseId: string,
   input: NewActivityEntry,
 ): Promise<void> {
-  if (!store) return Promise.resolve();
-  return store
-    .add(caseId, input)
-    .then(() => {
-      onActivity?.(caseId);
-    })
-    .catch(() => {});
+  await logActivityWithWarning(store, onActivity, caseId, input);
 }

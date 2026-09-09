@@ -62,18 +62,13 @@ test("US-361: a pasted Sigma rule compiles to VQL with its coverage line, and Ru
   const text = await vql.inputValue();
   expect(text, "the VQL must run on the endpoint's process list").toContain("FROM pslist()");
   expect(text, "the analyst's value must be in the WHERE clause").toMatch(/certutil/);
-
-  // #802: a process_creation rule compiles to TWO sources — live pslist() and Sysmon/Security event
-  // history — joined by the launcher's blank-line separator. The invariant that must hold is "no
-  // blank line INSIDE one source", not "no blank line in the whole program" (true only when there
-  // was a single source, before #802 added the second).
+  // #802: process_creation rules may compile to multiple sources joined by the launcher's
+  // blank-line separator. Require both live process state and event-log history without coupling
+  // the workflow to an exact source count as compiler coverage grows.
   const sources = text.split(/\n\s*\n/);
-  expect(sources, "certutil download pairs a live pslist() source with event history").toHaveLength(2);
-  for (const source of sources) {
-    expect(source, "a single source must never itself contain a blank line").not.toMatch(/\n\s*\n/);
-  }
-  expect(sources[0], "the first source is the live process list").toContain("FROM pslist()");
-  expect(sources[1], "the second source replays the WHERE against event-log history").toMatch(/parse_evtx/);
+  expect(sources.length, "the launcher should receive every matching source").toBeGreaterThanOrEqual(2);
+  expect(sources.some((source) => source.includes("FROM pslist()"))).toBe(true);
+  expect(sources.some((source) => source.includes("FROM parse_evtx"))).toBe(true);
 
   // No Velociraptor API in this harness: the Run button must not appear, and the card must say why.
   await expect(page.locator("#sigmaRunBtn")).toHaveCount(0);
