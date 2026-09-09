@@ -269,7 +269,12 @@ const PROFILES: Profile[] = [
       // (#909 item 7). Keeping only the name meant a rename could not be reconstructed at all.
       const entry = firstStr(row, ["EntryNumber", "FileReferenceNumber"]);
       const seq = firstStr(row, ["SequenceNumber"]);
-      addFile(sink, name);
+      // A bare filename is not identity, so cross-artifact comparison refuses it. Where the export
+      // recorded the directory, the event carries the full path instead — otherwise the journal
+      // could never be matched against an MFT record for the same file.
+      const parent = firstStr(row, ["ParentPath"]);
+      const full = parent ? `${parent.replace(/[\\/]+$/, "")}\\${name}` : name;
+      addFile(sink, full);
       return {
         timestamp: ezTime(getCI(row, "UpdateTimestamp")),
         description: `UsnJrnl: ${name} — ${reasons}${entry ? ` [file ${entry}-${seq || "?"}]` : ""}`.slice(
@@ -281,7 +286,7 @@ const PROFILES: Profile[] = [
         // Identity in the key, so two files that happened to share a name stay apart.
         aggKey: `usn|${entry}-${seq}|${name.toLowerCase()}|${reasons.toLowerCase()}`,
         sources: ["UsnJrnl"],
-        path: name,
+        path: full,
       };
     },
   },

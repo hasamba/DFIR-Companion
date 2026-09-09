@@ -161,6 +161,9 @@ function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
 // description. Stripped so it (a) never pollutes the text and (b) doesn't change the
 // dedup key — appending to the description used to break exact-duplicate re-matching.
 const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
+// The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
+// forward from whichever member holds it, instead of discarding the reason for a raised severity.
+const DERIVED_NOTE = /\[(?:unexpected parent|sacrificial process|timestomp corroboration):[\s\S]*?\]/u;
 export function cleanDescription(d: string): string {
   // Two DERIVED notes are stripped before the key is taken, for the same reason the corroboration
   // suffix above is: neither existed before the change that added it, so a stored annotated event
@@ -208,9 +211,20 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     .filter(Boolean)
     .sort();
 
+  // The primary is chosen for trust and length, not for which member carried a derived note. Two
+  // things follow. Its description must keep any explanation the group carried — stripping it left
+  // a raised severity with no stated reason — and a modification time only another member recorded
+  // must survive, or the timestomp comparison loses its input at the merge.
+  const annotated = events.find((e) => DERIVED_NOTE.test(e.description));
+  const fileModified = primary.fileModified ?? events.find((e) => e.fileModified)?.fileModified;
+
   const merged: ForensicEvent = {
     ...primary,
-    description: cleanDescription(primary.description),
+    description:
+      annotated && annotated !== primary
+        ? `${cleanDescription(primary.description)} ${DERIVED_NOTE.exec(annotated.description)?.[0]?.trim() ?? ""}`.trim()
+        : primary.description,
+    ...(fileModified ? { fileModified } : {}),
     severity: events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
     timestamp: times[0] ?? primary.timestamp,
     mitreTechniques: uniq(events.flatMap((e) => e.mitreTechniques)),

@@ -38,7 +38,10 @@ import type { Severity } from "./stateTypes.js";
 
 /** One artifact's record of a file's timestamp, and where it came from. */
 export interface TimeObservation {
-  source: "MFT" | "ShimCache" | "USN" | "I30" | "Prefetch" | "Amcache";
+  // Only the artifacts a comparison branch actually exists for. "I30", "Prefetch" and "Amcache"
+  // were in this union with no branch and no importer producing them — unreachable code that read
+  // as implemented coverage.
+  source: "MFT" | "ShimCache" | "USN";
   /** Full path. A basename alone is refused — see the header. */
   path: string;
   /** The file reference, when the artifact carries one. Stronger identity than a path. */
@@ -49,9 +52,16 @@ export interface TimeObservation {
   created?: string;
   /** For a USN observation: the reasons the record carried. */
   reasons?: string[];
+  /** The host, when the event recorded one. Two volumes can hold the same path. */
+  host?: string;
 }
 
-export type CorroborationKind = "shimcache-disagrees" | "i30-disagrees" | "journal-timestamp-change";
+export type CorroborationKind =
+  // The historical record is LATER than the MFT — the shape a backdated MFT produces.
+  | "shimcache-disagrees"
+  // The historical record is EARLIER — the shape an ordinary update produces. Context only.
+  | "shimcache-newer-mft"
+  | "journal-timestamp-change";
 
 export interface Corroboration {
   kind: CorroborationKind;
@@ -75,12 +85,27 @@ function ms(v: string | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+/**
+ * A VOLUME-RELATIVE path, because the two artifacts do not write the same form.
+ *
+ * MFTECmd roots ParentPath at the volume it parsed — `.\Windows\Temp` — while
+ * AppCompatCacheParser strips the `\??\` prefix and keeps the drive letter, `C:\Windows\Temp`.
+ * Comparing those verbatim never matched, so the whole comparison silently never fired in
+ * production even though every unit test passed.
+ *
+ * Dropping the volume is what makes them comparable, and it is also what makes a same-path match on
+ * TWO volumes possible. That is why sameFile additionally requires the two observations to agree on
+ * a host when either records one.
+ */
 function normPath(p: string): string {
   return String(p ?? "")
     .trim()
     .toLowerCase()
-    .replace(/^\\\\\?\\/, "")
-    .replace(/\//g, "\\");
+    .replace(/\//g, "\\")
+    .replace(/^\\\\\?\\/, "") // \\?\ long-path prefix
+    .replace(/^[a-z]:/, "") // drive letter
+    .replace(/^\.(?=\\)/, "") // MFTECmd's "." volume root
+    .replace(/^\\+/, "\\"); // collapse a doubled leading separator
 }
 
 /**
@@ -91,6 +116,9 @@ function normPath(p: string): string {
  * pairing two of them invents a discrepancy from two unrelated files.
  */
 export function sameFile(a: TimeObservation, b: TimeObservation): boolean {
+  // Disagreeing hosts settle it immediately, whatever the paths say. When neither observation
+  // records a host — the ordinary single-host KAPE import — the comparison proceeds.
+  if (a.host && b.host && a.host.toLowerCase() !== b.host.toLowerCase()) return false;
   if (a.reference && b.reference) return a.reference === b.reference;
   const pa = normPath(a.path);
   const pb = normPath(b.path);
@@ -121,27 +149,24 @@ export function corroborateTimestomp(
     if (o.source === "ShimCache" && subjectModified !== null) {
       const shim = ms(o.modified);
       if (shim !== null && Math.abs(shim - subjectModified) > TIME_TOLERANCE_MS) {
+        // DIRECTION IS THE DISCRIMINATOR, and without it this was wrong.
+        //
+        // A backdating timestomp pushes the MFT time INTO THE PAST, so the historical ShimCache
+        // record ends up LATER than the current MFT value. The opposite ordering — ShimCache older
+        // than the MFT — is what an ordinary update or replacement at the same path produces, and a
+        // path match alone cannot tell one file version from its successor. Reporting that as
+        // corroborated timestomping turned every updated binary into a High finding.
+        const mftIsEarlier = shim > subjectModified;
         corroborations.push({
-          kind: "shimcache-disagrees",
+          kind: mftIsEarlier ? "shimcache-disagrees" : "shimcache-newer-mft",
           source: "ShimCache",
-          detail:
-            `ShimCache recorded a modification time of ${o.modified} for this file while the MFT ` +
-            `records ${subject.modified}. ShimCache keeps its copy in the registry, which a tool ` +
-            "rewriting the MFT does not necessarily touch.",
-        });
-      }
-    }
-
-    if (o.source === "I30") {
-      const idx = ms(o.created);
-      const subjCreated = ms(subject.created);
-      if (idx !== null && subjCreated !== null && Math.abs(idx - subjCreated) > TIME_TOLERANCE_MS) {
-        corroborations.push({
-          kind: "i30-disagrees",
-          source: "I30",
-          detail:
-            `the directory index holds an older creation time (${o.created}) than the MFT record ` +
-            `(${subject.created}). The index is updated separately from the record it describes.`,
+          detail: mftIsEarlier
+            ? `ShimCache recorded a LATER modification time (${o.modified}) than the MFT now holds ` +
+              `(${subject.modified}). ShimCache keeps its copy in the registry, which a tool ` +
+              "rewriting the MFT does not necessarily touch, and a backdated MFT is exactly this shape."
+            : `ShimCache recorded an EARLIER modification time (${o.modified}) than the MFT now holds ` +
+              `(${subject.modified}). That is the ordinary shape of the file being updated or ` +
+              "replaced since ShimCache saw it, so it is reported as context and does not corroborate.",
         });
       }
     }
@@ -160,7 +185,9 @@ export function corroborateTimestomp(
 
   // BASIC_INFO_CHANGE cannot carry a verdict by itself, for the reason its own detail gives. With
   // nothing else, there is nothing to report that would not overstate the evidence.
-  const independent = corroborations.filter((c) => c.kind !== "journal-timestamp-change");
+  // Only a disagreement in the BACKDATING direction corroborates. A journal attribute change
+  // cannot (see its own detail), and an update-shaped disagreement cannot either.
+  const independent = corroborations.filter((c) => c.kind === "shimcache-disagrees");
   if (!base && independent.length === 0) return null;
   if (corroborations.length === 0) return null;
 
@@ -190,6 +217,7 @@ export const TIMESTOMP_CORROBORATION_MARKER = "[timestomp corroboration:";
 
 interface TimelineEventShape {
   description?: string;
+  asset?: string;
   severity?: Severity;
   mitreTechniques?: string[];
   path?: string;
@@ -229,6 +257,7 @@ export function corroborateTimestompsOnTimeline<T extends TimelineEventShape>(ev
     observations.push({
       source,
       path,
+      ...(e.asset ? { host: e.asset } : {}),
       ...(e.fileModified ? { modified: e.fileModified } : {}),
       ...(e.timestamp ? { created: e.timestamp } : {}),
       // The journal's reasons live in the description; BASIC_INFO_CHANGE is the only one read, and

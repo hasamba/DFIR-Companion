@@ -50,6 +50,10 @@ function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
   else delete target.md5;
   if (m.path) target.path = m.path;
   else delete target.path;
+  // Set-or-clear like the rest: a stale modification time from a DIFFERENT row would be compared
+  // against another artifact's record and reported as a discrepancy between two unrelated files.
+  if (m.fileModified) target.fileModified = m.fileModified;
+  else delete target.fileModified;
   if (m.asset) target.asset = m.asset;
   else delete target.asset;
   if (m.processName) target.processName = m.processName;

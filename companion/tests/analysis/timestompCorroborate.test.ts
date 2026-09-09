@@ -64,13 +64,19 @@ describe("corroborateTimestomp", () => {
     expect(v?.note).toContain("independent of the MFT disagrees");
   });
 
-  it("raises when the directory index holds a different creation time", () => {
-    const i30: TimeObservation = {
-      source: "I30",
+  // DIRECTION is the discriminator. A backdated MFT is EARLIER than the historical record; the
+  // opposite ordering is what an ordinary update at the same path produces, and a path match cannot
+  // tell one file version from its successor.
+  it("does not corroborate when ShimCache is OLDER than the MFT, which is an update", () => {
+    const shim: TimeObservation = {
+      source: "ShimCache",
       path: "C:\\Windows\\Temp\\evil.exe",
-      created: "2026-01-01T09:00:00Z",
+      modified: "2015-01-01T00:00:00Z",
     };
-    expect(corroborateTimestomp(mft(), [i30], base)?.severity).toBe("High");
+    const v = corroborateTimestomp(mft(), [shim], base);
+    expect(v?.severity).toBe("Medium");
+    expect(v?.corroborations[0].kind).toBe("shimcache-newer-mft");
+    expect(v?.note).toContain("updated or");
   });
 
   it("says nothing when the independent record agrees", () => {
@@ -128,7 +134,7 @@ describe("corroborateTimestomp", () => {
   });
 
   it("can surface a discrepancy the single-row check could not see", () => {
-    // No $SI/$FN signal at all, yet ShimCache disagrees with the MFT.
+    // No $SI/$FN signal at all, yet the historical record is later than the MFT now holds.
     const shim: TimeObservation = {
       source: "ShimCache",
       path: "C:\\Windows\\Temp\\evil.exe",
@@ -209,5 +215,66 @@ describe("corroborateTimestompsOnTimeline — the merge pass", () => {
       shimEvent({ fileModified: "2019-01-01T00:00:00Z" }),
     ]);
     expect(e.severity).toBe("Critical");
+  });
+});
+
+// The two artifacts do not write paths the same way. This is the test that would have caught the
+// feature silently never firing in production while every other test passed.
+describe("path forms the real tools actually emit", () => {
+  it("matches MFTECmd's volume-rooted path against ShimCache's drive-qualified one", () => {
+    const mftEcmd: TimeObservation = {
+      source: "MFT",
+      path: ".\\Windows\\Temp\\evil.exe",
+      modified: "2019-01-01T00:00:00Z",
+    };
+    const shimParser: TimeObservation = {
+      source: "ShimCache",
+      path: "C:\\Windows\\Temp\\evil.exe",
+      modified: "2026-01-01T10:00:00Z",
+    };
+    expect(sameFile(mftEcmd, shimParser)).toBe(true);
+    expect(corroborateTimestomp(mftEcmd, [shimParser], null)?.severity).toBe("High");
+  });
+
+  it("handles the long-path prefix", () => {
+    const a: TimeObservation = { source: "MFT", path: "\\\\?\\C:\\Windows\\Temp\\x.exe" };
+    const b: TimeObservation = { source: "ShimCache", path: "C:\\Windows\\Temp\\x.exe" };
+    expect(sameFile(a, b)).toBe(true);
+  });
+
+  // Dropping the volume to make the forms comparable is also what makes this possible.
+  it("refuses to match the same path on two different hosts", () => {
+    const a: TimeObservation = { source: "MFT", path: ".\\Windows\\Temp\\x.exe", host: "HOST-A" };
+    const b: TimeObservation = { source: "ShimCache", path: "C:\\Windows\\Temp\\x.exe", host: "HOST-B" };
+    expect(sameFile(a, b)).toBe(false);
+  });
+
+  it("proceeds when neither observation records a host, the single-host import case", () => {
+    const a: TimeObservation = { source: "MFT", path: ".\\Windows\\Temp\\x.exe" };
+    const b: TimeObservation = { source: "ShimCache", path: "C:\\Windows\\Temp\\x.exe" };
+    expect(sameFile(a, b)).toBe(true);
+  });
+});
+
+// A known limitation, recorded rather than papered over: ShimCache rows arrive Info, and the
+// default forensic floor demotes them to the super-timeline, which this pass does not read. So
+// corroboration fires when both artifacts are in the forensic timeline — the analyst lowered the
+// floor, or the content tagger promoted the ShimCache row — and not otherwise.
+describe("what the pass can and cannot see", () => {
+  it("finds nothing when the corroborating artifact is not in the timeline it reads", () => {
+    const mftOnly = [
+      {
+        description: "MFT: C:\\Windows\\Temp\\evil.exe",
+        severity: "Medium" as const,
+        mitreTechniques: ["T1070.006"],
+        path: "C:\\Windows\\Temp\\evil.exe",
+        sources: ["MFT"],
+        timestamp: "2019-01-01T00:00:00Z",
+        fileModified: "2019-01-01T00:00:00Z",
+      },
+    ];
+    const [e] = corroborateTimestompsOnTimeline(mftOnly);
+    expect(e.description).not.toContain("[timestomp corroboration:");
+    expect(e.severity).toBe("Medium");
   });
 });

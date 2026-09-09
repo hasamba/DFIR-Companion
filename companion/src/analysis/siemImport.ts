@@ -70,6 +70,8 @@ export interface SiemEvent {
   description: string;
   severity: Severity;
   mitreTechniques: string[];
+  // The modification time the source artifact recorded for this file — see ForensicEvent.
+  fileModified?: string;
   canonical?: CanonicalEventEnvelope;
   count?: number;
   endTimestamp?: string;
