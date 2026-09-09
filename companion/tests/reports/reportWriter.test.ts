@@ -6,6 +6,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { FalsePositiveStore, markerId } from "../../src/analysis/falsePositive.js";
+import { ScopeStore } from "../../src/analysis/scope.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 let caseStore: CaseStore;
@@ -392,5 +393,149 @@ describe("ReportWriter", () => {
     const onDisk = await reportMeta.load("c1");
     expect(onDisk.investigators).toEqual(["Demo Analyst", "Senior DFIR Analyst"]);
     expect(onDisk.distribution.length).toBe(2);
+  });
+});
+
+// The MITRE table the report shows is derived from the events that survive scope and the
+// false-positive filter, not read from a stored aggregate — so a dismissal takes effect at once and
+// is not undone by the next import, and un-marking restores the technique with no merge. #893.
+describe("ReportWriter MITRE table follows the filters (#893)", () => {
+  const event = (id: string, timestamp: string, techniques: string[]) => ({
+    id,
+    timestamp,
+    description: `event ${id}`,
+    severity: "High" as const,
+    mitreTechniques: techniques,
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  });
+
+  async function seed(): Promise<void> {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(
+      event("kept", "2026-06-01T10:00:00Z", ["T1003.003"]),
+      event("other", "2026-06-01T11:00:00Z", ["T1021.002"]),
+    );
+    await stateStore.save(state);
+  }
+
+  async function techniques(): Promise<string[]> {
+    const state = await new ReportWriter(caseStore, stateStore, {
+      falsePositives: new FalsePositiveStore(caseStore),
+      scope: new ScopeStore(caseStore),
+    }).filteredState("c1");
+    return state.mitreTechniques.map((t: { id: string }) => t.id);
+  }
+
+  it("collects the techniques the events carry, with no synthesis run (#878)", async () => {
+    await seed();
+
+    expect([...(await techniques())].sort()).toEqual(["T1003.003", "T1021.002"]);
+  });
+
+  it("drops a technique as soon as its only event is dismissed", async () => {
+    await seed();
+    await new FalsePositiveStore(caseStore).save("c1", [
+      {
+        id: markerId("event", "other"),
+        kind: "event",
+        ref: "other",
+        reason: "authorized-test",
+        note: "",
+        markedAt: "2026-06-01T12:00:00Z",
+        markedBy: "analyst",
+      },
+    ]);
+
+    const ids = await techniques();
+
+    expect(ids).toContain("T1003.003");
+    expect(ids).not.toContain("T1021.002");
+  });
+
+  it("brings it back when the analyst un-marks the event, with no merge in between", async () => {
+    await seed();
+    const fp = new FalsePositiveStore(caseStore);
+    await fp.save("c1", [
+      {
+        id: markerId("event", "other"),
+        kind: "event",
+        ref: "other",
+        reason: "authorized-test",
+        note: "",
+        markedAt: "2026-06-01T12:00:00Z",
+        markedBy: "analyst",
+      },
+    ]);
+    expect(await techniques()).not.toContain("T1021.002");
+
+    await fp.save("c1", []);
+
+    expect(await techniques()).toContain("T1021.002");
+  });
+
+  it("drops a technique whose only event the scope window excludes", async () => {
+    await seed();
+    await new ScopeStore(caseStore).save("c1", {
+      start: "2026-06-01T10:30:00Z",
+      end: "2026-06-01T23:00:00Z",
+    });
+
+    const ids = await techniques();
+
+    expect(ids).toContain("T1021.002");
+    expect(ids).not.toContain("T1003.003");
+  });
+
+  it("a technique baked in by a previous synthesis is still removable — nothing persists it", async () => {
+    // The last place event-carried techniques were written into persisted state was the synthesis
+    // fold. A row it had already stored survived every filter afterwards, because projection only
+    // ever ADDS: the analyst dismissed the event and the row stayed. Nothing writes them now, so
+    // the only source is the surviving timeline and the dismissal simply takes effect.
+    const state = emptyState("c1");
+    state.forensicTimeline.push(event("dismissed", "2026-06-01T11:00:00Z", ["T1021.002"]));
+    await stateStore.save(state);
+    expect(await techniques()).toContain("T1021.002");
+
+    await new FalsePositiveStore(caseStore).save("c1", [
+      {
+        id: markerId("event", "dismissed"),
+        kind: "event",
+        ref: "dismissed",
+        reason: "authorized-test",
+        note: "",
+        markedAt: "2026-06-01T12:00:00Z",
+        markedBy: "analyst",
+      },
+    ]);
+
+    expect(await techniques()).not.toContain("T1021.002");
+  });
+
+  it("hides a synthesized technique whose only supporting event is dismissed, reversibly", async () => {
+    // End to end for the last writer: the row is in the stored table, not on any event, and the
+    // event it was drawn from is dismissed. It goes — and comes back when the analyst un-marks,
+    // because the projection never touched what is stored.
+    const state = emptyState("c1");
+    state.mitreTechniques.push({ id: "T1486", name: "Data Encrypted for Impact", findingIds: [] });
+    state.forensicTimeline.push(event("dismissed", "2026-06-01T11:00:00Z", ["T1486"]));
+    await stateStore.save(state);
+    expect(await techniques()).toContain("T1486");
+
+    const fp = new FalsePositiveStore(caseStore);
+    const marker = {
+      id: markerId("event", "dismissed"),
+      kind: "event" as const,
+      ref: "dismissed",
+      reason: "authorized-test" as const,
+      note: "",
+      markedAt: "2026-06-01T12:00:00Z",
+      markedBy: "analyst",
+    };
+    await fp.save("c1", [marker]);
+    expect(await techniques()).not.toContain("T1486");
+
+    await fp.save("c1", []);
+    expect(await techniques()).toContain("T1486");
   });
 });

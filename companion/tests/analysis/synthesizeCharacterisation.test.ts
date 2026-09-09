@@ -300,9 +300,16 @@ describe("synthesize — the delta merge", () => {
     expect(state.forensicTimeline.map((e) => e.id)).toContain("e1"); // and the analyzed event stays
   });
 
-  it("unions the techniques the timeline already carries into the synthesized MITRE table", async () => {
-    // Importers tag Info/Low discovery activity with techniques the model never echoes back. If the
-    // union is lost the case's MITRE table silently shrinks to whatever the model happened to name.
+  it("leaves the techniques the timeline carries out of the STORED table (#893)", async () => {
+    // Importers tag Info/Low discovery activity with techniques the model never echoes back, and
+    // this fold used to union them into the persisted table so they reached the MITRE panel and the
+    // report. They did — and then could not be removed: scope and the false-positive filter drop
+    // events at projection rather than from state, so dismissing the only event carrying one left
+    // the row behind for good.
+    //
+    // They are derived at projection now (analysis/eventTechniques.ts), which is what makes a
+    // dismissal take effect; see the ReportWriter tests. What synthesis stores is what the model
+    // asserted.
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
       event("e1", "2026-01-01T00:00:00.000Z", "whoami /all", "Low", { mitreTechniques: ["T1033"] }),
@@ -320,7 +327,9 @@ describe("synthesize — the delta merge", () => {
 
     const state = await pipeline.synthesize("c1");
 
-    expect(state.mitreTechniques.map((t) => t.id).sort()).toEqual(["T1033", "T1059"]);
+    expect(state.mitreTechniques.map((t) => t.id)).toEqual(["T1059"]);
+    // Still on the event, which is where the projection reads it from.
+    expect(state.forensicTimeline.find((e) => e.id === "e1")?.mitreTechniques).toEqual(["T1033"]);
   });
 
   it("dryRun returns the conclusions without persisting them or arming the skip hash", async () => {

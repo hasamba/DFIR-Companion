@@ -46,9 +46,17 @@ export function projectScope(state: InvestigationState, scope: ScopeWindow): Inv
 
   // MITRE: recompute each technique's finding links to the survivors. A technique
   // that had links and loses them all is dropped; one with no links is preserved.
+  //
+  // One a human ACCEPTED is kept whatever its links do (#893). It came from the analyst overruling
+  // both models, not from the evidence this window selects, so narrowing the window is not a reason
+  // to drop it — and because synthesis folds and then SAVES a projected snapshot, dropping it here
+  // does not merely hide it for the duration of the scope, it loses the decision permanently.
   const mitreTechniques = state.mitreTechniques
     .map((t) => ({ ...t, findingIds: t.findingIds.filter((id) => survivingFindings.has(id)) }))
-    .filter((t, idx) => t.findingIds.length > 0 || state.mitreTechniques[idx].findingIds.length === 0);
+    .filter(
+      (t, idx) =>
+        t.analystAccepted || t.findingIds.length > 0 || state.mitreTechniques[idx].findingIds.length === 0,
+    );
 
   return { ...state, forensicTimeline, findings, iocs, mitreTechniques };
 }

@@ -4,6 +4,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
+import { withEventTechniques } from "../analysis/eventTechniques.js";
 import {
   applyFalsePositive,
   filterFalsePositiveEvents,
@@ -272,10 +273,9 @@ export class ReportWriter {
     const aligned = { ...loaded, forensicTimeline: projectAlignment(skew, loaded.forensicTimeline) };
     const scoped = projectScope(aligned, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
     const markers = this.falsePositives ? await this.falsePositives.load(caseId) : [];
-    return applyFalsePositive(
-      { ...scoped, forensicTimeline: filterFalsePositiveEvents(scoped.forensicTimeline, markers) },
-      markers,
-    );
+    const kept = filterFalsePositiveEvents(scoped.forensicTimeline, markers);
+    // MITRE completed LAST, from the events that survived both filters — see eventTechniques.ts (#893).
+    return withEventTechniques(applyFalsePositive({ ...scoped, forensicTimeline: kept }, markers));
   }
 
   private async loadNotebook(caseId: string): Promise<NotebookEntry[] | undefined> {
