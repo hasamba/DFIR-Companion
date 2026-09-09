@@ -148,13 +148,13 @@ function classify(plugin: string, cols: Set<string>): Category {
   if (/svcscan|services/.test(p)) return "service";
   if (any("binary", "servicedll", "binary path") && any("state", "start", "display")) return "service";
 
+  if (/dlllist|ldrmodules|dlldump/.test(p)) return "dll"; // before /modules/ — it matches ldrmodules
+  if (has("pid") && any("base", "dllbase") && any("path", "loadtime", "mappedpath") && has("size"))
+    return "dll";
+
   if (/driver|modscan|modules|modlist|lsmod|kernel_module/.test(p)) return "module";
   if (any("base", "dllbase") && has("size") && any("name", "path", "driver name") && !has("pid"))
     return "module";
-
-  if (/dlllist|ldrmodules|dlldump/.test(p)) return "dll";
-  if (has("pid") && any("base", "dllbase") && any("path", "loadtime", "mappedpath") && has("size"))
-    return "dll";
 
   if (/handles?/.test(p)) return "handle";
 

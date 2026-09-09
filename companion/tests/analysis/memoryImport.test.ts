@@ -452,6 +452,35 @@ describe("parseMemory — options & edges", () => {
     expect(tel.events.length).toBe(1);
   });
 
+  // `ldrmodules` enumerates a PROCESS's loaded modules and its loader-list membership flags — it is a
+  // DLL listing, not the kernel driver table. classify() tested /modules/ before /ldrmodules/, and
+  // "modules" is a substring of "ldrmodules", so every row reached the kernel-module mapper and lost
+  // both its process attribution and the flags the plugin exists to expose.
+  it("classifies ldrmodules as a DLL list, not a kernel module", () => {
+    const ldr = [
+      {
+        __children: [],
+        Pid: 3120,
+        Process: "evil.exe",
+        Base: "0x7ffb10000000",
+        InLoad: true,
+        InInit: false,
+        InMem: true,
+        MappedPath: "C:\\Temp\\evil.dll",
+      },
+    ];
+    const json = JSON.stringify({ "windows.ldrmodules.LdrModules": ldr });
+    // The DLL mapper harvests the path and stays silent unless telemetry is opted in; the kernel-module
+    // mapper emits an Info event per row regardless.
+    const r = parseMemory(json);
+    expect(r.events.length).toBe(0);
+    expect(r.iocs.some((i) => i.type === "file" && /evil\.dll/i.test(i.value))).toBe(true);
+    // Opted in, the row carries the process it was loaded into — which the kernel-module mapper cannot say.
+    const tel = parseMemory(json, { dllTelemetry: true });
+    expect(tel.events).toHaveLength(1);
+    expect(tel.events[0].description).toContain("evil.exe (PID 3120)");
+  });
+
   it("reports empty for non-memory JSON", () => {
     const r = parseMemory(JSON.stringify({ foo: "bar" }));
     expect(r.events.length).toBe(0);
