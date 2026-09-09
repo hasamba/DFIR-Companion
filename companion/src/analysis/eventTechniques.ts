@@ -23,8 +23,18 @@ import type { InvestigationState } from "./stateTypes.js";
 // Pure and idempotent — unionEventTechniques skips ids the table already holds, so a technique a
 // model asserted at a delta's top level keeps its finding links and is not duplicated.
 export function withEventTechniques(state: InvestigationState): InvestigationState {
-  return {
-    ...state,
-    mitreTechniques: unionEventTechniques(state.mitreTechniques, state.forensicTimeline),
-  };
+  // What the surviving evidence still supports. A technique SYNTHESIS asserted is persisted, so
+  // without this it outlived the dismissal of the very event it was drawn from: the analyst
+  // dismissed the evidence and the row stayed in the panel and the report.
+  //
+  // Hiding it here is safe in a way that pruning the stored table never was — and that is the whole
+  // difference this rework makes. This is a VIEW: state is untouched, so widening the scope window
+  // or un-marking the event brings the technique straight back, with no merge and nothing to heal.
+  // The old design had to choose between leaving stale rows and deleting analysis for good.
+  const surviving = new Set(state.findings.map((f) => f.id));
+  const carried = new Set(state.forensicTimeline.flatMap((e) => e.mitreTechniques));
+  const supported = state.mitreTechniques.filter(
+    (t) => t.findingIds.some((id) => surviving.has(id)) || carried.has(t.id),
+  );
+  return { ...state, mitreTechniques: unionEventTechniques(supported, state.forensicTimeline) };
 }

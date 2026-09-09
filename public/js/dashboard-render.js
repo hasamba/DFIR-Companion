@@ -482,7 +482,15 @@
     // A technique a model asserted keeps its name and its finding links. One derived from an event
     // shows its id as the name, which is exactly what the server's own name table falls back to for
     // an id it does not know.
-    const mitreRows = (state.mitreTechniques || []).slice();
+    // Only what the surviving evidence still supports: a technique synthesis asserted otherwise
+    // outlives the dismissal of the very event it came from. Safe to hide because this is a view —
+    // state is untouched, so un-marking the event brings it straight back.
+    const survivingFindings = new Set((state.findings || []).map((f) => f.id));
+    const carriedTechniques = new Set(ft.flatMap((e) => e.mitreTechniques || []));
+    const mitreRows = (state.mitreTechniques || []).filter(
+      (m) =>
+        (m.findingIds || []).some((id) => survivingFindings.has(id)) || carriedTechniques.has(m.id),
+    );
     const seenTechniques = new Set(mitreRows.map((m) => m.id));
     for (const e of ft)
       for (const id of e.mitreTechniques || [])

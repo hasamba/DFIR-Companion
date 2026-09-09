@@ -67,4 +67,50 @@ describe("withEventTechniques (#893)", () => {
     expect(twice.mitreTechniques).toEqual(once.mitreTechniques);
     expect(state.mitreTechniques).toEqual([]);
   });
+
+  it("hides a synthesized technique once the event it was drawn from is gone", () => {
+    // The row synthesis persisted outlived the dismissal of its own evidence: the analyst removed
+    // the event and the technique stayed in the panel and the report.
+    const state = {
+      ...emptyState("c1"),
+      mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact", findingIds: [] }],
+      forensicTimeline: [event("kept", ["T1003.003"])],
+    };
+
+    expect(withEventTechniques(state).mitreTechniques.map((t) => t.id)).toEqual(["T1003.003"]);
+  });
+
+  it("brings it back the moment the event is in the projection again", () => {
+    // Why hiding is safe here and pruning the stored table never was: this is a VIEW. The
+    // assertion is untouched in state, so un-dismissing restores it with no merge.
+    const asserted = [{ id: "T1486", name: "Data Encrypted for Impact", findingIds: [] }];
+    const hidden = { ...emptyState("c1"), mitreTechniques: asserted, forensicTimeline: [] };
+    expect(withEventTechniques(hidden).mitreTechniques).toEqual([]);
+
+    const restored = { ...hidden, forensicTimeline: [event("back", ["T1486"])] };
+
+    expect(withEventTechniques(restored).mitreTechniques).toEqual(asserted);
+  });
+
+  it("keeps a technique a surviving finding still cites, with no event carrying it", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [{ id: "f1" }] as never,
+      mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact", findingIds: ["f1"] }],
+      forensicTimeline: [],
+    };
+
+    expect(withEventTechniques(state).mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
+  });
+
+  it("hides one whose only finding the filters dropped", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [],
+      mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact", findingIds: ["gone"] }],
+      forensicTimeline: [],
+    };
+
+    expect(withEventTechniques(state).mitreTechniques).toEqual([]);
+  });
 });

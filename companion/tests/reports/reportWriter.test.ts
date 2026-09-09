@@ -511,4 +511,31 @@ describe("ReportWriter MITRE table follows the filters (#893)", () => {
 
     expect(await techniques()).not.toContain("T1021.002");
   });
+
+  it("hides a synthesized technique whose only supporting event is dismissed, reversibly", async () => {
+    // End to end for the last writer: the row is in the stored table, not on any event, and the
+    // event it was drawn from is dismissed. It goes — and comes back when the analyst un-marks,
+    // because the projection never touched what is stored.
+    const state = emptyState("c1");
+    state.mitreTechniques.push({ id: "T1486", name: "Data Encrypted for Impact", findingIds: [] });
+    state.forensicTimeline.push(event("dismissed", "2026-06-01T11:00:00Z", ["T1486"]));
+    await stateStore.save(state);
+    expect(await techniques()).toContain("T1486");
+
+    const fp = new FalsePositiveStore(caseStore);
+    const marker = {
+      id: markerId("event", "dismissed"),
+      kind: "event" as const,
+      ref: "dismissed",
+      reason: "authorized-test" as const,
+      note: "",
+      markedAt: "2026-06-01T12:00:00Z",
+      markedBy: "analyst",
+    };
+    await fp.save("c1", [marker]);
+    expect(await techniques()).not.toContain("T1486");
+
+    await fp.save("c1", []);
+    expect(await techniques()).toContain("T1486");
+  });
 });
