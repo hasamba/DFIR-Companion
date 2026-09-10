@@ -36,6 +36,7 @@
 // instance is not. That is a different finding and it is graded separately below.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { addressReach } from "./publicAddress.js";
 
 /** The link-local addresses and names that serve instance metadata. */
 export const METADATA_TARGETS: readonly string[] = [
@@ -76,17 +77,34 @@ const CREDENTIAL_PATH_RES: readonly RegExp[] = [
  */
 const IMDS_TOKEN_RE = /\/latest\/api\/token\b/i;
 
-/** Processes that serve web requests. None of them has a reason to read the instance role. */
-const WEB_SERVER_RE =
-  /^(?:nginx|httpd|apache2?|caddy|lighttpd|php-fpm[\d.]*|php|w3wp|node|java|tomcat\d*|catalina|gunicorn|uwsgi|uvicorn|puma|unicorn|passenger|ruby|rails)(?:\.exe)?$/i;
-
-/** Shell and transfer tools. A person or a script, not an SDK. */
+/**
+ * THE PROCESS NAME ALONE CANNOT ANSWER THIS ON LINUX, AND PRETENDING OTHERWISE WAS THE FIRST
+ * VERSION'S WORST DEFECT.
+ *
+ * On a container the application IS the SDK. An ECS task's executable basename is `node`; an EKS
+ * pod's is `java`; a boto3 worker's is `python3`. All three read the credential endpoint
+ * continuously, correctly, and by design — reading `/v2/credentials/<uuid>` is the ONLY way an ECS
+ * task gets credentials at all. Grading those High fired on every healthy workload in a container
+ * estate, which is precisely the failure the design set out to avoid.
+ *
+ * So the tables below are split by what the name actually tells you:
+ *
+ *   • TOOL_RE — curl, wget, nc, socat, httpie. No SDK is one of these. A hit here IS the finding.
+ *   • RUNTIME_RE — node, java, python, ruby, php, and the web servers. The name says nothing on its
+ *     own; it is the application and the SDK at the same time. Medium, with the ambiguity stated,
+ *     and High ONLY when the command line itself names the metadata URL — which means a person
+ *     typed the request rather than a library making it.
+ *   • SDK_RE — the standalone agents. Nothing at all.
+ */
 const TOOL_RE =
-  /^(?:curl|wget|python[\d.]*|perl|ruby|nc|ncat|socat|powershell|pwsh|bash|sh|zsh|busybox|lynx|links|httpie|http)(?:\.exe)?$/i;
+  /^(?:curl|wget|nc|ncat|netcat|socat|lynx|links|httpie|http|fetch|aria2c|powershell|pwsh)(?:\.exe)?$/i;
+
+const RUNTIME_RE =
+  /^(?:nginx|httpd|apache2?|caddy|lighttpd|php-fpm[\d.]*|php|w3wp|node|deno|bun|java|tomcat\d*|catalina|gunicorn|uwsgi|uvicorn|puma|unicorn|passenger|ruby|rails|python[\d.]*|perl|dotnet|go|bash|sh|zsh|busybox)(?:\.exe)?$/i;
 
 /** Clients that are SUPPOSED to read the credential path. Their presence is not evidence of anything. */
 const SDK_RE =
-  /^(?:aws(?:-cli)?|aws_completer|amazon-ssm-agent|amazon-cloudwatch-agent|cloud-init|google_guest_agent|google_metadata_script_runner|WindowsAzureGuestAgent|waagent|kubelet|ecs-agent|fluent-?bit|telegraf|datadog-agent|vector|otelcol[\w-]*)(?:\.exe)?$/i;
+  /^(?:aws(?:-cli)?|aws_completer|amazon-ssm-agent|amazon-cloudwatch-agent|ssm-agent|cloud-init|google_guest_agent|google_metadata_script_runner|WindowsAzureGuestAgent|waagent|kubelet|ecs-agent|agent|fluent-?bit|fluentd|telegraf|datadog-agent|vector|otelcol[\w-]*|node_exporter|consul|nomad|vault)(?:\.exe)?$/i;
 
 export interface MetadataHit {
   /** The event this came from. */
@@ -99,6 +117,13 @@ export interface MetadataHit {
   process: string;
   /** true when the metadata URL sits INSIDE another request — the shape of an SSRF attempt. */
   ssrfShaped: boolean;
+  /**
+   * true when the event's OWN command line names the metadata address.
+   *
+   * This is the fact that separates "a library made this call" from "someone typed this request".
+   * An SDK's HTTP call never appears on a command line; `curl http://169.254.169.254/...` does.
+   */
+  commandLineNamesTarget: boolean;
 }
 
 const baseName = (p: string): string => {
@@ -113,20 +138,25 @@ function searchText(e: ForensicEvent): string {
 }
 
 /**
- * The text as written, plus its percent-decoded form.
+ * The text as written and, when it differs, its percent-decoded form — as SEPARATE strings.
  *
- * An SSRF payload arrives URL-encoded far more often than not — `http%3a%2f%2f169.254.169.254` is
- * the ordinary spelling once the address is a parameter VALUE. Matching only the raw text missed
- * every encoded attempt, and the boundary check made it worse: the character before the address was
- * then `f`, from `%2f`, which reads as "part of a longer word".
+ * An SSRF payload arrives URL-encoded far more often than not: `http%3a%2f%2f169.254.169.254` is
+ * the ordinary spelling once the address is a parameter value. Matching only the raw text missed
+ * every encoded attempt, and the address-boundary check made it worse — the character before the
+ * address was then `f`, from `%2f`, which reads as part of a longer word.
+ *
+ * The first version JOINED the two forms into one string, and that broke the SSRF rule outright:
+ * a rule that counted `http://` occurrences saw every single URL twice, so ANY description holding
+ * one URL and one percent sign was graded as a forgery attempt — including an SDK reading its own
+ * role with a percent-encoded user agent. Two strings, tested separately, cannot do that.
  *
  * decodeURIComponent throws on a malformed sequence, and half an attacker's payload is malformed on
  * purpose, so a manual pass handles what it rejects. Decoding runs ONCE: repeating it until stable
- * would turn a double-encoded literal into a match that the server would never have made.
+ * would match a double-encoded literal the server would never have followed.
  */
-function expand(text: string): string {
+export function textVariants(text: string): string[] {
   const t = text ?? "";
-  if (!t.includes("%")) return t;
+  if (!t.includes("%")) return [t];
   let decoded: string;
   try {
     decoded = decodeURIComponent(t);
@@ -136,46 +166,61 @@ function expand(text: string): string {
       return code >= 0x20 && code < 0x7f ? String.fromCharCode(code) : m;
     });
   }
-  return `${t} ${decoded}`;
+  return decoded === t ? [t] : [t, decoded];
 }
+
+// Compiled once. Building seven RegExp objects per call cost 1.4 seconds over 100,000 log lines,
+// and metadataTarget is called twice per event.
+const TARGET_RES: readonly { target: string; re: RegExp }[] = METADATA_TARGETS.map((target) => ({
+  target,
+  re: new RegExp(`(?:^|[^\\w.:-])${target.replace(/[.[\]]/g, "\\$&")}(?:[^\\w.-]|$)`, "i"),
+}));
 
 /** Which metadata target this text names, or "". */
 export function metadataTarget(text: string): string {
-  const t = expand(text ?? "").toLowerCase();
-  for (const target of METADATA_TARGETS) {
+  for (const variant of textVariants(text)) {
+    const t = variant.toLowerCase();
     // A bare address match would hit a longer address that merely starts the same way, and the
     // hostname forms need a boundary too — "notmetadata.google.internal" is a different host.
-    const escaped = target.replace(/[.[\]]/g, "\\$&");
-    if (new RegExp(`(?:^|[^\\w.:-])${escaped}(?:[^\\w.-]|$)`, "i").test(t)) return target;
+    for (const { target, re } of TARGET_RES) if (re.test(t)) return target;
   }
   return "";
 }
 
 /** Does this text ask for credentials rather than ordinary instance facts? */
 export function isCredentialPath(text: string): boolean {
-  const t = expand(text ?? "");
-  return CREDENTIAL_PATH_RES.some((re) => re.test(t));
+  return textVariants(text ?? "").some((t) => CREDENTIAL_PATH_RES.some((re) => re.test(t)));
 }
 
 /**
  * Is the metadata URL sitting INSIDE another request?
  *
  * That is what SSRF looks like in a web log: the application's own URL carries the metadata address
- * as a parameter value, or as a redirect target the server was told to follow. An outbound request
- * TO the metadata service looks nothing like this — it has no host of its own in front of it.
+ * as a parameter value, or as a redirect target the server was told to follow.
+ *
+ * THE RULE IS "IT IS A PARAMETER VALUE", NOT "THERE ARE TWO URLS". Counting schemes was the first
+ * version's test and it was wrong twice over. An ordinary Apache combined-log line carries the
+ * request URL AND the referrer, so two schemes is the NORMAL shape of a web log; and the decoded
+ * and raw forms were being concatenated, so one URL counted as two. Between them, any log line
+ * mentioning a metadata address and containing a percent sign was graded a forgery attempt — which
+ * is how an SDK reading its own role, with a percent-encoded user agent, became a High SSRF claim.
+ *
+ * What actually identifies a forgery is position: the metadata address appears where a VALUE goes.
  */
+const SSRF_PARAM_RE =
+  /[?&][\w.\-[\]]{1,64}=(?:https?(?::|%3a)(?:\/\/|%2f%2f))?(?:169\.254\.|100\.100\.100\.200|metadata\.goog)/i;
+
+/** A metadata address anywhere after the query separator is in value position. */
+const SSRF_QUERY_RE = /\?[^\s]*(?:169\.254\.\d{1,3}\.\d{1,3}|metadata\.google\.internal)/i;
+
+/** Decimal, octal and hex spellings of 169.254.169.254 — an evasion attempt is itself the signal. */
+const SSRF_OBFUSCATED_RE = /\b(?:2852039166|0250\.0376\.0250\.0376|0xa9fea9fe)\b/i;
+
 export function looksLikeSsrf(text: string): boolean {
-  const t = expand(text ?? "");
-  if (!metadataTarget(t)) return false;
-  // A parameter whose value is a metadata URL, encoded or not.
-  if (/[?&][\w.\-[\]]+=(?:https?(?::|%3a)(?:\/\/|%2f%2f))?(?:169\.254\.|metadata\.goog)/i.test(t))
-    return true;
-  // Two schemes in one string: the request's own URL, then the metadata URL inside it.
-  const schemes = t.match(/https?:\/\//gi) ?? [];
-  if (schemes.length >= 2) return true;
-  // A decimal, octal or hex spelling of 169.254.169.254 alongside the literal — an evasion attempt
-  // is itself the signal, and it only counts when a metadata target was already named.
-  return /\b(?:2852039166|0250\.0376\.0250\.0376|0xa9fea9fe)\b/i.test(t);
+  return textVariants(text ?? "").some((t) => {
+    if (!metadataTarget(t)) return SSRF_OBFUSCATED_RE.test(t) && /169\.254\./.test(text ?? "");
+    return SSRF_PARAM_RE.test(t) || SSRF_QUERY_RE.test(t) || SSRF_OBFUSCATED_RE.test(t);
+  });
 }
 
 /** Read one event as a metadata request, or null when it is not one. */
@@ -189,6 +234,7 @@ export function readHit(e: ForensicEvent): MetadataHit | null {
     credentialPath: isCredentialPath(text),
     process: baseName(e.processName ?? ""),
     ssrfShaped: looksLikeSsrf(e.description ?? ""),
+    commandLineNamesTarget: !!metadataTarget(e.commandLine ?? ""),
   };
 }
 
@@ -212,9 +258,9 @@ export function gradeHit(hit: MetadataHit, rawText: string): MetadataVerdict | n
       severity: "High",
       mitre: ["T1552.005", "T1190"],
       reason:
-        `A request carried the instance metadata address ${hit.target} inside it, which is what a server-side request forgery looks like in a web log — the application was asked to fetch a URL and the URL points at the credential service. ` +
+        `A request carried the instance metadata address ${hit.target} in a parameter value, which is what a server-side request forgery looks like in a web log — the application was asked to fetch a URL and the URL points at the credential service. ` +
         (hit.credentialPath
-          ? "The path requested is the credential path, so this is an attempt to read the instance role's access key, not to read the machine's name."
+          ? "The path requested is the credential path, so this is an attempt to read the instance role's access key, not the machine's name."
           : "The path requested is not the credential path, so this may be a probe rather than a successful theft — check whether a credential-path request followed."),
     };
   }
@@ -222,25 +268,35 @@ export function gradeHit(hit: MetadataHit, rawText: string): MetadataVerdict | n
   // Everything below needs the credential path. Ordinary metadata reads are not findings.
   if (!hit.credentialPath) return null;
 
-  if (WEB_SERVER_RE.test(hit.process)) {
-    return {
-      severity: "High",
-      mitre: ["T1552.005"],
-      reason: `${hit.process} requested the instance role's credentials from ${hit.target}. A web server has no reason to read the instance role — this is the shape of a server-side request forgery, or of something running inside the web server that should not be.`,
-    };
-  }
+  // This is the endpoint's entire purpose. Saying nothing is the correct answer.
+  if (SDK_RE.test(hit.process)) return null;
 
   if (TOOL_RE.test(hit.process)) {
     return {
       severity: "High",
       mitre: ["T1552.005"],
-      reason: `${hit.process} requested the instance role's credentials from ${hit.target}. The SDKs read this endpoint on their own; a shell or transfer tool reading it is a person or a script, and the credentials it returns can be used from anywhere.`,
+      reason: `${hit.process} requested the instance role's credentials from ${hit.target}. No SDK is a transfer tool — a library never runs curl — so a person or a script made this request, and the credentials it returns work from anywhere.`,
     };
   }
 
-  if (SDK_RE.test(hit.process)) {
-    // This is the endpoint's entire purpose. Saying nothing is the correct answer.
-    return null;
+  if (RUNTIME_RE.test(hit.process)) {
+    // The command line is what separates "a library made this call" from "someone typed it". An
+    // SDK's HTTP request never appears on a command line; a hand-made one does.
+    if (hit.commandLineNamesTarget) {
+      return {
+        severity: "High",
+        mitre: ["T1552.005"],
+        reason: `${hit.process} was invoked with a command line that names ${hit.target} and the credential path. An SDK's request to the metadata service never appears on a command line, so this request was written by hand rather than made by a library.`,
+      };
+    }
+    return {
+      severity: "Medium",
+      mitre: ["T1552.005"],
+      reason:
+        `${hit.process} requested the instance role's credentials from ${hit.target}. ` +
+        `On a container the application and the SDK are the same process — an ECS task's executable is "node", an EKS pod's is "java", a boto3 worker's is "python3" — and reading this endpoint is how those workloads get credentials at all. ` +
+        `So "${hit.process}" does not separate ordinary SDK traffic from a request made through the application. What would: a command line that names the URL, an SSRF-shaped entry in the web access log for the same second, or the credentials appearing in use from an address this instance does not have.`,
+    };
   }
 
   if (!hit.process) {
@@ -254,7 +310,7 @@ export function gradeHit(hit: MetadataHit, rawText: string): MetadataVerdict | n
   return {
     severity: "Medium",
     mitre: ["T1552.005"],
-    reason: `${hit.process} requested the instance role's credentials from ${hit.target}. That is not a client known to need them, but it is also not a web server or a shell tool — confirm what ${hit.process} is on this host.`,
+    reason: `${hit.process} requested the instance role's credentials from ${hit.target}. That is not a client known to need them, and it is not a language runtime or a web server either — confirm what ${hit.process} is on this host.`,
   };
 }
 
@@ -289,22 +345,23 @@ export function explainMetadataAccess(events: readonly ForensicEvent[]): Forensi
 
 // ─────────────────────────── the other half: use from elsewhere ───────────────────────────
 
-/** A public IPv4, i.e. not one an instance would present to its own control plane. */
-function isPublicIp(ip: string): boolean {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec((ip ?? "").trim());
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127 || a === 0) return false;
-  if (a === 172 && b >= 16 && b <= 31) return false;
-  if (a === 192 && b === 168) return false;
-  if (a === 169 && b === 254) return false;
-  if (a === 100 && b >= 64 && b <= 127) return false; // carrier-grade NAT
-  return a <= 255 && b <= 255;
+/**
+ * Does this identity look like an EC2 instance role rather than a person or a service?
+ *
+ * THE WHOLE ARN IS REQUIRED, not the `assumed-role/…/i-…` fragment. Descriptions in this codebase
+ * are built from IMPORTED data, so a URL path, an S3 key or a filename an attacker chose lands in
+ * them verbatim — and the fragment alone matched
+ * `GET https://cdn.evil.test/assumed-role/x/i-0123456789abcdef/payload.bin`, planting a High
+ * "the credentials were taken off the host" claim on an unrelated proxy log line. An `arn:aws:sts`
+ * prefix with an account number is not something that appears by accident in a URL.
+ */
+export function isInstanceRoleIdentity(text: string): boolean {
+  return /\barn:aws(?:-[a-z-]+)?:sts::\d{12}:assumed-role\/[^\s/"']+\/i-[0-9a-f]{8,}/i.test(text ?? "");
 }
 
-/** Does this identity look like an EC2 instance role rather than a person or a service? */
-export function isInstanceRoleIdentity(text: string): boolean {
-  return /\bassumed-role\/[^\s/"']+\/i-[0-9a-f]{8,}/i.test(text ?? "");
+/** The source address an event recorded, from the canonical envelope or the flat field. */
+function sourceAddress(e: ForensicEvent): string {
+  return (e.canonical?.network?.source?.address ?? e.srcIp ?? "").trim();
 }
 
 /**
@@ -317,6 +374,11 @@ export function isInstanceRoleIdentity(text: string): boolean {
  *
  * A NAT gateway is the honest false positive here, and the note says so: an instance behind NAT
  * presents the gateway's public address on egress, and CloudTrail records the address it saw.
+ *
+ * The address is read from the canonical envelope FIRST. awsImport puts the caller address there
+ * and never sets the flat `srcIp`, so reading only `srcIp` meant this never fired on the one
+ * CloudTrail importer the product has — while still firing on proxy and firewall evidence, whose
+ * descriptions carry adversary-chosen URLs. It was dead where it mattered and live where it hurt.
  */
 export function instanceCredentialUseAway(events: readonly ForensicEvent[]): ForensicEvent[] {
   let changed = false;
@@ -324,18 +386,30 @@ export function instanceCredentialUseAway(events: readonly ForensicEvent[]): For
     if ((e.description ?? "").includes(METADATA_MARKER)) return e;
     const text = `${e.description ?? ""} ${e.path ?? ""}`;
     if (!isInstanceRoleIdentity(text)) return e;
-    const ip = (e.srcIp ?? "").trim();
-    if (!ip || !isPublicIp(ip)) return e;
+    const ip = sourceAddress(e);
+    // No address at all is not a gap this pass can speak to — plenty of audit records simply have
+    // none. An address that IS recorded but cannot be parsed is different, and is reported below.
+    if (!ip) return e;
+    const reach = addressReach(ip);
+    if (reach === "private") return e;
     changed = true;
     const severity: Severity = RANK.High > RANK[e.severity] ? "High" : e.severity;
     const reason =
-      `An API call was made with an EC2 instance role's credentials from ${ip}, a public address. ` +
-      "Instance-role credentials are meant to be used by the instance itself; a call from outside it means the credentials were taken off the host. " +
-      "One honest alternative exists: an instance behind a NAT gateway presents the gateway's public address, and the audit log records the address it saw. Confirm against the instance's egress address before acting on this.";
+      reach === "public"
+        ? `An API call was made with an EC2 instance role's credentials from ${ip}, an address outside the network. ` +
+          "Instance-role credentials are meant to be used by the instance itself; a call from outside it means they were taken off the host. " +
+          "One honest alternative exists: an instance behind a NAT gateway presents the gateway's public address, and the audit log records the address it saw. Confirm against the instance's egress address before acting on this."
+        : `An API call was made with an EC2 instance role's credentials, and the source address the log recorded (${ip}) could not be read as an address. ` +
+          "Whether the credentials were used from off the host therefore could not be determined here — this is not a finding that they were, and not evidence that they were not. Read the raw record's source address.";
     return {
       ...e,
-      severity,
-      mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), "T1552.005", "T1078.004"])],
+      // An unreadable address is a gap, not a finding. It is attached so the analyst sees it, but
+      // it does not raise the event.
+      severity: reach === "public" ? severity : e.severity,
+      mitreTechniques:
+        reach === "public"
+          ? [...new Set([...(e.mitreTechniques ?? []), "T1552.005", "T1078.004"])]
+          : (e.mitreTechniques ?? []),
       description: `${(e.description ?? "").slice(0, DESCRIPTION_MAX)} ${METADATA_MARKER} ${reason}]`.trim(),
     };
   });
@@ -343,18 +417,55 @@ export function instanceCredentialUseAway(events: readonly ForensicEvent[]): For
 }
 
 /**
- * What this pass could and could not see, for the import note.
+ * What this pass could and could not see.
  *
  * The metadata service leaves no trace in any cloud audit log — the request never leaves the
- * instance. A case holding only CloudTrail, Azure Activity or GCP audit logs therefore gets no
- * findings from the first half of this pass, and that absence is not evidence.
+ * instance. A case holding only cloud audit logs therefore gets no findings from the first half of
+ * this pass, and that absence is not evidence.
  */
 export function explainVisibility(hasHostTelemetry: boolean, hasCloudAudit: boolean): string {
   if (hasHostTelemetry) {
-    return "Instance metadata requests are visible here because the case holds host telemetry. A request that a process event did not capture is still invisible.";
+    return "Instance metadata requests are visible here because the case holds host telemetry. A request that no process event captured is still invisible.";
   }
   if (hasCloudAudit) {
     return "This case holds cloud audit logs but no host telemetry. The instance metadata service produces NO audit-log record — the request never leaves the instance — so no conclusion about metadata credential access can be drawn from these logs either way. Collect host process telemetry, web-server access logs, or VPC flow logs from the instance to answer the question.";
   }
   return "No evidence in this case can show whether the instance metadata service was queried.";
+}
+
+/** The id of the coverage event, so a re-merge replaces it instead of adding another. */
+export const COVERAGE_EVENT_ID = "cloud-metadata-coverage";
+
+const CLOUD_AUDIT_RE = /^(?:AWS|GCP|Azure|M365|Google Workspace|Okta)\b/;
+
+/**
+ * One event saying the question could not be answered, when that is the case.
+ *
+ * Without this, explainVisibility was an exported string builder no analyst ever saw — the exact
+ * defect this issue's earlier items already shipped twice. A silent pass over a case with no host
+ * telemetry reads as "nothing found", and "nothing found" is the wrong answer when nothing could
+ * have been found.
+ */
+export function metadataCoverageEvent(events: readonly ForensicEvent[]): ForensicEvent | null {
+  let hasCloudAudit = false;
+  let hasHostTelemetry = false;
+  for (const e of events) {
+    if (e.id === COVERAGE_EVENT_ID) continue;
+    if (e.processName) hasHostTelemetry = true;
+    if (CLOUD_AUDIT_RE.test(e.description ?? "")) hasCloudAudit = true;
+    if (hasHostTelemetry) return null; // the gap does not exist
+  }
+  if (!hasCloudAudit) return null;
+  return {
+    id: COVERAGE_EVENT_ID,
+    timestamp:
+      events.find((e) => Number.isFinite(Date.parse(e.timestamp ?? "")))?.timestamp ??
+      new Date().toISOString(),
+    description: `Cloud coverage gap ${METADATA_MARKER} ${explainVisibility(false, true)}]`,
+    severity: "Medium",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    sources: ["Coverage"],
+  };
 }

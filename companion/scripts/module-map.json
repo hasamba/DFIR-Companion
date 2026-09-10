@@ -397,6 +397,7 @@
     "promptBudget.ts": "analysis/ai",
     "promptCapabilities.ts": "analysis/ai",
     "pstreeDepth.ts": "analysis/ingest",
+    "publicAddress.ts": "shared",
     "pushAuth.ts": "analysis/notify",
     "pushPayload.ts": "analysis/notify",
     "pushTokenStore.ts": "analysis/notify",

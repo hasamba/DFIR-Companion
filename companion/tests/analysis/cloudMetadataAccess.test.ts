@@ -108,18 +108,31 @@ describe("gradeHit — the endpoint alone is never the finding", () => {
     ).toBeNull();
   });
 
-  it("reports a web server reading the credential path", () => {
-    for (const p of ["nginx", "php-fpm8.2", "java", "gunicorn", "w3wp.exe"]) {
+  // ON A CONTAINER THE APPLICATION IS THE SDK. An ECS task's executable is "node", an EKS pod's is
+  // "java", a boto3 worker's is "python3", and reading this endpoint is how all three get
+  // credentials at all. Grading those High fired on every healthy workload in a container estate.
+  it("reports a language runtime or web server at Medium, and says why the name cannot decide", () => {
+    for (const p of ["nginx", "php-fpm8.2", "java", "node", "python3.11", "gunicorn", "ruby", "w3wp.exe"]) {
       const v = gradeHit(hit({ process: p }), CRED);
-      expect(v?.severity).toBe("High");
-      expect(v?.mitre).toContain("T1552.005");
+      expect(v?.severity, p).toBe("Medium");
+      expect(v?.reason).toContain("the application and the SDK are the same process");
+      expect(v?.reason).toContain("What would");
     }
   });
 
-  it("reports a shell or transfer tool reading the credential path", () => {
-    const v = gradeHit(hit({ process: "curl" }), CRED);
+  // An SDK's HTTP call never appears on a command line. A hand-written request does.
+  it("raises a runtime to High when the command line itself names the URL", () => {
+    const v = gradeHit(hit({ process: "node", commandLineNamesTarget: true }), CRED);
     expect(v?.severity).toBe("High");
-    expect(v?.reason).toContain("used from anywhere");
+    expect(v?.reason).toContain("written by hand rather than made by a library");
+  });
+
+  it("reports a transfer tool reading the credential path", () => {
+    for (const p of ["curl", "wget", "socat", "ncat"]) {
+      const v = gradeHit(hit({ process: p }), CRED);
+      expect(v?.severity, p).toBe("High");
+    }
+    expect(gradeHit(hit({ process: "curl" }), CRED)?.reason).toContain("a library never runs curl");
   });
 
   it("reports an SSRF-shaped request whatever the path", () => {
@@ -144,7 +157,7 @@ describe("gradeHit — the endpoint alone is never the finding", () => {
 });
 
 describe("explainMetadataAccess — the timeline pass", () => {
-  it("raises and explains a web server reading the credential path", () => {
+  it("explains a web server reading the credential path, at Medium", () => {
     const [out] = explainMetadataAccess([
       ev({
         description: `Process created: nginx requested ${CRED}`,
@@ -152,9 +165,32 @@ describe("explainMetadataAccess — the timeline pass", () => {
         severity: "Info",
       }),
     ]);
-    expect(out.severity).toBe("High");
+    expect(out.severity).toBe("Medium");
     expect(out.description).toContain("[metadata credential access:");
     expect(out.mitreTechniques).toContain("T1552.005");
+  });
+
+  // A percent-encoded user agent is the ORDINARY spelling. Joining the raw and decoded text into
+  // one string made every URL count twice, so one URL plus one percent sign read as a forgery —
+  // and the SSRF branch runs before the SDK allow-list, so nothing downstream could save it.
+  it("does not call an SDK reading its own role an SSRF because the line contains a percent sign", () => {
+    const events = [
+      ev({
+        description: `GET ${CRED} UA=aws-sdk-go%2F1.44`,
+        processName: "/usr/bin/amazon-ssm-agent",
+      }),
+    ];
+    expect(explainMetadataAccess(events)).toBe(events);
+  });
+
+  it("does not call an ordinary web log line an SSRF for carrying a referrer", () => {
+    const events = [
+      ev({
+        description:
+          '10.0.0.1 - - [01/Jan/2026:10:00:00] "GET /a HTTP/1.1" 200 12 "http://app.test/b" "Mozilla/5.0" 169.254.169.254',
+      }),
+    ];
+    expect(explainMetadataAccess(events)).toBe(events);
   });
 
   it("leaves ordinary SDK traffic alone", () => {
@@ -191,14 +227,53 @@ describe("explainMetadataAccess — the timeline pass", () => {
 describe("instance credentials used from somewhere the instance is not", () => {
   const call = (over: Partial<ForensicEvent> = {}) =>
     ev({
-      description: "CloudTrail: s3:ListBuckets by arn:aws:sts::1234:assumed-role/app-role/i-0abc123def456",
+      description:
+        "CloudTrail: s3:ListBuckets by arn:aws:sts::123456789012:assumed-role/app-role/i-0abc123def456789",
       srcIp: "203.0.113.9",
       ...over,
     });
 
   it("recognises an instance-role identity", () => {
-    expect(isInstanceRoleIdentity("arn:aws:sts::1234:assumed-role/app-role/i-0abc123def456")).toBe(true);
-    expect(isInstanceRoleIdentity("arn:aws:sts::1234:assumed-role/admin/alice")).toBe(false);
+    expect(isInstanceRoleIdentity("arn:aws:sts::123456789012:assumed-role/app-role/i-0abc123def456789")).toBe(
+      true,
+    );
+    expect(isInstanceRoleIdentity("arn:aws:sts::123456789012:assumed-role/admin/alice")).toBe(false);
+  });
+
+  // Descriptions are built from IMPORTED data. The bare assumed-role/…/i-… fragment matched a URL
+  // path, an S3 key and a filename, planting a High credential-theft claim on unrelated evidence.
+  it("cannot be planted by an attacker-chosen path", () => {
+    for (const text of [
+      "Squid: GET https://cdn.evil.test/assumed-role/x/i-0123456789abcdef/payload.bin",
+      "/var/tmp/assumed-role/loader/i-deadbeefcafe0001",
+      "SharePoint FileDownloaded: notes-on-assumed-role/policy/i-0000000000000000.docx",
+    ]) {
+      expect(isInstanceRoleIdentity(text), text).toBe(false);
+    }
+  });
+
+  // awsImport puts the caller address in the canonical envelope and never sets the flat field, so
+  // reading only srcIp meant this never fired on the one CloudTrail importer the product has.
+  it("reads the source address out of the canonical envelope", () => {
+    const e = {
+      ...call({ srcIp: undefined }),
+      canonical: { network: { source: { address: "203.0.113.9" } } },
+    } as unknown as ForensicEvent;
+    expect(instanceCredentialUseAway([e])[0].severity).toBe("High");
+  });
+
+  // An address the code cannot read is a gap, not a finding either way.
+  it("says an unreadable address could not be read, and does not raise on it", () => {
+    const [out] = instanceCredentialUseAway([call({ srcIp: "not-an-address" })]);
+    expect(out.severity).toBe("Info");
+    expect(out.description).toContain("could not be read as an address");
+    expect(out.description).toContain("not evidence that they were not");
+  });
+
+  it("treats an IPv6 source as public rather than silently as internal", () => {
+    expect(instanceCredentialUseAway([call({ srcIp: "2001:db8::1" })])[0].severity).toBe("High");
+    const local = instanceCredentialUseAway([call({ srcIp: "fe80::1" })]);
+    expect(local[0].severity).toBe("Info");
   });
 
   it("raises a call made from a public address", () => {
@@ -222,7 +297,9 @@ describe("instance credentials used from somewhere the instance is not", () => {
 
   it("says nothing about a human role used from anywhere", () => {
     const events = [
-      call({ description: "CloudTrail: s3:ListBuckets by arn:aws:sts::1234:assumed-role/admin/alice" }),
+      call({
+        description: "CloudTrail: s3:ListBuckets by arn:aws:sts::123456789012:assumed-role/admin/alice",
+      }),
     ];
     expect(instanceCredentialUseAway(events)).toBe(events);
   });

@@ -17,7 +17,11 @@ import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
-import { explainMetadataAccess, instanceCredentialUseAway } from "./cloudMetadataAccess.js";
+import {
+  explainMetadataAccess,
+  instanceCredentialUseAway,
+  metadataCoverageEvent,
+} from "./cloudMetadataAccess.js";
 import { summarizeBulkReads } from "./cloudBulkRead.js";
 import { markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { toUtcIso } from "./timeUtc.js";
@@ -376,7 +380,12 @@ export function mergeDelta(
   // request and the process that made it routinely arrive from different sources — a web access log
   // and an EDR process event — and because the second half of the finding, an instance role used
   // from an address the instance does not have, lives in the cloud audit log instead. Only raises.
-  const withMetadata = instanceCredentialUseAway(explainMetadataAccess(withCertutil));
+  const explained = instanceCredentialUseAway(explainMetadataAccess(withCertutil));
+  // The metadata service leaves no audit-log record at all, so a case with only cloud logs can say
+  // nothing about it either way. That gap is put ON the timeline rather than left as silence —
+  // "nothing found" is the wrong answer when nothing could have been found. Replaced, not appended.
+  const coverage = metadataCoverageEvent(explained);
+  const withMetadata = coverage ? [...explained.filter((e) => e.id !== coverage.id), coverage] : explained;
   // One bounded summary per bulk object-read session (#908 item 8). It ADDS a summary event and
   // touches none of the reads themselves: promoting forty thousand GetObject rows would destroy the
   // timeline and put the whole export in front of the AI, which is what the forensic/super-timeline

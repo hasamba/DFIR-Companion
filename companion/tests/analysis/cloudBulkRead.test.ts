@@ -14,6 +14,9 @@ import {
   objectLoggingNote,
   MIN_OBJECTS,
   MIN_CONTAINERS,
+  MAX_RECORDS_PER_GROUP,
+  recurringPrincipals,
+  roleSegment,
   type BulkGroup,
 } from "../../src/analysis/cloudBulkRead.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -22,6 +25,8 @@ let seq = 0;
 const at = (min: number) => new Date(Date.parse("2026-01-01T10:00:00Z") + min * 60000).toISOString();
 
 /** A cloud read event as an importer that stamps the canonical envelope produces it. */
+const ROLE_PRINCIPAL = "arn:aws:sts::123456789012:assumed-role/app-role/i-0abc123def456789";
+
 const read = (over: {
   action?: string;
   principal?: string;
@@ -40,7 +45,7 @@ const read = (over: {
     sourceScreenshots: [],
     canonical: {
       event: { action: over.action ?? "GetObject" },
-      actor: { name: over.principal ?? "app-role" },
+      actor: { name: over.principal ?? ROLE_PRINCIPAL },
       cloud: { resource: over.resource ?? "corp-data/report.pdf" },
       network: { source: { address: over.ip ?? "10.0.1.5" } },
     },
@@ -54,7 +59,7 @@ const manyReads = (n: number, over: Parameters<typeof read>[0] = {}) =>
 describe("readCloudRecord", () => {
   it("reads an object read out of the canonical envelope", () => {
     const r = readCloudRecord(read({}));
-    expect(r?.principal).toBe("app-role");
+    expect(r?.principal).toBe(ROLE_PRINCIPAL);
     expect(r?.container).toBe("corp-data");
     expect(r?.object).toBe("report.pdf");
   });
@@ -104,7 +109,7 @@ describe("groupBulkReads", () => {
     const g = groupBulkReads(manyReads(MIN_OBJECTS + 5));
     expect(g).toHaveLength(1);
     expect(g[0].objectCount).toBe(MIN_OBJECTS + 5);
-    expect(g[0].principal).toBe("app-role");
+    expect(g[0].principal).toBe(ROLE_PRINCIPAL);
   });
 
   it("says nothing about a handful of reads", () => {
@@ -161,7 +166,7 @@ describe("role assumption", () => {
   const assume = read({
     action: "AssumeRole",
     principal: "alice",
-    resource: "app-role",
+    resource: "arn:aws:iam::123456789012:role/app-role",
     min: -10,
     description: "AWS AssumeRole (sts) by alice from 203.0.113.9",
   });
@@ -185,7 +190,12 @@ describe("role assumption", () => {
   });
 
   it("ignores an assumption of a different role", () => {
-    const other = read({ action: "AssumeRole", principal: "bob", resource: "other-role", min: -5 });
+    const other = read({
+      action: "AssumeRole",
+      principal: "bob",
+      resource: "arn:aws:iam::123456789012:role/other-role",
+      min: -5,
+    });
     const group = groupBulkReads(manyReads(MIN_OBJECTS + 1))[0];
     expect(assumptionFor(group, roleAssumptions([other]))).toBeNull();
   });
@@ -193,7 +203,7 @@ describe("role assumption", () => {
 
 describe("gradeGroup — breadth is a question, not an answer", () => {
   const group = (over: Partial<BulkGroup> = {}): BulkGroup => ({
-    principal: "app-role",
+    principal: ROLE_PRINCIPAL,
     sourceIp: "10.0.1.5",
     userAgent: "",
     objectCount: 4000,
@@ -204,6 +214,7 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
     first: at(0),
     last: at(30),
     listOnly: false,
+    truncated: false,
     ...over,
   });
 
@@ -233,7 +244,7 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
   });
 
   it("honours an environment baseline of expected bulk readers", () => {
-    expect(gradeGroup(group(), { expectedPrincipals: ["APP-ROLE"] })).toBeNull();
+    expect(gradeGroup(group(), { expectedPrincipals: [ROLE_PRINCIPAL.toUpperCase()] })).toBeNull();
   });
 
   // The one number an analyst most wants, and no provider records it.
@@ -311,6 +322,162 @@ describe("objectLoggingNote", () => {
 
   it("says plainly when the case holds no object-storage activity", () => {
     expect(objectLoggingNote([])).toContain("no cloud object-storage activity");
+  });
+});
+
+// Every one of these was a real defect the first version shipped.
+describe("regressions", () => {
+  // firstStr returned the bucket and threw the key away, so objectCount was structurally always 0
+  // and MIN_OBJECTS was unreachable on real CloudTrail. Pinned against the real importer.
+  it("keeps the object key, so a real CloudTrail GetObject carries an object", async () => {
+    const { parseCloudTrail } = await import("../../src/analysis/awsImport.js");
+    const record = {
+      eventTime: "2026-01-01T10:00:00Z",
+      eventName: "GetObject",
+      eventSource: "s3.amazonaws.com",
+      userIdentity: { type: "AssumedRole", arn: ROLE_PRINCIPAL },
+      sourceIPAddress: "203.0.113.9",
+      requestParameters: { bucketName: "corp-data", key: "finance/q4.xlsx" },
+    };
+    const parsed = parseCloudTrail(JSON.stringify({ Records: [record] }));
+    expect(parsed.events[0].canonical?.cloud?.resource).toBe("corp-data/finance/q4.xlsx");
+  });
+
+  // 300 GetObject calls on 300 files collapsed into one aggregated event with a count of 300.
+  it("does not aggregate distinct object reads into one row", async () => {
+    const { parseCloudTrail } = await import("../../src/analysis/awsImport.js");
+    const Records = Array.from({ length: 60 }, (_v, i) => ({
+      eventTime: "2026-01-01T10:00:00Z",
+      eventName: "GetObject",
+      eventSource: "s3.amazonaws.com",
+      userIdentity: { type: "AssumedRole", arn: ROLE_PRINCIPAL },
+      sourceIPAddress: "203.0.113.9",
+      requestParameters: { bucketName: "corp-data", key: `finance/f-${i}.xlsx` },
+    }));
+    const parsed = parseCloudTrail(JSON.stringify({ Records }));
+    expect(new Set(parsed.events.map((e) => e.aggKey)).size).toBe(60);
+  });
+
+  // A management-plane call repeated by one principal genuinely is one thing.
+  it("still aggregates management-plane calls", async () => {
+    const { parseCloudTrail } = await import("../../src/analysis/awsImport.js");
+    const Records = Array.from({ length: 10 }, () => ({
+      eventTime: "2026-01-01T10:00:00Z",
+      eventName: "DescribeInstances",
+      eventSource: "ec2.amazonaws.com",
+      userIdentity: { type: "AssumedRole", arn: ROLE_PRINCIPAL },
+      sourceIPAddress: "10.0.0.1",
+      requestParameters: {},
+    }));
+    const parsed = parseCloudTrail(JSON.stringify({ Records }));
+    expect(new Set(parsed.events.map((e) => e.aggKey)).size).toBe(1);
+  });
+
+  // "M365 SharePoint: FileDownloaded by …" — reading the first word captured "SharePoint", so
+  // three of the actions READ_ACTION_RE lists could never be reached.
+  it("reads the action past a service segment in the description", () => {
+    const e = {
+      id: "m1",
+      timestamp: at(0),
+      description: "M365 SharePoint: FileDownloaded by alice@corp.test from 203.0.113.9",
+      severity: "Info",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    } as unknown as ForensicEvent;
+    expect(readCloudRecord(e)?.action).toBe("FileDownloaded");
+  });
+
+  // The densest-window scan was O(n^2) with an allocation per start index, inside the state lock.
+  it("scans a large group in one forward pass", () => {
+    const many = Array.from({ length: 20_000 }, (_v, i) =>
+      read({ resource: `corp-data/f-${i}.csv`, min: i * 0.002 }),
+    );
+    const started = Date.now();
+    const g = groupBulkReads(many);
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(g[0].objectCount).toBeGreaterThan(1_000);
+  });
+
+  // correlate.ts keys duplicates on timestamp + cleanDescription + host, and cleanDescription
+  // strips the whole marker. With the identity only inside it, two sessions that started in the
+  // same second deduplicated into one and a data-theft finding vanished.
+  it("puts the principal and source outside the stripped marker", async () => {
+    const { cleanDescription } = await import("../../src/analysis/correlate.js");
+    const alice = manyReads(MIN_OBJECTS + 1, { principal: "alice" });
+    const bob = manyReads(MIN_OBJECTS + 1, { principal: "bob", ip: "198.51.100.4" });
+    const out = summarizeBulkReads([...alice, ...bob]);
+    const summaries = out.filter((e) => e.description.includes("[cloud bulk read:"));
+    expect(summaries).toHaveLength(2);
+    const cleaned = summaries.map((e) => cleanDescription(e.description));
+    expect(new Set(cleaned).size).toBe(2);
+  });
+
+  // role "admin" matched principal ".../superadmin-role/sess", and role "a" matched almost
+  // anything — a false causal attribution of one person's action to another.
+  it("matches the role segment exactly, not as a substring", () => {
+    const group = groupBulkReads(manyReads(MIN_OBJECTS + 1))[0];
+    expect(assumptionFor(group, [{ role: "app", by: "mallory", time: Date.parse(at(-5)) }])).toBeNull();
+    expect(
+      assumptionFor(group, [{ role: "superapp-role", by: "mallory", time: Date.parse(at(-5)) }]),
+    ).toBeNull();
+    expect(assumptionFor(group, [{ role: "app-role", by: "alice", time: Date.parse(at(-5)) }])?.by).toBe(
+      "alice",
+    );
+  });
+
+  it("reads the role name out of an ARN", () => {
+    expect(roleSegment("arn:aws:iam::123456789012:role/path/to/app-role")).toBe("app-role");
+    expect(roleSegment("app-role")).toBe("app-role");
+    expect(roleSegment("")).toBe("");
+  });
+
+  // A backup job reads at this scale every night; an operator does it once.
+  it("treats a principal that reads on several days as a scheduled job", () => {
+    const days = [0, 1, 2].flatMap((d) => manyReads(MIN_OBJECTS + 1, { min: d * 1440 }));
+    expect(recurringPrincipals(days)).toContain(ROLE_PRINCIPAL.toLowerCase());
+    expect(gradeGroup(groupBulkReads(days)[0], { recurringPrincipals: [ROLE_PRINCIPAL] })).toBeNull();
+  });
+
+  // objectLoggingNote was a string builder no analyst ever saw.
+  it("puts the object-logging gap on the timeline", () => {
+    const lists = Array.from({ length: 3 }, (_v, i) =>
+      read({ resource: `bucket-${i}`, action: "ListBucket", min: i }),
+    );
+    const out = summarizeBulkReads(lists);
+    const coverage = out.find((e) => e.id === "cloud-object-logging-coverage");
+    expect(coverage?.severity).toBe("Medium");
+    expect(coverage?.description).toContain("data events");
+    // and it is replaced, not duplicated, on a re-merge
+    expect(summarizeBulkReads(out).filter((e) => e.id === "cloud-object-logging-coverage")).toHaveLength(1);
+  });
+
+  it("says nothing about object logging when object reads are present", () => {
+    expect(
+      summarizeBulkReads(manyReads(3)).find((e) => e.id === "cloud-object-logging-coverage"),
+    ).toBeUndefined();
+  });
+
+  it("discloses when a group held more records than one pass measures", () => {
+    const g = groupBulkReads(
+      Array.from({ length: MAX_RECORDS_PER_GROUP + 10 }, (_v, i) =>
+        read({ resource: `corp-data/f-${i}.csv`, min: i * 0.001 }),
+      ),
+    );
+    expect(g[0].truncated).toBe(true);
+    expect(gradeGroup(g[0])?.reason).toContain("the real total is higher");
+  });
+
+  it("says an unreadable source address was unreadable, not internal", () => {
+    const g = groupBulkReads(manyReads(MIN_OBJECTS + 1, { ip: "not-an-address" }))[0];
+    const v = gradeGroup(g);
+    expect(v?.severity).toBe("Medium");
+    expect(v?.reason).toContain("could not be read");
+  });
+
+  it("treats an IPv6 source outside the cloud as corroboration", () => {
+    const g = groupBulkReads(manyReads(MIN_OBJECTS + 1, { ip: "2001:db8::1" }))[0];
+    expect(gradeGroup(g)?.severity).toBe("High");
   });
 });
 
