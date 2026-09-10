@@ -94,7 +94,10 @@ const DUAL_USE: Record<string, string[]> = {
   "certutil.exe": ["T1105", "T1140"],
   "bitsadmin.exe": ["T1197", "T1105"],
   "mshta.exe": ["T1218.005"],
-  "regsvr32.exe": ["T1218.010"],
+  // The PARENT technique only. A Prefetch entry shows regsvr32 ran and carries no command line, so
+  // it cannot show whether the scriptlet sub-technique (T1218.010) applies — that needs the /i:
+  // switch and a remote source, which tradecraftRules.ts matches on the command line.
+  "regsvr32.exe": ["T1218"],
   "installutil.exe": ["T1218.004"],
   "regasm.exe": ["T1218.009"],
   "regsvcs.exe": ["T1218.009"],

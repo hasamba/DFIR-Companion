@@ -115,6 +115,21 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
     weight: "strong",
     ids: ["T1105", "T1218.007"],
   },
+  // Squiblydoo (T1218.010): regsvr32 is told to register a COM scriptlet, and the scriptlet is
+  // fetched from a REMOTE source. The signed Microsoft binary does the downloading and the
+  // executing, so nothing unsigned touches disk and application allow-listing sees only regsvr32.
+  //
+  // Three things are required together, and the issue is explicit that the executable name alone is
+  // not one of them: regsvr32, the /i: scriptlet switch, and a remote source. Registering an
+  // ordinary local DLL is what regsvr32 is FOR, and grading that would flag every installer.
+  //
+  // A local .sct is deliberately not matched either. It is unusual, but it is not the
+  // remote-execution shape this technique names, and this rule is the precise one.
+  {
+    re: /\bregsvr32(?:\.exe)?\b[^\n]*\/i:\s*(?:https?:\/\/|\\\\[^\s\\]+\\)[^\n]*\bscrobj(?:\.dll)?\b/i,
+    weight: "strong",
+    ids: ["T1218.010", "T1105"],
+  },
   // curl/wget piping a fetched script directly into a shell interpreter (fetch-and-execute) — rarely
   // benign; a legitimate install script is normally saved to disk and reviewed/run separately.
   {
