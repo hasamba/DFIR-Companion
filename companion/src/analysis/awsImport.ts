@@ -75,9 +75,15 @@ const AWS_ACTIONS: Record<string, ActionDef> = {
   updateassumerolepolicy: { severity: "High", mitre: ["T1098"] },
   createpolicyversion: { severity: "High", mitre: ["T1098.003"] },
   setdefaultpolicyversion: { severity: "High", mitre: ["T1098.003"] },
-  // iam:PassRole priv-esc primitive + Lambda-based execution/persistence — from the IAM-priv-esc
-  // skill (Anthropic-Cybersecurity-Skills `detecting-aws-iam-privilege-escalation`, Apache-2.0).
-  passrole: { severity: "Medium", mitre: ["T1098"] },
+  // Lambda-based execution/persistence — from the IAM-priv-esc skill
+  // (Anthropic-Cybersecurity-Skills `detecting-aws-iam-privilege-escalation`, Apache-2.0).
+  //
+  // NO `passrole` ENTRY. `iam:PassRole` is a PERMISSION evaluated during another call, not an API
+  // that CloudTrail records under its own `eventName` — so a `passrole` key here could never match
+  // a real record. It sat in this table (and in a test that fabricated the impossible record) until
+  // the #931 review. Detecting role-passing means reading the assigned role out of the request
+  // parameters of the call that passes it (RunInstances, CreateFunction, ...), which #931 item 6
+  // proposes and this table cannot express.
   createfunction: { severity: "Medium", mitre: ["T1648"] },
   deactivatemfadevice: { severity: "High", mitre: ["T1556"] },
   deletevirtualmfadevice: { severity: "High", mitre: ["T1556"] },

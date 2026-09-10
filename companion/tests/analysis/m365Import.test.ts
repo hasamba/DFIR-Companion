@@ -127,20 +127,102 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(r.events[0].description).toContain("[FAILED");
   });
 
-  it("flags a ROPC legacy-auth sign-in (BAV2ROPC UserAgent) as Medium MFA-bypass, even with no error", () => {
-    const signin = {
-      createdDateTime: "2023-05-02T08:10:00Z",
-      userPrincipalName: "v@victim.com",
-      appDisplayName: "Azure CLI",
-      ipAddress: "198.51.100.9",
-      status: { errorCode: 0 },
-      userAgent: "python-requests/2.28 BAV2ROPC",
-    };
-    const r = parseM365Audit(JSON.stringify([signin]));
+  const signinRec = (over: Record<string, unknown>) => ({
+    createdDateTime: "2023-05-02T08:10:00Z",
+    userPrincipalName: "v@victim.com",
+    appDisplayName: "Azure CLI",
+    ipAddress: "198.51.100.9",
+    ...over,
+  });
+
+  it("flags a SUCCESSFUL ROPC legacy-auth sign-in (BAV2ROPC UserAgent) as Medium", () => {
+    const r = parseM365Audit(
+      JSON.stringify([signinRec({ status: { errorCode: 0 }, userAgent: "python-requests/2.28 BAV2ROPC" })]),
+    );
     const e = r.events[0];
     expect(e.severity).toBe("Medium");
-    expect(e.mitreTechniques).toEqual(expect.arrayContaining(["T1556.007", "T1621"]));
     expect(e.description).toContain("legacy-auth ROPC");
+  });
+
+  // ROPC is a legacy grant that shows no interactive MFA prompt. It is NOT an observed MFA bypass,
+  // and it is neither T1556.007 (Hybrid Identity) nor T1621 (MFA Request Generation — push
+  // bombing, which ROPC does not do). Both were asserted here, so the mis-mapping was pinned green.
+  it("does not claim an MFA-bypass technique for a ROPC sign-in", () => {
+    const r = parseM365Audit(
+      JSON.stringify([signinRec({ status: { errorCode: 0 }, userAgent: "python-requests/2.28 BAV2ROPC" })]),
+    );
+    const e = r.events[0];
+    expect(e.mitreTechniques).not.toContain("T1556.007");
+    expect(e.mitreTechniques).not.toContain("T1621");
+    expect(e.description).not.toContain("MFA bypass");
+  });
+
+  it("does not describe a BLOCKED ROPC attempt as a successful bypass", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({
+          status: { errorCode: 53003, failureReason: "Blocked by Conditional Access." },
+          userAgent: "python-requests/2.28 BAV2ROPC",
+        }),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.description).toContain("[FAILED 53003");
+    expect(e.severity).not.toBe("Medium"); // a blocked attempt is not graded like a landed one
+  });
+
+  // Every nonzero errorCode used to become Medium + T1110. Most failed sign-ins in a real tenant
+  // are interrupts, not password attacks (#931 item 3).
+  it.each([
+    [50074, "MFA challenge not passed"],
+    [50076, "MFA required by policy"],
+    [53003, "blocked by Conditional Access"],
+    [50055, "expired password"],
+    [50140, "keep-me-signed-in interrupt"],
+    [50058, "no SSO session — the most common code in a tenant export"],
+    [16000, "interaction required"],
+  ])("does not call errorCode %i a brute-force attempt (%s)", (code) => {
+    const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: code } })]));
+    const e = r.events[0];
+    expect(e.mitreTechniques).not.toContain("T1110");
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain(`[FAILED ${code}`);
+  });
+
+  it.each([50126, 50053, 50034, 50056, 50064])(
+    "keeps errorCode %i as a credential failure (T1110)",
+    (code) => {
+      const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: code } })]));
+      const e = r.events[0];
+      expect(e.mitreTechniques).toContain("T1110");
+      expect(e.severity).toBe("Medium");
+    },
+  );
+
+  // `Number(x) || 0` folded a non-numeric status into 0 — the value a genuine success carries — so
+  // an unreadable outcome took the success path and shared the success aggregation bucket.
+  it("does not read an unparseable errorCode as a success", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({ status: { errorCode: "unavailable" } }),
+        signinRec({ status: { errorCode: 0 } }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2); // distinct aggregation keys, not one merged row
+    const unknown = r.events.find((e) => e.description.includes("outcome unknown"));
+    expect(unknown).toBeDefined();
+    expect(unknown?.severity).toBe("Low");
+    expect(unknown?.mitreTechniques).not.toContain("T1110");
+  });
+
+  it("keeps a ROPC sign-in distinct from an ordinary one by the same user", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({ status: { errorCode: 0 }, userAgent: "python-requests/2.28 BAV2ROPC" }),
+        signinRec({ status: { errorCode: 0 }, userAgent: "Mozilla/5.0" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
   });
 
   it("maps an Entra directory audit (initiatedBy + targetResources)", () => {

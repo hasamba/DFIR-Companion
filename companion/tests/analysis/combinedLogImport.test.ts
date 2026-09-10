@@ -241,4 +241,31 @@ describe("parseCombinedLog — IOC provenance", () => {
     expect(iocB?.sourceAggKeys).toEqual([eventB?.aggKey]);
     expect(iocA?.sourceAggKeys).not.toEqual(iocB?.sourceAggKeys);
   });
+  // The client address is the first field of every combined-log line, and the mapper used to
+  // destructure straight past it — no `srcIp` reached any event, so "which host hit this server"
+  // had no answer (#930 item 3).
+  it("captures the client address as srcIp", () => {
+    const sink = new Map<string, SiemIoc>();
+    const line =
+      '203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET /index.php HTTP/1.1" 200 512 "-" "curl/8.0"';
+    expect(mapCombinedLogLine(line, sink)!.srcIp).toBe("203.0.113.7");
+  });
+
+  it("leaves srcIp unset when the server logged a hostname or no client at all", () => {
+    const sink = new Map<string, SiemIoc>();
+    const named =
+      'workstation.corp.example - - [10/Jan/2026:00:00:00 +0000] "GET /a HTTP/1.1" 200 1 "-" "curl/8.0"';
+    const absent = '- - - [10/Jan/2026:00:00:00 +0000] "GET /a HTTP/1.1" 200 1 "-" "curl/8.0"';
+    expect(mapCombinedLogLine(named, sink)!.srcIp).toBeUndefined();
+    expect(mapCombinedLogLine(absent, sink)!.srcIp).toBeUndefined();
+  });
+
+  // A `srcIp` that is not part of the key would pin ONE arbitrary client to a collapsed group.
+  it("does not merge two clients requesting the same path into one attributed row", () => {
+    const a = '203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET /login HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const b = '198.51.100.9 - - [10/Jan/2026:00:01:00 +0000] "GET /login HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const parsed = parseCombinedLog(`${a}\n${b}`);
+    expect(parsed.events).toHaveLength(2);
+    expect(parsed.events.map((e) => e.srcIp).sort()).toEqual(["198.51.100.9", "203.0.113.7"]);
+  });
 });

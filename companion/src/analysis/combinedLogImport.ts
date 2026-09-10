@@ -138,14 +138,31 @@ function classify(uri: string, status: number): { severity: Severity; mitre: str
   return { severity, mitre };
 }
 
+// The first field of a combined-log line is the client, but only as an ADDRESS when the server
+// logs one — `HostnameLookups On` puts a resolved name there instead, and "-" means unavailable.
+// `srcIp` must hold an address or nothing, so a name is dropped rather than stored as one.
+function clientAddress(raw: string | undefined): string {
+  const v = (raw ?? "").trim();
+  if (!v || v === "-") return "";
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(v)) return v;
+  if (/^[0-9a-f]*:[0-9a-f:]*$/i.test(v) && v.includes(":")) return v; // IPv6, incl. "::1"
+  return "";
+}
+
 // Map one combined-log line to a forensic event (collecting IOCs), or null if it doesn't match.
 export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): MappedEvent | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
-  const [, , , userRaw, dateRaw, method, uri, statusRaw, bytesRaw, refererRaw, uaRaw] = m;
+  const [, clientRaw, , userRaw, dateRaw, method, uri, statusRaw, bytesRaw, refererRaw, uaRaw] = m;
   const status = Number(statusRaw);
   const timestamp = parseApacheDate(dateRaw);
   const user = userRaw && userRaw !== "-" ? userRaw : "";
+  // The client address is the FIRST field of a combined-log line, and it was the one field this
+  // mapper threw away: the capture group existed, the destructuring skipped past it, and no
+  // `srcIp` ever reached the event — while the sibling Zeek flow mapper has populated `srcIp` all
+  // along. Every "which host attacked this server" question dead-ends without it (#930 item 3).
+  // "-" is the placeholder when the address is unavailable.
+  const client = clientAddress(clientRaw);
   const host = requestHost(uri);
   if (host) addIoc(sink, "domain", host);
 
@@ -189,11 +206,18 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
     // merges into a busier ref-less sibling on the same path and its secret vanishes from the
     // description — leaving a Medium with no visible reason. Measured on the spillage-full-matrix
     // benchmark: the JWT in a Referer on `GET /` produced no distinguishable event at all.
+    // The client address is part of the key, not just the row. Aggregation keeps ONE row's
+    // identity (the first, unless a later row is strictly more severe), so a `srcIp` that is not a
+    // discriminator would pin one arbitrary client's address to a group of thousands — a WRONG
+    // attribution, which is worse than the missing field it replaces. Keying on it costs one group
+    // per client per path; these rows are Info and land in the analyst-only super-timeline, so the
+    // extra groups do not reach the AI prompt.
     aggKey:
-      `weblog|${method}|${host}|${uri.split("?")[0]}|${status}${spill ? `|spill:${spill.families.join(",")}` : ""}`
+      `weblog|${method}|${host}|${uri.split("?")[0]}|${status}|${client}${spill ? `|spill:${spill.families.join(",")}` : ""}`
         .toLowerCase()
         .slice(0, 400),
     sources: [COMBINED_LOG_SOURCE],
+    ...(client ? { srcIp: client } : {}),
   };
 }
 
