@@ -8,8 +8,15 @@
 // NOTHING IS EVALUATED. Every judgement is a pattern match against the text as collected. A grader
 // that ran a candidate command to find out what it does would be the vulnerability, not the tool.
 
-/** Directories any account can write and nothing should run from. */
-export const TRANSIENT_RE = /^\/(?:tmp|var\/tmp|dev\/shm|run\/shm|var\/lock)(?:\/|$)/;
+/**
+ * Directories any account can write and nothing should run from — on BOTH platforms.
+ *
+ * macOS cron and shell profiles are graded by these same rules (#908 item 6), and the first version
+ * knew only the Linux directories. So `/private/tmp/x.sh` in a Mac crontab, which is the ordinary
+ * spelling of /tmp on macOS, matched nothing at all.
+ */
+export const TRANSIENT_RE =
+  /^\/(?:tmp|var\/tmp|dev\/shm|run\/shm|var\/lock|private\/tmp|private\/var\/tmp|private\/var\/folders|Users\/Shared|Volumes)(?:\/|$)/i;
 
 /**
  * How much of one command the payload regexes read.
@@ -82,11 +89,16 @@ export function commandTarget(command: string): string {
   return "";
 }
 
-/** Does a path sit under a user's home directory? Returns the account, or "". */
+/**
+ * Does a path sit under a user's home directory? Returns the account, or "".
+ *
+ * /Users is macOS's /home. Missing it meant every "root runs a file a user can rewrite" check
+ * silently skipped every macOS path — the rule existed and could never fire there.
+ */
 export function homeAccount(path: string): string {
-  const m = /^\/home\/([^/]+)\//.exec(path);
-  if (m) return m[1];
-  if (/^\/root\//.test(path)) return "root";
+  const m = /^\/(?:home|Users)\/([^/]+)\//.exec(path);
+  if (m) return m[1] === "Shared" ? "" : m[1];
+  if (/^\/(?:root|private\/var\/root)\//.test(path)) return "root";
   return "";
 }
 
@@ -104,7 +116,10 @@ export function judgePayload(command: string): PayloadJudgement {
   const target = commandTarget(cmd);
   // A transient path ANYWHERE in the command counts: `bash /tmp/x.sh` runs bash, but the code is the
   // argument. Reading only the first token missed every wrapper form.
-  const transientArg = /(?:^|[\s"'=(])\/(?:tmp|var\/tmp|dev\/shm|run\/shm)\//.test(cmd);
+  const transientArg =
+    /(?:^|[\s"'=(])\/(?:tmp|var\/tmp|dev\/shm|run\/shm|private\/tmp|private\/var\/tmp|private\/var\/folders|Users\/Shared)\//i.test(
+      cmd,
+    );
   return {
     target,
     transient: TRANSIENT_RE.test(target) || transientArg,

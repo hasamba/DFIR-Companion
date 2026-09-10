@@ -51,9 +51,38 @@ export const MAX_EVENTS = 2_000;
 const SECRET_KEY_RE =
   /pass|token|secret|key|credential|auth|cookie|sas_url|signature|sig$|bearer|session|private/i;
 
+/**
+ * Strip credentials out of a value that is KEPT for its destination facts.
+ *
+ * `url`, `endpoint` and `host` are evidence — they say where the data goes — and they routinely
+ * carry a credential inside them. A WebDAV url carries the account and its password inline,
+ * ahead of the host; an Azure staging url carries a shared-access signature that grants write
+ * access on its own. The first version kept those verbatim, so a live secret
+ * reached the event description, the IOC list, every export and the AI prompt — through the branch
+ * that exists to preserve evidence.
+ *
+ * The destination survives; the secret does not.
+ */
+export function stripEmbeddedSecrets(value: string): string {
+  let out = (value ?? "").replace(
+    /(\b[a-z][\w+.-]*:\/\/)([^/@\s]+)@/gi,
+    (_m, scheme: string, userinfo: string) => {
+      const user = userinfo.split(":")[0];
+      return `${scheme}${user}:${REDACTED}@`;
+    },
+  );
+  // Signed-URL and token parameters. The parameter NAME is kept, because "this url carries a
+  // signature" is itself evidence; the value is not.
+  out = out.replace(
+    /([?&](?:[\w.-]*(?:sig|signature|token|key|secret|password|passwd|pwd|credential|auth|sas)[\w.-]*)=)[^&\s]*/gi,
+    `$1${REDACTED}`,
+  );
+  return out;
+}
+
 /** Keys that are destination facts, not secrets. Kept because they are the evidence. */
 const KEEP_KEY_RE =
-  /^(?:type|provider|region|endpoint|location_constraint|storage_class|bucket|container|team_drive|root_folder_id|url|host|port|user|username|account|email|drive_id|upload_cutoff|remote|env_auth|acl)$/i;
+  /^(?:type|provider|region|endpoint|location_constraint|storage_class|bucket|container|team_drive|root_folder_id|url|host|port|user|username|account|email|drive_id|upload_cutoff|remote|env_auth|auth_url|auth_version|acl|tenant|tenant_domain|domain|project|zone|nextcloud_chunk_size|vendor)$/i;
 
 export interface RcloneRemote {
   name: string;
@@ -107,12 +136,16 @@ export function parseRcloneConfig(text: string): RcloneRemote[] {
       current.settings[key.toLowerCase()] = value;
       continue;
     }
-    if (SECRET_KEY_RE.test(key)) {
-      current.secretsPresent.push({ key: key.toLowerCase(), length: value.length });
+    // KEEP is tested FIRST. `env_auth` contains "auth", so the secret test claimed it and the
+    // report told the analyst to rotate a boolean — `env_auth = true` means the opposite, that no
+    // credential is stored in this file at all. `auth_url` (an OpenStack endpoint, i.e. evidence of
+    // the destination) and `auth_version` were lost the same way.
+    if (KEEP_KEY_RE.test(key)) {
+      current.settings[key.toLowerCase()] = stripEmbeddedSecrets(value).slice(0, 300);
       continue;
     }
-    if (KEEP_KEY_RE.test(key)) {
-      current.settings[key.toLowerCase()] = value.slice(0, 300);
+    if (SECRET_KEY_RE.test(key)) {
+      current.secretsPresent.push({ key: key.toLowerCase(), length: value.length });
       continue;
     }
     // An unrecognised key. Kept, but only if it holds nothing that looks like a secret — a long
@@ -171,16 +204,32 @@ const TRANSFERRED_RE = /^Transferred:\s+([\d.]+\s*[KMGTP]?i?B)\s*\/\s*([\d.]+\s*
 const MEGA_LINE_RE =
   /^(\d{2}\/\d{2}-\d{2}:\d{2}:\d{2})(?:\.\d+)?\s+(INFO|ERR|ERROR|WARN|DBG|DEBUG|CRIT)\s+(.*)$/i;
 
-/** Is this text an rclone transfer log? */
+/**
+ * Is this text an rclone transfer log?
+ *
+ * The line SHAPE alone is not enough. `2026/01/02 09:00:00 INFO  : x: Copied (new)` is a generic
+ * timestamped log line, and one of them anywhere in the first 500 lines claimed the whole file —
+ * so a concatenated or combined log holding a single rclone line was routed here entirely and
+ * everything else in it was dropped. rclone's own vocabulary has to be present too.
+ */
 export function isRcloneLog(text: string): boolean {
-  return RCLONE_LINE_RE.test(firstMatchingLine(text, RCLONE_LINE_RE) ?? "");
+  const head = (text ?? "").slice(0, 65_536);
+  if (!firstMatchingLine(head, RCLONE_LINE_RE)) return false;
+  return /\brclone\b|: Copied \(|: Failed to copy|^Transferred:|\bChecks:\s+\d/im.test(head);
 }
 
 /** Is this text a MEGAsync or megacmd log? */
 export function isMegaLog(text: string): boolean {
   const head = (text ?? "").slice(0, 65_536);
-  if (!/\bMEGA(?:sync|cmd|client|sdk)?\b/i.test(head)) return false;
-  return MEGA_LINE_RE.test(firstMatchingLine(head, MEGA_LINE_RE) ?? "");
+  const line = firstMatchingLine(head, MEGA_LINE_RE);
+  if (!line) return false;
+  // The MEGA marker has to be in a MATCHING line, not merely somewhere in the first 64 KB. Scanning
+  // the whole head let any application log that happened to mention a `mega-` filename and used
+  // `MM/DD-HH:MM:SS LEVEL` be claimed in full.
+  return (
+    /\bMEGA(?:sync|cmd|client|sdk)\b/i.test(head) &&
+    /\bMEGA(?:sync|cmd|client|sdk)?\b|\bSync\b|\bTransfer\b/i.test(line)
+  );
 }
 
 function firstMatchingLine(text: string, re: RegExp): string | null {
@@ -208,21 +257,54 @@ function rcloneTime(stamp: string): string {
   return `${date.replace(/\//g, "-")}T${clock}`;
 }
 
-/** MEGAsync omits the year. Take it from the reference time rather than inventing one. */
-function megaTime(stamp: string, yearFrom: string): string {
+/**
+ * MEGAsync omits the year. Take it from the reference time rather than inventing one.
+ *
+ * And step BACK a year when that would put the event in the future. A December log imported in
+ * January otherwise landed eleven months AFTER the case instead of days before it — an exfiltration
+ * placed on the wrong side of the incident is worse than one with no date at all.
+ */
+export function megaTime(stamp: string, yearFrom: string): string {
   const [md, clock] = stamp.split("-");
   const [month, day] = md.split("/");
-  const year = new Date(Date.parse(yearFrom) || Date.now()).getUTCFullYear();
+  const ref = Date.parse(yearFrom) || Date.now();
+  let year = new Date(ref).getUTCFullYear();
+  if (Date.parse(`${year}-${month}-${day}T${clock}Z`) > ref + 24 * 60 * 60 * 1000) year -= 1;
   return `${year}-${month}-${day}T${clock}`;
 }
 
 export function parseRcloneLog(text: string): TransferRecord[] {
   const out: TransferRecord[] = [];
+  let lastTime = "";
   for (const raw of (text ?? "").split(/\r?\n/).slice(0, MAX_LINES)) {
     if (out.length >= MAX_EVENTS) break;
     const line = raw.trim();
+
+    // THE STATS BLOCK HAS NO TIMESTAMP PREFIX. rclone writes it on its own lines:
+    //
+    //   2026/01/02 09:05:00 INFO  :
+    //   Transferred:        4.627 GiB / 4.627 GiB, 100%, 5.123 MiB/s, ETA 0s
+    //   Checks:                 2 / 2, 100%
+    //
+    // The single-line form only appears with --stats-one-line, which is not the default — so
+    // requiring the prefix meant the BYTE TOTAL, the one number no cloud audit log records and the
+    // headline claim of this importer, never fired on an ordinary rclone log.
+    const standalone = TRANSFERRED_RE.exec(line);
+    if (standalone) {
+      out.push({
+        time: lastTime,
+        file: "",
+        outcome: "summary",
+        destination: "",
+        bytes: parseSize(standalone[1]),
+        raw: stripEmbeddedSecrets(line),
+      });
+      continue;
+    }
+
     const m = RCLONE_LINE_RE.exec(line);
     if (!m) continue;
+    lastTime = rcloneTime(m[1]);
     const time = rcloneTime(m[1]);
     const body = m[3];
 
@@ -246,7 +328,10 @@ export function parseRcloneLog(text: string): TransferRecord[] {
     const what = body.slice(split + 2).trim();
     const outcome = rcloneOutcome(what);
     if (!outcome) continue;
-    out.push({ time, file, outcome, destination: "", bytes: null, raw: line });
+    // THE LOG LINE IS REDACTED TOO. Redaction existed only on the config path, and every grade
+    // appends 300 characters of the raw line — so an rclone error that echoes a presigned URL put
+    // an access key id and a request signature straight into a forensic event.
+    out.push({ time, file, outcome, destination: "", bytes: null, raw: stripEmbeddedSecrets(line) });
   }
   return out;
 }
@@ -276,7 +361,7 @@ export function parseMegaLog(text: string, yearFrom: string): TransferRecord[] {
         outcome: "copied",
         destination: "MEGA",
         bytes: null,
-        raw: line,
+        raw: stripEmbeddedSecrets(line),
       });
       continue;
     }
@@ -288,7 +373,7 @@ export function parseMegaLog(text: string, yearFrom: string): TransferRecord[] {
         outcome: "failed",
         destination: "MEGA",
         bytes: null,
-        raw: line,
+        raw: stripEmbeddedSecrets(line),
       });
     }
   }
@@ -431,7 +516,12 @@ export function artifactVersion(text: string): string {
  */
 export function versionNote(text: string): string {
   const v = artifactVersion(text);
-  return v
-    ? `The artifact declares version ${v}.`
-    : "The artifact carries no version marker, so the format this parser assumed could not be confirmed against the tool that wrote it. Check the fields against the raw file before relying on them.";
+  const zone =
+    " rclone writes local time with no time zone and MEGAsync writes no year, so these events are placed at the endpoint's WALL-CLOCK reading and stored as if it were UTC. On an endpoint that is not on UTC the whole set is shifted by its offset — correct for that before correlating these against cloud audit logs.";
+  return (
+    (v
+      ? `The artifact declares version ${v}.`
+      : "The artifact carries no version marker, so the format this parser assumed could not be confirmed against the tool that wrote it. Check the fields against the raw file before relying on them.") +
+    zone
+  );
 }

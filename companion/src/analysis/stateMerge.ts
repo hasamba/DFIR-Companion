@@ -23,7 +23,7 @@ import {
   metadataCoverageEvent,
 } from "./cloudMetadataAccess.js";
 import { summarizeBulkReads } from "./cloudBulkRead.js";
-import { markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
+import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
@@ -395,7 +395,13 @@ export function mergeDelta(
   // Browsing by an account that cannot be interactive (#908 item 10). Here because the shellbag,
   // the logon that made a desktop session possible, and any archiving beside it arrive from three
   // different importers. Only raises, and only for an account something SAYS is noninteractive.
-  const withServiceBrowsing = markServiceAccountBrowsing(withBulkReads);
+  const browsingMarked = markServiceAccountBrowsing(withBulkReads);
+  // Browsing evidence that carries no account cannot be judged, and "no service-account browsing
+  // found" would report a collection gap as a result. The gap goes ON the timeline, replaceable.
+  const attributionGap = attributionCoverageEvent(browsingMarked);
+  const withServiceBrowsing = attributionGap
+    ? [...browsingMarked.filter((e) => e.id !== attributionGap.id), attributionGap]
+    : browsingMarked;
   // Container escape (#908 item 11). Here because the container's own command line, the host's
   // process telemetry and the host's persistence artifacts arrive from different importers — and
   // because a container-originated change to host persistence only reads as one event when both

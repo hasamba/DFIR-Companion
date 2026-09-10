@@ -42,6 +42,11 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const SERVICE_BROWSING_MARKER = "[noninteractive account browsing:";
 
+/** Has this pass already annotated this description? Anchored, so imported text cannot fake it. */
+export function alreadyMarked(description: string): boolean {
+  return /\[noninteractive account browsing:[\s\S]*\]\s*$/.test(description ?? "");
+}
+
 /** How close a corroborating logon or collection event must be. */
 export const DEFAULT_WINDOW_MS = 4 * 60 * 60 * 1000;
 
@@ -156,6 +161,25 @@ export function classifyAccount(account: string, ctx: BrowsingContext = {}): Acc
 const SHELLBAG_USER_RE = /\[user:\s*([^\]]+?)\s*\]/i;
 
 /**
+ * The account a share-access record names.
+ *
+ * Windows writes 5140/5145 with `Account Name:` and a `Subject:` block, and the SIEM importers
+ * carry those through; `by DOMAIN\user` is the other shape the importers write. Both are read.
+ *
+ * This exists because requiring the Shellbags mapper's `[user: …]` tag made the entire share half
+ * of this item unreachable — no importer could ever produce a share record with an account, so the
+ * share path regex and everything built on it was dead code behind a test that added the tag by
+ * hand.
+ */
+export function shareAccount(description: string): string {
+  const d = description ?? "";
+  const named = /\bAccount\s*Name\s*[:=]\s*([A-Za-z0-9._$-]+(?:\\[A-Za-z0-9._$-]+)?)/i.exec(d)?.[1];
+  if (named && named !== "-") return named;
+  const by = /\bby\s+([A-Za-z0-9._-]+\\[A-Za-z0-9._$-]+|[A-Za-z0-9._-]+\$)/i.exec(d)?.[1];
+  return by ?? "";
+}
+
+/**
  * A share path in a description.
  *
  * The share segment deliberately excludes spaces. Allowing them let the match run past the end of
@@ -193,7 +217,11 @@ export function readBrowsing(e: ForensicEvent): BrowsingRecord | null {
 
   const tagged = SHELLBAG_USER_RE.exec(description)?.[1] ?? "";
   const attributionMissing = /not recorded by this collection/i.test(tagged);
-  const account = attributionMissing ? "" : tagged;
+  // A share record carries its account in the EVENT LOG's own wording, not in a `[user: …]` tag —
+  // only the Shellbags mapper writes that tag. Requiring it made the entire share half of this
+  // item unreachable: no importer could ever produce a share record with an account, so SHARE_RE
+  // and everything built on it was dead code behind a test that added the tag by hand.
+  const account = attributionMissing ? "" : tagged || (isShare ? shareAccount(description) : "");
 
   return {
     id: e.id,
@@ -223,27 +251,84 @@ export interface Corroboration {
   collectionId: string | null;
 }
 
-/** Find a logon and a collection action by the same account near the browsing. */
+/**
+ * Does this text name this account, as an ACCOUNT?
+ *
+ * A substring test was catastrophic here. The bare name of NT AUTHORITY\\SYSTEM is "system", which
+ * is inside System32, systemd and filesystem — so `C:\\Windows\\System32\\winlogon.exe` in Alice's
+ * logon and `C:\\Windows\\System32\\tar.exe` in an unrelated archive both "matched", and the pass
+ * raised a machine account's browsing to High while asserting in the report that those two events
+ * were by the same account. That is the false accusation this module's own header forbids.
+ */
+export function namesAccount(text: string, account: string): boolean {
+  const bare = norm(accountName(account));
+  if (!bare) return false;
+  // A word boundary on both sides, allowing a domain prefix and the trailing $ of a machine account.
+  const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^\\w$.-])(?:[\\w.-]+\\\\)?${escaped}(?![\\w$.-])`, "i").test(text ?? "");
+}
+
+/** How many events one corroboration pass will read. */
+export const MAX_CORROBORATION_EVENTS = 20_000;
+
+/**
+ * Find a logon and a collection action near each browsing record, in ONE pass.
+ *
+ * The first version scanned every event for every record — O(records × events) with a Date.parse
+ * per pair, inside the state lock. Measured: 500 shellbags in a 2,000-event timeline took 1.4
+ * seconds, 4,000 in 16,000 took 85, and it is a clean 4× per doubling. A single Shellbags.csv from
+ * a file server reaches tens of thousands of rows, which is hours on every merge with no progress
+ * and no cancel. Now the candidate events are collected once, and each record checks that short
+ * list.
+ */
+export function corroborateAll(
+  records: readonly BrowsingRecord[],
+  events: readonly ForensicEvent[],
+  windowMs = DEFAULT_WINDOW_MS,
+): Map<string, Corroboration> {
+  const out = new Map<string, Corroboration>();
+  if (records.length === 0) return out;
+
+  // One pass over the timeline, keeping only what could ever corroborate anything.
+  const candidates: { time: number; text: string; id: string; logon: boolean; collection: boolean }[] = [];
+  let seen = 0;
+  for (const e of events) {
+    if (seen >= MAX_CORROBORATION_EVENTS) break;
+    seen++;
+    const d = e.description ?? "";
+    const logon = INTERACTIVE_LOGON_RE.test(d);
+    const collection = COLLECTION_RE.test(d);
+    if (!logon && !collection) continue;
+    const t = Date.parse(e.timestamp ?? "");
+    if (!Number.isFinite(t)) continue;
+    candidates.push({ time: t, text: d, id: e.id, logon, collection });
+  }
+  candidates.sort((a, b) => a.time - b.time);
+
+  for (const record of records) {
+    let logonId: string | null = null;
+    let collectionId: string | null = null;
+    if (record.account) {
+      for (const c of candidates) {
+        if (Math.abs(c.time - record.time) > windowMs) continue;
+        if (!namesAccount(c.text, record.account)) continue;
+        if (!logonId && c.logon) logonId = c.id;
+        if (!collectionId && c.collection) collectionId = c.id;
+        if (logonId && collectionId) break;
+      }
+    }
+    out.set(record.id, { logonId, collectionId });
+  }
+  return out;
+}
+
+/** Single-record convenience, for callers holding one record. */
 export function corroborate(
   record: BrowsingRecord,
   events: readonly ForensicEvent[],
   windowMs = DEFAULT_WINDOW_MS,
 ): Corroboration {
-  const account = norm(accountName(record.account));
-  let logonId: string | null = null;
-  let collectionId: string | null = null;
-  if (!account) return { logonId, collectionId };
-
-  for (const e of events) {
-    const t = Date.parse(e.timestamp ?? "");
-    if (!Number.isFinite(t) || Math.abs(t - record.time) > windowMs) continue;
-    const d = e.description ?? "";
-    if (!norm(d).includes(account)) continue;
-    if (!logonId && INTERACTIVE_LOGON_RE.test(d)) logonId = e.id;
-    if (!collectionId && COLLECTION_RE.test(d)) collectionId = e.id;
-    if (logonId && collectionId) break;
-  }
-  return { logonId, collectionId };
+  return corroborateAll([record], events, windowMs).get(record.id) ?? { logonId: null, collectionId: null };
 }
 
 // ─────────────────────────── grading ───────────────────────────
@@ -313,14 +398,29 @@ export function markServiceAccountBrowsing(
   ctx: BrowsingContext = {},
   windowMs = DEFAULT_WINDOW_MS,
 ): ForensicEvent[] {
+  // The records worth corroborating are collected first, so the corroboration pass runs once over
+  // the timeline rather than once per record.
+  const records: BrowsingRecord[] = [];
+  for (const e of events) {
+    if (alreadyMarked(e.description ?? "")) continue;
+    const record = readBrowsing(e);
+    if (record?.account && classifyAccount(record.account, ctx).noninteractive) records.push(record);
+  }
+  if (records.length === 0) return events as ForensicEvent[];
+  const corroborations = corroborateAll(records, events, windowMs);
+
   let changed = false;
   const out = events.map((e) => {
-    if ((e.description ?? "").includes(SERVICE_BROWSING_MARKER)) return e;
+    if (alreadyMarked(e.description ?? "")) return e;
     const record = readBrowsing(e);
     if (!record || !record.account) return e;
     const classification = classifyAccount(record.account, ctx);
     if (!classification.noninteractive) return e;
-    const verdict = gradeBrowsing(record, classification, corroborate(record, events, windowMs));
+    const verdict = gradeBrowsing(
+      record,
+      classification,
+      corroborations.get(record.id) ?? { logonId: null, collectionId: null },
+    );
     if (!verdict) return e;
     changed = true;
     const severity: Severity = RANK[verdict.severity] > RANK[e.severity] ? verdict.severity : e.severity;
@@ -353,4 +453,37 @@ export function attributionNote(events: readonly ForensicEvent[]): string {
   if (attributed === 0 && missing === 0) return "This case holds no shellbag or share-access evidence.";
   if (missing === 0) return `All ${attributed} browsing record(s) carry an account.`;
   return `${missing} of ${attributed + missing} browsing record(s) carry no account, so who browsed those folders cannot be established from this collection. Re-collect the per-user hives with their filenames intact, or add a user column, to attribute them.`;
+}
+
+/** The id of the attribution-coverage event, so a re-merge replaces it. */
+export const ATTRIBUTION_COVERAGE_ID = "shellbag-attribution-coverage";
+
+/**
+ * One event saying how much browsing evidence could not be attributed, when some of it could not.
+ *
+ * attributionNote was an exported string builder no analyst ever saw. "No service-account browsing
+ * found" is the wrong answer when the records carry no account, and the only way to say so is to
+ * put it on the timeline.
+ */
+export function attributionCoverageEvent(events: readonly ForensicEvent[]): ForensicEvent | null {
+  let missing = 0;
+  let firstTime = "";
+  for (const e of events) {
+    if (e.id === ATTRIBUTION_COVERAGE_ID) continue;
+    const r = readBrowsing(e);
+    if (!r) continue;
+    if (!firstTime) firstTime = e.timestamp ?? "";
+    if (!r.account) missing++;
+  }
+  if (missing === 0) return null;
+  return {
+    id: ATTRIBUTION_COVERAGE_ID,
+    timestamp: firstTime || new Date().toISOString(),
+    description: `Browsing evidence without an account ${SERVICE_BROWSING_MARKER} ${attributionNote(events)}]`,
+    severity: "Medium",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    sources: ["Coverage"],
+  };
 }

@@ -58,10 +58,17 @@ describe("configuration — what makes escape possible", () => {
     }
   });
 
-  it("reads a shared namespace", () => {
+  it("reads a shared namespace that is an escape primitive", () => {
     expect(configRisks("docker run --pid=host alpine")[0].detail).toContain("PID namespace");
-    expect(configRisks("docker run --network host alpine")[0].primitive).toBe("ns:network");
     expect(configRisks("docker run --userns=host alpine")[0].primitive).toBe("ns:user");
+    expect(configRisks("docker run --ipc=host alpine")[0].primitive).toBe("ns:IPC");
+  });
+
+  // Host networking is an isolation choice, not an escape primitive. Node exporters, ingress
+  // controllers, DNS and CNI plugins use it across most estates.
+  it("says nothing about host networking", () => {
+    expect(configRisks("docker run -d --network host --name node-exporter prom/node-exporter")).toEqual([]);
+    expect(configRisks("docker run --net=host --uts=host alpine")).toEqual([]);
   });
 
   it("reads an unconfined security profile and a raw device", () => {
@@ -204,6 +211,70 @@ describe("markContainerEscape — configuration and behaviour are different clai
   it("returns the input untouched when nothing matches", () => {
     const events = [run("docker ps"), ev({ description: "Process created: notepad.exe" })];
     expect(markContainerEscape(events)).toBe(events);
+  });
+});
+
+// Every one of these was a real defect found in review.
+describe("regressions", () => {
+  // /mnt is the most common chroot target on Linux. RHEL rescue mode is `chroot /mnt/sysimage`.
+  it("does not call ordinary host administration an escape", () => {
+    for (const cmd of [
+      "chroot /mnt/sysimage /bin/bash",
+      "chroot /mnt/gentoo /bin/bash -c 'emerge --sync'",
+      "cat /proc/sys/kernel/core_pattern > /cases/HOST01/core_pattern.txt",
+      "grep -r notify_on_release /sys/fs/cgroup > /cases/HOST01/cgroup.txt",
+      "docker -H unix:///var/run/docker.sock ps -a",
+      "curl --unix-socket /var/run/docker.sock http://localhost/containers/json",
+    ]) {
+      expect(escapeBehavior(cmd), cmd).toEqual([]);
+    }
+  });
+
+  it("still sees a mutating call over the socket", () => {
+    expect(
+      escapeBehavior("curl --unix-socket /var/run/docker.sock -X POST http://localhost/containers/create"),
+    ).toHaveLength(1);
+  });
+
+  // cp, mv and install put the DESTINATION last — the three forms an operator is likeliest to type.
+  it("reads the destination of a copy, not its source", () => {
+    for (const cmd of [
+      "docker exec web cp /tmp/payload /host/etc/cron.d/backup",
+      "mv /tmp/payload /host/etc/cron.d/backup",
+      "install -m 755 /tmp/payload /host/etc/cron.d/backup",
+    ]) {
+      const [b] = escapeBehavior(cmd);
+      expect(b?.primitive, cmd).toBe("host-persistence-write");
+      expect(b?.hostPath, cmd).toBe("/etc/cron.d/backup");
+    }
+  });
+
+  // A hardening audit and a label are not configurations.
+  it("does not read a --privileged token that is not a run flag", () => {
+    expect(configRisks("docker inspect app | grep -- --privileged")).toEqual([]);
+    expect(configRisks('docker run --label "--privileged" nginx')).toEqual([]);
+    expect(configRisks("docker ps --filter label=--privileged")).toEqual([]);
+  });
+
+  // Anchoring at the end made a mount of the sensitive file itself invisible.
+  it("reads a mount of a sensitive sub-path", () => {
+    for (const cmd of [
+      "docker run -d -v /root/.ssh:/keys alpine",
+      "docker run -d -v /etc/shadow:/tmp/shadow alpine",
+      "docker run -d -v /home/alice/.ssh:/keys alpine",
+    ]) {
+      expect(configRisks(cmd).length, cmd).toBeGreaterThan(0);
+    }
+  });
+
+  it("does not read a lookalike directory as the runtime's own state", () => {
+    expect(configRisks("docker run -d -v /var/lib/dockerhub-cache:/cache registry:2")).toEqual([]);
+    expect(configRisks("docker run -d -v /var/lib/containerd-shim-logs:/l alpine")).toEqual([]);
+  });
+
+  it("reads a comma-separated capability list", () => {
+    const risks = configRisks("podman run --cap-add=CAP_SYS_ADMIN,CAP_NET_ADMIN alpine");
+    expect(risks.map((r) => r.primitive)).toContain("cap:sys_admin");
   });
 });
 

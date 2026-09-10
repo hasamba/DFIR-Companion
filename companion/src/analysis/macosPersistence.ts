@@ -30,8 +30,22 @@ export type PlistValue = string | number | boolean | PlistValue[] | { [k: string
 /** How deep the reader will follow nested dicts and arrays. */
 export const MAX_PLIST_DEPTH = 24;
 
-/** How many entries one dict or array may hold. */
-export const MAX_PLIST_ENTRIES = 2_000;
+/**
+ * How many entries ONE PARSE may read, across every container.
+ *
+ * A per-container budget bounded nothing useful: 500 arrays of 2,000 values each is a million
+ * values, and — worse — a dict with 2,000 harmless keys before `Program` hit the limit and returned
+ * a partial dictionary with no program in it, which read as a clean job. The budget is now spent
+ * from one pool, and running out is REPORTED rather than yielding a silent partial result.
+ */
+export const MAX_PLIST_ENTRIES = 20_000;
+
+/** True when the last parsePlist call ran out of budget, so the caller can say the read was partial. */
+let lastParseTruncated = false;
+
+export function lastPlistTruncated(): boolean {
+  return lastParseTruncated;
+}
 
 /** Does this upload look like a binary plist, which is not text and cannot be read here? */
 export function isBinaryPlist(text: string): boolean {
@@ -75,6 +89,8 @@ function unescapeXml(s: string): string {
 interface Scanner {
   s: string;
   i: number;
+  /** Entries left in this parse's budget. */
+  budget: number;
 }
 
 // Skip whitespace, comments, the XML declaration and the DOCTYPE. The DOCTYPE is SKIPPED, never
@@ -200,7 +216,11 @@ function readValue(sc: Scanner, tag: string, depth: number): PlistValue | undefi
     }
     case "dict": {
       const out: Record<string, PlistValue> = {};
-      for (let n = 0; n < MAX_PLIST_ENTRIES; n++) {
+      for (;;) {
+        if (sc.budget-- <= 0) {
+          lastParseTruncated = true;
+          break;
+        }
         const t = nextTag(sc);
         if (!t || t === "/dict") break;
         if (t !== "key") continue;
@@ -228,7 +248,11 @@ function readValue(sc: Scanner, tag: string, depth: number): PlistValue | undefi
     }
     case "array": {
       const out: PlistValue[] = [];
-      for (let n = 0; n < MAX_PLIST_ENTRIES; n++) {
+      for (;;) {
+        if (sc.budget-- <= 0) {
+          lastParseTruncated = true;
+          break;
+        }
         const t = nextTag(sc);
         if (!t || t === "/array") break;
         const value = readValue(sc, t, depth + 1);
@@ -243,9 +267,10 @@ function readValue(sc: Scanner, tag: string, depth: number): PlistValue | undefi
 
 /** Parse an XML property list into its root dictionary, or null when it holds none. */
 export function parsePlist(xml: string): Record<string, PlistValue> | null {
+  lastParseTruncated = false;
   if (!xml || isBinaryPlist(xml)) return null;
-  const sc: Scanner = { s: xml, i: 0 };
-  for (let n = 0; n < MAX_PLIST_ENTRIES; n++) {
+  const sc: Scanner = { s: xml, i: 0, budget: MAX_PLIST_ENTRIES };
+  for (let n = 0; n < 1_000; n++) {
     const tag = nextTag(sc);
     if (!tag) return null;
     if (tag === "dict") {

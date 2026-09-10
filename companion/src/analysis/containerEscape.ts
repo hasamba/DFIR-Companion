@@ -35,29 +35,8 @@ import { judgePayload } from "./linuxPayload.js";
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const ESCAPE_MARKER = "[container escape:";
 
-/** How far apart a configuration and a behaviour may sit and still be reported as one story. */
-export const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
-
 /** How much of one command line is read. */
 export const MAX_COMMAND = 8_192;
-
-export type EscapeKind = "config" | "behavior";
-
-export interface EscapeHit {
-  id: string;
-  kind: EscapeKind;
-  /** Short label for the primitive, used to group and to dedup. */
-  primitive: string;
-  /** What it means, in words an analyst can check. */
-  detail: string;
-  mitre: string[];
-  /** The container this came from, when the evidence named one. */
-  container: string;
-  /** The host path a mount exposes, when this hit is about one. */
-  hostPath: string;
-}
-
-const CONTAINER_CMD_RE = /\b(?:docker|podman|nerdctl|ctr)\b/i;
 
 // ─────────────────────────── configuration ───────────────────────────
 
@@ -81,21 +60,30 @@ const SENSITIVE_HOST_MOUNTS: { re: RegExp; why: string }[] = [
     why: "the Docker socket. Anything that can write to it can start a new privileged container, which is root on the host",
   },
   { re: /^\/$/, why: "the entire host filesystem" },
-  { re: /^\/etc\/?$/i, why: "the host's /etc, which includes its users, cron and systemd units" },
-  { re: /^\/root\/?$/i, why: "root's home directory, including its SSH keys" },
-  { re: /^\/home\/?$/i, why: "every user's home directory on the host" },
-  { re: /^\/proc\/?$/i, why: "the host's /proc, which exposes every process and several kernel controls" },
+  // These match the directory AND anything under it. Anchoring at the end made a mount of the
+  // sensitive file itself invisible — `-v /root/.ssh:/keys` and `-v /etc/shadow:/tmp/shadow` are
+  // exactly what an operator mounts, and neither was reported.
+  { re: /^\/etc(?:\/|$)/i, why: "the host's /etc, which holds its users, cron and systemd units" },
+  { re: /^\/root(?:\/|$)/i, why: "root's home directory, including its SSH keys" },
+  { re: /^\/home\/[^/]+\/\.ssh(?:\/|$)/i, why: "a user's SSH keys on the host" },
+  { re: /^\/home(?:\/|$)/i, why: "a user's home directory on the host" },
   {
-    re: /^\/sys\/?$/i,
+    re: /^\/proc(?:\/|$)/i,
+    why: "the host's /proc, which exposes every process and several kernel controls",
+  },
+  {
+    re: /^\/sys(?:\/|$)/i,
     why: "the host's /sys, which exposes kernel controls including the cgroup release_agent",
   },
   {
-    re: /^\/var\/run\/?$/i,
+    re: /^\/(?:var\/)?run(?:\/|$)/i,
     why: "the host's runtime directory, which usually contains the container socket",
   },
-  { re: /^\/dev\/?$/i, why: "the host's device nodes, including its raw disks" },
+  { re: /^\/dev(?:\/|$)/i, why: "the host's device nodes, including its raw disks" },
   {
-    re: /^\/var\/lib\/(?:docker|kubelet|containerd)\/?/i,
+    // Anchored on a path SEPARATOR. Without it, `/var/lib/dockerhub-cache` and
+    // `/var/lib/containerd-shim-logs` were reported as the runtime's own state.
+    re: /^\/var\/lib\/(?:docker|kubelet|containerd|containers)(?:\/|$)/i,
     why: "the container runtime's own state, which includes every other container's filesystem",
   },
 ];
@@ -142,9 +130,16 @@ function flagValue(list: string[], i: number, flag: string): string {
  * Returns every one it finds, because they combine: a docker socket AND `--pid=host` is a different
  * conversation from either alone, and the finding lists them.
  */
+/** Does this command actually START a container? `docker ps` and `docker inspect` do not. */
+const CONTAINER_RUN_RE =
+  /\b(?:docker|podman|nerdctl|ctr)\b[^\n]{0,200}?\b(?:run|create|exec|start|compose\s+run)\b/i;
+
 export function configRisks(command: string): ConfigRisk[] {
   const cmd = (command ?? "").slice(0, MAX_COMMAND);
-  if (!CONTAINER_CMD_RE.test(cmd)) return [];
+  // A container command is not enough — it has to be one that starts a container. `docker inspect
+  // app | grep -- --privileged` is a HARDENING AUDIT, and `docker run --label "--privileged" nginx`
+  // puts the token in a label; the quote-stripping tokenizer then compared it equal to the flag.
+  if (!CONTAINER_RUN_RE.test(cmd)) return [];
   const list = tokens(cmd);
   const out: ConfigRisk[] = [];
   const seen = new Set<string>();
@@ -158,7 +153,12 @@ export function configRisks(command: string): ConfigRisk[] {
     const t = list[i];
 
     if (t === "--privileged" || t.startsWith("--privileged=")) {
-      if (!/=false$/i.test(t)) {
+      // Not when it is the VALUE of another flag. The tokenizer strips quotes, so
+      // `docker run --label "--privileged" nginx` compared equal to the flag itself.
+      const prev = (list[i - 1] ?? "").toLowerCase();
+      const isValue =
+        /^-{1,2}(?:label|env|e|filter|annotation|entrypoint|cmd|arg)$/.test(prev) || prev === "--";
+      if (!isValue && !/=false$/i.test(t)) {
         add({
           primitive: "privileged",
           detail:
@@ -195,24 +195,29 @@ export function configRisks(command: string): ConfigRisk[] {
     }
 
     for (const flag of ["--cap-add", "--capabilities"]) {
-      const value = flagValue(list, i, flag).toLowerCase().replace(/^cap_/, "");
-      if (!value) continue;
-      const why = DANGEROUS_CAPS[value];
-      if (!why) continue;
-      add({
-        primitive: `cap:${value}`,
-        detail: `The container is granted ${value.toUpperCase()}: ${why}.`,
-        mitre: ["T1611"],
-        hostPath: "",
-      });
+      const raw = flagValue(list, i, flag);
+      if (!raw) continue;
+      // Podman accepts a comma-separated list, and looking the whole value up as one key missed
+      // `--cap-add=CAP_SYS_ADMIN,CAP_NET_ADMIN` entirely.
+      for (const one of raw.toLowerCase().split(",")) {
+        const value = one.trim().replace(/^cap_/, "");
+        const why = DANGEROUS_CAPS[value];
+        if (!why) continue;
+        add({
+          primitive: `cap:${value}`,
+          detail: `The container is granted ${value.toUpperCase()}: ${why}.`,
+          mitre: ["T1611"],
+          hostPath: "",
+        });
+      }
     }
 
+    // --network host and --uts host are NOT here. Host networking is an isolation choice, not an
+    // escape primitive: node exporters, ingress controllers, DNS and CNI plugins use it across most
+    // estates, and flagging it is the Medium version of the noise this module exists to avoid.
     for (const [flag, what] of [
       ["--pid", "process"],
-      ["--net", "network"],
-      ["--network", "network"],
       ["--ipc", "IPC"],
-      ["--uts", "UTS"],
       ["--userns", "user"],
       ["--cgroupns", "cgroup"],
     ] as const) {
@@ -274,6 +279,40 @@ export interface BehaviorHit {
  * None of these has an ordinary explanation from inside a container. That is what separates them
  * from the configuration list, where nearly everything has one.
  */
+/** Does this command write INTO a path matching `what`, rather than merely reading or naming it? */
+function writesInto(command: string, what: RegExp): boolean {
+  const cmd = command ?? "";
+  // `> /path`, `>> /path` or `tee /path` where the path is the one in question.
+  for (const m of cmd.matchAll(/(?:>{1,2}|\btee\b(?:\s+-\S+)*)\s*("?)([^\s"';|&]+)/gi)) {
+    if (what.test(m[2])) return true;
+  }
+  return false;
+}
+
+/**
+ * The path a command WRITES to.
+ *
+ * cp, mv and install take the destination LAST. Capturing the path immediately after the verb took
+ * the SOURCE, so `cp /tmp/payload /host/etc/cron.d/backup` — one of the likeliest forms an operator
+ * types — produced no finding at all, while only the two shapes the tests used actually worked.
+ */
+export function writeTarget(command: string): string {
+  const cmd = (command ?? "").slice(0, MAX_COMMAND);
+
+  const lastArg = /(?:^|[\s;&|])(?:cp|mv|install|rsync)\b((?:\s+-{1,2}[^\s]+)*)\s+(.+)$/i.exec(cmd);
+  if (lastArg) {
+    const args = lastArg[2]
+      .split(/\s+/)
+      .filter((a) => a && !a.startsWith("-"))
+      .map((a) => a.replace(/^["']|["']$/g, ""));
+    const dest = args[args.length - 1] ?? "";
+    if (args.length >= 2 && dest.startsWith("/")) return dest;
+  }
+
+  const redirect = /(?:>{1,2}|\btee\b(?:\s+-\S+)*)\s*("?)(\/[^\s"';|&]+)/i.exec(cmd);
+  return redirect?.[2] ?? "";
+}
+
 export function escapeBehavior(command: string): BehaviorHit[] {
   const cmd = (command ?? "").slice(0, MAX_COMMAND);
   const out: BehaviorHit[] = [];
@@ -289,7 +328,11 @@ export function escapeBehavior(command: string): BehaviorHit[] {
     });
   }
 
-  if (/\bchroot\s+(\/(?:host|hostfs|mnt\/host|rootfs|host-root|mnt|media\/root)[^\s]*)/i.test(cmd)) {
+  // /mnt alone is NOT in this list. It is the most common chroot target on Linux — RHEL rescue
+  // mode is `chroot /mnt/sysimage`, and a Gentoo install is `chroot /mnt/gentoo` — and grading
+  // ordinary host administration as a container escape is the exact failure this module is written
+  // to avoid. Only the conventional container mount points count.
+  if (/\bchroot\s+(\/(?:host|hostfs|mnt\/host|rootfs|host-root|host_root|media\/root)[^\s]*)/i.test(cmd)) {
     const target = /\bchroot\s+(\/[^\s]+)/i.exec(cmd)?.[1] ?? "";
     out.push({
       primitive: "chroot-host",
@@ -300,7 +343,10 @@ export function escapeBehavior(command: string): BehaviorHit[] {
   }
 
   // The cgroup v1 release_agent escape: the kernel runs the named program on the HOST.
-  if (/release_agent|notify_on_release/i.test(cmd) && /(?:echo|printf|tee|>)/.test(cmd)) {
+  // A WRITE INTO the file, not merely a `>` somewhere on the line. `grep -r notify_on_release
+  // /sys/fs/cgroup > /cases/HOST01/cgroup.txt` is a live-response collection script READING the
+  // value, and it was being reported as a container-to-host code-execution primitive.
+  if (writesInto(cmd, /(?:release_agent|notify_on_release)/i)) {
     out.push({
       primitive: "release-agent",
       detail:
@@ -310,7 +356,7 @@ export function escapeBehavior(command: string): BehaviorHit[] {
     });
   }
 
-  if (/\/proc\/sys\/kernel\/core_pattern/i.test(cmd) && /(?:echo|printf|tee|>)/.test(cmd)) {
+  if (writesInto(cmd, /\/proc\/sys\/kernel\/core_pattern/i)) {
     out.push({
       primitive: "core-pattern",
       detail:
@@ -321,10 +367,21 @@ export function escapeBehavior(command: string): BehaviorHit[] {
   }
 
   // Talking to the Docker API through the socket from inside a container.
-  if (
+  // Only a MUTATING API call. `docker -H unix:///var/run/docker.sock ps` is how an admin addresses
+  // the local daemon, and `curl --unix-socket … /containers/json` is a Portainer-style health poll
+  // — both were graded as escape behaviour. Creating, starting or exec-ing is the finding.
+  const overSocket =
     /--unix-socket\s+\/(?:var\/)?run\/docker\.sock/i.test(cmd) ||
-    /\bdocker\b[^\n]{0,80}-H\s+unix:\/\//i.test(cmd)
-  ) {
+    /\bdocker\b[^\n]{0,80}-H\s+unix:\/\//i.test(cmd);
+  const mutating =
+    /\/(?:containers\/(?:create|[\w.-]+\/(?:start|exec|attach))|exec\/[\w.-]+\/start|images\/create)\b/i.test(
+      cmd,
+    ) ||
+    // NOT a bare /\brun\b/ — that matches the "run" inside "/var/run/docker.sock", which made
+    // `docker -H unix:///var/run/docker.sock ps` a mutating call.
+    /\b-X\s*POST\b/i.test(cmd) ||
+    /\bdocker\b[^\n]{0,120}?\s(?:run|create|exec|start)\s/i.test(cmd);
+  if (overSocket && mutating) {
     out.push({
       primitive: "docker-api",
       detail:
@@ -335,9 +392,8 @@ export function escapeBehavior(command: string): BehaviorHit[] {
   }
 
   // Writing host persistence through a mount. This is the one that needs both halves.
-  const write =
-    /(?:^|[\s>|;&])(?:tee|cp|mv|install|cat\s*>|echo[^\n>]{0,200}>{1,2})\s*("?)(\/[^\s"']+)/i.exec(cmd);
-  const target = write?.[2] ?? "";
+  // cp, mv and install put the destination LAST — see writeTarget.
+  const target = writeTarget(cmd);
   const mounted = HOST_MOUNT_PREFIX_RE.exec(target);
   if (mounted && HOST_PERSISTENCE_RE.test(mounted[2])) {
     out.push({

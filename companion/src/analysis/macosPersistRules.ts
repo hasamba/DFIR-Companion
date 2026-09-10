@@ -25,9 +25,10 @@
 
 import type { Severity } from "./stateTypes.js";
 import type { CollectedFile } from "./linuxPersistence.js";
-import { judgePayload, type LinuxContext, type LinuxSignal } from "./linuxPersistRules.js";
+import { judgePayload, homeAccount, type LinuxContext, type LinuxSignal } from "./linuxPersistRules.js";
 import {
   isBinaryPlist,
+  lastPlistTruncated,
   launchScope,
   parsePlist,
   readLaunchJob,
@@ -43,14 +44,23 @@ import {
 // anchored test read that job as running from /bin. It covers only the genuinely transient
 // directories: a backup job with a `/Volumes/Backup` ARGUMENT is ordinary, and sweeping that in
 // would have been a false positive on every Mac with an external disk.
+// /private/var/root is root's HOME DIRECTORY, and it is not writable by anything but root — calling
+// it "a directory any process can write" was simply false. A root-owned helper living there is
+// unusual, not world-writable, and it is judged by the home-directory rule instead.
 const MAC_TRANSIENT_RE =
-  /^\/(?:private\/)?(?:tmp|var\/tmp|var\/folders)\/|^\/Users\/Shared\/|^\/Volumes\/|^\/private\/var\/root\/|^\/Users\/[^/]+\/(?:Downloads|Public)\//i;
+  /^\/(?:private\/)?(?:tmp|var\/tmp|var\/folders)\/|^\/Users\/Shared\/|^\/Volumes\/|^\/Users\/[^/]+\/(?:Downloads|Public)\//i;
 
 const MAC_TRANSIENT_ARG_RE =
   /(?:^|[\s"'=(])\/(?:private\/)?(?:tmp|var\/tmp|var\/folders)\/|(?:^|[\s"'=(])\/Users\/Shared\//i;
 
-/** Where Apple's own launchd programs live. */
-const APPLE_PROGRAM_RE = /^\/(?:System\/|usr\/(?:libexec|sbin|bin|lib)\/|Library\/Apple\/)/;
+/**
+ * Where Apple's own launchd programs live.
+ *
+ * Xcode's helpers are labelled com.apple.dt.* and live inside /Applications/Xcode.app, so a rule
+ * that knew only /System called every one of them a misleading label on a developer Mac.
+ */
+const APPLE_PROGRAM_RE =
+  /^\/(?:System\/|usr\/(?:libexec|sbin|bin|lib)\/|Library\/(?:Apple|Developer)\/|Applications\/(?:Xcode(?:-beta)?\.app|Safari\.app|Utilities\/)|private\/var\/db\/)/;
 
 /**
  * Apple SHIPS these, and macOS persistence almost always drives one of them.
@@ -143,12 +153,17 @@ export function runsAs(job: LaunchJob, scope: LaunchScope): string {
 }
 
 export interface MacJudgement {
+  /** The PROGRAM itself sits in a world-writable directory. */
   transient: boolean;
+  /** A world-writable directory is only REFERENCED — an argument, a log target, a scan root. */
+  transientRef: boolean;
   hiddenPath: boolean;
   fetchExec: boolean;
   reverseShell: boolean;
   encoded: boolean;
   misleading: boolean;
+  /** The account whose home directory a root-run job executes from, when there is one. */
+  rootRunsUserFile: string;
 }
 
 export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
@@ -160,19 +175,50 @@ export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
   const env = Object.values(job.environment).join(" ");
   const text = `${job.commandLine} ${env}`.trim();
   const j = judgePayload(text);
+  // The PROGRAM being in a world-writable directory and the command merely MENTIONING one are
+  // different facts. `/usr/bin/find /private/tmp -mtime +7 -delete` runs from /usr/bin and cleans
+  // /tmp; reporting it as "runs a program from a directory any process can write" was false, on a
+  // High-severity forensic event.
+  // When the program is an interpreter, the SCRIPT is what runs — `/bin/sh /private/tmp/x.sh` runs
+  // the file in /tmp, and calling that a mere reference would be as wrong as the opposite mistake.
+  // Same for a library the job injects: DYLD_INSERT_LIBRARIES names code that will execute.
+  const wrapper = /\/(?:(?:ba|z|k|da|a)?sh|python[\d.]*|perl|ruby|osascript|node|php|open|env)$/i.test(
+    job.program,
+  );
+  const programTransient =
+    MAC_TRANSIENT_RE.test(job.program) ||
+    (wrapper && job.arguments.some((a) => MAC_TRANSIENT_RE.test(a))) ||
+    Object.values(job.environment).some((v) => MAC_TRANSIENT_RE.test(v));
   return {
-    transient: MAC_TRANSIENT_RE.test(job.program) || MAC_TRANSIENT_ARG_RE.test(text),
-    hiddenPath: hidden(job.program) || Object.values(job.environment).some(hidden),
+    transient: programTransient,
+    transientRef: !programTransient && MAC_TRANSIENT_ARG_RE.test(text),
+    // Hidden paths are read from the ARGUMENTS too: `Program=/usr/bin/osascript` with an argument
+    // of `~/.cache/.update.scpt` is the ordinary shape of macOS persistence, and reading only the
+    // program missed all of it.
+    hiddenPath:
+      hidden(job.program) || job.arguments.some(hidden) || Object.values(job.environment).some(hidden),
     fetchExec: j.fetchExec,
     reverseShell: j.reverseShell,
     encoded: j.encoded,
     misleading: misleadingLabel(job, scope),
+    // A LaunchDaemon runs as root at boot. If what it runs lives in a user's home directory, that
+    // user can change what root runs — the same rule the Linux side has had all along, and macOS
+    // had none of it because homeAccount() did not know /Users.
+    rootRunsUserFile:
+      !job.userName && (scope === "system-daemon" || scope === "system-agent")
+        ? (homeAccount(job.program) ?? "")
+        : "",
   };
 }
 
 /** Does anything here stand on its own? Signing and persistence flags deliberately do not. */
 function standsAlone(m: MacJudgement): boolean {
   return m.reverseShell || m.fetchExec || m.encoded || m.transient || m.misleading;
+}
+
+/** A reference to a world-writable directory is worth reporting, but not at the same weight. */
+function worthReporting(m: MacJudgement): boolean {
+  return standsAlone(m) || m.hiddenPath || m.transientRef || !!m.rootRunsUserFile;
 }
 
 function primaryReason(m: MacJudgement, job: LaunchJob, scope: LaunchScope): string {
@@ -185,9 +231,14 @@ function primaryReason(m: MacJudgement, job: LaunchJob, scope: LaunchScope): str
   if (m.fetchExec)
     return `A launchd job running as ${who} downloads code and executes it in the same command, so the payload never has to exist on disk before it runs.`;
   if (m.encoded) return `A launchd job running as ${who} decodes its own payload before running it.`;
+  if (m.rootRunsUserFile) {
+    return `A launchd job runs as ${who} but executes a program inside ${m.rootRunsUserFile}'s home directory, so that account can change what root runs.`;
+  }
   if (m.transient)
     return `A launchd job running as ${who} runs a program from a directory any process can write. Installed software does not live there.`;
-  return `A launchd job running as ${who} runs a program from a hidden directory.`;
+  if (m.hiddenPath)
+    return `A launchd job running as ${who} runs from, or loads, something in a hidden directory.`;
+  return `A launchd job running as ${who} references a directory any process can write. Check whether that path is what runs or only where output goes — the program itself is ${job.program}.`;
 }
 
 const MITRE_BY_SCOPE: Record<LaunchScope, string> = {
@@ -236,13 +287,15 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
   // indistinguishable from "this file is clean" — a truncated member of a real collection, and a
   // crafted one, both produced "1 artifact file(s) read, 0 finding(s)". The binary-plist branch
   // above already got this right; the XML branch did not.
-  if (!plist || !job?.program) {
+  if (!plist || !job?.program || lastPlistTruncated()) {
     return [
       unreadable(
         file,
-        plist
-          ? "This launchd plist parsed, but it names no program to run — either it is not a job, or the file is truncated or malformed. Nothing about it has been assessed either way; read the raw file."
-          : "This launchd plist could not be parsed as a property list. Nothing about it has been assessed either way; read the raw file, or convert it with plutil -convert xml1.",
+        lastPlistTruncated()
+          ? "This launchd plist held more entries than one parse reads, so it was read only in part and the program it runs may not have been reached. Nothing about it has been assessed either way; read the raw file."
+          : plist
+            ? "This launchd plist parsed, but it names no program to run — either it is not a job, or the file is truncated or malformed. Nothing about it has been assessed either way; read the raw file."
+            : "This launchd plist could not be parsed as a property list. Nothing about it has been assessed either way; read the raw file, or convert it with plutil -convert xml1.",
       ),
     ];
   }
@@ -251,9 +304,9 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
 
   const scope = launchScope(file.path);
   const m = judgeJob(job, scope);
-  if (!standsAlone(m) && !m.hiddenPath) return [];
+  if (!worthReporting(m)) return [];
 
-  let severity: Severity = standsAlone(m) ? "High" : "Medium";
+  let severity: Severity = standsAlone(m) || m.rootRunsUserFile ? "High" : "Medium";
   // Disabled is only the plist's DEFAULT. `launchctl load -w` overrides it in
   // /var/db/com.apple.xpc.launchd/disabled.plist and the job runs. Dropping the job on this key
   // was a one-line evasion, and a disabled persistence plist is evidence either way.

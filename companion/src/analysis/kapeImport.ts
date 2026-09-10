@@ -151,13 +151,21 @@ const has = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.
  * where SBECmd records it — `20260102120000_UsrClass_alice.csv`, `..._NTUSER_alice.csv`, or a path
  * containing `\Users\alice\`. Returns "" rather than a guess.
  */
+/** Words SBECmd puts in its own filenames. None of them is an account. */
+const SBECMD_OUTPUT_WORD =
+  /^(?:deduplicated|output|combined|merged|all|results?|backup|export|temp|tmp|copy)$/i;
+
 export function shellbagAccount(row: Row): string {
   const direct = firstStr(row, ["User", "UserName", "UserSID", "SID", "Account", "ProfileName"]);
   if (direct) return direct;
   const source = firstStr(row, ["SourceFile", "_Source", "HiveName", "HivePath", "File", "SourceName"]);
   if (!source) return "";
   const named = /(?:UsrClass|NTUSER(?:\.DAT)?)[_-]([^\\/_.]+)/i.exec(source);
-  if (named) return named[1];
+  // SBECmd's own output words are not usernames. `..._UsrClass_Deduplicated.csv` and
+  // `..._NTUSER_Output.csv` are files the tool writes, and reading them as accounts put an invented
+  // name into the description, the key and every finding — worse than the "not recorded" note the
+  // code already has for the case where it genuinely does not know.
+  if (named && !SBECMD_OUTPUT_WORD.test(named[1])) return named[1];
   const profile = /[\\/]Users[\\/]([^\\/]+)[\\/]/i.exec(source);
   return profile ? profile[1] : "";
 }

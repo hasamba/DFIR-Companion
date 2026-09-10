@@ -9,6 +9,9 @@ import {
   gradeBrowsing,
   markServiceAccountBrowsing,
   attributionNote,
+  attributionCoverageEvent,
+  namesAccount,
+  shareAccount,
   SERVICE_SIDS,
 } from "../../src/analysis/serviceAccountBrowsing.js";
 import { shellbagAccount } from "../../src/analysis/kapeImport.js";
@@ -291,5 +294,100 @@ describe("reachability", () => {
   it("keys a shellbag on the account as well as the path", () => {
     const kape = readFileSync(join(process.cwd(), "src/analysis/kapeImport.ts"), "utf8");
     expect(kape).toContain("sb|${account.toLowerCase()}|${path.toLowerCase()}");
+  });
+});
+
+// Every one of these was a real defect found in review.
+describe("regressions", () => {
+  // The bare name of NT AUTHORITY\SYSTEM is "system", which is inside System32, systemd and
+  // filesystem — so an unrelated logon and an unrelated tar.exe both "matched", and the pass
+  // asserted in the report that they were by the same account.
+  it("matches an account as an account, not as a substring", () => {
+    expect(namesAccount("C:\\Windows\\System32\\winlogon.exe", "NT AUTHORITY\\SYSTEM")).toBe(false);
+    expect(namesAccount("C:\\Windows\\System32\\tar.exe -cf out.tar", "SYSTEM")).toBe(false);
+    expect(namesAccount("systemd started", "SYSTEM")).toBe(false);
+    expect(namesAccount("Logon for NT AUTHORITY\\SYSTEM from console", "SYSTEM")).toBe(true);
+    expect(namesAccount("Logon for CORP\\FS-01$ ", "CORP\\FS-01$")).toBe(true);
+  });
+
+  it("does not corroborate a machine account's browsing with another account's logon", () => {
+    const out = markServiceAccountBrowsing([
+      bag("NT AUTHORITY\\SYSTEM", "C:\\Finance\\2026 Budget"),
+      ev({
+        description:
+          "Successful logon type 2 for CORP\\alice from console, process C:\\Windows\\System32\\winlogon.exe",
+        timestamp: "2026-01-01T09:30:00Z",
+      }),
+      ev({
+        description: "Process: C:\\Windows\\System32\\tar.exe -cf C:\\temp\\out.tar C:\\Finance",
+        timestamp: "2026-01-01T10:10:00Z",
+      }),
+    ]);
+    const finding = out.find((e) => e.description.includes("[noninteractive account browsing:"));
+    expect(finding?.severity).toBe("Medium");
+    expect(finding?.description).not.toContain("interactive logon by the same account");
+    expect(finding?.description).not.toContain("Archiving or copying activity");
+  });
+
+  // 500 shellbags in a 2,000-event timeline took 1.4s; 4,000 in 16,000 took 85s, inside the lock.
+  it("corroborates in one pass over the timeline, not one per record", () => {
+    const bags = Array.from({ length: 2_000 }, (_v, i) => bag("CORP\\FS-01$", `C:\\Data\\f${i}`));
+    const noise = Array.from({ length: 6_000 }, (_v, i) =>
+      ev({ description: `Process created: worker-${i}.exe`, timestamp: "2026-01-01T10:00:00Z" }),
+    );
+    const started = Date.now();
+    markServiceAccountBrowsing([...bags, ...noise]);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  // Requiring the Shellbags mapper's tag made the entire share half unreachable.
+  it("reads the account out of a share-access event's own wording", () => {
+    expect(shareAccount("A network share object was accessed. Account Name: FS-01$")).toBe("FS-01$");
+    expect(shareAccount("SMB share access to \\\\FS-01\\Finance by CORP\\svc_backup")).toBe(
+      "CORP\\svc_backup",
+    );
+    expect(shareAccount("Account Name: -")).toBe("");
+  });
+
+  it("reports share access by a machine account with no hand-added tag", () => {
+    const [out] = markServiceAccountBrowsing([
+      ev({
+        description:
+          "A network share object was accessed, logon type 3, \\\\FS-01\\Finance, Account Name: FS-01$",
+      }),
+    ]);
+    expect(out.severity).toBe("Medium");
+    expect(out.description).toContain("[noninteractive account browsing:");
+  });
+
+  // A wrong account is worse than the "not recorded" note the code already has.
+  it("does not invent an account out of an SBECmd output filename", () => {
+    for (const f of [
+      "20260102_UsrClass_Deduplicated.csv",
+      "20260102_NTUSER_Output.csv",
+      "20260102_NTUSER_backup.csv",
+    ]) {
+      expect(shellbagAccount({ SourceFile: f }), f).toBe("");
+    }
+    expect(shellbagAccount({ SourceFile: "20260102_UsrClass_alice.csv" })).toBe("alice");
+  });
+
+  // Every shellbag in every existing case would otherwise double on the next import.
+  it("strips the user tag before the duplicate key is taken", async () => {
+    const { cleanDescription } = await import("../../src/analysis/correlate.js");
+    expect(cleanDescription("Shellbag: C:\\Finance [user: alice]")).toBe("Shellbag: C:\\Finance");
+  });
+
+  it("puts the attribution gap on the timeline", () => {
+    const out = attributionCoverageEvent([
+      bag("alice"),
+      ev({ description: "Shellbag: C:\\x [user: not recorded by this collection]", sources: ["Shellbags"] }),
+    ]);
+    expect(out?.severity).toBe("Medium");
+    expect(out?.description).toContain("carry no account");
+  });
+
+  it("says nothing when everything is attributed", () => {
+    expect(attributionCoverageEvent([bag("alice")])).toBeNull();
   });
 });

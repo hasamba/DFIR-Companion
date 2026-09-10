@@ -145,17 +145,50 @@ describe("gradeHit — the endpoint alone is never the finding", () => {
     expect(v?.reason).toContain("may be a probe");
   });
 
-  // Without the process there is nothing to separate this from the SDK traffic.
-  it("says the process was not recorded rather than guessing", () => {
-    const v = gradeHit(hit({ process: "" }), CRED);
-    expect(v?.severity).toBe("Medium");
-    expect(v?.reason).toContain("did not record which process");
+  // The issue requires credential path AND context. With no process there is no context, and a
+  // credential-path read is indistinguishable from the SDK traffic every instance produces — so
+  // reporting it Medium put a finding on ordinary traffic whenever telemetry lacked attribution.
+  it("says nothing when the evidence recorded no process", () => {
+    expect(gradeHit(hit({ process: "" }), CRED)).toBeNull();
   });
 
-  it("reports an unknown process at Medium and names what to confirm", () => {
-    const v = gradeHit(hit({ process: "backup-agent" }), CRED);
-    expect(v?.severity).toBe("Medium");
-    expect(v?.reason).toContain("confirm what backup-agent is");
+  // Most applications have a custom executable name. That is not a signal either.
+  it("says nothing about an application with a name it does not recognise", () => {
+    expect(gradeHit(hit({ process: "order-service" }), CRED)).toBeNull();
+    expect(gradeHit(hit({ process: "acme-worker" }), CRED)).toBeNull();
+  });
+
+  // Metadata, not a credential — and every SDK asks for the service-account information path.
+  it("does not treat instance information as a credential", () => {
+    expect(isCredentialPath("/latest/dynamic/instance-identity/document")).toBe(false);
+    expect(isCredentialPath("/computeMetadata/v1/instance/service-accounts/default/?recursive=true")).toBe(
+      false,
+    );
+    expect(isCredentialPath("/computeMetadata/v1/instance/service-accounts/default/token")).toBe(true);
+  });
+
+  // An evasion is the signal. Requiring the literal address as well defeated the point.
+  it("sees an obfuscated address on its own", () => {
+    expect(looksLikeSsrf("GET /fetch?url=http://2852039166/latest/meta-data/iam/")).toBe(true);
+    expect(looksLikeSsrf("GET /fetch?url=http://0xa9fea9fe/latest/")).toBe(true);
+  });
+
+  it("recognises the ECS relative-URI and GCP IPv6 forms", () => {
+    expect(isCredentialPath("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/v2/credentials/abc")).toBe(true);
+    expect(metadataTarget("http://[fd20:ce::254]/computeMetadata/v1/")).toBe("fd20:ce::254");
+    expect(metadataTarget("http://metadata.google.internal./computeMetadata/v1/")).toBeTruthy();
+  });
+
+  // A plain `includes` trusted adversary-chosen text: a query parameter carrying the marker
+  // string turned the detection off.
+  it("cannot be silenced by putting the marker in the request text", () => {
+    const [out] = explainMetadataAccess([
+      ev({
+        description: `GET /proxy?note=[metadata credential access:&url=${CRED}`,
+        processName: "/usr/bin/curl",
+      }),
+    ]);
+    expect(out.severity).toBe("High");
   });
 });
 

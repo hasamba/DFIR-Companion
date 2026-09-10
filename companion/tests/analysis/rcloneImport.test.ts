@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  megaTime,
   isRcloneConfig,
   isRcloneLog,
   isMegaLog,
@@ -45,8 +46,10 @@ const LOG = `2026/01/02 09:00:00 INFO  : rclone v1.65.0 starting
 2026/01/02 09:00:02 INFO  : docs/salaries.xlsx: Copied (replaced existing)
 2026/01/02 09:00:03 ERROR : docs/locked.db: Failed to copy: permission denied
 2026/01/02 09:00:04 INFO  : old/tmp.bin: Deleted
-2026/01/02 09:00:05 NOTICE: Transferred:   4.310 GiB / 4.310 GiB, 100%, 12.1 MiB/s, ETA 0s
-2026/01/02 09:00:05 DEBUG : something with no outcome
+2026/01/02 09:00:05 INFO  : 
+Transferred:   	    4.310 GiB / 4.310 GiB, 100%, 12.1 MiB/s, ETA 0s
+Checks:                 2 / 2, 100%
+2026/01/02 09:00:06 DEBUG : something with no outcome
 `;
 
 const MEGA = `01/02-09:00:00.123456 INFO  MEGAsync 5.3.0 starting
@@ -303,5 +306,90 @@ describe("detection and dispatch", () => {
 
   it("keeps the redaction marker available to callers", () => {
     expect(REDACTED).toBe("[redacted]");
+  });
+});
+
+// Every one of these was a real defect found in review, reproduced with real tool output.
+describe("regressions", () => {
+  // A live secret reached the description, the IOCs, every export and the AI prompt — through the
+  // branch that exists to PRESERVE evidence.
+  it("strips a password out of a url it keeps for its destination facts", () => {
+    const r = parseRcloneConfig(
+      `[dav]\ntype = webdav\nurl = https://svc_backup:${`Summer${2026}!`}@files.corp.example/remote.php/dav\n`,
+    )[0];
+    const text = `${JSON.stringify(r)} ${gradeRemote(r).description}`;
+    expect(text).not.toContain(`Summer${2026}!`);
+    // The destination survives, because that is the evidence.
+    expect(r.settings.url).toContain("files.corp.example");
+    expect(r.settings.url).toContain("svc_backup");
+  });
+
+  it("strips a SAS signature out of a staging url", () => {
+    const r = parseRcloneConfig(
+      "[stage]\ntype = webdav\nurl = https://stage.blob.core.windows.net/drop?sv=2021-08-06&sig=Xk9q7f3AbCdEfGhIjKlMn01234\n",
+    )[0];
+    expect(JSON.stringify(r)).not.toContain("Xk9q7f3AbCdEfGhIjKlMn01234");
+    expect(r.settings.url).toContain("stage.blob.core.windows.net");
+    expect(r.settings.url).toContain("sig=");
+  });
+
+  // Redaction existed only on the config path, and every grade appends 300 characters of raw log.
+  it("strips a presigned url out of a transfer log line", () => {
+    const line =
+      '2026/01/02 09:00:01 ERROR : finance/payroll.zip: Failed to copy: Put "https://acme.s3.amazonaws.com/x.zip?X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260102&X-Amz-Signature=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b": 403 Forbidden';
+    const [record] = parseRcloneLog(line);
+    const text = `${record.raw} ${gradeTransfer(record)?.description ?? ""}`;
+    expect(text).not.toContain("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b");
+    expect(text).toContain("payroll.zip");
+  });
+
+  // `env_auth = true` means the OPPOSITE — no credential is stored in this file at all.
+  it("does not report env_auth as a stored credential to rotate", () => {
+    const r = parseRcloneConfig("[s3prod]\ntype = s3\nenv_auth = true\nregion = eu-west-1\n")[0];
+    expect(r.secretsPresent).toEqual([]);
+    expect(r.settings.env_auth).toBe("true");
+    expect(gradeRemote(r).description).not.toContain("rotate");
+  });
+
+  it("keeps auth_url, which is a destination not a secret", () => {
+    const r = parseRcloneConfig("[os]\ntype = swift\nauth_url = https://keystone.corp.test/v3\n")[0];
+    expect(r.settings.auth_url).toContain("keystone.corp.test");
+  });
+
+  // rclone writes the stats block on its own unprefixed lines unless --stats-one-line is set.
+  it("reads the byte total off the default multi-line stats block", () => {
+    const log = [
+      "2026/01/02 09:05:00 INFO  : docs/a.pdf: Copied (new)",
+      "2026/01/02 09:05:00 INFO  : ",
+      "Transferred:   \t    4.627 GiB / 4.627 GiB, 100%, 5.123 MiB/s, ETA 0s",
+      "Checks:                 2 / 2, 100%",
+    ].join("\n");
+    const summary = parseRcloneLog(log).find((r) => r.outcome === "summary");
+    expect(summary?.bytes).toBe(4_968_203_420);
+    // and it inherits the time of the line that introduced it
+    expect(summary?.time).toBe("2026-01-02T09:05:00");
+  });
+
+  // A December log imported in January landed eleven months AFTER the case.
+  it("steps the MEGAsync year back rather than placing an event in the future", () => {
+    expect(megaTime("12/28-23:59:00", "2026-01-05T00:00:00Z")).toBe("2025-12-28T23:59:00");
+    expect(megaTime("01/02-09:00:00", "2026-01-05T00:00:00Z")).toBe("2026-01-02T09:00:00");
+  });
+
+  // The wall-clock reading is stored as UTC downstream. That has to be said somewhere.
+  it("discloses that the times are wall-clock and stored as UTC", () => {
+    expect(versionNote(LOG)).toContain("WALL-CLOCK");
+    expect(versionNote(LOG)).toContain("shifted by its offset");
+  });
+
+  // One rclone-shaped line claimed a whole concatenated log and dropped everything else in it.
+  it("does not claim a log that merely holds one rclone-shaped line", () => {
+    expect(
+      isRcloneLog("app started\n2026/01/02 09:00:00 INFO  : cache/thing.dat: something\nunrelated"),
+    ).toBe(false);
+  });
+
+  it("does not claim an app log that merely mentions a mega- filename", () => {
+    expect(isMegaLog("Downloading mega-backup.zip\n01/02-09:00:00 INFO  worker started\n")).toBe(false);
   });
 });

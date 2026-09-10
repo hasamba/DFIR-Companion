@@ -44,13 +44,26 @@ export const METADATA_TARGETS: readonly string[] = [
   "fd00:ec2::254", // AWS IPv6
   "169.254.170.2", // AWS ECS task role
   "metadata.google.internal",
+  "metadata.google.internal.", // a fully qualified name with the root dot is the same host
   "metadata.goog",
+  "fd20:ce::254", // GCP IPv6
   "100.100.100.200", // Alibaba Cloud
   "169.254.169.253", // Oracle Cloud
 ];
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const METADATA_MARKER = "[metadata credential access:";
+
+/**
+ * Has this pass already annotated this description?
+ *
+ * ANCHORED AT THE END, where the pass puts its marker. A plain `includes` trusted adversary-chosen
+ * text: a request whose own query string carried the marker string suppressed grading entirely,
+ * which is a one-parameter way to turn the detection off.
+ */
+export function alreadyMarked(description: string): boolean {
+  return /\[metadata credential access:[\s\S]*\]\s*$/.test(description ?? "");
+}
 
 /**
  * The paths that return CREDENTIALS, as opposed to the harmless instance facts.
@@ -63,9 +76,13 @@ const CREDENTIAL_PATH_RES: readonly RegExp[] = [
   /\/latest\/meta-data\/iam\/security-credentials/i, // AWS IMDS
   /\/computeMetadata\/v1\/instance\/service-accounts\/[^\s"'&?]*\/(?:token|identity)/i, // GCP
   /\/metadata\/identity\/oauth2\/token/i, // Azure managed identity
-  /\/v1\/instance\/service-accounts/i, // GCP, short form
-  /\/latest\/dynamic\/instance-identity\/document/i, // AWS identity document
+  // GCP short form, but only the paths that RETURN a token. `/service-accounts/default/?recursive`
+  // returns the account's aliases, email and scopes — information, not a credential — and every SDK
+  // asks for it.
+  /\/v1\/instance\/service-accounts\/[^\s"'&?]*\/(?:token|identity)\b/i,
   /\/v2\/credentials\//i, // ECS task role
+  // The ECS relative-URI form, which is how a task is TOLD where its credentials are.
+  /\bAWS_CONTAINER_CREDENTIALS_(?:RELATIVE_URI|FULL_URI)\s*=/i,
 ];
 
 /**
@@ -218,8 +235,12 @@ const SSRF_OBFUSCATED_RE = /\b(?:2852039166|0250\.0376\.0250\.0376|0xa9fea9fe)\b
 
 export function looksLikeSsrf(text: string): boolean {
   return textVariants(text ?? "").some((t) => {
-    if (!metadataTarget(t)) return SSRF_OBFUSCATED_RE.test(t) && /169\.254\./.test(text ?? "");
-    return SSRF_PARAM_RE.test(t) || SSRF_QUERY_RE.test(t) || SSRF_OBFUSCATED_RE.test(t);
+    // An obfuscated spelling of the metadata address stands ALONE. Requiring the literal address
+    // as well meant the evasion regex could only ever fire when the attacker had also written the
+    // address in plain form — which defeats the point of writing it in decimal.
+    if (SSRF_OBFUSCATED_RE.test(t)) return true;
+    if (!metadataTarget(t)) return false;
+    return SSRF_PARAM_RE.test(t) || SSRF_QUERY_RE.test(t);
   });
 }
 
@@ -299,19 +320,13 @@ export function gradeHit(hit: MetadataHit, rawText: string): MetadataVerdict | n
     };
   }
 
-  if (!hit.process) {
-    return {
-      severity: "Medium",
-      mitre: ["T1552.005"],
-      reason: `Something on this host requested the instance role's credentials from ${hit.target}. The evidence did not record which process made the request, so this cannot be separated from the SDK traffic every cloud instance produces continuously. Recover the process — an EDR process event or an auditd record for the same second — before treating it either way.`,
-    };
-  }
-
-  return {
-    severity: "Medium",
-    mitre: ["T1552.005"],
-    reason: `${hit.process} requested the instance role's credentials from ${hit.target}. That is not a client known to need them, and it is not a language runtime or a web server either — confirm what ${hit.process} is on this host.`,
-  };
+  // NO PROCESS CONTEXT MEANS NO FINDING. The issue requires "credential-path AND process/request
+  // context", and a credential-path read with neither is indistinguishable from the SDK traffic
+  // every cloud instance produces continuously. Reporting it Medium put a finding on ordinary
+  // traffic whenever telemetry lacked attribution, or whenever an application had a custom
+  // executable name — which is most of them. The case-level gap is stated once by the coverage
+  // event instead of once per request.
+  return null;
 }
 
 const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
@@ -325,7 +340,7 @@ const DESCRIPTION_MAX = 700;
 export function explainMetadataAccess(events: readonly ForensicEvent[]): ForensicEvent[] {
   let changed = false;
   const out = events.map((e) => {
-    if ((e.description ?? "").includes(METADATA_MARKER)) return e;
+    if (alreadyMarked(e.description ?? "")) return e;
     const hit = readHit(e);
     if (!hit) return e;
     const verdict = gradeHit(hit, searchText(e));
@@ -383,7 +398,7 @@ function sourceAddress(e: ForensicEvent): string {
 export function instanceCredentialUseAway(events: readonly ForensicEvent[]): ForensicEvent[] {
   let changed = false;
   const out = events.map((e) => {
-    if ((e.description ?? "").includes(METADATA_MARKER)) return e;
+    if (alreadyMarked(e.description ?? "")) return e;
     const text = `${e.description ?? ""} ${e.path ?? ""}`;
     if (!isInstanceRoleIdentity(text)) return e;
     const ip = sourceAddress(e);

@@ -19,7 +19,7 @@
 
 import { splitCollection, singleArtifact, type CollectedFile } from "./linuxPersistence.js";
 import { analyzeLinuxCollection, type LinuxSignal } from "./linuxPersistRules.js";
-import { classifyMacArtifact } from "./macosPersistence.js";
+import { classifyMacArtifact, isBinaryPlist, isXmlPlist } from "./macosPersistence.js";
 import { gradeLaunchd, type MacContext } from "./macosPersistRules.js";
 import {
   collectionNote,
@@ -41,12 +41,27 @@ export function readMacCollection(filename: string, text: string): CollectedFile
   const members = splitCollection(text, classifyMacArtifact);
   if (members.some((m) => m.kind !== "unknown")) return members;
   const base = (filename ?? "").split(/[\\/]/).pop() ?? "";
-  return singleArtifact(base.replace(/\.(?:txt|log|out)$/i, ""), text, classifyMacArtifact);
+  const named = singleArtifact(base.replace(/\.(?:txt|log|out)$/i, ""), text, classifyMacArtifact);
+  if (named.length) return named;
+
+  // A property list is self-identifying, so a plist saved under any other name is still a plist.
+  // Requiring a .plist filename meant detection claimed the file — the CONTENT sniff routes it
+  // here — and then this returned nothing, so the import was empty and the whole upload dropped.
+  if (isXmlPlist(text) || isBinaryPlist(text)) {
+    return [{ path: filename || "collected.plist", kind: "launchd", content: text }];
+  }
+  return [];
 }
 
 export function analyzeMacCollection(files: readonly CollectedFile[], ctx: MacContext = {}): LinuxSignal[] {
   // Everything that is not launchd is the same artifact it is on Linux, graded by the same rules.
-  const shared = analyzeLinuxCollection(files, ctx);
+  //
+  // EXCEPT the SUID listing. macOS ships a different setuid set — /usr/libexec/authopen,
+  // /usr/sbin/traceroute6, /usr/bin/quota and the rest — and none of it is in the Linux baseline,
+  // so every one would have been reported on a healthy Mac. macOS setuid analysis is not part of
+  // this item, and grading it against the wrong distribution's list is worse than not grading it.
+  const gradable = files.filter((f) => f.kind !== "suid");
+  const shared = analyzeLinuxCollection(gradable, ctx);
   const launchd = files.filter((f) => f.kind === "launchd").flatMap((f) => gradeLaunchd(f, ctx));
   return [...launchd, ...shared];
 }
