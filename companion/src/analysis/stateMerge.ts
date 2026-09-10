@@ -17,6 +17,7 @@ import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
+import { explainMetadataAccess, instanceCredentialUseAway } from "./cloudMetadataAccess.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -369,7 +370,12 @@ export function mergeDelta(
   // the command to the network and file records of the same process (#908 item 4). Here, because
   // those three legs arrive from different importers.
   const withCertutil = explainCertutilTransfers(withPrecursors);
-  const correlated = correlateEvents(withCertutil).sort(byEventTime);
+  // Instance-metadata credential access (#908 item 7). Here rather than in an importer because the
+  // request and the process that made it routinely arrive from different sources — a web access log
+  // and an EDR process event — and because the second half of the finding, an instance role used
+  // from an address the instance does not have, lives in the cloud audit log instead. Only raises.
+  const withMetadata = instanceCredentialUseAway(explainMetadataAccess(withCertutil));
+  const correlated = correlateEvents(withMetadata).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and

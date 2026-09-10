@@ -164,7 +164,7 @@ const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 // The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
 // forward from whichever member holds it, instead of discarding the reason for a raised severity.
 const DERIVED_NOTE =
-  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer):[\s\S]*?\]/u;
+  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access):[\s\S]*?\]/u;
 export function cleanDescription(d: string): string {
   // Two DERIVED notes are stripped before the key is taken, for the same reason the corroboration
   // suffix above is: neither existed before the change that added it, so a stored annotated event
@@ -174,7 +174,7 @@ export function cleanDescription(d: string): string {
   const withoutDerived = d
     // The process-lifetime markers (#909 item 6).
     .replace(
-      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer):[\s\S]*?\]\s*$/u,
+      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access):[\s\S]*?\]\s*$/u,
       "",
     )
     // The malfind interpretation (#909 item 4).
