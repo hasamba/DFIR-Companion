@@ -205,6 +205,7 @@
     "complianceView.ts": "analysis/intel",
     "confidence.ts": "analysis/findings",
     "confidenceControl.ts": "analysis/findings",
+    "containerEscape.ts": "analysis/timeline",
     "correlate.ts": "analysis/timeline",
     "correlationProfile.ts": "analysis/detect",
     "countryCentroids.ts": "analysis/intel",

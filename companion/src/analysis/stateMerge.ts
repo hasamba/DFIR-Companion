@@ -24,6 +24,7 @@ import {
 } from "./cloudMetadataAccess.js";
 import { summarizeBulkReads } from "./cloudBulkRead.js";
 import { markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
+import { markContainerEscape } from "./containerEscape.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -395,7 +396,12 @@ export function mergeDelta(
   // the logon that made a desktop session possible, and any archiving beside it arrive from three
   // different importers. Only raises, and only for an account something SAYS is noninteractive.
   const withServiceBrowsing = markServiceAccountBrowsing(withBulkReads);
-  const correlated = correlateEvents(withServiceBrowsing).sort(byEventTime);
+  // Container escape (#908 item 11). Here because the container's own command line, the host's
+  // process telemetry and the host's persistence artifacts arrive from different importers — and
+  // because a container-originated change to host persistence only reads as one event when both
+  // halves are in the same timeline. Only raises, and it keeps configuration and behaviour apart.
+  const withEscape = markContainerEscape(withServiceBrowsing);
+  const correlated = correlateEvents(withEscape).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and
