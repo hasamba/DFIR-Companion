@@ -82,6 +82,18 @@ const AZURE_RULES: Rule[] = [
   [/\/delete$/, "Medium", []],
 ];
 
+/**
+ * Does this operation READ an object's content, as opposed to managing infrastructure?
+ *
+ * Used only to decide whether the resource belongs in the aggregation key. Kept deliberately narrow:
+ * widening it would stop this importer aggregating the management noise it exists to collapse.
+ */
+function isObjectRead(action: string): boolean {
+  return /^(?:storage\.objects\.(?:get|list)|get blob|list blobs|blob\.(?:read|download))$/i.test(
+    (action ?? "").trim(),
+  );
+}
+
 function matchRule(rules: Rule[], key: string): { severity: Severity; mitre: string[] } | null {
   const k = key.toLowerCase();
   for (const [re, severity, mitre] of rules) if (re.test(k)) return { severity, mitre };
@@ -141,7 +153,15 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
     description,
     severity,
     mitre,
-    aggKey: `gcp|${method}|${principal}|${ip}|${statusCode}`.toLowerCase().slice(0, 400),
+    // The RESOURCE is part of the key for an object read. Without it, aggregation folded every
+    // read by one principal into a single counted event before any correlation could see it — so
+    // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
+    // reads carry it: a hundred management calls by one principal genuinely are one thing, and
+    // adding the resource everywhere would undo the aggregation this importer exists to do.
+    aggKey:
+      `gcp|${method}|${principal}|${ip}|${statusCode}${isObjectRead(method) && shortRes ? `|${shortRes}` : ""}`
+        .toLowerCase()
+        .slice(0, 400),
     sources: ["GCP Audit"],
   };
 }
@@ -179,7 +199,14 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
     description,
     severity,
     mitre,
-    aggKey: `azure|${op}|${caller}|${ip}|${status}`.toLowerCase().slice(0, 400),
+    // The RESOURCE is part of the key for an object read. Without it, aggregation folded every
+    // read by one principal into a single counted event before any correlation could see it — so
+    // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
+    // reads carry it: a hundred management calls by one principal genuinely are one thing, and
+    // adding the resource everywhere would undo the aggregation this importer exists to do.
+    aggKey: `azure|${op}|${caller}|${ip}|${status}${isObjectRead(op) && shortRes ? `|${shortRes}` : ""}`
+      .toLowerCase()
+      .slice(0, 400),
     sources: ["Azure Activity"],
   };
 }

@@ -251,9 +251,25 @@ export interface ForensicEvent {
   // event's description contains a base64-encoded or otherwise obfuscated command.
   deobfuscated?: {
     decoded: string; // the decoded/deobfuscated payload
-    method: string; // how it was decoded: "powershell-enc" | "base64"
+    method: string; // the OUTERMOST layer, kept for compatibility with single-layer results
     iocs: string[]; // canonical IOC ids (i###) extracted from the decoded content
+    // Every layer peeled, outermost first (#909 item 2). An analyst has to be able to see HOW a
+    // payload was reached before trusting what it says.
+    steps?: { method: string; detail?: string }[];
+    // A limit was hit (depth, size, time) or an expression could not be folded without executing
+    // it. Partial output is shown as partial — never as the final answer.
+    partial?: boolean;
+    // The decoder that produced this. Improving the decoder does not retroactively improve stored
+    // results, so this is what lets a later pass find the stale ones and redo them deliberately.
+    version?: number;
   };
+  // The modification time the SOURCE ARTIFACT recorded for this file (#909 item 8).
+  //
+  // Structured rather than only in the description, because corroborating a timestomp means
+  // comparing what two independent artifacts say about ONE file, and reading either value back out
+  // of prose would be parsing a sentence to make a forensic claim. ShimCache keeps its copy in the
+  // registry and the MFT keeps its own; a disagreement between them is the corroboration.
+  fileModified?: string;
   // Provenance markers explaining WHY this event was pulled into the analyzed timeline by an automated
   // pass rather than a normal import — currently the second-look loop (guidance #11), which stamps
   // "[second-look: h2]" onto a raw super-timeline row it promoted to resolve an open hypothesis/question.

@@ -7,6 +7,7 @@
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
+import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isIntactMemoryFile, looksLikeIntactPrefix } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
@@ -30,6 +31,11 @@ import {
   isMacosUnifiedLog,
   macosQuarantineCsvSig,
   hindsightCsvSig,
+  isAuditd,
+  looksLikeLinuxPersist,
+  looksLikeMacosPersist,
+  looksLikeRcloneEvidence,
+  looksLikeVelociraptorFile,
 } from "./importDetectSources.js";
 
 // The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
@@ -582,38 +588,23 @@ function isEmail(filename: string, text: string): boolean {
   return hasSpecific && headers >= 2;
 }
 
-// Velociraptor names its JSON exports after the collected artifact, e.g.
-// `Velociraptor-Windows.Triage.HighValueMemory.json` or `Generic.System.Pstree.json`. Many
-// artifacts (process lists, file listings, memory acquisition) emit rows with no distinctive
-// content signature, so they sniff as the generic SIEM fallback. When the FILENAME marks a
-// Velociraptor export we route those to the Velociraptor importer instead — it reads each
-// artifact's own columns and tags the source, rather than mislabeling rows "SIEM event:".
-const VR_ARTIFACT =
-  /\b(?:Windows|Linux|MacOS|Generic|Custom|Server|Exchange|Admin|Network)\.[A-Za-z]\w*(?:\.\w+)+/;
-function looksLikeVelociraptorFile(filename: string): boolean {
-  const n = filename ?? "";
-  return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
-}
-
-// ───────────────────────────── auditd (line-oriented) ─────────────────────────────
-
-// Linux auditd records ("type=SYSCALL msg=audit(1490451217.272:270): …") — the raw audit.log /
-// `ausearch` format. The `type=… msg=audit(secs.millis:serial)` shape is unique to auditd, so one
-// matching line anywhere in the head is enough to claim it ahead of the generic log fallback.
-const RE_AUDITD = /(?:^|\n)\s*type=\w+\s+msg=audit\(\d+\.\d+:\d+\)/;
-// 8 KB was not enough: a real audit.log opens with a boot banner and a run of SYSCALL-less noise,
-// and a file whose first `type=… msg=audit(…)` sat past that window sniffed as a plain log and went
-// to AI line-triage. 256 KB clears any realistic preamble while still being a cheap slice — the
-// regex is anchored per line, so a bigger window costs a scan, not a backtrack.
-function isAuditd(text: string): boolean {
-  return RE_AUDITD.test(text.slice(0, 256_000));
-}
-
 // ───────────────────────────── top-level ─────────────────────────────
 
 export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
+
+  // Windows Error Reporting (#909 item 5). Early, or the generic log path claims a Report.wer and
+  // reads none of its structure. isWerReport needs EventType AND a WER marker, so an INI does not match.
+  if (isWerReport(t)) return "wer";
+
+  // Persistence collections and rclone/MEGAsync evidence (#908 items 5, 6, 9). Ahead of the JSON
+  // sniff, not just the line formats: a systemd unit and an rclone.conf both open with `[`, which
+  // sent them to the JSON path and returned "unknown" — a 400 for a file already accepted. The
+  // signatures live in importDetectSources.ts; macOS is asked before Linux, which is a superset.
+  if (looksLikeMacosPersist(filename, t)) return "macospersist";
+  if (looksLikeLinuxPersist(filename, t)) return "linuxpersist";
+  if (looksLikeRcloneEvidence(t)) return "rclone";
 
   // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit
   // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.

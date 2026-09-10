@@ -161,8 +161,41 @@ function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
 // description. Stripped so it (a) never pollutes the text and (b) doesn't change the
 // dedup key — appending to the description used to break exact-duplicate re-matching.
 const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
+// The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
+// forward from whichever member holds it, instead of discarding the reason for a raised severity.
+const DERIVED_NOTE =
+  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]{0,1200}?\]/u;
+/**
+ * The per-user tag the Shellbags mapper adds (#908 item 10).
+ *
+ * Stripped before the duplicate key is taken, like every derived marker. Without this, re-importing
+ * a Shellbags CSV into a case imported before that tag existed added every row a second time — the
+ * description differed by the tag alone.
+ */
+// The marker body is BOUNDED. A lazy `[\s\S]*?` with no closing bracket present rescans to the end
+// of the string from every marker start, so a description carrying repeated marker openings is
+// quadratic — 288 KB of them took a second per regex, and cleanDescription runs once per event
+// during correlation. No real marker body approaches this cap; every pass truncates well below it.
+const SHELLBAG_USER_TAG = /\s*\[user:[^\]]*\]\s*$/u;
+
 export function cleanDescription(d: string): string {
-  return d.replace(CORRO_NOTE, "").trim();
+  // Two DERIVED notes are stripped before the key is taken, for the same reason the corroboration
+  // suffix above is: neither existed before the change that added it, so a stored annotated event
+  // and a freshly imported plain one would key differently and the row would duplicate on
+  // re-import. Correlation can also pick an unannotated primary while keeping an annotated
+  // member's fields, and stripping is what stops the next pass appending a second marker.
+  const withoutDerived = d
+    // The process-lifetime markers (#909 item 6).
+    .replace(
+      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]{0,1200}?\]\s*$/u,
+      "",
+    )
+    // The malfind interpretation (#909 item 4).
+    .replace(
+      / — (?:writable and executable|executable but not writable|protection (?:recorded as|was not recorded)|private memory|file-backed|VAD tag|no content preview|the captured preview|the tool reported)[\s\S]*$/u,
+      "",
+    );
+  return withoutDerived.replace(SHELLBAG_USER_TAG, "").replace(CORRO_NOTE, "").trim();
 }
 
 // Real source names only — drop empty and the legacy "unknown source" placeholder so a
@@ -195,9 +228,20 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     .filter(Boolean)
     .sort();
 
+  // The primary is chosen for trust and length, not for which member carried a derived note. Two
+  // things follow. Its description must keep any explanation the group carried — stripping it left
+  // a raised severity with no stated reason — and a modification time only another member recorded
+  // must survive, or the timestomp comparison loses its input at the merge.
+  const annotated = events.find((e) => DERIVED_NOTE.test(e.description));
+  const fileModified = primary.fileModified ?? events.find((e) => e.fileModified)?.fileModified;
+
   const merged: ForensicEvent = {
     ...primary,
-    description: cleanDescription(primary.description),
+    description:
+      annotated && annotated !== primary
+        ? `${cleanDescription(primary.description)} ${DERIVED_NOTE.exec(annotated.description)?.[0]?.trim() ?? ""}`.trim()
+        : primary.description,
+    ...(fileModified ? { fileModified } : {}),
     severity: events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
     timestamp: times[0] ?? primary.timestamp,
     mitreTechniques: uniq(events.flatMap((e) => e.mitreTechniques)),

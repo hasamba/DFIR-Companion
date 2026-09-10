@@ -486,7 +486,7 @@
     <label id="deepReasoningLabel" data-safe-style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
       <input type="checkbox" id="deepReasoning" data-safe-style="margin:0;cursor:pointer" />🧠
     </label>
-    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,.evtx,.evt,.pcap,.pcapng,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" data-safe-style="display:none" />
+    <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,.evtx,.evt,.wer,.service,.timer,.socket,.bashrc,.bash_profile,.zshrc,.profile,.plist,.conf,.pcap,.pcapng,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" data-safe-style="display:none" />
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" data-safe-style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" data-safe-style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
@@ -4197,7 +4197,16 @@
       }
       if (e.deobfuscated) {
         const iocRefs = (e.deobfuscated.iocs || []).length ? ` (IOCs: ${e.deobfuscated.iocs.map(i => esc(i)).join(", ")})` : "";
-        parts.push(`<div data-safe-style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
+        // The LAYERS the payload was wrapped in, and whether decoding finished (#909 item 2). A
+        // payload that was truncated, hit the depth cap, or contained an expression we refuse to
+        // evaluate must not be shown as if it were the final answer — the analyst has to know the
+        // decode stopped early before drawing a conclusion from what came out.
+        const steps = (e.deobfuscated.steps || []).map(s => esc(s.method)).join(" -> ");
+        const via = steps ? `<div data-safe-style="opacity:.75">Decoded via: ${steps}</div>` : "";
+        const partial = e.deobfuscated.partial
+          ? `<div data-safe-style="opacity:.9">Partial decode - a limit was reached or an expression could not be resolved without running it. Treat what follows as incomplete.</div>`
+          : "";
+        parts.push(`<div data-safe-style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">${via}${partial}Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
       }
       // Second-look provenance (#11): this raw row was pulled up from the super-timeline by the
       // post-synthesis re-query — show WHY (which open question/hypothesis it answers).

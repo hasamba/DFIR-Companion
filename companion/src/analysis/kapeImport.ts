@@ -30,7 +30,11 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
+import { parseReasons, pairRenames, summarizeLifecycle, type UsnRecord } from "./usnLifecycle.js";
 import { prefetchSignal } from "./prefetchExecution.js";
+import { readSrumRow, totalSrum, srumSignal, type SrumRow } from "./srumNetwork.js";
+import { companionLeads, type PrefetchEntry } from "./prefetchResources.js";
+import { NOISY_LOLBINS } from "./winProcessBaseline.js";
 
 type Row = Record<string, unknown>;
 
@@ -54,6 +58,39 @@ export interface KapeParseResult {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
+// MFTECmd $J columns → the identity-bearing shape the lifecycle module works on. The volume comes
+// from SourceFile when the export records it: entry 12345 on C: and on D: are different files, and
+// one collection can contain both journals.
+function toUsnRecords(rows: readonly Row[]): UsnRecord[] {
+  return rows.map((row) => ({
+    name: firstStr(row, ["Name"]),
+    entry: firstStr(row, ["EntryNumber", "FileReferenceNumber"]),
+    sequence: firstStr(row, ["SequenceNumber"]),
+    parentEntry: firstStr(row, ["ParentEntryNumber", "ParentFileReferenceNumber"]),
+    parentSequence: firstStr(row, ["ParentSequenceNumber"]),
+    usn: firstStr(row, ["UpdateSequenceNumber", "Usn"]),
+    timestamp: ezTime(getCI(row, "UpdateTimestamp")),
+    reasons: parseReasons(firstStr(row, ["UpdateReasons"])),
+    parentPath: firstStr(row, ["ParentPath"]),
+    // SourceFile names the file the parser READ, which in a KAPE collection is the staging path
+    // (E:\KAPE\Collection\C\$Extend\$J) — its drive letter is the collector's, not the host's.
+    // So a real volume column is preferred, and SourceFile is used only when it is not a staging
+    // path. An empty volume is honest; a wrong one silently merges two volumes' files.
+    volume: usnVolume(firstStr(row, ["Volume", "VolumeName"]), firstStr(row, ["SourceFile"])),
+  }));
+}
+
+// The volume a journal record belongs to, or "" when the export does not reliably say.
+function usnVolume(explicit: string, sourceFile: string): string {
+  const v = explicit.trim();
+  if (/^[A-Za-z]:?$/.test(v)) return `${v[0].toUpperCase()}:`;
+  const src = sourceFile.trim();
+  // A staging path has the journal nested under a collection directory; its leading drive letter is
+  // the collector's. Only a path that IS the journal at a volume root is trusted.
+  if (/^[A-Za-z]:\\\$Extend\\\$(?:J|UsnJrnl)/i.test(src)) return `${src[0].toUpperCase()}:`;
+  return "";
+}
+
 // EZ timestamps are UTC "yyyy-MM-dd HH:mm:ss(.fffffff)" (no zone). Truncate the 7-digit
 // fraction to ms, drop the .NET min-date sentinel, then normalize (treats naive as UTC).
 function ezTime(v: unknown): string {
@@ -62,6 +99,15 @@ function ezTime(v: unknown): string {
   t = t.replace(/(\.\d{3})\d+/, "$1");
   return normalizeTime(t);
 }
+
+// How many journal rows lifecycle reconstruction will hold at once. Renames are adjacent in the
+// journal, so a prefix reconstructs the same pairs a whole file would for everything inside it.
+const MAX_LIFECYCLE_ROWS = 200_000;
+
+// Prefetch reference lists run to a thousand entries each. Bounded for the same reason the journal
+// pass is: the whole collection is held at once before the event cap applies.
+const MAX_PREFETCH_ENTRIES = 5_000;
+const MAX_REFERENCES_PER_ENTRY = 1_000;
 
 const HASH40 = /[a-f0-9]{40}/i;
 function addHash(sink: Map<string, SiemIoc>, raw: string): void {
@@ -98,6 +144,32 @@ interface Profile {
 
 const has = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.has(k.toLowerCase()));
 
+/**
+ * The account a shellbag row belongs to.
+ *
+ * Read from a user column when the collection added one, then from the source filename, which is
+ * where SBECmd records it — `20260102120000_UsrClass_alice.csv`, `..._NTUSER_alice.csv`, or a path
+ * containing `\Users\alice\`. Returns "" rather than a guess.
+ */
+/** Words SBECmd puts in its own filenames. None of them is an account. */
+const SBECMD_OUTPUT_WORD =
+  /^(?:deduplicated|output|combined|merged|all|results?|backup|export|temp|tmp|copy)$/i;
+
+export function shellbagAccount(row: Row): string {
+  const direct = firstStr(row, ["User", "UserName", "UserSID", "SID", "Account", "ProfileName"]);
+  if (direct) return direct;
+  const source = firstStr(row, ["SourceFile", "_Source", "HiveName", "HivePath", "File", "SourceName"]);
+  if (!source) return "";
+  const named = /(?:UsrClass|NTUSER(?:\.DAT)?)[_-]([^\\/_.]+)/i.exec(source);
+  // SBECmd's own output words are not usernames. `..._UsrClass_Deduplicated.csv` and
+  // `..._NTUSER_Output.csv` are files the tool writes, and reading them as accounts put an invented
+  // name into the description, the key and every finding — worse than the "not recorded" note the
+  // code already has for the case where it genuinely does not know.
+  if (named && !SBECMD_OUTPUT_WORD.test(named[1])) return named[1];
+  const profile = /[\\/]Users[\\/]([^\\/]+)[\\/]/i.exec(source);
+  return profile ? profile[1] : "";
+}
+
 const PROFILES: Profile[] = [
   {
     name: "Prefetch",
@@ -108,13 +180,28 @@ const PROFILES: Profile[] = [
       const runCount = firstStr(row, ["RunCount"]);
       const proc = addProc(sink, exe);
       const time = ezTime(getCI(row, "LastRun")) || ezTime(getCI(row, "SourceModified"));
+      // PECmd records up to seven PREVIOUS runs. Only the last was read, so the execution history
+      // the artifact carries — how often, and over what span — never reached the timeline.
+      const previous = [
+        "PreviousRun0",
+        "PreviousRun1",
+        "PreviousRun2",
+        "PreviousRun3",
+        "PreviousRun4",
+        "PreviousRun5",
+        "PreviousRun6",
+      ]
+        .map((k) => ezTime(getCI(row, k)))
+        .filter(Boolean);
       // Prefetch carries no command line, so the binary's NAME is all there is to grade — and ungraded it
       // stays Info, below the forensic floor, where synthesis never reads it. PECmd exports no executable
       // path column, so the location-dependent rules stay silent. See prefetchExecution.ts.
       const signal = prefetchSignal(exe);
       return {
         timestamp: time,
-        description: `Prefetch: ${exe} executed${runCount ? ` (run ${runCount}×)` : ""}`.slice(0, 600),
+        description: `Prefetch: ${exe} executed${runCount ? ` (run ${runCount}×)` : ""}${
+          previous.length ? `, previously ${previous.join(", ")}` : ""
+        }`.slice(0, 600),
         severity: signal?.severity ?? "Info",
         mitre: signal ? signal.mitre : [],
         aggKey: `pf|${exe.toLowerCase()}`,
@@ -159,12 +246,22 @@ const PROFILES: Profile[] = [
       const executed = truthy(getCI(row, "Executed"));
       return {
         timestamp: ezTime(getCI(row, "LastModifiedTimeUTC")),
-        description: `ShimCache: ${path}${executed ? " (Executed)" : ""}`.slice(0, 600),
+        // The timestamp on this event is LastModifiedTimeUTC — the FILE's modification time, not
+        // when anything ran. Saying so on the row is the difference between an analyst reading the
+        // timeline correctly and reading it as an execution (#909 item 1).
+        description: `ShimCache: ${path} — present in the cache${
+          executed ? ", execution flag set" : ""
+        }; time shown is the file's modification time, not a run time`.slice(0, 600),
         severity: "Info",
         mitre: [],
         aggKey: `shim|${path.toLowerCase()}`,
         sources: ["ShimCache"],
         path,
+        // ShimCache keeps its copy of the modification time in the REGISTRY, which a tool that
+        // rewrites the MFT does not necessarily touch. That independence is the whole point.
+        ...(ezTime(getCI(row, "LastModifiedTimeUTC"))
+          ? { fileModified: ezTime(getCI(row, "LastModifiedTimeUTC")) }
+          : {}),
         ...(proc ? { processName: proc } : {}),
       };
     },
@@ -222,15 +319,28 @@ const PROFILES: Profile[] = [
       const name = firstStr(row, ["Name"]);
       const reasons = firstStr(row, ["UpdateReasons"]);
       if (!name) return null;
-      const proc = addProc(sink, name);
+      // The file reference — entry AND sequence — is what identifies the file across renames
+      // (#909 item 7). Keeping only the name meant a rename could not be reconstructed at all.
+      const entry = firstStr(row, ["EntryNumber", "FileReferenceNumber"]);
+      const seq = firstStr(row, ["SequenceNumber"]);
+      // A bare filename is not identity, so cross-artifact comparison refuses it. Where the export
+      // recorded the directory, the event carries the full path instead — otherwise the journal
+      // could never be matched against an MFT record for the same file.
+      const parent = firstStr(row, ["ParentPath"]);
+      const full = parent ? `${parent.replace(/[\\/]+$/, "")}\\${name}` : name;
+      addFile(sink, full);
       return {
         timestamp: ezTime(getCI(row, "UpdateTimestamp")),
-        description: `UsnJrnl: ${name} — ${reasons}`.slice(0, 600),
+        description: `UsnJrnl: ${name} — ${reasons}${entry ? ` [file ${entry}-${seq || "?"}]` : ""}`.slice(
+          0,
+          600,
+        ),
         severity: "Info",
         mitre: [],
-        aggKey: `usn|${name.toLowerCase()}|${reasons.toLowerCase()}`,
+        // Identity in the key, so two files that happened to share a name stay apart.
+        aggKey: `usn|${entry}-${seq}|${name.toLowerCase()}|${reasons.toLowerCase()}`,
         sources: ["UsnJrnl"],
-        ...(proc ? { processName: proc } : {}),
+        path: full,
       };
     },
   },
@@ -259,28 +369,40 @@ const PROFILES: Profile[] = [
         aggKey: `mft|${path.toLowerCase()}`,
         sources: ["MFT"],
         path,
+        // The MFT's own record of when the file was modified, kept structured so it can be
+        // compared against ShimCache's independent copy (#909 item 8).
+        ...(ezTime(getCI(row, "LastModified0x10"))
+          ? { fileModified: ezTime(getCI(row, "LastModified0x10")) }
+          : {}),
         ...(proc ? { processName: proc } : {}),
       };
     },
   },
   {
     name: "SRUM",
-    match: (h) => has(h, "BytesSent", "BytesReceived"),
+    // BytesRecvd is SrumECmd's spelling. Requiring BytesReceived meant a real export was never
+    // recognised as SRUM at all (#909 item 9).
+    match: (h) => h.has("bytessent") && (h.has("bytesrecvd") || h.has("bytesreceived")),
     map: (row, sink) => {
       const exe = firstStr(row, ["ExeInfo", "AppId", "Application"]);
       if (!exe) return null;
       const proc = addProc(sink, exe);
       const sent = firstStr(row, ["BytesSent"]);
-      const recv = firstStr(row, ["BytesReceived"]);
+      const recv = firstStr(row, ["BytesRecvd", "BytesReceived"]);
+      const user = firstStr(row, ["UserName", "User"]) || firstStr(row, ["Sid", "UserId"]);
       return {
         timestamp: ezTime(getCI(row, "Timestamp")),
-        description: `SRUM network: ${baseName(exe)} sent ${sent || "?"} / recv ${recv || "?"} bytes`.slice(
-          0,
-          600,
-        ),
+        // The per-row event keeps the ATTRIBUTION, not just the numbers: which user, which
+        // interface. A total without them cannot be defended.
+        description:
+          `SRUM network: ${baseName(exe)}${user ? ` as ${user}` : ""} sent ${sent || "?"} / recv ${recv || "?"} bytes`.slice(
+            0,
+            600,
+          ),
         severity: "Info",
         mitre: [],
-        aggKey: `srum|${exe.toLowerCase()}`,
+        // Identity in the key: two users of one application are two facts, and one key merged them.
+        aggKey: `srum|${exe.toLowerCase()}|${user.toLowerCase()}|${firstStr(row, ["InterfaceLuid", "L2ProfileId"])}`,
         sources: ["SRUM"],
         ...(proc ? { processName: proc } : {}),
       };
@@ -311,12 +433,27 @@ const PROFILES: Profile[] = [
       const path = firstStr(row, ["AbsolutePath"]);
       if (!path) return null;
       addFile(sink, path);
+      // WHO browsed is the whole point of a shellbag (#908 item 10). A shellbag lives in a
+      // per-user hive, so the account is the artifact's most important field — and it was being
+      // dropped, which cost more than the label: the aggregation key was the path alone, so two
+      // accounts that browsed the same folder collapsed into ONE event and one of them
+      // disappeared. That is exactly the case the issue is about.
+      //
+      // SBECmd writes no user column, so the identity has to come from whatever the collection
+      // preserved: an added column, the source filename (SBECmd names its output for the hive it
+      // read), or a Velociraptor `_Source`. When none of those survived, the event says the
+      // attribution was not recorded rather than implying the browsing was unattributed.
+      const account = shellbagAccount(row);
       return {
         timestamp: ezTime(getCI(row, "LastInteracted")) || ezTime(getCI(row, "FirstInteracted")),
-        description: `Shellbag: ${path}`.slice(0, 600),
+        description:
+          `Shellbag: ${path}` +
+          (account
+            ? ` [user: ${account}]`
+            : " [user: not recorded by this collection — a shellbag is per-user, so the account is unknown here, not absent]"),
         severity: "Info",
         mitre: [],
-        aggKey: `sb|${path.toLowerCase()}`,
+        aggKey: `sb|${account.toLowerCase()}|${path.toLowerCase()}`,
         sources: ["Shellbags"],
         path,
       };
@@ -351,6 +488,9 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  const usnRows: Row[] = [];
+  const srumRows: SrumRow[] = [];
+  const prefetchEntries: PrefetchEntry[] = [];
   for (const cols of rows) {
     const row: Row = {};
     headers.forEach((h, i) => {
@@ -358,6 +498,126 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     });
     const m = profile.map(row, iocSink);
     if (m) mapped.push(m);
+    // Bounded. A real $J export runs to millions of rows, and lifecycle reconstruction holds every
+    // one it is given, sorts a copy, and allocates a record per row — all BEFORE maxEvents applies.
+    // Unbounded, that exhausts the process before any capped result is produced.
+    if (profile.name === "UsnJrnl" && usnRows.length < MAX_LIFECYCLE_ROWS) usnRows.push(row);
+    if (profile.name === "Prefetch") {
+      // PECmd lists every file the executable referenced while starting, in FilesLoaded, and the
+      // volumes in Directories. That list is the half of the artifact that answers "what else came
+      // with it" (#909 item 10) — the importer was keeping only the name and a run count.
+      const exe = firstStr(row, ["ExecutableName"]);
+      if (exe && prefetchEntries.length < MAX_PREFETCH_ENTRIES) {
+        const loaded = firstStr(row, ["FilesLoaded", "Files Loaded"]);
+        prefetchEntries.push({
+          executable: exe,
+          host: firstStr(row, ["ComputerName", "Host"]),
+          volumeSerial: firstStr(row, ["Volume0Serial", "VolumeSerial"]),
+          runCount: Number(firstStr(row, ["RunCount"])) || 0,
+          lastRun: ezTime(getCI(row, "LastRun")),
+          // PECmd separates the list with commas; some exports use semicolons or newlines.
+          referenced: loaded
+            .split(/[,;\r\n]+/)
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .slice(0, MAX_REFERENCES_PER_ENTRY),
+        });
+      }
+    }
+    if (profile.name === "SRUM") {
+      const r = readSrumRow((k) => getCI(row, k));
+      if (r) srumRows.push({ ...r, timestamp: ezTime(r.timestamp) || r.timestamp });
+    }
+  }
+
+  // Lifecycle reconstruction needs every record at once: a rename is TWO records, and which names a
+  // file was known under is a property of the whole journal, not of any single row (#909 item 7).
+  // Totals per application AND user AND interface, over deduplicated rows (#909 item 9). One row
+  // per hour says nothing; the total is the evidence, and it is only defensible with the
+  // attribution and the interval attached.
+  for (const t of totalSrum(srumRows)) {
+    const signal = srumSignal(t);
+    if (!signal) continue;
+    mapped.push({
+      timestamp: t.last || t.first,
+      description: `SRUM total: ${signal.note}`.slice(0, 900),
+      severity: signal.severity,
+      mitre: signal.mitre,
+      aggKey: `srum|total|${t.app.toLowerCase()}|${(t.sid || t.user).toLowerCase()}|${t.interfaceId}`,
+      sources: ["SRUM"],
+      ...(t.app ? { processName: baseName(t.app) } : {}),
+    });
+  }
+
+  // What else on this host referenced the same unusual files as an executable already worth
+  // grading. The suspects are not decided here — prefetchExecution.ts already says which names earn
+  // more than Info, and this answers "what came with it" for those (#909 item 10).
+  // Graded, but NOT the ones the repository's own baseline already calls constant stock-host noise.
+  // rundll32.exe is in the dual-use list and in NOISY_LOLBINS, so seeding on it made every managed
+  // endpoint produce companion leads.
+  const suspects = [
+    ...new Set(
+      prefetchEntries
+        .filter((e) => prefetchSignal(e.executable) !== null)
+        .map((e) => e.executable.toLowerCase())
+        .filter((n) => !NOISY_LOLBINS.has(n)),
+    ),
+  ];
+  for (const suspect of suspects) {
+    for (const lead of companionLeads(prefetchEntries, suspect)) {
+      // Only the leads that point somewhere a shipped program does not keep resources. The rest are
+      // the ordinary-coincidence tail, and the dedicated KAPE import route does not demote Info
+      // rows, so emitting them would put that tail straight into the forensic timeline.
+      if (!lead.inUserWritable) continue;
+      // Dated from the companion's own last run. An empty timestamp sorts after every real event,
+      // which puts a lead about two executions nowhere near either of them.
+      const when = prefetchEntries.find((e) => e.executable.toLowerCase() === lead.companion)?.lastRun ?? "";
+      mapped.push({
+        timestamp: when,
+        description: `Prefetch companions: ${lead.note}`.slice(0, 900),
+        // A shared reference LINKS two executions; it does not explain either, so it is a lead.
+        severity: "Low",
+        mitre: [],
+        aggKey: `pf|companion|${lead.suspect}|${lead.companion}`,
+        sources: ["Prefetch"],
+        processName: lead.companion,
+      });
+    }
+  }
+
+  const usnRecords = toUsnRecords(usnRows);
+  // Files the journal shows being DELETED, and files it knew under several names. This is where the
+  // deleted-Prefetch case surfaces: a .pf record carrying FILE_DELETE is an execution artifact
+  // removed, which is anti-forensics rather than housekeeping.
+  for (const life of summarizeLifecycle(usnRecords)) {
+    const prefetchDeleted = life.deletedSeen && life.names.some((n) => /\.pf$/i.test(n));
+    const multiName = life.names.length > 1;
+    if (!prefetchDeleted && !multiName) continue;
+    mapped.push({
+      timestamp: life.last || life.first,
+      description:
+        `UsnJrnl lifecycle: ${life.note}` +
+        (prefetchDeleted
+          ? " A Prefetch file being deleted removes execution evidence; Windows does not routinely delete them individually."
+          : ""),
+      severity: prefetchDeleted ? "Medium" : "Info",
+      mitre: prefetchDeleted ? ["T1070.004"] : [],
+      aggKey: `usn|life|${life.reference}`,
+      sources: ["UsnJrnl"],
+      path: life.names[life.names.length - 1],
+    });
+  }
+
+  for (const pair of pairRenames(usnRecords)) {
+    mapped.push({
+      timestamp: pair.timestamp,
+      description: `UsnJrnl: ${pair.newName} — ${pair.note}`.slice(0, 600),
+      severity: pair.severity,
+      mitre: [],
+      aggKey: `usn|${pair.kind}|${pair.reference}|${pair.oldName.toLowerCase()}|${pair.newName.toLowerCase()}|${pair.oldParent}|${pair.newParent}`,
+      sources: ["UsnJrnl"],
+      path: pair.newName,
+    });
   }
 
   const { events, groups } = aggregateEvents(mapped, {

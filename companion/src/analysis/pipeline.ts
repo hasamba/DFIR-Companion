@@ -524,6 +524,22 @@ export class AnalysisPipeline {
     return ingest.importKape(this.importCtx, ...args);
   }
 
+  importWer(...args: ImporterArgs<typeof ingest.importWer>): Promise<InvestigationState> {
+    return ingest.importWer(this.importCtx, ...args);
+  }
+
+  importLinuxPersist(...args: ImporterArgs<typeof ingest.importLinuxPersist>): Promise<InvestigationState> {
+    return ingest.importLinuxPersist(this.importCtx, ...args);
+  }
+
+  importMacosPersist(...args: ImporterArgs<typeof ingest.importMacosPersist>): Promise<InvestigationState> {
+    return ingest.importMacosPersist(this.importCtx, ...args);
+  }
+
+  importRclone(...args: ImporterArgs<typeof ingest.importRclone>): Promise<InvestigationState> {
+    return ingest.importRclone(this.importCtx, ...args);
+  }
+
   importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
     return ingest.importCybertriage(this.importCtx, ...args);
   }

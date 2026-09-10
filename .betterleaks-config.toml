@@ -30,6 +30,15 @@ regexes = [
   '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|northstar|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
   '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
+  # `metadata.google.internal` is Google Cloud's PUBLIC, documented address for the instance
+  # metadata service — the same well-known name as 169.254.169.254, and detection DATA for the
+  # cloud-credential-access rules (#908 item 7), not a hostname belonging to anyone's estate.
+  # The leading `[\w-]*` covers `notmetadata.google.internal`, the negative-test hostname that
+  # proves the boundary check rejects a longer name that merely ends the same way.
+  '''(?i)[\w-]*metadata\.google\.internal\.?''',
+  # `HOST.domain.local` is a placeholder in a comment about host-name normalization — two literal
+  # placeholders, not a host.
+  '''(?i)\bHOST\.domain\.local\b''',
   # Presidio test fixtures. `presidio.local` is a deliberately unreachable URL in the client's
   # error-path tests (nothing must resolve it), and `DC01.victim.local` is the synthetic victim
   # host the ordering tests assert never reaches Presidio in the clear — i.e. the string is the

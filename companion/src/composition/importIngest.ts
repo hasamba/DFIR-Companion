@@ -49,7 +49,10 @@ export interface ImportIngestDeps {
   getControl: (caseId: string) => Promise<AiControl>;
   applyWhitelistToCase: (caseId: string) => Promise<{ matched: number; added: number }>;
   applyNsrlToCase: (caseId: string) => Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
-  applyDeobfuscationToCase: (caseId: string) => Promise<{ deobfuscated: number; newIocs: number }>;
+  applyDeobfuscationToCase: (
+    caseId: string,
+    opts?: { reanalyzeStale?: boolean },
+  ) => Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }>;
   resynthesizeInBackground: (caseId: string) => void;
 }
 
@@ -250,6 +253,14 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importCiscoAsa(caseId, text, base));
       case "syslog":
         return observe(pipeline.importSyslog(caseId, text, base));
+      case "wer":
+        return observe(pipeline.importWer(caseId, text, base));
+      case "linuxpersist":
+        return observe(pipeline.importLinuxPersist(caseId, text, base));
+      case "macospersist":
+        return observe(pipeline.importMacosPersist(caseId, text, base));
+      case "rclone":
+        return observe(pipeline.importRclone(caseId, text, base));
       case "csv":
         return observe(pipeline.analyzeCsv(caseId, text, base));
       case "log":

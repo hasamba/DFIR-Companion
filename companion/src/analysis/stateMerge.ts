@@ -13,6 +13,18 @@ import { correlateEvents } from "./correlate.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
+import { markProcessLifetimeSignals } from "./processLifetime.js";
+import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
+import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
+import { explainCertutilTransfers } from "./certutilTransfer.js";
+import {
+  explainMetadataAccess,
+  instanceCredentialUseAway,
+  metadataCoverageEvent,
+} from "./cloudMetadataAccess.js";
+import { summarizeBulkReads } from "./cloudBulkRead.js";
+import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
+import { markContainerEscape } from "./containerEscape.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -280,6 +292,7 @@ export function mergeDelta(
       if (incoming.parentName) existing.parentName = incoming.parentName;
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
       if (incoming.commandLine) existing.commandLine = incoming.commandLine;
+      if (incoming.fileModified) existing.fileModified = incoming.fileModified;
       if (incoming.chainSignature) existing.chainSignature = incoming.chainSignature;
       // A re-import may restate whether this source guesses its year; nothing else may clear the
       // mark, because it describes the SOURCE, not this particular merge (#739).
@@ -313,6 +326,7 @@ export function mergeDelta(
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
         ...(incoming.commandLine ? { commandLine: incoming.commandLine } : {}),
+        ...(incoming.fileModified ? { fileModified: incoming.fileModified } : {}),
         ...(incoming.chainSignature ? { chainSignature: incoming.chainSignature } : {}),
         ...(incoming.yearInferred ? { yearInferred: true } : {}),
         ...(incoming.canonical ? { canonical: incoming.canonical } : {}),
@@ -340,10 +354,60 @@ export function mergeDelta(
   // upload is raised to High and tagged — a deterministic, destination-agnostic "Data Exfiltration"
   // signal instead of relying on the synthesis model to notice the pairing. Conservative + idempotent.
   const withExfil = linkArchiveToExfil(withInitialAccess);
+  // Raise a process whose parent is not the one that ordinarily starts it, and an argument-free
+  // host that something else already makes odd (#909 item 6). Runs here,
+  // beside the other deterministic correlations, because parentage is only judgeable once the
+  // events from every importer sit in one timeline. Only ever RAISES: parentage cannot make other
+  // evidence about a process less true. A process with NO recorded parent is left alone — a
+  // snapshot taken after the parent exited looks exactly like an orphan.
+  const withParents = markProcessLifetimeSignals(withExfil);
   // Collapse duplicates / cross-source matches immediately (so re-importing the same
   // report, or two tools flagging one artifact, never doubles the timeline) — not only
   // during synthesis. Idempotent.
-  const correlated = correlateEvents(withExfil).sort(byEventTime);
+  // Weigh each MFT timestomp signal against what an INDEPENDENT artifact recorded for the same file
+  // (#909 item 8). Runs here because the MFT and ShimCache arrive as separate imports, so this is
+  // the first point at which both are in hand. Only ever raises.
+  const withTimestomp = corroborateTimestompsOnTimeline(withParents);
+  // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
+  // here, with the other deterministic correlations, because the steps arrive from different
+  // importers and no single one of them is remarkable — the combination is the finding. Only ever
+  // raises, and never on one behaviour alone.
+  const withPrecursors = markRansomwarePrecursors(withTimestomp);
+  // Say what a certutil transfer actually did — where it connected, what it wrote — by stitching
+  // the command to the network and file records of the same process (#908 item 4). Here, because
+  // those three legs arrive from different importers.
+  const withCertutil = explainCertutilTransfers(withPrecursors);
+  // Instance-metadata credential access (#908 item 7). Here rather than in an importer because the
+  // request and the process that made it routinely arrive from different sources — a web access log
+  // and an EDR process event — and because the second half of the finding, an instance role used
+  // from an address the instance does not have, lives in the cloud audit log instead. Only raises.
+  const explained = instanceCredentialUseAway(explainMetadataAccess(withCertutil));
+  // The metadata service leaves no audit-log record at all, so a case with only cloud logs can say
+  // nothing about it either way. That gap is put ON the timeline rather than left as silence —
+  // "nothing found" is the wrong answer when nothing could have been found. Replaced, not appended.
+  const coverage = metadataCoverageEvent(explained);
+  const withMetadata = coverage ? [...explained.filter((e) => e.id !== coverage.id), coverage] : explained;
+  // One bounded summary per bulk object-read session (#908 item 8). It ADDS a summary event and
+  // touches none of the reads themselves: promoting forty thousand GetObject rows would destroy the
+  // timeline and put the whole export in front of the AI, which is what the forensic/super-timeline
+  // boundary exists to prevent. A re-merge replaces a group's summary rather than adding a second.
+  const withBulkReads = summarizeBulkReads(withMetadata);
+  // Browsing by an account that cannot be interactive (#908 item 10). Here because the shellbag,
+  // the logon that made a desktop session possible, and any archiving beside it arrive from three
+  // different importers. Only raises, and only for an account something SAYS is noninteractive.
+  const browsingMarked = markServiceAccountBrowsing(withBulkReads);
+  // Browsing evidence that carries no account cannot be judged, and "no service-account browsing
+  // found" would report a collection gap as a result. The gap goes ON the timeline, replaceable.
+  const attributionGap = attributionCoverageEvent(browsingMarked);
+  const withServiceBrowsing = attributionGap
+    ? [...browsingMarked.filter((e) => e.id !== attributionGap.id), attributionGap]
+    : browsingMarked;
+  // Container escape (#908 item 11). Here because the container's own command line, the host's
+  // process telemetry and the host's persistence artifacts arrive from different importers — and
+  // because a container-originated change to host persistence only reads as one event when both
+  // halves are in the same timeline. Only raises, and it keeps configuration and behaviour apart.
+  const withEscape = markContainerEscape(withServiceBrowsing);
+  const correlated = correlateEvents(withEscape).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and

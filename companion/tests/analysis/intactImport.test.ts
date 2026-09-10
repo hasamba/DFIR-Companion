@@ -306,7 +306,10 @@ describe("Intact plugin tables", () => {
   it("surfaces a benign RWX region without asserting an injection happened", () => {
     const r = parseIntact(payload(), {})!;
     const defender = r.events.find((e) => /MsMpEng\.exe/.test(e.description))!;
-    expect(defender.description).toContain("executable/injected private memory");
+    // The lead no longer asserts the conclusion in its first six words (#909 item 4): malfind
+    // OBSERVED an executable region, and Defender is the canonical benign producer of that shape.
+    expect(defender.description).toContain("executable memory region flagged");
+    expect(defender.description).toContain("requiring interpretation");
     expect(defender.description).toContain("PAGE_EXECUTE_READWRITE");
     expect(defender.description).not.toMatch(/\binjected code\b|\bconfirmed\b/i);
   });

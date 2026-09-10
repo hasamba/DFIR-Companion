@@ -81,14 +81,18 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
     expect(r.iocs.some((i) => i.type === "hash" && /^[a-f0-9]{40}$/.test(i.value))).toBe(true);
   });
 
-  it("ShimCache (AppCompatCache): path + Executed flag", () => {
+  it("ShimCache (AppCompatCache): presence, the flag, and what the timestamp means", () => {
     const text = csv(
       ["ControlSet", "CacheEntryPosition", "Path", "LastModifiedTimeUTC", "Executed"],
       [["1", "0", "C:\\Windows\\Temp\\a.exe", "2023-04-01 08:00:00", "Yes"]],
     );
     const r = parseKapeCsv(text);
     expect(r.artifact).toBe("ShimCache");
-    expect(r.events[0].description).toContain("ShimCache: C:\\Windows\\Temp\\a.exe (Executed)");
+    expect(r.events[0].description).toContain("ShimCache: C:\\Windows\\Temp\\a.exe");
+    expect(r.events[0].description).toContain("execution flag set");
+    // The timestamp is LastModifiedTimeUTC. An analyst reading the row must not take it for a
+    // run time.
+    expect(r.events[0].description).toContain("file's modification time, not a run time");
     expect(r.iocs.find((i) => i.type === "file")?.value).toBe("C:\\Windows\\Temp\\a.exe");
   });
 

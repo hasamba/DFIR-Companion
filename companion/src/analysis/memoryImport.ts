@@ -61,6 +61,9 @@ import {
 import { pstreeChildren } from "./pstreeDepth.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
+import { malfindContext } from "./malfindContext.js";
+import { repeatedShortLifetimes, type ProcessRecord } from "./processLifetime.js";
+import { psxviewSignal, ldrModulesSignal, hasLdrColumns, hasPsxviewColumns } from "./memoryCrossView.js";
 
 type Row = Record<string, unknown>;
 
@@ -302,16 +305,28 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
             ...(ppid ? { "process.parent.pid": ["PPID"] } : {}),
           },
         });
+        // psxview prints one column per enumeration method, and the reason to run it is that they
+        // can DISAGREE. Flattened to a generic process row those columns were dropped, so the only
+        // thing the plugin is collected for never reached the timeline (#909 item 3). Graded
+        // cautiously — see memoryCrossView.ts for the benign causes it has to rule out first.
+        // Detected by COLUMNS, not by the plugin label: a dotted Volatility id like
+        // `windows.malware.psxview` renders its label as "malware", so a name test silently never
+        // fired. The columns are what the signal reads anyway.
+        const cross = hasPsxviewColumns(r) ? psxviewSignal(r) : null;
+        if (cross) description += ` — ${cross.note}`;
         out.push({
           timestamp: created,
           description: description.slice(0, 600),
-          severity: "Info",
-          mitre: [],
+          severity: cross ? cross.severity : "Info",
+          mitre: cross ? [...cross.mitre] : [],
           canonical,
-          aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}${psscan ? "|scan" : ""}`.slice(
-            0,
-            400,
-          ),
+          // The process-object offset distinguishes two EPROCESS rows that share a reused PID —
+          // psxview reports one row per object, and collapsing them loses one view's verdict.
+          aggKey:
+            `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}|${pick(r, ["Offset(V)", "Offset", "offset"])}${psscan ? "|scan" : ""}`.slice(
+              0,
+              400,
+            ),
           sources: [tool],
           ...(name ? { processName: name } : {}),
           ...(parentName ? { parentName } : {}),
@@ -370,7 +385,13 @@ function mapNetscan(label: string, tool: string, rows: Row[], sink: Map<string, 
   return out;
 }
 
-function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, SiemIoc>): MappedEvent[] {
+function mapMalfind(
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+  corroborating: { network: Set<string>; suspiciousCmd: Set<string> },
+): MappedEvent[] {
   const out: MappedEvent[] = [];
   for (const r of rows) {
     const proc = pick(r, ["Process", "ImageFileName", "Name", "name", "_EPROCESS"]);
@@ -380,9 +401,23 @@ function mapMalfind(label: string, tool: string, rows: Row[], sink: Map<string, 
     const region = malfindRegion(r); // its token and its phrase must agree — see malfindRegion
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
+    // malfind reports a region that is private and executable. That is the shape of injection AND
+    // of every JIT, .NET and several AV engines, so the row needs its observed characteristics
+    // stated alongside it (#909 item 4). Severity policy is unchanged — this adds interpretation,
+    // and never says a region is clean.
+    const ctx = malfindContext(r, {
+      networkPid: corroborating.network.has(pid),
+      suspiciousCommandLine: corroborating.suspiciousCmd.has(pid),
+    });
     out.push({
       timestamp: "",
-      description: malfindDescription(tool, label, proc, pid, region.phrase, prot, tag),
+      // The SHORT clause comes first, because synthesis and the case reports truncate a description
+      // at 240 characters — with the caveat only at the end they saw the categorical lead alone.
+      description:
+        `${malfindDescription(tool, label, proc, pid, region.phrase, prot, tag)} — ${ctx.summary} — ${ctx.note}`.slice(
+          0,
+          900,
+        ),
       severity: "High",
       mitre: ["T1055"],
       aggKey: `mem|malfind|${name.toLowerCase()}|${pid}|${region.token}|${prot}`.toLowerCase().slice(0, 400),
@@ -494,18 +529,30 @@ function mapDll(
     const proc = procName(r);
     const pid = pickPid(r);
     addIoc(sink, "file", filePathIoc(path));
-    if (!telemetry) continue;
-    if (!path && !dllName) continue;
+    // ldrmodules reports membership in the three PEB loader lists, and a module mapped in memory
+    // while absent from them was not loaded through the loader. That row is the whole reason to
+    // run the plugin, so it becomes an event even though DLL rows are otherwise pure telemetry
+    // (#909 item 3).
+    const cross = hasLdrColumns(r) ? ldrModulesSignal(r) : null;
+    if (!telemetry && !cross) continue;
+    // A flagged row with NO path is the strongest case this table produces — executable memory that
+    // no file explains. Dropping it for lacking a name discarded exactly the finding worth keeping,
+    // so a cross-view signal is described by its base address instead.
+    if (!path && !dllName && !cross) continue;
+    const base = pick(r, ["Base", "base", "DllBase"]);
+    const what = path || dllName || `region at ${base || "?"}`;
     out.push({
       timestamp: pickTime(r, ["LoadTime", "load_time"]),
-      description:
-        `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(path || dllName).slice(0, 220)}`.slice(
-          0,
-          600,
-        ),
-      severity: "Info",
-      mitre: [],
-      aggKey: `mem|dll|${proc.toLowerCase()}|${(path || dllName).toLowerCase()}`.slice(0, 400),
+      description: (
+        `${tool} ${label}: ${proc || "?"} (PID ${pid || "?"}) loaded ${oneLine(what).slice(0, 220)}` +
+        (cross ? ` — ${cross.note}` : "")
+      ).slice(0, 600),
+      severity: cross ? cross.severity : "Info",
+      mitre: cross ? [...cross.mitre] : [],
+      // PID and base included: without them two different svchost.exe PIDs mapping the same path,
+      // or two mappings at different bases in one PID, aggregated into a single event and one of
+      // the cross-view findings disappeared into a count (#909 item 3 requires same-identity only).
+      aggKey: `mem|dll|${proc.toLowerCase()}|${pid}|${base}|${what.toLowerCase()}`.slice(0, 400),
       sources: [tool],
       ...(proc ? { processName: proc } : {}),
       ...(filePathIoc(path) ? { path } : {}),
@@ -1005,6 +1052,7 @@ function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryPar
 
   const sink = new Map<string, SiemIoc>();
   const mapped = mapFindevil(rows, sink);
+
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -1478,9 +1526,61 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     processes = 0,
     connections = 0;
 
+  // Evidence about the SAME process from OTHER tables in the SAME image, gathered before the
+  // dispatch loop so malfind can be weighed against it (#909 item 4). The issue asks for confidence
+  // to be strengthened by process context, network behaviour and independent detections; without
+  // this the note could only ever tell the analyst to go and check those themselves. Confined to one
+  // image and one PID, per the issue.
+  const corroborating = { network: new Set<string>(), suspiciousCmd: new Set<string>() };
+  for (const t of tables) {
+    const cat = classify(t.plugin, colSet(t.rows));
+    if (cat === "netscan") {
+      for (const r of t.rows) {
+        const pid = pickPid(r);
+        const foreign = pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr"]);
+        if (pid && foreign && !/^(?:0\.0\.0\.0|::|\*)?$/.test(foreign.trim())) corroborating.network.add(pid);
+      }
+    } else if (cat === "cmdline") {
+      for (const r of t.rows) {
+        const pid = pickPid(r);
+        if (
+          pid &&
+          isSuspiciousCmd(
+            pick(r, ["Process", "ImageFileName", "Name"]),
+            pick(r, ["Args", "CommandLine", "args", "cmd"]),
+          )
+        )
+          corroborating.suspiciousCmd.add(pid);
+      }
+    }
+  }
+
+  // Process records with BOTH a start and an exit, which is the only place in the product that has
+  // them: a memory image records CreateTime and ExitTime on the same row (#909 item 6). The
+  // repeated-short-lifetime rule cannot run anywhere else, because every other importer sees a
+  // process creation and never its end.
+  const lifetimeRecords: ProcessRecord[] = [];
+
   for (const t of tables) {
     const cols = colSet(t.rows);
     const category = classify(t.plugin, cols);
+    if (category === "process") {
+      for (const r of t.rows) {
+        const nm = procName(r);
+        if (!nm) continue;
+        lifetimeRecords.push({
+          image: pick(r, ["Path", "path"]) || nm,
+          name: baseName(nm).toLowerCase(),
+          pid: pickPid(r),
+          ppid: pick(r, ["PPID", "ppid"]),
+          parentName: "",
+          start: pickTime(r, ["CreateTime", "process_create_time", "CreatedTime", "start_time"]),
+          exit: pickTime(r, ["ExitTime", "process_exit_time"]),
+          commandLine: pick(r, ["Cmd", "CommandLine", "Args"]),
+          commandLineCaptured: true,
+        });
+      }
+    }
     const label = displayLabel(t.plugin, category, t.rows);
     switch (category) {
       case "process":
@@ -1492,7 +1592,7 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
         connections += t.rows.length;
         break;
       case "malfind":
-        mapped.push(...mapMalfind(label, tool, t.rows, sink));
+        mapped.push(...mapMalfind(label, tool, t.rows, sink, corroborating));
         injected += t.rows.length;
         break;
       case "cmdline":
@@ -1512,6 +1612,21 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
       default:
         mapped.push(...mapGeneric(label, tool, t.rows, sink));
     }
+  }
+
+  // Repeated short-lived executions of one image (#909 item 6). Emitted as ONE event per image
+  // rather than one per execution: the pattern is the finding, and twenty rows saying "it ran
+  // again" is the noise the pattern was meant to replace.
+  for (const cluster of repeatedShortLifetimes(lifetimeRecords)) {
+    mapped.push({
+      timestamp: "",
+      description: `${tool}: ${cluster.note}`.slice(0, 600),
+      severity: cluster.severity,
+      mitre: [],
+      aggKey: `mem|repeat|${cluster.name}`,
+      sources: [tool],
+      processName: cluster.name,
+    });
   }
 
   const { events, groups } = aggregateEvents(mapped, {

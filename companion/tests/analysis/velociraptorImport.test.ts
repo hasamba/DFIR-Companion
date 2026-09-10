@@ -2083,7 +2083,10 @@ describe("parseVelociraptorJson — forensic artifacts lead with the action, not
     expect(e.description).toContain("(3×)");
   });
 
-  it("AppCompatCache → Execution evidence (Shimcache): <binary path>, not a field dump", () => {
+  // ShimCache records that the OS SAW the file — from Windows 8 onward that includes directory
+  // enumeration — and the time it carries is the FILE's modification time. Calling the row
+  // "execution evidence" while showing an mtime was two errors in one line (#909 item 1).
+  it("AppCompatCache → presence in the cache, with the timestamp's meaning stated", () => {
     const e = one({
       _Source: "Windows.Registry.AppCompatCache",
       Position: 2,
@@ -2092,7 +2095,10 @@ describe("parseVelociraptorJson — forensic artifacts lead with the action, not
       ModificationTime: "2026-04-29T23:23:31Z",
       ControlSet: "ControlSet001",
     });
-    expect(e.description).toContain("Execution evidence (Shimcache)");
+    expect(e.description).toContain("Present in ShimCache");
+    expect(e.description).toContain("execution flag set");
+    expect(e.description).toContain("file's modification time");
+    expect(e.description).not.toContain("Execution evidence");
     expect(e.description).toContain("C:\\Temp\\evil.exe");
     expect(e.description).not.toContain("Position=");
     expect(e.path).toBe("C:\\Temp\\evil.exe");
