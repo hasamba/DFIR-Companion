@@ -38,6 +38,7 @@ export const IMPORT_KINDS = [
   "sandbox",
   "memory",
   "wer",
+  "linuxpersist",
   "email",
   "auditd",
   "journald",

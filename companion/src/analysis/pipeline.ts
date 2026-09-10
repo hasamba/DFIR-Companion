@@ -528,6 +528,10 @@ export class AnalysisPipeline {
     return ingest.importWer(this.importCtx, ...args);
   }
 
+  importLinuxPersist(...args: ImporterArgs<typeof ingest.importLinuxPersist>): Promise<InvestigationState> {
+    return ingest.importLinuxPersist(this.importCtx, ...args);
+  }
+
   importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
     return ingest.importCybertriage(this.importCtx, ...args);
   }

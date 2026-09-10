@@ -4,10 +4,10 @@
 // signatures mirroring each importer's own classifier — ordered most-specific → most-generic.
 //
 // Returns a kind that maps 1:1 to a pipeline import method (see server `/cases/:id/import`).
-import { isWerReport } from "./werImport.js";
 // The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
+import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isIntactMemoryFile, looksLikeIntactPrefix } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
@@ -31,6 +31,8 @@ import {
   isMacosUnifiedLog,
   macosQuarantineCsvSig,
   hindsightCsvSig,
+  isAuditd,
+  looksLikeLinuxPersist,
 } from "./importDetectSources.js";
 
 // The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
@@ -596,31 +598,22 @@ function looksLikeVelociraptorFile(filename: string): boolean {
   return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
 }
 
-// ───────────────────────────── auditd (line-oriented) ─────────────────────────────
-
-// Linux auditd records ("type=SYSCALL msg=audit(1490451217.272:270): …") — the raw audit.log /
-// `ausearch` format. The `type=… msg=audit(secs.millis:serial)` shape is unique to auditd, so one
-// matching line anywhere in the head is enough to claim it ahead of the generic log fallback.
-const RE_AUDITD = /(?:^|\n)\s*type=\w+\s+msg=audit\(\d+\.\d+:\d+\)/;
-// 8 KB was not enough: a real audit.log opens with a boot banner and a run of SYSCALL-less noise,
-// and a file whose first `type=… msg=audit(…)` sat past that window sniffed as a plain log and went
-// to AI line-triage. 256 KB clears any realistic preamble while still being a cheap slice — the
-// regex is anchored per line, so a bigger window costs a scan, not a backtrack.
-function isAuditd(text: string): boolean {
-  return RE_AUDITD.test(text.slice(0, 256_000));
-}
-
 // ───────────────────────────── top-level ─────────────────────────────
 
 export function detectImportKind(filename: string, text: string): ImportKind {
   const t = (text ?? "").trim();
   if (!t) return "unknown";
 
-  // Windows Error Reporting report (#909 item 5). Checked early because a Report.wer is a plain
-  // key=value text file and would otherwise be claimed by the generic log path, which reads none of
-  // its structure. isWerReport requires EventType AND a WER-specific marker, so an ordinary INI does
-  // not match.
+  // Windows Error Reporting (#909 item 5). Early, or the generic log path claims a Report.wer and
+  // reads none of its structure. isWerReport needs EventType AND a WER marker, so an INI does not match.
   if (isWerReport(t)) return "wer";
+
+  // A Linux persistence collection (#908 item 5) — headered `cat` output, or one artifact named for
+  // what it is. Checked ahead of the JSON sniff, not just ahead of the line formats: a systemd unit
+  // opens with `[Unit]`, so the leading `[` sent it to the JSON path, which failed to parse it and
+  // returned "unknown" — a 400 at the route, for a file already shown as accepted. Nothing here can
+  // steal a real export: it needs absolute-path headers, or a filename that means one thing.
+  if (looksLikeLinuxPersist(filename, t)) return "linuxpersist";
 
   // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit
   // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.

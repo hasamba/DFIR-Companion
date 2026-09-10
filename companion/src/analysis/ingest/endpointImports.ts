@@ -9,6 +9,7 @@ import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseThorReport, type ThorImportOptions } from "../thorImport.js";
 import { parseWerReport, werSignal, werDescription, werDedupKey, type WerCaseContext } from "../werImport.js";
+import { parseLinuxPersist, incidentWindowFromTimeline } from "../linuxPersistImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -521,6 +522,70 @@ export async function importCybertriage(
 
   return ctx.withStateLock(caseId, async () => {
     let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+/**
+ * Import a Linux persistence collection (#908 item 5).
+ *
+ * The case's own High/Critical events supply the incident window, so a persistence file the
+ * collection dated inside that window is prioritised over one that has been there for a year.
+ * Where the collection recorded no times — which is the usual case — the window simply does not
+ * apply, and every finding says so rather than implying the file was unchanged.
+ */
+export async function importLinuxPersist(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+
+    const parsed = parseLinuxPersist(
+      opts.label,
+      text,
+      { incident: incidentWindowFromTimeline(state.forensicTimeline) },
+      opts.importedAt,
+    );
+    if (parsed.files.length === 0) return noteEmptyImport(ctx, caseId, opts, "Linux persistence", 0);
+
+    const events = applySeverityFloor(
+      parsed.events.map((e, i) => ({
+        ...e,
+        id: `${opts.idPrefix}e${i + 1}`,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      })) as never,
+      opts.minSeverity,
+    );
+
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: events,
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: parsed.note,
+      summary: "",
+    });
+
     state = await ctx.mergeWithAliases(state, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

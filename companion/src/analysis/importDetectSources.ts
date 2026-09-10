@@ -1,4 +1,5 @@
 import { getCI, isObject } from "./siemImport.js";
+import { classifyLinuxArtifact, splitCollection } from "./linuxPersistence.js";
 
 // Format detectors for the sources added alongside the identity/mobile/browser importers — Okta,
 // Google Workspace, Hindsight, macOS and LEAPP.
@@ -87,4 +88,48 @@ export function hindsightCsvSig(h: Set<string>): boolean {
   return (
     has("interpretation") || has("profile folder") || has("profile_folder") || (has("type") && has("profile"))
   );
+}
+// ───────────────────────────── auditd (line-oriented) ─────────────────────────────
+//
+// Moved here from importDetect.ts, which sits at the 800-line limit: the dispatch ORDER is the
+// contract that has to stay in that file, the predicate itself does not.
+
+// Linux auditd records ("type=SYSCALL msg=audit(1490451217.272:270): …") — the raw audit.log /
+// `ausearch` format. The `type=… msg=audit(secs.millis:serial)` shape is unique to auditd, so one
+// matching line anywhere in the head is enough to claim it ahead of the generic log fallback.
+const RE_AUDITD = /(?:^|\n)\s*type=\w+\s+msg=audit\(\d+\.\d+:\d+\)/;
+// 8 KB was not enough: a real audit.log opens with a boot banner and a run of SYSCALL-less noise,
+// and a file whose first `type=… msg=audit(…)` sat past that window sniffed as a plain log and went
+// to AI line-triage. 256 KB clears any realistic preamble while still being a cheap slice — the
+// regex is anchored per line, so a bigger window costs a scan, not a backtrack.
+export function isAuditd(text: string): boolean {
+  return RE_AUDITD.test(text.slice(0, 256_000));
+}
+
+// ───────────────────────── Linux persistence collection (#908 item 5) ─────────────────────────
+//
+// Two routes, because analysts hand these over two ways.
+//
+// A COLLECTION is many small files concatenated under per-file headers — `head`/`tail` banners or a
+// script's own. splitCollection only accepts a header that is the whole line and names an absolute
+// path, and this claims the file only when at least one of those paths is an artifact class the
+// grader reads. A stray header-shaped line inside some other log therefore does not claim it.
+//
+// A SINGLE artifact is claimed by NAME, and only for names that mean one thing. `authorized_keys`,
+// a systemd unit and the shell-profile family qualify. `env` deliberately does not: a `.env` file is
+// an application's secrets, not a Linux environment dump, and routing one here would be a mis-route
+// with a privacy cost. A collection can still carry /etc/environment, where the header says what it is.
+const SINGLE_ARTIFACT_NAME =
+  /^(?:authorized_keys2?|crontab|\.?(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile))$|\.(?:service|timer|socket)$|suid/i;
+
+export function looksLikeLinuxPersist(filename: string, text: string): boolean {
+  const base = (filename ?? "").split(/[\\/]/).pop() ?? "";
+  // A collected artifact is routinely saved with a .txt/.log wrapper extension.
+  const stem = base.replace(/\.(?:txt|log|out)$/i, "");
+  if (SINGLE_ARTIFACT_NAME.test(stem) && classifyLinuxArtifact(stem) !== "unknown") return true;
+
+  // 256 KB is enough to see the first headers of any realistic collection without scanning a
+  // multi-megabyte upload that is not one.
+  const members = splitCollection((text ?? "").slice(0, 256_000));
+  return members.some((m) => m.kind !== "unknown");
 }

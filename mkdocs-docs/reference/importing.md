@@ -22,6 +22,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 |----------|---------|
 | **Windows detection** | Chainsaw hunt JSON/JSONL, EVTX dump (evtx_dump), Hayabusa JSON/CSV timeline |
 | **Windows Event Log XML** | Event Viewer "Save As XML", `wevtutil qe /f:xml`, PowerShell `Get-WinEvent … ToXml()` (Security, Sysmon, System, any channel) — same per-EID Windows/Sysmon mapping as the SIEM/EVTX-JSON paths |
+| **Windows crash reports** | Windows Error Reporting `Report.wer` — the faulting application, its loaded modules and the crash signature |
 | **Windows host triage** | KAPE/EZ Tools CSVs (Prefetch, Amcache, ShimCache, LNK, JumpLists, USN Journal, MFT, SRUM, Recycle Bin, Shellbags), Cyber Triage JSONL/JSON/CSV |
 | **EDR / SIEM** | Velociraptor native JSON/JSONL/artifact-map, Velociraptor **upload-only artifacts** (e.g. THOR) — paste the GUI's "Uploaded Files" tab URL to import just the uploaded report, skipping rows entirely; also reads `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`, SIEM/EDR JSON (Elastic, Splunk, Kibana, winlogbeat), Wazuh JSON, THOR Nextron JSONL, ECAR (EDR Common Activity Record) NDJSON |
 | **Network** | Suricata eve.json, Zeek JSON (combined or per-stream conn/dns/http/ssl/x509/files), Security Onion events |
@@ -34,7 +35,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **Mobile** | iLEAPP / ALEAPP TSV exports (iOS and Android extractions), one artifact per import. Generic by design: LEAPP artifacts share no schema beyond a timestamp column, so the parser finds that column and renders the rest |
 | **Malware analysis** | CAPEv2 report.json, CrowdStrike Falcon Sandbox summary JSON, sandbox report arrays, YARA CLI scan output (`yara -s -m`) |
 | **Super-timeline** | Plaso/log2timeline psort CSV (dynamic and l2tcsv) — files over 200 MB are streamed line-by-line automatically; filter your `psort` output first to reduce size |
-| **Linux** | shell history (`.bash_history` / `.zsh_history`, with or without timestamps), auditd logs (raw/ausearch/aureport), journald JSON (`journalctl -o json`) |
+| **Linux** | shell history (`.bash_history` / `.zsh_history`, with or without timestamps), auditd logs (raw/ausearch/aureport), journald JSON (`journalctl -o json`), **persistence artifacts** — SSH authorized keys, cron, systemd units, shell profiles, SUID listings and PATH (see [Collecting Linux persistence artifacts](#collecting-linux-persistence-artifacts)) |
 | **Container/syscall** | Falco alert JSON, sysdig JSON, Kubernetes API-server audit log (`audit.k8s.io` JSON-lines / EventList) |
 | **Host telemetry** | osquery scheduled-query result log (differential + snapshot) |
 | **Case management** | TheHive 5 case/alert/observable export |
@@ -48,6 +49,47 @@ All of the above except CSV/log/DFIR-IRIS are **fully deterministic — no AI ca
 Deterministic imports also retain a [versioned canonical event envelope](canonical-events.md) with
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.
+
+### Collecting Linux persistence artifacts
+
+The Companion reads the files that decide what a Linux host runs on its own: SSH authorized keys,
+cron, systemd units, shell profiles, a SUID listing and PATH.
+
+**Upload one file.** Either a single artifact, named for what it is — `authorized_keys`,
+`something.service`, `crontab`, `.bashrc` — or several files concatenated under a header line each.
+Any of these header spellings works, and the path must be absolute:
+
+```
+==> /root/.ssh/authorized_keys <==
+=== /etc/crontab ===
+##### /home/alice/.bashrc #####
+# FILE: /etc/systemd/system/telemetry.service
+```
+
+`head -n -0` writes the first form, so the simplest collection is one command:
+
+```bash
+head -n -0 /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys /etc/crontab /etc/cron.d/*   /var/spool/cron/crontabs/* /etc/systemd/system/*.service /home/*/.bashrc /etc/profile   /etc/environment > linux-persistence.txt
+```
+
+Add a SUID listing to the same file — `find / -perm -4000 -type f -ls` — under its own header.
+
+**Add modification times if you can.** Most collections carry none, and without them the Companion
+cannot tell a file changed during the incident from one that has been there for years. It says so on
+every finding rather than assuming. To supply them, put a `# mtime:` line directly under a header:
+
+```
+==> /etc/systemd/system/telemetry.service <==
+# mtime: 2026-01-02T09:00:00Z
+# owner: root
+```
+
+**What it reports.** Not the artifacts themselves — a host is meant to have cron jobs and authorized
+keys. It reports payloads that run from world-writable directories, commands that download and
+execute in one line, reverse shells, root running files a user can rewrite, setuid interpreters,
+SUID binaries no distribution installs, PATH resolving out of the working directory, and one SSH key
+that opens two accounts. Where your environment legitimately does one of those, the finding names the
+file and the line so you can rule it out.
 
 ### Intact (trimmed VolWeb output)
 

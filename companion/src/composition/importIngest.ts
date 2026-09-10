@@ -255,6 +255,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importSyslog(caseId, text, base));
       case "wer":
         return observe(pipeline.importWer(caseId, text, base));
+      case "linuxpersist":
+        return observe(pipeline.importLinuxPersist(caseId, text, base));
       case "csv":
         return observe(pipeline.analyzeCsv(caseId, text, base));
       case "log":
