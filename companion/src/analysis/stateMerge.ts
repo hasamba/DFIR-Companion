@@ -18,6 +18,7 @@ import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
 import { explainMetadataAccess, instanceCredentialUseAway } from "./cloudMetadataAccess.js";
+import { summarizeBulkReads } from "./cloudBulkRead.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -375,7 +376,12 @@ export function mergeDelta(
   // and an EDR process event — and because the second half of the finding, an instance role used
   // from an address the instance does not have, lives in the cloud audit log instead. Only raises.
   const withMetadata = instanceCredentialUseAway(explainMetadataAccess(withCertutil));
-  const correlated = correlateEvents(withMetadata).sort(byEventTime);
+  // One bounded summary per bulk object-read session (#908 item 8). It ADDS a summary event and
+  // touches none of the reads themselves: promoting forty thousand GetObject rows would destroy the
+  // timeline and put the whole export in front of the AI, which is what the forensic/super-timeline
+  // boundary exists to prevent. A re-merge replaces a group's summary rather than adding a second.
+  const withBulkReads = summarizeBulkReads(withMetadata);
+  const correlated = correlateEvents(withBulkReads).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and

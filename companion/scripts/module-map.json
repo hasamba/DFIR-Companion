@@ -187,6 +187,7 @@
     "clockSkew.ts": "analysis/timeline",
     "clockSkewStore.ts": "analysis/timeline",
     "cloudActivityImport.ts": "analysis/ingest",
+    "cloudBulkRead.ts": "analysis/timeline",
     "cloudMetadataAccess.ts": "analysis/timeline",
     "coach.ts": "analysis/ai",
     "cockpit.ts": "analysis/workflow",
