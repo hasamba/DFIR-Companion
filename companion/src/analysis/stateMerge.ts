@@ -15,6 +15,7 @@ import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
+import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -358,7 +359,12 @@ export function mergeDelta(
   // (#909 item 8). Runs here because the MFT and ShimCache arrive as separate imports, so this is
   // the first point at which both are in hand. Only ever raises.
   const withTimestomp = corroborateTimestompsOnTimeline(withParents);
-  const correlated = correlateEvents(withTimestomp).sort(byEventTime);
+  // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
+  // here, with the other deterministic correlations, because the steps arrive from different
+  // importers and no single one of them is remarkable — the combination is the finding. Only ever
+  // raises, and never on one behaviour alone.
+  const withPrecursors = markRansomwarePrecursors(withTimestomp);
+  const correlated = correlateEvents(withPrecursors).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and

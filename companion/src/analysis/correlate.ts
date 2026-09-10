@@ -163,7 +163,8 @@ function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
 const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 // The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
 // forward from whichever member holds it, instead of discarding the reason for a raised severity.
-const DERIVED_NOTE = /\[(?:unexpected parent|sacrificial process|timestomp corroboration):[\s\S]*?\]/u;
+const DERIVED_NOTE =
+  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors):[\s\S]*?\]/u;
 export function cleanDescription(d: string): string {
   // Two DERIVED notes are stripped before the key is taken, for the same reason the corroboration
   // suffix above is: neither existed before the change that added it, so a stored annotated event
@@ -172,7 +173,10 @@ export function cleanDescription(d: string): string {
   // member's fields, and stripping is what stops the next pass appending a second marker.
   const withoutDerived = d
     // The process-lifetime markers (#909 item 6).
-    .replace(/\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration):[\s\S]*?\]\s*$/u, "")
+    .replace(
+      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors):[\s\S]*?\]\s*$/u,
+      "",
+    )
     // The malfind interpretation (#909 item 4).
     .replace(
       / — (?:writable and executable|executable but not writable|protection (?:recorded as|was not recorded)|private memory|file-backed|VAD tag|no content preview|the captured preview|the tool reported)[\s\S]*$/u,
