@@ -71,6 +71,7 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1222.002":
     "File and Directory Permissions Modification: Linux and Mac File and Directory Permissions Modification",
   "T1559.001": "Inter-Process Communication: Component Object Model",
+  T1218: "System Binary Proxy Execution",
   "T1218.007": "System Binary Proxy Execution: Msiexec",
   "T1555.003": "Credentials from Password Stores: Credentials from Web Browsers",
 };

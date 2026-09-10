@@ -126,7 +126,11 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   // A local .sct is deliberately not matched either. It is unusual, but it is not the
   // remote-execution shape this technique names, and this rule is the precise one.
   {
-    re: /\bregsvr32(?:\.exe)?\b[^\n]*\/i:\s*(?:https?:\/\/|\\\\[^\s\\]+\\)[^\n]*\bscrobj(?:\.dll)?\b/i,
+    // BOTH argument orderings, because both are documented and used: the DLL is normally last
+    // (`/i:URL scrobj.dll`) but `scrobj.dll /n /i:URL` is equally valid and was being missed. The
+    // source may also be quoted. Quantifiers are bounded rather than open `[^\n]*` so a command line
+    // repeating the anchor cannot make matching quadratic.
+    re: /\bregsvr32(?:\.exe)?\b(?:[^\n]{0,400}\/i:\s*["']?(?:https?:\/\/|\\\\[^\s\\]+\\)[^\n]{0,400}\bscrobj(?:\.dll)?\b|[^\n]{0,400}\bscrobj(?:\.dll)?\b[^\n]{0,400}\/i:\s*["']?(?:https?:\/\/|\\\\[^\s\\]+\\))/i,
     weight: "strong",
     ids: ["T1218.010", "T1105"],
   },
