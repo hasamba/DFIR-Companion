@@ -60,16 +60,32 @@ export const EVIDENCE_CLASS_SOURCES: Record<EvidenceClass, readonly string[]> = 
   // Listing them let a collection containing only ShimCache count as full execution coverage, which
   // is how "no evidence it ran" becomes "it did not run" — the exact failure described at the top of
   // this file. They remain valuable POSITIVE evidence; they are simply not proof of an absence.
+  //
+  // SRUM, USERASSIST AND BAM WERE REMOVED FOR THE SAME REASON. Each is partial BY DESIGN, so a
+  // binary can run without ever appearing in it:
+  //
+  //   • UserAssist records programs launched through Explorer. Anything started from a command
+  //     line, a service, a scheduled task or another process is absent by design.
+  //   • BAM/DAM records per-user background activity with short retention, and is scoped to
+  //     sessions rather than to every execution.
+  //   • SRUM meters per-application resource use. A process that ran briefly and consumed nothing
+  //     measurable need not appear at all.
+  //
+  // Removing them makes the gate downgrade MORE refutations to "unknown". That is the safe
+  // direction: the gate only ever weakens a claim, so the cost of over-caution is an analyst being
+  // told to collect more, and the cost of under-caution is the tool asserting something did not
+  // happen when the evidence that would have shown it was never gathered.
   execution: [
-    "prefetch",
-    "srum",
+    // Process-creation logging. When it was running and retained, its silence IS meaningful — this
+    // is the only category that records every execution by design.
     "sysmon",
     "4688",
     "processcreation",
     "process_creation",
-    "userassist",
-    "bam",
     "executionhistory",
+    // Prefetch. Not perfect — it can be disabled, and it evicts — but it is the DFIR-standard
+    // execution artifact and a full collection of it is what an analyst means by "we checked".
+    "prefetch",
   ],
   // Full file-system enumerations only. A signature scanner (THOR, YARA) reports the files that
   // matched a rule — see DETECTION_FEED_RE — and its silence about everything else is the ruleset's

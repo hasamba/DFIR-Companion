@@ -62,7 +62,7 @@ export const SHADOW_ARTIFACTS: readonly ShadowArtifact[] = [
     id: "amcache",
     name: "Amcache (Amcache.hve)",
     reconstructs:
-      "Program presence and execution — the Amcache registry hive records executables (with SHA-1) that " +
+      "Program PRESENCE, with hashes — the Amcache registry hive records executables (with SHA-1) that " +
       "ran or were installed, recovering tooling dropped during the blackout.",
     whyResilient:
       "A registry hive flushed by the OS, distinct from the audit log; survives event-log clearing and is " +

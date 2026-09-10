@@ -110,18 +110,13 @@ describe("collectedEvidenceClasses", () => {
 
   // They are still perfectly good POSITIVE evidence — this is only about what an ABSENCE proves.
   it("still downgrades a refutation when only ShimCache was collected", () => {
-    const seeds = [
-      {
-        sourceKey: "h1",
-        title: "the dropped binary never executed",
-        description: "no execution evidence anywhere in the timeline",
-        status: "refuted" as const,
-      },
-    ];
     const collected = collectedEvidenceClasses([
       ev("a", ["Velociraptor"], "Windows.Registry.AppCompatCache"),
     ]);
-    const { seeds: out, downgraded } = gateRefutedSeeds(seeds, collected);
+    const { seeds: out, downgraded } = gateRefutedSeeds(
+      [seed("the dropped binary never executed")],
+      collected,
+    );
     expect(out[0].status).toBe("unknown");
     expect(downgraded[0].missing).toContain("execution");
   });
