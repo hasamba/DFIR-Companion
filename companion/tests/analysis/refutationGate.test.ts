@@ -86,8 +86,44 @@ describe("collectedEvidenceClasses", () => {
   });
 
   it("counts the full collection of the same artifact", () => {
-    const got = collectedEvidenceClasses([ev("a", ["Velociraptor"], "Windows.Forensics.Amcache")]);
+    const got = collectedEvidenceClasses([ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch")]);
     expect(got.has("execution")).toBe(true);
+  });
+
+  // This list decides when an absence is trustworthy enough to leave a refutation standing, so an
+  // entry has to be able to show the event HAD IT HAPPENED (#909 item 1).
+  //
+  // ShimCache holds at most 1024 entries and evicts, and from Windows 8 onward it records metadata
+  // gathered by directory ENUMERATION as well as execution — so its silence is not evidence the
+  // binary did not run. Amcache has its own coverage limits. Counting either as full execution
+  // coverage is how "no evidence it ran" becomes "it did not run".
+  it("does NOT count ShimCache or Amcache as general execution coverage", () => {
+    for (const artifact of [
+      "Windows.Registry.AppCompatCache",
+      "Windows.Forensics.Amcache",
+      "AppCompatCacheParser",
+    ]) {
+      const got = collectedEvidenceClasses([ev("a", ["Velociraptor"], artifact)]);
+      expect(got.has("execution"), `${artifact} must not vouch for an absence`).toBe(false);
+    }
+  });
+
+  // They are still perfectly good POSITIVE evidence — this is only about what an ABSENCE proves.
+  it("still downgrades a refutation when only ShimCache was collected", () => {
+    const seeds = [
+      {
+        sourceKey: "h1",
+        title: "the dropped binary never executed",
+        description: "no execution evidence anywhere in the timeline",
+        status: "refuted" as const,
+      },
+    ];
+    const collected = collectedEvidenceClasses([
+      ev("a", ["Velociraptor"], "Windows.Registry.AppCompatCache"),
+    ]);
+    const { seeds: out, downgraded } = gateRefutedSeeds(seeds, collected);
+    expect(out[0].status).toBe("unknown");
+    expect(downgraded[0].missing).toContain("execution");
   });
 
   it("does NOT count a live process list as historical execution evidence", () => {

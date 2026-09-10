@@ -220,7 +220,12 @@ const PROFILES: Profile[] = [
       const executed = truthy(getCI(row, "Executed"));
       return {
         timestamp: ezTime(getCI(row, "LastModifiedTimeUTC")),
-        description: `ShimCache: ${path}${executed ? " (Executed)" : ""}`.slice(0, 600),
+        // The timestamp on this event is LastModifiedTimeUTC — the FILE's modification time, not
+        // when anything ran. Saying so on the row is the difference between an analyst reading the
+        // timeline correctly and reading it as an execution (#909 item 1).
+        description: `ShimCache: ${path} — present in the cache${
+          executed ? ", execution flag set" : ""
+        }; time shown is the file's modification time, not a run time`.slice(0, 600),
         severity: "Info",
         mitre: [],
         aggKey: `shim|${path.toLowerCase()}`,

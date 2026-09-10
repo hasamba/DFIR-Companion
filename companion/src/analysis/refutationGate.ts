@@ -46,11 +46,22 @@ export const EVIDENCE_CLASS_SOURCES: Record<EvidenceClass, readonly string[]> = 
   // records what one interpreter was asked to do and is silent about every other binary on the box,
   // and ShellBags record folder navigation, not execution at all — neither can vouch that a dropped
   // executable did or did not run, so neither belongs here.
+  //
+  // SHIMCACHE AND AMCACHE WERE REMOVED, and the reason is the same one the gate exists for (#909
+  // item 1). This list decides when an absence is trustworthy enough to leave a refutation standing,
+  // so an entry has to be able to show the event HAD IT HAPPENED. Neither can:
+  //
+  //   • ShimCache (AppCompatCache) holds at most 1024 entries and evicts. From Windows 8 onward it
+  //     records file metadata gathered by directory ENUMERATION as well as execution, so a row does
+  //     not mean the binary ran and — the half that matters here — its absence does not mean the
+  //     binary did not.
+  //   • Amcache has its own coverage limits and is likewise not a complete execution record.
+  //
+  // Listing them let a collection containing only ShimCache count as full execution coverage, which
+  // is how "no evidence it ran" becomes "it did not run" — the exact failure described at the top of
+  // this file. They remain valuable POSITIVE evidence; they are simply not proof of an absence.
   execution: [
     "prefetch",
-    "amcache",
-    "shimcache",
-    "appcompat",
     "srum",
     "sysmon",
     "4688",
