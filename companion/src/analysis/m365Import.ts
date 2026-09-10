@@ -220,41 +220,101 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   };
 }
 
+// The Entra sign-in error codes that mean CREDENTIAL VALIDATION ITSELF FAILED, and nothing else.
+// A code in this set is the only kind of failure that supports a T1110 (brute force / spray) claim.
+//
+// This set is an ALLOW-LIST for a reason. Every nonzero errorCode used to become Medium + T1110,
+// which made a brute-force finding out of an MFA challenge (50074, 50076), a Conditional Access
+// block (53003), an expired password (50055), a "keep me signed in" prompt (50140) and the single
+// most common code in any tenant export, 50058 — which Microsoft documents as "expected when a
+// user is unauthenticated and hasn't yet signed in". The failed side of a real tenant's sign-in log
+// is mostly interrupts, so the old rule graded routine noise as an attack. Enumerating the
+// credential failures is bounded; enumerating everything that is NOT one is not.
+//
+// Codes and meanings from Microsoft's AADSTS reference (learn.microsoft.com/entra/identity-platform
+// /reference-error-codes). A code outside this set is still reported as a failure — it just does
+// not carry an attack technique.
+const CREDENTIAL_FAILURE_CODES = new Set([
+  50034, // UserAccountNotFound — the account does not exist (enumeration / spray fan-out)
+  50056, // Invalid or null password
+  50064, // CredentialAuthenticationError — username/password validation failed
+  50126, // InvalidUserNameOrPassword — the wrong-password code
+]);
+
+// 50053 is NOT in that set, because Microsoft documents it as two different conditions: IdsLocked
+// ("the account is locked because the user tried to sign in too many times with an incorrect user
+// ID or password") OR a sign-in blocked because it came from an IP address with malicious activity.
+// The first is the strongest single spray signal there is; the second is a risk/policy block that
+// says nothing about passwords. Asserting T1110 for both would re-introduce, in the allow-list
+// meant to end it, exactly the overstatement this classifier exists to remove. Microsoft's own
+// remediation advice is to read the Failure Reason to tell them apart, so that is what decides —
+// and an absent or unrecognised reason stays the conservative side of the split.
+const LOCKOUT_REASON = /\block(?:ed|out)?\b/i;
+
+// The outcome of one sign-in record, kept separate from severity so a missing, empty or malformed
+// status can never take the success path. `Number(x) || 0` used to fold a non-numeric errorCode
+// into 0 — the same value a genuine success carries — and an ABSENT status took that path too,
+// even though a record reaches this mapper on a risk field alone, with no status at all. Only a
+// finite numeric zero is a success now; everything unreadable is `unknown` and says so.
+type SignInOutcome = "success" | "credential-failure" | "other-failure" | "unknown";
+
+function signInOutcome(raw: unknown, failureReason: string): { outcome: SignInOutcome; code: number | null } {
+  if (raw === undefined || raw === null || raw === "") return { outcome: "unknown", code: null };
+  const code = Number(raw);
+  if (!Number.isFinite(code)) return { outcome: "unknown", code: null };
+  if (code === 0) return { outcome: "success", code: 0 };
+  const credential =
+    CREDENTIAL_FAILURE_CODES.has(code) || (code === 50053 && LOCKOUT_REASON.test(failureReason));
+  return { outcome: credential ? "credential-failure" : "other-failure", code };
+}
+
 function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const upn = pickStr(rec, ["userPrincipalName", "userDisplayName"]);
   const app = pickStr(rec, ["appDisplayName", "resourceDisplayName"]);
   const ip = extractIp(pickStr(rec, ["ipAddress"]));
-  const errorCode = Number(getPath(rec, "status.errorCode") ?? getCI(rec, "errorCode")) || 0;
   const failureReason = pickStr(rec, ["status.failureReason", "status.additionalDetails"]);
+  const { outcome, code } = signInOutcome(
+    getPath(rec, "status.errorCode") ?? getCI(rec, "errorCode"),
+    failureReason,
+  );
   const risk = pickStr(rec, ["riskLevelDuringSignIn", "riskLevelAggregated", "riskState"]).toLowerCase();
   const city = pickStr(rec, ["location.city"]);
   const country = pickStr(rec, ["location.countryOrRegion"]);
-  // ROPC (Resource Owner Password Credentials) legacy-auth grant — sends the password directly to
-  // the token endpoint with no interactive MFA prompt, a known Conditional-Access/MFA bypass. Entra
-  // sign-in logs surface this as the literal "BAV2ROPC" marker in the client UserAgent.
+  // ROPC (Resource Owner Password Credentials) legacy-auth grant — sends the password straight to
+  // the token endpoint, so no interactive MFA prompt is shown. Entra surfaces it as the literal
+  // "BAV2ROPC" marker in the client UserAgent.
+  //
+  // WHAT THIS IS NOT: proof that MFA was bypassed. The UserAgent is a client-supplied string, and
+  // Conditional Access can block the grant outright — in which case the record is a FAILED sign-in
+  // that the old code still described as "MFA bypass". It also carried T1556.007 (Hybrid Identity)
+  // and T1621 (MFA Request Generation — push bombing); ROPC is neither, and it generates no MFA
+  // request at all. There is no ATT&CK technique for "authenticated over a legacy protocol", so the
+  // honest mapping is the T1078.004 already present. See #931 item 3.
   const isRopc = /bav2ropc/i.test(pickStr(rec, ["userAgent", "UserAgent"]));
 
   let severity: Severity;
   const mitre = ["T1078.004"];
   if (/high|confirmedcompromised|atrisk/.test(risk)) severity = "High";
   else if (risk === "medium") severity = "Medium";
-  else if (isRopc) {
-    severity = "Medium";
-    mitre.push("T1556.007", "T1621");
-  } else if (errorCode !== 0) {
+  else if (outcome === "credential-failure") {
     severity = "Medium";
     mitre.push("T1110");
-  } else severity = "Info";
+  } else if (outcome === "success" && isRopc) severity = "Medium";
+  // A failure that is not a credential failure, and a record whose status could not be read, are
+  // both worth seeing and neither is evidence of an attack.
+  else if (outcome !== "success") severity = "Low";
+  else severity = "Info";
   if (ip) addIoc(sink, "ip", ip);
 
   let description = `Entra sign-in: ${upn || "?"}`;
   if (ip) description += ` from ${ip}`;
   if (city || country) description += ` (${[city, country].filter(Boolean).join(", ")})`;
   if (app) description += ` via ${app}`;
-  if (errorCode !== 0)
-    description += ` [FAILED${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
+  if (outcome === "unknown") description += " [outcome unknown: unreadable status]";
+  else if (outcome !== "success")
+    description += ` [FAILED${code === null ? "" : ` ${code}`}${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
   if (risk && risk !== "none") description += ` [risk: ${risk}]`;
-  if (isRopc) description += " [legacy-auth ROPC — MFA bypass]";
+  if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
   description = description.slice(0, 600);
 
   return {
@@ -262,7 +322,12 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     description,
     severity,
     mitre,
-    aggKey: `entra-signin|${upn}|${ip}|${app}|${errorCode}|${risk}`.toLowerCase().slice(0, 400),
+    // `outcome` and `isRopc` are both discriminators: keying on the raw code alone folded an
+    // unreadable status into the `0` bucket that genuine successes use, and left a ROPC grant to
+    // merge with an ordinary sign-in by the same user (aggregation keeps ONE description).
+    aggKey: `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`
+      .toLowerCase()
+      .slice(0, 400),
     sources: ["Entra ID"],
   };
 }

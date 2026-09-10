@@ -241,4 +241,60 @@ describe("parseCombinedLog — IOC provenance", () => {
     expect(iocB?.sourceAggKeys).toEqual([eventB?.aggKey]);
     expect(iocA?.sourceAggKeys).not.toEqual(iocB?.sourceAggKeys);
   });
+  // The client address is the first field of every combined-log line, and the mapper used to
+  // destructure straight past it — no `srcIp` reached any event, so "which host hit this server"
+  // had no answer (#930 item 3).
+  it("captures the client address as srcIp", () => {
+    const sink = new Map<string, SiemIoc>();
+    const line =
+      '203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET /index.php HTTP/1.1" 200 512 "-" "curl/8.0"';
+    expect(mapCombinedLogLine(line, sink)!.srcIp).toBe("203.0.113.7");
+  });
+
+  it("leaves srcIp unset when the server logged a hostname or no client at all", () => {
+    const sink = new Map<string, SiemIoc>();
+    const named =
+      'workstation.corp.example - - [10/Jan/2026:00:00:00 +0000] "GET /a HTTP/1.1" 200 1 "-" "curl/8.0"';
+    const absent = '- - - [10/Jan/2026:00:00:00 +0000] "GET /a HTTP/1.1" 200 1 "-" "curl/8.0"';
+    expect(mapCombinedLogLine(named, sink)!.srcIp).toBeUndefined();
+    expect(mapCombinedLogLine(absent, sink)!.srcIp).toBeUndefined();
+  });
+
+  // A `srcIp` that is not part of the key would pin ONE arbitrary client to a collapsed group.
+  it("does not merge two clients requesting the same path into one attributed row", () => {
+    const a = '203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET /login HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const b = '198.51.100.9 - - [10/Jan/2026:00:01:00 +0000] "GET /login HTTP/1.1" 200 512 "-" "curl/8.0"';
+    const parsed = parseCombinedLog(`${a}\n${b}`);
+    expect(parsed.events).toHaveLength(2);
+    expect(parsed.events.map((e) => e.srcIp).sort()).toEqual(["198.51.100.9", "203.0.113.7"]);
+  });
+  // ADVERSARIAL: the URI is attacker-controlled and unbounded. If it sits ahead of the client in
+  // the key and the key is then truncated, a long enough path pushes the client off the end and
+  // two clients collapse into one row again — the exact false attribution the srcIp change exists
+  // to prevent. aggKey.ts documents this failure mode and boundedAggKey is the answer to it.
+  it("keeps two clients distinct even when the request path is longer than the key bound", () => {
+    const longPath = `/${"a".repeat(600)}`;
+    const a = `203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET ${longPath} HTTP/1.1" 200 512 "-" "curl/8.0"`;
+    const b = `198.51.100.9 - - [10/Jan/2026:00:01:00 +0000] "GET ${longPath} HTTP/1.1" 200 512 "-" "curl/8.0"`;
+    const parsed = parseCombinedLog(`${a}\n${b}`);
+    expect(parsed.events).toHaveLength(2);
+    expect(parsed.events.map((e) => e.srcIp).sort()).toEqual(["198.51.100.9", "203.0.113.7"]);
+  });
+
+  it("keeps the spill marker in the key when the request path is longer than the key bound", () => {
+    const longPath = `/${"a".repeat(600)}`;
+    const plain = `203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET ${longPath} HTTP/1.1" 200 512 "-" "curl/8.0"`;
+    const spilled = `203.0.113.7 - - [10/Jan/2026:00:01:00 +0000] "GET ${longPath} HTTP/1.1" 200 512 "https://x.example/?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnopqrstuvwxyz012345" "curl/8.0"`;
+    const parsed = parseCombinedLog(`${plain}\n${spilled}`);
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  // Two DIFFERENT long paths must not collide either — a bounded key keeps a digest of the full
+  // key in its tail precisely so a shared 400-character prefix stays two rows.
+  it("keeps two different long paths distinct", () => {
+    const base = "a".repeat(600);
+    const a = `203.0.113.7 - - [10/Jan/2026:00:00:00 +0000] "GET /${base}one HTTP/1.1" 200 512 "-" "curl/8.0"`;
+    const b = `203.0.113.7 - - [10/Jan/2026:00:01:00 +0000] "GET /${base}two HTTP/1.1" 200 512 "-" "curl/8.0"`;
+    expect(parseCombinedLog(`${a}\n${b}`).events).toHaveLength(2);
+  });
 });
