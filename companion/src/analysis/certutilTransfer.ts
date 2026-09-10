@@ -64,6 +64,10 @@ export function isCertificateAdmin(image: string, cmd: string): boolean {
 export interface TransferLegs {
   /** The URL or host the command itself names, when it names one. */
   commandTarget: string;
+  /** The destination file the command names, which is the write leg's identity. */
+  destination: string;
+  /** False when the command's own timestamp could not be read, so nothing could be correlated. */
+  commandTimeUsable: boolean;
   /** A connection recorded from the same process, or "" when none was found. */
   connection: string;
   /** A file written by the same process, or "" when none was found. */
@@ -76,12 +80,40 @@ export interface TransferLegs {
 
 const URL_IN_CMD = /\bhttps?:\/\/[^\s"'<>|]+/i;
 
+/**
+ * The file the command itself names as its destination.
+ *
+ * This is the strongest identity available for the write leg, and the reason it matters is that
+ * Sysmon's file-create rows and ECAR's file rows carry NO process name or PID. Requiring process
+ * identity meant the write leg could essentially never be established from real telemetry. A file
+ * event for the path the command asked for is better evidence than a name match anyway.
+ */
+export function destinationFromCommand(cmd: string): string {
+  const text = String(cmd ?? "");
+  // `-urlcache -split -f <url> <destination>` and `-decode <in> <out>`: the destination is the last
+  // path-shaped argument, and it must not be the URL.
+  const args = text.match(/(?:"[^"]+"|\S+)/g) ?? [];
+  for (let i = args.length - 1; i >= 0; i--) {
+    const a = args[i].replace(/^"|"$/g, "");
+    if (/^https?:\/\//i.test(a)) continue;
+    if (a.startsWith("-") || a.startsWith("/")) continue;
+    if (/[\\/]/.test(a) || /\.[A-Za-z0-9]{1,6}$/.test(a)) return a;
+  }
+  return "";
+}
+
 function sameProcess(a: ForensicEvent, b: ForensicEvent): boolean {
-  // PID when both carry one; otherwise the image name. PID alone across a long collection can be
-  // reused, so the name has to agree too.
   const an = (a.processName ?? "").toLowerCase();
   const bn = (b.processName ?? "").toLowerCase();
-  if (a.pid !== undefined && b.pid !== undefined && a.pid === b.pid) return !an || !bn || an === bn;
+  // TWO PIDs THAT DISAGREE ARE TWO PROCESSES. The first version fell through to the name when they
+  // conflicted, so certutil.exe PID 100 and PID 200 matched — and two invocations minutes apart
+  // could borrow each other's connection, giving the wrong destination AND a false escalation.
+  if (a.pid !== undefined && b.pid !== undefined) {
+    if (a.pid !== b.pid) return false;
+    return !an || !bn || an === bn;
+  }
+  // Only one side records a PID: the name is all there is, and it is a weak match by itself. The
+  // caller pairs it with the causal-order and destination checks rather than trusting it alone.
   return !!an && an === bn;
 }
 
@@ -99,42 +131,80 @@ export function transferLegs(
   const windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
   const host = shortHost(command.asset) || command.asset || "";
   const t = Date.parse(command.timestamp ?? "");
+  const commandText = command.commandLine ?? command.description ?? "";
+  const destination = destinationFromCommand(commandText);
+  const destKey = destination.toLowerCase().replace(/\//g, "\\");
 
   let connection = "";
   let fileWritten = "";
   let networkCollected = false;
   let fileActivityCollected = false;
+  // The CLOSEST leg after the command, not the first one encountered in array order.
+  let bestConn = Infinity;
+  let bestFile = Infinity;
 
   for (const e of events) {
     if (e.id === command.id) continue;
     const eHost = shortHost(e.asset) || e.asset || "";
     if (host && eHost && host !== eHost) continue;
 
-    const isNetwork = !!e.dstIp || /\bconnection\b|\bnetwork\b|netscan|netstat/i.test(e.description ?? "");
-    const isFileWrite = e.action === "write" || /file (?:created|written)/i.test(e.description ?? "");
+    // An outbound connection needs a DESTINATION ADDRESS. Matching the words "connection" or
+    // "network" in prose swept in share access, type-3 logons, promiscuous-mode notices and SRUM
+    // byte-accounting rows — and a SRUM row carries a process name, so it could become the leg and
+    // escalate the command while naming no destination at all.
+    const isNetwork = !!e.dstIp;
+    const isFileWrite =
+      e.action === "write" || /\bfile (?:created|written|write)\b/i.test(e.description ?? "");
     if (isNetwork) networkCollected = true;
     if (isFileWrite) fileActivityCollected = true;
 
     if (!Number.isFinite(t)) continue;
     const et = Date.parse(e.timestamp ?? "");
-    if (!Number.isFinite(et) || Math.abs(et - t) > windowMs) continue;
-    if (!sameProcess(command, e)) continue;
+    if (!Number.isFinite(et)) continue;
+    // CAUSAL ORDER. A connection or a write BEFORE the command did not result from it, and
+    // accepting one let a later invocation borrow an earlier one's evidence.
+    const delta = et - t;
+    if (delta < 0 || delta > windowMs) continue;
 
-    if (isNetwork && !connection) connection = e.dstIp || (e.description ?? "").slice(0, 120);
-    if (isFileWrite && !fileWritten) fileWritten = e.path || (e.description ?? "").slice(0, 120);
+    if (isNetwork && sameProcess(command, e) && delta < bestConn) {
+      bestConn = delta;
+      connection = e.dstIp || (e.description ?? "").slice(0, 120);
+    }
+    if (isFileWrite && delta < bestFile) {
+      // The destination the COMMAND named is the identity here, because the file telemetry that
+      // matters carries no process of its own. A process match is accepted as a fallback.
+      const path = (e.path ?? "").toLowerCase().replace(/\//g, "\\");
+      const matchesDestination = !!destKey && !!path && path.endsWith(destKey);
+      if (matchesDestination || sameProcess(command, e)) {
+        bestFile = delta;
+        fileWritten = e.path || (e.description ?? "").slice(0, 120);
+      }
+    }
   }
 
   return {
-    commandTarget: URL_IN_CMD.exec(command.commandLine ?? command.description ?? "")?.[0] ?? "",
+    commandTarget: URL_IN_CMD.exec(commandText)?.[0] ?? "",
+    destination,
     connection,
     fileWritten,
     networkCollected,
     fileActivityCollected,
+    // Stated separately, because "we could not correlate" and "nothing was there" are different
+    // facts and the note has to be able to tell them apart.
+    commandTimeUsable: Number.isFinite(t),
   };
 }
 
 /** The sentence a set of legs becomes. */
 export function explainTransfer(legs: TransferLegs): string {
+  if (!legs.commandTimeUsable) {
+    return (
+      `the command names ${legs.commandTarget || "no readable URL"}` +
+      (legs.destination ? ` and a destination of ${legs.destination}` : "") +
+      ". Its own timestamp could not be read, so nothing could be correlated to it — this says " +
+      "nothing about whether the transfer happened."
+    );
+  }
   const parts: string[] = [];
   parts.push(
     legs.commandTarget
@@ -148,9 +218,10 @@ export function explainTransfer(legs: TransferLegs): string {
         ? "no outbound connection from this process was recorded, though network telemetry was collected"
         : "no network telemetry was collected for this host, so the connection cannot be confirmed either way",
   );
+  if (legs.destination) parts.push(`its destination argument is ${legs.destination}`);
   parts.push(
     legs.fileWritten
-      ? `it wrote ${legs.fileWritten}`
+      ? `a write of ${legs.fileWritten} was recorded`
       : legs.fileActivityCollected
         ? "no file write by this process was recorded, though file activity was collected"
         : "no file-activity telemetry was collected for this host, so what it wrote is unknown",
@@ -165,11 +236,19 @@ export function explainTransfer(legs: TransferLegs): string {
  * "nothing was collected" is worth attaching, but it is not grounds to raise a severity.
  */
 export function explainCertutilTransfers(events: readonly ForensicEvent[]): ForensicEvent[] {
-  const commands = events.filter(
-    (e) =>
-      !(e.description ?? "").includes(CERTUTIL_MARKER) &&
-      isCertutilTransfer(e.processName ?? "", e.commandLine ?? e.description ?? ""),
-  );
+  const commands = events.filter((e) => {
+    const text = e.commandLine ?? e.description ?? "";
+    if (!isCertutilTransfer(e.processName ?? "", text)) return false;
+    // Certificate administration is excluded EXPLICITLY rather than only implicitly, so widening
+    // the transfer verbs later cannot quietly start calling `-store` work a download.
+    if (isCertificateAdmin(e.processName ?? "", text)) return false;
+    const existing = e.description ?? "";
+    if (!existing.includes(CERTUTIL_MARKER)) return true;
+    // ALREADY EXPLAINED — but only left alone if that explanation established something. A note
+    // written before the network or file evidence was imported would otherwise be frozen as "not
+    // collected" forever, and no later import could correct it.
+    return /no network telemetry|no file-activity telemetry|could not be read/.test(existing);
+  });
   if (commands.length === 0) return events as ForensicEvent[];
 
   const byId = new Map<string, string>();
@@ -185,7 +264,8 @@ export function explainCertutilTransfers(events: readonly ForensicEvent[]): Fore
     const note = byId.get(e.id);
     if (!note) return e;
     const severity: Severity = raise.has(e.id) && RANK["High"] > RANK[e.severity] ? "High" : e.severity;
-    const base = (e.description ?? "").slice(0, 700);
+    // Replace any earlier explanation rather than appending a second one.
+    const base = (e.description ?? "").replace(/\s*\[certutil transfer:[\s\S]*?\]\s*$/u, "").slice(0, 700);
     return { ...e, severity, description: `${base} ${CERTUTIL_MARKER} ${note}]`.trim() };
   });
 }

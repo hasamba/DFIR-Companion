@@ -73,6 +73,7 @@ describe("transferLegs — host, process identity and time", () => {
     expect(legs.commandTarget).toBe("http://evil.test/a.exe");
     expect(legs.connection).toBe("203.0.113.9");
     expect(legs.fileWritten).toBe("C:\\Temp\\a.exe");
+    expect(legs.destination).toBe("C:\\Temp\\a.exe");
   });
 
   it("does not link another process's connection", () => {
@@ -133,6 +134,8 @@ describe("explainTransfer — missing telemetry is stated, never assumed", () =>
   it("says a connection was not recorded when network telemetry WAS collected", () => {
     const note = explainTransfer({
       commandTarget: "http://x/a",
+      destination: "",
+      commandTimeUsable: true,
       connection: "",
       fileWritten: "",
       networkCollected: true,
@@ -146,6 +149,8 @@ describe("explainTransfer — missing telemetry is stated, never assumed", () =>
   it("says the connection cannot be confirmed when no network telemetry was collected at all", () => {
     const note = explainTransfer({
       commandTarget: "http://x/a",
+      destination: "",
+      commandTimeUsable: true,
       connection: "",
       fileWritten: "",
       networkCollected: false,
@@ -158,6 +163,8 @@ describe("explainTransfer — missing telemetry is stated, never assumed", () =>
   it("never presents an absence as evidence the transfer did not happen", () => {
     const note = explainTransfer({
       commandTarget: "",
+      destination: "",
+      commandTimeUsable: true,
       connection: "",
       fileWritten: "",
       networkCollected: false,
@@ -182,6 +189,7 @@ describe("explainCertutilTransfers — the timeline pass", () => {
     expect(c.description).toContain("[certutil transfer:");
     expect(c.description).toContain("203.0.113.9");
     expect(c.description).toContain("C:\\Temp\\a.exe");
+    expect(c.description).toContain("destination argument");
   });
 
   it("raises the command once a leg is corroborated", () => {
@@ -221,5 +229,102 @@ describe("reachability", () => {
   it("has its marker stripped before correlation keys a duplicate", () => {
     const corr = readFileSync(join(process.cwd(), "src/analysis/correlate.ts"), "utf8");
     expect(corr).toContain("certutil transfer");
+  });
+});
+
+// Every one of these was a real defect the first version shipped.
+describe("regressions", () => {
+  // certutil.exe PID 100 and PID 200 are two processes. Falling through to the name let two
+  // invocations minutes apart borrow each other's evidence.
+  it("does not treat two PIDs of the same image as one process", () => {
+    const c = cmd({ pid: 100 });
+    const legs = transferLegs(c, [
+      c,
+      ev({ timestamp: "2026-01-01T10:00:05Z", pid: 200, dstIp: "203.0.113.9" }),
+    ]);
+    expect(legs.connection).toBe("");
+  });
+
+  // Sysmon's file-create rows and ECAR's file rows carry no process name or PID, so requiring
+  // process identity made the write leg unreachable from real telemetry.
+  it("links a write by the path the command asked for, with no process on the file row", () => {
+    const c = cmd();
+    const legs = transferLegs(c, [
+      c,
+      ev({
+        timestamp: "2026-01-01T10:00:06Z",
+        description: "File created",
+        path: "C:\\Temp\\a.exe",
+        processName: undefined,
+        pid: undefined,
+      }),
+    ]);
+    expect(legs.fileWritten).toBe("C:\\Temp\\a.exe");
+  });
+
+  it("does not link a write to some other path", () => {
+    const c = cmd();
+    const legs = transferLegs(c, [
+      c,
+      ev({
+        timestamp: "2026-01-01T10:00:06Z",
+        description: "File created",
+        path: "C:\\Temp\\unrelated.log",
+        processName: undefined,
+        pid: undefined,
+      }),
+    ]);
+    expect(legs.fileWritten).toBe("");
+  });
+
+  // A connection BEFORE the command did not result from it.
+  it("does not link a connection that precedes the command", () => {
+    const c = cmd();
+    const legs = transferLegs(c, [c, ev({ timestamp: "2026-01-01T09:59:00Z", dstIp: "203.0.113.9" })]);
+    expect(legs.connection).toBe("");
+  });
+
+  it("takes the closest connection after the command, not the first in array order", () => {
+    const c = cmd();
+    const legs = transferLegs(c, [
+      c,
+      ev({ timestamp: "2026-01-01T10:04:00Z", dstIp: "198.51.100.1" }),
+      ev({ timestamp: "2026-01-01T10:00:02Z", dstIp: "203.0.113.9" }),
+    ]);
+    expect(legs.connection).toBe("203.0.113.9");
+  });
+
+  // "connection" and "network" in prose swept in share access, type-3 logons and SRUM byte rows —
+  // and a SRUM row carries a process name, so it could become the leg while naming no destination.
+  it("does not accept a SRUM byte-accounting row as the outbound connection", () => {
+    const c = cmd();
+    const legs = transferLegs(c, [
+      c,
+      ev({
+        timestamp: "2026-01-01T10:00:05Z",
+        description: "SRUM network: certutil.exe as CORP\\jdoe sent 4000 / recv 10 bytes",
+      }),
+    ]);
+    expect(legs.connection).toBe("");
+  });
+
+  it("says correlation was impossible when the command's own time cannot be read", () => {
+    const c = cmd({ timestamp: "not a date" });
+    const note = explainTransfer(transferLegs(c, [c]));
+    expect(note).toContain("could not be read");
+    expect(note).toContain("says nothing about whether the transfer happened");
+  });
+
+  // A note written before the network evidence arrived must not be frozen as "not collected".
+  it("re-explains a command once corroborating evidence arrives in a later import", () => {
+    const first = explainCertutilTransfers([cmd({ severity: "Medium" })]);
+    expect(first[0].description).toContain("no network telemetry");
+    const second = explainCertutilTransfers([
+      first[0],
+      ev({ timestamp: "2026-01-01T10:00:05Z", dstIp: "203.0.113.9" }),
+    ]);
+    expect(second[0].description).toContain("203.0.113.9");
+    // ...and it replaces the old explanation rather than appending a second one.
+    expect(second[0].description.match(/\[certutil transfer:/g)).toHaveLength(1);
   });
 });
