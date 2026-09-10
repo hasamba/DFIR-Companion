@@ -47,8 +47,13 @@ export const GLOSSARY_DICTIONARY: Record<string, string> = {
   "domain controller": "A server that authenticates users and enforces policy in an Active Directory domain.",
   "scheduled task": "A Windows mechanism to run programs on a schedule, often abused for persistence.",
   prefetch: "A Windows execution artifact recording recently run programs.",
-  amcache: "A Windows registry hive recording program-execution metadata.",
-  shimcache: "Application Compatibility Cache — a Windows artifact of executed/known binaries.",
+  amcache:
+    "A Windows registry hive recording metadata about programs present on the system. Partial by " +
+    "design: a binary can run without appearing, so its silence is not evidence a program did not run.",
+  shimcache:
+    "Application Compatibility Cache — records that Windows SAW a binary, which from Windows 8 " +
+    "onward includes files noticed by directory enumeration as well as executed ones. Its timestamp " +
+    "is the file's modification time, not a run time, and it holds a limited number of entries.",
   MFT: "Master File Table — the NTFS index of every file on a volume; a key forensic artifact.",
   YARA: "A pattern-matching tool and ruleset for identifying malware.",
   VirusTotal: "An online service aggregating many AV engines and threat intel for files/URLs/IPs.",

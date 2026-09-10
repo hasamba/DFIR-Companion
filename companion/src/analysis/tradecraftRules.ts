@@ -22,6 +22,7 @@
 // (siemImport), the ECAR EDR feed and the memory-forensics importer. No AI.
 
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { commandCandidates } from "./commandNormalize.js";
 import { reconTechniques } from "./reconTechniques.js";
 
 export interface TradecraftRule {
@@ -114,6 +115,25 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
     weight: "strong",
     ids: ["T1105", "T1218.007"],
   },
+  // Squiblydoo (T1218.010): regsvr32 is told to register a COM scriptlet, and the scriptlet is
+  // fetched from a REMOTE source. The signed Microsoft binary does the downloading and the
+  // executing, so nothing unsigned touches disk and application allow-listing sees only regsvr32.
+  //
+  // Three things are required together, and the issue is explicit that the executable name alone is
+  // not one of them: regsvr32, the /i: scriptlet switch, and a remote source. Registering an
+  // ordinary local DLL is what regsvr32 is FOR, and grading that would flag every installer.
+  //
+  // A local .sct is deliberately not matched either. It is unusual, but it is not the
+  // remote-execution shape this technique names, and this rule is the precise one.
+  {
+    // BOTH argument orderings, because both are documented and used: the DLL is normally last
+    // (`/i:URL scrobj.dll`) but `scrobj.dll /n /i:URL` is equally valid and was being missed. The
+    // source may also be quoted. Quantifiers are bounded rather than open `[^\n]*` so a command line
+    // repeating the anchor cannot make matching quadratic.
+    re: /\bregsvr32(?:\.exe)?\b(?:[^\n]{0,400}\/i:\s*["']?(?:https?:\/\/|\\\\[^\s\\]+\\)[^\n]{0,400}\bscrobj(?:\.dll)?\b|[^\n]{0,400}\bscrobj(?:\.dll)?\b[^\n]{0,400}\/i:\s*["']?(?:https?:\/\/|\\\\[^\s\\]+\\))/i,
+    weight: "strong",
+    ids: ["T1218.010", "T1105"],
+  },
   // curl/wget piping a fetched script directly into a shell interpreter (fetch-and-execute) — rarely
   // benign; a legitimate install script is normally saved to disk and reviewed/run separately.
   {
@@ -198,6 +218,23 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   // persistence + tunnel primitive distinct from a plain SSH/plink reverse tunnel.
   { re: /\bqemu-system-\w+(?:\.exe)?\b[^\n]*hostfwd=tcp/i, weight: "strong", ids: ["T1572"] },
 
+  // Taking ownership or rewriting an ACL across a tree. Ransomware does this to reach files its
+  // account cannot otherwise write; administrators do it too, which is why it is WEAK on its own and
+  // only means something as one of several precursor behaviours (#908 item 3).
+  //
+  // Anchored on the RECURSIVE forms. A single `takeown /f file` is routine desktop support; `/r` or
+  // `icacls ... /t /grant everyone:F` across a directory is the shape that precedes encryption.
+  {
+    re: /\btakeown(?:\.exe)?\b[^\n]{0,200}\/r\b|\bicacls(?:\.exe)?\b[^\n]{0,200}\/t\b[^\n]{0,200}\/grant[^\n]{0,80}(?::[rf]|everyone|users)/i,
+    weight: "weak",
+    ids: ["T1222.001"],
+  },
+  // The POSIX equivalents, for the Linux and ESXi side of the same behaviour.
+  {
+    re: /\bchown\b[^\n]{0,120}\s-R\b|\bchmod\b[^\n]{0,120}\s-R\b[^\n]{0,60}\b777\b/i,
+    weight: "weak",
+    ids: ["T1222.002"],
+  },
   // ───────────── Impact: inhibit system recovery (T1490) ─────────────
   // `vssadmin delete shadows` — matched here (not only STRONG_CMD's `vssadmin\s+delete`, which misses
   // the `.exe` form `vssadmin.exe delete`) so it grades High with the CORRECT technique (T1490, not the
@@ -477,12 +514,15 @@ export function tradecraftSignal(
   image: string,
   cmd: string,
 ): { weight: "strong" | "weak"; mitre: string[] } | null {
-  const blob = `${image} ${cmd}`;
+  // The original text and its de-escaped reading, as SEPARATE strings (#908 item 1). Each rule is
+  // tested against each in turn, so a match must exist wholly inside one reading — joining them
+  // let `vssadmin\s+delete` match across the join. See commandNormalize.ts.
+  const blobs = commandCandidates(image, cmd);
   let strong = false;
   let weak = false;
   const mitre = new Set<string>();
   for (const rule of TRADECRAFT_RULES) {
-    if (!rule.re.test(blob)) continue;
+    if (!blobs.some((b) => rule.re.test(b))) continue;
     if (rule.weight === "strong") strong = true;
     else weak = true;
     for (const id of rule.ids) mitre.add(id);

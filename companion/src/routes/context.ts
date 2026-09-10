@@ -182,7 +182,10 @@ export interface RouteContext {
   pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
-  applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }>;
+  applyDeobfuscationToCase(
+    caseId: string,
+    opts?: { reanalyzeStale?: boolean },
+  ): Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }>;
   moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
   // Threat-intel ENRICHMENT engine (routes/threatIntel.ts). The engine + its background reachability
   // poller stay in createApp (the poller re-arms enrichInBackground and drains enrichPending on

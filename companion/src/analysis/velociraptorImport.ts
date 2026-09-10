@@ -1184,14 +1184,27 @@ function mapUserAssist(row: Row, artifact: string, host: string): MappedEvent {
   });
 }
 
-// Windows.Registry.AppCompatCache (Shimcache) — EXECUTION/presence evidence for a binary. The generic
-// mapper dumped Position=/ModificationTime=/Path= as a field blob; the binary is in Path.
+// Windows.Registry.AppCompatCache (Shimcache) — PRESENCE evidence for a binary, and a timestamp
+// that is the FILE'S modification time, not a run time (#909 item 1).
+//
+// The row said "Execution evidence" while carrying ModificationTime, which is two errors in one
+// line. ShimCache records that the OS saw the file: from Windows 8 onward that includes metadata
+// gathered by directory ENUMERATION, so a row is not proof the binary ran. And the time it holds is
+// when the FILE was last modified — putting it on a timeline labelled as execution says a program
+// ran at a moment nothing happened.
+//
+// The ExecutionFlag, where the artifact supplies one, is the only part that speaks to execution,
+// and it is reported for what it is rather than folded into the headline.
 function mapShimcache(row: Row, artifact: string, host: string): MappedEvent {
   const path = firstStr(row, ["Path", "OSPath"]);
+  const flag = firstStr(row, ["ExecutionFlag"]);
+  const executed = /^(?:true|yes|1)$/i.test(flag);
   return actionEvent({
     artifact,
     host,
-    action: "Execution evidence (Shimcache)",
+    action: executed
+      ? "Present in ShimCache, execution flag set (time shown is the file's modification time)"
+      : "Present in ShimCache (time shown is the file's modification time, not a run time)",
     subject: path || "(path)",
     time: firstTime(row, ["ModificationTime"]) || pickTime(row),
     path: path || undefined,

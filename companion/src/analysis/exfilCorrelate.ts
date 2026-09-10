@@ -56,11 +56,17 @@ export function linkArchiveToExfil(
   if (stagedAt.size === 0) return events;
 
   return events.map((e) => {
-    if (!e.asset || !(e.mitreTechniques ?? []).includes("T1041")) return e;
+    // A SRUM outbound TOTAL counts as a transfer candidate (#909 item 9). SRUM is graded at import
+    // time, where there is no case to compare against, so the staging pairing the issue asks for
+    // could only ever happen here — where every host's evidence is already in one timeline.
+    const isSrumTotal = /^SRUM total:/.test(e.description ?? "");
+    if (!e.asset) return e;
+    if (!isSrumTotal && !(e.mitreTechniques ?? []).includes("T1041")) return e;
     if ((e.description ?? "").includes(MARKER)) return e; // idempotent
     // A T1041 tag alone is not an exfil transfer — require an attributable outbound send, so a
     // mis-tagged neighbour in the staging window is not escalated to "confirmed exfiltration".
-    if (!hasOutboundTransfer(e)) return e;
+    // A SRUM total IS the attributable outbound send; the byte counter is the attribution.
+    if (!isSrumTotal && !hasOutboundTransfer(e)) return e;
     const staged = stagedAt.get(e.asset);
     if (staged === undefined) return e;
     const t = Date.parse(e.timestamp ?? "");
@@ -68,10 +74,14 @@ export function linkArchiveToExfil(
     return {
       ...e,
       severity: worstSeverity(e.severity, "High"),
-      description: `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}]`.slice(
-        0,
-        600,
-      ),
+      ...(isSrumTotal ? { mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), "T1041"])] } : {}),
+      description:
+        `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}` +
+        (isSrumTotal
+          ? ". SRUM records the volume and the application, not the destination or the contents, so this" +
+            " pairs a staging event with a large send — it does not show what left."
+          : "") +
+        `]`.slice(0, 900),
     };
   });
 }

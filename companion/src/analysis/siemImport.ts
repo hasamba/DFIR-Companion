@@ -32,6 +32,7 @@ import {
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tradecraftRules.js";
+import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
@@ -69,6 +70,8 @@ export interface SiemEvent {
   description: string;
   severity: Severity;
   mitreTechniques: string[];
+  // The modification time the source artifact recorded for this file — see ForensicEvent.
+  fileModified?: string;
   canonical?: CanonicalEventEnvelope;
   count?: number;
   endTimestamp?: string;
@@ -737,9 +740,11 @@ function winAccounts(ed: Row): string[] {
 // UNCOMMON LOLBin image), or null. Exported so the memory-forensics importer can bump a Volatility
 // `cmdline` row the same way.
 export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" | null {
-  const blob = `${image} ${cmd}`;
-  if (STRONG_CMD.test(blob)) return "strong";
-  if (SUSP_CMD.test(blob) || SUSP_PATH.test(image)) return "weak";
+  // The original and its de-escaped reading, as separate strings (#908 item 1) — never joined, or
+  // a rule matches across the join. See commandNormalize.ts.
+  const blobs = commandCandidates(image, cmd);
+  if (blobs.some((b) => STRONG_CMD.test(b))) return "strong";
+  if (blobs.some((b) => SUSP_CMD.test(b)) || SUSP_PATH.test(image)) return "weak";
   // A LOLBin IMAGE on its own grades only when the binary is not itself an everyday one: cmd.exe and
   // powershell.exe spawn continuously on a healthy endpoint, so the name proves nothing without a
   // command-line or path signal to go with it, and grading it Medium buried the rare real one.
@@ -751,6 +756,8 @@ export interface MappedEvent {
   timestamp: string;
   description: string;
   severity: Severity;
+  // The modification time the source artifact recorded for this file — see ForensicEvent.
+  fileModified?: string;
   mitre: string[];
   aggKey: string;
   canonical?: CanonicalEventEnvelope;

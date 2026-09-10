@@ -196,15 +196,42 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
   if (ip) description += ` from ${ip}`;
   else if (rawIp && rawIp !== "AWS Internal") description += ` from ${rawIp}`;
   if (region) description += ` in ${region}`;
+  // The CLIENT, in a marker the bulk-read pass reads back. The issue names the user agent as one of
+  // the five dimensions to aggregate on, and CloudTrail records it on every call — but nothing kept
+  // it, so two different clients under one identity merged into a single group and a fifty-object
+  // threshold could be reached by two twenty-five-object sessions that had nothing to do with each
+  // other. Trimmed hard: a full user agent is long and this is a marker, not the raw field.
+  const client = str(getCI(rec, "userAgent")).trim();
+  if (client) description += ` [ua: ${oneLine(client).slice(0, 80)}]`;
   if (isRoot) description += " [root]";
   if (errorCode) description += ` [${errorCode}]`;
   description = description.slice(0, 600);
   const observedTimestamp = str(getCI(rec, "eventTime"));
   const normalizedTimestamp = normalizeTime(observedTimestamp);
   const request = getCI(rec, "requestParameters");
-  const resource = isObject(request)
-    ? firstStr(request, ["resource", "resourceName", "userName", "roleName", "bucketName", "key"])
-    : "";
+  // An object read names BOTH a bucket and a key, and firstStr returns whichever it meets first —
+  // so `cloud.resource` was the bucket alone and the object was thrown away. That is not a cosmetic
+  // loss: bulk-read correlation (#908 item 8) counts DISTINCT OBJECTS, so with the key gone every
+  // group had an object count of zero and the pass could never fire on real CloudTrail. Both are
+  // kept, joined the way the rest of the codebase writes an object path.
+  const bucket = isObject(request) ? firstStr(request, ["bucketName"]) : "";
+  const objectKey = isObject(request) ? firstStr(request, ["key"]) : "";
+  const resource =
+    bucket && objectKey
+      ? `${bucket}/${objectKey}`
+      : isObject(request)
+        ? firstStr(request, [
+            "resource",
+            "resourceName",
+            "userName",
+            "roleName",
+            // roleArn is how AssumeRole names the role it issued. Without it the role-assumption
+            // correlation in cloudBulkRead had nothing to match a bulk reader's session against.
+            "roleArn",
+            "bucketName",
+            "key",
+          ])
+        : "";
   const canonical = createCanonicalEvent({
     event: {
       category: "cloud",
@@ -266,7 +293,14 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     severity,
     mitre,
     canonical,
-    aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}`.toLowerCase().slice(0, 400),
+    // The OBJECT is part of the key for a data-plane read. Without it, three hundred GetObject
+    // calls on three hundred different files collapsed into ONE aggregated event with a count of
+    // 300, and every downstream question about WHICH objects were read — bulk-read correlation
+    // (#908 item 8) above all — had nothing left to read. Management-plane calls keep the old key:
+    // a hundred DescribeInstances by one principal genuinely are one thing.
+    aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}|${client}${objectKey ? `|${resource}` : ""}`
+      .toLowerCase()
+      .slice(0, 400),
     sources: ["AWS CloudTrail"],
   };
 }

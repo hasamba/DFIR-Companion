@@ -26,6 +26,7 @@
  * tests never spin up a filesystem poller.
  */
 import { basename, dirname, extname, join, relative } from "node:path";
+import { decodeImportedText } from "../ingest/decodeText.js";
 import { readdir, stat, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import type { CaseStore } from "../storage/caseStore.js";
 import { openNoFollow, readFileNoFollow, readHeadNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
@@ -364,7 +365,8 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await ingestDroppedImage(caseId, full, name, file.mtimeMs);
         return { ok: true };
       }
-      const text = (await readFileNoFollow(full)).toString("utf8");
+      // BOM-aware: a Report.wer is UTF-16LE, and utf8 turns it into NUL-interleaved mojibake.
+      const text = decodeImportedText(await readFileNoFollow(full));
       if (!text.trim()) return { ok: false, reason: "empty file" };
       const kind = resolveImportKind(name, text);
       if (kind === "unknown")

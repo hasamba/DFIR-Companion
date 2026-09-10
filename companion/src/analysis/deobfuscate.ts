@@ -54,7 +54,7 @@ const DOMAIN_RE =
 
 const NOISE_IPS = new Set(["127.0.0.1", "0.0.0.0", "255.255.255.255", "8.8.8.8", "8.8.4.4"]);
 
-function extractIocsFromText(text: string): RawIoc[] {
+export function extractIocsFromText(text: string): RawIoc[] {
   const out: RawIoc[] = [];
   const seen = new Set<string>();
   const add = (type: IOC["type"], value: string): void => {

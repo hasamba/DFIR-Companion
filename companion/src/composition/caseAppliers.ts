@@ -18,6 +18,7 @@ import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "../analy
 import { whitelistMatches } from "../analysis/iocWhitelist.js";
 import { nsrlMatchIocs, nsrlMatchEvents } from "../analysis/nsrl.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
+import { scriptBlockSignal } from "../analysis/tradecraftRules.js";
 import { applyDeobfuscation } from "../analysis/applyDeobfuscation.js";
 import { pushCheckpoint } from "../analysis/importUndo.js";
 import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/playbookControl.js";
@@ -42,7 +43,10 @@ export interface CaseAppliers {
   readonly falsePositives: FalsePositiveStore;
   pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
-  applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }>;
+  applyDeobfuscationToCase(
+    caseId: string,
+    opts?: { reanalyzeStale?: boolean },
+  ): Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }>;
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
   loadPlaybookControl(caseId: string): Promise<PlaybookControl>;
   syncPlaybook(caseId: string): Promise<PlaybookTask[]>;
@@ -132,15 +136,27 @@ export function createCaseAppliers({
   // Returns how many events were decoded and how many new IOCs were extracted.
   async function applyDeobfuscationToCase(
     caseId: string,
-  ): Promise<{ deobfuscated: number; newIocs: number }> {
-    if (!options.stateStore) return { deobfuscated: 0, newIocs: 0 };
+    // Re-decode events whose stored result came from an older decoder (#909 item 2). Off by
+    // default: the sweep stays idempotent for automatic runs, and re-analysis — which rewrites
+    // stored findings — is something the analyst asks for.
+    opts: { reanalyzeStale?: boolean } = {},
+  ): Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }> {
+    if (!options.stateStore) return { deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
     return runStateExclusive(caseId, async () => {
       const state = await options.stateStore!.load(caseId);
-      const result = applyDeobfuscation(state);
-      if (result.deobfuscated === 0 && result.newIocs === 0) return { deobfuscated: 0, newIocs: 0 };
+      const result = applyDeobfuscation(state, {
+        reanalyzeStale: opts.reanalyzeStale,
+        gradeDerived: scriptBlockSignal,
+      });
+      if (result.deobfuscated === 0 && result.newIocs === 0)
+        return { deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
       await options.stateStore!.save(result.state);
       options.onState?.(result.state);
-      return { deobfuscated: result.deobfuscated, newIocs: result.newIocs };
+      return {
+        deobfuscated: result.deobfuscated,
+        newIocs: result.newIocs,
+        reanalyzed: result.reanalyzed,
+      };
     });
   }
 

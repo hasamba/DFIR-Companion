@@ -99,6 +99,11 @@ const M365_OPS: Record<string, OpDef> = {
   "remove mfa": { severity: "High", mitre: ["T1556.006"] },
 };
 
+/** Does this operation read a FILE, as opposed to changing a setting? See the aggKey note. */
+function isFileRead(op: string): boolean {
+  return /^(?:filedownloaded|filesyncdownloadedfull|fileaccessed|filepreviewed)$/i.test((op ?? "").trim());
+}
+
 function opSeverity(op: string): OpDef {
   const k = op.toLowerCase().trim().replace(/\.$/, "");
   if (M365_OPS[k]) return M365_OPS[k];
@@ -203,7 +208,14 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     description,
     severity,
     mitre: [...(def.mitre ?? [])],
-    aggKey: `m365|${workload}|${op}|${user}|${ip}`.toLowerCase().slice(0, 400),
+    // The RESOURCE is part of the key for an object read. Without it, aggregation folded every
+    // read by one principal into a single counted event before any correlation could see it — so
+    // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
+    // reads carry it: a hundred management calls by one principal genuinely are one thing, and
+    // adding the resource everywhere would undo the aggregation this importer exists to do.
+    aggKey: `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`
+      .toLowerCase()
+      .slice(0, 400),
     sources: ["Microsoft 365"],
   };
 }
