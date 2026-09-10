@@ -73,12 +73,15 @@ describe("the SSRF shape", () => {
 });
 
 describe("gradeHit — the endpoint alone is never the finding", () => {
-  const hit = (over: Partial<NonNullable<ReturnType<typeof readHit>>> = {}) => ({
+  const hit = (
+    over: Partial<NonNullable<ReturnType<typeof readHit>>> = {},
+  ): NonNullable<ReturnType<typeof readHit>> => ({
     id: "e1",
     target: "169.254.169.254",
     credentialPath: true,
     process: "",
     ssrfShaped: false,
+    commandLineNamesTarget: false,
     ...over,
   });
 
