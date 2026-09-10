@@ -8,6 +8,7 @@ import {
   type SrumRow,
 } from "../../src/analysis/srumNetwork.js";
 import { parseKapeCsv } from "../../src/analysis/kapeImport.js";
+import { linkArchiveToExfil } from "../../src/analysis/exfilCorrelate.js";
 
 const row = (over: Partial<SrumRow> = {}): SrumRow => ({
   id: "1",
@@ -21,8 +22,8 @@ const row = (over: Partial<SrumRow> = {}): SrumRow => ({
   ...over,
 });
 
-// SrumECmd emits BytesRecvd. The previous profile matched on BytesReceived, which SrumECmd does not
-// emit — so it never recognised a real export.
+// SrumECmd's CSV header is BytesReceived; BytesRecvd is the raw ESE column the tool maps before
+// writing. Both are accepted, because other SRUM readers export the raw name.
 describe("readSrumRow — the column names SrumECmd actually writes", () => {
   const cells: Record<string, unknown> = {
     Id: "42",
@@ -33,7 +34,7 @@ describe("readSrumRow — the column names SrumECmd actually writes", () => {
     Sid: "S-1-5-21-1-2-3-1001",
     InterfaceLuid: "1689399632855555",
     BytesSent: "52428800",
-    BytesRecvd: "1024",
+    BytesReceived: "1024",
   };
 
   it("reads the attribution the artifact carries", () => {
@@ -47,8 +48,8 @@ describe("readSrumRow — the column names SrumECmd actually writes", () => {
     expect(r.bytesReceived).toBe(1024);
   });
 
-  it("still accepts the BytesReceived spelling other exports use", () => {
-    const alt: Record<string, unknown> = { ...cells, BytesRecvd: undefined, BytesReceived: "2048" };
+  it("still accepts the raw ESE spelling other readers export", () => {
+    const alt: Record<string, unknown> = { ...cells, BytesReceived: undefined, BytesRecvd: "2048" };
     expect(readSrumRow((k) => alt[k])!.bytesReceived).toBe(2048);
   });
 
@@ -57,7 +58,7 @@ describe("readSrumRow — the column names SrumECmd actually writes", () => {
   });
 
   it("treats an unreadable counter as zero rather than NaN", () => {
-    const bad: Record<string, unknown> = { ...cells, BytesSent: "-", BytesRecvd: "n/a" };
+    const bad: Record<string, unknown> = { ...cells, BytesSent: "-", BytesReceived: "n/a" };
     const r = readSrumRow((k) => bad[k])!;
     expect(r.bytesSent).toBe(0);
     expect(r.bytesReceived).toBe(0);
@@ -90,6 +91,17 @@ describe("totalSrum — attribution is per application AND user AND interface", 
     const t = totalSrum([...rows, ...rows])[0];
     expect(t.rows).toBe(2);
     expect(t.bytesSent).toBe(100 * 1024 * 1024);
+  });
+
+  // AutoIncId restarts per export, so two databases merged into one file both contain Id=1.
+  // Keying on the id alone dropped the second row and UNDER-counted.
+  it("keeps two distinct rows that share a record id from different exports", () => {
+    const t = totalSrum([
+      row({ id: "1", timestamp: "2026-01-01T10:00:00Z", bytesSent: 100 }),
+      row({ id: "1", timestamp: "2026-01-01T11:00:00Z", bytesSent: 200 }),
+    ])[0];
+    expect(t.rows).toBe(2);
+    expect(t.bytesSent).toBe(300);
   });
 
   // SRUM rows are snapshots, and consecutive ones can describe the same interval.
@@ -147,8 +159,19 @@ describe("srumSignal — volume is a lead, never a verdict", () => {
     }
   });
 
-  it("names the user the traffic is attributed to", () => {
-    expect(srumSignal(big)!.note).toContain("CORP\\jdoe");
+  it("names the user the traffic is attributed to, with the SID", () => {
+    const n = srumSignal(big)!.note;
+    expect(n).toContain("CORP\\jdoe");
+    expect(n).toContain("S-1-5-21-1-2-3-1001");
+  });
+
+  // A rounded figure with nothing behind it cannot be checked by whoever reads the report.
+  it("carries the exact counters, the interval, the interface and the rows behind the total", () => {
+    const n = srumSignal(big)!.note;
+    expect(n).toContain("4294967296 bytes sent");
+    expect(n).toContain("on interface 1689399632855555");
+    expect(n).toContain("between 2026-01-01T10:00:00Z");
+    expect(n).toContain("from SRUM rows 1");
   });
 
   it("says so plainly when no user was recorded", () => {
@@ -167,7 +190,7 @@ describe("humanBytes", () => {
 
 describe("wired into the KAPE importer", () => {
   const csv = [
-    "Id,Timestamp,AppId,ExeInfo,UserName,Sid,InterfaceLuid,BytesSent,BytesRecvd",
+    "Id,Timestamp,AppId,ExeInfo,UserName,Sid,InterfaceLuid,BytesSent,BytesReceived",
     "1,2026-01-01 10:00:00,104,C:\\Users\\jdoe\\rclone.exe,CORP\\jdoe,S-1-5-21-1-2-3-1001,168939,4294967296,1024",
     "2,2026-01-01 11:00:00,104,C:\\Users\\jdoe\\rclone.exe,CORP\\jdoe,S-1-5-21-1-2-3-1001,168939,1048576,512",
   ].join("\n");
@@ -182,5 +205,52 @@ describe("wired into the KAPE importer", () => {
     expect(total).toBeDefined();
     expect(total!.description).toContain("CORP\\jdoe");
     expect(total!.description).toContain("no remote address");
+  });
+});
+
+// The staging pairing is the point of the item, and it cannot happen at import time — the importer
+// has no case to compare against. It happens where every host's evidence is already in one timeline.
+describe("SRUM totals pair with archive staging in the correlator", () => {
+  const staging = {
+    id: "s1",
+    timestamp: "2026-01-01T09:00:00Z",
+    description: "Compress-Archive -Path C:\\data -DestinationPath C:\\Temp\\out.zip",
+    severity: "Medium" as const,
+    mitreTechniques: ["T1560.001"],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: "WS-01",
+  };
+  const total = {
+    id: "t1",
+    timestamp: "2026-01-01T10:00:00Z",
+    description: "SRUM total: 4.0 GB sent by rclone.exe as CORP\\jdoe over 2 recorded interval(s).",
+    severity: "Info" as const,
+    mitreTechniques: [] as string[],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: "WS-01",
+  };
+
+  it("raises a SRUM total that follows archive staging on the same host", () => {
+    const out = linkArchiveToExfil([staging, total] as never);
+    const t = out.find((e) => /SRUM total/.test(e.description))!;
+    expect(t.severity).toBe("High");
+    expect(t.mitreTechniques).toContain("T1041");
+    expect(t.description).toContain("preceded by archive staging");
+    // The limitation travels with the escalation.
+    expect(t.description).toContain("does not show what left");
+  });
+
+  it("leaves a SRUM total alone when the host has no staging evidence", () => {
+    const out = linkArchiveToExfil([{ ...total, asset: "WS-02" }, staging] as never);
+    const t = out.find((e) => /SRUM total/.test(e.description))!;
+    expect(t.severity).toBe("Info");
+  });
+
+  it("does not pair a total that precedes the staging", () => {
+    const early = { ...total, timestamp: "2026-01-01T08:00:00Z" };
+    const out = linkArchiveToExfil([staging, early] as never);
+    expect(out.find((e) => /SRUM total/.test(e.description))!.severity).toBe("Info");
   });
 });

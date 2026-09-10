@@ -27,8 +27,10 @@
 // Two things cause the same bytes to be added twice. Re-importing the same export is the obvious
 // one. The subtler one is that SRUM rows are SNAPSHOTS: consecutive rows for one application can
 // describe overlapping intervals, and adding them produces a total that never happened. Every row
-// carries its own record id, and totals are computed over DEDUPLICATED rows keyed on that id plus
-// the interval — so a re-import contributes nothing, and an overlapping snapshot is counted once.
+// Totals are computed over rows deduplicated on a FULL-ROW fingerprint — the record id together
+// with the attribution, the interval and both counters. The id alone is not enough: it is the
+// NetworkUsages table's AutoIncId, unique within one export and not across two, so two databases
+// merged into one file both start at 1 and keying on it would silently drop the second row.
 
 import type { Severity } from "./stateTypes.js";
 
@@ -68,8 +70,9 @@ function num(v: unknown): number {
 /**
  * Read one row.
  *
- * The column names are SrumECmd's. `BytesRecvd` is the real spelling — the previous profile matched
- * on `BytesReceived`, which SrumECmd does not emit, so it never recognised a real export.
+ * SrumECmd's CSV exports `BytesReceived`: `BytesRecvd` is the RAW ESE column name, which the tool
+ * maps before writing. Both are accepted because other SRUM readers export the raw name, but the
+ * primary is the one SrumECmd actually writes.
  */
 export function readSrumRow(get: (key: string) => unknown): SrumRow | null {
   const first = (...keys: string[]): string => {
@@ -85,11 +88,13 @@ export function readSrumRow(get: (key: string) => unknown): SrumRow | null {
     id: first("Id", "RecordId", "AutoIncId"),
     app,
     user: first("UserName", "User"),
-    sid: first("Sid", "UserId", "SidType"),
+    // SidType classifies a SID; it is not one. Using it as a fallback identity put an enum
+    // value where a principal belongs.
+    sid: first("Sid", "UserId"),
     interfaceId: first("InterfaceLuid", "L2ProfileId", "InterfaceType", "Interface"),
     timestamp: first("Timestamp", "EventTimestamp"),
     bytesSent: num(get("BytesSent")),
-    bytesReceived: num(get("BytesRecvd") ?? get("BytesReceived")),
+    bytesReceived: num(get("BytesReceived") ?? get("BytesRecvd")),
   };
 }
 
@@ -101,14 +106,21 @@ export function readSrumRow(get: (key: string) => unknown): SrumRow | null {
  * snapshots describing the same interval are counted once rather than summed into a total that
  * never happened.
  */
+export const MAX_SRUM_ROWS = 200_000;
+
 export function totalSrum(rows: readonly SrumRow[]): SrumTotal[] {
+  // Bounded like the journal pass: a large export is materialized, fingerprinted and grouped before
+  // the event cap applies, and unbounded that is a memory risk rather than a slow import.
+  const input = rows.length > MAX_SRUM_ROWS ? rows.slice(0, MAX_SRUM_ROWS) : rows;
   const seen = new Set<string>();
   const byKey = new Map<string, SrumTotal>();
 
-  for (const r of rows) {
-    const dedupKey = r.id
-      ? `id:${r.id}`
-      : `k:${r.app}|${r.sid || r.user}|${r.interfaceId}|${r.timestamp}|${r.bytesSent}|${r.bytesReceived}`;
+  for (const r of input) {
+    // A FULL-ROW fingerprint, with the id as one component rather than the whole key. SRUM's Id is
+    // the NetworkUsages table's AutoIncId: unique within one export and not across two, so keying on
+    // it alone silently dropped a distinct row from a second database and UNDER-counted. Including
+    // the counters and interval prevents that while still collapsing a genuine re-import.
+    const dedupKey = `${r.id}|${r.app}|${r.sid || r.user}|${r.interfaceId}|${r.timestamp}|${r.bytesSent}|${r.bytesReceived}`;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
 
@@ -170,7 +182,16 @@ export interface SrumSignal {
 export function srumSignal(t: SrumTotal, stagingNearby = false): SrumSignal | null {
   if (t.bytesSent < NOTABLE_SENT_BYTES) return null;
 
-  const who = t.user || t.sid || "an unrecorded user";
+  const who = t.user && t.sid ? `${t.user} (${t.sid})` : t.user || t.sid || "an unrecorded user";
+  // The figures and the identity the total was computed from. A rounded number with no interval,
+  // interface or row count behind it cannot be checked by the analyst reading the report.
+  const detail =
+    `${t.bytesSent} bytes sent and ${t.bytesReceived} received` +
+    (t.interfaceId ? ` on interface ${t.interfaceId}` : "") +
+    (t.first && t.last ? `, between ${t.first} and ${t.last}` : "") +
+    (t.rowIds.length ? `, from SRUM rows ${t.rowIds.slice(0, 10).join(", ")}` : "") +
+    (t.rowIds.length > 10 ? ` and ${t.rowIds.length - 10} more` : "") +
+    ".";
   const limits =
     "SRUM counts bytes per application; it records no remote address, no filenames and no content, " +
     "so it cannot show where this went or what it was, and it does not establish exfiltration.";
@@ -181,7 +202,7 @@ export function srumSignal(t: SrumTotal, stagingNearby = false): SrumSignal | nu
       mitre: [],
       note:
         `${humanBytes(t.bytesSent)} sent by ${t.app} as ${who} over ${t.rows} recorded interval(s). ` +
-        `Backup clients, cloud sync and OS updates produce this same shape. ${limits}`,
+        `${detail} Backup clients, cloud sync and OS updates produce this same shape. ${limits}`,
     };
   }
 
@@ -191,6 +212,6 @@ export function srumSignal(t: SrumTotal, stagingNearby = false): SrumSignal | nu
     note:
       `${humanBytes(t.bytesSent)} sent by ${t.app} as ${who} over ${t.rows} recorded interval(s), ` +
       `and this host has archive-staging evidence in the same window. The SEQUENCE is the lead, not ` +
-      `the volume. ${limits}`,
+      `the volume. ${detail} ${limits}`,
   };
 }
