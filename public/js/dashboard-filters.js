@@ -191,6 +191,52 @@ function findingPassesOriginLens(f, hideAuto, hideGap) {
   return true;
 }
 
+// The case MITRE table, completed from the techniques the surviving events carry (#893).
+//
+// THE CLIENT MIRROR OF src/analysis/eventTechniques.ts. It is a separate function rather than two
+// dozen inline lines in render() for the same reason findingPassesOriginLens above is: render() is
+// a 700-line DOM function with no behavioural harness, so a rule written inside it can only be
+// checked by reading it. As a pure function it is run directly against the REAL server function in
+// tests/dashboard/dashboardMitreParity.test.ts, which is what #918 asked for.
+//
+// `findings` MUST ALREADY HAVE THE FALSE-POSITIVE FILTER APPLIED. That is not a detail of the
+// caller's convenience — it is half the rule. On the server the order is fixed and visible in one
+// expression, withEventTechniques(applyFalsePositive(state, markers)) at reports/reportWriter.ts,
+// so a technique whose only support was a finding the analyst just confirmed benign is gone from
+// the table. Passing the raw state.findings here instead reproduces #917: the panel keeps a row
+// the report has already dropped, until a background re-synthesis happens to land.
+//
+// Nothing is persisted. This is a VIEW over state, so dismissing an event takes effect on the next
+// render and un-marking it brings the technique straight back, with no merge and nothing to heal.
+//
+// One knowing divergence from the server, and it is in the NAME only: a row derived from an event
+// id shows the bare id, because the id -> name table is server-side reference data
+// (analysis/attackTechniqueNames.ts) that the dashboard is never sent. Ids and finding links match
+// the server exactly; the parity suite pins that and documents the carve-out.
+function deriveMitreRows(findings, forensicTimeline, table) {
+  const ft = forensicTimeline || [];
+  const surviving = new Set((findings || []).map((f) => f.id));
+  const carried = new Set(ft.flatMap((e) => e.mitreTechniques || []));
+  // Copied, not aliased — the server's unionEventTechniques() hands back copies, and a caller that
+  // edited a row in place would otherwise be editing the persisted state object.
+  const rows = (table || [])
+    .filter(
+      (m) =>
+        m.analystAccepted ||
+        (m.findingIds || []).some((id) => surviving.has(id)) ||
+        carried.has(m.id),
+    )
+    .map((m) => ({ ...m }));
+  const seen = new Set(rows.map((m) => m.id));
+  for (const e of ft)
+    for (const id of e.mitreTechniques || [])
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        rows.push({ id, name: id, findingIds: [] });
+      }
+  return rows;
+}
+
 // Published for the inline script and the other helper modules. EVERY function this file
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
@@ -212,6 +258,7 @@ window.DfirFilters = {
   isAutoBackfillFinding,
   isGapFinding,
   findingPassesOriginLens,
+  deriveMitreRows,
   ftOriginOf,
   originFacets,
 };

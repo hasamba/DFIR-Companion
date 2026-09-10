@@ -479,27 +479,14 @@
     // persisted, so a dismissal takes effect on the next render and un-marking restores the
     // technique, with no merge and no healing pass in between.
     //
-    // A technique a model asserted keeps its name and its finding links. One derived from an event
-    // shows its id as the name, which is exactly what the server's own name table falls back to for
-    // an id it does not know.
-    // Only what the surviving evidence still supports: a technique synthesis asserted otherwise
-    // outlives the dismissal of the very event it came from. Safe to hide because this is a view —
-    // state is untouched, so un-marking the event brings it straight back.
-    const survivingFindings = new Set((state.findings || []).map((f) => f.id));
-    const carriedTechniques = new Set(ft.flatMap((e) => e.mitreTechniques || []));
-    const mitreRows = (state.mitreTechniques || []).filter(
-      (m) =>
-        m.analystAccepted ||
-        (m.findingIds || []).some((id) => survivingFindings.has(id)) ||
-        carriedTechniques.has(m.id),
-    );
-    const seenTechniques = new Set(mitreRows.map((m) => m.id));
-    for (const e of ft)
-      for (const id of e.mitreTechniques || [])
-        if (id && !seenTechniques.has(id)) {
-          seenTechniques.add(id);
-          mitreRows.push({ id, name: id, findingIds: [] });
-        }
+    // THE FINDINGS ARGUMENT IS `notFp`, NOT `state.findings`, and that is the whole of #917. The
+    // findings panel a few hundred lines up already renders `notFp` — the list with the
+    // just-confirmed false positives dropped — and the server derives MITRE in that same order,
+    // withEventTechniques(applyFalsePositive(...)) in reports/reportWriter.ts. Passing the raw list
+    // here left a technique whose only support was a finding the analyst had confirmed benign
+    // sitting in this panel while the report and every server-side export had already dropped it,
+    // until a background re-synthesis happened to land. Pinned by dashboardMitreParity.test.ts.
+    const mitreRows = deriveMitreRows(notFp, ft, state.mitreTechniques);
     document.getElementById("mitre").innerHTML =
       mitreRows
         .map(

@@ -144,6 +144,15 @@ export interface FiltersApi {
   originFacets(ft: EventLike[] | null): string[];
   isLowSignalEvent(e: EventLike): boolean;
   lowSignalChip(e: EventLike): string;
+  /**
+   * `findings` is the FALSE-POSITIVE-FILTERED list, never raw state.findings — the server's own
+   * order is withEventTechniques(applyFalsePositive(...)), and passing the raw list here is #917.
+   */
+  deriveMitreRows(
+    findings: Array<{ id: string }> | null,
+    forensicTimeline: Array<{ mitreTechniques?: string[] }> | null,
+    table: Array<{ id: string; name: string; findingIds?: string[]; analystAccepted?: boolean }> | null,
+  ): Array<{ id: string; name: string; findingIds: string[] }>;
 }
 
 export interface IocApi {
