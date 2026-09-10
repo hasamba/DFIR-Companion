@@ -51,8 +51,20 @@ export interface SharedResource {
 
 // Locations a shipped program's resources live in. A reference under one of these is unremarkable
 // however rare it is, because rarity in a small collection is not the same as rarity on the host.
-const SYSTEM_LOCATION =
-  /\\(?:windows\\(?:system32|syswow64|winsxs|assembly|servicing|microsoft\.net)|program files(?: \(x86\))?|programdata\\microsoft)\\/i;
+const SYSTEM_LOCATION = new RegExp(
+  "\\\\(?:" +
+    // Everything shipped under \Windows, not only System32: Fonts, Globalization, Installer,
+    // SystemApps, INF and Resources are all referenced by ordinary programs and were each a
+    // false lead waiting to happen.
+    "windows\\\\(?:system32|syswow64|winsxs|assembly|servicing|microsoft\\.net|fonts|globalization|installer|systemapps|inf|resources|apppatch|policydefinitions|diagnostics|immersivecontrolpanel)" +
+    "|program files(?: \\(x86\\))?" +
+    "|programdata\\\\(?:microsoft|package cache|packages)" +
+    // Per-user caches that every managed endpoint fills: Microsoft's own app data, UWP packages,
+    // and the .NET/NuGet artifact stores.
+    "|users\\\\[^\\\\]+\\\\appdata\\\\(?:local|roaming)\\\\(?:microsoft|packages|nuget|temp\\\\\\.net)" +
+    ")\\\\",
+  "i",
+);
 
 // Locations a shipped program does NOT execute or stage from. A rare reference here is the shape
 // worth reporting.
@@ -62,12 +74,25 @@ const USER_WRITABLE =
 /** How many executables may reference a resource before it stops being unusual. */
 export const MAX_BREADTH = 3;
 
-function norm(p: string): string {
-  return String(p ?? "")
+/** Shared resources required before an ordinary-location link is worth reporting. */
+export const MIN_SHARED_FOR_LEAD = 3;
+
+/**
+ * A comparable path, WITH its volume kept as part of the identity.
+ *
+ * Stripping `\Device\HarddiskVolumeN` made the same path on two different volumes look like one
+ * file — the exact collision the per-volume scoping was supposed to prevent. The device number is
+ * normalised into an explicit volume token instead, so it separates rather than disappears.
+ */
+function norm(p: string, volumeSerial: string): string {
+  const raw = String(p ?? "")
     .trim()
     .toLowerCase()
-    .replace(/\//g, "\\")
-    .replace(/^\\device\\harddiskvolume\d+/i, "");
+    .replace(/\//g, "\\");
+  const device = /^\\device\\harddiskvolume(\d+)/i.exec(raw);
+  const body = device ? raw.slice(device[0].length) : raw.replace(/^[a-z]:/, "");
+  const volume = device ? `vol${device[1]}` : volumeSerial.toLowerCase() || "vol?";
+  return `${volume}|${body}`;
 }
 
 /**
@@ -86,7 +111,9 @@ export function sharedResources(
 
   for (const e of entries) {
     for (const raw of e.referenced) {
-      const p = norm(raw);
+      // Host is part of the key, so two hosts in one merged export never link to each other. The
+      // header claimed this; only the key enforces it.
+      const p = `${e.host.toLowerCase()}|${norm(raw, e.volumeSerial)}`;
       if (!p) continue;
       // Excluded outright, not merely down-weighted: a shipped library referenced by two programs
       // says nothing about either.
@@ -143,6 +170,9 @@ export function companionLeads(
   const out: CompanionLead[] = [];
   for (const [companion, via] of byCompanion) {
     const inUserWritable = via.some((p) => USER_WRITABLE.test(p));
+    // One shared ordinary file is coincidence on a host with hundreds of Prefetch entries. A lead
+    // needs either SEVERAL shared resources or one somewhere a shipped program does not keep them.
+    if (!inUserWritable && via.length < MIN_SHARED_FOR_LEAD) continue;
     out.push({
       suspect: target,
       companion,

@@ -34,6 +34,7 @@ import { parseReasons, pairRenames, summarizeLifecycle, type UsnRecord } from ".
 import { prefetchSignal } from "./prefetchExecution.js";
 import { readSrumRow, totalSrum, srumSignal, type SrumRow } from "./srumNetwork.js";
 import { companionLeads, type PrefetchEntry } from "./prefetchResources.js";
+import { NOISY_LOLBINS } from "./winProcessBaseline.js";
 
 type Row = Record<string, unknown>;
 
@@ -153,13 +154,28 @@ const PROFILES: Profile[] = [
       const runCount = firstStr(row, ["RunCount"]);
       const proc = addProc(sink, exe);
       const time = ezTime(getCI(row, "LastRun")) || ezTime(getCI(row, "SourceModified"));
+      // PECmd records up to seven PREVIOUS runs. Only the last was read, so the execution history
+      // the artifact carries — how often, and over what span — never reached the timeline.
+      const previous = [
+        "PreviousRun0",
+        "PreviousRun1",
+        "PreviousRun2",
+        "PreviousRun3",
+        "PreviousRun4",
+        "PreviousRun5",
+        "PreviousRun6",
+      ]
+        .map((k) => ezTime(getCI(row, k)))
+        .filter(Boolean);
       // Prefetch carries no command line, so the binary's NAME is all there is to grade — and ungraded it
       // stays Info, below the forensic floor, where synthesis never reads it. PECmd exports no executable
       // path column, so the location-dependent rules stay silent. See prefetchExecution.ts.
       const signal = prefetchSignal(exe);
       return {
         timestamp: time,
-        description: `Prefetch: ${exe} executed${runCount ? ` (run ${runCount}×)` : ""}`.slice(0, 600),
+        description: `Prefetch: ${exe} executed${runCount ? ` (run ${runCount}×)` : ""}${
+          previous.length ? `, previously ${previous.join(", ")}` : ""
+        }`.slice(0, 600),
         severity: signal?.severity ?? "Info",
         mitre: signal ? signal.mitre : [],
         aggKey: `pf|${exe.toLowerCase()}`,
@@ -490,20 +506,31 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
   // What else on this host referenced the same unusual files as an executable already worth
   // grading. The suspects are not decided here — prefetchExecution.ts already says which names earn
   // more than Info, and this answers "what came with it" for those (#909 item 10).
+  // Graded, but NOT the ones the repository's own baseline already calls constant stock-host noise.
+  // rundll32.exe is in the dual-use list and in NOISY_LOLBINS, so seeding on it made every managed
+  // endpoint produce companion leads.
   const suspects = [
     ...new Set(
       prefetchEntries
         .filter((e) => prefetchSignal(e.executable) !== null)
-        .map((e) => e.executable.toLowerCase()),
+        .map((e) => e.executable.toLowerCase())
+        .filter((n) => !NOISY_LOLBINS.has(n)),
     ),
   ];
   for (const suspect of suspects) {
     for (const lead of companionLeads(prefetchEntries, suspect)) {
+      // Only the leads that point somewhere a shipped program does not keep resources. The rest are
+      // the ordinary-coincidence tail, and the dedicated KAPE import route does not demote Info
+      // rows, so emitting them would put that tail straight into the forensic timeline.
+      if (!lead.inUserWritable) continue;
+      // Dated from the companion's own last run. An empty timestamp sorts after every real event,
+      // which puts a lead about two executions nowhere near either of them.
+      const when = prefetchEntries.find((e) => e.executable.toLowerCase() === lead.companion)?.lastRun ?? "";
       mapped.push({
-        timestamp: "",
+        timestamp: when,
         description: `Prefetch companions: ${lead.note}`.slice(0, 900),
         // A shared reference LINKS two executions; it does not explain either, so it is a lead.
-        severity: lead.inUserWritable ? "Low" : "Info",
+        severity: "Low",
         mitre: [],
         aggKey: `pf|companion|${lead.suspect}|${lead.companion}`,
         sources: ["Prefetch"],
