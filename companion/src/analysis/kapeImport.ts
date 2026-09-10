@@ -144,6 +144,24 @@ interface Profile {
 
 const has = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.has(k.toLowerCase()));
 
+/**
+ * The account a shellbag row belongs to.
+ *
+ * Read from a user column when the collection added one, then from the source filename, which is
+ * where SBECmd records it — `20260102120000_UsrClass_alice.csv`, `..._NTUSER_alice.csv`, or a path
+ * containing `\Users\alice\`. Returns "" rather than a guess.
+ */
+export function shellbagAccount(row: Row): string {
+  const direct = firstStr(row, ["User", "UserName", "UserSID", "SID", "Account", "ProfileName"]);
+  if (direct) return direct;
+  const source = firstStr(row, ["SourceFile", "_Source", "HiveName", "HivePath", "File", "SourceName"]);
+  if (!source) return "";
+  const named = /(?:UsrClass|NTUSER(?:\.DAT)?)[_-]([^\\/_.]+)/i.exec(source);
+  if (named) return named[1];
+  const profile = /[\\/]Users[\\/]([^\\/]+)[\\/]/i.exec(source);
+  return profile ? profile[1] : "";
+}
+
 const PROFILES: Profile[] = [
   {
     name: "Prefetch",
@@ -407,12 +425,27 @@ const PROFILES: Profile[] = [
       const path = firstStr(row, ["AbsolutePath"]);
       if (!path) return null;
       addFile(sink, path);
+      // WHO browsed is the whole point of a shellbag (#908 item 10). A shellbag lives in a
+      // per-user hive, so the account is the artifact's most important field — and it was being
+      // dropped, which cost more than the label: the aggregation key was the path alone, so two
+      // accounts that browsed the same folder collapsed into ONE event and one of them
+      // disappeared. That is exactly the case the issue is about.
+      //
+      // SBECmd writes no user column, so the identity has to come from whatever the collection
+      // preserved: an added column, the source filename (SBECmd names its output for the hive it
+      // read), or a Velociraptor `_Source`. When none of those survived, the event says the
+      // attribution was not recorded rather than implying the browsing was unattributed.
+      const account = shellbagAccount(row);
       return {
         timestamp: ezTime(getCI(row, "LastInteracted")) || ezTime(getCI(row, "FirstInteracted")),
-        description: `Shellbag: ${path}`.slice(0, 600),
+        description:
+          `Shellbag: ${path}` +
+          (account
+            ? ` [user: ${account}]`
+            : " [user: not recorded by this collection — a shellbag is per-user, so the account is unknown here, not absent]"),
         severity: "Info",
         mitre: [],
-        aggKey: `sb|${path.toLowerCase()}`,
+        aggKey: `sb|${account.toLowerCase()}|${path.toLowerCase()}`,
         sources: ["Shellbags"],
         path,
       };

@@ -19,6 +19,7 @@ import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
 import { explainMetadataAccess, instanceCredentialUseAway } from "./cloudMetadataAccess.js";
 import { summarizeBulkReads } from "./cloudBulkRead.js";
+import { markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -381,7 +382,11 @@ export function mergeDelta(
   // timeline and put the whole export in front of the AI, which is what the forensic/super-timeline
   // boundary exists to prevent. A re-merge replaces a group's summary rather than adding a second.
   const withBulkReads = summarizeBulkReads(withMetadata);
-  const correlated = correlateEvents(withBulkReads).sort(byEventTime);
+  // Browsing by an account that cannot be interactive (#908 item 10). Here because the shellbag,
+  // the logon that made a desktop session possible, and any archiving beside it arrive from three
+  // different importers. Only raises, and only for an account something SAYS is noninteractive.
+  const withServiceBrowsing = markServiceAccountBrowsing(withBulkReads);
+  const correlated = correlateEvents(withServiceBrowsing).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and
