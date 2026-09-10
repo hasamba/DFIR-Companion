@@ -180,6 +180,7 @@
     "caseSqliteWorker.ts": "storage",
     "caseStats.ts": "analysis/case",
     "caseTransientPaths.ts": "storage",
+    "certutilTransfer.ts": "analysis/timeline",
     "chainSignature.ts": "analysis/detect",
     "chainsawImport.ts": "analysis/ingest",
     "ciscoAsaImport.ts": "analysis/ingest",

@@ -16,6 +16,7 @@ import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
+import { explainCertutilTransfers } from "./certutilTransfer.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
@@ -364,7 +365,11 @@ export function mergeDelta(
   // importers and no single one of them is remarkable — the combination is the finding. Only ever
   // raises, and never on one behaviour alone.
   const withPrecursors = markRansomwarePrecursors(withTimestomp);
-  const correlated = correlateEvents(withPrecursors).sort(byEventTime);
+  // Say what a certutil transfer actually did — where it connected, what it wrote — by stitching
+  // the command to the network and file records of the same process (#908 item 4). Here, because
+  // those three legs arrive from different importers.
+  const withCertutil = explainCertutilTransfers(withPrecursors);
+  const correlated = correlateEvents(withCertutil).sort(byEventTime);
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and
