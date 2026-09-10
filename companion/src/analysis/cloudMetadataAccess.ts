@@ -44,7 +44,6 @@ export const METADATA_TARGETS: readonly string[] = [
   "fd00:ec2::254", // AWS IPv6
   "169.254.170.2", // AWS ECS task role
   "metadata.google.internal",
-  "metadata.google.internal.", // a fully qualified name with the root dot is the same host
   "metadata.goog",
   "fd20:ce::254", // GCP IPv6
   "100.100.100.200", // Alibaba Cloud
@@ -196,7 +195,9 @@ const TARGET_RES: readonly { target: string; re: RegExp }[] = METADATA_TARGETS.m
 /** Which metadata target this text names, or "". */
 export function metadataTarget(text: string): string {
   for (const variant of textVariants(text)) {
-    const t = variant.toLowerCase();
+    // A trailing root dot makes a fully qualified name — `metadata.google.internal.` is the same
+    // host — so it is removed here rather than carried as a second entry in the target list.
+    const t = variant.toLowerCase().replace(/(\.[a-z]+)\.(?=[^\w.]|$)/g, "$1");
     // A bare address match would hit a longer address that merely starts the same way, and the
     // hostname forms need a boundary too — "notmetadata.google.internal" is a different host.
     for (const { target, re } of TARGET_RES) if (re.test(t)) return target;
