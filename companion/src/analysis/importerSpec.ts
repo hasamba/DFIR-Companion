@@ -39,6 +39,7 @@ export const IMPORT_KINDS = [
   "memory",
   "wer",
   "linuxpersist",
+  "macospersist",
   "email",
   "auditd",
   "journald",

@@ -97,6 +97,27 @@ describe("splitCollection — one upload, many files", () => {
     expect(f.content).toContain("# mtime");
   });
 
+  it("carries a platform annotation through without interpreting it", () => {
+    const [f] = splitCollection(
+      [
+        "==> /Library/LaunchDaemons/x.plist <==",
+        "# codesign: unsigned",
+        "# quarantine: https://evil.test/a",
+        "<plist/>",
+      ].join("\n"),
+    );
+    expect(f.extra).toEqual({ codesign: "unsigned", quarantine: "https://evil.test/a" });
+  });
+
+  // An open key set swallowed the first line of any file that began with a `# word:` comment.
+  it("leaves an ordinary leading comment in the content", () => {
+    const [f] = splitCollection(
+      ["==> /etc/crontab <==", "# Edited by: alice", "* * * * * root x"].join("\n"),
+    );
+    expect(f.extra).toBeUndefined();
+    expect(f.content).toContain("# Edited by: alice");
+  });
+
   it("ignores an unparseable mtime rather than inventing one", () => {
     const [f] = splitCollection(["==> /etc/crontab <==", "# mtime: never", "x"].join("\n"));
     expect(f.mtime).toBeUndefined();

@@ -77,9 +77,77 @@ export function readCollection(filename: string, text: string): CollectedFile[] 
   return singleArtifact(base.replace(/\.(?:txt|log|out)$/i, ""), text);
 }
 
-function describe(s: LinuxSignal): string {
+function describe(s: LinuxSignal, label: string): string {
   const where = s.line > 1 ? `${s.artifact}:${s.line}` : s.artifact;
-  return `Linux persistence — ${where}: ${s.reason} Collected line: ${s.evidence}`.slice(0, DESCRIPTION_MAX);
+  return `${label} — ${where}: ${s.reason} Collected line: ${s.evidence}`.slice(0, DESCRIPTION_MAX);
+}
+
+/**
+ * Turn graded signals into timeline events. Shared with the macOS importer (#908 item 6), which
+ * grades different artifacts but has exactly the same timestamp problem and the same dedup need.
+ */
+export function signalsToEvents(
+  signals: readonly LinuxSignal[],
+  files: readonly CollectedFile[],
+  fallbackTime: string,
+  label: string,
+  source: string,
+  keyPrefix: string,
+): LinuxPersistEvent[] {
+  const mtimeOf = new Map(files.map((f) => [f.path, f.mtime]));
+  return signals.map((s) => {
+    const mtime = mtimeOf.get(s.artifact);
+    const timed = !!mtime && Number.isFinite(Date.parse(mtime));
+    return {
+      timestamp: timed ? (mtime) : fallbackTime,
+      description: timed
+        ? describe(s, label)
+        : `${describe(s, label)} [no collected timestamp — placed at the import time, not at a time this change is known to have happened]`.slice(
+            0,
+            DESCRIPTION_MAX,
+          ),
+      severity: s.severity,
+      mitreTechniques: s.mitre,
+      sources: [source],
+      // The artifact, the line and the rule together. Re-importing the same collection, or the same
+      // file collected twice by two tools, produces one row rather than a second copy.
+      aggKey: `${keyPrefix}|${s.artifact}|${s.line}|${s.kind}|${s.mitre.join(",")}`,
+      path: s.artifact,
+    };
+  });
+}
+
+/** The payload paths a set of signals named, deduplicated and capped. */
+export function iocsFromSignals(signals: readonly LinuxSignal[]): { type: "file"; value: string }[] {
+  const seen = new Set<string>();
+  const out: { type: "file"; value: string }[] = [];
+  for (const s of signals) {
+    // The payload, not the artifact: /etc/crontab is on every host and is not an indicator.
+    const value = s.target;
+    if (!value || !value.startsWith("/") || seen.has(value)) continue;
+    seen.add(value);
+    if (out.length < MAX_IOCS) out.push({ type: "file", value });
+  }
+  return out;
+}
+
+/** What the import read, what it skipped, and what it could not date. */
+export function collectionNote(
+  files: readonly CollectedFile[],
+  signals: readonly LinuxSignal[],
+  label: string,
+): string {
+  const readable = files.filter((f) => f.kind !== "unknown");
+  const skipped = files.length - readable.length;
+  const undated = readable.filter((f) => !f.mtime).length;
+  return (
+    `${label} import: ${readable.length} artifact file(s) read` +
+    (skipped ? `, ${skipped} member(s) skipped because their path names no artifact class this reads` : "") +
+    `, ${signals.length} finding(s)` +
+    (undated
+      ? `. ${undated} of the files carried no modification time, so whether they changed during the incident could not be checked`
+      : "")
+  );
 }
 
 export function parseLinuxPersist(
@@ -90,49 +158,18 @@ export function parseLinuxPersist(
 ): LinuxPersistParse {
   const files = readCollection(filename, text);
   const signals = analyzeLinuxCollection(files, ctx);
-  const mtimeOf = new Map(files.map((f) => [f.path, f.mtime]));
-
-  const events: LinuxPersistEvent[] = signals.map((s) => {
-    const mtime = mtimeOf.get(s.artifact);
-    const timed = mtime && Number.isFinite(Date.parse(mtime));
-    return {
-      timestamp: timed ? mtime : fallbackTime,
-      description: timed
-        ? describe(s)
-        : `${describe(s)} [no collected timestamp — placed at the import time, not at a time this change is known to have happened]`.slice(
-            0,
-            DESCRIPTION_MAX,
-          ),
-      severity: s.severity,
-      mitreTechniques: s.mitre,
-      sources: ["Linux persistence"],
-      // The artifact, the line and the rule together. Re-importing the same collection, or the same
-      // file collected twice by two tools, produces one row rather than a second copy.
-      aggKey: `linuxpersist|${s.artifact}|${s.line}|${s.kind}|${s.mitre.join(",")}`,
-      path: s.artifact,
-    };
-  });
-
-  const seen = new Set<string>();
-  const iocs: { type: "file"; value: string }[] = [];
-  for (const s of signals) {
-    // The payload, not the artifact: /etc/crontab is on every Linux host and is not an indicator.
-    const value = s.target;
-    if (!value || !value.startsWith("/") || seen.has(value)) continue;
-    seen.add(value);
-    if (iocs.length < MAX_IOCS) iocs.push({ type: "file", value });
-  }
-
-  const readable = files.filter((f) => f.kind !== "unknown");
-  const skipped = files.length - readable.length;
-  const undated = readable.filter((f) => !f.mtime).length;
-  const note =
-    `Linux persistence import: ${readable.length} artifact file(s) read` +
-    (skipped ? `, ${skipped} member(s) skipped because their path names no artifact class this reads` : "") +
-    `, ${signals.length} finding(s)` +
-    (undated
-      ? `. ${undated} of the files carried no modification time, so whether they changed during the incident could not be checked`
-      : "");
-
-  return { files, signals, events, iocs, note };
+  return {
+    files,
+    signals,
+    events: signalsToEvents(
+      signals,
+      files,
+      fallbackTime,
+      "Linux persistence",
+      "Linux persistence",
+      "linuxpersist",
+    ),
+    iocs: iocsFromSignals(signals),
+    note: collectionNote(files, signals, "Linux persistence"),
+  };
 }

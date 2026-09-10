@@ -33,6 +33,7 @@ import {
   hindsightCsvSig,
   isAuditd,
   looksLikeLinuxPersist,
+  looksLikeMacosPersist,
 } from "./importDetectSources.js";
 
 // The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
@@ -608,11 +609,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // reads none of its structure. isWerReport needs EventType AND a WER marker, so an INI does not match.
   if (isWerReport(t)) return "wer";
 
-  // A Linux persistence collection (#908 item 5) — headered `cat` output, or one artifact named for
-  // what it is. Checked ahead of the JSON sniff, not just ahead of the line formats: a systemd unit
-  // opens with `[Unit]`, so the leading `[` sent it to the JSON path, which failed to parse it and
-  // returned "unknown" — a 400 at the route, for a file already shown as accepted. Nothing here can
-  // steal a real export: it needs absolute-path headers, or a filename that means one thing.
+  // Persistence collections (#908 items 5 and 6). Ahead of the JSON sniff, not just the line formats:
+  // a unit file opens with `[Unit]`, and the leading `[` sent it to the JSON path, which returned
+  // "unknown" — a 400 for a file already accepted. macOS first: see importDetectSources.ts.
+  if (looksLikeMacosPersist(filename, t)) return "macospersist";
   if (looksLikeLinuxPersist(filename, t)) return "linuxpersist";
 
   // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit

@@ -10,6 +10,7 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseThorReport, type ThorImportOptions } from "../thorImport.js";
 import { parseWerReport, werSignal, werDescription, werDedupKey, type WerCaseContext } from "../werImport.js";
 import { parseLinuxPersist, incidentWindowFromTimeline } from "../linuxPersistImport.js";
+import { parseMacPersist } from "../macosPersistImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -564,6 +565,70 @@ export async function importLinuxPersist(
       opts.importedAt,
     );
     if (parsed.files.length === 0) return noteEmptyImport(ctx, caseId, opts, "Linux persistence", 0);
+
+    const events = applySeverityFloor(
+      parsed.events.map((e, i) => ({
+        ...e,
+        id: `${opts.idPrefix}e${i + 1}`,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      })) as never,
+      opts.minSeverity,
+    );
+
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      mitreTechniques: [],
+      forensicEvents: events,
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: parsed.note,
+      summary: "",
+    });
+
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+/**
+ * Import a macOS persistence collection (#908 item 6).
+ *
+ * Same shape as the Linux importer, and the shared artifacts — cron, shell profiles, authorized
+ * keys — are graded by the same rules. What differs is launchd, and the two facts a Mac collection
+ * can carry that a Linux one cannot: the program's signing status and macOS's own record that it
+ * was downloaded. Neither creates a finding; both raise or explain one.
+ */
+export async function importMacosPersist(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+
+    const parsed = parseMacPersist(
+      opts.label,
+      text,
+      { incident: incidentWindowFromTimeline(state.forensicTimeline) },
+      opts.importedAt,
+    );
+    if (parsed.files.length === 0) return noteEmptyImport(ctx, caseId, opts, "macOS persistence", 0);
 
     const events = applySeverityFloor(
       parsed.events.map((e, i) => ({

@@ -1,5 +1,6 @@
 import { getCI, isObject } from "./siemImport.js";
 import { classifyLinuxArtifact, splitCollection } from "./linuxPersistence.js";
+import { classifyMacArtifact, isBinaryPlist, isXmlPlist } from "./macosPersistence.js";
 
 // Format detectors for the sources added alongside the identity/mobile/browser importers — Okta,
 // Google Workspace, Hindsight, macOS and LEAPP.
@@ -132,4 +133,21 @@ export function looksLikeLinuxPersist(filename: string, text: string): boolean {
   // multi-megabyte upload that is not one.
   const members = splitCollection((text ?? "").slice(0, 256_000));
   return members.some((m) => m.kind !== "unknown");
+}
+
+// ───────────────────────── macOS persistence collection (#908 item 6) ─────────────────────────
+//
+// A property list is self-identifying — `<plist>` or the plist DOCTYPE — so a single collected
+// LaunchAgent needs no filename rule at all. A binary plist is claimed too, deliberately: the
+// importer's job there is to SAY the file needs converting, which is more useful than the generic
+// log path silently reading mojibake out of it.
+//
+// A COLLECTION is claimed only when at least one header names a launchd path. A collection with no
+// launchd member is a Linux-shaped collection and belongs to the Linux importer, which grades the
+// cron and shell artifacts macOS shares with it.
+export function looksLikeMacosPersist(filename: string, text: string): boolean {
+  const t = text ?? "";
+  if (isBinaryPlist(t) || isXmlPlist(t.slice(0, 4096))) return true;
+  if (/\.plist$/i.test(filename ?? "")) return true;
+  return splitCollection(t.slice(0, 256_000), classifyMacArtifact).some((m) => m.kind === "launchd");
 }

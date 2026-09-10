@@ -30,9 +30,18 @@
 // rather than assumed. `head` writes no mtime, so most collections have none; a collection that ran
 // `stat` can annotate a member with a `# mtime:` line and the incident-time rule then applies.
 
-/** The artifact classes this module understands. */
+/**
+ * The artifact classes this module understands.
+ *
+ * `launchd` is macOS (#908 item 6) and is graded elsewhere. It is in this union because the
+ * collection splitter below is shared across both platforms — a macOS triage collection arrives in
+ * exactly the same shape, and duplicating the splitter to add one member name would be worse.
+ */
 export type LinuxArtifactKind =
-  "authorized_keys" | "cron" | "systemd" | "shellrc" | "suid" | "env" | "unknown";
+  "authorized_keys" | "cron" | "systemd" | "launchd" | "shellrc" | "suid" | "env" | "unknown";
+
+/** Decides which artifact class a collected path holds. Platform-specific; see classifyMacArtifact. */
+export type ArtifactClassifier = (path: string) => LinuxArtifactKind;
 
 export interface CollectedFile {
   /** Absolute path as the collection recorded it. */
@@ -42,6 +51,11 @@ export interface CollectedFile {
   /** ISO time, only when the collection recorded one. Undefined means NOT COLLECTED, not "unchanged". */
   mtime?: string;
   owner?: string;
+  /**
+   * Any other `# key: value` annotation the collection put directly under the header, lowercased
+   * key. macOS uses `# codesign:` and `# quarantine:` (#908 item 6); nothing here interprets them.
+   */
+  extra?: Record<string, string>;
 }
 
 /** Cap on members read from one collection, so a whole-filesystem dump cannot stall an import. */
@@ -80,7 +94,9 @@ export function classifyLinuxArtifact(path: string): LinuxArtifactKind {
   if (base === "authorized_keys" || base === "authorized_keys2") return "authorized_keys";
   if (base.endsWith(".service") || base.endsWith(".timer") || base.endsWith(".socket")) return "systemd";
   if (p.includes("/systemd/") && !base.includes(".")) return "systemd";
-  if (base === "crontab" || p.includes("/cron.d/") || p.includes("/spool/cron")) return "cron";
+  // /usr/lib/cron/tabs is macOS's spool directory; /var/spool/cron is Linux's.
+  if (base === "crontab" || p.includes("/cron.d/") || p.includes("/spool/cron") || p.includes("/cron/tabs/"))
+    return "cron";
   if (/^cron(tab)?[-_.]/.test(base) || base.endsWith(".cron")) return "cron";
   if (
     base === ".bashrc" ||
@@ -107,20 +123,30 @@ export function classifyLinuxArtifact(path: string): LinuxArtifactKind {
  *
  * A body before the first header belongs to no file and is dropped: it is a banner, not evidence.
  */
-export function splitCollection(text: string): CollectedFile[] {
+export function splitCollection(
+  text: string,
+  classify: ArtifactClassifier = classifyLinuxArtifact,
+): CollectedFile[] {
   const out: CollectedFile[] = [];
   const lines = (text ?? "").split(/\r?\n/);
-  let current: { path: string; body: string[]; mtime?: string; owner?: string } | null = null;
+  let current: {
+    path: string;
+    body: string[];
+    mtime?: string;
+    owner?: string;
+    extra?: Record<string, string>;
+  } | null = null;
 
   const flush = () => {
     if (!current) return;
     if (out.length < MAX_MEMBERS) {
       out.push({
         path: current.path,
-        kind: classifyLinuxArtifact(current.path),
+        kind: classify(current.path),
         content: current.body.slice(0, MAX_LINES).join("\n"),
         ...(current.mtime ? { mtime: current.mtime } : {}),
         ...(current.owner ? { owner: current.owner } : {}),
+        ...(current.extra ? { extra: current.extra } : {}),
       });
     }
     current = null;
@@ -134,17 +160,26 @@ export function splitCollection(text: string): CollectedFile[] {
       continue;
     }
     if (!current) continue;
-    // Metadata a `stat`-annotated collection can attach, read only directly under the header.
+    // Metadata an annotated collection can attach, read only directly under the header.
+    //
+    // The key set is CLOSED. An open one swallowed the first line of any collected file that began
+    // with a `# word:` comment — `# Edited by: alice` at the top of a crontab is normal — and a
+    // dropped line is a change to the evidence view, however harmless the line was.
     if (current.body.length === 0) {
-      const meta = /^#\s*(mtime|modified|owner|uid|user)\s*:\s*(.+)$/i.exec(line.trim());
+      const meta =
+        /^#\s*(mtime|modified|owner|uid|user|codesign|signature|quarantine|sha256)\s*:\s*(.+)$/i.exec(
+          line.trim(),
+        );
       if (meta) {
         const key = meta[1].toLowerCase();
         const value = meta[2].trim();
         if (key === "mtime" || key === "modified") {
           const t = Date.parse(value);
           if (Number.isFinite(t)) current.mtime = new Date(t).toISOString();
-        } else {
+        } else if (key === "owner" || key === "uid" || key === "user") {
           current.owner = value;
+        } else {
+          current.extra = { ...current.extra, [key]: value };
         }
         continue;
       }
@@ -160,8 +195,12 @@ export function splitCollection(text: string): CollectedFile[] {
  *
  * The filename is all there is to go on, so an unrecognised name yields nothing rather than a guess.
  */
-export function singleArtifact(filename: string, text: string): CollectedFile[] {
-  const kind = classifyLinuxArtifact(filename);
+export function singleArtifact(
+  filename: string,
+  text: string,
+  classify: ArtifactClassifier = classifyLinuxArtifact,
+): CollectedFile[] {
+  const kind = classify(filename);
   if (kind === "unknown") return [];
   return [{ path: filename, kind, content: text }];
 }
@@ -304,7 +343,7 @@ export function cronHasUserColumn(path: string): boolean {
 /** The account a spool crontab belongs to, from its filename. */
 export function cronSpoolUser(path: string): string {
   const p = path.toLowerCase();
-  if (!p.includes("/spool/cron")) return "";
+  if (!p.includes("/spool/cron") && !p.includes("/cron/tabs/")) return "";
   return path.slice(path.lastIndexOf("/") + 1);
 }
 

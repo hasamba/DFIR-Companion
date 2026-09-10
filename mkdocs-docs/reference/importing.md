@@ -31,7 +31,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log, Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log |
 | **Identity provider** | Okta System Log, Google Workspace admin/login audit — severity comes from the event type, not the vendor's own operational grade, so IdP account-takeover tradecraft (MFA/2SV disabled, admin role granted, API token minted, OAuth grant consented, session impersonated, Workspace mail monitor added) grades above Info |
 | **Browser artifacts** | Hindsight JSON or CSV — Chrome/Edge/Brave history, downloads and interpretations. Every row is Info: browser artifacts are evidence, not verdicts, so they land in the super-timeline |
-| **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance — quarantine rows carry both the data URL and the referring origin URL |
+| **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance — quarantine rows carry both the data URL and the referring origin URL; **persistence artifacts** — LaunchAgent/LaunchDaemon plists, cron and shell profiles (see [Collecting macOS persistence artifacts](#collecting-macos-persistence-artifacts)) |
 | **Mobile** | iLEAPP / ALEAPP TSV exports (iOS and Android extractions), one artifact per import. Generic by design: LEAPP artifacts share no schema beyond a timestamp column, so the parser finds that column and renders the rest |
 | **Malware analysis** | CAPEv2 report.json, CrowdStrike Falcon Sandbox summary JSON, sandbox report arrays, YARA CLI scan output (`yara -s -m`) |
 | **Super-timeline** | Plaso/log2timeline psort CSV (dynamic and l2tcsv) — files over 200 MB are streamed line-by-line automatically; filter your `psort` output first to reduce size |
@@ -90,6 +90,42 @@ execute in one line, reverse shells, root running files a user can rewrite, setu
 SUID binaries no distribution installs, PATH resolving out of the working directory, and one SSH key
 that opens two accounts. Where your environment legitimately does one of those, the finding names the
 file and the line so you can rule it out.
+
+### Collecting macOS persistence artifacts
+
+Same shape as the Linux collection above — one upload, headers per file — and macOS cron and shell
+profiles are read by the same rules. What this adds is **launchd**.
+
+```bash
+head -n -0 /Library/LaunchDaemons/*.plist /Library/LaunchAgents/*.plist \
+  /Users/*/Library/LaunchAgents/*.plist /usr/lib/cron/tabs/* /Users/*/.zshrc > mac-persistence.txt
+```
+
+**Convert binary plists first.** Most plists on disk are `bplist00`, which is not text. The
+Companion recognises one and tells you to convert it rather than reading nothing out of it:
+
+```bash
+plutil -convert xml1 -o - /Library/LaunchDaemons/com.example.plist
+```
+
+**Two extra facts are worth collecting**, because neither can be recovered from the plist. Put them
+under the plist's header:
+
+```
+==> /Library/LaunchDaemons/com.example.plist <==
+# mtime: 2026-01-02T09:00:00Z
+# codesign: unsigned
+# quarantine: https://example.test/update.zip
+```
+
+`codesign -dv --verbose=2 <program>` gives the first; `xattr -p com.apple.quarantine <program>` gives
+the second.
+
+**Neither one is a finding on its own, by design.** Homebrew formulas, internal builds and much
+commercial software are unsigned, and almost every Mac application installs a LaunchAgent. Signing
+status and a quarantine record raise and explain a job that is already suspicious for a reason of its
+own: a program in a directory anything can write, a label that claims to be Apple's on something
+Apple did not ship, or a command that downloads and executes in one line.
 
 ### Intact (trimmed VolWeb output)
 
