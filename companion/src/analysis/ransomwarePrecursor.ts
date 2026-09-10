@@ -24,8 +24,21 @@
 //
 // The finding names WHICH behaviours contributed and links the events that carried them, because
 // "ransomware precursors detected" without the list is not something an analyst can check.
+//
+// ─────────────────────────── WHAT THIS PASS CANNOT SEE ───────────────────────────
+//
+// Approved administration is handled by SAYING SO, not by filtering. False-positive markers live in
+// their own store and are applied when the timeline is PROJECTED, not held in state — so a pass
+// running at merge time has no access to them and cannot exclude a behaviour the analyst has
+// already explained. A dismissed event is still dropped from what the analyst sees, but it can
+// contribute to the class count that formed the group.
+//
+// That is why the note ends by telling the reader to confirm against change records: the pass
+// cannot do it, and pretending otherwise would be worse than saying so.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { normalizeCommand } from "./commandNormalize.js";
+import { shortHost } from "./correlate.js";
 
 /** The behaviour classes that make up the pattern, keyed by the technique that identifies them. */
 export const PRECURSOR_CLASSES: { id: string; label: string; techniques: string[] }[] = [
@@ -36,8 +49,8 @@ export const PRECURSOR_CLASSES: { id: string; label: string; techniques: string[
   },
   {
     id: "firewall-acl",
-    label: "firewall or access control changed",
-    techniques: ["T1562.004", "T1222", "T1222.001"],
+    label: "firewall changed",
+    techniques: ["T1562.004"],
   },
   {
     id: "logs",
@@ -50,9 +63,11 @@ export const PRECURSOR_CLASSES: { id: string; label: string; techniques: string[
     techniques: ["T1490"],
   },
   {
+    // Ownership and permissions. Listed AFTER firewall previously and sharing its technique ids, so
+    // classOf — which returns the first match — could never reach it. The ids are separated now.
     id: "ownership",
-    label: "file ownership taken",
-    techniques: ["T1222.001"],
+    label: "file ownership or permissions taken",
+    techniques: ["T1222", "T1222.001", "T1222.002"],
   },
 ];
 
@@ -61,6 +76,9 @@ export const MIN_CLASSES = 3;
 
 /** How close together, in milliseconds. */
 export const DEFAULT_WINDOW_MS = 60 * 60 * 1000;
+
+/** Most recent precursor events considered per host, bounding the quadratic window walk. */
+export const MAX_EVENTS_PER_HOST = 2_000;
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const PRECURSOR_MARKER = "[ransomware precursors:";
@@ -86,8 +104,16 @@ function labelOf(id: string): string {
  * behaviours would inflate confidence precisely where the evidence is least ambiguous.
  */
 function behaviourKey(e: ForensicEvent, cls: string): string {
-  const cmd = (e.commandLine ?? "").trim().toLowerCase();
-  return `${cls}|${cmd || (e.description ?? "").trim().toLowerCase().slice(0, 120)}`;
+  const raw = (e.commandLine ?? "").trim();
+  if (raw) {
+    // The repository's normalizer, so two tools that quote or escape the same command differently
+    // still produce one key. Trim-and-lowercase alone missed those.
+    return `${cls}|${normalizeCommand(raw).text.toLowerCase().replace(/\s+/g, " ")}`;
+  }
+  // No command line. The description is all there is, and a fixed-length PREFIX of it collided:
+  // two different actions in one class whose text starts the same way became one behaviour, and one
+  // event's evidence disappeared. The whole normalized description is used instead.
+  return `${cls}|${(e.description ?? "").trim().toLowerCase().replace(/\s+/g, " ")}`;
 }
 
 export interface PrecursorGroup {
@@ -120,13 +146,19 @@ export function findPrecursorGroups(
     if (!cls) continue;
     const t = Date.parse(e.timestamp ?? "");
     if (!Number.isFinite(t)) continue; // an undated event cannot be placed in a window
-    const list = byHost.get(e.asset) ?? [];
+    // The repository's host normalizer: an exact-string key never matched HOST against
+    // HOST.domain.local, which is how the same machine arrives from two importers.
+    const host = shortHost(e.asset) || e.asset;
+    const list = byHost.get(host) ?? [];
     list.push({ t, e, cls });
-    byHost.set(e.asset, list);
+    byHost.set(host, list);
   }
 
   const out: PrecursorGroup[] = [];
-  for (const [host, list] of byHost) {
+  for (const [host, all] of byHost) {
+    // Bounded. The window walk is quadratic in one host's precursor events, and an accumulated case
+    // timeline has no cap of its own — the newest events are the ones an analyst is working from.
+    const list = all.length > MAX_EVENTS_PER_HOST ? all.slice(-MAX_EVENTS_PER_HOST) : all;
     list.sort((a, b) => a.t - b.t);
 
     // The densest window, walked once. Distinct CLASSES are what count, and a behaviour seen twice
@@ -196,12 +228,15 @@ export function markRansomwarePrecursors(
     const note = noteFor.get(e.id);
     if (!note) return e;
     if ((e.description ?? "").includes(PRECURSOR_MARKER)) return e;
+    // NO technique is added. Tagging these T1486 (Data Encrypted for Impact) said the opposite of
+    // the note attached to the same event, and it reached the MITRE panel, the report and the
+    // ATT&CK Navigator export as a High-confidence encryption claim with no encryption evidence
+    // behind it. The events keep the techniques their own evidence supports.
     const severity: Severity = RANK["High"] > RANK[e.severity] ? "High" : e.severity;
     const base = (e.description ?? "").slice(0, 700);
     return {
       ...e,
       severity,
-      mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), "T1486"])],
       description: `${base} ${PRECURSOR_MARKER} ${note}]`.trim(),
     };
   });

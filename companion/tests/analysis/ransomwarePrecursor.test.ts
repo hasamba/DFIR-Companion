@@ -37,7 +37,8 @@ describe("findPrecursorGroups — several distinct behaviours, one host, one win
     expect(g).toHaveLength(1);
     expect(g[0].classes).toHaveLength(3);
     expect(g[0].severity).toBe("High");
-    expect(g[0].host).toBe("WS-01");
+    // Normalized by the repository's host helper, so HOST and HOST.domain group together.
+    expect(g[0].host).toBe("ws-01");
   });
 
   it("names which behaviours contributed and links their events", () => {
@@ -120,6 +121,38 @@ describe("findPrecursorGroups — several distinct behaviours, one host, one win
     ).toEqual([]);
   });
 
+  // classOf returns the FIRST matching class, and firewall-acl used to list the ownership
+  // technique ids too — so the ownership branch was unreachable for any input.
+  it("classifies an ownership event as ownership, not as a firewall change", () => {
+    const g = findPrecursorGroups([
+      ev(["T1222.001"], { timestamp: at(0), commandLine: "takeown /f C:\\Data /r" }),
+      ev(["T1070.001"], { timestamp: at(1), commandLine: "wevtutil cl Security" }),
+      ev(["T1490"], { timestamp: at(2), commandLine: "vssadmin delete shadows" }),
+    ]);
+    expect(g[0].classes).toContain("ownership");
+    expect(g[0].note).toContain("file ownership or permissions taken");
+  });
+
+  // Two tools quoting the same command differently are still one behaviour.
+  it("deduplicates a command two tools spelled differently", () => {
+    const g = findPrecursorGroups([
+      ev(["T1562.001"], { timestamp: at(0), commandLine: "sc stop WinDefend" }),
+      ev(["T1490"], { timestamp: at(1), commandLine: "vssadmin delete shadows /all" }),
+      ev(["T1490"], { timestamp: at(1), commandLine: "vssadmin  delete  shadows  /all" }),
+    ]);
+    expect(g).toEqual([]);
+  });
+
+  it("groups a host that arrives under both its short name and its FQDN", () => {
+    const g = findPrecursorGroups([
+      ev(["T1562.001"], { timestamp: at(0), asset: "WS-01", commandLine: "a" }),
+      ev(["T1070.001"], { timestamp: at(1), asset: "WS-01.corp.local", commandLine: "b" }),
+      ev(["T1490"], { timestamp: at(2), asset: "ws-01", commandLine: "c" }),
+    ]);
+    expect(g).toHaveLength(1);
+    expect(g[0].classes).toHaveLength(3);
+  });
+
   it("respects a caller-supplied threshold", () => {
     const g = findPrecursorGroups(
       [
@@ -145,8 +178,19 @@ describe("markRansomwarePrecursors — the timeline pass", () => {
     for (const e of out) {
       expect(e.severity).toBe("High");
       expect(e.description).toContain("[ransomware precursors:");
-      expect(e.mitreTechniques).toContain("T1486");
     }
+  });
+
+  // Tagging these T1486 said the opposite of the note on the same event, and reached the MITRE
+  // panel, the report and the Navigator export as a High-confidence encryption claim with no
+  // encryption evidence behind it.
+  it("adds no technique of its own, least of all Data Encrypted for Impact", () => {
+    const before = cluster();
+    const after = markRansomwarePrecursors(before);
+    after.forEach((e, i) => {
+      expect(e.mitreTechniques).toEqual(before[i].mitreTechniques);
+      expect(e.mitreTechniques).not.toContain("T1486");
+    });
   });
 
   it("states that this is not proof encryption happened", () => {

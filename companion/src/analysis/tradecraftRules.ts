@@ -218,6 +218,23 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   // persistence + tunnel primitive distinct from a plain SSH/plink reverse tunnel.
   { re: /\bqemu-system-\w+(?:\.exe)?\b[^\n]*hostfwd=tcp/i, weight: "strong", ids: ["T1572"] },
 
+  // Taking ownership or rewriting an ACL across a tree. Ransomware does this to reach files its
+  // account cannot otherwise write; administrators do it too, which is why it is WEAK on its own and
+  // only means something as one of several precursor behaviours (#908 item 3).
+  //
+  // Anchored on the RECURSIVE forms. A single `takeown /f file` is routine desktop support; `/r` or
+  // `icacls ... /t /grant everyone:F` across a directory is the shape that precedes encryption.
+  {
+    re: /\btakeown(?:\.exe)?\b[^\n]{0,200}\/r\b|\bicacls(?:\.exe)?\b[^\n]{0,200}\/t\b[^\n]{0,200}\/grant[^\n]{0,80}(?::[rf]|everyone|users)/i,
+    weight: "weak",
+    ids: ["T1222.001"],
+  },
+  // The POSIX equivalents, for the Linux and ESXi side of the same behaviour.
+  {
+    re: /\bchown\b[^\n]{0,120}\s-R\b|\bchmod\b[^\n]{0,120}\s-R\b[^\n]{0,60}\b777\b/i,
+    weight: "weak",
+    ids: ["T1222.002"],
+  },
   // ───────────── Impact: inhibit system recovery (T1490) ─────────────
   // `vssadmin delete shadows` — matched here (not only STRONG_CMD's `vssadmin\s+delete`, which misses
   // the `.exe` form `vssadmin.exe delete`) so it grades High with the CORRECT technique (T1490, not the
