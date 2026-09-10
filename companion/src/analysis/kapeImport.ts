@@ -33,6 +33,7 @@ import { detectTimestomp } from "./timestompDetect.js";
 import { parseReasons, pairRenames, summarizeLifecycle, type UsnRecord } from "./usnLifecycle.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { readSrumRow, totalSrum, srumSignal, type SrumRow } from "./srumNetwork.js";
+import { companionLeads, type PrefetchEntry } from "./prefetchResources.js";
 
 type Row = Record<string, unknown>;
 
@@ -101,6 +102,11 @@ function ezTime(v: unknown): string {
 // How many journal rows lifecycle reconstruction will hold at once. Renames are adjacent in the
 // journal, so a prefix reconstructs the same pairs a whole file would for everything inside it.
 const MAX_LIFECYCLE_ROWS = 200_000;
+
+// Prefetch reference lists run to a thousand entries each. Bounded for the same reason the journal
+// pass is: the whole collection is held at once before the event cap applies.
+const MAX_PREFETCH_ENTRIES = 5_000;
+const MAX_REFERENCES_PER_ENTRY = 1_000;
 
 const HASH40 = /[a-f0-9]{40}/i;
 function addHash(sink: Map<string, SiemIoc>, raw: string): void {
@@ -422,6 +428,7 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
   const mapped: MappedEvent[] = [];
   const usnRows: Row[] = [];
   const srumRows: SrumRow[] = [];
+  const prefetchEntries: PrefetchEntry[] = [];
   for (const cols of rows) {
     const row: Row = {};
     headers.forEach((h, i) => {
@@ -433,6 +440,28 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     // one it is given, sorts a copy, and allocates a record per row — all BEFORE maxEvents applies.
     // Unbounded, that exhausts the process before any capped result is produced.
     if (profile.name === "UsnJrnl" && usnRows.length < MAX_LIFECYCLE_ROWS) usnRows.push(row);
+    if (profile.name === "Prefetch") {
+      // PECmd lists every file the executable referenced while starting, in FilesLoaded, and the
+      // volumes in Directories. That list is the half of the artifact that answers "what else came
+      // with it" (#909 item 10) — the importer was keeping only the name and a run count.
+      const exe = firstStr(row, ["ExecutableName"]);
+      if (exe && prefetchEntries.length < MAX_PREFETCH_ENTRIES) {
+        const loaded = firstStr(row, ["FilesLoaded", "Files Loaded"]);
+        prefetchEntries.push({
+          executable: exe,
+          host: firstStr(row, ["ComputerName", "Host"]),
+          volumeSerial: firstStr(row, ["Volume0Serial", "VolumeSerial"]),
+          runCount: Number(firstStr(row, ["RunCount"])) || 0,
+          lastRun: ezTime(getCI(row, "LastRun")),
+          // PECmd separates the list with commas; some exports use semicolons or newlines.
+          referenced: loaded
+            .split(/[,;\r\n]+/)
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .slice(0, MAX_REFERENCES_PER_ENTRY),
+        });
+      }
+    }
     if (profile.name === "SRUM") {
       const r = readSrumRow((k) => getCI(row, k));
       if (r) srumRows.push({ ...r, timestamp: ezTime(r.timestamp) || r.timestamp });
@@ -456,6 +485,31 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
       sources: ["SRUM"],
       ...(t.app ? { processName: baseName(t.app) } : {}),
     });
+  }
+
+  // What else on this host referenced the same unusual files as an executable already worth
+  // grading. The suspects are not decided here — prefetchExecution.ts already says which names earn
+  // more than Info, and this answers "what came with it" for those (#909 item 10).
+  const suspects = [
+    ...new Set(
+      prefetchEntries
+        .filter((e) => prefetchSignal(e.executable) !== null)
+        .map((e) => e.executable.toLowerCase()),
+    ),
+  ];
+  for (const suspect of suspects) {
+    for (const lead of companionLeads(prefetchEntries, suspect)) {
+      mapped.push({
+        timestamp: "",
+        description: `Prefetch companions: ${lead.note}`.slice(0, 900),
+        // A shared reference LINKS two executions; it does not explain either, so it is a lead.
+        severity: lead.inUserWritable ? "Low" : "Info",
+        mitre: [],
+        aggKey: `pf|companion|${lead.suspect}|${lead.companion}`,
+        sources: ["Prefetch"],
+        processName: lead.companion,
+      });
+    }
   }
 
   const usnRecords = toUsnRecords(usnRows);

@@ -376,6 +376,7 @@
     "playbookHuntStore.ts": "analysis/hunt",
     "playbookMatch.ts": "analysis/intel",
     "playbookStore.ts": "analysis/intel",
+    "prefetchResources.ts": "analysis/ingest",
     "preflight.ts": "analysis/case",
     "presentation.ts": "analysis/workflow",
     "presidio.ts": "analysis/privacy",
