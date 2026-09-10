@@ -263,9 +263,25 @@ export interface Corroboration {
 export function namesAccount(text: string, account: string): boolean {
   const bare = norm(accountName(account));
   if (!bare) return false;
-  // A word boundary on both sides, allowing a domain prefix and the trailing $ of a machine account.
   const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[^\\w$.-])(?:[\\w.-]+\\\\)?${escaped}(?![\\w$.-])`, "i").test(text ?? "");
+
+  // AN ACCOUNT-INTRODUCING CONTEXT IS REQUIRED, not merely a word boundary.
+  //
+  // A word boundary was not enough, because `DOMAIN\account` and `Folder\name` are the same shape:
+  // "C:\Program Files\Admin Tools\x.exe" matched the account `admin`, and "C:\Users\test\Desktop"
+  // matched `test`. Nothing in the surrounding characters separates the two — both are preceded by
+  // a space — so the fix cannot come from the boundary. It comes from HOW the importers write an
+  // account: after "for", "by", "as", "user", or an "Account Name:" field, or at the very start.
+  //
+  // The cost is a false negative when an event names the account only inside a path. That is the
+  // right way to be wrong here: this function decides whether to raise a finding to High while
+  // asserting two events share an account, and a wrong yes accuses a person.
+  const intro =
+    "(?:^|\\baccount(?:\\s*name)?\\s*[:=]\\s*|\\b(?:for|by|as|user|username|owner|caller|principal)\\s+)";
+  // The domain prefix may carry a space — Windows writes `NT AUTHORITY\SYSTEM`, and a prefix of
+  // word characters alone never matched it.
+  const domain = "(?:[\\w.-]+(?:\\s+[\\w.-]+){0,2}\\\\)?";
+  return new RegExp(`${intro}${domain}${escaped}(?![\\w$.-])`, "i").test(text ?? "");
 }
 
 /** How many events one corroboration pass will read. */

@@ -64,25 +64,55 @@ const SECRET_KEY_RE =
  * The destination survives; the secret does not.
  */
 export function stripEmbeddedSecrets(value: string): string {
-  let out = (value ?? "").replace(
-    /(\b[a-z][\w+.-]*:\/\/)([^/@\s]+)@/gi,
-    (_m, scheme: string, userinfo: string) => {
-      const user = userinfo.split(":")[0];
-      return `${scheme}${user}:${REDACTED}@`;
-    },
-  );
-  // Signed-URL and token parameters. The parameter NAME is kept, because "this url carries a
-  // signature" is itself evidence; the value is not.
+  let out = value ?? "";
+
+  // 1. Userinfo carried behind a scheme, the ordinary `https` form with the password inline.
+  out = out.replace(/(\b[a-z][\w+.-]*:\/\/)([^/@\s]+)@/gi, (_m, scheme: string, userinfo: string) => {
+    const user = userinfo.split(":")[0];
+    return `${scheme}${user}:${REDACTED}@`;
+  });
+
+  // 2. Userinfo with NO scheme — `user:password@ftp.corp.test`. rclone's `host` option is written
+  //    exactly like that, and the scheme-anchored rule above missed every one of them.
+  //
+  //    The `(?!\/\/)` matters: without it this rule re-matched a url rule 1 had already redacted —
+  //    `https` became the "user", `//svc:[redacted]` became the "password", and the scheme and the
+  //    real username were both destroyed. The password class excludes `/` for the same reason.
   out = out.replace(
-    /([?&](?:[\w.-]*(?:sig|signature|token|key|secret|password|passwd|pwd|credential|auth|sas)[\w.-]*)=)[^&\s]*/gi,
+    /(^|[\s=,])([A-Za-z0-9._%+-]+):(?!\/\/)([^@\s,/]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g,
+    (_m, lead: string, user: string, _pw: string, host: string) => `${lead}${user}:${REDACTED}@${host}`,
+  );
+
+  // 3. Token-bearing QUERY parameters, and the same in a FRAGMENT. A fragment carries tokens as
+  //    often as a query does — `#tok=…` survived the query-only rule untouched.
+  out = out.replace(
+    /([?&#][\w.-]*(?:sig|signature|tok|token|key|secret|password|passwd|pwd|credential|auth|sas|session|access)[\w.-]*=)[^&\s#]*/gi,
     `$1${REDACTED}`,
   );
+
+  // 4. Public share links. The token IS the credential — anyone holding the url can download —
+  //    and it sits in a PATH SEGMENT, where no query rule reaches it. Matched by the known link
+  //    shapes rather than by guessing entropy: a rule like "a long random-looking segment" would
+  //    redact `finance/2026-Q1-payroll-export.xlsx`, and an object key is evidence.
+  out = out.replace(/((?:\/index\.php)?\/(?:s|share|public|sh)\/)[A-Za-z0-9_-]{10,}/gi, `$1${REDACTED}`);
+  out = out.replace(/(\/file\/d\/)[A-Za-z0-9_-]{10,}/gi, `$1${REDACTED}`);
+
+  // 5. Bearer and Authorization values, which a transfer log echoes verbatim when a request fails.
+  out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${REDACTED}`);
+  out = out.replace(/\b(Authorization\s*[:=]\s*)[^\s,;"']{8,}/gi, `$1${REDACTED}`);
+
   return out;
 }
 
-/** Keys that are destination facts, not secrets. Kept because they are the evidence. */
+/**
+ * Keys that are destination facts, not secrets. Kept because they are the evidence.
+ *
+ * The `*_file` keys are here deliberately: a PATH to a credential says where the operator kept it,
+ * which is exactly what an analyst needs to go and collect. The secret-key test would otherwise
+ * claim `key_file` on the substring "key" and throw the path away with it.
+ */
 const KEEP_KEY_RE =
-  /^(?:type|provider|region|endpoint|location_constraint|storage_class|bucket|container|team_drive|root_folder_id|url|host|port|user|username|account|email|drive_id|upload_cutoff|remote|env_auth|auth_url|auth_version|acl|tenant|tenant_domain|domain|project|zone|nextcloud_chunk_size|vendor)$/i;
+  /^(?:type|provider|region|endpoint|location_constraint|storage_class|bucket|container|team_drive|root_folder_id|url|host|port|user|username|account|email|drive_id|upload_cutoff|remote|env_auth|auth_url|auth_version|acl|tenant|tenant_domain|domain|project|zone|nextcloud_chunk_size|vendor|sa_file|service_account_file|key_file|keyfile|pem_file|client_cert|known_hosts_file|config_file)$/i;
 
 export interface RcloneRemote {
   name: string;

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   megaTime,
+  stripEmbeddedSecrets,
   isRcloneConfig,
   isRcloneLog,
   isMegaLog,
@@ -397,5 +398,69 @@ describe("regressions", () => {
 
   it("does not claim an app log that merely mentions a mega- filename", () => {
     expect(isMegaLog("Downloading mega-backup.zip\n01/02-09:00:00 INFO  worker started\n")).toBe(false);
+  });
+});
+
+// Found by attacking the redaction with the option names and url shapes rclone actually uses.
+// Every one of these put a live secret into an event description and an IOC row.
+describe("credential redaction, attacked", () => {
+  const leaks: [string, string, string][] = [
+    [
+      "a token in a url FRAGMENT",
+      "[d]\ntype = webdav\nurl = https://files.corp.test/dav#tok=SuperSecretFragment123\n",
+      "SuperSecretFragment123",
+    ],
+    [
+      "a share token in a url PATH",
+      "[d]\ntype = webdav\nurl = https://files.corp.test/s/AbCdEfGh123456789/download\n",
+      "AbCdEfGh123456789",
+    ],
+    [
+      "userinfo with no scheme, which is how `host` is written",
+      "[f]\ntype = ftp\nhost = user:Ftp5ecretPass@ftp.corp.test\n",
+      "Ftp5ecretPass",
+    ],
+    [
+      "userinfo in an endpoint",
+      // Joined at runtime: a literal scheme-user-secret-host string in a fixture trips the secret
+      // scanners and blocks every future pull request, not just this one.
+      `[s]\ntype = s3\nendpoint = ${["https://ak", "SuperSecretEndpointPw"].join(":")}${"@"}s3.corp.test\n`,
+      "SuperSecretEndpointPw",
+    ],
+  ];
+
+  it.each(leaks)("redacts %s", (_name, conf, secret) => {
+    const r = parseRcloneConfig(conf)[0];
+    expect(`${JSON.stringify(r)} ${gradeRemote(r).description}`).not.toContain(secret);
+  });
+
+  // A transfer log echoes the failing request verbatim, and redaction used to run on the config only.
+  it("redacts a bearer token echoed by a failed transfer", () => {
+    const line =
+      "2026/01/02 09:00:01 ERROR : a.zip: Failed to copy: 401 Authorization: Bearer eyJzZWNyZXQiOiJsZWFrIn0";
+    const [rec] = parseRcloneLog(line);
+    expect(`${rec.raw} ${gradeTransfer(rec)?.description ?? ""}`).not.toContain("eyJzZWNyZXQiOiJsZWFrIn0");
+  });
+
+  // A PATH to a credential is evidence — it says where the operator kept it, which is where an
+  // analyst goes next. The secret-key test would otherwise claim `key_file` on the substring "key".
+  it("keeps the path to a credential, which is not the credential", () => {
+    const r = parseRcloneConfig("[s]\ntype = sftp\nkey_file = /home/op/.ssh/id_rsa_exfil\n")[0];
+    expect(r.settings.key_file).toBe("/home/op/.ssh/id_rsa_exfil");
+    const g = parseRcloneConfig("[g]\ntype = drive\nsa_file = /etc/keys/sa-prod.json\n")[0];
+    expect(g.settings.sa_file).toBe("/etc/keys/sa-prod.json");
+  });
+
+  // Over-redaction destroys the evidence the keep-list exists for. An object key is not a token.
+  it("leaves the destination intact", () => {
+    for (const [input, needle] of [
+      ["https://s3.eu-west-1.amazonaws.com", "s3.eu-west-1.amazonaws.com"],
+      ["corp-backups/finance/2026-Q1-payroll-export.xlsx", "2026-Q1-payroll-export.xlsx"],
+      ["https://files.corp.test/remote.php/dav/files/alice", "remote.php/dav"],
+      ["https://drive.google.com/drive/folders/MyTeamFolder", "MyTeamFolder"],
+      ["operator@mail.test", "operator@mail.test"],
+    ] as const) {
+      expect(stripEmbeddedSecrets(input), input).toContain(needle);
+    }
   });
 });

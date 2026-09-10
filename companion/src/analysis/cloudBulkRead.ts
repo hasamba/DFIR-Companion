@@ -111,7 +111,7 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
   const principal = c?.actor?.name ?? principalFromDescription(e.description ?? "");
   if (!principal) return null;
 
-  const resource = c?.cloud?.resource ?? c?.target?.name ?? "";
+  const resource = c?.cloud?.resource ?? c?.target?.name ?? resourceFromDescription(e.description ?? "");
   const { container, object } = splitResource(resource);
 
   return {
@@ -141,10 +141,34 @@ export function splitResource(resource: string): { container: string; object: st
 // FileSyncDownloadedFull and FileAccessed — three of the actions READ_ACTION_RE lists — could
 // never be reached. The optional service segment is skipped.
 function actionFromDescription(d: string): string {
-  const m = /^(?:AWS|GCP|Azure|M365|Google Workspace|Okta)\s+(?:([A-Za-z][\w ]*):\s*)?([A-Za-z][\w.]*)/.exec(
-    d ?? "",
-  );
-  return m?.[2] ?? "";
+  const m =
+    /^(?:AWS|GCP|Azure|M365|Google Workspace|Okta)\s+(?:([A-Za-z][\w ]*):\s*)?([A-Za-z][\w.]*)(\s+[A-Za-z]\w*)?/.exec(
+      d ?? "",
+    );
+  if (!m) return "";
+  // Azure writes a TWO-WORD operation — "Get Blob", "List Blobs" — and taking the first word alone
+  // returned "Get", which matches no read action. The longer form is preferred when it is one of
+  // the actions this pass knows; otherwise the single word stands.
+  const one = m[2];
+  const two = m[3] ? `${one}${m[3]}` : "";
+  if (two && READ_ACTION_RE.test(two.trim())) return two.trim();
+  return one;
+}
+
+/**
+ * The object a non-AWS importer named, read back from its description.
+ *
+ * Only awsImport stamps `canonical.cloud.resource`, so without this the container and the object
+ * were EMPTY for GCP, Azure, M365 and Workspace — which means the object count was zero and the
+ * pass was blind to every provider but one. The importers do record the resource, in their own
+ * wording: GCP and Azure append " on <resource>", M365 appends " → <target>".
+ */
+function resourceFromDescription(d: string): string {
+  const text = d ?? "";
+  const arrow = /\s→\s([^[]+?)(?:\s\[|$)/.exec(text)?.[1];
+  if (arrow) return arrow.trim();
+  const on = /\son\s([^[]+?)(?:\s\[|$)/.exec(text)?.[1];
+  return on ? on.trim() : "";
 }
 
 function principalFromDescription(d: string): string {

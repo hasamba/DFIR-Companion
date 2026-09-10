@@ -481,6 +481,74 @@ describe("regressions", () => {
   });
 });
 
+// Only awsImport stamps a canonical resource. Without a description fallback the container and the
+// object were empty for every other provider, so the object count was zero and the pass was blind
+// to all of them — an AWS-only feature wearing a cloud-wide name.
+describe("the other providers", () => {
+  const ev = (description: string) =>
+    ({
+      id: `p${++seq}`,
+      timestamp: at(0),
+      description,
+      severity: "Info",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    }) as unknown as ForensicEvent;
+
+  it("reads a GCP object read", () => {
+    const r = readCloudRecord(
+      ev(
+        "GCP storage.objects.get (storage) by svc@proj.iam.gserviceaccount.com from 10.0.0.1 on corp-data/finance/q4.csv",
+      ),
+    );
+    expect(r?.container).toBe("corp-data");
+    expect(r?.object).toBe("finance/q4.csv");
+  });
+
+  // Azure writes a TWO-WORD operation. Taking the first word returned "Get", which is not a read.
+  it("reads an Azure blob read, whose action is two words", () => {
+    const r = readCloudRecord(ev("Azure Get Blob by svc from 10.0.0.1 on drop/export.zip"));
+    expect(r?.action).toBe("Get Blob");
+    expect(r?.container).toBe("drop");
+    expect(r?.object).toBe("export.zip");
+  });
+
+  it("reads an M365 download, whose target follows an arrow", () => {
+    const r = readCloudRecord(
+      ev(
+        "M365 SharePoint: FileDownloaded by alice@corp.test from 203.0.113.9 \u2192 Finance/Payroll/2026.xlsx",
+      ),
+    );
+    expect(r?.action).toBe("FileDownloaded");
+    expect(r?.container).toBe("Finance");
+    expect(r?.object).toBe("Payroll/2026.xlsx");
+  });
+
+  it("does not invent a resource when the description carries none", () => {
+    const r = readCloudRecord(ev("M365 FileDownloaded by alice@corp.test from 203.0.113.9"));
+    expect(r?.object).toBe("");
+  });
+
+  it("groups a GCP principal's reads into a finding", () => {
+    const many = Array.from(
+      { length: MIN_OBJECTS + 5 },
+      (_v, i) =>
+        ({
+          id: `g${i}`,
+          timestamp: at(i * 0.01),
+          description: `GCP storage.objects.get (storage) by svc@proj.iam.gserviceaccount.com from 203.0.113.9 on corp-data/f-${i}.csv`,
+          severity: "Info",
+          mitreTechniques: [],
+          relatedFindingIds: [],
+          sourceScreenshots: [],
+        }) as unknown as ForensicEvent,
+    );
+    const g = groupBulkReads(many);
+    expect(g[0]?.objectCount).toBe(MIN_OBJECTS + 5);
+  });
+});
+
 describe("reachability", () => {
   it("runs from the merge", () => {
     const merge = readFileSync(join(process.cwd(), "src/analysis/stateMerge.ts"), "utf8");
