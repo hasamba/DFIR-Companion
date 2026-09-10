@@ -11,6 +11,18 @@
 /** Directories any account can write and nothing should run from. */
 export const TRANSIENT_RE = /^\/(?:tmp|var\/tmp|dev\/shm|run\/shm|var\/lock)(?:\/|$)/;
 
+/**
+ * How much of one command the payload regexes read.
+ *
+ * Two of them pair an unbounded `[^\n]*` with a required literal, which backtracks quadratically
+ * when the literal is absent: `nc -` followed by 40,000 `e` characters took 1.8 seconds in one
+ * call, and a collected crontab of 5,000 two-kilobyte lines took 24 SECONDS — synchronously, inside
+ * the state lock, with every route and every other case stopped behind it. The input is a file
+ * collected from a compromised host, so that is an attacker's choice, not bad luck. No real cron
+ * line or ExecStart is anywhere near this long.
+ */
+export const MAX_COMMAND = 4_096;
+
 /** Directories a standard install puts binaries in. */
 export const STANDARD_BIN_RE =
   /^\/(?:usr\/(?:bin|sbin|lib|lib64|libexec|local\/(?:bin|sbin))|bin|sbin|opt)\//;
@@ -31,26 +43,28 @@ export interface PayloadJudgement {
 
 const FETCH_EXEC_RES: RegExp[] = [
   // curl|wget piped straight into a shell, in either order and through any shell name.
-  /\b(?:curl|wget|fetch)\b[^|;&]*\|\s*(?:sudo\s+)?(?:\/[\w./-]*\/)?(?:ba|z|k|da|a)?sh\b/i,
+  // The pipe target is widened past the shell family: `curl … | python3 -`, `| perl` and `| node`
+  // are the same technique and were all missed.
+  /\b(?:curl|wget|fetch)\b[^|;&\n]{0,300}\|\s*(?:sudo\s+)?(?:\/[\w./-]*\/)?(?:(?:ba|z|k|da|a)?sh|python[\d.]*|perl|ruby|node|php)\b/i,
   // command substitution: bash -c "$(curl …)" and eval "$(wget …)"
   /(?:eval|(?:ba|z|k|da|a)?sh\s+-c)\s*["']?\$\(\s*(?:curl|wget|fetch)\b/i,
   // python/perl one-liner that opens a URL and executes the body
-  /\bpython[\d.]*\s+-c\b[^\n]*\b(?:urlopen|urllib|requests\.get)\b[^\n]*\bexec\b/i,
+  /\bpython[\d.]*\s+-c\b[^\n]{0,300}\b(?:urlopen|urllib|requests\.get)\b[^\n]{0,300}\bexec\b/i,
 ];
 
 const REVERSE_SHELL_RES: RegExp[] = [
   /\/dev\/(?:tcp|udp)\/[^\s/]+\/\d+/i,
-  /\bn(?:c|cat|etcat)\b[^\n]*\s-[a-z]*e[a-z]*\s/i,
+  /\bn(?:c|cat|etcat)\b[^\n]{0,200}\s-{1,2}[a-z]{0,8}e(?:xec)?[a-z]{0,8}[\s=]/i,
   /\bsocat\b[^\n]*\bexec:/i,
-  /\bmkfifo\b[^\n]*\|[^\n]*\bn(?:c|cat)\b/i,
-  /\bpython[\d.]*\s+-c\b[^\n]*\bsocket\b[^\n]*\b(?:dup2|subprocess|pty\.spawn)\b/i,
-  /\bperl\s+-e\b[^\n]*\bsocket\b[^\n]*\bexec\b/i,
+  /\bmkfifo\b[^\n]{0,200}\|[^\n]{0,200}\bn(?:c|cat)\b/i,
+  /\bpython[\d.]*\s+-c\b[^\n]{0,300}\bsocket\b[^\n]{0,300}\b(?:dup2|subprocess|pty\.spawn)\b/i,
+  /\bperl\s+-e\b[^\n]{0,300}\bsocket\b[^\n]{0,300}\bexec\b/i,
 ];
 
 const ENCODED_RES: RegExp[] = [
-  /\bbase64\s+(?:-d|--decode|-D)\b[^\n]*\|\s*(?:sudo\s+)?(?:\/[\w./-]*\/)?(?:ba|z|k|da|a)?sh\b/i,
-  /\b(?:ba|z|k|da|a)?sh\s+-c\s*["']?\$\(\s*(?:echo|printf)\b[^\n]*base64\s+(?:-d|--decode)/i,
-  /\bopenssl\s+enc\s+-d\b[^\n]*\|\s*(?:ba|z|k|da|a)?sh\b/i,
+  /\bbase64\s+(?:-d|--decode|-D)\b[^\n]{0,200}\|\s*(?:sudo\s+)?(?:\/[\w./-]*\/)?(?:(?:ba|z|k|da|a)?sh|python[\d.]*|perl)\b/i,
+  /\b(?:ba|z|k|da|a)?sh\s+-c\s*["']?\$\(\s*(?:echo|printf)\b[^\n]{0,300}base64\s+(?:-d|--decode)/i,
+  /\bopenssl\s+enc\s+-d\b[^\n]{0,200}\|\s*(?:ba|z|k|da|a)?sh\b/i,
 ];
 
 /** The first token of a command that names something to run, ignoring env assignments and wrappers. */
@@ -85,7 +99,8 @@ export function hiddenComponent(path: string): boolean {
 
 /** Grade what a command does, without running or evaluating any part of it. */
 export function judgePayload(command: string): PayloadJudgement {
-  const cmd = command ?? "";
+  // Bounded before anything reads it. See MAX_COMMAND.
+  const cmd = (command ?? "").slice(0, MAX_COMMAND);
   const target = commandTarget(cmd);
   // A transient path ANYWHERE in the command counts: `bash /tmp/x.sh` runs bash, but the code is the
   // argument. Reading only the first token missed every wrapper form.

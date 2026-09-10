@@ -31,8 +31,6 @@
 
 import type { Severity } from "./stateTypes.js";
 import {
-  keyOption,
-  parseAuthorizedKeys,
   parseCrontab,
   parsePathEntries,
   parseSuidListing,
@@ -41,8 +39,25 @@ import {
   splitPathValue,
   stripExecPrefix,
   type CollectedFile,
-  type LinuxArtifactKind,
 } from "./linuxPersistence.js";
+export { crossAccountKeyReuse, gradeAuthorizedKeys, isNeuteredKey, keyAccount } from "./linuxSshKeys.js";
+export { SUID_BASELINE, type LinuxBaseline, type LinuxContext, type LinuxSignal } from "./linuxSignal.js";
+
+import { crossAccountKeyReuse, gradeAuthorizedKeys } from "./linuxSshKeys.js";
+import {
+  baselinePaths,
+  hostPathInImage,
+  IMAGE_ROOT_RE,
+  INTERPRETER_RE,
+  SHADOWABLE,
+  payloadReason,
+  payloadSeverity,
+  payloadTechniques,
+  signal,
+  SUID_BASELINE_SET,
+  type LinuxContext,
+  type LinuxSignal,
+} from "./linuxSignal.js";
 import {
   commandTarget,
   hiddenComponent,
@@ -54,321 +69,6 @@ import {
 } from "./linuxPayload.js";
 
 export { commandTarget, hiddenComponent, homeAccount, judgePayload, type PayloadJudgement };
-
-export interface LinuxSignal {
-  /** The collected file the signal came from. */
-  artifact: string;
-  kind: LinuxArtifactKind;
-  severity: Severity;
-  mitre: string[];
-  /** What happened and why it is suspicious, in one sentence an analyst can check. */
-  reason: string;
-  /** The collected line itself, so the finding links to evidence rather than replacing it. */
-  evidence: string;
-  line: number;
-  /** The collection recorded no modification time, so an incident-time change could not be checked. */
-  timeUnknown: boolean;
-  /** The file the finding is ABOUT, when the rule identified one — the payload, not the artifact. */
-  target?: string;
-}
-
-export interface LinuxBaseline {
-  /** authorized_keys blobs this environment expects. */
-  keys?: readonly string[];
-  /** SUID paths this environment expects beyond the standard install set. */
-  suid?: readonly string[];
-  /** Unit or cron payload paths this environment expects. */
-  paths?: readonly string[];
-}
-
-export interface LinuxContext {
-  /** The incident window. A file changed inside it is prioritised. */
-  incident?: { start: string; end: string };
-  baseline?: LinuxBaseline;
-}
-
-const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
-const EVIDENCE_MAX = 300;
-
-/** Interpreters that hand out a root shell the moment they are setuid. */
-const INTERPRETER_RE =
-  /^(?:ba|z|k|c|tc|da|a)?sh$|^busybox$|^python[\d.]*$|^perl[\d.]*$|^ruby[\d.]*$|^php[\d.]*$|^node$|^lua[\d.]*$|^awk$|^gawk$|^mawk$|^env$|^find$|^vim?$|^nano$|^less$|^more$|^man$|^nmap$|^tar$|^zip$|^socat$|^tcpdump$/;
-
-/**
- * SUID binaries a standard Linux install ships.
- *
- * Not a security judgement — several of these have known abuse paths. It is the answer to "does this
- * host have a SUID binary the distribution did not put there", which is the question the artifact is
- * collected to answer. An environment that ships more supplies them as a baseline.
- */
-export const SUID_BASELINE: readonly string[] = [
-  "/bin/fusermount",
-  "/bin/mount",
-  "/bin/ping",
-  "/bin/ping6",
-  "/bin/su",
-  "/bin/umount",
-  "/sbin/mount.nfs",
-  "/sbin/pam_timestamp_check",
-  "/sbin/pccardctl",
-  "/sbin/unix_chkpwd",
-  "/usr/bin/at",
-  "/usr/bin/chage",
-  "/usr/bin/chfn",
-  "/usr/bin/chsh",
-  "/usr/bin/crontab",
-  "/usr/bin/expiry",
-  "/usr/bin/fusermount",
-  "/usr/bin/fusermount3",
-  "/usr/bin/gpasswd",
-  "/usr/bin/ksu",
-  "/usr/bin/mount",
-  "/usr/bin/newgidmap",
-  "/usr/bin/newgrp",
-  "/usr/bin/newuidmap",
-  "/usr/bin/passwd",
-  "/usr/bin/pkexec",
-  "/usr/bin/sg",
-  "/usr/bin/su",
-  "/usr/bin/sudo",
-  "/usr/bin/umount",
-  "/usr/bin/wall",
-  "/usr/bin/write",
-  "/usr/lib/dbus-1.0/dbus-daemon-launch-helper",
-  "/usr/lib/eject/dmcrypt-get-device",
-  "/usr/lib/openssh/ssh-keysign",
-  "/usr/lib/polkit-1/polkit-agent-helper-1",
-  "/usr/lib/policykit-1/polkit-agent-helper-1",
-  "/usr/libexec/dbus-1/dbus-daemon-launch-helper",
-  "/usr/libexec/openssh/ssh-keysign",
-  "/usr/libexec/polkit-agent-helper-1",
-  "/usr/sbin/exim4",
-  "/usr/sbin/mount.nfs",
-  "/usr/sbin/pppd",
-  "/usr/sbin/unix_chkpwd",
-  "/usr/sbin/userhelper",
-  "/usr/sbin/usernetctl",
-];
-
-const SUID_BASELINE_SET = new Set(SUID_BASELINE);
-
-// Commands a shadowing binary earlier in PATH would intercept.
-const SHADOWABLE = new Set([
-  "ls",
-  "ps",
-  "id",
-  "sudo",
-  "su",
-  "ssh",
-  "scp",
-  "cat",
-  "grep",
-  "netstat",
-  "ss",
-  "top",
-  "find",
-  "curl",
-  "wget",
-  "systemctl",
-  "journalctl",
-  "passwd",
-  "kill",
-  "df",
-  "du",
-  "who",
-  "w",
-  "last",
-]);
-
-// ─────────────────────────── shared helpers ───────────────────────────
-
-function clip(s: string): string {
-  const t = (s ?? "").replace(/\s+/g, " ").trim();
-  return t.length > EVIDENCE_MAX ? `${t.slice(0, EVIDENCE_MAX)}…` : t;
-}
-
-function inIncident(file: CollectedFile, ctx: LinuxContext): boolean {
-  if (!file.mtime || !ctx.incident) return false;
-  const t = Date.parse(file.mtime);
-  const a = Date.parse(ctx.incident.start);
-  const b = Date.parse(ctx.incident.end);
-  if (!Number.isFinite(t) || !Number.isFinite(a) || !Number.isFinite(b)) return false;
-  return t >= Math.min(a, b) && t <= Math.max(a, b);
-}
-
-/**
- * Build a signal, applying the incident-time rule.
- *
- * Medium is raised to High when the collection PROVES the file changed inside the window. High is
- * never raised further: an incident-time change makes a finding more urgent, not more certain.
- */
-function signal(
-  file: CollectedFile,
-  ctx: LinuxContext,
-  s: { severity: Severity; mitre: string[]; reason: string; evidence: string; line: number; target?: string },
-): LinuxSignal {
-  const changed = inIncident(file, ctx);
-  const timeUnknown = !file.mtime;
-  let severity = s.severity;
-  let reason = s.reason;
-  if (changed && RANK[severity] === RANK.Medium) severity = "High";
-  if (changed) reason += ` The file was modified inside the incident window (${file.mtime}).`;
-  else if (timeUnknown) {
-    reason +=
-      " The collection recorded no modification time for this file, so whether it changed during the incident could not be checked.";
-  }
-  return {
-    artifact: file.path,
-    kind: file.kind,
-    severity,
-    mitre: s.mitre,
-    reason,
-    evidence: clip(s.evidence),
-    line: s.line,
-    timeUnknown,
-    ...(s.target ? { target: s.target } : {}),
-  };
-}
-
-function baselinePaths(ctx: LinuxContext): Set<string> {
-  return new Set(ctx.baseline?.paths ?? []);
-}
-
-/** The wording every payload finding shares, so the reason names the property, not the artifact. */
-function payloadReason(j: PayloadJudgement, what: string): string | null {
-  if (j.reverseShell) return `${what} opens an interactive connection back to a remote host.`;
-  if (j.fetchExec)
-    return `${what} downloads code and executes it in the same command, so the payload never has to exist on disk before it runs.`;
-  if (j.encoded)
-    return `${what} decodes its own payload before running it, which keeps the command text out of the logs.`;
-  if (j.transient)
-    return `${what} runs from a world-writable directory that is cleared on reboot, which is not where installed software lives.`;
-  if (j.hidden) return `${what} runs from a hidden directory.`;
-  return null;
-}
-
-function payloadSeverity(j: PayloadJudgement): Severity {
-  if (j.reverseShell || j.fetchExec || j.encoded || j.transient) return "High";
-  return "Medium"; // hidden only
-}
-
-function payloadTechniques(j: PayloadJudgement, base: string[]): string[] {
-  const out = [...base];
-  if (j.fetchExec || j.encoded || j.reverseShell) out.push("T1059.004");
-  if (j.fetchExec) out.push("T1105");
-  return [...new Set(out)];
-}
-
-// ─────────────────────────── SSH authorized keys ───────────────────────────
-
-/** The account an authorized_keys path belongs to. */
-export function keyAccount(path: string): string {
-  if (/^\/root\//.test(path)) return "root";
-  const m = /^\/home\/([^/]+)\//.exec(path);
-  if (m) return m[1];
-  const m2 = /^\/(?:var\/lib|opt|srv)\/([^/]+)\//.exec(path);
-  return m2 ? m2[1] : "";
-}
-
-export function gradeAuthorizedKeys(file: CollectedFile, ctx: LinuxContext): LinuxSignal[] {
-  const known = new Set(ctx.baseline?.keys ?? []);
-  const account = keyAccount(file.path);
-  const out: LinuxSignal[] = [];
-
-  for (const key of parseAuthorizedKeys(file.content)) {
-    if (known.has(key.blob)) continue;
-    const evidence = `${key.options ? `${key.options} ` : ""}${key.type} ${key.blob.slice(0, 24)}… ${key.comment}`;
-
-    // A forced command is normally a RESTRICTION — rsync, borg, git-shell. It is only a finding when
-    // the thing it forces is a shell or a payload, which turns the restriction into the backdoor.
-    const forced = keyOption(key.options, "command");
-    if (forced) {
-      const j = judgePayload(forced);
-      const reason = payloadReason(j, "A forced command on this authorized key");
-      const isShell = /^(?:\/[\w./-]*\/)?(?:ba|z|k|da|a)?sh\b/.test(forced.trim());
-      if (reason || isShell) {
-        out.push(
-          signal(file, ctx, {
-            severity: reason ? payloadSeverity(j) : "High",
-            mitre: payloadTechniques(j, ["T1098.004"]),
-            reason:
-              (reason ??
-                `A forced command on this authorized key runs a shell, so the restriction grants interactive access instead of limiting it.`) +
-              ` Account: ${account || "unknown"}. Forced command: ${clip(forced)}.`,
-            evidence,
-            line: key.line,
-          }),
-        );
-        continue;
-      }
-    }
-
-    // Otherwise the key itself is only remarkable if the collection can show it appeared during the
-    // incident. A host has authorized keys; that is what the file is for.
-    if (inIncident(file, ctx)) {
-      out.push(
-        signal(file, ctx, {
-          severity: "Medium",
-          mitre: ["T1098.004"],
-          reason: `An SSH key authorising ${account || "this account"} is present in a file modified during the incident window. The file's timestamp covers every key in it, so this key is not necessarily the one that was added — compare against a known-good key list.`,
-          evidence,
-          line: key.line,
-        }),
-      );
-    }
-  }
-  return out;
-}
-
-/**
- * The same key material authorising two accounts.
- *
- * A shared administrative key is a real and legitimate pattern, so this is Medium — the finding is
- * that the accounts are linked, and the analyst decides whether that link is expected. It becomes
- * High only when one of the accounts is root, because that is the shape of "a user key was copied
- * into root" rather than "one admin key was deployed everywhere".
- */
-export function crossAccountKeyReuse(files: readonly CollectedFile[], ctx: LinuxContext): LinuxSignal[] {
-  const known = new Set(ctx.baseline?.keys ?? []);
-  const byBlob = new Map<string, { account: string; file: CollectedFile; line: number; comment: string }[]>();
-
-  for (const file of files) {
-    if (file.kind !== "authorized_keys") continue;
-    const account = keyAccount(file.path);
-    if (!account) continue;
-    for (const key of parseAuthorizedKeys(file.content)) {
-      if (known.has(key.blob)) continue;
-      const list = byBlob.get(key.blob) ?? [];
-      // One account, one entry: the same file listing a key twice is not two accounts.
-      if (list.some((e) => e.account === account)) continue;
-      list.push({ account, file, line: key.line, comment: key.comment });
-      byBlob.set(key.blob, list);
-    }
-  }
-
-  const out: LinuxSignal[] = [];
-  for (const [blob, uses] of byBlob) {
-    if (uses.length < 2) continue;
-    const accounts = uses.map((u) => u.account);
-    const hasRoot = accounts.includes("root");
-    const first = uses[0];
-    out.push(
-      signal(first.file, ctx, {
-        severity: hasRoot ? "High" : "Medium",
-        mitre: ["T1098.004"],
-        reason:
-          `The same SSH key authorises ${accounts.length} accounts: ${accounts.join(", ")}. ` +
-          (hasRoot
-            ? "One of them is root, so whoever holds this key has both a user account and full control of the host. "
-            : "") +
-          "A shared administrative key is a legitimate pattern — confirm whether these accounts are meant to share one.",
-        evidence: `${blob.slice(0, 24)}… ${first.comment}`,
-        line: first.line,
-      }),
-    );
-  }
-  return out;
-}
 
 // ─────────────────────────── cron ───────────────────────────
 
@@ -408,7 +108,7 @@ export function gradeCron(file: CollectedFile, ctx: LinuxContext): LinuxSignal[]
   // what every job in the file resolves to.
   for (const e of env) {
     if (e.name.toUpperCase() !== "PATH") continue;
-    const bad = gradePathEntries(splitPathValue(e.value));
+    const bad = gradePathEntries(splitPathValue(expandPathSelf(e.value)));
     if (!bad) continue;
     out.push(
       signal(file, ctx, {
@@ -429,7 +129,16 @@ export function gradeUnit(file: CollectedFile, ctx: LinuxContext): LinuxSignal[]
   const unit = parseUnit(file.content);
   const allowed = baselinePaths(ctx);
   const out: LinuxSignal[] = [];
-  const commands = [...unit.execStartPre, ...unit.execStart];
+  // Every key that runs something, not just ExecStart. ExecStopPost runs on failure, which for a
+  // unit that fails on purpose is a reliable trigger, and Environment= carries LD_PRELOAD.
+  // An Environment= value is `KEY=value`. The VALUE is the payload — commandTarget skips a leading
+  // assignment, so passing the whole thing left no target and the finding graded a preload Medium.
+  const commands = [
+    ...unit.execStartPre,
+    ...unit.execStart,
+    ...unit.execOther,
+    ...unit.environment.map((e) => e.replace(/^[A-Za-z_][A-Za-z0-9_]*=/, "")),
+  ];
 
   for (const raw of commands) {
     const cmd = stripExecPrefix(raw);
@@ -439,7 +148,11 @@ export function gradeUnit(file: CollectedFile, ctx: LinuxContext): LinuxSignal[]
     let reason = payloadReason(j, `A systemd service running as ${runsAs}`);
     let severity = payloadSeverity(j);
 
-    if (!unit.user && j.homeOwned && j.homeOwned !== "root" && !file.path.includes("/.config/")) {
+    // A user unit runs as that user, never as root. They live under ~/.config/systemd/user AND
+    // ~/.local/share/systemd/user — testing only the first graded a syncthing user unit as a
+    // system-wide root service.
+    const userUnit = /\/systemd\/user\//.test(file.path);
+    if (!unit.user && j.homeOwned && j.homeOwned !== "root" && !userUnit) {
       reason = `A system-wide systemd service runs as root but executes a file inside ${j.homeOwned}'s home directory, so that account can change what root runs.`;
       severity = "High";
     }
@@ -465,6 +178,48 @@ export function gradeUnit(file: CollectedFile, ctx: LinuxContext): LinuxSignal[]
 
 const HISTORY_OFF_RE =
   /\bunset\s+HISTFILE\b|\bHISTFILE\s*=\s*\/dev\/null\b|\bHISTSIZE\s*=\s*0\b|\bHISTFILESIZE\s*=\s*0\b|\bset\s+\+o\s+history\b|\bhistory\s+-c\b/i;
+
+/**
+ * Grade an alias.
+ *
+ * THE NAME IS NOT THE SIGNAL. Ubuntu's own /etc/skel/.bashrc ships `alias ls='ls --color=auto'` and
+ * `alias grep='grep --color=auto'` uncommented, so a rule that fired on "this redefines a common
+ * command" produced two Medium timeline events for every home directory on every Debian-family
+ * host — raised to High whenever the file's mtime fell inside the incident window. A developer Mac
+ * adds `alias cat='bat'`, `alias top='htop'`, `alias du='dust'`. None of that is tradecraft.
+ *
+ * What IS tradecraft is an alias whose body does something the command does not: it runs a payload
+ * at every prompt, or it removes lines from the output of an enumeration command so the account
+ * cannot see what is there. Those two are the rule.
+ */
+export function gradeAlias(
+  name: string,
+  body: string,
+): { severity: Severity; mitre: string[]; reason: string } | null {
+  const target = body.replace(/^['"]|['"]$/g, "").trim();
+  const j = judgePayload(target);
+  if (j.transient || j.fetchExec || j.reverseShell || j.encoded) {
+    return {
+      severity: "High",
+      mitre: payloadTechniques(j, ["T1546.004"]),
+      reason:
+        `The alias "${name}" runs a payload rather than the command it is named after, so it executes whenever the account types that name. ` +
+        `${payloadReason(j, "The alias body") ?? ""}`.trim(),
+    };
+  }
+  // Output filtering on an enumeration command: the account is shown a shortened truth.
+  const enumerates =
+    /^(?:ls|ps|netstat|ss|who|w|last|find|df|du|top|lsof|ip|ifconfig|dmesg|journalctl)$/i.test(name);
+  const filters = /\|\s*(?:grep|egrep|sed|awk)\b[^|]*(?:-v\b|\/d\b|!~)/i.test(target);
+  if (enumerates && filters) {
+    return {
+      severity: "Medium",
+      mitre: ["T1564"],
+      reason: `The alias "${name}" pipes the command's output through a filter that REMOVES lines, so anyone using this account sees a shortened result and has no sign that anything was hidden.`,
+    };
+  }
+  return null;
+}
 
 export function gradeShellInit(file: CollectedFile, ctx: LinuxContext): LinuxSignal[] {
   const allowed = baselinePaths(ctx);
@@ -503,16 +258,19 @@ export function gradeShellInit(file: CollectedFile, ctx: LinuxContext): LinuxSig
     }
 
     const alias = /^\s*alias\s+([A-Za-z_][\w.-]*)\s*=\s*(.+)$/.exec(text);
-    if (alias && SHADOWABLE.has(alias[1].toLowerCase())) {
-      out.push(
-        signal(file, ctx, {
-          severity: "Medium",
-          mitre: ["T1036"],
-          reason: `This shell profile redefines the common command "${alias[1]}", so what the account sees when it runs that command is not what the command does.`,
-          evidence: text,
-          line,
-        }),
-      );
+    if (alias) {
+      const verdict = gradeAlias(alias[1], alias[2]);
+      if (verdict) {
+        out.push(
+          signal(file, ctx, {
+            severity: verdict.severity,
+            mitre: verdict.mitre,
+            reason: verdict.reason,
+            evidence: text,
+            line,
+          }),
+        );
+      }
       continue;
     }
 
@@ -581,7 +339,15 @@ export function gradePathEntries(entries: readonly string[]): { severity: Severi
   }
   const firstSystem = entries.findIndex(isSystemDir);
   const before = firstSystem < 0 ? entries : entries.slice(0, firstSystem);
-  const risky = before.find((e) => TRANSIENT_RE.test(e) || /^\/home\//.test(e) || hiddenComponent(e));
+  // ~/.local/bin is created by `pip install --user` and prepended by Ubuntu's stock .profile, and
+  // ~/.cargo/bin and ~/.npm-global/bin are the same story. A home directory on the PATH is only
+  // remarkable when it is not one of those.
+  const ORDINARY_USER_BIN = /\/\.(?:local|cargo|rustup|nvm|npm-global|bun|deno|pyenv|rbenv|volta)\//;
+  const risky = before.find(
+    (e) =>
+      TRANSIENT_RE.test(e) ||
+      (!ORDINARY_USER_BIN.test(`${e}/`) && (/^\/home\//.test(e) || hiddenComponent(e))),
+  );
   if (risky) {
     return {
       severity: "Medium",
@@ -594,14 +360,18 @@ export function gradePathEntries(entries: readonly string[]): { severity: Severi
 export function gradeEnv(file: CollectedFile, ctx: LinuxContext): LinuxSignal[] {
   const entries = parsePathEntries(file.content);
   if (!entries) return [];
-  const bad = gradePathEntries(entries);
+  // expandPathSelf, like the shell-profile grader. Skipping it here meant `PATH="$PATH:/home/x"` in
+  // /etc/environment read as "searches /home/x BEFORE the system directories" — the opposite of the
+  // evidence, on a Medium finding. It is the same bug the shell grader already had once.
+  const expanded = entries.map((e) => (e === "$PATH" || e === "${PATH}" ? PATH_INHERITED : e));
+  const bad = gradePathEntries(expanded);
   if (!bad) return [];
   return [
     signal(file, ctx, {
       severity: bad.severity,
       mitre: ["T1574.007"],
       reason: bad.reason,
-      evidence: `PATH=${entries.join(":")}`,
+      evidence: `PATH=${showPath(expanded)}`,
       line: 1,
     }),
   ];
@@ -639,6 +409,17 @@ export function gradeSuid(file: CollectedFile, ctx: LinuxContext): LinuxSignal[]
     if (allowed.has(entry.path)) continue;
 
     const name = entry.path.slice(entry.path.lastIndexOf("/") + 1).toLowerCase();
+
+    // A binary inside a snap mount or a container layer is a packaged copy, not an implant. Judge
+    // it at the path it would have on the host; report it only if THAT is not standard.
+    if (IMAGE_ROOT_RE.test(entry.path)) {
+      const asHost = hostPathInImage(entry.path);
+      // No bin/lib segment inside the image means this is NOT a packaged binary — a setuid file
+      // under /snap/core22/1122/tmp is an implant wherever it sits. Fall through and grade it.
+      if (asHost && (allowed.has(asHost) || (!INTERPRETER_RE.test(name) && STANDARD_BIN_RE.test(asHost))))
+        continue;
+    }
+
     let severity: Severity;
     let reason: string;
 
@@ -685,30 +466,10 @@ export function analyzeLinuxCollection(
     for (const s of list) if (out.length < MAX_SIGNALS) out.push(s);
   };
 
-  for (const file of files) {
-    switch (file.kind) {
-      case "authorized_keys":
-        push(gradeAuthorizedKeys(file, ctx));
-        break;
-      case "cron":
-        push(gradeCron(file, ctx));
-        break;
-      case "systemd":
-        push(gradeUnit(file, ctx));
-        break;
-      case "shellrc":
-        push(gradeShellInit(file, ctx));
-        break;
-      case "suid":
-        push(gradeSuid(file, ctx));
-        break;
-      case "env":
-        push(gradeEnv(file, ctx));
-        break;
-      default:
-        break;
-    }
-  }
+  // THE CROSS-FILE FINDINGS GO FIRST, on purpose. They used to run after the per-file loop, so a
+  // host with hundreds of SUID rows filled the cap and the one shared root key — the finding that
+  // actually matters — was silently evicted. The findings that need the whole collection to exist
+  // at all are the ones least able to survive being dropped.
   push(crossAccountKeyReuse(files, ctx));
 
   // Suspicious command resolution needs both halves: a PATH and a listing of what is in it.
@@ -734,6 +495,31 @@ export function analyzeLinuxCollection(
         line: 1,
       }),
     ]);
+  }
+
+  for (const file of files) {
+    switch (file.kind) {
+      case "authorized_keys":
+        push(gradeAuthorizedKeys(file, ctx));
+        break;
+      case "cron":
+        push(gradeCron(file, ctx));
+        break;
+      case "systemd":
+        push(gradeUnit(file, ctx));
+        break;
+      case "shellrc":
+        push(gradeShellInit(file, ctx));
+        break;
+      case "suid":
+        push(gradeSuid(file, ctx));
+        break;
+      case "env":
+        push(gradeEnv(file, ctx));
+        break;
+      default:
+        break;
+    }
   }
   return out;
 }

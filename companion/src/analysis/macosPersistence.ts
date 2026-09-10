@@ -54,9 +54,22 @@ export function classifyMacArtifact(path: string): LinuxArtifactKind {
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
-/** Only the five predefined XML entities. A numeric or custom entity is left as written. */
+/**
+ * The five predefined entities and NUMERIC character references. No custom entity, ever.
+ *
+ * Numeric references were left as written, so `&#47;tmp&#47;evil.sh` came back as that literal
+ * string and the path rules saw no `/tmp/` — a one-line evasion that made a malicious job read as
+ * clean. A numeric reference is a plain character, not a document-defined name, so expanding it
+ * carries none of the risk that expanding a DOCTYPE entity does. Values are capped so a reference
+ * cannot be used to inflate the text.
+ */
 function unescapeXml(s: string): string {
-  return s.replace(/&(amp|lt|gt|quot|apos);/g, (_m, name: string) => ENTITIES[name] ?? _m);
+  return s
+    .replace(/&(amp|lt|gt|quot|apos);/g, (m, name: string) => ENTITIES[name] ?? m)
+    .replace(/&#(x?)([0-9a-f]{1,6});/gi, (m, hex: string, digits: string) => {
+      const code = parseInt(digits, hex ? 16 : 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    });
 }
 
 interface Scanner {
@@ -98,7 +111,24 @@ function skipNoise(sc: Scanner): void {
 function nextTag(sc: Scanner): string {
   skipNoise(sc);
   if (sc.i >= sc.s.length || sc.s[sc.i] !== "<") return "";
-  const close = sc.s.indexOf(">", sc.i);
+
+  // A `>` inside a quoted attribute value is not the end of the tag. A raw indexOf(">") cut
+  // `<key attr="a>b">Program</key>` in the middle, and the key became `b">Program` — so the value
+  // was never associated with Program and the job read as clean.
+  let close = -1;
+  let quote = "";
+  for (let i = sc.i + 1; i < sc.s.length; i++) {
+    const ch = sc.s[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === ">") {
+      close = i;
+      break;
+    }
+  }
   if (close < 0) {
     sc.i = sc.s.length;
     return "";
@@ -110,13 +140,36 @@ function nextTag(sc: Scanner): string {
   return selfClosing ? `${name}/` : name;
 }
 
-/** Read character data up to the next `<`. */
+/**
+ * Read character data up to the closing tag, through CDATA sections and comments.
+ *
+ * Stopping at the first `<` dropped both. `<string><![CDATA[/tmp/evil.sh]]></string>` yielded an
+ * empty program, and `<string>/tmp<!-- x -->/evil.sh</string>` yielded `/tmp` — which the path
+ * rules do not match, because they need the trailing slash. Both were one-line evasions.
+ */
 function readText(sc: Scanner): string {
-  const next = sc.s.indexOf("<", sc.i);
-  const end = next < 0 ? sc.s.length : next;
-  const raw = sc.s.slice(sc.i, end);
-  sc.i = end;
-  return unescapeXml(raw).trim();
+  let out = "";
+  for (let guard = 0; guard < 64; guard++) {
+    if (sc.s.startsWith("<![CDATA[", sc.i)) {
+      const end = sc.s.indexOf("]]>", sc.i + 9);
+      out += end < 0 ? sc.s.slice(sc.i + 9) : sc.s.slice(sc.i + 9, end);
+      sc.i = end < 0 ? sc.s.length : end + 3;
+      continue;
+    }
+    if (sc.s.startsWith("<!--", sc.i)) {
+      const end = sc.s.indexOf("-->", sc.i + 4);
+      sc.i = end < 0 ? sc.s.length : end + 3;
+      continue;
+    }
+    const next = sc.s.indexOf("<", sc.i);
+    const end = next < 0 ? sc.s.length : next;
+    out += unescapeXml(sc.s.slice(sc.i, end));
+    sc.i = end;
+    if (next < 0 || !sc.s.startsWith("<![CDATA[", sc.i)) {
+      if (!sc.s.startsWith("<!--", sc.i)) break;
+    }
+  }
+  return out.trim();
 }
 
 function readValue(sc: Scanner, tag: string, depth: number): PlistValue | undefined {
@@ -155,6 +208,19 @@ function readValue(sc: Scanner, tag: string, depth: number): PlistValue | undefi
         nextTag(sc); // </key>
         const vt = nextTag(sc);
         if (!vt || vt === "/dict") break;
+        // A dangling `<key>Orphan</key>` followed by another `<key>` is malformed, and the first
+        // version read the NEXT KEY'S NAME as the orphan's value and then broke out of the dict —
+        // so every remaining pair, Program included, was lost and the job read as clean. Skip the
+        // orphan and carry on: what follows is still readable.
+        if (vt === "key") {
+          const nextKey = readText(sc);
+          nextTag(sc); // </key>
+          const nextValueTag = nextTag(sc);
+          if (!nextValueTag || nextValueTag === "/dict") break;
+          const nextValue = readValue(sc, nextValueTag, depth + 1);
+          if (nextValue !== undefined) out[nextKey] = nextValue;
+          continue;
+        }
         const value = readValue(sc, vt, depth + 1);
         if (value !== undefined) out[key] = value;
       }
@@ -184,7 +250,7 @@ export function parsePlist(xml: string): Record<string, PlistValue> | null {
     if (!tag) return null;
     if (tag === "dict") {
       const v = readValue(sc, tag, 0);
-      return v && typeof v === "object" && !Array.isArray(v) ? (v) : null;
+      return v && typeof v === "object" && !Array.isArray(v) ? v : null;
     }
     if (tag === "dict/") return {};
   }
@@ -209,6 +275,11 @@ export interface LaunchJob {
   watchPaths: string[];
   userName: string;
   disabled: boolean;
+  /**
+   * EnvironmentVariables. Read because DYLD_INSERT_LIBRARIES is macOS persistence in one key: the
+   * program can be entirely legitimate while the library loaded into it is not.
+   */
+  environment: Record<string, string>;
 }
 
 function str(v: PlistValue | undefined): string {
@@ -249,6 +320,17 @@ export function readLaunchJob(plist: Record<string, PlistValue>): LaunchJob {
       : [],
     userName: str(plist.UserName),
     disabled: plist.Disabled === true,
+    environment:
+      plist.EnvironmentVariables &&
+      typeof plist.EnvironmentVariables === "object" &&
+      !Array.isArray(plist.EnvironmentVariables)
+        ? Object.fromEntries(
+            Object.entries(plist.EnvironmentVariables).map(([k, v]) => [
+              k,
+              typeof v === "string" ? v : String(v),
+            ]),
+          )
+        : {},
   };
 }
 

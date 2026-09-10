@@ -578,13 +578,11 @@ export async function importLinuxPersist(
     );
     if (parsed.files.length === 0) return noteEmptyImport(ctx, caseId, opts, "Linux persistence", 0);
 
+    // The id comes from the FINDING (see stableEventId), not from this import's counter. stateMerge
+    // dedups forensic events by id, so a stable id is what makes re-importing the same collection
+    // update the row instead of adding a second copy of it.
     const events = applySeverityFloor(
-      parsed.events.map((e, i) => ({
-        ...e,
-        id: `${opts.idPrefix}e${i + 1}`,
-        relatedFindingIds: [],
-        sourceScreenshots: [],
-      })) as never,
+      parsed.events.map((e) => ({ ...e, relatedFindingIds: [], sourceScreenshots: [] })) as never,
       opts.minSeverity,
     );
 
@@ -642,13 +640,11 @@ export async function importMacosPersist(
     );
     if (parsed.files.length === 0) return noteEmptyImport(ctx, caseId, opts, "macOS persistence", 0);
 
+    // The id comes from the FINDING (see stableEventId), not from this import's counter. stateMerge
+    // dedups forensic events by id, so a stable id is what makes re-importing the same collection
+    // update the row instead of adding a second copy of it.
     const events = applySeverityFloor(
-      parsed.events.map((e, i) => ({
-        ...e,
-        id: `${opts.idPrefix}e${i + 1}`,
-        relatedFindingIds: [],
-        sourceScreenshots: [],
-      })) as never,
+      parsed.events.map((e) => ({ ...e, relatedFindingIds: [], sourceScreenshots: [] })) as never,
       opts.minSeverity,
     );
 

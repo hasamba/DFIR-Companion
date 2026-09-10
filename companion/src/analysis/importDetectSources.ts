@@ -122,11 +122,14 @@ export function isAuditd(text: string): boolean {
 // an application's secrets, not a Linux environment dump, and routing one here would be a mis-route
 // with a privacy cost. A collection can still carry /etc/environment, where the header says what it is.
 const SINGLE_ARTIFACT_NAME =
-  /^(?:authorized_keys2?|crontab|\.?(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile))$|\.(?:service|timer|socket)$|suid/i;
+  /^(?:authorized_keys2?|crontab|\.?(?:bashrc|bash_profile|bash_login|profile|zshrc|zprofile))$|\.(?:service|timer|socket)$|^(?:s[ug]id|setuid)[\w.-]*$/i;
 
 export function looksLikeLinuxPersist(filename: string, text: string): boolean {
   const base = (filename ?? "").split(/[\\/]/).pop() ?? "";
   // A collected artifact is routinely saved with a .txt/.log wrapper extension.
+  // A .csv has its own importer and its own detection; a name that merely contains "suid" must not
+  // pull one here. `SUID_audit_report.csv` was being claimed.
+  if (/\.(?:csv|tsv|json|jsonl|ndjson|xml|evtx)$/i.test(base)) return false;
   const stem = base.replace(/\.(?:txt|log|out)$/i, "");
   if (SINGLE_ARTIFACT_NAME.test(stem) && classifyLinuxArtifact(stem) !== "unknown") return true;
 
@@ -147,9 +150,19 @@ export function looksLikeLinuxPersist(filename: string, text: string): boolean {
 // launchd member is a Linux-shaped collection and belongs to the Linux importer, which grades the
 // cron and shell artifacts macOS shares with it.
 export function looksLikeMacosPersist(filename: string, text: string): boolean {
-  const t = text ?? "";
-  if (isBinaryPlist(t) || isXmlPlist(t.slice(0, 4096))) return true;
-  if (/\.plist$/i.test(filename ?? "")) return true;
+  const t = (text ?? "").trimStart();
+  if (isBinaryPlist(t)) return true;
+
+  // The plist marker must open the DOCUMENT, not merely appear somewhere in its first 4 KB. The
+  // loose test claimed a Velociraptor export whose rows carried plist file CONTENT, an NDJSON whose
+  // first record's command line mentioned "<plist", and any JSON preference dump named *.plist —
+  // and each of those then produced an empty import, so the whole export was dropped rather than
+  // mis-parsed. A property list starts with an XML declaration, a DOCTYPE or the plist element.
+  if (/^(?:<\?xml[^>]*\?>\s*)?(?:<!DOCTYPE\s+plist\b|<plist\b)/i.test(t.slice(0, 512))) return true;
+
+  // A .plist NAME with no plist body is not one. It was claimed on the filename alone.
+  if (/\.plist$/i.test(filename ?? "") && isXmlPlist(t.slice(0, 4096))) return true;
+
   return splitCollection(t.slice(0, 256_000), classifyMacArtifact).some((m) => m.kind === "launchd");
 }
 
@@ -181,4 +194,3 @@ export function looksLikeVelociraptorFile(filename: string): boolean {
   const n = filename ?? "";
   return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
 }
-

@@ -339,6 +339,8 @@
     "linuxPersistImport.ts": "analysis/ingest",
     "linuxPersistRules.ts": "analysis/ingest",
     "linuxPersistence.ts": "analysis/ingest",
+    "linuxSignal.ts": "analysis/ingest",
+    "linuxSshKeys.ts": "analysis/ingest",
     "logAggregate.ts": "analysis/ingest",
     "logImport.ts": "analysis/ingest",
     "loginGraph.ts": "analysis/detect",

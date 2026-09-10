@@ -98,6 +98,9 @@ export function classifyLinuxArtifact(path: string): LinuxArtifactKind {
   if (base === "crontab" || p.includes("/cron.d/") || p.includes("/spool/cron") || p.includes("/cron/tabs/"))
     return "cron";
   if (/^cron(tab)?[-_.]/.test(base) || base.endsWith(".cron")) return "cron";
+  // /etc/cron.daily, .hourly, .weekly, .monthly hold plain scripts run by run-parts. They are a
+  // classic drop location and were being classified unknown, so nothing in them was ever read.
+  if (/\/cron\.(?:daily|hourly|weekly|monthly)\//.test(p)) return "shellrc";
   if (
     base === ".bashrc" ||
     base === ".bash_profile" ||
@@ -118,6 +121,19 @@ export function classifyLinuxArtifact(path: string): LinuxArtifactKind {
   return "unknown";
 }
 
+/** Members and lines a collection lost to the caps, so the import note can say so. */
+export interface CollectionTruncation {
+  members: number;
+  files: string[];
+}
+
+let lastTruncation: CollectionTruncation = { members: 0, files: [] };
+
+/** What the most recent splitCollection call dropped. Read immediately after it. */
+export function lastCollectionTruncation(): CollectionTruncation {
+  return { members: lastTruncation.members, files: [...lastTruncation.files] };
+}
+
 /**
  * Split one uploaded collection into its member files.
  *
@@ -128,6 +144,7 @@ export function splitCollection(
   classify: ArtifactClassifier = classifyLinuxArtifact,
 ): CollectedFile[] {
   const out: CollectedFile[] = [];
+  lastTruncation = { members: 0, files: [] };
   const lines = (text ?? "").split(/\r?\n/);
   let current: {
     path: string;
@@ -139,6 +156,8 @@ export function splitCollection(
 
   const flush = () => {
     if (!current) return;
+    if (current.body.length > MAX_LINES) lastTruncation.files.push(current.path);
+    if (out.length >= MAX_MEMBERS) lastTruncation.members++;
     if (out.length < MAX_MEMBERS) {
       out.push({
         path: current.path,
@@ -336,8 +355,12 @@ const CRON_SPECIALS = new Set([
  * decides.
  */
 export function cronHasUserColumn(path: string): boolean {
-  const p = path.toLowerCase();
-  return p.endsWith("/crontab") || p.includes("/cron.d/") || p.includes("/cron.daily");
+  const p = path.toLowerCase().replace(/\.(?:txt|log|out)$/, "");
+  // The bare stem matters: an analyst uploading one file names it `crontab`, and readCollection
+  // passes that stem through — so `endsWith("/crontab")` was false, the six-field line was read as
+  // five, and the USER was parsed as the start of the command. Same evidence, two routes, and one
+  // of them silently produced nothing and showed a corrupted command line.
+  return p === "crontab" || p.endsWith("/crontab") || p.includes("/cron.d/") || p.includes("/cron.");
 }
 
 /** The account a spool crontab belongs to, from its filename. */
@@ -394,10 +417,22 @@ export interface SystemdUnit {
   /** Every ExecStart, in order. systemd allows several, and an empty `ExecStart=` RESETS the list. */
   execStart: string[];
   execStartPre: string[];
+  /**
+   * ExecStop, ExecStopPost and ExecReload.
+   *
+   * A payload here runs just as surely as one in ExecStart — ExecStopPost runs on every failure,
+   * which for a deliberately failing unit is a very reliable trigger. Reading only ExecStart and
+   * ExecStartPre missed all three.
+   */
+  execOther: string[];
+  /** Environment= assignments. LD_PRELOAD here is persistence with an innocent ExecStart. */
+  environment: string[];
   user: string;
   restart: string;
   wantedBy: string;
   type: string;
+  /** For a .timer, the unit it starts. */
+  triggers: string;
 }
 
 /**
@@ -412,10 +447,13 @@ export function parseUnit(content: string): SystemdUnit {
     description: "",
     execStart: [],
     execStartPre: [],
+    execOther: [],
+    environment: [],
     user: "",
     restart: "",
     wantedBy: "",
     type: "",
+    triggers: "",
   };
 
   const raw = (content ?? "").split(/\r?\n/).slice(0, MAX_LINES);
@@ -450,6 +488,11 @@ export function parseUnit(content: string): SystemdUnit {
 
     if (section === "unit" && key === "description") unit.description = value;
     if (section === "install" && key === "wantedby") unit.wantedBy = value;
+    // A .timer's [Timer] and a .socket's [Socket] name what they trigger. Reading only [Service]
+    // meant those units were accepted, counted as "read", and always silent.
+    if (section === "timer" && key === "unit") unit.triggers = value;
+    if (section === "socket" && (key === "execstartpost" || key === "execstartpre"))
+      unit.execOther.push(value);
     if (section !== "service") continue;
 
     if (key === "execstart") {
@@ -459,6 +502,16 @@ export function parseUnit(content: string): SystemdUnit {
     } else if (key === "execstartpre") {
       if (value === "") unit.execStartPre = [];
       else unit.execStartPre.push(value);
+    } else if (
+      key === "execstop" ||
+      key === "execstoppost" ||
+      key === "execreload" ||
+      key === "execcondition"
+    ) {
+      if (value === "") unit.execOther = [];
+      else unit.execOther.push(value);
+    } else if (key === "environment" || key === "environmentfile") {
+      if (value) unit.environment.push(value);
     } else if (key === "user") unit.user = value;
     else if (key === "restart") unit.restart = value;
     else if (key === "type") unit.type = value;

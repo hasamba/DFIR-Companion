@@ -21,10 +21,24 @@
 // its description says so, so nobody reads its position on the timeline as a finding.
 
 import type { Severity } from "./stateTypes.js";
-import { splitCollection, singleArtifact, type CollectedFile } from "./linuxPersistence.js";
-import { analyzeLinuxCollection, type LinuxContext, type LinuxSignal } from "./linuxPersistRules.js";
+import {
+  lastCollectionTruncation,
+  MAX_MEMBERS,
+  MAX_LINES,
+  splitCollection,
+  singleArtifact,
+  type CollectedFile,
+} from "./linuxPersistence.js";
+import {
+  analyzeLinuxCollection,
+  MAX_SIGNALS,
+  type LinuxContext,
+  type LinuxSignal,
+} from "./linuxPersistRules.js";
 
 export interface LinuxPersistEvent {
+  /** Derived from the finding, not from an import counter — see stableEventId. */
+  id: string;
   timestamp: string;
   description: string;
   severity: Severity;
@@ -86,6 +100,16 @@ function describe(s: LinuxSignal, label: string): string {
  * Turn graded signals into timeline events. Shared with the macOS importer (#908 item 6), which
  * grades different artifacts but has exactly the same timestamp problem and the same dedup need.
  */
+/** A stable id for one finding, so re-importing the same collection updates rather than duplicates. */
+export function stableEventId(keyPrefix: string, s: LinuxSignal): string {
+  const key = `${keyPrefix}|${s.artifact}|${s.line}|${s.kind}|${s.mitre.join(",")}|${s.reason.slice(0, 80)}`;
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
+  let h2 = 52711;
+  for (let i = key.length - 1; i >= 0; i--) h2 = ((h2 * 31) ^ key.charCodeAt(i)) >>> 0;
+  return `${keyPrefix}-${h.toString(36)}${h2.toString(36)}`;
+}
+
 export function signalsToEvents(
   signals: readonly LinuxSignal[],
   files: readonly CollectedFile[],
@@ -99,7 +123,8 @@ export function signalsToEvents(
     const mtime = mtimeOf.get(s.artifact);
     const timed = !!mtime && Number.isFinite(Date.parse(mtime));
     return {
-      timestamp: timed ? (mtime) : fallbackTime,
+      id: stableEventId(keyPrefix, s),
+      timestamp: timed ? mtime : fallbackTime,
       description: timed
         ? describe(s, label)
         : `${describe(s, label)} [no collected timestamp — placed at the import time, not at a time this change is known to have happened]`.slice(
@@ -109,8 +134,11 @@ export function signalsToEvents(
       severity: s.severity,
       mitreTechniques: s.mitre,
       sources: [source],
-      // The artifact, the line and the rule together. Re-importing the same collection, or the same
-      // file collected twice by two tools, produces one row rather than a second copy.
+      // aggKey is NOT how these dedup. The forensic-event schema has no such field, so zod stripped
+      // it and the promise the first version's comment made was never kept — re-importing the same
+      // collection after adding `# mtime:` lines, which the manual actively encourages, duplicated
+      // every row. stateMerge dedups forensic events by ID, so the ID is what has to be stable, and
+      // it is derived from the artifact, the line and the rule rather than from an import counter.
       aggKey: `${keyPrefix}|${s.artifact}|${s.line}|${s.kind}|${s.mitre.join(",")}`,
       path: s.artifact,
     };
@@ -140,12 +168,25 @@ export function collectionNote(
   const readable = files.filter((f) => f.kind !== "unknown");
   const skipped = files.length - readable.length;
   const undated = readable.filter((f) => !f.mtime).length;
+  const cut = lastCollectionTruncation();
   return (
     `${label} import: ${readable.length} artifact file(s) read` +
     (skipped ? `, ${skipped} member(s) skipped because their path names no artifact class this reads` : "") +
     `, ${signals.length} finding(s)` +
     (undated
       ? `. ${undated} of the files carried no modification time, so whether they changed during the incident could not be checked`
+      : "") +
+    // TRUNCATION IS DISCLOSED. A collection with 600 members reported "500 artifact file(s) read"
+    // and said nothing about the other hundred; a payload on line 6,001 of a .bashrc produced
+    // "0 finding(s)". Silence there reads as a clean result.
+    (cut.members
+      ? `. ${cut.members} further member(s) were NOT read — this import reads at most ${MAX_MEMBERS} files per collection. Split the collection and import the rest.`
+      : "") +
+    (cut.files.length
+      ? `. ${cut.files.length} file(s) were longer than ${MAX_LINES} lines and were read only that far (${cut.files.slice(0, 3).join(", ")}${cut.files.length > 3 ? ", …" : ""}); anything past that point was not assessed.`
+      : "") +
+    (signals.length >= MAX_SIGNALS
+      ? `. The finding cap of ${MAX_SIGNALS} was reached, so some findings are not shown — treat this list as a sample, not the whole picture.`
       : "")
   );
 }
