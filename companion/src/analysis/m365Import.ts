@@ -236,31 +236,47 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
 // not carry an attack technique.
 const CREDENTIAL_FAILURE_CODES = new Set([
   50034, // UserAccountNotFound — the account does not exist (enumeration / spray fan-out)
-  50053, // IdsLocked — locked out after too many wrong passwords, or blocked malicious IP
   50056, // Invalid or null password
   50064, // CredentialAuthenticationError — username/password validation failed
   50126, // InvalidUserNameOrPassword — the wrong-password code
 ]);
 
-// The outcome of one sign-in record, kept separate from severity so a missing/malformed status
-// can never take the success path. `unknown` exists because `Number(x) || 0` used to fold a
-// non-numeric errorCode into 0 — the same value a genuine success carries.
+// 50053 is NOT in that set, because Microsoft documents it as two different conditions: IdsLocked
+// ("the account is locked because the user tried to sign in too many times with an incorrect user
+// ID or password") OR a sign-in blocked because it came from an IP address with malicious activity.
+// The first is the strongest single spray signal there is; the second is a risk/policy block that
+// says nothing about passwords. Asserting T1110 for both would re-introduce, in the allow-list
+// meant to end it, exactly the overstatement this classifier exists to remove. Microsoft's own
+// remediation advice is to read the Failure Reason to tell them apart, so that is what decides —
+// and an absent or unrecognised reason stays the conservative side of the split.
+const LOCKOUT_REASON = /\block(?:ed|out)?\b/i;
+
+// The outcome of one sign-in record, kept separate from severity so a missing, empty or malformed
+// status can never take the success path. `Number(x) || 0` used to fold a non-numeric errorCode
+// into 0 — the same value a genuine success carries — and an ABSENT status took that path too,
+// even though a record reaches this mapper on a risk field alone, with no status at all. Only a
+// finite numeric zero is a success now; everything unreadable is `unknown` and says so.
 type SignInOutcome = "success" | "credential-failure" | "other-failure" | "unknown";
 
-function signInOutcome(raw: unknown): { outcome: SignInOutcome; code: number | null } {
-  if (raw === undefined || raw === null || raw === "") return { outcome: "success", code: 0 };
+function signInOutcome(raw: unknown, failureReason: string): { outcome: SignInOutcome; code: number | null } {
+  if (raw === undefined || raw === null || raw === "") return { outcome: "unknown", code: null };
   const code = Number(raw);
   if (!Number.isFinite(code)) return { outcome: "unknown", code: null };
   if (code === 0) return { outcome: "success", code: 0 };
-  return { outcome: CREDENTIAL_FAILURE_CODES.has(code) ? "credential-failure" : "other-failure", code };
+  const credential =
+    CREDENTIAL_FAILURE_CODES.has(code) || (code === 50053 && LOCKOUT_REASON.test(failureReason));
+  return { outcome: credential ? "credential-failure" : "other-failure", code };
 }
 
 function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const upn = pickStr(rec, ["userPrincipalName", "userDisplayName"]);
   const app = pickStr(rec, ["appDisplayName", "resourceDisplayName"]);
   const ip = extractIp(pickStr(rec, ["ipAddress"]));
-  const { outcome, code } = signInOutcome(getPath(rec, "status.errorCode") ?? getCI(rec, "errorCode"));
   const failureReason = pickStr(rec, ["status.failureReason", "status.additionalDetails"]);
+  const { outcome, code } = signInOutcome(
+    getPath(rec, "status.errorCode") ?? getCI(rec, "errorCode"),
+    failureReason,
+  );
   const risk = pickStr(rec, ["riskLevelDuringSignIn", "riskLevelAggregated", "riskState"]).toLowerCase();
   const city = pickStr(rec, ["location.city"]);
   const country = pickStr(rec, ["location.countryOrRegion"]);

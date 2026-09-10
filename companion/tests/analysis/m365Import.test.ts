@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 
+// One Entra sign-in record. Module-scoped so every describe block can build one.
+const signinRec = (over: Record<string, unknown>) => ({
+  createdDateTime: "2023-05-02T08:10:00Z",
+  userPrincipalName: "v@victim.com",
+  appDisplayName: "Azure CLI",
+  ipAddress: "198.51.100.9",
+  ...over,
+});
+
 // ── M365 Unified Audit Log records (Search-UnifiedAuditLog shape: AuditData JSON string) ──
 function ualRow(auditData: Record<string, unknown>, outer: object = {}): object {
   return {
@@ -127,14 +136,6 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(r.events[0].description).toContain("[FAILED");
   });
 
-  const signinRec = (over: Record<string, unknown>) => ({
-    createdDateTime: "2023-05-02T08:10:00Z",
-    userPrincipalName: "v@victim.com",
-    appDisplayName: "Azure CLI",
-    ipAddress: "198.51.100.9",
-    ...over,
-  });
-
   it("flags a SUCCESSFUL ROPC legacy-auth sign-in (BAV2ROPC UserAgent) as Medium", () => {
     const r = parseM365Audit(
       JSON.stringify([signinRec({ status: { errorCode: 0 }, userAgent: "python-requests/2.28 BAV2ROPC" })]),
@@ -189,15 +190,12 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(e.description).toContain(`[FAILED ${code}`);
   });
 
-  it.each([50126, 50053, 50034, 50056, 50064])(
-    "keeps errorCode %i as a credential failure (T1110)",
-    (code) => {
-      const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: code } })]));
-      const e = r.events[0];
-      expect(e.mitreTechniques).toContain("T1110");
-      expect(e.severity).toBe("Medium");
-    },
-  );
+  it.each([50126, 50034, 50056, 50064])("keeps errorCode %i as a credential failure (T1110)", (code) => {
+    const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: code } })]));
+    const e = r.events[0];
+    expect(e.mitreTechniques).toContain("T1110");
+    expect(e.severity).toBe("Medium");
+  });
 
   // `Number(x) || 0` folded a non-numeric status into 0 — the value a genuine success carries — so
   // an unreadable outcome took the success path and shared the success aggregation bucket.
@@ -267,5 +265,65 @@ describe("parseM365Audit — options & edges", () => {
     const r = parseM365Audit("not json");
     expect(r.format).toBe("empty");
     expect(r.events).toHaveLength(0);
+  });
+  // ADVERSARIAL: a record can reach mapSignIn via `riskState` alone, with no status field at all.
+  // Mapping an ABSENT errorCode to success asserts an outcome the record does not carry — the same
+  // hole as the old `Number(x) || 0`, kept open for the absent case while the malformed case closed.
+  it("does not read an ABSENT errorCode as a success", () => {
+    const r = parseM365Audit(JSON.stringify([signinRec({ riskState: "atRisk" })]));
+    expect(r.events[0].description).toContain("outcome unknown");
+  });
+
+  it("does not read an empty-string errorCode as a success", () => {
+    const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: "" } })]));
+    const e = r.events[0];
+    expect(e.description).toContain("outcome unknown");
+    expect(e.mitreTechniques).not.toContain("T1110");
+  });
+
+  it("does not elevate a ROPC record whose outcome is unknown as though the grant landed", () => {
+    const r = parseM365Audit(
+      JSON.stringify([signinRec({ status: {}, userAgent: "python-requests/2.28 BAV2ROPC" })]),
+    );
+    const e = r.events[0];
+    expect(e.description).toContain("outcome unknown");
+    expect(e.severity).not.toBe("Medium");
+  });
+
+  // ADVERSARIAL: Microsoft documents 50053 as TWO different conditions — a credential lockout, or
+  // a sign-in blocked because the IP had malicious activity. Asserting T1110 for both turns a
+  // policy/risk block into brute-force evidence, which is the overstatement this file is fixing.
+  it("does not claim brute force for a 50053 that does not state a lockout", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({
+          status: {
+            errorCode: 50053,
+            failureReason: "Sign-in was blocked because it came from an IP address with malicious activity.",
+          },
+        }),
+      ]),
+    );
+    expect(r.events[0].mitreTechniques).not.toContain("T1110");
+  });
+
+  it("does not claim brute force for a bare 50053 with no failure reason", () => {
+    const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 50053 } })]));
+    expect(r.events[0].mitreTechniques).not.toContain("T1110");
+  });
+
+  it("does claim brute force for a 50053 whose reason states the account is locked", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({
+          status: {
+            errorCode: 50053,
+            failureReason:
+              "The account is locked, you've tried to sign in too many times with an incorrect user ID or password.",
+          },
+        }),
+      ]),
+    );
+    expect(r.events[0].mitreTechniques).toContain("T1110");
   });
 });

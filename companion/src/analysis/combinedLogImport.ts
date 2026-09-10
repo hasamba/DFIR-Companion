@@ -61,6 +61,7 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { boundedAggKey } from "./aggKey.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -212,10 +213,18 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
     // attribution, which is worse than the missing field it replaces. Keying on it costs one group
     // per client per path; these rows are Info and land in the analyst-only super-timeline, so the
     // extra groups do not reach the AI prompt.
-    aggKey:
-      `weblog|${method}|${host}|${uri.split("?")[0]}|${status}|${client}${spill ? `|spill:${spill.families.join(",")}` : ""}`
-        .toLowerCase()
-        .slice(0, 400),
+    //
+    // FIELD ORDER IS THE POINT, and the request path is the reason. It is unbounded and it is
+    // ATTACKER-CONTROLLED, so any discriminator placed after it can be pushed past the key's length
+    // bound by a long enough URI — and a truncated key does not merely miscount, it collapses two
+    // rows and DELETES one row's identity. With the path in the middle, a 600-character request
+    // would have folded two clients back into one attributed row, and taken the spill marker with
+    // it. So: every bounded field first (method, status, client, host, spill), the path LAST, and
+    // boundedAggKey rather than a raw slice — it keeps a digest of the FULL key in the tail, so two
+    // long paths sharing a 400-character prefix stay two rows. This is the rule aggKey.ts states.
+    aggKey: boundedAggKey(
+      `weblog|${method}|${status}|${client}|${host}${spill ? `|spill:${spill.families.join(",")}` : ""}|${uri.split("?")[0]}`.toLowerCase(),
+    ),
     sources: [COMBINED_LOG_SOURCE],
     ...(client ? { srcIp: client } : {}),
   };
