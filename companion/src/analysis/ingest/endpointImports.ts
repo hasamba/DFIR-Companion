@@ -11,6 +11,18 @@ import { parseThorReport, type ThorImportOptions } from "../thorImport.js";
 import { parseWerReport, werSignal, werDescription, werDedupKey, type WerCaseContext } from "../werImport.js";
 import { parseLinuxPersist, incidentWindowFromTimeline } from "../linuxPersistImport.js";
 import { parseMacPersist } from "../macosPersistImport.js";
+import {
+  gradeRemote,
+  gradeTransfer,
+  isMegaLog,
+  isRcloneConfig,
+  isRcloneLog,
+  parseMegaLog,
+  parseRcloneConfig,
+  parseRcloneLog,
+  versionNote,
+  type RcloneCaseContext,
+} from "../rcloneImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -648,6 +660,125 @@ export async function importMacosPersist(
       threadsOpened: [],
       threadsClosed: [],
       timelineNote: parsed.note,
+      summary: "",
+    });
+
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+/**
+ * Import rclone or MEGAsync evidence (#908 item 9).
+ *
+ * Three artifacts arrive under this one kind and answer different questions. The CONFIGURATION says
+ * where data could have gone and under whose account — capability, not proof — and every event it
+ * produces says so. The TRANSFER LOGS say what actually moved, with the byte total no cloud audit
+ * log records.
+ *
+ * Credentials are redacted inside the parser, before anything is built from the file, so no later
+ * change to display, export or prompt-building can leak an OAuth token or an S3 secret key.
+ */
+export async function importRclone(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+
+    // What the case already knows, so a configured remote can be tied to an execution or a
+    // connection instead of standing alone.
+    const caseCtx: RcloneCaseContext = {
+      processNames: new Set(
+        state.forensicTimeline.map((e) => (e.processName ?? "").toLowerCase().split(/[\\/]/).pop() ?? ""),
+      ),
+      networkHosts: new Set(state.forensicTimeline.map((e) => (e.dstIp ?? "").toLowerCase()).filter(Boolean)),
+    };
+
+    const events: {
+      id: string;
+      timestamp: string;
+      description: string;
+      severity: Severity;
+      mitreTechniques: string[];
+      relatedFindingIds: string[];
+      sourceScreenshots: string[];
+      sources: string[];
+    }[] = [];
+    const iocValues = new Set<string>();
+    let what = "";
+
+    const remotes = isRcloneConfig(text) ? parseRcloneConfig(text) : [];
+    for (const remote of remotes) {
+      const signal = gradeRemote(remote, caseCtx);
+      events.push({
+        id: `${opts.idPrefix}e${events.length + 1}`,
+        timestamp: opts.importedAt,
+        description: signal.description,
+        severity: signal.severity,
+        mitreTechniques: signal.mitre,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sources: ["rclone config"],
+      });
+      for (const key of ["endpoint", "host", "url", "bucket", "container", "account", "user"]) {
+        const v = remote.settings[key];
+        if (v) iocValues.add(v);
+      }
+    }
+    if (remotes.length) what = `${remotes.length} configured remote(s)`;
+
+    const transfers = isRcloneLog(text)
+      ? parseRcloneLog(text)
+      : isMegaLog(text)
+        ? parseMegaLog(text, opts.importedAt)
+        : [];
+    const remoteNames = remotes.map((r) => r.name);
+    for (const record of transfers) {
+      const signal = gradeTransfer(record, remoteNames);
+      if (!signal) continue;
+      events.push({
+        id: `${opts.idPrefix}e${events.length + 1}`,
+        timestamp: record.time || opts.importedAt,
+        description: signal.description,
+        severity: signal.severity,
+        mitreTechniques: signal.mitre,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sources: [record.destination === "MEGA" ? "MEGAsync log" : "rclone log"],
+      });
+      if (record.file) iocValues.add(record.file);
+    }
+    if (transfers.length) what = `${what ? `${what}, ` : ""}${transfers.length} transfer record(s)`;
+
+    if (events.length === 0) return noteEmptyImport(ctx, caseId, opts, "rclone/MEGAsync", 0);
+
+    const graded = applySeverityFloor(events as never, opts.minSeverity);
+    const iocs = [...iocValues].slice(0, 200);
+
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: iocs.map((v, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: "file" as const, value: v })),
+      mitreTechniques: [],
+      forensicEvents: graded,
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: `rclone/MEGAsync import: ${what}. ${versionNote(text)}`,
       summary: "",
     });
 

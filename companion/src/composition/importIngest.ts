@@ -259,6 +259,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importLinuxPersist(caseId, text, base));
       case "macospersist":
         return observe(pipeline.importMacosPersist(caseId, text, base));
+      case "rclone":
+        return observe(pipeline.importRclone(caseId, text, base));
       case "csv":
         return observe(pipeline.analyzeCsv(caseId, text, base));
       case "log":

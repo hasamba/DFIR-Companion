@@ -536,6 +536,10 @@ export class AnalysisPipeline {
     return ingest.importMacosPersist(this.importCtx, ...args);
   }
 
+  importRclone(...args: ImporterArgs<typeof ingest.importRclone>): Promise<InvestigationState> {
+    return ingest.importRclone(this.importCtx, ...args);
+  }
+
   importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
     return ingest.importCybertriage(this.importCtx, ...args);
   }

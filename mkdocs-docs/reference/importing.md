@@ -33,6 +33,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **Browser artifacts** | Hindsight JSON or CSV — Chrome/Edge/Brave history, downloads and interpretations. Every row is Info: browser artifacts are evidence, not verdicts, so they land in the super-timeline |
 | **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance — quarantine rows carry both the data URL and the referring origin URL; **persistence artifacts** — LaunchAgent/LaunchDaemon plists, cron and shell profiles (see [Collecting macOS persistence artifacts](#collecting-macos-persistence-artifacts)) |
 | **Mobile** | iLEAPP / ALEAPP TSV exports (iOS and Android extractions), one artifact per import. Generic by design: LEAPP artifacts share no schema beyond a timestamp column, so the parser finds that column and renders the rest |
+| **Exfiltration tooling** | rclone configuration (`rclone.conf`), rclone transfer log, MEGAsync/megacmd log — recovers remote destinations, file names, outcomes and the byte total. **Credentials are redacted in the parser**, so no token or secret key is ever stored, displayed, exported or sent to an AI |
 | **Malware analysis** | CAPEv2 report.json, CrowdStrike Falcon Sandbox summary JSON, sandbox report arrays, YARA CLI scan output (`yara -s -m`) |
 | **Super-timeline** | Plaso/log2timeline psort CSV (dynamic and l2tcsv) — files over 200 MB are streamed line-by-line automatically; filter your `psort` output first to reduce size |
 | **Linux** | shell history (`.bash_history` / `.zsh_history`, with or without timestamps), auditd logs (raw/ausearch/aureport), journald JSON (`journalctl -o json`), **persistence artifacts** — SSH authorized keys, cron, systemd units, shell profiles, SUID listings and PATH (see [Collecting Linux persistence artifacts](#collecting-linux-persistence-artifacts)) |
@@ -126,6 +127,35 @@ commercial software are unsigned, and almost every Mac application installs a La
 status and a quarantine record raise and explain a job that is already suspicious for a reason of its
 own: a program in a directory anything can write, a label that claims to be Apple's on something
 Apple did not ship, or a command that downloads and executes in one line.
+
+### rclone and MEGAsync evidence
+
+Three artifacts, all plain text, all detected by content — the filename is never needed:
+
+| Artifact | Where it usually is | What it answers |
+|---|---|---|
+| `rclone.conf` | `%APPDATA%\rclone\rclone.conf`, `~/.config/rclone/rclone.conf` | Where data COULD go, and under whose account |
+| rclone log | wherever `--log-file` pointed | What actually moved, and how many bytes |
+| `MEGAsync.log` | `%LOCALAPPDATA%\Mega Limited\MEGAsync\logs\` | Which files finished uploading to MEGA |
+
+**A configuration is not proof of exfiltration.** Every finding from `rclone.conf` says so in as
+many words. It establishes capability and intent — someone set this host up to move data to that
+destination. The transfer log is what shows data moving; the config file cannot.
+
+**Credentials never reach the tool.** An `rclone.conf` holds live OAuth refresh tokens, S3 secret
+keys and service-account JSON — often the victim's own, because operators frequently configure the
+remote using the victim's cloud account. Redaction happens inside the parser, so the value never
+exists in the imported data at all. What you get instead is which credential keys were present and
+how long each value was, plus a reminder to rotate them. Treat every credential in a collected
+config as live.
+
+**The byte total is real.** An rclone run summary carries the number of bytes transferred. No cloud
+provider's audit log records that, so where you have both, the rclone log is the stronger evidence
+of volume.
+
+**Version**: neither artifact is required to declare one. Where a version appears the import note
+records it; where it does not, the note says the format could not be confirmed against the tool that
+wrote it.
 
 ### Intact (trimmed VolWeb output)
 

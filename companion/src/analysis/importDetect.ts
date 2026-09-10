@@ -34,6 +34,8 @@ import {
   isAuditd,
   looksLikeLinuxPersist,
   looksLikeMacosPersist,
+  looksLikeRcloneEvidence,
+  looksLikeVelociraptorFile,
 } from "./importDetectSources.js";
 
 // The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
@@ -586,19 +588,6 @@ function isEmail(filename: string, text: string): boolean {
   return hasSpecific && headers >= 2;
 }
 
-// Velociraptor names its JSON exports after the collected artifact, e.g.
-// `Velociraptor-Windows.Triage.HighValueMemory.json` or `Generic.System.Pstree.json`. Many
-// artifacts (process lists, file listings, memory acquisition) emit rows with no distinctive
-// content signature, so they sniff as the generic SIEM fallback. When the FILENAME marks a
-// Velociraptor export we route those to the Velociraptor importer instead — it reads each
-// artifact's own columns and tags the source, rather than mislabeling rows "SIEM event:".
-const VR_ARTIFACT =
-  /\b(?:Windows|Linux|MacOS|Generic|Custom|Server|Exchange|Admin|Network)\.[A-Za-z]\w*(?:\.\w+)+/;
-function looksLikeVelociraptorFile(filename: string): boolean {
-  const n = filename ?? "";
-  return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
-}
-
 // ───────────────────────────── top-level ─────────────────────────────
 
 export function detectImportKind(filename: string, text: string): ImportKind {
@@ -609,11 +598,13 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // reads none of its structure. isWerReport needs EventType AND a WER marker, so an INI does not match.
   if (isWerReport(t)) return "wer";
 
-  // Persistence collections (#908 items 5 and 6). Ahead of the JSON sniff, not just the line formats:
-  // a unit file opens with `[Unit]`, and the leading `[` sent it to the JSON path, which returned
-  // "unknown" — a 400 for a file already accepted. macOS first: see importDetectSources.ts.
+  // Persistence collections and rclone/MEGAsync evidence (#908 items 5, 6, 9). Ahead of the JSON
+  // sniff, not just the line formats: a systemd unit and an rclone.conf both open with `[`, which
+  // sent them to the JSON path and returned "unknown" — a 400 for a file already accepted. The
+  // signatures live in importDetectSources.ts; macOS is asked before Linux, which is a superset.
   if (looksLikeMacosPersist(filename, t)) return "macospersist";
   if (looksLikeLinuxPersist(filename, t)) return "linuxpersist";
+  if (looksLikeRcloneEvidence(t)) return "rclone";
 
   // LEAPP TSVs carry no in-content marker; the filename is the only signal. See the explicit
   // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.

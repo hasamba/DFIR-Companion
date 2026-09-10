@@ -1,6 +1,7 @@
 import { getCI, isObject } from "./siemImport.js";
 import { classifyLinuxArtifact, splitCollection } from "./linuxPersistence.js";
 import { classifyMacArtifact, isBinaryPlist, isXmlPlist } from "./macosPersistence.js";
+import { isRcloneConfig, isRcloneLog, isMegaLog } from "./rcloneImport.js";
 
 // Format detectors for the sources added alongside the identity/mobile/browser importers — Okta,
 // Google Workspace, Hindsight, macOS and LEAPP.
@@ -151,3 +152,33 @@ export function looksLikeMacosPersist(filename: string, text: string): boolean {
   if (/\.plist$/i.test(filename ?? "")) return true;
   return splitCollection(t.slice(0, 256_000), classifyMacArtifact).some((m) => m.kind === "launchd");
 }
+
+// ───────────────────────── rclone / MEGAsync evidence (#908 item 9) ─────────────────────────
+//
+// Three artifacts, one kind: the rclone configuration, the rclone transfer log, and the MEGAsync
+// log. Each has a signature of its own, so the filename is never needed and never trusted.
+//
+// The config check is the fussy one — an rclone.conf is an ordinary INI, and claiming every INI
+// would be a mis-route with real cost. It requires a section header AND a `type =` naming a known
+// rclone backend, which is the one key every remote has and almost no other INI does.
+export function looksLikeRcloneEvidence(text: string): boolean {
+  const t = text ?? "";
+  return isRcloneConfig(t) || isRcloneLog(t) || isMegaLog(t);
+}
+
+// Moved here from importDetect.ts, which sits at the 800-line limit; the dispatch ORDER is the
+// contract that has to stay in that file, the predicate does not.
+//
+// Velociraptor names its JSON exports after the collected artifact, e.g.
+// `Velociraptor-Windows.Triage.HighValueMemory.json` or `Generic.System.Pstree.json`. Many
+// artifacts (process lists, file listings, memory acquisition) emit rows with no distinctive
+// content signature, so they sniff as the generic SIEM fallback. When the FILENAME marks a
+// Velociraptor export we route those to the Velociraptor importer instead — it reads each
+// artifact's own columns and tags the source, rather than mislabeling rows "SIEM event:".
+const VR_ARTIFACT =
+  /\b(?:Windows|Linux|MacOS|Generic|Custom|Server|Exchange|Admin|Network)\.[A-Za-z]\w*(?:\.\w+)+/;
+export function looksLikeVelociraptorFile(filename: string): boolean {
+  const n = filename ?? "";
+  return /velociraptor/i.test(n) || VR_ARTIFACT.test(n);
+}
+

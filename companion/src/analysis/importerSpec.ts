@@ -40,6 +40,7 @@ export const IMPORT_KINDS = [
   "wer",
   "linuxpersist",
   "macospersist",
+  "rclone",
   "email",
   "auditd",
   "journald",

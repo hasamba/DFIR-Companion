@@ -402,6 +402,7 @@
     "pushTokenStore.ts": "analysis/notify",
     "queryTranslate.ts": "analysis/ai",
     "ransomwarePrecursor.ts": "analysis/timeline",
+    "rcloneImport.ts": "analysis/ingest",
     "rdpLateralDetect.ts": "analysis/ingest",
     "reconTechniques.ts": "analysis/intel",
     "redactPaths.ts": "analysis/privacy",
