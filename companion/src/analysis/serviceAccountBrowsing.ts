@@ -44,7 +44,10 @@ export const SERVICE_BROWSING_MARKER = "[noninteractive account browsing:";
 
 /** Has this pass already annotated this description? Anchored, so imported text cannot fake it. */
 export function alreadyMarked(description: string): boolean {
-  return /\[noninteractive account browsing:[\s\S]*\]\s*$/.test(description ?? "");
+  // The pass's OWN wording, not just the marker — see the same guard in containerEscape.ts.
+  return /\[noninteractive account browsing: (?:[^\s\]]+ browsed|\d+ of \d+|All \d+|This case holds)[\s\S]{0,1200}?\]\s*$/.test(
+    description ?? "",
+  );
 }
 
 /** How close a corroborating logon or collection event must be. */
@@ -278,9 +281,17 @@ export function namesAccount(text: string, account: string): boolean {
   // asserting two events share an account, and a wrong yes accuses a person.
   const intro =
     "(?:^|\\baccount(?:\\s*name)?\\s*[:=]\\s*|\\b(?:for|by|as|user|username|owner|caller|principal)\\s+)";
-  // The domain prefix may carry a space — Windows writes `NT AUTHORITY\SYSTEM`, and a prefix of
-  // word characters alone never matched it.
-  const domain = "(?:[\\w.-]+(?:\\s+[\\w.-]+){0,2}\\\\)?";
+  // THE DOMAIN MUST AGREE WHEN BOTH SIDES CARRY ONE. `CORP\\svc` and `OTHER\\svc` are different
+  // principals — the same service name in two domains is two accounts, and treating them as one
+  // would corroborate a finding with an unrelated domain's activity.
+  //
+  // A bare mention with no domain still matches: the importers frequently write the account without
+  // one, and refusing those would lose most real corroboration.
+  const accountDomain = norm(account).includes("\\") ? norm(account).split("\\")[0] : "";
+  const domain = accountDomain
+    ? `(?:${accountDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\\\)?`
+    : // The prefix may carry a space — Windows writes `NT AUTHORITY\SYSTEM`.
+      "(?:[\\w.-]+(?:\\s+[\\w.-]+){0,2}\\\\)?";
   return new RegExp(`${intro}${domain}${escaped}(?![\\w$.-])`, "i").test(text ?? "");
 }
 
@@ -386,17 +397,31 @@ export function gradeBrowsing(
     `${record.account} browsed ${record.target}, and that account is noninteractive: ${classification.basis}.`,
   ];
 
+  // A NAMING CONVENTION CANNOT REACH HIGH. It is a hint about a label, not a property of the
+  // account, and the corroboration below would otherwise promote a guess to a High-severity
+  // assertion about a person who may simply have a service-shaped username.
+  const ceiling: Severity = weak ? "Medium" : "Critical";
+  const raise = (to: Severity) => {
+    if (RANK[to] > RANK[severity] && RANK[to] <= RANK[ceiling]) severity = to;
+  };
+
   if (corroboration.logonId) {
     parts.push(
       `An interactive logon by the same account sits nearby (${corroboration.logonId}), which is how a desktop session under a service identity is established.`,
     );
-    if (RANK[severity] < RANK.High) severity = "High";
+    raise("High");
   }
   if (corroboration.collectionId) {
     parts.push(
       `Archiving or copying activity by the same account sits nearby (${corroboration.collectionId}). That is a SEPARATE artifact from the browsing — read together they suggest collection, but neither alone establishes it.`,
     );
-    if (RANK[severity] < RANK.High) severity = "High";
+    raise("High");
+  }
+
+  if (weak && (corroboration.logonId || corroboration.collectionId)) {
+    parts.push(
+      "This account was classified from a NAMING CONVENTION rather than from a property of the account, so the corroboration above does not raise it further — confirm the account is not a person's.",
+    );
   }
 
   parts.push(WHAT_IT_SHOWS[record.kind]);

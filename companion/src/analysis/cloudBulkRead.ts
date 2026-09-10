@@ -32,8 +32,8 @@
 // thousands of objects on a schedule, from one principal, all night, every night. Breadth alone is
 // therefore a question, not an answer, and it is graded Medium with the alternative named. It
 // becomes High when something else about the reader is wrong: the role was assumed by a different
-// principal shortly before, or the source address is outside the cloud, or the client is an
-// interactive sync tool rather than the service that normally does this work.
+// principal shortly before, or the source address is a public one that has to be placed, or the
+// client is an interactive sync tool rather than the service that normally does this work.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
@@ -118,7 +118,7 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
     id: e.id,
     time,
     principal: principal.trim(),
-    sourceIp: (c?.network?.source?.address ?? e.srcIp ?? "").trim(),
+    sourceIp: (c?.network?.source?.address ?? e.srcIp ?? sourceFromDescription(e.description ?? "")).trim(),
     userAgent: clientFromDescription(e.description ?? ""),
     action: action.trim(),
     container,
@@ -156,6 +156,18 @@ function actionFromDescription(d: string): string {
 }
 
 /**
+ * The caller address a non-AWS importer named, read back from its description.
+ *
+ * GCP, Azure and M365 put the address in prose and set neither the canonical field nor `srcIp`, so
+ * every source collapsed to "" and fifty different callers were grouped as one. That is the
+ * opposite of what the source dimension is for: it made a distributed read look like a single
+ * session, and it merged sessions that should never have been compared.
+ */
+function sourceFromDescription(d: string): string {
+  return /\sfrom\s([A-Za-z0-9.:]+)(?=\s|$)/.exec(d ?? "")?.[1] ?? "";
+}
+
+/**
  * The object a non-AWS importer named, read back from its description.
  *
  * Only awsImport stamps `canonical.cloud.resource`, so without this the container and the object
@@ -172,7 +184,10 @@ function resourceFromDescription(d: string): string {
 }
 
 function principalFromDescription(d: string): string {
-  return /\bby\s+([^\s][^\n]*?)(?:\s+from\s|\s+in\s|\s*\[|$)/.exec(d ?? "")?.[1]?.trim() ?? "";
+  // Stops before " on " and " → " as well as "from"/"in"/"[". Adding the resource fallback made
+  // those two into terminators the parser did not know: without a source address the object path
+  // was swallowed into the principal, so every read became a DIFFERENT principal and nothing grouped.
+  return /\bby\s+([^\s][^\n]*?)(?:\s+from\s|\s+in\s|\s+on\s|\s+→\s|\s*\[|$)/.exec(d ?? "")?.[1]?.trim() ?? "";
 }
 
 /**
@@ -229,19 +244,27 @@ export function groupBulkReads(
 
   const byKey = new Map<string, ReadRecord[]>();
   let bestCounts: { objects: number; containers: number } | null = null;
+  // The cap bounds COLLECTION, not just the scan. Materialising every record and sorting every full
+  // group before slicing meant a million-read export allocated and sorted a million objects while
+  // holding the state lock — the cap saved the scan and nothing else.
+  let dropped = 0;
   for (const e of events) {
     const r = readCloudRecord(e);
     if (!r) continue;
-    const list = byKey.get(groupKey(r)) ?? [];
+    const key = groupKey(r);
+    const list = byKey.get(key) ?? [];
+    if (list.length >= MAX_RECORDS_PER_GROUP) {
+      dropped++;
+      continue;
+    }
     list.push(r);
-    byKey.set(groupKey(r), list);
+    byKey.set(key, list);
   }
 
   const out: BulkGroup[] = [];
   for (const records of byKey.values()) {
     records.sort((a, b) => a.time - b.time);
-    // The cap is per group, and a group that hits it carries `truncated` so the finding says so.
-    const list = records.slice(0, MAX_RECORDS_PER_GROUP);
+    const list = records;
 
     // ONE forward pass with two pointers, not a fresh scan from every index.
     //
@@ -274,8 +297,13 @@ export function groupBulkReads(
         if (l.container) drop(containerCounts, l.container);
         left++;
       }
+      // A window is only a candidate if it QUALIFIES. Ranking by score first and testing the winner
+      // afterwards let a window with 49 objects across 4 buckets (score 53, qualifying for neither
+      // threshold) beat one with 50 objects in 1 bucket (score 51, qualifying) — and the group was
+      // then dropped entirely. A near-miss must never displace a hit.
+      const qualifies = objectCounts.size >= minObjects || containerCounts.size >= minContainers;
       const score = objectCounts.size + containerCounts.size;
-      if (!bestCounts || score > bestCounts.objects + bestCounts.containers) {
+      if (qualifies && (!bestCounts || score > bestCounts.objects + bestCounts.containers)) {
         // Only the BOUNDS and the counts are recorded here. Materialising the sample arrays on
         // every improvement put an O(n) copy inside the loop and gave back the quadratic cost the
         // sliding window was written to remove. The sample is built once, after the scan.
@@ -284,8 +312,7 @@ export function groupBulkReads(
         bestCounts = { objects: objectCounts.size, containers: containerCounts.size };
       }
     }
-    if (!bestCounts || bestRight < 0) continue;
-    if (bestCounts.objects < minObjects && bestCounts.containers < minContainers) {
+    if (!bestCounts || bestRight < 0) {
       bestCounts = null;
       continue;
     }
@@ -321,7 +348,7 @@ export function groupBulkReads(
       // listOnly is judged on the WINDOW, not the whole group: a group whose densest window is
       // enumeration-only but which holds one object read elsewhere is not enumeration-only.
       listOnly: bestCounts.objects === 0 && window.every((r) => LIST_ONLY_RE.test(r.action)),
-      truncated: records.length > MAX_RECORDS_PER_GROUP,
+      truncated: dropped > 0,
     });
     bestCounts = null;
   }
@@ -329,7 +356,14 @@ export function groupBulkReads(
   // Biggest first, then bounded: an export covering a whole estate can hold many groups, and the
   // analyst needs the largest, not the first twenty alphabetically.
   out.sort((a, b) => b.objectCount + b.containerCount - (a.objectCount + a.containerCount));
+  lastDropped = dropped;
   return out.slice(0, MAX_GROUPS);
+}
+
+/** How many object-read records the last groupBulkReads call could not examine. */
+let lastDropped = 0;
+export function lastDroppedRecords(): number {
+  return lastDropped;
 }
 
 // ─────────────────────────── role assumption ───────────────────────────
@@ -425,7 +459,6 @@ export interface BulkVerdict {
 export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict | null {
   const expected = (ctx.expectedPrincipals ?? []).map(lower);
   if (expected.some((p) => lower(group.principal) === p)) return null;
-  if ((ctx.recurringPrincipals ?? []).some((p) => lower(p) === lower(group.principal))) return null;
 
   const minutes = Math.max(1, Math.round((Date.parse(group.last) - Date.parse(group.first)) / 60000));
   const what = group.objectCount
@@ -441,12 +474,26 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
   }
   const reach = addressReach(group.sourceIp);
   if (reach === "public")
-    corroboration.push(`the reads came from ${group.sourceIp}, an address outside the cloud`);
+    // NOT "outside the cloud" — that claim is false for a cloud VM's own public address, a NAT
+    // gateway and a hosted runner, all of which are public. What is true is that it is routable,
+    // and that the analyst has to place it.
+    corroboration.push(
+      `the reads came from ${group.sourceIp}, a public address — place it before relying on this, because a cloud VM, a NAT gateway and a hosted runner all present one`,
+    );
   if (INTERACTIVE_CLIENT_RE.test(group.userAgent)) {
     corroboration.push(
       `the client was ${group.userAgent.slice(0, 80)}, a tool a person drives rather than a scheduled service`,
     );
   }
+
+  // THE SCHEDULE BASELINE ONLY APPLIES WHEN NOTHING ELSE IS WRONG.
+  //
+  // It used to return null outright, before any corroboration was considered — so a principal that
+  // had read one routine object on three days was silenced completely, including the day it read
+  // five thousand objects from a new public address with rclone. A schedule explains VOLUME. It
+  // does not explain a new source, a new client, or a role someone else just assumed.
+  const scheduled = (ctx.recurringPrincipals ?? []).some((p) => lower(p) === lower(group.principal));
+  if (scheduled && corroboration.length === 0) return null;
 
   const severity: Severity = corroboration.length ? "High" : "Medium";
   const head =
@@ -456,7 +503,10 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
     ".";
 
   const why = corroboration.length
-    ? ` What makes this more than volume: ${corroboration.join("; ")}.`
+    ? ` What makes this more than volume: ${corroboration.join("; ")}.` +
+      (scheduled
+        ? " This principal also reads on a schedule, which explains the volume but explains none of the above."
+        : "")
     : " Volume alone is the only signal here. Backup, replication, indexing and analytics jobs all read at this scale on a schedule — confirm against the expected workload for this principal before treating it as collection.";
 
   const limits =
@@ -465,7 +515,7 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
     // first version's two-state test did exactly that for every IPv6 and IPv4-mapped address, and
     // then printed "Volume alone is the only signal here" — an absence stated as a result.
     (reach === "unreadable" && group.sourceIp
-      ? ` The source address recorded for these reads (${group.sourceIp}) could not be read, so whether they came from outside the cloud is unknown here rather than answered.`
+      ? ` The source address recorded for these reads (${group.sourceIp}) could not be read, so where they came from is unknown here rather than answered.`
       : "") +
     (group.truncated
       ? ` This principal produced more read records than one pass measures (${MAX_RECORDS_PER_GROUP}); the counts above are from the earliest of them and the real total is higher.`
@@ -492,10 +542,22 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
 
 /** A stable id for a group's summary, so a re-merge replaces its summary instead of adding another. */
 export function summaryId(group: BulkGroup): string {
-  const key = `${lower(group.principal)}|${group.sourceIp}|${lower(group.userAgent)}`;
-  let h = 5381;
-  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
-  return `bulkread-${h.toString(36)}`;
+  // THE WINDOW'S START IS PART OF THE IDENTITY. Without it, one principal reading on Monday and
+  // again on Friday from the same address produced ONE id, so the second summary replaced the
+  // first and a whole session vanished from the record.
+  //
+  // And the hash is 64-bit, in two independent halves. A 32-bit djb2 collides on inputs an
+  // attacker can choose — `principal-1r` and `principal-30` hashed identically — and a collision
+  // here does not merely confuse two rows, it DELETES one, because replacement filters by id.
+  const key = `${lower(group.principal)}|${group.sourceIp}|${lower(group.userAgent)}|${group.first}`;
+  let h1 = 5381;
+  let h2 = 52711;
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i);
+    h1 = ((h1 * 33) ^ c) >>> 0;
+    h2 = ((h2 * 31) ^ (c + i)) >>> 0;
+  }
+  return `bulkread-${h1.toString(36)}${h2.toString(36)}`;
 }
 
 /**
@@ -532,7 +594,8 @@ export function summarizeBulkReads(
 ): ForensicEvent[] {
   const groups = groupBulkReads(events, opts);
   const coverage = objectLoggingEvent(events);
-  if (groups.length === 0 && !coverage) return events as ForensicEvent[];
+  const truncated = truncationEvent(events, lastDroppedRecords());
+  if (groups.length === 0 && !coverage && !truncated) return events as ForensicEvent[];
 
   const assumptions = ctx.assumptions ?? roleAssumptions(events);
   const recurring = ctx.recurringPrincipals ?? recurringPrincipals(events);
@@ -568,6 +631,10 @@ export function summarizeBulkReads(
     replaced.add(coverage.id);
     summaries.push(coverage);
   }
+  if (truncated) {
+    replaced.add(truncated.id);
+    summaries.push(truncated);
+  }
   if (summaries.length === 0) return events as ForensicEvent[];
 
   // A previous merge's summary for the same group is replaced, not duplicated: the group grows as
@@ -585,6 +652,32 @@ export const LOGGING_COVERAGE_ID = "cloud-object-logging-coverage";
  * wrong answer when nothing could have been found, and the only way to say so is to put it on the
  * timeline.
  */
+/** The id of the truncation-coverage event. */
+export const TRUNCATION_COVERAGE_ID = "cloud-bulk-read-truncated";
+
+/**
+ * One event saying the pass did not read everything, when it did not.
+ *
+ * Truncation used to be disclosed only on a group that actually formed — so an export whose first
+ * twenty thousand records were one object read repeatedly, followed by the sixty unique reads that
+ * mattered, produced NO group and NO warning. The analyst was told nothing at all.
+ */
+export function truncationEvent(events: readonly ForensicEvent[], dropped: number): ForensicEvent | null {
+  if (dropped <= 0) return null;
+  return {
+    id: TRUNCATION_COVERAGE_ID,
+    timestamp:
+      events.find((e) => Number.isFinite(Date.parse(e.timestamp ?? "")))?.timestamp ??
+      new Date().toISOString(),
+    description: `Cloud object reads were not all examined ${BULK_READ_MARKER} ${dropped} object-read record(s) past the per-principal cap of ${MAX_RECORDS_PER_GROUP} were not examined, so any bulk read among them is NOT reflected above. Narrow the import — by principal, by bucket, or by time — and re-import to cover the rest.]`,
+    severity: "Medium",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    sources: ["Coverage"],
+  };
+}
+
 export function objectLoggingEvent(events: readonly ForensicEvent[]): ForensicEvent | null {
   let reads = 0;
   let lists = 0;

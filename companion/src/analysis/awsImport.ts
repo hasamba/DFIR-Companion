@@ -190,6 +190,13 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
   if (ip) description += ` from ${ip}`;
   else if (rawIp && rawIp !== "AWS Internal") description += ` from ${rawIp}`;
   if (region) description += ` in ${region}`;
+  // The CLIENT, in a marker the bulk-read pass reads back. The issue names the user agent as one of
+  // the five dimensions to aggregate on, and CloudTrail records it on every call — but nothing kept
+  // it, so two different clients under one identity merged into a single group and a fifty-object
+  // threshold could be reached by two twenty-five-object sessions that had nothing to do with each
+  // other. Trimmed hard: a full user agent is long and this is a marker, not the raw field.
+  const client = str(getCI(rec, "userAgent")).trim();
+  if (client) description += ` [ua: ${oneLine(client).slice(0, 80)}]`;
   if (isRoot) description += " [root]";
   if (errorCode) description += ` [${errorCode}]`;
   description = description.slice(0, 600);
@@ -285,7 +292,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // 300, and every downstream question about WHICH objects were read — bulk-read correlation
     // (#908 item 8) above all — had nothing left to read. Management-plane calls keep the old key:
     // a hundred DescribeInstances by one principal genuinely are one thing.
-    aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}${objectKey ? `|${resource}` : ""}`
+    aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}|${client}${objectKey ? `|${resource}` : ""}`
       .toLowerCase()
       .slice(0, 400),
     sources: ["AWS CloudTrail"],

@@ -164,7 +164,7 @@ const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 // The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
 // forward from whichever member holds it, instead of discarding the reason for a raised severity.
 const DERIVED_NOTE =
-  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]*?\]/u;
+  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]{0,1200}?\]/u;
 /**
  * The per-user tag the Shellbags mapper adds (#908 item 10).
  *
@@ -172,6 +172,10 @@ const DERIVED_NOTE =
  * a Shellbags CSV into a case imported before that tag existed added every row a second time — the
  * description differed by the tag alone.
  */
+// The marker body is BOUNDED. A lazy `[\s\S]*?` with no closing bracket present rescans to the end
+// of the string from every marker start, so a description carrying repeated marker openings is
+// quadratic — 288 KB of them took a second per regex, and cleanDescription runs once per event
+// during correlation. No real marker body approaches this cap; every pass truncates well below it.
 const SHELLBAG_USER_TAG = /\s*\[user:[^\]]*\]\s*$/u;
 
 export function cleanDescription(d: string): string {
@@ -183,7 +187,7 @@ export function cleanDescription(d: string): string {
   const withoutDerived = d
     // The process-lifetime markers (#909 item 6).
     .replace(
-      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]*?\]\s*$/u,
+      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]{0,1200}?\]\s*$/u,
       "",
     )
     // The malfind interpretation (#909 item 4).

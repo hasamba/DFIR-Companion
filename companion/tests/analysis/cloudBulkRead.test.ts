@@ -549,6 +549,105 @@ describe("the other providers", () => {
   });
 });
 
+// Found by the codex review of this item. Several were caused by the fix that preceded them.
+describe("codex review regressions", () => {
+  const cev = (id: string, description: string, min: number) =>
+    ({
+      id,
+      timestamp: new Date(Date.parse("2026-01-01T10:00:00Z") + min * 60000).toISOString(),
+      description,
+      severity: "Info",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    }) as unknown as ForensicEvent;
+
+  // Adding the resource fallback made " on " and " → " terminators the principal parser did not
+  // know, so without a source address each object path was swallowed into a DIFFERENT principal.
+  it("does not swallow the resource into the principal when there is no source address", () => {
+    const many = Array.from({ length: MIN_OBJECTS + 10 }, (_v, i) =>
+      cev(`n${i}`, `GCP storage.objects.get (storage) by svc@x.test on objects/f-${i}.csv`, i * 0.01),
+    );
+    const g = groupBulkReads(many);
+    expect(g[0]?.principal).toBe("svc@x.test");
+    expect(g[0]?.objectCount).toBe(MIN_OBJECTS + 10);
+  });
+
+  // GCP, Azure and M365 put the address in prose only. Every source became "" and fifty callers
+  // were grouped as one, which makes a distributed read look like a single session.
+  it("recovers a non-AWS source address, so distinct callers do not merge", () => {
+    const spread = Array.from({ length: 50 }, (_v, i) =>
+      cev(
+        `s${i}`,
+        `GCP storage.objects.get (storage) by svc@x.test from 10.0.0.${i} on data/f-${i}.csv`,
+        i * 0.01,
+      ),
+    );
+    expect(readCloudRecord(spread[0])?.sourceIp).toBe("10.0.0.0");
+    expect(groupBulkReads(spread)).toEqual([]);
+  });
+
+  // A near-miss window must never displace a hit: ranking by score and testing the winner
+  // afterwards dropped the group entirely.
+  it("keeps a qualifying window over a higher-scoring one that qualifies for neither threshold", () => {
+    const hit = Array.from({ length: 50 }, (_v, i) =>
+      cev(`q${i}`, `AWS GetObject (s3) by app from 10.0.0.1 on b1/f-${i}.csv`, i * 0.01),
+    );
+    const nearMiss = Array.from({ length: 49 }, (_v, i) =>
+      cev(`m${i}`, `AWS GetObject (s3) by app from 10.0.0.1 on b${i % 4}/g-${i}.csv`, 120 + i * 0.01),
+    );
+    expect(groupBulkReads([...hit, ...nearMiss])[0]?.objectCount).toBe(50);
+  });
+
+  // A schedule explains VOLUME. It does not explain a new source, a new client, or a role someone
+  // else just assumed — and it used to silence the finding before any of those were considered.
+  it("still reports a scheduled principal when something else is wrong", () => {
+    const days = [0, 1440, 2880].flatMap((d) =>
+      Array.from({ length: MIN_OBJECTS + 10 }, (_v, i) =>
+        cev(`d${d}-${i}`, `AWS GetObject (s3) by app from 203.0.113.9 on b/f-${d}-${i}.csv`, d + i * 0.01),
+      ),
+    );
+    const rec = recurringPrincipals(days);
+    expect(rec.length).toBeGreaterThan(0);
+    const verdict = gradeGroup(groupBulkReads(days)[0], { recurringPrincipals: rec });
+    expect(verdict).not.toBeNull();
+    expect(verdict?.reason).toContain("explains none of the above");
+  });
+
+  it("still suppresses a scheduled principal when volume is the only signal", () => {
+    const days = [0, 1440, 2880].flatMap((d) =>
+      Array.from({ length: MIN_OBJECTS + 10 }, (_v, i) =>
+        cev(`p${d}-${i}`, `AWS GetObject (s3) by app from 10.0.0.5 on b/f-${d}-${i}.csv`, d + i * 0.01),
+      ),
+    );
+    expect(
+      gradeGroup(groupBulkReads(days)[0], { recurringPrincipals: recurringPrincipals(days) }),
+    ).toBeNull();
+  });
+
+  // The identity carried no time, so a second session replaced the first and one vanished.
+  it("gives two sessions by one identity different ids", () => {
+    const session = (p: string, min: number) =>
+      groupBulkReads(
+        Array.from({ length: MIN_OBJECTS + 5 }, (_v, i) =>
+          cev(`${p}${i}`, `AWS GetObject (s3) by app from 10.0.0.1 on b/${p}-${i}.csv`, min + i * 0.01),
+        ),
+      )[0];
+    expect(summaryId(session("mon", 0))).not.toBe(summaryId(session("fri", 7200)));
+  });
+
+  // A public address is NOT necessarily outside the cloud — a cloud VM, a NAT gateway and a hosted
+  // runner all present one, and the finding used to assert otherwise.
+  it("does not claim a public address is outside the cloud", () => {
+    const many = Array.from({ length: MIN_OBJECTS + 5 }, (_v, i) =>
+      cev(`x${i}`, `AWS GetObject (s3) by app from 54.240.0.1 on b/f-${i}.csv`, i * 0.01),
+    );
+    const reason = gradeGroup(groupBulkReads(many)[0])?.reason ?? "";
+    expect(reason).not.toContain("outside the cloud");
+    expect(reason).toContain("a NAT gateway and a hosted runner all present one");
+  });
+});
+
 describe("reachability", () => {
   it("runs from the merge", () => {
     const merge = readFileSync(join(process.cwd(), "src/analysis/stateMerge.ts"), "utf8");

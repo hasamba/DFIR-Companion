@@ -49,7 +49,7 @@ export const MAX_EVENTS = 2_000;
  * and a new backend adding another spelling must fail CLOSED — redacted — not open.
  */
 const SECRET_KEY_RE =
-  /pass|token|secret|key|credential|auth|cookie|sas_url|signature|sig$|bearer|session|private/i;
+  /pass|token|secret|key|credential|auth|cookie|sas_url|signature|sig$|bearer|session|private|^pem$|^p12$|^pfx$|^cert$/i;
 
 /**
  * Strip credentials out of a value that is KEPT for its destination facts.
@@ -69,7 +69,11 @@ export function stripEmbeddedSecrets(value: string): string {
   // 1. Userinfo carried behind a scheme, the ordinary `https` form with the password inline.
   out = out.replace(/(\b[a-z][\w+.-]*:\/\/)([^/@\s]+)@/gi, (_m, scheme: string, userinfo: string) => {
     const user = userinfo.split(":")[0];
-    return `${scheme}${user}:${REDACTED}@`;
+    // The USERNAME half is not automatically safe. `https://AKIAIOSFODNN7EXAMPLE:pw@host` puts an
+    // access key id there, and `https://TOKEN@host` puts the whole credential there with no colon
+    // at all. A short ordinary name is evidence and is kept; anything key-shaped is not.
+    const keyShaped = /^AKIA[0-9A-Z]{12,}$/.test(user) || user.length > 24 || !userinfo.includes(":");
+    return `${scheme}${keyShaped ? REDACTED : user}:${REDACTED}@`;
   });
 
   // 2. Userinfo with NO scheme — `user:password@ftp.corp.test`. rclone's `host` option is written
@@ -85,8 +89,10 @@ export function stripEmbeddedSecrets(value: string): string {
 
   // 3. Token-bearing QUERY parameters, and the same in a FRAGMENT. A fragment carries tokens as
   //    often as a query does — `#tok=…` survived the query-only rule untouched.
+  // The separator may be `?`, `&`, `#`, `;` or plain whitespace — a log line writes
+  // `oauth response token=SECRET` with no url around it at all, and that reached the description.
   out = out.replace(
-    /([?&#][\w.-]*(?:sig|signature|tok|token|key|secret|password|passwd|pwd|credential|auth|sas|session|access)[\w.-]*=)[^&\s#]*/gi,
+    /((?:^|[?&#;\s])[\w.-]*(?:sig|signature|tok|token|key|secret|password|passwd|pwd|credential|auth|sas|session|access)[\w.-]*\s*=\s*)[^&\s#;]+/gi,
     `$1${REDACTED}`,
   );
 
@@ -124,6 +130,32 @@ export interface RcloneRemote {
   secretsPresent: { key: string; length: number }[];
 }
 
+/**
+ * A value that is a filesystem path, as opposed to an inline credential.
+ *
+ * rclone accepts either in `sa_file` and friends, and the keep-list exists only for the path form.
+ */
+function looksLikePath(value: string): boolean {
+  const v = (value ?? "").trim();
+  if (!v || v.length > 300) return false;
+  if (/^[{["'<]/.test(v)) return false; // inline JSON, an array, a quoted blob, a PEM header
+  if (/\s/.test(v) && !/^[A-Za-z]:\\/.test(v)) return false;
+  return /^(?:[A-Za-z]:[\\/]|[\\/~.]|[\w.-]+[\\/])/.test(v);
+}
+
+/**
+ * A key name safe to show.
+ *
+ * The NAME is adversary-controlled too: `token_<secret> = x` puts the secret in the key, and the
+ * key is what the finding prints. Bounded and stripped to the characters a real option name uses.
+ */
+function safeKeyName(key: string): string {
+  return (key ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, "")
+    .slice(0, 40);
+}
+
 /** Is this text an rclone configuration file? */
 export function isRcloneConfig(text: string): boolean {
   const head = (text ?? "").slice(0, 65_536);
@@ -151,7 +183,10 @@ export function parseRcloneConfig(text: string): RcloneRemote[] {
     const section = /^\[([^\]]+)\]$/.exec(line);
     if (section) {
       if (current) out.push(current);
-      current = { name: section[1].trim(), type: "", settings: {}, secretsPresent: [] };
+      // The section name is the REMOTE'S NAME, and it is the subject of the finding — "rclone
+      // remote 'gdrive' is configured for drive". It is not redacted, deliberately: redacting it
+      // would remove the thing the finding is about. It IS bounded, so a name cannot carry a blob.
+      current = { name: section[1].trim().slice(0, 80), type: "", settings: {}, secretsPresent: [] };
       continue;
     }
     if (!current) continue;
@@ -162,8 +197,9 @@ export function parseRcloneConfig(text: string): RcloneRemote[] {
     const value = kv[2].trim();
 
     if (/^type$/i.test(key)) {
-      current.type = value;
-      current.settings[key.toLowerCase()] = value;
+      // A backend name is one word. Anything after it is not a type, and it is printed verbatim.
+      current.type = value.split(/\s+/)[0].slice(0, 40);
+      current.settings[key.toLowerCase()] = current.type;
       continue;
     }
     // KEEP is tested FIRST. `env_auth` contains "auth", so the secret test claimed it and the
@@ -171,17 +207,32 @@ export function parseRcloneConfig(text: string): RcloneRemote[] {
     // credential is stored in this file at all. `auth_url` (an OpenStack endpoint, i.e. evidence of
     // the destination) and `auth_version` were lost the same way.
     if (KEEP_KEY_RE.test(key)) {
+      // A `*_file` key is on the keep list because it names a PATH, and a path is evidence. It is
+      // only kept when the value actually IS one: rclone accepts inline JSON in `sa_file`, so
+      // allowlisting the key without checking the value handed the private key straight through.
+      if (/_file$|^keyfile$|^pem$|^p12$/i.test(key) && !looksLikePath(value)) {
+        current.secretsPresent.push({ key: safeKeyName(key), length: value.length });
+        continue;
+      }
       current.settings[key.toLowerCase()] = stripEmbeddedSecrets(value).slice(0, 300);
       continue;
     }
     if (SECRET_KEY_RE.test(key)) {
-      current.secretsPresent.push({ key: key.toLowerCase(), length: value.length });
+      current.secretsPresent.push({ key: safeKeyName(key), length: value.length });
       continue;
     }
+    // KEY MATERIAL IS A SECRET WHATEVER THE KEY IS CALLED. A PEM block under an option name no
+    // list anticipated is still a private key, and it was short enough to slip under the length
+    // and base64 tests below.
+    if (/-----BEGIN [A-Z ]*(?:PRIVATE KEY|CERTIFICATE)|^ssh-(?:rsa|ed25519|dss)\s/i.test(value)) {
+      current.secretsPresent.push({ key: safeKeyName(key), length: value.length });
+      continue;
+    }
+
     // An unrecognised key. Kept, but only if it holds nothing that looks like a secret — a long
     // opaque blob in an unknown key is exactly what a new backend's token looks like.
     if (value.length > 64 || /^[A-Za-z0-9+/=_-]{40,}$/.test(value)) {
-      current.secretsPresent.push({ key: key.toLowerCase(), length: value.length });
+      current.secretsPresent.push({ key: safeKeyName(key), length: value.length });
       continue;
     }
     current.settings[key.toLowerCase()] = value;
@@ -354,7 +405,9 @@ export function parseRcloneLog(text: string): TransferRecord[] {
     // `<file>: <what happened>`
     const split = body.indexOf(": ");
     if (split < 0) continue;
-    const file = body.slice(0, split).trim();
+    // The FILE is redacted too. Only `raw` was, and the file field is what reaches the event
+    // description AND the IOC list — so a url-shaped path carrying a token was stored twice over.
+    const file = stripEmbeddedSecrets(body.slice(0, split).trim());
     const what = body.slice(split + 2).trim();
     const outcome = rcloneOutcome(what);
     if (!outcome) continue;
@@ -387,7 +440,7 @@ export function parseMegaLog(text: string, yearFrom: string): TransferRecord[] {
     if (up) {
       out.push({
         time: megaTime(m[1], yearFrom),
-        file: up[1].trim().slice(0, 400),
+        file: stripEmbeddedSecrets(up[1].trim()).slice(0, 400),
         outcome: "copied",
         destination: "MEGA",
         bytes: null,
@@ -399,7 +452,7 @@ export function parseMegaLog(text: string, yearFrom: string): TransferRecord[] {
     if (fail) {
       out.push({
         time: megaTime(m[1], yearFrom),
-        file: fail[1].trim().slice(0, 400),
+        file: stripEmbeddedSecrets(fail[1].trim()).slice(0, 400),
         outcome: "failed",
         destination: "MEGA",
         bytes: null,
@@ -484,6 +537,16 @@ export function gradeTransfer(
 
   if (record.outcome === "summary") {
     const bytes = record.bytes;
+    // A ZERO-BYTE SUMMARY IS EVIDENCE THAT NOTHING MOVED. `Transferred: 0 B / 0 B` was being graded
+    // High with the words "0 bytes transferred" beside it — a finding that contradicted itself and
+    // asserted exfiltration from a run that carried nothing.
+    if (bytes === 0) {
+      return {
+        severity: "Low",
+        mitre: [],
+        description: `rclone run summary: NOTHING was transferred (0 bytes). The run executed and moved no data. ${record.raw.slice(0, 300)}`,
+      };
+    }
     return {
       severity: "High",
       mitre: ["T1567.002"],

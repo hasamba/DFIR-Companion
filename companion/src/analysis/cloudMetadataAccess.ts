@@ -61,7 +61,11 @@ export const METADATA_MARKER = "[metadata credential access:";
  * which is a one-parameter way to turn the detection off.
  */
 export function alreadyMarked(description: string): boolean {
-  return /\[metadata credential access:[\s\S]*\]\s*$/.test(description ?? "");
+  // The pass's OWN wording, not just the marker. Anchoring at the end was not enough — imported
+  // text can end with the marker too, and that silenced the grading completely.
+  return /\[metadata credential access: (?:A request carried|An API call|Something on this host|[\w.-]+ (?:requested|was invoked)|This case holds|Instance metadata|No evidence)[\s\S]{0,1200}?\]\s*$/.test(
+    description ?? "",
+  );
 }
 
 /**

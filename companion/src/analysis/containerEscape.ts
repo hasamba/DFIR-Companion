@@ -35,6 +35,21 @@ import { judgePayload } from "./linuxPayload.js";
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const ESCAPE_MARKER = "[container escape:";
 
+/**
+ * Has THIS PASS already annotated this description?
+ *
+ * Anchoring the marker at the end was not enough — an attacker who controls imported text can put
+ * it at the end too, and doing so silenced the grading entirely. The guard therefore looks for the
+ * pass's OWN wording, which follows the marker in everything it writes. Reproducing that exactly is
+ * a far narrower target, and the worst outcome if someone manages it is a missing re-annotation
+ * rather than a suppressed finding on a fresh event.
+ */
+export function alreadyMarked(description: string): boolean {
+  return /\[container escape: Container escape (?:BEHAVIOUR|CONFIGURATION)[\s\S]{0,1200}?\]\s*$/.test(
+    description ?? "",
+  );
+}
+
 /** How much of one command line is read. */
 export const MAX_COMMAND = 8_192;
 
@@ -283,8 +298,17 @@ export interface BehaviorHit {
 function writesInto(command: string, what: RegExp): boolean {
   const cmd = command ?? "";
   // `> /path`, `>> /path` or `tee /path` where the path is the one in question.
-  for (const m of cmd.matchAll(/(?:>{1,2}|\btee\b(?:\s+-\S+)*)\s*("?)([^\s"';|&]+)/gi)) {
-    if (what.test(m[2])) return true;
+  // A redirect inside a quoted string is usually TEXT, not a write — `echo "audit text > /proc/..."`
+  // was reported as a write to the control it merely mentions. But the body of `sh -c "..."` is a
+  // COMMAND, and stripping it lost every real payload delivered that way. So the shell body is
+  // unwrapped first, and only what remains quoted after that is treated as text.
+  const unwrapped = cmd.replace(
+    /\b(?:[a-z]*sh|bash|zsh|dash|ash)\s+-[a-z]*c\s*(["'])([\s\S]*?)\1/gi,
+    (_m, _q, body: string) => ` ${body} `,
+  );
+  const unquoted = unwrapped.replace(/"[^"]*"|'[^']*'/g, " ");
+  for (const m of unquoted.matchAll(/(?:>{1,2}|\btee\b(?:\s+-\S+)*)\s*([^\s"';|&]+)/gi)) {
+    if (what.test(m[1])) return true;
   }
   return false;
 }
@@ -299,7 +323,9 @@ function writesInto(command: string, what: RegExp): boolean {
 export function writeTarget(command: string): string {
   const cmd = (command ?? "").slice(0, MAX_COMMAND);
 
-  const lastArg = /(?:^|[\s;&|])(?:cp|mv|install|rsync)\b((?:\s+-{1,2}[^\s]+)*)\s+(.+)$/i.exec(cmd);
+  // The capture STOPS at a shell separator. `cp /tmp/a /backup/a; cat /host/etc/cron.d/x` was
+  // reporting the path that was READ as the path that was written.
+  const lastArg = /(?:^|[\s;&|])(?:cp|mv|install|rsync)\b((?:\s+-{1,2}[^\s]+)*)\s+([^;&|<>\n]+)/i.exec(cmd);
   if (lastArg) {
     const args = lastArg[2]
       .split(/\s+/)
@@ -313,12 +339,44 @@ export function writeTarget(command: string): string {
   return redirect?.[2] ?? "";
 }
 
+/**
+ * Does this evidence come from INSIDE a container, or name one?
+ *
+ * The behaviour rules assumed a container context that was never established, so they ran on every
+ * event in the timeline — and several of them describe things a host administrator does routinely.
+ * `nsenter -t 1 -m -- mount` is ordinary on a host. So is
+ * `echo '|/usr/lib/systemd/systemd-coredump' > /proc/sys/kernel/core_pattern`, which is how a
+ * distribution configures its own crash handler. Both were being graded High and described as a
+ * container escape.
+ *
+ * A mounted-host prefix counts on its own: `/host/etc/...` only exists because someone mounted the
+ * host filesystem somewhere, which is the container context itself.
+ */
+export function hasContainerContext(text: string): boolean {
+  const t = text ?? "";
+  return (
+    /\b(?:docker|podman|nerdctl|containerd|crictl|runc|kubectl|lxc)\b/i.test(t) ||
+    /\bcontainer(?:d|-)?\b|\bpod\b|\bimage\b/i.test(t) ||
+    /(?:^|\s)\/(?:host|hostfs|mnt\/host|rootfs|host-root|host_root|media\/root)(?:\/|\s|$)/i.test(t) ||
+    /\/\.dockerenv|\/proc\/1\/cgroup|\bDOCKER_HOST\b/i.test(t)
+  );
+}
+
 export function escapeBehavior(command: string): BehaviorHit[] {
   const cmd = (command ?? "").slice(0, MAX_COMMAND);
   const out: BehaviorHit[] = [];
+  // Container context is required PER RULE, not once for all of them.
+  //
+  // A blanket gate was wrong in both directions. Some of these primitives ARE the container
+  // context — a conventional host-mount path only exists because someone mounted the host — and
+  // gating those on a separate mention made real escapes invisible. Others are things a host
+  // administrator does routinely and mean nothing without one.
+  const inContainer = hasContainerContext(cmd);
 
   // nsenter into PID 1's namespaces is THE escape one-liner for a --pid=host container.
-  if (/\bnsenter\b[^\n]{0,200}(?:-t\s*1\b|--target[= ]\s*1\b)/i.test(cmd)) {
+  // AMBIGUOUS ON A HOST. `nsenter -t 1 -m -- mount` is a normal administrative action; it is only
+  // an escape when the process running it is in a container.
+  if (inContainer && /\bnsenter\b[^\n]{0,200}(?:-t\s*1\b|--target[= ]\s*1\b)/i.test(cmd)) {
     out.push({
       primitive: "nsenter-pid1",
       detail:
@@ -356,7 +414,9 @@ export function escapeBehavior(command: string): BehaviorHit[] {
     });
   }
 
-  if (writesInto(cmd, /\/proc\/sys\/kernel\/core_pattern/i)) {
+  // AMBIGUOUS ON A HOST. `echo '|/usr/lib/systemd/systemd-coredump' > /proc/sys/kernel/core_pattern`
+  // is how a distribution configures its own crash handler, and it was being graded High.
+  if (inContainer && writesInto(cmd, /\/proc\/sys\/kernel\/core_pattern/i)) {
     out.push({
       primitive: "core-pattern",
       detail:
@@ -426,7 +486,9 @@ const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Cr
 const DESCRIPTION_MAX = 600;
 
 function commandOf(e: ForensicEvent): string {
-  return `${e.commandLine ?? ""} ${e.description ?? ""}`;
+  // Each half is bounded BEFORE they are joined. Concatenating two unbounded imported fields and
+  // slicing afterwards still allocated the whole thing first.
+  return `${(e.commandLine ?? "").slice(0, MAX_COMMAND)} ${(e.description ?? "").slice(0, MAX_COMMAND)}`;
 }
 
 /**
@@ -437,7 +499,7 @@ function commandOf(e: ForensicEvent): string {
 export function markContainerEscape(events: readonly ForensicEvent[]): ForensicEvent[] {
   let changed = false;
   const out = events.map((e) => {
-    if ((e.description ?? "").includes(ESCAPE_MARKER)) return e;
+    if (alreadyMarked(e.description ?? "")) return e;
     const cmd = commandOf(e);
 
     const behaviors = escapeBehavior(cmd);

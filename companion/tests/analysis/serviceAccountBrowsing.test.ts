@@ -391,3 +391,34 @@ describe("regressions", () => {
     expect(attributionCoverageEvent([bag("alice")])).toBeNull();
   });
 });
+
+// Found by the codex review of this item.
+describe("codex review regressions", () => {
+  const BS = String.fromCharCode(92);
+
+  // The same service name in two domains is TWO accounts. Treating them as one would corroborate
+  // a finding with an unrelated domain's activity.
+  it("does not match the same account name in a different domain", () => {
+    expect(namesAccount(`logon for CORP${BS}svc_backup`, `CORP${BS}svc_backup`)).toBe(true);
+    expect(namesAccount(`logon for OTHER${BS}svc_backup`, `CORP${BS}svc_backup`)).toBe(false);
+    // A bare mention still matches — the importers often write the account without a domain.
+    expect(namesAccount("logon for svc_backup", `CORP${BS}svc_backup`)).toBe(true);
+  });
+
+  // A naming convention is a hint about a label, not a property of the account. Corroboration used
+  // to promote that guess to a High-severity assertion about a possible person.
+  it("keeps a naming-convention classification below Medium even when corroborated", () => {
+    const rec = readBrowsing(bag("svc_backup"))!;
+    const cls = classifyAccount("svc_backup", { useNamingConvention: true });
+    const v = gradeBrowsing(rec, cls, { logonId: "e9", collectionId: "e8" });
+    expect(v?.severity).toBe("Low");
+    expect(v?.reason).toContain("does not raise it further");
+  });
+
+  // The same corroboration on a machine account, which IS a property of the account, still raises.
+  it("still raises a machine account on the same corroboration", () => {
+    const rec = readBrowsing(bag(`CORP${BS}FS-01$`))!;
+    const v = gradeBrowsing(rec, classifyAccount(`CORP${BS}FS-01$`), { logonId: "e9", collectionId: null });
+    expect(v?.severity).toBe("High");
+  });
+});
