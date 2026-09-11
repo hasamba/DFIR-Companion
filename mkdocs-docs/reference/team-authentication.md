@@ -44,6 +44,12 @@ DFIR_PUBLIC_URL=https://dfir.example.com
 DFIR_AUTH_BOOTSTRAP_TOKEN=replace-with-a-long-random-value
 ```
 
+The token must be at least 32 characters; a shorter value stops the server at startup. Generate
+one with `openssl rand -base64 32`. Five wrong guesses lock the endpoint for 30 seconds, doubling
+after each further failure, and every rejected guess is written to the audit log with the source
+address. The lockout applies to the token, not the client, so it can also delay you: if you are
+locked out of your own first setup, someone else is trying the endpoint.
+
 Put the Companion behind HTTPS. Team-mode cookies are `Secure` by default and therefore are not
 sent over plain HTTP. `DFIR_AUTH_COOKIE_SECURE=false` exists for an HTTP-only loopback lab, not a
 network-facing deployment.

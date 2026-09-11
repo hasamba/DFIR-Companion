@@ -237,6 +237,8 @@ let _loginSweepTimer: NodeJS.Timeout | null = null;
 let _loginIpSweepTimer: NodeJS.Timeout | null = null;
 let _oidcStartLimiter: SlidingWindowLimiter | null = null;
 let _oidcStartSweepTimer: NodeJS.Timeout | null = null;
+let _bootstrapLimiter: AttemptLimiter | null = null;
+let _bootstrapSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -356,6 +358,29 @@ export function getOidcStartLimiter(): SlidingWindowLimiter {
   return _oidcStartLimiter;
 }
 
+/** The one key {@link getBootstrapLimiter} is ever consulted with. There is exactly one bootstrap
+ *  token per deployment, so the budget is the TOKEN's, not the client's — see the factory. */
+export const BOOTSTRAP_LIMITER_KEY = "bootstrap";
+
+/** Failed-guess budget for POST /auth/bootstrap (#920). Same shape as the login lockout — five
+ *  failures, then 30s doubling to 10min — but keyed on a single constant rather than per client:
+ *  a guesser gains nothing by rotating source addresses, because it is the token being guessed,
+ *  not an account. The prize is the deployment's first administrator, so the lockout is allowed
+ *  to bite the legitimate operator too: an operator who cannot bootstrap because someone is
+ *  hammering the endpoint has learned that someone is on the network before the first admin
+ *  exists, which is the thing they most need to know. Not consulted in loopback mode, where a
+ *  non-loopback caller is refused without a guess having been made — counting those would let
+ *  a LAN neighbour lock the operator out of a token-less setup. */
+export function getBootstrapLimiter(): AttemptLimiter {
+  if (!_bootstrapLimiter) {
+    const limiter = new AttemptLimiter(5, 30_000);
+    _bootstrapLimiter = limiter;
+    _bootstrapSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _bootstrapSweepTimer.unref?.();
+  }
+  return _bootstrapLimiter;
+}
+
 /** Reset singletons (tests). Also clears each singleton's sweep timer so repeated
  *  reset+get cycles in a test suite don't stack up abandoned intervals. */
 export function resetLimiters(): void {
@@ -367,6 +392,7 @@ export function resetLimiters(): void {
   if (_loginSweepTimer) clearInterval(_loginSweepTimer);
   if (_loginIpSweepTimer) clearInterval(_loginIpSweepTimer);
   if (_oidcStartSweepTimer) clearInterval(_oidcStartSweepTimer);
+  if (_bootstrapSweepTimer) clearInterval(_bootstrapSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
   _importSweepTimer = null;
@@ -383,4 +409,6 @@ export function resetLimiters(): void {
   _loginIpLimiter = null;
   _oidcStartSweepTimer = null;
   _oidcStartLimiter = null;
+  _bootstrapSweepTimer = null;
+  _bootstrapLimiter = null;
 }
