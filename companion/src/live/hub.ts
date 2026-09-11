@@ -1,3 +1,4 @@
+import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 
 export interface SocketLike {
@@ -59,8 +60,18 @@ export class LiveHub {
     return count;
   }
 
+  // A state push carries the same ATT&CK name map GET /cases/:id/state attaches
+  // (routes/caseState.ts). The dashboard's MITRE derivation reads that map off whichever state
+  // object it was last handed, and a push REPLACES the fetched one wholesale — so a push without
+  // it sent every event-only technique back to its bare id on the first import, synthesis or edit
+  // after the page loaded, until the next reload. Built here rather than at the onState call
+  // sites because every one of them funnels into this method; there is nowhere else to miss.
+  //
+  // `?? []` because this is transport, not the route: a caller may hand over a partial state (the
+  // socket-gate tests do), and a throw here would surface inside a route that has already saved.
   broadcast(state: InvestigationState): void {
-    this.broadcastTo(state.caseId, { type: "state", state });
+    const techniqueNames = techniqueNamesFor(state.mitreTechniques ?? [], state.forensicTimeline ?? []);
+    this.broadcastTo(state.caseId, { type: "state", state: { ...state, techniqueNames } });
   }
 
   // Send an arbitrary JSON message to all live subscribers of a case.

@@ -18,8 +18,8 @@ import {
 } from "../analysis/caseExportArchive.js";
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
 import { registerCasePushRoutes } from "./casePush.js";
+import { registerCaseStateRoutes } from "./caseState.js";
 import { computeCaseStats } from "../analysis/caseStats.js";
-import { projectAlignment } from "../analysis/clockSkew.js";
 import { ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
 import { byEventTime } from "../analysis/forensicSort.js";
@@ -369,33 +369,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  app.get("/cases/:id/state", async (req: Request, res: Response) => {
-    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
-    try {
-      if (!(await store.caseExists(req.params.id))) {
-        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
-      }
-      const rawCursor = Number(req.query.timelineCursor);
-      const rawLimit = Number(req.query.timelineLimit);
-      const timeline = await options.stateStore.queryForensicTimeline(req.params.id, {
-        cursor: Number.isFinite(rawCursor) && rawCursor >= 0 ? Math.floor(rawCursor) : undefined,
-        limit: Number.isFinite(rawLimit) && rawLimit >= 0 ? Math.min(10_000, Math.floor(rawLimit)) : 10_000,
-      });
-      const state = await options.stateStore.loadOverview(req.params.id);
-      // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
-      // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
-      // while state/state.json keeps the evidence exactly as imported.
-      const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
-      return res.status(200).json({
-        ...state,
-        forensicTimeline: projectAlignment(skew, timeline.entities),
-        forensicTimelineTotal: timeline.total,
-        forensicTimelineNextCursor: timeline.nextCursor,
-      });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
+  registerCaseStateRoutes(app, ctx); // GET /cases/:id/state — the case as the dashboard reads it
 
   // Per-IOC corroboration: { iocId: [tools that observed it] }, derived on demand by matching each
   // IOC value against the forensic events' sources (same scope/legitimate filtering as the report).
