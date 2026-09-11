@@ -286,25 +286,40 @@
 
   // fpMarkers is ONE page-level global, and four views derive their hidden sets from it: the
   // Findings panel (fpFindingTitleSet), the MITRE panel, the forensic timeline (fpEventIdSet) and
-  // the IOC panel (fpIocValueSet). It had no case ownership (#937): this function took a case id
-  // and threw it away, so a slow answer for case A that landed after case B loaded installed A's
-  // markers over B and repainted B through them. Findings match by two-way title substring, so
-  // that needs no exact collision. Two guards, the same shape as the asset graph's load token:
+  // the IOC panel (fpIocValueSet). It had no case ownership (#937): a slow answer for case A that
+  // landed after case B loaded installed A's markers over B and repainted B through them.
+  // Findings match by two-way title substring, so that needs no exact collision.
   //
-  //   1. A generation per load. Only the latest load may write; a superseded response — success
-  //      or failure — is ignored entirely.
-  //   2. A case switch clears the global SYNCHRONOUSLY, here, before the request is even sent.
-  //      The panel loaders run in the same tick as the per-case resets (runPanelLoaders drives
-  //      every loader body synchronously; only the fetch lane is queued), so between this call
-  //      and B's response the page renders B unfiltered rather than through A. A refresh for the
-  //      SAME case (the false_positive_changed websocket path) does not clear: the panel stays
-  //      filled until the newer answer replaces it.
+  // THE OWNER IS THE PAGE'S ACTIVE CASE, decided at every commit — the same authority render()'s
+  // stale guard uses (activeCaseId, set by dashboard-case-connect.js before any loader runs). A
+  // first cut keyed ownership on "the latest caller" instead, and review showed why that is not
+  // ownership at all: a false_positive_changed frame already queued on case A's closing socket
+  // still fires A's handler after B is active (the switch closes the socket without detaching
+  // onmessage), and a latest-caller rule made that late call the newest owner, cleared B, and
+  // rejected B's own response. So:
+  //
+  //   • commitFalsePositives(caseId, markers) is the ONE path that installs markers from a
+  //     response, and it refuses a case that is not on screen. Every writer goes through it —
+  //     this loader, the mark and un-mark handlers, NSRL apply and whitelist apply — and a
+  //     static test refuses any new bare renderFalsePositives(<response>) in those files.
+  //   • loadFalsePositives refuses a case that is not active BEFORE it touches anything: no
+  //     clear, no request, no ownership change. A case switch clears the global synchronously
+  //     (the loaders run in the same tick as the per-case resets — runPanelLoaders drives every
+  //     loader body synchronously, only the fetch lane is queued), so the new case renders
+  //     unfiltered until its own markers land; a same-case refresh does not clear, so the panel
+  //     stays filled until the newer answer replaces it. A generation per load makes the latest
+  //     same-case answer win when two are in flight.
   //
   // A failed load for a new case therefore leaves it unfiltered — the safe direction: nothing
   // hidden, rather than hidden by another case's judgement.
+  function commitFalsePositives(caseId, markers) {
+    if (caseId !== activeCaseId) return; // a response for a case that is no longer on screen
+    renderFalsePositives(markers);
+  }
   let fpLoadSeq = 0;
   let fpLoadedCaseId = null;
   function loadFalsePositives(caseId) {
+    if (caseId !== activeCaseId) return; // a late frame from a closed socket, or a stale caller
     const seq = ++fpLoadSeq;
     if (caseId !== fpLoadedCaseId) {
       fpLoadedCaseId = caseId;
@@ -314,7 +329,7 @@
       .then((r) => r.json())
       .then((markers) => {
         if (seq !== fpLoadSeq) return; // superseded by a newer load — ignore entirely
-        renderFalsePositives(markers);
+        commitFalsePositives(caseId, markers);
       })
       .catch(() => {});
   }
@@ -493,7 +508,7 @@
             return r.json();
           })
           .then((markers) => {
-            renderFalsePositives(markers);
+            commitFalsePositives(caseId, markers);
             const tid = unKind === "ioc" ? qaResolveIocId(unRef, null) : unRef;
             qaAudit(caseId, unKind, tid, `un-marked false positive: ${unRef}`);
           })
@@ -515,6 +530,7 @@
   window.fpIocValueSet = fpIocValueSet;
   window.loadCustomerExposure = loadCustomerExposure;
   window.loadFalsePositives = loadFalsePositives;
+  window.commitFalsePositives = commitFalsePositives;
   window.loadLearnedPatterns = loadLearnedPatterns;
   window.loadSourceTrust = loadSourceTrust;
   window.renderFalsePositives = renderFalsePositives;

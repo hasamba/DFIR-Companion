@@ -213,7 +213,7 @@
       })
       .then((j) => {
         msg.textContent = `${j.matchedIocs} IOC(s) + ${j.matchedEvents} event(s) matched · ${j.added} newly marked false positive`;
-        if (j.legitimate) renderFalsePositives(j.legitimate);
+        if (j.legitimate) commitFalsePositives(caseId, j.legitimate);
       })
       .catch((e) => {
         msg.textContent =
