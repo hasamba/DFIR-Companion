@@ -22,8 +22,11 @@
 // False-positive discipline (see the "does not fire on ordinary text" tests): every rule is
 // anchored on a vendor-specific literal prefix plus a minimum length of key material, so ordinary
 // auth chatter ("Failed password for invalid user admin", "authentication failure") cannot match.
-// Values that are already masked / redacted are excluded outright — re-flagging a redacted line
-// manufactures a Medium out of evidence that the secret was handled correctly.
+// Values that are already masked / redacted are excluded — re-flagging a redacted value
+// manufactures a Medium out of evidence that the secret was handled correctly. Masking is judged
+// per OCCURRENCE, never per line: the first version ran the mask check over the whole line once,
+// before any rule, and a `note=REDACTED` anywhere on the line hid a real token beside it (#930
+// item 3 found it while reusing this table on decoded request targets).
 //
 // Pure + table-driven + unit-tested. No AI.
 
@@ -34,8 +37,7 @@ export interface SecretSpillRule {
 }
 
 // A run of characters that reads as MASKED rather than as key material: three or more consecutive
-// mask characters, or a bracketed redaction marker. Checked against the whole line before any rule
-// runs, and again against each captured value.
+// mask characters, or a bracketed redaction marker. Checked against each occurrence's own text.
 const MASKED = /\*{3,}|x{6,}|•{3,}|\[?\bREDACTED\b\]?|<[A-Z_]{3,}>|\.{5,}/i;
 
 // Key material must not be a single repeated character (AAAAAAAA…) — generator placeholders and
@@ -75,9 +77,11 @@ export const SECRET_SPILL_RULES: SecretSpillRule[] = [
   // A database/broker URI carrying inline credentials — `scheme://user:password@host`. The password
   // group is required, so an ordinary credential-free DSN (`postgres://db-01:5432/reports`) does not
   // match. `:` and `@` are excluded from the password class so a bare `host:port` cannot masquerade.
+  // The password is the captured value, so masking is judged on it alone — a redacted USERNAME
+  // beside a real password is still a spill.
   {
     family: "db_uri",
-    re: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql|jdbc:[a-z]+|ftp|sftp):\/\/[^\s:/@]+:[^\s:/@]{4,}@/i,
+    re: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql|jdbc:[a-z]+|ftp|sftp):\/\/[^\s:/@]+:([^\s:/@]{4,})@/i,
   },
 
   // ───────────── Generic assigned secrets ─────────────
@@ -92,6 +96,31 @@ export const SECRET_SPILL_RULES: SecretSpillRule[] = [
     re: /\b(?:pass(?:word|wd|phrase)?|pwd|secret|api[_-]?key|api[_-]?token|auth[_-]?token|access[_-]?token|bearer)\b["']?\s*[=:]?\s*["']?([A-Za-z0-9][A-Za-z0-9!@#$%^&*()_+=.,\/~-]{11,})/i,
   },
 ];
+
+// Every occurrence of the rule is inspected until one is real or the text is exhausted. A
+// masked-shaped occurrence — `AKIAXXXX…` (a vendor's own masked example), `password=****…` — is
+// evidence of correct handling and is skipped, but it must not hide a real token later on the same
+// line, and no occurrence cap is applied: a cap of N is exactly N decoys before the real key.
+// Exhaustion is bounded by the caller's text — every caller passes ONE line (a command, a syslog
+// message, a request line + Referer). The global regex is built per call from the rule's source: a
+// shared `/g` instance carries `lastIndex` between calls, and a leaked index skips the start of the
+// next line.
+function hasRealOccurrence(rule: SecretSpillRule, text: string): boolean {
+  const re = new RegExp(rule.re.source, rule.re.flags.includes("g") ? rule.re.flags : `${rule.re.flags}g`);
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    // Masking is judged on the secret-bearing VALUE (the capture group where a rule has one), not
+    // the whole match: a redacted username beside a real password is still a spill. The generic
+    // rule's value must also clear the key-material gate.
+    const material = m[1] ?? m[0];
+    if (rule.family === "password_generic" ? looksLikeKeyMaterial(material) : !MASKED.test(material))
+      return true;
+    // A rejected occurrence may have swallowed the NEXT value — the generic value class runs over
+    // `&`, `=` and `,`, so `TOKEN=xxxxxxxxxxxx&TOKEN=<real>` is one match whose masked head hides
+    // the real tail. Resume just past the rejected match's START, not its end.
+    re.lastIndex = m.index + 1;
+  }
+  return false;
+}
 
 // Extra gate for the generic rule only: the captured value must look like key material rather than
 // like the next English word in a sentence.
@@ -114,17 +143,10 @@ function looksLikeKeyMaterial(value: string): boolean {
  */
 export function secretSpillSignal(text: string): { families: string[]; mitre: string[] } | null {
   if (!text || !text.trim()) return null;
-  // A line whose secret is already masked is evidence of correct handling, not of a spill.
-  if (MASKED.test(text)) return null;
 
   const families = new Set<string>();
   for (const rule of SECRET_SPILL_RULES) {
-    const m = rule.re.exec(text);
-    if (!m) continue;
-    // The generic rule captures its value and must clear the key-material gate; the vendor-anchored
-    // rules are specific enough that matching at all is sufficient.
-    if (rule.family === "password_generic" && !looksLikeKeyMaterial(m[1] ?? "")) continue;
-    families.add(rule.family);
+    if (hasRealOccurrence(rule, text)) families.add(rule.family);
   }
   if (!families.size) return null;
   // T1552.001 (Unsecured Credentials: Credentials In Files) is the technique every surface here
