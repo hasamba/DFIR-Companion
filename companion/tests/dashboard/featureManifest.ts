@@ -682,6 +682,13 @@ export const FEATURES: Feature[] = [
     private: ["workflowByFinding", "FINDING_WF_STATUS_LABELS"],
   },
   {
+    // Finding attack outcome (#930 item 8): two analyst-set axes (execution, control) per finding,
+    // server-backed like workflow so synthesis cannot wipe them.
+    file: "dashboard-finding-outcome.js",
+    publish: ["loadFindingOutcome", "findingOutcomeControls", "setFindingExecution", "setFindingControl"],
+    private: ["outcomeByFinding", "EXECUTION_LABELS", "CONTROL_LABELS", "axisControl", "patchFindingOutcome", "bound", "bindOnce"],
+  },
+  {
     // Pinned findings (#220) — the other half of that banner. Nothing here references the feature
     // above it and nothing there references this.
     // The three bindings and loadPins() came home in #415: the feature had moved out but its state

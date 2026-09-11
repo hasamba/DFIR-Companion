@@ -289,6 +289,8 @@
     "ROUTE POST /cases/:id/notebook",
     "ROUTE PATCH /cases/:id/notebook/:entryId",
     "ROUTE DELETE /cases/:id/notebook/:entryId",
+    "ROUTE GET /cases/:id/finding-outcome",
+    "ROUTE PATCH /cases/:id/findings/:findingId/outcome",
     "ROUTE GET /tagger/rules",
     "ROUTE PUT /tagger/rules",
     "ROUTE POST /cases/:id/tagger/run",
