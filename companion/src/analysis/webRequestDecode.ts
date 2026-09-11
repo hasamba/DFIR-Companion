@@ -147,12 +147,16 @@ export function decodeRequestTarget(text: string): DecodedTarget {
 }
 
 // ───────────── Attack shapes ─────────────
-// Every regex is linear: no nested quantifiers over one class, no unbounded `.*` between anchors.
+// Every regex is linear: no nested quantifiers over one class, no unbounded `.*` between anchors,
+// and every repeat that follows a class is bounded. Where a regex would need a length cap to stay
+// linear — "the value before the `;`", "the comment body" — the text is PARSED instead: a URL's
+// query is split into values, and SQL comments are removed by a scan, so no cap exists to pad past.
 
 const BT = "`";
-// Shell separators — including a decoded newline: `foo%0Aid` is `foo` then `id` on its own line.
+// Shell separators inside a query VALUE — including a decoded newline: `foo%0Aid` is `foo` then `id`
+// on its own line. `;` is a separator in a value; in a PATH it is matrix syntax and is not scanned.
 const SEP = String.raw`(?:;|\|\||&&|\||\r?\n|` + BT + String.raw`|\$\()`;
-const STRICT_SEP = String.raw`(?:\|\||&&|\r?\n|` + BT + String.raw`|\$\()`; // every separator but `;` and a bare pipe
+const STRICT_SEP = String.raw`(?:;|\|\||&&|\r?\n|` + BT + String.raw`|\$\()`; // every separator but a bare pipe
 const ARG = String.raw`[^\s;|&"'<>` + BT + String.raw`]{1,200}`; // one argument token, bounded
 const PATH_ARG =
   String.raw`(?:[\/\\~]|[A-Za-z]:\\|\.{1,2}[\/\\]|\.\w)[^\s;|&"'<>` + BT + String.raw`]{0,200}`; // a path-shaped argument
@@ -164,8 +168,11 @@ const TOOLS = String.raw`(?:sh|bash|dash|zsh|cmd(?:\.exe)?|powershell|pwsh|nc|nc
 const READERS = String.raw`(?:cat|type|more|head|tail)`;
 const FREE_TIER = String.raw`(?:whoami|ifconfig|ipconfig|netstat|tasklist|systeminfo|printenv)`;
 const STRICT_TIER = String.raw`(?:hostname|uname|id|ls|dir|pwd|ps|env|set|net|reg)`;
-// Query parameters whose NAME says "run this": `/shell.php?cmd=whoami` needs no separator.
-const EXEC_PARAM = String.raw`[?&](?:cmd|exec|execute|command|shell|run|system)=`;
+// Query parameters whose NAME says "run this". Their value fires without a separator, but only
+// with EXECUTION evidence — a tool with an argument, a recon name that is not a selector word, or
+// a command followed by a separator. `?run=php`, `?command=ls&format=json` are runtime and
+// listing selectors on ordinary APIs; `?cmd=whoami`, `?cmd=cat /etc/passwd` are web shells.
+const EXEC_PARAM = /^(?:cmd|exec|execute|command|shell|run|system)$/i;
 
 // Sensitive targets a traversal must reach; searched with indexOf, never a regex over the whole
 // field (see traversalMatch).
@@ -189,38 +196,15 @@ interface AttackRule {
   re: RegExp;
 }
 
-// SQL rules run on a copy where bounded inline comments are spaces: `UNION/**/SELECT` is the
-// oldest whitespace bypass there is.
-const SQL_COMMENT = /\/\*[^*]{0,64}\*\//g;
-
-const ATTACK_RULES: AttackRule[] = [
-  // cmd (a): a separator + an interpreter or transfer tool WITH an argument, or a reader with a path.
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${TOOLS}\s+${ARG}`, "i") },
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${READERS}\s+${PATH_ARG}`, "i") },
-  // cmd (b), free tier: a recon command that is not a plausible field name, after any separator.
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${FREE_TIER}${TAIL}`, "i") },
-  // cmd (b), strict tier: bare after `&&`, `||`, a newline, a backtick or `$(` …
-  { family: "cmd", re: new RegExp(String.raw`${STRICT_SEP}\s*${STRICT_TIER}${TAIL}`, "i") },
-  // … after `;` only inside a `key=value` (a `;` in a path is matrix syntax: `/resource;id`) …
-  { family: "cmd", re: new RegExp(String.raw`(?<==[^&;\s"']{0,200});\s*${STRICT_TIER}${TAIL}`, "i") },
-  // … and after a bare pipe only with a flag or an absolute path (`fields=name|id` is filter syntax).
-  { family: "cmd", re: new RegExp(String.raw`\|\s*${STRICT_TIER}\s+(?:-|\/)\S`, "i") },
-  // cmd (c): an exec-named parameter whose value opens with a command, no separator needed.
-  {
-    family: "cmd",
-    re: new RegExp(
-      String.raw`${EXEC_PARAM}(?:${TOOLS}|${READERS}|${FREE_TIER}|${STRICT_TIER})(?:$|[\s+;|&"'%])`,
-      "i",
-    ),
-  },
+// Rules that run over the WHOLE decoded text (any field).
+const TEXT_RULES: AttackRule[] = [
   // expression: jndi (the match runs to the closing brace so two lookups are two identities), a
-  // nested lookup, or a template expression carrying an operator or a call. Every run is bounded.
+  // nested lookup, or a template expression carrying an operator or a call.
   {
     family: "expression",
     re: /\$\{jndi:[^}\s"'<>]{0,200}\}?|\$\{[^}]{0,40}\$\{[^}]{0,200}\}?|(?:\{\{|#\{|\$\{)[^}]{0,80}?(?:[*+\/%-]\s*\d|\w{1,40}\s*\(|T\()[^}]{0,120}\}?/i,
   },
-  // sqli: structure, never a lone token. Every repeat is bounded so a long run of word characters
-  // cannot make the engine retry O(n) times per start.
+  // sqli: structure, never a lone token; run on the copy with block comments removed.
   // The select list is part of the match, so two different union payloads are two identities.
   { family: "sqli", re: /\bunion\s+(?:all\s+)?select\b[^;"'<>]{0,200}/i },
   { family: "sqli", re: /(?:'|\d)\s{0,8}(?:or|and)\s{1,8}(?:'?\w{1,64}'?\s{0,8}=\s{0,8}'?\w{1,64}'?)/i },
@@ -228,6 +212,41 @@ const ATTACK_RULES: AttackRule[] = [
   { family: "sqli", re: /;\s{0,8}waitfor\s{1,8}delay\s{1,8}'/i },
   { family: "sqli", re: /;\s{0,8}(?:drop|insert|update|delete|exec|xp_cmdshell)\s{1,8}\w/i },
 ];
+
+// Rules that run over the query string of a URL (or the whole User-Agent).
+const VALUE_RULES: AttackRule[] = [
+  // cmd (a): a separator + an interpreter or transfer tool WITH an argument, or a reader with a path.
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${TOOLS}\s+${ARG}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${READERS}\s+${PATH_ARG}`, "i") },
+  // cmd (b), free tier: a recon command that is not a plausible field name, after any separator.
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${FREE_TIER}${TAIL}`, "i") },
+  // cmd (b), strict tier: bare after every separator but a bare pipe …
+  { family: "cmd", re: new RegExp(String.raw`${STRICT_SEP}\s*${STRICT_TIER}${TAIL}`, "i") },
+  // … and after a bare pipe only with a flag or an absolute path (`fields=name|id` is filter syntax).
+  { family: "cmd", re: new RegExp(String.raw`\|\s*${STRICT_TIER}\s+(?:-|\/)\S`, "i") },
+];
+
+// cmd (c): the value of an exec-named parameter, with execution evidence (see EXEC_PARAM).
+const EXEC_VALUE = new RegExp(
+  String.raw`^\s*(?:${TOOLS}\s+${ARG}|${READERS}\s+${PATH_ARG}|${FREE_TIER}${TAIL}|${STRICT_TIER}\s+(?:-|\/)\S|(?:${TOOLS}|${READERS}|${STRICT_TIER})\s*${SEP})`,
+  "i",
+);
+
+// Block comments removed by a scan, whatever they contain and however long: `UNION/*a*b*/SELECT`
+// is the oldest whitespace bypass there is, and a regex with a bounded body is a bypass with a
+// length. An unterminated comment is left in place.
+function stripBlockComments(text: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const open = text.indexOf("/*", i);
+    if (open < 0) return out + text.slice(i);
+    const close = text.indexOf("*/", open + 2);
+    if (close < 0) return out + text.slice(i);
+    out += text.slice(i, open) + " ";
+    i = close + 2;
+  }
+}
 
 // traversal: a `../` (or `..\`) segment within TRAVERSAL_WINDOW characters BEFORE a sensitive
 // target. A linear scan — indexOf for each target, one bounded window test per hit — because the
@@ -248,11 +267,28 @@ function traversalMatch(text: string): string | null {
   return null;
 }
 
+// The query of a decoded URL as (name, value) pairs; a URL with no query has none.
+function queryPairs(url: string): Array<{ name: string; value: string }> {
+  const q = url.indexOf("?");
+  if (q < 0) return [];
+  return url
+    .slice(q + 1)
+    .split("&")
+    .filter(Boolean)
+    .map((part) => {
+      const eq = part.indexOf("=");
+      return eq < 0 ? { name: part, value: "" } : { name: part.slice(0, eq), value: part.slice(eq + 1) };
+    });
+}
+
 /**
- * The attack families a decoded request field carries, with each match's identity form and display
- * form, or null. One match per family (the first).
+ * The attack families a decoded field carries, with each match's identity form and display form,
+ * or null. One match per family (the first). `isUrl` says the field is a request target or a
+ * Referer: the command rules run over its query string only (a `;` in the path is matrix syntax
+ * and never scanned), and an exec-named parameter is judged on its own value. A User-Agent is
+ * scanned whole.
  */
-export function webAttackSignal(text: string): WebAttackSignal | null {
+export function webAttackSignal(text: string, isUrl = true): WebAttackSignal | null {
   if (!text) return null;
   const matches: AttackMatch[] = [];
   const seen = new Set<string>();
@@ -263,11 +299,34 @@ export function webAttackSignal(text: string): WebAttackSignal | null {
   };
   const traversal = traversalMatch(text);
   if (traversal) push("traversal", traversal);
-  const sql = text.replace(SQL_COMMENT, " ");
-  for (const rule of ATTACK_RULES) {
+  const sql = stripBlockComments(text);
+  for (const rule of TEXT_RULES) {
     if (seen.has(rule.family)) continue;
     const m = rule.re.exec(rule.family === "sqli" ? sql : text);
     if (m) push(rule.family, m[0]);
+  }
+  // The command rules run over the QUERY of a URL (the path's `;` is matrix syntax) as one string —
+  // not per `&`-split value, because `&&` is itself a separator — and over the whole User-Agent.
+  const q = text.indexOf("?");
+  const scope = isUrl ? (q < 0 ? "" : text.slice(q + 1)) : text;
+  if (scope) {
+    for (const rule of VALUE_RULES) {
+      const m = rule.re.exec(scope);
+      if (m) {
+        push("cmd", m[0]);
+        break;
+      }
+    }
+  }
+  if (isUrl && !seen.has("cmd")) {
+    for (const { name, value } of queryPairs(text)) {
+      if (!EXEC_PARAM.test(name)) continue;
+      const m = EXEC_VALUE.exec(value);
+      if (m) {
+        push("cmd", m[0].trim());
+        break;
+      }
+    }
   }
   if (!matches.length) return null;
   matches.sort((a, b) => (a.family < b.family ? -1 : a.family > b.family ? 1 : 0));
@@ -337,7 +396,7 @@ export function inspectRequestFields(raw: RequestFields): {
     const scanned = field === "ua" ? clipped.text : decodeRequestTarget(clipped.text).decoded;
     if (field === "target") decodedTarget = scanned;
     if (field === "referer") decodedReferer = scanned;
-    const signal = webAttackSignal(scanned);
+    const signal = webAttackSignal(scanned, field !== "ua");
     if (!signal) continue;
     for (const m of signal.matches) {
       families.push(`${m.family}${suffix}`);

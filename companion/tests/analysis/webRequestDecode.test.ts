@@ -186,8 +186,14 @@ describe("webAttackSignal", () => {
 
   it("fires on an exec-named parameter without a separator", () => {
     expect(fires("/shell.php?cmd=whoami")).toContain("cmd");
-    expect(fires("/shell.php?cmd=cat+/etc/passwd")).toContain("cmd");
-    expect(fires("/x?cmd=ls%20-la")).toContain("cmd");
+    expect(fires(decodeRequestTarget("/shell.php?cmd=cat+/etc/passwd").decoded)).toContain("cmd");
+    expect(fires(decodeRequestTarget("/x?cmd=%20ls%20-la").decoded)).toContain("cmd"); // leading space
+    expect(fires("/api?run=php&version=8")).toEqual([]); // a runtime selector, no execution evidence
+    expect(fires("/api?command=ls&format=json")).toEqual([]); // a listing selector
+    expect(fires("/resource;foo=bar;id")).toEqual([]); // keyed matrix parameters in a path
+    expect(fires(`/x?q=${"a".repeat(300)};id`)).toContain("cmd"); // no value-length cap to pad past
+    expect(fires(decodeRequestTarget("/x?id=1%20UNION/*a*b*/SELECT%201").decoded)).toContain("sqli");
+    expect(fires(`/x?id=1 UNION/*${"c".repeat(80)}*/SELECT 1`)).toContain("sqli");
     expect(fires("/x?command=abc")).toEqual([]); // a value that is not a command
     expect(fires("/x?cmdline=id")).toEqual([]); // not an exec-named parameter
   });
