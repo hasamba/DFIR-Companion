@@ -126,6 +126,27 @@ function falconSigSeverity(human: string, threatLevel: number): Severity {
 
 // ───────────────────────────── CAPEv2 ─────────────────────────────
 
+// "No behavioural signatures recorded" — not "no behaviour": dropped files, processes and network
+// artifacts are extracted independently of the signature list, so a signature-less report can still
+// hold recorded behaviour. What zero signatures does mean is that the sandbox's own detections
+// fired nothing, and that is not the same as clean.
+// One report-controlled display field, bounded so several of them cannot crowd out what follows.
+function clipField(v: string): string {
+  const t = oneLine(v).trim();
+  return t.length > 80 ? t.slice(0, 79) + "…" : t;
+}
+
+function coverageNote(signatureCount: number, duration: string, errors: string): string {
+  if (signatureCount > 0) return "";
+  const detail = [
+    duration ? `duration ${duration}` : "",
+    errors ? `errors: ${oneLine(errors).slice(0, 120)}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+  return ` — no behavioural signatures recorded, coverage unknown${detail ? ` (${detail})` : ""}`;
+}
+
 function mapCape(
   report: Row,
   sink: Map<string, SiemIoc>,
@@ -146,6 +167,14 @@ function mapCape(
   // long family name would not survive to make them differ.
   const runTag = runId ? ` [run ${runId}]` : "";
   const sigNames: string[] = [];
+  // Silence is not a clean verdict. A report with no behavioural signatures may have timed out,
+  // lacked a dependency, or found its C2 dead — so the verdict row says what it can: that no
+  // signatures were recorded, coverage is unknown, and how long the run lasted / what it reported.
+  const coverage = coverageNote(
+    asArray(getCI(report, "signatures")).length,
+    str(getPath(report, "info.duration")),
+    flatStr(getPath(report, "debug.errors")),
+  );
 
   if (sha256) addHash(sink, sha256);
   if (md5) addHash(sink, md5);
@@ -154,8 +183,11 @@ function mapCape(
   // The sample verdict event.
   out.push({
     timestamp: time,
+    // Bounded fields FIRST — prefix, run, coverage, score — and the report-controlled free text
+    // (family, sample name) last and clipped, so no field the sample chose can push the coverage
+    // warning past the 600-character limit. Same rule as an aggregation key.
     description:
-      `${SANDBOX_PREFIX.capeVerdict}${runTag} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(
+      `${SANDBOX_PREFIX.capeVerdict}${runTag}${coverage} score ${malscore}/10 — ${clipField(family) || "analysis"} — ${clipField(name) || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""}`.slice(
         0,
         600,
       ),
@@ -258,6 +290,11 @@ function mapFalcon(
   const runId = str(getCI(report, "job_id")) || str(getCI(report, "environment_id"));
   const runTag = runId ? ` [run ${runId}]` : "";
   const sigNames: string[] = [];
+  const coverage = coverageNote(
+    asArray(getCI(report, "signatures")).length,
+    str(getCI(report, "analysis_time")),
+    str(getCI(report, "error")),
+  );
 
   if (sha256) addHash(sink, sha256);
   if (md5) addHash(sink, md5);
@@ -266,7 +303,7 @@ function mapFalcon(
   out.push({
     timestamp: time,
     description:
-      `${SANDBOX_PREFIX.falconVerdict}${runTag} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(
+      `${SANDBOX_PREFIX.falconVerdict}${runTag}${coverage} score ${score}/100 — ${clipField(verdict) || "analysis"}${family ? ` (${clipField(family)})` : ""} — ${clipField(name) || sha256.slice(0, 16) || "sample"}`.slice(
         0,
         600,
       ),

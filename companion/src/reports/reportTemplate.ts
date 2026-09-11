@@ -37,6 +37,14 @@ export const REPORT_SECTION_DEFS = [
   { key: "compliance", label: "Compliance Impact (control failures & notification obligations)" },
   { key: "notebook", label: "Analyst Notebook" },
   { key: "chainOfCustody", label: "Chain of Custody (per-artifact custody chain)" },
+  // defaultEnabled: false — an EXISTING saved template (one that already lists sections) gains this
+  // key switched off, so a client-facing Executive override does not sprout technical detonation
+  // detail on upgrade. A fresh template with no section list still gets every section (#932 item 5).
+  {
+    key: "sandboxReports",
+    label: "Sandbox reports (detonation results and sighting status)",
+    defaultEnabled: false,
+  },
 ] as const;
 
 export type ReportSectionKey = (typeof REPORT_SECTION_DEFS)[number]["key"];
@@ -128,8 +136,16 @@ export function normalizeSections(input: unknown): ReportTemplateSection[] {
       out.push({ key: key as ReportSectionKey, enabled: raw?.enabled !== false });
     }
   }
-  for (const key of ALL_SECTION_KEYS) {
-    if (!seen.has(key)) out.push({ key, enabled: true });
+  // A key the input did not list: enabled for a FRESH template (empty list — every section is what
+  // "default" means), but for an existing template it takes the key's compatibility default, so a
+  // section added after that template was saved does not switch itself on in a saved override.
+  const fresh = out.length === 0;
+  for (const def of REPORT_SECTION_DEFS) {
+    if (!seen.has(def.key))
+      out.push({
+        key: def.key,
+        enabled: fresh || ("defaultEnabled" in def ? def.defaultEnabled !== false : true),
+      });
   }
   return out;
 }
@@ -212,6 +228,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       // Off for the same reason as sessions: a per-artifact custody table is operator detail, and
       // this template exists to keep the client-facing brief short. The full report carries it.
       { key: "chainOfCustody", enabled: false },
+      { key: "sandboxReports", enabled: false },
     ],
   }),
   normalizeReportTemplate({
