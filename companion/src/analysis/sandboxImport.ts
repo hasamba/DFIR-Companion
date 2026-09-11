@@ -130,6 +130,12 @@ function falconSigSeverity(human: string, threatLevel: number): Severity {
 // artifacts are extracted independently of the signature list, so a signature-less report can still
 // hold recorded behaviour. What zero signatures does mean is that the sandbox's own detections
 // fired nothing, and that is not the same as clean.
+// One report-controlled display field, bounded so several of them cannot crowd out what follows.
+function clipField(v: string): string {
+  const t = oneLine(v).trim();
+  return t.length > 80 ? t.slice(0, 79) + "…" : t;
+}
+
 function coverageNote(signatureCount: number, duration: string, errors: string): string {
   if (signatureCount > 0) return "";
   const detail = [
@@ -177,8 +183,11 @@ function mapCape(
   // The sample verdict event.
   out.push({
     timestamp: time,
+    // Bounded fields FIRST — prefix, run, coverage, score — and the report-controlled free text
+    // (family, sample name) last and clipped, so no field the sample chose can push the coverage
+    // warning past the 600-character limit. Same rule as an aggregation key.
     description:
-      `${SANDBOX_PREFIX.capeVerdict}${runTag} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10${coverage}`.slice(
+      `${SANDBOX_PREFIX.capeVerdict}${runTag}${coverage} score ${malscore}/10 — ${clipField(family) || "analysis"} — ${clipField(name) || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""}`.slice(
         0,
         600,
       ),
@@ -294,7 +303,7 @@ function mapFalcon(
   out.push({
     timestamp: time,
     description:
-      `${SANDBOX_PREFIX.falconVerdict}${runTag} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100${coverage}`.slice(
+      `${SANDBOX_PREFIX.falconVerdict}${runTag}${coverage} score ${score}/100 — ${clipField(verdict) || "analysis"}${family ? ` (${clipField(family)})` : ""} — ${clipField(name) || sha256.slice(0, 16) || "sample"}`.slice(
         0,
         600,
       ),

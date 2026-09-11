@@ -182,6 +182,23 @@ describe("parseSandboxReport — options & edges", () => {
     expect(verdict.description).not.toMatch(/\bclean\b/i);
   });
 
+  // The warning sits before the report-controlled free text, which is itself clipped, so no family
+  // or filename the sample chose can push it past the row's 600-character limit.
+  it("keeps the coverage warning when the family and sample name are absurdly long", () => {
+    const silent = capeReport() as {
+      signatures: unknown[];
+      malfamily: string;
+      target: { file: { name: string } };
+    };
+    silent.signatures = [];
+    silent.malfamily = "F".repeat(700);
+    silent.target.file.name = "N".repeat(700);
+    const r = parseSandboxReport(JSON.stringify(silent));
+    const verdict = r.events.find((e) => e.description.startsWith("CAPE sandbox:"))!;
+    expect(verdict.description).toContain("no behavioural signatures recorded, coverage unknown");
+    expect(verdict.description.length).toBeLessThanOrEqual(600);
+  });
+
   it("says nothing about coverage when signatures were recorded", () => {
     const r = parseSandboxReport(JSON.stringify(capeReport()));
     const verdict = r.events.find((e) => e.description.startsWith("CAPE sandbox:"))!;

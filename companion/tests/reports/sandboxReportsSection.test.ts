@@ -76,6 +76,35 @@ describe("sandbox reports section", () => {
     expect(md).not.toMatch(/on WS-01.*inject/); // never narrated as host behaviour
   });
 
+  // A sandbox row persisted before `origin` existed carries no marker. If it shares the hash it must
+  // not count as a sighting — that would be another sandbox result presented as host evidence.
+  it("does not count a LEGACY sandbox row as a sighting", () => {
+    const state = emptyState("INC-1");
+    state.labIntel = [rec()];
+    state.forensicTimeline.push({
+      id: "old1",
+      timestamp: "2023-09-01T10:00:00Z",
+      description: "CAPE sandbox: Emotet — invoice.exe score 9/10",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sources: ["CAPEv2"],
+      sha256: SHA,
+    });
+    const md = renderMarkdownReport(
+      state,
+      emptyReportMeta(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      sandboxOnly,
+    );
+    expect(md).toContain("not observed in collected evidence");
+    expect(md).not.toContain("seen on");
+  });
+
   it("says a sample was not observed when no collected event carries its hash", () => {
     expect(render([rec()])).toContain("not observed in collected evidence");
   });

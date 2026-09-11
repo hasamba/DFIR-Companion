@@ -1,5 +1,5 @@
 import type { InvestigationState, LabIntelRecord } from "../analysis/stateTypes.js";
-import { normalizeSha256, selectLabIntelForDisplay } from "../analysis/labIntel.js";
+import { isLabProduced, normalizeSha256, selectLabIntelForDisplay } from "../analysis/labIntel.js";
 import { cellMd } from "./mdText.js";
 
 /**
@@ -53,7 +53,11 @@ export function sandboxReportsSection(state: InvestigationState, lines: string[]
 function firstSightings(state: InvestigationState): Map<string, { host: string; time: string }> {
   const out = new Map<string, { host: string; time: string }>();
   for (const e of state.forensicTimeline) {
-    if (e.origin === "lab") continue;
+    // isLabProduced, not `origin === "lab"`: a sandbox row persisted before the field existed
+    // carries no origin, and a sighting that is really another sandbox result is exactly the false
+    // attribution this section must never print. A row already merged with a host source is a
+    // genuine sighting and the helper keeps it.
+    if (isLabProduced(e)) continue;
     const sha = normalizeSha256(e.sha256);
     if (!sha) continue;
     const prev = out.get(sha);
