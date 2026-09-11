@@ -800,6 +800,47 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     ).toEqual(["caller-1", "caller-2", "owner-1", "owner-2"]);
     expect(r.events.every((e) => (e.count ?? 1) === 1)).toBe(true);
   });
+  it("the cross-account notice survives a kept description that fills 600 characters", () => {
+    const shared = "shared-long";
+    const longDoc = JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Allow",
+          Action: Array.from({ length: 200 }, (_, i) => `svc${i}:Action${i}`),
+          Resource: "*",
+          Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } },
+        },
+      ],
+    });
+    const iamRecord = (over: object) =>
+      record({
+        eventName: "PutRolePolicy",
+        eventSource: "iam.amazonaws.com",
+        readOnly: false,
+        sharedEventID: shared,
+        requestParameters: {
+          roleName: "r".repeat(300),
+          policyName: "n".repeat(300),
+          policyDocument: longDoc,
+        },
+        ...over,
+      });
+    const r = parseCloudTrail(
+      envelope(
+        iamRecord({
+          userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+          recipientAccountId: OTHER,
+          eventID: "owner",
+        }),
+        iamRecord({ userIdentity: assumedRole(), recipientAccountId: ACCT, eventID: "caller" }),
+      ),
+    );
+    expect(r.events).toHaveLength(1);
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d.endsWith(`[also recorded in account ${OTHER}]`)).toBe(true);
+  });
   it("a reused session name under two access keys is two rows", () => {
     const r = parseCloudTrail(
       envelope(

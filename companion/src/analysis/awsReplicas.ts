@@ -45,7 +45,11 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
       ...new Set(others.map((c) => c.recipientAccountId).filter((a) => a && a !== kept.recipientAccountId)),
     ];
     const note = alsoIn.length ? ` [also recorded in account ${alsoIn.join(", ")}]` : "";
-    const description = `${kept.event.description}${note}`.slice(0, 600);
+    // The notice is reserved: the kept description is clipped (with an ellipsis) to make room, so
+    // a full-length IAM or SSM row never drops or truncates the account-boundary context.
+    const room = 600 - note.length;
+    const base = kept.event.description;
+    const description = `${base.length > room ? `${base.slice(0, Math.max(0, room - 1))}…` : base}${note}`;
     // The two accounts of a cross-account action are the caller's (`cloud.accountId`) and the
     // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
     // caller's, so a Hunt on either account id finds the action.
