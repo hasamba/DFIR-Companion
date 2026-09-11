@@ -37,7 +37,7 @@ it may never go up.**
 **Type-only imports count.** `import type` is exempt from `check:imports`, because an erased import
 cannot form a runtime initialisation cycle — that reasoning is correct there and does not carry over
 here. A type import still means one domain knows another's shape, which is the coupling this map
-exists to control. It is not a rounding error either: **15 of the 39 recorded violations are
+exists to control. It is not a rounding error either: **15 of the 38 recorded violations are
 type-only**, so exempting them would have hidden a third of the problem on day one.
 
 | Layer | Contents | May import |
@@ -211,8 +211,8 @@ established, and it works the same way.
 - `scripts/module-map.json` assigns **every file** in `companion/src` to a domain, and declares the
   allowed edges. Files are listed by exact path, not by count, so deleting one file never creates
   room for a different one.
-- `scripts/boundary-violations.json` records the **39 violations** that break the map today, as
-  concrete `source-file → target-file [kind]` entries spanning 27 domain edges — an edge being one
+- `scripts/boundary-violations.json` records the **38 violations** that break the map today, as
+  concrete `source-file → target-file [kind]` entries spanning 26 domain edges — an edge being one
   ordered `source-domain → target-domain` pair, resolved through this map, so the number is
   reproducible rather than remembered. Not domain pairs,
   and not counts: an already-recorded edge must not become a licence to add more imports along it.
@@ -231,7 +231,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,064 of the 2,103 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,068 of the 2,106 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long
@@ -251,7 +251,7 @@ Every entry is small. Grouped by domain edge, with the shape of the problem:
 | 3 | `intel -> workflow` | `playbook.ts` and `incidentTypes.ts` importing collection directives and templates |
 | 3 | `workflow -> ai` | type-only back-references from `cockpit.ts` and `priorWork.ts`; see the tier note above |
 | 2 each | `case -> ingest`, `intel -> detect`, `timeline -> findings`, `timeline -> ai`, `routes -> composition` | `routes -> composition` is the two `AppOptions` type imports |
-| 1 each | `privacy -> detect`, `privacy -> findings`, `privacy -> ingest`, `case -> detect`, `case -> ai`, `case -> workflow`, `case -> enrichment`, `timeline -> intel`, `timeline -> workflow`, `findings -> ingest`, `detect -> ingest`, `intel -> ingest`, `intel -> findings`, `workflow -> reports`, ~~`workflow -> integrations`~~ (cleared — the third `mitreTactics.ts` importer), `shared -> findings`, `storage -> privacy`, `auth -> case`, `providers -> ai` | `shared -> findings` is `stateTypes.ts` importing an `IocExcludeRule` type — the event vocabulary should not know about IOC exclusion rules, and it is the one entry that is a genuine modelling wart rather than a misfiling |
+| 1 each | `privacy -> detect`, `privacy -> findings`, `privacy -> ingest`, `case -> detect`, `case -> ai`, `case -> workflow`, `case -> enrichment`, `timeline -> intel`, `timeline -> workflow`, `findings -> ingest`, `detect -> ingest`, `intel -> ingest`, `intel -> findings`, `workflow -> reports`, ~~`workflow -> integrations`~~ (cleared — the third `mitreTactics.ts` importer), `shared -> findings`, `storage -> privacy`, `auth -> case`, ~~`providers -> ai`~~ (cleared — `extractJson.ts` is a pure JSON-repair helper with no imports, used by a platform provider, the AI gate and now the import detector; it was filed under `ai` and is now `shared`, #953) | `shared -> findings` is `stateTypes.ts` importing an `IocExcludeRule` type — the event vocabulary should not know about IOC exclusion rules, and it is the one entry that is a genuine modelling wart rather than a misfiling |
 
 ### Known structural debt
 
