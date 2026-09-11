@@ -13,6 +13,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
+import { boundedAggKey } from "./aggKey.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -134,7 +135,15 @@ function principal(ui: unknown): {
   if (!isObject(ui)) return { name: str(ui), isRoot: false };
   const type = str(getCI(ui, "type"));
   const arn = str(getCI(ui, "arn"));
-  const id = str(getCI(ui, "principalId")) || str(getCI(ui, "userId"));
+  // IAM Identity Center users carry NO principalId/userName at the root: the immutable identity is
+  // onBehalfOf.userId inside identityStoreArn. Without it every Identity Center user in an account
+  // keyed as the literal type string and merged into one principal.
+  const id =
+    str(getCI(ui, "principalId")) ||
+    str(getCI(ui, "userId")) ||
+    (str(getPath(ui, "onBehalfOf.userId"))
+      ? `${str(getPath(ui, "onBehalfOf.identityStoreArn"))}#${str(getPath(ui, "onBehalfOf.userId"))}`
+      : "");
   const accountId = str(getCI(ui, "accountId"));
   const name =
     str(getCI(ui, "userName")) ||
@@ -298,9 +307,14 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // 300, and every downstream question about WHICH objects were read — bulk-read correlation
     // (#908 item 8) above all — had nothing left to read. Management-plane calls keep the old key:
     // a hundred DescribeInstances by one principal genuinely are one thing.
-    aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}|${client}${objectKey ? `|${resource}` : ""}`
-      .toLowerCase()
-      .slice(0, 400),
+    // Identities, not labels (#931 prerequisite): the service (a same-named API in two services is
+    // two things), the account and principal id (an organisation trail holds identically named
+    // roles in many accounts), the COMPUTED outcome (ConsoleLogin reports failure in
+    // responseElements with no errorCode at all), the region (RunInstances in a new region is the
+    // rogue-compute signal). Bounded fields first, the object key last, bounded with a digest.
+    aggKey: boundedAggKey(
+      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+    ),
     sources: ["AWS CloudTrail"],
   };
 }
