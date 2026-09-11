@@ -223,3 +223,58 @@ export function parseJsonLoose(raw: string): unknown {
     }
   }
 }
+
+/**
+ * Complete a JSON ARRAY that was cut off mid-way — a head sample, not a file (#953).
+ *
+ * POST /cases/:id/import-file classifies from a bounded 256 KB head, bounded on purpose: a Plaso
+ * super-timeline cannot be read whole just to sniff it. A JSON array cut mid-way is not a value,
+ * so every array-rooted export over that size — Velociraptor GUI exports, Hayabusa and Chainsaw
+ * json-timelines — read as "unknown" from the one route that exists for large files, while the
+ * same bytes imported through the dashboard upload and the drop folder, which read the whole file.
+ *
+ * This is NOT repairTruncatedJson. That one recovers a model reply cut at max_tokens and is right
+ * to be lenient: a partial last object is still useful there. A detector sample must be exact, so:
+ *
+ *   • string-aware — a `}` inside a string value (a command line, an embedded script) is not a
+ *     record boundary; lastIndexOf("}") would cut inside the string and produce nothing;
+ *   • depth-aware — only a `}` that returns to array depth ends a top-level element, so a cut
+ *     inside the FIRST record yields null rather than a partial object that a generic signature
+ *     would claim as some other kind;
+ *   • array-only — a partial single object is never a safe sample, so `{`-rooted text is null.
+ *
+ * Returns the completed array text (complete elements only), or null when the text already
+ * parses, is not array-rooted, or holds no complete element. Callers keep the raw sample on null,
+ * so the whole-file paths — which never call this — classify exactly as they always did.
+ */
+export function closeTruncatedJsonArray(text: string): string | null {
+  const t = text.trimStart();
+  if (t[0] !== "[") return null;
+  try {
+    JSON.parse(t);
+    return null; // whole: nothing to complete
+  } catch {
+    /* fall through to the scan */
+  }
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let lastComplete = -1; // index just past the `}` (or `]`) that closed a top-level element
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 1) lastComplete = i + 1; // back at array depth: one element is whole
+    }
+  }
+  if (lastComplete <= 1) return null; // no complete element before the cut
+  return `${t.slice(0, lastComplete)}]`;
+}

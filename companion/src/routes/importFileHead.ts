@@ -1,5 +1,6 @@
 import { open } from "node:fs/promises";
 import { decodeImportedText } from "../ingest/decodeText.js";
+import { closeTruncatedJsonArray } from "../analysis/extractJson.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 
 /**
@@ -22,13 +23,21 @@ import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js"
 /** 256 KB — plenty for the header and many rows of any supported format. */
 export const IMPORT_FILE_HEAD_BYTES = 1 << 18;
 
-/** A BOM-aware decoded head sample for kind detection. Throws what open/read throw. */
+/**
+ * A BOM-aware decoded head sample for kind detection. Throws what open/read throw.
+ *
+ * A head that cuts a JSON array mid-way is completed to its whole elements HERE, on this path
+ * only (#953): the detector is shared with the upload and drop-folder paths, which hand it whole
+ * files, and a genuinely malformed whole file must still be refused rather than classified from
+ * its one good row and then imported as nothing. See closeTruncatedJsonArray.
+ */
 export async function sniffImportFileHead(filePath: string): Promise<string> {
   const fh = await open(filePath, "r");
   try {
     const buf = Buffer.alloc(IMPORT_FILE_HEAD_BYTES);
     const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-    return decodeImportedText(buf.subarray(0, bytesRead));
+    const sample = decodeImportedText(buf.subarray(0, bytesRead));
+    return closeTruncatedJsonArray(sample) ?? sample;
   } finally {
     await fh.close();
   }

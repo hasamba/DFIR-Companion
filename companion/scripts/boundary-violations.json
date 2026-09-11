@@ -34,7 +34,6 @@
   "analysis/veloHuntStore.ts -> integrations/velociraptor/velociraptorApi.ts [type]",
   "analysis/velociraptorClientStore.ts -> integrations/velociraptor/velociraptorApi.ts [type]",
   "auth/teamAuth.ts -> analysis/casePassword.ts [runtime]",
-  "providers/claudeCode.ts -> analysis/extractJson.ts [runtime]",
   "routes/context.ts -> server.ts [type]",
   "routes/presidioApproval.ts -> server.ts [type]",
   "storage/caseStore.ts -> analysis/ocrSearch.ts [type]"
