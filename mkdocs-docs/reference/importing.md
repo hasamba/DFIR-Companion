@@ -203,6 +203,35 @@ happened on any host, so its rows are handled differently from every other impor
 - **Only a real SHA-256 joins.** A report whose sample hash is missing or malformed still produces
   super-timeline rows and IOCs, but no verdict can attach to a sighting.
 
+### Web access logs: decoded requests and attack shapes
+
+A request target arrives in the log the way the client sent it — encoded. `%2e%2e%2f` is `../`,
+`%3B` is `;`, and `%2525` decodes twice. The combined-log importer now decodes each request target
+and Referer (up to three layers, never evaluating anything) and looks for **attack shapes** in the
+decoded text and in the User-Agent:
+
+- **traversal** — `../` segments followed by a sensitive target (`etc/passwd`, `win.ini`, `.env`,
+  `.ssh/`, `id_rsa`, `.git/`); a lone `../` or a relative image path does not count.
+- **cmd** — a shell separator followed by an interpreter or transfer tool with an argument
+  (`;cat /etc/passwd`, `&& curl http://…`), or by a recon command (`;id`, `|whoami`, `x|uname -a`).
+  A REST field list such as `fields=name|id` does not count.
+- **expression** — `${jndi:…}`, a nested lookup, or a template expression with an operator or a
+  call (`{{7*7}}`); a plain placeholder such as `${price}` does not count.
+- **sqli** — `union select`, `' or 1=1`, a timing call with an argument, a stacked statement; a
+  function name in a docs path or a search box does not count.
+
+A row that carries one is graded **Medium** with T1190 and its description starts with the
+evidence: `[web-attack: cmd] [status: 200] [match: ";cat /etc/passwd"] GET /index.php?cmd=…`. The
+family names the field when it was not the target (`expression@ua`, `sqli@referer`). The HTTP
+status sits in its own slot and is stated, not interpreted: **a 200 does not prove the command
+ran and a 500 does not prove it was stopped** — the prefix says "web-attack", never "compromise".
+Rows with no attack shape are unchanged.
+
+Two different payloads on one path are two rows; the same payload with different padding is one.
+A scanner run is bounded: after 64 distinct payloads on one path, the rest fold into one
+`[overflow: …]` row per path that names every family seen. A field longer than 64 KiB is not
+inspected at all — the row says `oversized@target (N chars, not inspected)` instead of silently
+scanning a prefix — and a decoded control character is shown as `\x00`, never written as the byte.
 ### Mobile evidence with no clock (iLEAPP / ALEAPP)
 
 Most of what a phone examination is for has no timestamp: the installed-apps list, permissions,
