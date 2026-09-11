@@ -83,6 +83,14 @@ export interface EntraAppChange {
  */
 export type Resolver = (objectId: string, tenant: string) => string;
 
+// A record's atomic changes are bounded: a 4 KiB consent value, a 3,850-character delegated grant
+// scope string or a 4 KiB credential list can hold hundreds of entries, and every entry would
+// otherwise become a full row before the importer's event cap is applied. The overflow is one
+// extra row that says how much was cut — never a silent drop.
+const MAX_ENTRIES = 16;
+const MAX_SCOPES = 32;
+const MAX_CREDENTIALS = 16;
+
 const NOT_OBSERVED = "assigned, not yet observed in use";
 // Three qualifiers may share the 130-character slot: 33 + 56 + 32 and two separators fit.
 const DELEGATED_NOTE = "delegated — as the signed-in user, within that user's access";
@@ -264,20 +272,35 @@ function credentialChanges(r: EntraAuditRecord, removal: boolean): EntraAppChang
   }
   const from = removal ? oldList : newList;
   const against = new Set((removal ? newList : oldList).map((k) => k.keyId.toLowerCase()));
-  return from
-    .filter((k) => !against.has(k.keyId.toLowerCase()))
-    .map((k) =>
+  const delta = from.filter((k) => !against.has(k.keyId.toLowerCase()));
+  const shown = delta.slice(0, MAX_CREDENTIALS);
+  const rows = shown.map((k) =>
+    build({
+      ...base,
+      verb: `${removal ? "removes" : "adds"} ${k.keyType || "unknown-type"} credential ${k.keyId.slice(0, 36)}`,
+      infinitive: `${removal ? "remove" : "add"} ${k.keyType || "unknown-type"} credential ${k.keyId.slice(0, 36)}`,
+      detail: `"${k.displayName.slice(0, 40)}" (${newList.length} now)`,
+      object: `for ${subject.name || short(subject.id)}`,
+      atomic: `cred:${k.keyId}`,
+      severity: "High",
+      credential: k,
+    }),
+  );
+  const cut = delta.length - shown.length;
+  if (cut > 0)
+    rows.push(
       build({
         ...base,
-        verb: `${removal ? "removes" : "adds"} ${k.keyType || "unknown-type"} credential ${k.keyId.slice(0, 36)}`,
-        infinitive: `${removal ? "remove" : "add"} ${k.keyType || "unknown-type"} credential ${k.keyId.slice(0, 36)}`,
-        detail: `"${k.displayName.slice(0, 40)}" (${newList.length} now)`,
+        verb: `credential list ${removal ? "removes" : "adds"} ${cut} more than are shown`,
+        infinitive: `change ${cut} more credentials than are shown`,
+        detail: "",
         object: `for ${subject.name || short(subject.id)}`,
-        atomic: `cred:${k.keyId}`,
+        atomic: `overflow:${p.rawDigest}`,
         severity: "High",
-        credential: k,
+        qualifiers: ["truncated — the complete list is in the raw record"],
       }),
     );
+  return rows;
 }
 
 // ───────────────────────────── permissions ─────────────────────────────
@@ -373,13 +396,6 @@ function appRoleChanges(r: EntraAuditRecord, removal: boolean, resolve?: Resolve
     }),
   ];
 }
-
-// A record's atomic changes are bounded: a 4 KiB consent value, or a 3,850-character delegated
-// grant scope string, can hold thousands of scopes, and every scope would otherwise become a full
-// row before the importer's event cap is applied. The overflow is one extra row that says how much
-// was cut — never a silent drop.
-const MAX_ENTRIES = 16;
-const MAX_SCOPES = 32;
 
 function overflowRow(
   r: EntraAuditRecord,

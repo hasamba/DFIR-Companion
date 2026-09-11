@@ -500,6 +500,24 @@ describe("keys and bounds", () => {
   });
 });
 
+describe("credential bound", () => {
+  it("an oversized credential list yields the bound plus one overflow row", () => {
+    const many = Array.from({ length: 40 }, (_, i) => key(`k-${i}`, "Password", `s${i}`));
+    const r = graph("Add service principal credentials", [
+      {
+        type: "ServicePrincipal",
+        id: SP,
+        displayName: "svc",
+        modifiedProperties: [P("KeyDescription", JSON.stringify(many), JSON.stringify([]))],
+      },
+    ]);
+    const changes = decodeEntraAppChanges(r);
+    expect(changes).toHaveLength(17);
+    expect(changes[16].posture).toBe("credential list adds 24 more than are shown");
+    expect(changes[16].qualifiers).toContain("truncated — the complete list is in the raw record");
+  });
+});
+
 describe("delegated-grant bound", () => {
   it("a 3,850-character scope string is bounded the same way as a consent, with one overflow row", () => {
     const scopeText = Array.from({ length: 700 }, (_, i) => `s${i}`).join(" ");
