@@ -1043,6 +1043,7 @@ export const FEATURES: Feature[] = [
       "fpIocValueSet",
       "loadCustomerExposure",
       "loadFalsePositives",
+      "commitFalsePositives",
       "loadLearnedPatterns",
       "loadSourceTrust",
       "renderFalsePositives",

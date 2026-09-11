@@ -194,7 +194,7 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             markers = await r.json();
           }
-          renderFalsePositives(markers);
+          commitFalsePositives(caseId, markers);
           closeFalsePositiveModal();
           if (onDone) onDone();
           document.getElementById("status").textContent =

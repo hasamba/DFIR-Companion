@@ -130,7 +130,7 @@
       })
       .then((j) => {
         msg.textContent = `${j.matched} matched · ${j.added} newly marked false positive`;
-        if (j.legitimate) renderFalsePositives(j.legitimate);
+        if (j.legitimate) commitFalsePositives(caseId, j.legitimate);
       })
       .catch((e) => {
         msg.textContent =

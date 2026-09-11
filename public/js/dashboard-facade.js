@@ -371,6 +371,7 @@
     "fpIocValueSet",
     "loadCustomerExposure",
     "loadFalsePositives",
+    "commitFalsePositives",
     "loadLearnedPatterns",
     "loadSourceTrust",
     "renderFalsePositives",
