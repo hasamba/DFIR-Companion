@@ -484,6 +484,15 @@ describe("parseM365Audit — Entra application changes (#931 item 1)", () => {
     expect(conflict.events.find((e) => e.description.includes("Mail.ReadWrite"))!.description).toContain(
       "API not identified",
     );
+    // A tenant-less record resolves against tenant-less facts only when the whole file is
+    // tenant-less; once any record names a tenant, a tenant-less record is of unknown tenant.
+    const mixed = parseM365Audit(
+      JSON.stringify([consent("", "g1"), grant("", [GRAPH_APP]), grant("t9", [GRAPH_APP])]),
+      { aggregate: false },
+    );
+    expect(mixed.events.find((e) => e.description.includes("Mail.ReadWrite"))!.description).toContain(
+      "API not identified",
+    );
     // A consent record itself never teaches the resolver (it names no app id).
     const only = parseM365Audit(JSON.stringify([consent("t1", "g1")]), { aggregate: false });
     expect(only.events[0].description).toContain("API not identified");

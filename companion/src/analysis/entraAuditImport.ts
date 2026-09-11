@@ -57,7 +57,20 @@ const WORKLOAD_CREDENTIAL_FAILURES: Record<number, string> = {
 export function learnApiResolver(records: readonly Row[]): Resolver {
   const map = new Map<string, string>();
   const conflicts = new Set<string>();
+  // A record without a tenant id may only learn from, and resolve against, other tenant-less
+  // records when the WHOLE file is tenant-less — a single export from one tenant by construction
+  // (Graph directoryAudits carries no tenant field). The moment one record names a tenant, a
+  // tenant-less record is of unknown tenant and neither learns nor resolves.
+  const tenantOf = (rec: Row): string =>
+    str(getCI(rec, "resourceTenantId")).trim() ||
+    str(getCI(rec, "homeTenantId")).trim() ||
+    str(getCI(rec, "tenantId")).trim() ||
+    str(getCI(rec, "OrganizationId")).trim() ||
+    str(getCI(rec, "TargetContextId")).trim();
+  const anyTenant = records.some((rec) => tenantOf(rec) !== "");
+  const usable = (tenant: string): boolean => tenant !== "" || !anyTenant;
   const learn = (tenant: string, objectId: string, appId: string) => {
+    if (!usable(tenant)) return;
     const k = `${tenant.toLowerCase()}|${objectId.toLowerCase()}`;
     const prev = map.get(k);
     if (prev && prev !== appId) conflicts.add(k);
@@ -80,6 +93,7 @@ export function learnApiResolver(records: readonly Row[]): Resolver {
     if (known.length === 1) learn(audit.tenant, target.id, known[0]);
   }
   return (objectId, tenant) => {
+    if (!usable(tenant)) return "";
     const k = `${tenant.toLowerCase()}|${objectId.trim().toLowerCase()}`;
     return conflicts.has(k) ? "" : (map.get(k) ?? "");
   };

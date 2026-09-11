@@ -500,6 +500,35 @@ describe("keys and bounds", () => {
   });
 });
 
+describe("credentials on more than one target", () => {
+  it("every KeyDescription property is read against its own target — a second target's change is never dropped", () => {
+    const r = graph("Add service principal credentials", [
+      {
+        type: "ServicePrincipal",
+        id: SP,
+        displayName: "one",
+        modifiedProperties: [
+          P("KeyDescription", JSON.stringify([key("k-1", "Password", "a")]), JSON.stringify([])),
+        ],
+      },
+      {
+        type: "ServicePrincipal",
+        id: USER2,
+        displayName: "two",
+        modifiedProperties: [
+          P("KeyDescription", JSON.stringify([key("k-2", "Password", "b")]), JSON.stringify([])),
+        ],
+      },
+    ]);
+    const changes = decodeEntraAppChanges(r);
+    expect(changes.map((c) => [c.subject.name, c.credential?.keyId])).toEqual([
+      ["one", "k-1"],
+      ["two", "k-2"],
+    ]);
+    expect(changes[0].aggKey).not.toBe(changes[1].aggKey);
+  });
+});
+
 describe("credential bound", () => {
   it("an oversized credential list yields the bound plus one overflow row", () => {
     const many = Array.from({ length: 40 }, (_, i) => key(`k-${i}`, "Password", `s${i}`));

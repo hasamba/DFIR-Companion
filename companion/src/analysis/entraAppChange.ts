@@ -239,9 +239,19 @@ const isSelf = (r: EntraAuditRecord, subject: EntraAppChange["subject"]): boolea
 
 // ───────────────────────────── credentials ─────────────────────────────
 
+// One record can carry credential changes for more than one target (a batched export); every
+// KeyDescription property is read, each against its own target — never only the first.
 function credentialChanges(r: EntraAuditRecord, removal: boolean): EntraAppChange[] {
-  const p = propOf(r, "KeyDescription");
-  const subject = spSubject(r);
+  const props = r.props.filter((p) => p.name.toLowerCase() === "keydescription");
+  return props.flatMap((p) => credentialChangesOf(r, removal, p));
+}
+
+function credentialChangesOf(r: EntraAuditRecord, removal: boolean, p: EntraProp): EntraAppChange[] {
+  const own = p.targetIndex >= 0 ? r.targets[p.targetIndex] : undefined;
+  const subject =
+    own && /serviceprincipal|application/i.test(own.type)
+      ? { id: own.id, name: label(own), appId: "", type: own.type }
+      : spSubject(r);
   const kind: ChangeKind = removal ? "credential-removed" : "credential-added";
   const base = {
     r,
@@ -252,7 +262,6 @@ function credentialChanges(r: EntraAuditRecord, removal: boolean): EntraAppChang
     qualifiers: [],
     words: "",
   };
-  if (!p) return [];
   const newList = parseKeyDescriptions(p.newValue);
   const oldList = parseKeyDescriptions(p.oldValue);
   const readable =
