@@ -30,6 +30,7 @@ import { decodeImportedText } from "../ingest/decodeText.js";
 import { readdir, stat, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import type { CaseStore } from "../storage/caseStore.js";
 import { openNoFollow, readFileNoFollow, readHeadNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
+import { isSafeDropRelpath } from "../storage/dropRelpath.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
@@ -216,6 +217,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   }
 
   async function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+    // FIRST, before the mkdir below: this is the one function that renames a file, and its relpath
+    // is not only the walk's — run-pending feeds it from state/drop-status.json, which an imported
+    // archive restores verbatim (#919). The schema drops an escaping entry at load; this is the
+    // second layer, so no future writer of that file can reach a rename. It has to precede the
+    // mkdir because mkdir(dirname(dest)) on a traversal relpath creates directories OUTSIDE drop/.
+    if (!isSafeDropRelpath(relpath)) {
+      throw new Error(`refused to move a path outside the drop folder (security): ${relpath}`);
+    }
     const src = join(dropDir, relpath);
     const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
     await mkdir(dirname(dest), { recursive: true });

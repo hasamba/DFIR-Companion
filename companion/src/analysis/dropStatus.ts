@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { isSafeDropRelpath } from "../storage/dropRelpath.js";
 
 // Per-case record of the LAST drop-folder sweep that did anything: when it ran, the absolute drop
 // path (so the dashboard can tell the analyst where to drop), and the imported / failed files. Kept
@@ -17,12 +18,28 @@ const failureSchema = z.object({
 
 // A raw binary (EVTX/PCAP) waiting on an external tool: it can't be imported as text, so instead of
 // failing it we surface it as "pending" so the dashboard can offer "Run <tool>" / "Configure <tool>".
+//
+// `relpath` is the one field here that is not merely displayed: POST /cases/:id/drop/run-pending
+// joins it onto drop/ and reads, uploads and MOVES the result. And this file is not only written
+// by the sweep — it rides inside a whole-case archive and import restores it verbatim (#919), so
+// the list is attacker-controlled the moment an untrusted .dfircase is opened. An entry whose
+// relpath could escape drop/ is therefore DROPPED at load, not coerced: a `.catch("")` here would
+// hand the consumer `join(dropDir, "")`, which is the drop folder itself.
 const pendingRawSchema = z.object({
-  relpath: z.string().catch(""),
+  relpath: z.string().refine(isSafeDropRelpath),
   ext: z.string().catch(""),
   suggestedTool: z.string().nullable().catch(null),
   configured: z.boolean().catch(false),
 });
+const pendingRawListSchema = z
+  .array(z.unknown())
+  .catch([])
+  .transform((entries) =>
+    entries.flatMap((entry) => {
+      const parsed = pendingRawSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
 
 export const dropStatusSchema = z.object({
   lastSweepAt: z.string().catch(""),
@@ -31,7 +48,7 @@ export const dropStatusSchema = z.object({
   failedCount: z.number().catch(0),
   imported: z.array(z.string()).catch([]),
   failed: z.array(failureSchema).catch([]),
-  pendingRawInputs: z.array(pendingRawSchema).catch([]),
+  pendingRawInputs: pendingRawListSchema,
 });
 
 export type DropFailure = z.infer<typeof failureSchema>;
