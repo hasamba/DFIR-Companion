@@ -18,9 +18,10 @@ const QUALIFIERS_MAX = 130; // sized for the three messages the IAM decoder may 
 // The caller's identity words (#931 item 5) sit after the head. They are attacker-shaped in part
 // (a session name, a source identity) and they are context, not the evidence the row grades on:
 // they take whatever the other mandatory slots leave, never more than IDENTITY_MAX, never less
-// than IDENTITY_MIN — the mandatory set without them sums to 560, so 40 always remain.
+// than IDENTITY_MIN — the mandatory set without them sums to 566 with its separators, so 33
+// always remain, and the qualifiers are never the slot that pays for the identity.
 const IDENTITY_MAX = 150;
-const IDENTITY_MIN = 40;
+const IDENTITY_MIN = 33;
 const OPTIONAL_MAX = [140, 100, 100]; // reading, trust, bindings — attacker-shaped, clipped first
 const OPTIONAL_DEFAULT_MAX = 100;
 

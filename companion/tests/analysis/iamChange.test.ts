@@ -642,6 +642,9 @@ describe("renderAwsDescription — reserved budgets", () => {
   });
   it("the maximal row keeps the head, the outcome, the object and all three qualifiers inside 600", () => {
     const s = renderAwsDescription(parts());
+    expect(renderAwsDescription({ ...parts(), identity: "i".repeat(300) })).toMatch(
+      /effective access depends on controls not in this record$/,
+    );
     expect(s.length).toBeLessThanOrEqual(600);
     expect(s).toMatch(/^AWS PutRolePolicy \(iam\) by p+/);
     expect(s).toContain("attempted to replace inline policy");

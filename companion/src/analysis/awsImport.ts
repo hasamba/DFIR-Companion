@@ -513,7 +513,12 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   });
   const finalEvents = stampSourceArtifactHash(events, text);
 
-  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
+  // A merged cross-account action is ONE event that represents every replica record it carries
+  // (its raw-record pointers): those records are on the row, not dropped.
+  const represented = finalEvents.reduce(
+    (n, e) => n + (e.count ?? 1) * Math.max(1, e.canonical?.evidence.rawRecords.length ?? 1),
+    0,
+  );
   return {
     events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),

@@ -951,7 +951,12 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     expect(r.events).toHaveLength(1);
     const d = r.events[0].description;
     expect(d.length).toBeLessThanOrEqual(600);
-    expect(d.endsWith(`[also recorded in account ${OTHER}]`)).toBe(true);
+    // The notice sits in front of the row's qualifier tail, which survives whole.
+    expect(d).toContain(`[also recorded in account ${OTHER}] — `);
+    expect(d).toMatch(/effective access depends on controls not in this record$/);
+    // Both records are represented, none dropped.
+    expect(r.dropped).toBe(0);
+    expect(r.kept).toBe(1);
   });
   it("a reused session name under two access keys is two rows", () => {
     const r = parseCloudTrail(

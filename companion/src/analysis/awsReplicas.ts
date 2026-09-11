@@ -47,9 +47,15 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     const note = alsoIn.length ? ` [also recorded in account ${alsoIn.join(", ")}]` : "";
     // The notice is reserved: the kept description is clipped (with an ellipsis) to make room, so
     // a full-length IAM or SSM row never drops or truncates the account-boundary context.
-    const room = 600 - note.length;
+    // The rendered description parks its caveats and qualifiers at the tail (" — …"); the notice
+    // goes in FRONT of that tail and the middle is what clips, so a full-length SSM or IAM row
+    // keeps its caveats and its notice both.
     const base = kept.event.description;
-    const description = `${base.length > room ? `${base.slice(0, Math.max(0, room - 1))}…` : base}${note}`;
+    const tailAt = base.lastIndexOf(" — ");
+    const tail = tailAt >= 0 ? base.slice(tailAt) : "";
+    const front = tailAt >= 0 ? base.slice(0, tailAt) : base;
+    const room = 600 - note.length - tail.length;
+    const description = `${front.length > room ? `${front.slice(0, Math.max(0, room - 1))}…` : front}${note}${tail}`;
     // The two accounts of a cross-account action are the caller's (`cloud.accountId`) and the
     // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
     // caller's, so a Hunt on either account id finds the action.
