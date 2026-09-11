@@ -30,6 +30,7 @@ import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalEvent.js";
+import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -407,7 +408,17 @@ export function mergeDelta(
   // because a container-originated change to host persistence only reads as one event when both
   // halves are in the same timeline. Only raises, and it keeps configuration and behaviour apart.
   const withEscape = markContainerEscape(withServiceBrowsing);
-  const correlated = correlateEvents(withEscape).sort(byEventTime);
+  const correlatedOnly = correlateEvents(withEscape).sort(byEventTime);
+  // Attach each sample's sandbox detonations to the incident events that carry its hash (#932
+  // item 5). AFTER correlation, on the registry this merge will persist, so a sighting arriving in
+  // this delta and a report imported last week annotate the same way regardless of order. Derived
+  // data: cleared and recomputed here every time. A lab row never gets one (it never gets here).
+  const labIntel = upsertLabIntel(state.labIntel, delta.labIntel ?? []);
+  const correlated = annotateSightingsWithLabIntel({
+    ...state,
+    forensicTimeline: correlatedOnly,
+    labIntel,
+  }).forensicTimeline;
 
   // NOTE: the techniques the deterministic importers carry on their EVENTS are deliberately not
   // collected here (#893). #878 unioned them into this aggregate, which made the MITRE panel and
@@ -476,6 +487,9 @@ export function mergeDelta(
         ? (delta.narrativeTimeline as string)
         : state.narrativeTimeline,
     iocExcludeRules: state.iocExcludeRules,
+    // Union by (sha256, source, runId). Named here on purpose: this literal is what a reducer keeps,
+    // and a field it does not name is gone after the first merge (#932 item 5).
+    labIntel,
     updatedAt: ctx.timestamp,
   };
 }

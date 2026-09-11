@@ -14,6 +14,7 @@
 import { SEVERITY_RANK, worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature } from "./chainSignature.js";
+import { isLabProduced } from "./labIntel.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
@@ -323,6 +324,18 @@ function groupEvents(
   // process-creation event carries the field (satisfying the importer-agnostic path).
   const evs = events.map(withSignature);
   const dsu = new DSU(n);
+  // A LAB row (a sandbox detonation) is never unioned with a HOST observation, whatever they share
+  // (#932 item 5). The hash step below groups on `sha256:action` with no time bound, and mergeGroup
+  // makes the most severe member primary — so a CAPE "injects into explorer.exe" at High used to
+  // swallow a KAPE "file created X.exe" at Info and a real host event came out described as an
+  // injection. New lab rows never reach this function (ingest sends them to the super-timeline);
+  // this guard is for rows persisted before that, and for any future producer that forgets.
+  // Lab-with-lab unions stay allowed: two copies of one report should still dedup.
+  const lab = evs.map(isLabProduced);
+  const union = (a: number, b: number): void => {
+    if (lab[a] !== lab[b]) return;
+    dsu.union(a, b);
+  };
 
   // 0) EXACT duplicates → union. Same event time + same description ON THE SAME HOST is the same
   // observation — this collapses re-imports of the SAME file (and any event type that
@@ -337,7 +350,7 @@ function groupEvents(
   evs.forEach((e, i) => {
     const k = `${e.timestamp} ${cleanDescription(e.description)} ${shortHost(e.asset)}`;
     const prev = byExact.get(k);
-    if (prev !== undefined) dsu.union(prev, i);
+    if (prev !== undefined) union(prev, i);
     else byExact.set(k, i);
   });
 
@@ -386,7 +399,7 @@ function groupEvents(
       const mine = realSources([evs[i]]);
       if (mine.some((src) => claimed.has(src))) continue; // same parser → a second finding, not a duplicate
       if (Math.abs((timeOf(evs[i]) as number) - anchorTime) > windowMs) continue; // a reused record number
-      dsu.union(anchor, i);
+      union(anchor, i);
       for (const src of mine) claimed.add(src);
     }
   }
@@ -414,7 +427,7 @@ function groupEvents(
   for (const idxs of byHash.values()) {
     if (idxs.length < 2) continue;
     for (const group of hostScopedGroups(idxs, evs, crossHostArtifacts)) {
-      for (let k = 1; k < group.length; k++) dsu.union(group[0], group[k]);
+      for (let k = 1; k < group.length; k++) union(group[0], group[k]);
     }
   }
 
@@ -448,7 +461,7 @@ function groupEvents(
         if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
         // Undated events on the same path correlate too (no time to disprove); dated ones
         // must be within the window.
-        if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);
+        if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) union(a.i, b.i);
       }
     }
   }
@@ -475,7 +488,7 @@ function groupEvents(
       const a = dated[k - 1],
         b = dated[k];
       if (!corroborates(evs[a.i], evs[b.i])) continue;
-      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= pidWindowMs) dsu.union(a.i, b.i);
+      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= pidWindowMs) union(a.i, b.i);
     }
   }
 
@@ -501,7 +514,7 @@ function groupEvents(
       const a = dated[k - 1],
         b = dated[k];
       if (!corroborates(evs[a.i], evs[b.i])) continue;
-      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= cmdWindowMs) dsu.union(a.i, b.i);
+      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= cmdWindowMs) union(a.i, b.i);
     }
   }
 

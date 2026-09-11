@@ -13,6 +13,7 @@ import type { BeaconCandidate } from "./beaconDetect.js";
 import { BEACON_CAVEAT } from "./beaconDetect.js";
 import type { AttackPhase } from "./burstDetect.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { labIntelTag } from "./labIntel.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
 
@@ -49,6 +50,12 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
 
   const nSources = e.sources?.length ?? 0;
   if (nSources >= 2) tags.push(`<src:${nSources}>`);
+
+  // What the sample seen at THIS event did in a sandbox (#932 item 5) — intelligence about the file,
+  // placed where the file was observed. labIntelTag returns "" or " <sandbox:…>"; strip its space
+  // so it joins like the others.
+  const lab = labIntelTag(e.labIntel).trim();
+  if (lab) tags.push(lab);
 
   return tags.length ? " " + tags.join(" ") : "";
 }

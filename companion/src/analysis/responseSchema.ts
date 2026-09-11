@@ -99,6 +99,24 @@ export const deltaSchema = z.object({
   threadsClosed: z.array(z.string()), // thread ids
   timelineNote: z.string(),
   summary: z.string(),
+  // Sandbox detonation records (#932 item 5) — written by the sandbox importer, never by the model.
+  // Unioned by (sha256, source, runId) in mergeDelta; a record whose sha256 is not 64 hex is dropped
+  // there. Optional: every other producer of a delta omits it.
+  labIntel: z
+    .array(
+      z.object({
+        sha256: z.string(),
+        source: z.string(),
+        runId: z.string().default("").catch(""),
+        verdict: z.enum(["malicious", "suspicious", "unknown"]).catch("unknown"),
+        score: z.number().default(0).catch(0),
+        family: z.string().default("").catch(""),
+        signatures: z.array(z.string()).default([]).catch([]),
+        detonatedAt: z.string().default("").catch(""),
+        importedAt: z.string().default("").catch(""),
+      }),
+    )
+    .optional(),
   // Real incident events with their actual timestamps, extracted from the evidence.
   forensicEvents: z
     .array(

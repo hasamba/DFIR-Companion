@@ -21,6 +21,7 @@ import { parseWazuhAlerts, type WazuhImportOptions } from "../wazuhImport.js";
 import { YARA_SOURCE, parseYaraOutput, type YaraImportOptions } from "../yaraImport.js";
 import { commitDelta, noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import type { ForensicEvent } from "../stateTypes.js";
 
 /**
  * Security platforms, case trackers and analysis tooling that already produced findings.
@@ -148,27 +149,51 @@ export async function importSandbox(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseSandboxReport(text, opts.sandbox);
-  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Sandbox", parsed.total);
+  // No severity floor here: the floor gates what reaches the FORENSIC timeline, and nothing from
+  // this importer does. Flooring lab rows would only thin the super-timeline copy — and a floor that
+  // removed every row would have discarded the sample's registry record with them.
+  const parsed = parseSandboxReport(text, opts.sandbox);
+  if (parsed.events.length === 0 && parsed.labIntel.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Sandbox", parsed.total);
+
+  // LAB EVIDENCE NEVER ENTERS THE FORENSIC TIMELINE (#932 item 5). A sandbox row says what the
+  // FILE does in a lab, not what happened on any host. Put into the delta like every other import,
+  // it would be merged, correlated by hash into a real host observation — where the more severe
+  // row becomes the primary and a KAPE "file created" is suddenly described as an injection — and
+  // read by the model as incident chronology at the detonation time. So the rows go straight to
+  // the super-timeline (searchable, promotable, out of the model's reach), and the sample's
+  // verdict reaches the model as a registry record attached to the events that carry its hash.
+  const labRows: ForensicEvent[] = parsed.events.map((e, i) => ({
+    ...e,
+    id: `${opts.idPrefix}e${i + 1}`,
+    origin: "lab",
+    relatedFindingIds: [],
+    sourceScreenshots: [opts.label],
+    sources: e.sources?.length ? e.sources : ["Sandbox"],
+  }));
+  // Rows first, then the registry: a crash between the two leaves searchable rows with no tag on
+  // the sighting, never a tag pointing at rows that do not exist. (The two-store write is the
+  // property of every import path today; a recoverable import run is a separate change.)
+  const labRowsWritten = ctx.opts.superTimelineStore
+    ? await ctx.opts.superTimelineStore.append(caseId, labRows)
+    : 0;
 
   const raw = {
     findings: [],
     iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
     mitreTechniques: [],
-    forensicEvents: parsed.events.map((e, i) => ({
-      ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
-      sources: e.sources?.length ? e.sources : ["Sandbox"],
-    })),
+    forensicEvents: [],
+    labIntel: parsed.labIntel.map((r) => ({ ...r, importedAt: opts.importedAt })),
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Sandbox import (${parsed.format}): ${parsed.kept} event(s)` +
+      `Sandbox import (${parsed.format}): ${labRows.length} lab row(s) to the super-timeline` +
+      (ctx.opts.superTimelineStore ? "" : " (NOT written — no super-timeline store configured)") +
       (parsed.signatures > 0 ? `, ${parsed.signatures} signature(s)` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.labIntel.length} sample record(s), ${parsed.iocs.length} IOC(s)`,
     summary: "",
   };
+  void labRowsWritten;
   const delta = deltaSchema.parse(raw);
 
   return commitDelta(ctx, caseId, delta, opts);

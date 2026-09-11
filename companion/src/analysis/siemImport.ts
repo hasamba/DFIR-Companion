@@ -21,7 +21,7 @@
 // everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
 // with a conservative bump for LOLBin / suspicious command lines and LSASS access.
 
-import { worstSeverity as worst, type Severity } from "./stateTypes.js";
+import { worstSeverity as worst, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import {
@@ -64,7 +64,7 @@ export interface SiemImportOptions {
 }
 
 // A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
-export interface SiemEvent {
+export interface SiemEvent extends Pick<ForensicEvent, "origin"> {
   id: string;
   timestamp: string;
   description: string;
@@ -752,7 +752,7 @@ export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" |
   return LOLBINS.has(base) && !NOISY_LOLBINS.has(base) ? "weak" : null;
 }
 
-export interface MappedEvent {
+export interface MappedEvent extends Pick<ForensicEvent, "origin"> {
   timestamp: string;
   description: string;
   severity: Severity;

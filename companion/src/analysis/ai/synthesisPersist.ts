@@ -3,6 +3,7 @@ import { sortByEventTime } from "../forensicSort.js";
 import type { StateLock } from "../stateLock.js";
 import type { StateStore } from "../stateStore.js";
 import type { InvestigationState, TimelineEntry } from "../stateTypes.js";
+import { upsertLabIntel } from "../labIntel.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -112,6 +113,9 @@ export function mergeConcurrentAdditions(
     iocs: mergedIocs,
     openThreads: addedThreads.length ? [...next.openThreads, ...addedThreads] : next.openThreads,
     timeline: addedTimeline.length ? [...next.timeline, ...addedTimeline] : next.timeline,
+    // The sandbox registry is keyed, so two writers cannot conflict: union everything the snapshot
+    // did not have with everything this synthesis kept (#932 item 5).
+    labIntel: upsertLabIntel(next.labIntel, latest.labIntel ?? []),
   };
 }
 

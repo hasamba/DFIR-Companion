@@ -132,4 +132,39 @@ describe("parseSandboxReport — options & edges", () => {
     expect(r.format).toBe("empty");
     expect(r.events).toHaveLength(0);
   });
+
+  // #932 item 5: a sandbox row is LAB evidence. It never enters the forensic timeline (the ingest
+  // path appends it straight to the super-timeline), and the model learns about the sample through
+  // the registry record attached to the incident event that carries the hash.
+  it("marks every emitted row origin lab and returns one registry record per report", () => {
+    const r = parseSandboxReport(JSON.stringify(capeReport()));
+    expect(r.events.length).toBeGreaterThan(0);
+    for (const e of r.events) expect(e.origin).toBe("lab");
+    expect(r.labIntel).toHaveLength(1);
+    const rec = r.labIntel[0];
+    expect(rec.sha256).toBe("a".repeat(64));
+    expect(rec.source).toBe("CAPEv2");
+    expect(rec.runId).toBe("42");
+    expect(rec.verdict).toBe("malicious"); // score 9.2 of 10
+    expect(rec.signatures.length).toBeGreaterThan(0);
+    expect(rec.detonatedAt).toMatch(/^2023-09-01T10:00:00/);
+  });
+
+  it("keeps two detonations of one sample as two rows and two registry records", () => {
+    const a = capeReport() as { info: { id: number } };
+    const b = capeReport() as { info: { id: number } };
+    b.info.id = 43;
+    const r = parseSandboxReport(JSON.stringify([a, b]));
+    const verdicts = r.events.filter((e) => e.description.startsWith("CAPE sandbox:"));
+    expect(verdicts).toHaveLength(2);
+    expect(r.labIntel.map((x) => x.runId).sort()).toEqual(["42", "43"]);
+  });
+
+  it("returns no registry record for a report with no usable sha256", () => {
+    const c = capeReport() as { target: { file: { sha256?: string } } };
+    delete c.target.file.sha256;
+    const r = parseSandboxReport(JSON.stringify(c));
+    expect(r.labIntel).toEqual([]);
+    expect(r.events.length).toBeGreaterThan(0); // the rows still exist for the super-timeline
+  });
 });

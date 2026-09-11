@@ -1,6 +1,7 @@
 import type { WindowContext, mergeDelta } from "../stateMerge.js";
 import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
+import type { SuperTimelineStore } from "../superTimelineStore.js";
 
 /**
  * What an importer needs from the pipeline, and nothing else (#384).
@@ -37,6 +38,11 @@ export interface ImportContext {
   readonly opts: {
     stateStore: StateStore;
     onState?: (state: InvestigationState) => void;
+    // One importer needs this: sandbox reports (#932 item 5). Their rows are LAB evidence and never
+    // enter the forensic timeline, so importSandbox appends them here directly instead of putting
+    // them in the delta. Optional because minimal wirings (tests) have no super-timeline; the
+    // importer then reports the rows as dropped rather than falling back into the forensic timeline.
+    superTimelineStore?: SuperTimelineStore;
   };
 
   /**
