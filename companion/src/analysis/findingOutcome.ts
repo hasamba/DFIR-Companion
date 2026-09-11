@@ -12,7 +12,6 @@ import {
   type ExecutionOutcome,
   type Finding,
   type InvestigationState,
-  type OutcomeSource,
 } from "./stateTypes.js";
 
 // The analyst's statement of a finding's attack outcome (#930 item 8), kept in a per-case side
@@ -161,11 +160,9 @@ export function withAnalystOutcomes(
       return {
         ...f,
         ...(execution !== undefined
-          ? { execution, executionSource: (r?.execution ? "analyst" : "machine") as OutcomeSource }
+          ? { execution, executionSource: r?.execution ? "analyst" : "machine" }
           : {}),
-        ...(control !== undefined
-          ? { control, controlSource: (r?.control ? "analyst" : "machine") as OutcomeSource }
-          : {}),
+        ...(control !== undefined ? { control, controlSource: r?.control ? "analyst" : "machine" } : {}),
       };
     }),
   };

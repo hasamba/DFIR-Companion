@@ -1,12 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import type { FindingOutcomePatch } from "../analysis/findingOutcome.js";
-import {
-  CONTROL_DISPOSITIONS,
-  EXECUTION_OUTCOMES,
-  type ControlDisposition,
-  type ExecutionOutcome,
-} from "../analysis/stateTypes.js";
+import { CONTROL_DISPOSITIONS, EXECUTION_OUTCOMES } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 import { deriveSemanticKey } from "../analysis/semanticKey.js";
 
@@ -42,13 +37,13 @@ export function registerFindingOutcomeRoutes(app: Express, ctx: RouteContext): v
       return res
         .status(400)
         .json({ error: `execution must be one of ${EXECUTION_OUTCOMES.join(", ")} (or null to clear)` });
-    if (execution !== "absent") patch.execution = execution as ExecutionOutcome | null;
+    if (execution !== "absent") patch.execution = execution;
     const control = readAxis(req.body?.control, CONTROL_DISPOSITIONS);
     if (control === "invalid")
       return res
         .status(400)
         .json({ error: `control must be one of ${CONTROL_DISPOSITIONS.join(", ")} (or null to clear)` });
-    if (control !== "absent") patch.control = control as ControlDisposition | null;
+    if (control !== "absent") patch.control = control;
     if (req.body?.note !== undefined) patch.note = String(req.body.note);
     if (typeof req.body?.updatedBy === "string") patch.updatedBy = req.body.updatedBy;
     if (patch.execution === undefined && patch.control === undefined && patch.note === undefined) {

@@ -79,9 +79,9 @@ describe("dashboard-finding-outcome ordering", () => {
     h.api.loadFindingOutcome("A");
     h.api.loadFindingOutcome("B");
     expect(h.pending.map((p) => p.url)).toEqual(["/cases/A/finding-outcome", "/cases/B/finding-outcome"]);
-    h.pending[1]!.resolve([]); // B answers first, empty
+    h.pending[1].resolve([]); // B answers first, empty
     await tick();
-    h.pending[0]!.resolve([rec("f1", "blocked")]); // A answers late, with a record for a recurring id
+    h.pending[0].resolve([rec("f1", "blocked")]); // A answers late, with a record for a recurring id
     await tick();
     expect(selected(h.api.findingOutcomeControls("f1"), "ctl")).toBe(""); // B shows nothing for f1
   });

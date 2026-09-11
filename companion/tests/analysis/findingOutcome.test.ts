@@ -126,7 +126,7 @@ describe("withAnalystOutcomes", () => {
         updatedBy: "",
       },
     ]);
-    const f = out.findings[0]!;
+    const f = out.findings[0];
     expect(f.execution).toBe("observed"); // analyst wins on the axis they set
     expect(f.control).toBe("allowed"); // machine value survives on the axis they did not
     expect(f.executionSource).toBe("analyst");
@@ -136,10 +136,10 @@ describe("withAnalystOutcomes", () => {
   it("leaves a finding with no analyst record untouched, and marks a machine-only one", () => {
     const s = state([finding({ id: "f-1", execution: "observed" }), finding({ id: "f-2" })]);
     const out = withAnalystOutcomes(s, []);
-    expect(out.findings[0]!.executionSource).toBe("machine");
-    expect(out.findings[0]!.controlSource).toBeUndefined();
-    expect(out.findings[1]!.executionSource).toBeUndefined();
-    expect(out.findings[1]!.execution).toBeUndefined();
+    expect(out.findings[0].executionSource).toBe("machine");
+    expect(out.findings[0].controlSource).toBeUndefined();
+    expect(out.findings[1].executionSource).toBeUndefined();
+    expect(out.findings[1].execution).toBeUndefined();
   });
 
   // Same id, different claim: synthesis keeps ids stable for a claim the model re-emits, but an
@@ -158,7 +158,7 @@ describe("withAnalystOutcomes", () => {
         updatedBy: "",
       },
     ]);
-    expect(out.findings[0]!.execution).toBeUndefined();
+    expect(out.findings[0].execution).toBeUndefined();
   });
 
   it("applies an UNKEYED record by id — the only kind a deployment with no state store can write", () => {
@@ -174,7 +174,7 @@ describe("withAnalystOutcomes", () => {
         updatedBy: "",
       },
     ]);
-    expect(out.findings[0]!.execution).toBe("observed");
+    expect(out.findings[0].execution).toBe("observed");
   });
 
   it("matches a keyed record against a key DERIVED from a finding that has none stored", () => {
@@ -189,9 +189,9 @@ describe("withAnalystOutcomes", () => {
       updatedAt: "",
       updatedBy: "",
     });
-    expect(withAnalystOutcomes(state([f]), [rec(derived)]).findings[0]!.execution).toBe("observed");
+    expect(withAnalystOutcomes(state([f]), [rec(derived)]).findings[0].execution).toBe("observed");
     expect(
-      withAnalystOutcomes(state([f]), [rec("T1021:something else")]).findings[0]!.execution,
+      withAnalystOutcomes(state([f]), [rec("T1021:something else")]).findings[0].execution,
     ).toBeUndefined();
   });
 
