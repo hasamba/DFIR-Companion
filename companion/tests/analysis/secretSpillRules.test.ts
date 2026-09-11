@@ -154,3 +154,37 @@ describe("secretSpillRules — does not fire on ordinary text", () => {
     expect(secretSpillSignal("   ")).toBeNull();
   });
 });
+
+// A masked value elsewhere on the line used to silence EVERY rule for that line: the old check ran
+// MASKED over the whole text once, before any rule, so `note=REDACTED` beside a real JWT, or a
+// vendor's own masked example beside a real key, hid the spill. Masking is judged per occurrence
+// now, and the scan runs on until a real occurrence is found or the line is exhausted — a cap of N
+// occurrences would just mean N decoys before the real key.
+describe("secretSpillRules — a masked value never hides a real one on the same line", () => {
+  const AWS_DECOY = ["AKIA", "X".repeat(16)].join(""); // matches the AWS shape, reads as masked
+  const GENERIC_REAL = `${FAKE}0Yl4nQxsCkGv!`;
+
+  it("flags a real JWT beside a redaction note", () => {
+    const r = secretSpillSignal(`note=REDACTED user=svc token=${JWT}`);
+    expect(r?.families).toEqual(["jwt"]);
+  });
+
+  it("flags the real generic secret after a masked one", () => {
+    const r = secretSpillSignal(`API_TOKEN=xxxxxxxxxxxxxxxx API_TOKEN=${GENERIC_REAL}`);
+    expect(r?.families).toEqual(["password_generic"]);
+  });
+
+  it("flags a real vendor key after any number of masked-shaped decoys", () => {
+    const decoys = Array.from({ length: 40 }, () => AWS_DECOY).join(" ");
+    expect(secretSpillSignal(`${decoys} ${AWS_KEY}`)?.families).toEqual(["aws_iam"]);
+    // and the decoys alone are still not a spill
+    expect(secretSpillSignal(decoys)).toBeNull();
+  });
+
+  it("does not carry scan position from one call into the next", () => {
+    // A shared global regex would keep `lastIndex` past the first line's key and skip the start of
+    // the second line, where its key sits.
+    expect(secretSpillSignal(`${"pad ".repeat(20)}${AWS_KEY}`)?.families).toEqual(["aws_iam"]);
+    expect(secretSpillSignal(`${AWS_KEY} trailing`)?.families).toEqual(["aws_iam"]);
+  });
+});
