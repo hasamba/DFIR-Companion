@@ -249,6 +249,13 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),
     sourceScreenshots: uniq(events.flatMap((e) => e.sourceScreenshots)),
     sources: sources.length ? sources : undefined,
+    // Provenance markers are a UNION, not the primary's: an analyst's "[promoted]" on a lab row must
+    // survive a merge with an incidental (explain / starred-report) copy of the same sample whose
+    // longer description wins primary, or second-look would treat their choice as pending again
+    // (#932 item 5 part B). Same shape as sources and mitreTechniques above.
+    ...(events.some((e) => e.provenance?.length)
+      ? { provenance: uniq(events.flatMap((e) => e.provenance ?? [])) }
+      : {}),
     // artifactName, unlike the fields below, is an ATTRIBUTION of the shown description (which artifact
     // produced this text) — not a neutral shared fact about the underlying process/host/connection — so
     // it must come from the SAME event as `description` (primary), never borrowed from a different

@@ -108,3 +108,49 @@ describe("isPendingLabRow", () => {
     expect(isPendingLabRow(labRow({ sources: ["CAPEv2", "KAPE"] }))).toBe(false); // merged: not lab-produced
   });
 });
+
+describe("origin is not the model's to assert", () => {
+  it("stripAiExtractedFrom removes origin from every model-produced forensic event", async () => {
+    const { deltaSchema, stripAiExtractedFrom } = await import("../../src/analysis/responseSchema.js");
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
+      forensicEvents: [
+        {
+          id: "e1",
+          timestamp: "2023-03-15T08:00:00Z",
+          description: "process create invoice.exe on WS-01",
+          severity: "High",
+          mitreTechniques: [],
+          relatedFindingIds: [],
+          origin: "lab", // a prompt-injected or weak model claiming a host event is lab evidence
+        },
+      ],
+    });
+    expect(delta.forensicEvents?.[0]?.origin).toBe("lab"); // the schema transports it …
+    expect(stripAiExtractedFrom(delta).forensicEvents?.[0]?.origin).toBeUndefined(); // … the AI guard drops it
+  });
+});
+
+describe("the promotion marker survives correlation", () => {
+  it("a lab/lab merge keeps [promoted] even when the other member's longer description wins primary", async () => {
+    const { correlateEvents } = await import("../../src/analysis/correlate.js");
+    const manual = labRow({ id: "man", severity: "Info", origin: "lab", provenance: [PROMOTED_MARKER] });
+    const incidental = labRow({
+      id: "exp",
+      severity: "Info",
+      origin: "lab",
+      description:
+        "CAPE sandbox: [run 42] Emotet — invoice.exe score 9/10 — promoted so it could be explained",
+    });
+    const out = correlateEvents([manual, incidental]);
+    expect(out).toHaveLength(1);
+    expect(out[0].provenance).toContain(PROMOTED_MARKER);
+    expect(isPendingLabRow(out[0])).toBe(false);
+  });
+});
