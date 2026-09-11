@@ -11,7 +11,7 @@
   "reports/markdown.ts": 1597,
   "reports/reportWriter.ts": 837,
   "routes/aiSynthesis.ts": 863,
-  "routes/caseLifecycle.ts": 855,
+  "routes/caseLifecycle.ts": 829,
   "routes/findings.ts": 833,
   "routes/import.ts": 3205,
   "routes/mcp.ts": 913,

@@ -147,11 +147,15 @@ export interface FiltersApi {
   /**
    * `findings` is the FALSE-POSITIVE-FILTERED list, never raw state.findings — the server's own
    * order is withEventTechniques(applyFalsePositive(...)), and passing the raw list here is #917.
+   *
+   * `names` is state.techniqueNames off the /cases/:id/state payload — the server's own id -> name
+   * map, which is what lets an appended row carry the same name the report gives it.
    */
   deriveMitreRows(
     findings: Array<{ id: string }> | null,
     forensicTimeline: Array<{ mitreTechniques?: string[] }> | null,
     table: Array<{ id: string; name: string; findingIds?: string[]; analystAccepted?: boolean }> | null,
+    names?: Record<string, string> | null,
   ): Array<{ id: string; name: string; findingIds: string[] }>;
 }
 

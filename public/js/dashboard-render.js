@@ -486,7 +486,10 @@
     // here left a technique whose only support was a finding the analyst had confirmed benign
     // sitting in this panel while the report and every server-side export had already dropped it,
     // until a background re-synthesis happened to land. Pinned by dashboardMitreParity.test.ts.
-    const mitreRows = deriveMitreRows(notFp, ft, state.mitreTechniques);
+    // The fourth argument is the server's own id -> name map, carried on the state payload
+    // Without it a row appended from an event id showed the bare "T1490" here while
+    // the report and every server-side export showed "Inhibit System Recovery".
+    const mitreRows = deriveMitreRows(notFp, ft, state.mitreTechniques, state.techniqueNames);
     document.getElementById("mitre").innerHTML =
       mitreRows
         .map(

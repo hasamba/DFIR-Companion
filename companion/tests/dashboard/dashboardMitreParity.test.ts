@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { techniqueNamesFor } from "../../src/analysis/attackTechniqueNames.js";
 import { withEventTechniques } from "../../src/analysis/eventTechniques.js";
 import { applyFalsePositive, type FalsePositiveMarker } from "../../src/analysis/falsePositive.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
@@ -50,7 +51,7 @@ function filters(): FiltersApi {
  * benign. f-open backs T1059, which an event also carries. T1486 is in the table with no support at
  * all. T1583 is analyst-accepted, so it survives with no support by construction. T1490 is carried
  * only by an event and is not in the table, so it has to be appended — and it is one of the ids the
- * SERVER's name table knows, which is what makes the name carve-out below observable at all.
+ * name table knows, so an appended row's NAME is a real assertion here and not a restated id.
  */
 function fixture(): InvestigationState {
   const finding = (id: string, title: string) => ({
@@ -88,16 +89,29 @@ function fixture(): InvestigationState {
 }
 
 /**
- * Ids and finding links only.
+ * Every field of a row: id, name and finding links.
  *
- * THE `name` FIELD IS A KNOWN, DELIBERATE DIVERGENCE, not an oversight this normalisation hides.
- * A row appended from an event id gets its real name on the server, from the id -> name table in
- * analysis/attackTechniqueNames.ts, and the bare id on the client, which is never sent that table.
- * It is pinned as its own test below rather than left to fail here, so the day someone ships the
- * table to the browser this suite says which assertion to delete.
+ * `name` used to be excluded. A row appended from an event id got its real name on the server, from
+ * the id -> name table in analysis/attackTechniqueNames.ts, and the bare id on the client, which was
+ * never sent that table — so the panel read "T1490" where the report read "Inhibit System Recovery".
+ * The route now sends the table's answer with the state payload instead of copying the table into the
+ * browser, and the carve-out that stood here went with it: there is no field left to normalise away.
  */
-function shape(rows: ReadonlyArray<{ id: string; findingIds: string[] }>) {
-  return rows.map((r) => ({ id: r.id, findingIds: r.findingIds }));
+function shape(rows: ReadonlyArray<{ id: string; name: string; findingIds: string[] }>) {
+  return rows.map((r) => ({ id: r.id, name: r.name, findingIds: r.findingIds }));
+}
+
+/**
+ * The id -> name map the /cases/:id/state route sends with the payload, built by the route's OWN
+ * function over the same two inputs it uses (src/routes/caseState.ts).
+ *
+ * Built here rather than written out, for the reason the header gives for importing
+ * withEventTechniques: a literal map would pin the test author's reading of the table, which is the
+ * divergence this suite exists to catch. Feeding the client the real map is also what makes the
+ * comparison end to end — server resolves, client renders — rather than a check of two halves.
+ */
+function names(state: InvestigationState): Record<string, string> {
+  return techniqueNamesFor(state.mitreTechniques, state.forensicTimeline);
 }
 
 // ── HALF 1: THE RULE ─────────────────────────────────────────────────────────────────────────────
@@ -129,25 +143,53 @@ describe("the client MITRE derivation matches the server's", () => {
 
   it.each(CASES)("agrees with the server: %s", (_label, shapeIt) => {
     const state = shapeIt(fixture());
-    const client = filters().deriveMitreRows(state.findings, state.forensicTimeline, state.mitreTechniques);
+    const client = filters().deriveMitreRows(
+      state.findings,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
     const server = withEventTechniques(state).mitreTechniques;
     expect(shape(client)).toEqual(shape(server));
   });
 
-  // The one field that does not match, stated out loud. Both sides keep the stored name for a row
-  // that was already in the table; only an APPENDED row differs.
-  it("keeps the stored name on both sides, and differs only on an appended row", () => {
+  // shape() above compares every field, so the it.each cases already cover names. This one names the
+  // case the comparison is weakest on: an APPENDED row, whose name comes from the map rather than
+  // from the stored table. Spelled out as a literal so a map that silently went empty — both sides
+  // falling back to the bare id, in agreement and both wrong — cannot pass.
+  it("names an appended row the way the report does, not with the bare id", () => {
     const state = fixture();
-    const client = filters().deriveMitreRows(state.findings, state.forensicTimeline, state.mitreTechniques);
-    const server = withEventTechniques(state).mitreTechniques;
+    const client = filters().deriveMitreRows(
+      state.findings,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
     const nameOf = (rows: ReadonlyArray<{ id: string; name: string }>, id: string) =>
       rows.find((r) => r.id === id)?.name;
-    expect(nameOf(client, "T1059")).toBe("Command and Scripting Interpreter");
-    expect(nameOf(server, "T1059")).toBe("Command and Scripting Interpreter");
-    // T1490 is appended from e2, and the server's table knows it. The client has no table, so it
-    // shows the bare id — the one field where the two disagree, and the reason shape() drops name.
-    expect(nameOf(client, "T1490")).toBe("T1490");
-    expect(nameOf(server, "T1490")).toBe("Inhibit System Recovery");
+    expect(nameOf(client, "T1490")).toBe("Inhibit System Recovery");
+    expect(nameOf(withEventTechniques(state).mitreTechniques, "T1490")).toBe("Inhibit System Recovery");
+  });
+
+  // An id the table does not know: the map omits it and BOTH sides fall back to the bare id. That is
+  // the property the omission rests on — techniqueNamesFor() leaving an entry out has to mean the
+  // same answer as sending { T9999: "T9999" }, or the fallback is a second rule rather than the
+  // same one.
+  it("falls back to the bare id on both sides for a technique the table does not know", () => {
+    const state = fixture();
+    state.forensicTimeline = [
+      ...state.forensicTimeline,
+      { ...state.forensicTimeline[1], id: "e7", mitreTechniques: ["T9999"] },
+    ];
+    expect(names(state)).not.toHaveProperty("T9999");
+    const client = filters().deriveMitreRows(
+      state.findings,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
+    expect(shape(client)).toEqual(shape(withEventTechniques(state).mitreTechniques));
+    expect(client.find((r) => r.id === "T9999")?.name).toBe("T9999");
   });
 
   // SHALLOW ON BOTH SIDES, and pinned as such rather than asserted away. The server's
@@ -157,7 +199,12 @@ describe("the client MITRE derivation matches the server's", () => {
   // the two ALIAS ALIKE, which is the property a mirror actually owes.
   it("copies rows but shares findingIds — the same shallowness as the server", () => {
     const state = fixture();
-    const client = filters().deriveMitreRows(state.findings, state.forensicTimeline, state.mitreTechniques);
+    const client = filters().deriveMitreRows(
+      state.findings,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
     const server = withEventTechniques(state).mitreTechniques;
     expect(client[0]).not.toBe(state.mitreTechniques[0]);
     expect(server[0]).not.toBe(state.mitreTechniques[0]);
@@ -168,7 +215,12 @@ describe("the client MITRE derivation matches the server's", () => {
   // The list itself is fresh, which is the half render() depends on: it appends event-carried rows.
   it("appends to its own array, leaving the stored table's length alone", () => {
     const state = fixture();
-    const rows = filters().deriveMitreRows(state.findings, state.forensicTimeline, state.mitreTechniques);
+    const rows = filters().deriveMitreRows(
+      state.findings,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
     rows.push({ id: "T9999", name: "injected", findingIds: [] });
     expect(state.mitreTechniques).toHaveLength(4);
     expect(state.mitreTechniques.map((t) => t.id)).not.toContain("T9999");
@@ -177,6 +229,18 @@ describe("the client MITRE derivation matches the server's", () => {
   it("tolerates the null and missing shapes the dashboard can hand it mid-load", () => {
     expect(filters().deriveMitreRows(null, null, null)).toEqual([]);
     expect(filters().deriveMitreRows([], [{}], [])).toEqual([]);
+    // A payload from a server that predates the map, and one that sent it empty. Neither may throw,
+    // and both give the old rendering — the bare id — rather than a blank name.
+    const state = fixture();
+    for (const map of [undefined, null, {}]) {
+      const rows = filters().deriveMitreRows(
+        state.findings,
+        state.forensicTimeline,
+        state.mitreTechniques,
+        map,
+      );
+      expect(rows.find((r) => r.id === "T1490")?.name).toBe("T1490");
+    }
   });
 });
 
@@ -206,7 +270,12 @@ describe("a finding confirmed false-positive withdraws the support it was giving
   it("drops it on the client too, when the FILTERED findings are passed", () => {
     const state = fixture();
     const notFp = state.findings.filter((f) => !filters().isFindingFalsePositive(f.title, ["beaconing"]));
-    const rows = filters().deriveMitreRows(notFp, state.forensicTimeline, state.mitreTechniques);
+    const rows = filters().deriveMitreRows(
+      notFp,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
     expect(rows.map((r) => r.id)).not.toContain("T1071");
     expect(shape(rows)).toEqual(
       shape(withEventTechniques(applyFalsePositive(state, markers)).mitreTechniques),
@@ -218,7 +287,12 @@ describe("a finding confirmed false-positive withdraws the support it was giving
   // stylistic one. If this ever stops being true the AST test below is worth nothing.
   it("and keeps it when the RAW findings are passed — why the call site matters", () => {
     const state = fixture();
-    const rows = filters().deriveMitreRows(state.findings, state.forensicTimeline, state.mitreTechniques);
+    const rows = filters().deriveMitreRows(
+      state.findings,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
     expect(rows.map((r) => r.id)).toContain("T1071");
   });
 });
@@ -250,7 +324,11 @@ describe("render() feeds the derivation the false-positive-filtered findings", (
     };
     visit(node);
     if (!call) throw new Error("deriveMitreRows call not found in render()");
-    return call.arguments.map((a) => (ts.isIdentifier(a) ? a.text : `<non-identifier: ${a.getText()}>`));
+    // Source text, whatever the argument's shape. An earlier version returned bare identifiers and
+    // wrapped everything else in a marker, which was enough while every asserted argument was a
+    // local; the names map is a property access, and its own text is what an assertion wants to
+    // read. A wrong identifier still fails loudly — it just fails against its own text.
+    return call.arguments.map((a) => a.getText());
   }
 
   it("calls deriveMitreRows rather than deriving inline", () => {
@@ -277,5 +355,20 @@ describe("render() feeds the derivation the false-positive-filtered findings", (
     const swapped = RENDER_SOURCE.replace("deriveMitreRows(notFp,", "deriveMitreRows(state.findings,");
     const script = scriptFromSource("dashboard-render.js", swapped);
     expect(deriveMitreRowsArgs(renderBody(script))[0]).not.toBe("notFp");
+  });
+
+  // THE NAMES ARGUMENT, for the reason the findings argument gets its own test: the call compiles,
+  // renders and passes every behavioural test above with the fourth argument simply missing, and
+  // the only visible symptom is a row reading "T1490" instead of "Inhibit System Recovery".
+  // deriveMitreRows falls back to the bare id by design, so nothing throws to point at the omission.
+  it("passes state.techniqueNames — the server's map — as the names argument", () => {
+    const script = scriptFromSource("dashboard-render.js", RENDER_SOURCE);
+    expect(deriveMitreRowsArgs(renderBody(script))[3]).toBe("state.techniqueNames");
+  });
+
+  it("goes red when the names argument is dropped", () => {
+    const stripped = RENDER_SOURCE.replace(", state.techniqueNames)", ")");
+    const script = scriptFromSource("dashboard-render.js", stripped);
+    expect(deriveMitreRowsArgs(renderBody(script))[3]).toBeUndefined();
   });
 });

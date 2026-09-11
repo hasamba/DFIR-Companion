@@ -1575,6 +1575,43 @@ describe("state and report routes", () => {
     expect(next.body.forensicTimelineTotal).toBe(3);
   });
 
+  // THE WIRING BEHIND THE DASHBOARD'S MITRE NAMES. The panel completes the stored table from
+  // the techniques the events carry and needs a name for each row it appends; the id -> name table
+  // is server-side reference data, so the route resolves it into the payload rather than the
+  // browser holding a copy. Nothing throws when this field goes missing — deriveMitreRows falls
+  // back to the bare id — so the only thing that catches a route that stopped sending it is a test
+  // that asks the route for it.
+  it("GET /cases/:id/state carries ATT&CK names for the techniques the payload mentions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-state-names-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const state = emptyState("c1");
+    state.mitreTechniques = [{ id: "T1059", name: "Command and Scripting Interpreter", findingIds: [] }];
+    state.forensicTimeline = [
+      {
+        id: "e0",
+        timestamp: "2026-07-30T00:00:00Z",
+        description: "vssadmin delete shadows",
+        severity: "High" as const,
+        mitreTechniques: ["T1490", "T9999"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+    ];
+    await stateStore.save(state);
+
+    const res = await request(app).get("/cases/c1/state");
+    expect(res.status).toBe(200);
+    // Carried only by the event, so this is the row the dashboard appends and the name it shows.
+    expect(res.body.techniqueNames.T1490).toBe("Inhibit System Recovery");
+    expect(res.body.techniqueNames.T1059).toBe("Command and Scripting Interpreter");
+    // An id the table does not know is OMITTED, not mapped to itself: the client falls back to the
+    // bare id, which is the same answer the server's techniqueName() gives.
+    expect(res.body.techniqueNames).not.toHaveProperty("T9999");
+  });
+
   it("POST /cases/:id/report writes reports and returns paths", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-report-route-"));
     const store = new CaseStore(root);
