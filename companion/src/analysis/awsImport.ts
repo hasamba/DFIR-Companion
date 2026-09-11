@@ -202,7 +202,9 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     str(getCI(rec, "errorCode")),
     str(getCI(rec, "errorMessage")),
     str(getCI(rec, "recipientAccountId")).trim(),
-    str(getCI(rec, "eventID")).trim(),
+    // A document that has no digest of its own keys on the record; an exported record without an
+    // eventID still has its position in the file.
+    str(getCI(rec, "eventID")).trim() || `record:${recordIndex}`,
   );
   if (iam) {
     if (iam.severityFloor) severity = worst(severity, iam.severityFloor);

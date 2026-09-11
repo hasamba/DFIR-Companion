@@ -503,6 +503,24 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
     expect(d).toContain("effective access depends on controls not in this record");
     expect(d).toContain("[AccessDenied]");
   });
+  it("two documents the reader cannot digest, in records without an eventID, stay two rows", () => {
+    const deep = (leaf: string) => {
+      let d: unknown = { Effect: "Allow", Action: "*", Resource: leaf };
+      for (let i = 0; i < 40; i++) d = { x: d }; // past the reader's depth bound, within JSON's
+      return { Statement: [d] };
+    };
+    const put = (leaf: string) =>
+      record({
+        eventSource: "iam.amazonaws.com",
+        eventName: "PutRolePolicy",
+        readOnly: false,
+        requestParameters: { roleName: "r", policyName: "p", policyDocument: deep(leaf) },
+      });
+    const r = parseCloudTrail(envelope(put("a"), put("b")));
+    expect(r.events).toHaveLength(2);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(2);
+    expect(r.events[0].description).toContain("unreadable");
+  });
   it("cloud.resource is the untruncated object the call names, or a binding's destination", () => {
     const longGroup = "g".repeat(120);
     const r = parseCloudTrail(
