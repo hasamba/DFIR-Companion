@@ -14,6 +14,7 @@
 // caller IP becomes an IOC; the principal email is surfaced for the asset↔IoC graph.
 
 import type { Severity } from "./stateTypes.js";
+import { boundedAggKey } from "./aggKey.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -72,7 +73,10 @@ const GCP_RULES: Rule[] = [
 const AZURE_RULES: Rule[] = [
   [/authorization\/roleassignments\/write/, "High", ["T1098.003"]],
   [/authorization\/roledefinitions\/write/, "High", ["T1098.003"]],
-  [/runcommand\/action/, "High", ["T1059"]],
+  // Remote execution as a FAMILY (#931 item 7): the action form and the managed form
+  // (`runCommands/write`, inline or URI-hosted scripts), on a VM or a scale-set instance. T1651 is
+  // the precise technique (Cloud Administration Command); T1059 stays for existing expectations.
+  [/virtualmachines(?:\/[^/]+)?\/runcommands?\/(?:action|write)/, "High", ["T1651", "T1059"]],
   [/(networksecuritygroups|securityrules).*\/write/, "Medium", ["T1562.007"]],
   [/keyvault.*\/(accesspolicies\/write|write|action)/, "High", ["T1552"]],
   [/storageaccounts\/listkeys\/action/, "High", ["T1552.001"]],
@@ -187,10 +191,28 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   if (ip) addIoc(sink, "ip", ip);
 
   const shortRes = resource.split("/").slice(-2).join("/");
+  // Remote execution names its TARGET machine, not the last two path segments (which, for the
+  // managed form, are `runCommands/<command-name>` — a child, not the VM). The parent VM or the
+  // scale-set instance (`<set>/<instanceId>` — an instance number alone is not an identity) is the
+  // target, and its normalised resource id joins the key so commands against two machines by one
+  // caller are two rows. The script body is not in the Activity Log, and the note says so.
+  const exec = azureRemoteExecutionTarget(
+    op,
+    resource,
+    pickStr(rec, [
+      "eventDataId",
+      "EventDataId",
+      "correlationId",
+      "CorrelationId",
+      "operationId",
+      "OperationId",
+    ]),
+  );
   let description = `Azure ${op}`;
   if (caller) description += ` by ${caller}`;
   if (ip) description += ` from ${ip}`;
-  if (shortRes) description += ` on ${shortRes}`;
+  if (exec) description += ` → ${exec.display} — the script body is not in the Activity Log`;
+  else if (shortRes) description += ` on ${shortRes}`;
   if (failed) description += ` [${status}]`;
   description = description.slice(0, 600);
 
@@ -204,11 +226,35 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
     // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
-    aggKey: `azure|${op}|${caller}|${ip}|${status}${isObjectRead(op) && shortRes ? `|${shortRes}` : ""}`
-      .toLowerCase()
-      .slice(0, 400),
+    aggKey: boundedAggKey(
+      `azure|${op}|${caller}|${ip}|${status}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}`.toLowerCase(),
+    ),
     sources: ["Azure Activity"],
   };
+}
+
+// The machine a Run Command targets, from the operation and the resource id. Null for every other
+// operation. `id` is the normalised parent resource id (lowercased) — the identity the key carries;
+// `display` is the VM name or `<set>/<instanceId>`.
+const VM_RE =
+  /(\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.compute\/virtualmachines\/([^/]+))/i;
+const VMSS_RE =
+  /(\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.compute\/virtualmachinescalesets\/([^/]+)\/virtualmachines\/([^/]+))/i;
+export function azureRemoteExecutionTarget(
+  op: string,
+  resource: string,
+  recordId = "",
+): { id: string; display: string } | null {
+  if (!/virtualmachines(?:\/[^/]+)?\/runcommands?\/(?:action|write)/i.test(op)) return null;
+  const vmss = VMSS_RE.exec(resource);
+  if (vmss) return { id: vmss[1].toLowerCase(), display: `${vmss[2]}/${vmss[3]}`.slice(0, 160) };
+  const vm = VM_RE.exec(resource);
+  if (vm) return { id: vm[1].toLowerCase(), display: vm[2].slice(0, 120) };
+  // No parseable machine: the row must stay its own — a per-record identifier keeps it from
+  // folding into every other same-operation call with an unknown target (`recordId` is supplied
+  // by the mapper from eventDataId / correlationId / operationId).
+  const short = resource.split("/").slice(-2).join("/") || "(unknown target)";
+  return { id: `${resource.toLowerCase() || "unknown"}#${recordId}`, display: short.slice(0, 160) };
 }
 
 // ───────────────────────────── classification ─────────────────────────────
