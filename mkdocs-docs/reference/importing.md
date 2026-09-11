@@ -356,6 +356,51 @@ the record holds none of them. A replace (`Put*`, `UpdateAssumeRolePolicy`) also
 document not in this record`. Those qualifiers, the outcome and the object have reserved room in the
 description; a long principal name or a long document is clipped before they are.
 
+### AWS identities: which credential, which role, which account
+
+Every CloudTrail row now says who called in the record's own words, after the head: `AssumedRole
+key ASIA… (temporary) session i-0abc123 since 2024-05-01T09:00:00Z CloudTrail mfaAuthenticated=false
+issuer Role arn:aws:iam::…:role/admin-role`. Each clause is a field of the record, rendered
+literally:
+
+- **The kind** — `IAMUser`, `Root`, `AssumedRole`, `Role`, `FederatedUser`, `SAMLUser`,
+  `WebIdentityUser`, `AWSService`, `AWSAccount`, `IdentityCenterUser`; an unlisted value is shown
+  as `Unknown type <value>`, never mapped to a guess. `AWSService` is a request made by an AWS
+  service; `AWSAccount` is a principal of another account whose identity this record does not
+  carry; `SAMLUser` and `WebIdentityUser` name the external caller of an issuance, not a credential
+  in use.
+- **The credential** — the access key id the call was signed with (or an Identity Center
+  credential id) and its class: `temporary` for an assumed role, a federated user, or a user or
+  root whose record carries a session (GetSessionToken credentials keep the user's type);
+  `long-term` for a user or root without one. The `ASIA`/`AKIA` prefix is shown as data and never
+  used to classify or grade — a temporary key alone is normal telemetry.
+- **The session** — its name, when it started, `CloudTrail mfaAuthenticated=<value>` (the
+  record's own claim about MFA at AWS, not a verdict on a provider's MFA), a source identity,
+  `credential originated from a console session`, `instance-role credentials delivered via
+  IMDSv1|IMDSv2` (the row never says the credential was stolen — that needs the instance's own
+  addresses from another source), `federated via <provider>`, and the **issuer** with its own
+  type (`issuer Role arn:…` for an assumed role, `issuer IAMUser arn:…` for a federated user).
+- **The accounts** — `cross-account: caller <A>, recipient <B>` when the record was delivered to
+  an account other than the caller's. An account boundary is not an organisation boundary; the
+  row says nothing about organisations. The two records CloudTrail writes for one cross-account
+  action (one in each account, sharing a `sharedEventID`) are **one row** with both records as
+  provenance and `[also recorded in account <B>]` — when they arrive in one file; two files are two
+  rows.
+- **Issuance rows** — `AssumeRole`, `AssumeRoleWithSAML`, `AssumeRoleWithWebIdentity`,
+  `GetFederationToken`, `GetSessionToken` and `AssumeRoot` read their own fields: `issues
+  temporary credentials role arn:… session deploy → key ASIA… expires … MFA device … source
+  identity … external id supplied`. The issued key id is the row's identity, so a later call can be
+  matched to the issuance that minted its credential by the key it carries — never by a role's
+  display name. A denied call is `attempted to assume role … — denied (…)`; a success whose
+  response CloudTrail truncated says `response details unavailable` and never invents a key.
+  `AssumeRoot` (a root session for a member account) is High on success and Medium when denied.
+
+Two calls by one session name under two access keys are two rows. The credential, the issuer, the
+kind and the recipient account are typed on every row (`authentication.credentialId`,
+`authentication.issuer`, `authentication.mechanism`, `cloud.recipientAccountId`) and searchable in
+Hunt. The lineage across records — which later calls used the credential an issuance minted, a
+workload role used from a new source — is a join by access key id, filed as #931 item 5's chain.
+
 ### Entra applications: credentials, grants, roles, sign-ins
 
 An application that gains a credential, then a powerful permission, then acts, is the classic

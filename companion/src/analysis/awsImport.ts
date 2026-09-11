@@ -16,6 +16,8 @@ import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.
 import { boundedAggKey } from "./aggKey.js";
 import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
+import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
+import { mergeReplicas, type ReplicaCandidate } from "./awsReplicas.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -111,6 +113,8 @@ export const AWS_ACTIONS: Record<string, ActionDef> = {
   batchgetsecretvalue: { severity: "High", mitre: ["T1552.001"] },
   getcalleridentity: { severity: "Info", mitre: ["T1087"] },
   assumerole: { severity: "Info", mitre: ["T1078.004"] },
+  // AssumeRoot is graded by the issuance reader (awsIdentity.ts): High on success, Medium when
+  // denied — a table entry would make a denied attempt High too.
   getfederationtoken: { severity: "Low", mitre: ["T1078.004"] },
   getsessiontoken: { severity: "Low", mitre: ["T1078.004"] }, // STS token minting (cryptomining/priv-esc skills)
   // NOTE: S3 object-level ops (GetObject/CopyObject/DeleteObject) are deliberately NOT graded here —
@@ -167,7 +171,7 @@ function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
 
-function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): MappedEvent | null {
+function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): ReplicaCandidate | null {
   const name = str(getCI(rec, "eventName"));
   const source = str(getCI(rec, "eventSource"));
   if (!name || !source) return null;
@@ -210,6 +214,19 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
     for (const t of iam.mitre) if (!mitre.includes(t)) mitre.push(t);
   }
+  // Who called, in the record's words (#931 item 5): the kind, the credential, the session's
+  // issuer and attributes, the accounts — and, for an STS call, what it issued.
+  const who2 = readAwsIdentity(rec);
+  const issuance = readCredentialIssuance(
+    name,
+    getCI(rec, "requestParameters"),
+    getCI(rec, "responseElements"),
+    str(getCI(rec, "errorCode")),
+    rec,
+    recordIndex,
+  );
+  if (issuance?.severity) severity = worst(severity, issuance.severity);
+  for (const t of issuance?.mitre ?? []) if (!mitre.includes(t)) mitre.push(t);
 
   const identity = principal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
@@ -236,21 +253,26 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
 
   if (ip) addIoc(sink, "ip", ip);
 
-  let description = `AWS ${name} (${shortSource(source)})`;
-  if (who) description += ` by ${oneLine(who).slice(0, 120)}`;
-  // (an SSM row replaces this composition below with a fixed-slot one — renderSsmDescription)
-  if (ip) description += ` from ${ip}`;
-  else if (rawIp && rawIp !== "AWS Internal") description += ` from ${rawIp}`;
-  if (region) description += ` in ${region}`;
   // The CLIENT, in a marker the bulk-read pass reads back. The issue names the user agent as one of
   // the five dimensions to aggregate on, and CloudTrail records it on every call — but nothing kept
   // it, so two different clients under one identity merged into a single group and a fifty-object
   // threshold could be reached by two twenty-five-object sessions that had nothing to do with each
   // other. Trimmed hard: a full user agent is long and this is a marker, not the raw field.
   const client = str(getCI(rec, "userAgent")).trim();
-  if (client) description += ` [ua: ${oneLine(client).slice(0, 80)}]`;
-  if (isRoot) description += " [root]";
-  if (errorCode) description += ` [${errorCode}]`;
+  const from = ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : "");
+  // Every AWS row is composed with reserved slots (awsDescription.ts): the head, the caller's
+  // identity words, the posture (an STS issuance here), the tail — and the identity yields to the
+  // evidence slots, never the other way round.
+  let description = renderAwsDescription({
+    head: `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`,
+    identity: who2.words,
+    posture: issuance?.posture ?? "",
+    outcome: issuance?.outcome ?? "",
+    object: issuance?.detail ?? "",
+    optional: [],
+    tail: `${client ? `[ua: ${oneLine(client).slice(0, 80)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
+    qualifiers: [],
+  });
   // An SSM row is composed with fixed, individually bounded slots so the document, id, status and
   // target always survive the clip — a long principal, user agent or tag selector cannot push them out.
   if (ssm) {
@@ -263,14 +285,15 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       client: oneLine(client),
       root: isRoot,
       errorCode,
+      identity: who2.words,
     });
   }
   // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last but
   // never clipped away (awsDescription.ts).
   if (iam) {
-    const from = ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : "");
     description = renderAwsDescription({
       head: `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`,
+      identity: who2.words,
       posture: iam.posture,
       outcome: iam.outcome,
       object: iam.object,
@@ -325,8 +348,40 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
           },
         }
       : {}),
-    ...(resource ? { target: { kind: "other", name: resource } } : {}),
+    // An STS issuance row: the OBJECT is the role (or federated user) the credentials were issued
+    // for, the TARGET the credential itself — its key id is what a later row can be matched on.
+    ...(issuance && !issuance.attempted && (issuance.role?.arn || issuance.federatedUser?.arn)
+      ? {
+          object: {
+            kind: "cloud_principal",
+            id: issuance.role?.arn || issuance.federatedUser?.arn,
+            ...(issuance.role?.assumedArn || issuance.federatedUser?.arn
+              ? { name: issuance.role?.assumedArn || issuance.federatedUser?.arn }
+              : {}),
+          },
+        }
+      : {}),
+    ...(issuance?.issuedKey
+      ? { target: { kind: "other", id: issuance.issuedKey, name: "temporary credential" } }
+      : resource
+        ? { target: { kind: "other", name: resource } }
+        : {}),
     ...(ip ? { network: { source: { address: ip } } } : {}),
+    // The credential and the session issuer, typed (#931 item 5): a later row that used the
+    // credential an issuance minted is matched on `credentialId`, never on a display name.
+    ...(who2.credentialIdentity || who2.issuer?.arn || who2.protocol || who2.kind !== "Unknown"
+      ? {
+          authentication: {
+            ...(who2.session.signInSessionArn ? { sessionId: who2.session.signInSessionArn } : {}),
+            ...(who2.credential.accessKeyId || who2.credential.credentialId
+              ? { credentialId: who2.credential.accessKeyId || who2.credential.credentialId }
+              : {}),
+            ...(who2.issuer?.arn ? { issuer: who2.issuer.arn } : {}),
+            ...(who2.kind !== "Unknown" ? { mechanism: who2.kind } : {}),
+            ...(who2.protocol ? { protocol: who2.protocol } : {}),
+          },
+        }
+      : {}),
     // The SSM command payload is a command line: the process-lifetime and tradecraft passes read
     // it there. No canonical host target for the instance — host identity for cloud instances is
     // #931 item 5's lineage work; the instance is in the description, the key and cloud.resource.
@@ -334,8 +389,15 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     cloud: {
       provider: "aws",
       ...(identity.id ? { principalId: identity.id } : {}),
-      ...(identity.type ? { principalType: identity.type } : {}),
+      ...(who2.kind !== "Unknown"
+        ? { principalType: who2.kind }
+        : identity.type
+          ? { principalType: identity.type }
+          : {}),
+      // `accountId` is the CALLER's account; `recipientAccountId` the account the record was
+      // delivered to — they differ on a cross-account action.
       ...(identity.accountId ? { accountId: identity.accountId } : {}),
+      ...(who2.accounts.recipient ? { recipientAccountId: who2.accounts.recipient } : {}),
       ...(region ? { region } : {}),
       ...(ssm?.target ? { resource: ssm.target } : resource ? { resource } : {}),
     },
@@ -368,7 +430,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     },
   });
 
-  return {
+  const event: MappedEvent = {
     timestamp: normalizedTimestamp,
     description,
     severity,
@@ -384,10 +446,19 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // roles in many accounts), the COMPUTED outcome (ConsoleLogin reports failure in
     // responseElements with no errorCode at all), the region (RunInstances in a new region is the
     // rogue-compute signal). Bounded fields first, the object key last, bounded with a digest.
+    // The credential and the session issuer join the key (#931 item 5): a reused session name
+    // under two access keys is two rows. The recipient account does NOT — the two records of one
+    // cross-account action share a sharedEventID and are merged into one row before aggregation.
     aggKey: boundedAggKey(
-      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
+  };
+  return {
+    event,
+    replicaId: who2.replicaId,
+    informative: !["AWSAccount", "AWSService", "Unknown"].includes(who2.kind),
+    recipientAccountId: who2.accounts.recipient,
   };
 }
 
@@ -400,11 +471,14 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   }
 
   const iocSink = new Map<string, SiemIoc>();
-  const mapped: MappedEvent[] = [];
+  const candidates: ReplicaCandidate[] = [];
   for (const [recordIndex, rec] of records.entries()) {
     const m = mapRecord(rec, iocSink, recordIndex);
-    if (m) mapped.push(m);
+    if (m) candidates.push(m);
   }
+  // The two records of one cross-account action are one row (awsReplicas.ts), before and
+  // independent of the optional aggregation.
+  const mapped = mergeReplicas(candidates);
   if (mapped.length === 0) {
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty" };
   }

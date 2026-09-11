@@ -215,6 +215,8 @@ export function renderSsmDescription(
     client: string;
     root: boolean;
     errorCode: string;
+    /** The caller's identity words (#931 item 5); bounded to its own slot, after the head. */
+    identity?: string;
   },
 ): string {
   const head = `AWS ${parts.name} (${parts.source})${parts.who ? ` by ${parts.who.slice(0, 60)}` : ""}${parts.from ? ` from ${parts.from}` : ""}${parts.region ? ` in ${parts.region}` : ""}`;
@@ -222,7 +224,15 @@ export function renderSsmDescription(
   const summary = ` ${ssm.summary.slice(0, 260)}`;
   const payload = ssm.payloadExcerpt ? ` cmd: "${ssm.payloadExcerpt.slice(0, 150)}"` : "";
   const note = ` — ${ssm.note}`;
-  const fixed = `${head}${summary}${payload}${tail}`;
+  // The caller's identity words (#931 item 5) take what the SSM evidence leaves — between 40 and
+  // 110 characters — so the document, id, status, target and payload never yield to them.
+  const evidence = `${head}${summary}${payload}${tail}`;
+  const identityRaw = (parts.identity ?? "").trim();
+  const budget = Math.max(40, Math.min(150, 600 - evidence.length - 1));
+  const identity = identityRaw
+    ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
+    : "";
+  const fixed = `${head}${identity}${summary}${payload}${tail}`;
   return `${fixed}${note.slice(0, Math.max(0, 600 - fixed.length))}`.slice(0, 600);
 }
 

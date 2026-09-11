@@ -15,11 +15,19 @@ const OUTCOME_MAX = 40; // `denied (<code ≤ 30>)`
 const OBJECT_MAX = 150;
 const TAIL_MAX = 70; // `[ua ≤ 30] [root] [<errorCode ≤ 30>]` — the caller bounds each part
 const QUALIFIERS_MAX = 130; // sized for the three messages the IAM decoder may need at once (128)
+// The caller's identity words (#931 item 5) sit after the head. They are attacker-shaped in part
+// (a session name, a source identity) and they are context, not the evidence the row grades on:
+// they take whatever the other mandatory slots leave, never more than IDENTITY_MAX, never less
+// than IDENTITY_MIN — the mandatory set without them sums to 560, so 40 always remain.
+const IDENTITY_MAX = 150;
+const IDENTITY_MIN = 40;
 const OPTIONAL_MAX = [140, 100, 100]; // reading, trust, bindings — attacker-shaped, clipped first
 const OPTIONAL_DEFAULT_MAX = 100;
 
 export interface AwsDescriptionParts {
   head: string;
+  /** The caller's identity words — kind, credential, issuer, session, accounts. */
+  identity?: string;
   posture: string;
   /** `denied (<code>)` on a failed call — rendered next to the posture, never in the tail alone. */
   outcome: string;
@@ -40,7 +48,14 @@ export function renderAwsDescription(parts: AwsDescriptionParts): string {
   const object = clip(parts.object.trim(), OBJECT_MAX);
   const tail = clip(parts.tail.trim(), TAIL_MAX);
   const qualifiers = clip(parts.qualifiers.filter(Boolean).join("; "), QUALIFIERS_MAX);
-  const mandatory = [head, posture, object].filter(Boolean);
+  const fixed = [head, posture, object].filter(Boolean);
+  const fixedLen =
+    fixed.join(" ").length + (tail ? tail.length + 1 : 0) + (qualifiers ? qualifiers.length + 3 : 0);
+  const identityRaw = (parts.identity ?? "").trim();
+  const identity = identityRaw
+    ? clip(identityRaw, Math.max(IDENTITY_MIN, Math.min(IDENTITY_MAX, TOTAL_MAX - fixedLen - 1)))
+    : "";
+  const mandatory = [head, identity, posture, object].filter(Boolean);
   let remaining =
     TOTAL_MAX -
     mandatory.join(" ").length -
