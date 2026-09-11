@@ -496,6 +496,7 @@
     "timestompCorroborate.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
     "toolDetect.ts": "analysis/detect",
+    "defenderEvents.ts": "analysis/detect",
     "tradecraftRules.ts": "analysis/detect",
     "webRequestDecode.ts": "analysis/detect",
     "truncatedRemainder.ts": "analysis/ingest",
