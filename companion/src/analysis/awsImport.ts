@@ -349,11 +349,13 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
           ? "failed"
           : "success",
     },
-    ...(who
+    // The actor exists whenever the record names the caller by name OR by id: an Identity Center
+    // record with no `type` has no display name but a composite immutable id.
+    ...(who || identity.id
       ? {
           actor: {
             kind: "cloud_principal",
-            name: who,
+            ...(who ? { name: who } : {}),
             ...(identity.id ? { id: identity.id } : {}),
           },
         }
@@ -432,7 +434,14 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       "event.outcome": ["errorCode", "responseElements.ConsoleLogin"],
       "time.observed": ["eventTime"],
       ...(who ? { "actor.name": ["userIdentity.userName", "userIdentity.arn", "userIdentity.type"] } : {}),
-      ...(identity.id ? { "actor.id": ["userIdentity.principalId", "userIdentity.userId"] } : {}),
+      ...(identity.id
+        ? {
+            "actor.id":
+              who2.kind === "IdentityCenterUser"
+                ? ["userIdentity.onBehalfOf.identityStoreArn", "userIdentity.onBehalfOf.userId"]
+                : ["userIdentity.principalId", "userIdentity.userId"],
+          }
+        : {}),
       ...(ip ? { "network.source.address": ["sourceIPAddress"] } : {}),
       "cloud.provider": ["eventSource"],
       ...(region ? { "cloud.region": ["awsRegion"] } : {}),

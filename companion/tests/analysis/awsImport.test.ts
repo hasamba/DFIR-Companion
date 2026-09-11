@@ -838,6 +838,35 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     expect(r.events[0].description).toContain("IdentityCenterUser key cred-9 (temporary)");
     expect(r.events[0].canonical?.authentication?.credentialId).toBe("cred-9");
   });
+  it("a type-absent Identity Center record still has a canonical actor, by its composite id", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "ListBuckets",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: {
+            accountId: ACCT,
+            credentialId: "cred-3",
+            onBehalfOf: {
+              userId: "u-3",
+              identityStoreArn: "arn:aws:identitystore::111122223333:identitystore/d-1",
+            },
+          },
+          eventID: "ic-no-type",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.canonical?.actor).toMatchObject({
+      kind: "cloud_principal",
+      id: "arn:aws:identitystore::111122223333:identitystore/d-1#u-3",
+    });
+    expect(e.canonical?.fieldProvenance["actor.id"]?.rawFields).toEqual([
+      "userIdentity.onBehalfOf.identityStoreArn",
+      "userIdentity.onBehalfOf.userId",
+    ]);
+  });
   it("the cross-account notice survives a kept description that fills 600 characters", () => {
     const shared = "shared-long";
     const longDoc = JSON.stringify({
