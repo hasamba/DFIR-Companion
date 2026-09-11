@@ -374,9 +374,41 @@ function appRoleChanges(r: EntraAuditRecord, removal: boolean, resolve?: Resolve
   ];
 }
 
+// A record's atomic changes are bounded: a 4 KiB consent value, or a 3,850-character delegated
+// grant scope string, can hold thousands of scopes, and every scope would otherwise become a full
+// row before the importer's event cap is applied. The overflow is one extra row that says how much
+// was cut — never a silent drop.
+const MAX_ENTRIES = 16;
+const MAX_SCOPES = 32;
+
+function overflowRow(
+  r: EntraAuditRecord,
+  kind: ChangeKind,
+  subject: EntraAppChange["subject"],
+  cut: number,
+  rawDigest: string,
+): EntraAppChange {
+  return build({
+    r,
+    kind,
+    verb: `grant lists ${cut} more scope${cut === 1 ? "" : "s"} than are shown`,
+    infinitive: `grant ${cut} more scopes than are shown`,
+    detail: "",
+    object: `for ${subject.name || short(subject.id)}`,
+    subject,
+    resource: { id: "", name: "", appId: "", api: "" },
+    atomic: `overflow:${rawDigest}`,
+    severity: "High",
+    mitre: ["T1528"],
+    qualifiers: ["truncated — the complete list is in the raw record"],
+    words: "",
+  });
+}
+
 function delegatedGrantChanges(r: EntraAuditRecord, removal: boolean, resolve?: Resolver): EntraAppChange[] {
-  const scopes = propText(r, "DelegatedPermissionGrant.Scope").split(/\s+/).filter(Boolean);
-  if (!scopes.length) return [];
+  const allScopes = propText(r, "DelegatedPermissionGrant.Scope").split(/\s+/).filter(Boolean);
+  if (!allScopes.length) return [];
+  const scopes = allScopes.slice(0, MAX_SCOPES);
   const subject = clientSubject(r);
   const t = r.targets.find((x) => x.id.toLowerCase() !== subject.id.toLowerCase()) ?? r.targets[0];
   const resourceId = propText(r, "DelegatedPermissionGrant.ResourceId") || t?.id || "";
@@ -400,7 +432,7 @@ function delegatedGrantChanges(r: EntraAuditRecord, removal: boolean, resolve?: 
     (consent.allUsers === false && !principalId
       ? `raw:${propOf(r, "DelegatedPermissionGrant.Scope")?.rawDigest}`
       : "");
-  return scopes.map((scope) =>
+  const rows = scopes.map((scope) =>
     permissionChange(r, {
       kind: removal ? "delegated-permission-removed" : "delegated-permission-granted",
       value: scope,
@@ -411,13 +443,13 @@ function delegatedGrantChanges(r: EntraAuditRecord, removal: boolean, resolve?: 
       atomic: `scope:${scope}:${consentType}:${principalId}:${grantId}`,
     }),
   );
+  const cut = allScopes.length - scopes.length;
+  if (cut > 0 && !removal) {
+    const digestOf = propOf(r, "DelegatedPermissionGrant.Scope")?.rawDigest ?? "";
+    rows.push(overflowRow(r, "delegated-permission-granted", subject, cut, digestOf));
+  }
+  return rows;
 }
-
-// A record's atomic changes are bounded: a 4 KiB consent value can hold two thousand scopes, and
-// every scope would otherwise become a full row before the importer's event cap is applied. The
-// overflow is one extra row that says how much was cut — never a silent drop.
-const MAX_ENTRIES = 16;
-const MAX_SCOPES = 32;
 
 function consentChanges(r: EntraAuditRecord, resolve?: Resolver): EntraAppChange[] {
   const p = propOf(r, "ConsentAction.Permissions");
@@ -455,21 +487,13 @@ function consentChanges(r: EntraAuditRecord, resolve?: Resolver): EntraAppChange
   });
   if (cut > 0)
     rows.push(
-      build({
+      overflowRow(
         r,
-        kind: appOnly ? "app-permission-granted" : "delegated-permission-granted",
-        verb: `consent lists ${cut} more scope${cut === 1 ? "" : "s"} than are shown`,
-        infinitive: `consent to ${cut} more scopes than are shown`,
-        detail: "",
-        object: `for ${subject.name || short(subject.id)}`,
+        appOnly ? "app-permission-granted" : "delegated-permission-granted",
         subject,
-        resource: { id: "", name: "", appId: "", api: "" },
-        atomic: `overflow:${p?.rawDigest ?? ""}`,
-        severity: "High",
-        mitre: ["T1528"],
-        qualifiers: ["truncated — the complete list is in the raw record"],
-        words: "",
-      }),
+        cut,
+        p?.rawDigest ?? "",
+      ),
     );
   return rows;
 }

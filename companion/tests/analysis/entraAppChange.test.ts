@@ -494,9 +494,31 @@ describe("keys and bounds", () => {
     const changes = decodeEntraAppChanges(r);
     expect(changes).toHaveLength(33);
     const overflow = changes[32];
-    expect(overflow.posture).toBe("consent lists 18 more scopes than are shown");
+    expect(overflow.posture).toBe("grant lists 18 more scopes than are shown");
     expect(overflow.qualifiers).toContain("truncated — the complete list is in the raw record");
     expect(overflow.severity).toBe("High");
+  });
+});
+
+describe("delegated-grant bound", () => {
+  it("a 3,850-character scope string is bounded the same way as a consent, with one overflow row", () => {
+    const scopeText = Array.from({ length: 700 }, (_, i) => `s${i}`).join(" ");
+    expect(scopeText.length).toBeLessThanOrEqual(3850);
+    const r = graph("Add delegated permission grant", [
+      {
+        type: "ServicePrincipal",
+        id: GRAPH_SP,
+        modifiedProperties: [
+          P("DelegatedPermissionGrant.Scope", scopeText),
+          P("DelegatedPermissionGrant.ConsentType", "AllPrincipals"),
+          P("ServicePrincipal.ObjectID", SP),
+          P("TargetId.ServicePrincipalNames", [GRAPH_APP]),
+        ],
+      },
+    ]);
+    const changes = decodeEntraAppChanges(r);
+    expect(changes).toHaveLength(33);
+    expect(changes[32].posture).toBe("grant lists 668 more scopes than are shown");
   });
 });
 
