@@ -34,8 +34,13 @@ export function withEventTechniques(state: InvestigationState): InvestigationSta
   // An analyst's accepted addition counts as support in itself — see Technique.analystAccepted.
   const surviving = new Set(state.findings.map((f) => f.id));
   const carried = new Set(state.forensicTimeline.flatMap((e) => e.mitreTechniques));
-  const supported = state.mitreTechniques.filter(
-    (t) => t.analystAccepted || t.findingIds.some((id) => surviving.has(id)) || carried.has(t.id),
-  );
+  // The surviving set decides which rows stay AND which links each row keeps (#938). A row that
+  // survives for another reason — a second finding, an event carrying it, the analyst's acceptance
+  // — used to keep the ids of findings applyFalsePositive had ERASED from state, and the report
+  // printed them as its evidence. Pruned into a fresh array: this is a view, and the stored table
+  // must keep its links so un-marking the finding brings the link straight back.
+  const supported = state.mitreTechniques
+    .filter((t) => t.analystAccepted || t.findingIds.some((id) => surviving.has(id)) || carried.has(t.id))
+    .map((t) => ({ ...t, findingIds: t.findingIds.filter((id) => surviving.has(id)) }));
   return { ...state, mitreTechniques: unionEventTechniques(supported, state.forensicTimeline) };
 }

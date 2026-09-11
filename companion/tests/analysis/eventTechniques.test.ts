@@ -48,6 +48,7 @@ describe("withEventTechniques (#893)", () => {
   it("keeps an asserted technique's name and finding links rather than restating it", () => {
     const state = {
       ...emptyState("c1"),
+      findings: [{ id: "f1" }] as never, // the link survives because the finding does (#938)
       mitreTechniques: [{ id: "T1003.003", name: "NTDS", findingIds: ["f1"] }],
       forensicTimeline: [event("e1", ["T1003.003"])],
     };
@@ -101,6 +102,61 @@ describe("withEventTechniques (#893)", () => {
     };
 
     expect(withEventTechniques(state).mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
+  });
+
+  // #938. applyFalsePositive REMOVES a finding from state, and a row that survived for another reason
+  // — a second finding, an event carrying it, an analyst's acceptance — kept the erased finding's id
+  // and the report printed it as evidence (reports/markdown.ts renders findingIds). The surviving
+  // set decides which rows stay AND which links each row keeps.
+  it("prunes the ids of findings no longer in state from a retained row (#938)", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [{ id: "f-real" }] as never,
+      mitreTechniques: [
+        { id: "T1486", name: "Data Encrypted for Impact", findingIds: ["f-real", "f-benign"] },
+      ],
+      forensicTimeline: [],
+    };
+
+    const [row] = withEventTechniques(state).mitreTechniques;
+    expect(row.findingIds).toEqual(["f-real"]);
+  });
+
+  it("prunes on a row that survives only by acceptance or by an event — down to no links at all", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [],
+      mitreTechniques: [
+        {
+          id: "T1583",
+          name: "Acquire Infrastructure",
+          findingIds: ["f-gone"],
+          analystAccepted: true as const,
+        },
+        { id: "T1059", name: "Command and Scripting Interpreter", findingIds: ["f-gone"] },
+      ],
+      forensicTimeline: [event("e1", ["T1059"])],
+    };
+
+    const rows = withEventTechniques(state).mitreTechniques;
+    expect(rows.map((r) => [r.id, r.findingIds])).toEqual([
+      ["T1583", []],
+      ["T1059", []],
+    ]);
+  });
+
+  it("prunes into a fresh array — the state's own links are never written to", () => {
+    const stored = ["f-real", "f-benign"];
+    const state = {
+      ...emptyState("c1"),
+      findings: [{ id: "f-real" }] as never,
+      mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact", findingIds: stored }],
+      forensicTimeline: [],
+    };
+
+    const [row] = withEventTechniques(state).mitreTechniques;
+    expect(row.findingIds).not.toBe(stored);
+    expect(stored).toEqual(["f-real", "f-benign"]);
   });
 
   it("hides one whose only finding the filters dropped", () => {

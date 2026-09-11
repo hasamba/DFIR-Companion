@@ -84,6 +84,9 @@ function fixture(): InvestigationState {
       { id: "T1071", name: "Application Layer Protocol", findingIds: ["f-benign"] },
       { id: "T1486", name: "Data Encrypted for Impact", findingIds: [] },
       { id: "T1583", name: "Acquire Infrastructure", findingIds: [], analystAccepted: true },
+      // Mixed support: one finding that survives a false-positive mark and one that does not. The
+      // row must stay AND cite only the survivor (#938); every it.each case below runs over it.
+      { id: "T1021", name: "Remote Services", findingIds: ["f-open", "f-benign"] },
     ],
   };
 }
@@ -193,12 +196,14 @@ describe("the client MITRE derivation matches the server's", () => {
   });
 
   // SHALLOW ON BOTH SIDES, and pinned as such rather than asserted away. The server's
-  // unionEventTechniques() spreads each row ({ ...t }), so the row objects are fresh but their
-  // findingIds arrays are the state's own. The client copies the same way. Claiming a deep copy
-  // here would be the mirror drifting in the test rather than in the code — so the check is that
-  // the two ALIAS ALIKE, which is the property a mirror actually owes.
-  it("copies rows but shares findingIds — the same shallowness as the server", () => {
+  // This used to pin the OPPOSITE: that both sides shared the state's own findingIds arrays, "the
+  // same shallowness as the server". That shallowness was the defect (#938) — a row kept the ids of
+  // findings applyFalsePositive had erased, and the report printed them as evidence. Both sides now
+  // prune into a fresh array, and the property a mirror owes is that they prune ALIKE and that
+  // neither writes into the state.
+  it("prunes findingIds into fresh arrays on both sides, and never into the state (#938)", () => {
     const state = fixture();
+    const before = state.mitreTechniques.map((t) => [...t.findingIds]);
     const client = filters().deriveMitreRows(
       state.findings,
       state.forensicTimeline,
@@ -206,10 +211,12 @@ describe("the client MITRE derivation matches the server's", () => {
       names(state),
     );
     const server = withEventTechniques(state).mitreTechniques;
-    expect(client[0]).not.toBe(state.mitreTechniques[0]);
-    expect(server[0]).not.toBe(state.mitreTechniques[0]);
-    expect(client[0].findingIds).toBe(state.mitreTechniques[0].findingIds);
-    expect(server[0].findingIds).toBe(state.mitreTechniques[0].findingIds);
+    for (let i = 0; i < state.mitreTechniques.length; i++) {
+      expect(client[i].findingIds, `client row ${i}`).not.toBe(state.mitreTechniques[i].findingIds);
+      expect(server[i].findingIds, `server row ${i}`).not.toBe(state.mitreTechniques[i].findingIds);
+      expect(client[i].findingIds).toEqual(server[i].findingIds);
+    }
+    expect(state.mitreTechniques.map((t) => t.findingIds)).toEqual(before);
   });
 
   // The list itself is fresh, which is the half render() depends on: it appends event-carried rows.
@@ -222,7 +229,7 @@ describe("the client MITRE derivation matches the server's", () => {
       names(state),
     );
     rows.push({ id: "T9999", name: "injected", findingIds: [] });
-    expect(state.mitreTechniques).toHaveLength(4);
+    expect(state.mitreTechniques).toHaveLength(5);
     expect(state.mitreTechniques.map((t) => t.id)).not.toContain("T9999");
   });
 
@@ -265,6 +272,22 @@ describe("a finding confirmed false-positive withdraws the support it was giving
   it("drops the technique on the server", () => {
     const rows = withEventTechniques(applyFalsePositive(fixture(), markers)).mitreTechniques;
     expect(rows.map((r) => r.id)).not.toContain("T1071");
+  });
+
+  it("keeps a mixed-support row and cites only the survivor, on both sides (#938)", () => {
+    const state = fixture();
+    const server = withEventTechniques(applyFalsePositive(state, markers)).mitreTechniques;
+    const notFp = state.findings.filter((f) => !filters().isFindingFalsePositive(f.title, ["beaconing"]));
+    const client = filters().deriveMitreRows(
+      notFp,
+      state.forensicTimeline,
+      state.mitreTechniques,
+      names(state),
+    );
+    const link = (rows: ReadonlyArray<{ id: string; findingIds: string[] }>) =>
+      rows.find((r) => r.id === "T1021")?.findingIds;
+    expect(link(server)).toEqual(["f-open"]); // f-benign was erased from state, so it is not evidence
+    expect(link(client)).toEqual(["f-open"]);
   });
 
   it("drops it on the client too, when the FILTERED findings are passed", () => {
