@@ -327,3 +327,292 @@ describe("parseM365Audit — options & edges", () => {
     expect(r.events[0].mitreTechniques).toContain("T1110");
   });
 });
+
+describe("parseM365Audit — Entra application changes (#931 item 1)", () => {
+  const SP = "2b7f3c1a-1111-4aaa-8bbb-000000000001";
+  const GRAPH_SP = "3c8e4d2b-2222-4bbb-9ccc-000000000002";
+  const USER = "4d9f5e3c-3333-4ccc-addd-000000000003";
+  const GRAPH_APP = "00000003-0000-0000-c000-000000000000";
+  const audit = (activity: string, targets: unknown[], over: Record<string, unknown> = {}) => ({
+    id: `rec-${activity.length}-${JSON.stringify(targets).length}`,
+    activityDateTime: "2024-05-01T10:00:00Z",
+    activityDisplayName: activity,
+    result: "success",
+    initiatedBy: { user: { id: USER, userPrincipalName: "admin@victim.com", ipAddress: "203.0.113.60" } },
+    targetResources: targets,
+    ...over,
+  });
+  const prop = (displayName: string, newValue: unknown, oldValue: unknown = null) => ({
+    displayName,
+    oldValue,
+    newValue,
+  });
+
+  it("one record with three consented scopes is three rows, each with its own key and a schema-valid envelope", () => {
+    const consent = audit("Consent to application", [
+      {
+        type: "ServicePrincipal",
+        id: SP,
+        displayName: "Sync",
+        modifiedProperties: [
+          prop("ConsentContext.IsAdminConsent", "True"),
+          prop("ConsentContext.IsAppOnly", "False"),
+          prop("ConsentContext.OnBehalfOfAll", "True"),
+          prop(
+            "ConsentAction.Permissions",
+            `[] => [[Id: g1, ClientId: ${SP}, PrincipalId: , ResourceId: ${GRAPH_SP}, ConsentType: AllPrincipals, Scope: openid Mail.ReadWrite Directory.ReadWrite.All, CreatedDateTime: 2024-05-01, ExpiryTime: ]]`,
+          ),
+        ],
+      },
+    ]);
+    const r = parseM365Audit(JSON.stringify([consent]), { aggregate: false });
+    expect(r.events).toHaveLength(3);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(3);
+    const mail = r.events.find((e) => e.description.includes("Mail.ReadWrite"))!;
+    expect(mail.description).toContain(
+      "Entra audit: Consent to application by admin@victim.com from 203.0.113.60",
+    );
+    expect(mail.description).toContain(
+      "grants delegated permission Mail.ReadWrite on API 3c8e4d2b… for Sync (admin consent, for all users)",
+    );
+    expect(mail.description).toContain("API not identified in this record");
+    expect(mail.description).toContain("for Sync (admin consent, for all users)");
+    expect(mail.description).toContain("assigned, not yet observed in use");
+    expect(mail.severity).toBe("Medium");
+    expect(mail.canonical?.event).toMatchObject({
+      category: "cloud",
+      type: "directory-change",
+      action: "Consent to application",
+      outcome: "success",
+    });
+    expect(mail.canonical?.actor).toMatchObject({ kind: "account", id: USER, name: "admin@victim.com" });
+    expect(mail.canonical?.object).toMatchObject({ kind: "cloud_principal", id: SP, name: "Sync" });
+    expect(mail.canonical?.cloud?.provider).toBe("entra");
+    expect(mail.canonical?.evidence.rawRecords[0]).toMatchObject({
+      source: "entra-audit",
+      locator: "record:0",
+    });
+  });
+  it("another record of the export that names Graph's object id lets the consent identify the API and grade by class", () => {
+    const grant = audit("Add app role assignment to service principal", [
+      {
+        type: "ServicePrincipal",
+        id: GRAPH_SP,
+        displayName: "Microsoft Graph",
+        modifiedProperties: [
+          prop("AppRole.Value", "User.Read.All"),
+          prop("ServicePrincipal.ObjectID", SP),
+          prop("TargetId.ServicePrincipalNames", [GRAPH_APP, "https://graph.microsoft.com"]),
+        ],
+      },
+    ]);
+    const consent = audit("Consent to application", [
+      {
+        type: "ServicePrincipal",
+        id: SP,
+        displayName: "Sync",
+        modifiedProperties: [
+          prop("ConsentContext.IsAdminConsent", "True"),
+          prop("ConsentContext.IsAppOnly", "False"),
+          prop(
+            "ConsentAction.Permissions",
+            `[] => [[Id: g1, ClientId: ${SP}, PrincipalId: , ResourceId: ${GRAPH_SP}, ConsentType: AllPrincipals, Scope: Mail.ReadWrite, CreatedDateTime: 2024-05-01, ExpiryTime: ]]`,
+          ),
+        ],
+      },
+    ]);
+    const r = parseM365Audit(JSON.stringify([consent, grant]), { aggregate: false });
+    const mail = r.events.find((e) => e.description.includes("Mail.ReadWrite"))!;
+    expect(mail.description).toContain("on Microsoft Graph");
+    expect(mail.description).toContain("can read and change every mailbox");
+    expect(mail.severity).toBe("High");
+  });
+  it("a credential added to a service principal is a High row that names the key, never a secret; the plain row survives for an undecoded change", () => {
+    const cred = audit("Add service principal credentials", [
+      {
+        type: "ServicePrincipal",
+        id: SP,
+        displayName: "Sync",
+        modifiedProperties: [
+          prop(
+            "KeyDescription",
+            JSON.stringify(["[KeyIdentifier=k-1,KeyType=Password,KeyUsage=Verify,DisplayName=deploy]"]),
+            JSON.stringify([]),
+          ),
+        ],
+      },
+    ]);
+    const plain = audit("Update user", [{ type: "User", id: USER, userPrincipalName: "bob@victim.com" }]);
+    const r = parseM365Audit(JSON.stringify([cred, plain]), { aggregate: false });
+    const c = r.events.find((e) => e.description.includes("credential"))!;
+    expect(c.severity).toBe("High");
+    expect(c.description).toContain('adds Password credential k-1 "deploy" (1 now) for Sync');
+    const p = r.events.find((e) => e.description.includes("Update user"))!;
+    expect(p.description).toBe(
+      "Entra audit: Update user by admin@victim.com from 203.0.113.60 → bob@victim.com",
+    );
+    expect(p.canonical?.target).toMatchObject({ kind: "account", id: USER, name: "bob@victim.com" });
+  });
+  it("a failed grant reads as an attempt, with the failure next to the posture", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        audit(
+          "Add app role assignment to service principal",
+          [
+            {
+              type: "ServicePrincipal",
+              id: GRAPH_SP,
+              modifiedProperties: [
+                prop("AppRole.Value", "RoleManagement.ReadWrite.Directory"),
+                prop("ServicePrincipal.ObjectID", SP),
+                prop("TargetId.ServicePrincipalNames", [GRAPH_APP]),
+              ],
+            },
+          ],
+          { result: "failure" },
+        ),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toMatch(
+      /attempted to grant application permission RoleManagement\.ReadWrite\.Directory — failed on Microsoft Graph for/,
+    );
+    expect(e.description).toContain("requested, not granted");
+  });
+  it("the UAL shape of the same change goes through the same decoder", () => {
+    const ual = {
+      Id: "ual-1",
+      CreationTime: "2024-05-01T10:00:00Z",
+      Workload: "AzureActiveDirectory",
+      RecordType: 8,
+      Operation: "Add member to role.",
+      ResultStatus: "Success",
+      OrganizationId: "tenant-1",
+      ActorIpAddress: "203.0.113.61",
+      Actor: [
+        { ID: "admin@victim.com", Type: 5 },
+        { ID: "User", Type: 2 },
+        { ID: USER, Type: 3 },
+      ],
+      Target: [
+        { ID: "Sync", Type: 1 },
+        { ID: "ServicePrincipal", Type: 2 },
+        { ID: SP, Type: 3 },
+      ],
+      ModifiedProperties: [
+        { Name: "Role.DisplayName", NewValue: "Global Administrator", OldValue: "" },
+        { Name: "Role.TemplateId", NewValue: "62e90394-69f5-4237-9190-012177145e10", OldValue: "" },
+      ],
+    };
+    const r = parseM365Audit(JSON.stringify([ual]));
+    expect(r.format).toBe("m365-ual");
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("assigns directory role Global Administrator to service principal Sync");
+    expect(e.description).toContain("can take over the tenant");
+    expect(e.canonical?.cloud?.tenant).toBe("tenant-1");
+    expect(e.canonical?.evidence.rawRecords[0]).toMatchObject({ source: "m365-ual", recordId: "ual-1" });
+  });
+  it("the description of a maximal row keeps the head, the posture, the object and the qualifiers inside 600", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        audit(
+          "Consent to application",
+          [
+            {
+              type: "ServicePrincipal",
+              id: SP,
+              displayName: "S".repeat(400),
+              modifiedProperties: [
+                prop("ConsentContext.IsAdminConsent", "False"),
+                prop(
+                  "ConsentAction.Permissions",
+                  `[] => [[Id: g1, ClientId: ${SP}, PrincipalId: ${USER}, ResourceId: ${GRAPH_SP}, ConsentType: Principal, Scope: ${"Scope.X".repeat(60)}, CreatedDateTime: 2024-05-01, ExpiryTime: ]]`,
+                ),
+              ],
+            },
+          ],
+          {
+            initiatedBy: {
+              user: {
+                id: USER,
+                userPrincipalName: `${"p".repeat(300)}@victim.com`,
+                ipAddress: "203.0.113.60",
+              },
+            },
+          },
+        ),
+      ]),
+    );
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toMatch(/^Entra audit: Consent to application by p+/);
+    expect(d).toContain("grants delegated permission");
+    expect(d).toContain("for SSSS");
+    expect(d).toContain("delegated — bounded by the consenting user's own access");
+    expect(d).toContain("assigned, not yet observed in use");
+  });
+});
+
+describe("parseM365Audit — service-principal sign-ins (#931 item 1)", () => {
+  const SP = "2b7f3c1a-1111-4aaa-8bbb-000000000001";
+  const GRAPH_SP = "3c8e4d2b-2222-4bbb-9ccc-000000000002";
+  const spSignIn = (over: Record<string, unknown> = {}) => ({
+    id: "sp-1",
+    createdDateTime: "2024-05-01T11:00:00Z",
+    appId: "app-1",
+    servicePrincipalId: SP,
+    servicePrincipalName: "Sync",
+    resourceDisplayName: "Microsoft Graph",
+    resourceServicePrincipalId: GRAPH_SP,
+    resourceId: "00000003-0000-0000-c000-000000000000",
+    ipAddress: "198.51.100.7",
+    clientCredentialType: "clientSecret",
+    servicePrincipalCredentialKeyId: "k-1",
+    resourceTenantId: "tenant-1",
+    status: { errorCode: 0 },
+    ...over,
+  });
+  it("is a row now, not a dropped record: token issued, the credential type from clientCredentialType, Low for a secret", () => {
+    const r = parseM365Audit(JSON.stringify([spSignIn()]));
+    expect(r.format).toBe("entra-signin");
+    const e = r.events[0];
+    expect(e.description).toBe(
+      "Entra sign-in: application Sync (app-1) token issued → Microsoft Graph from 198.51.100.7 credential: clientSecret k-1",
+    );
+    expect(e.severity).toBe("Low");
+    expect(e.canonical?.event).toMatchObject({
+      category: "authentication",
+      type: "sign-in",
+      action: "service-principal",
+      outcome: "success",
+    });
+    expect(e.canonical?.actor).toMatchObject({ kind: "cloud_principal", id: SP, name: "Sync" });
+    expect(e.canonical?.cloud).toMatchObject({
+      provider: "entra",
+      tenant: "tenant-1",
+      principalId: SP,
+      resource: GRAPH_SP,
+    });
+    expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("198.51.100.7");
+    expect(
+      parseM365Audit(JSON.stringify([spSignIn({ clientCredentialType: "certificate" })])).events[0].severity,
+    ).toBe("Info");
+  });
+  it("a workload credential rejection is Medium and says so; any other failure is Low with the code", () => {
+    const rejected = parseM365Audit(JSON.stringify([spSignIn({ status: { errorCode: 7000215 } })])).events[0];
+    expect(rejected.severity).toBe("Medium");
+    expect(rejected.description).toContain("credential rejected (invalid client secret, AADSTS7000215)");
+    const blocked = parseM365Audit(JSON.stringify([spSignIn({ status: { errorCode: 53003 } })])).events[0];
+    expect(blocked.severity).toBe("Low");
+    expect(blocked.description).toContain("failed (AADSTS53003)");
+    expect(blocked.mitreTechniques ?? []).toEqual([]);
+  });
+  it("keys on tenant, client, resource, credential, type, outcome and code — two credentials are two rows", () => {
+    const r = parseM365Audit(
+      JSON.stringify([spSignIn(), spSignIn({ servicePrincipalCredentialKeyId: "k-2" }), spSignIn()]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+});
