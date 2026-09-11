@@ -104,3 +104,65 @@ describe("pollUntilImported", () => {
     expect(res.error).toContain("importer rejected the blob");
   });
 });
+
+// #927. The 240-attempt ceiling bounds COMPLETED status checks. It says nothing about time: a check
+// that takes four minutes to answer "processing" is one attempt, and a check that never answers is
+// attempt 1 forever. The comment above the ceiling promises "20 minutes"; that was only true when
+// every request completed promptly. DFIR_TOOL_SOCRATES_TIMEOUT_MS is a duration the operator set,
+// so the loop has to honour it as a duration.
+describe("pollUntilImported — wall-clock deadline", () => {
+  const noSleep = async () => {};
+
+  it("fails on the deadline even when every check completes, so slow answers cannot stretch it", async () => {
+    // A clock the poller reads: each status check "takes" six minutes. Under a 20-minute budget
+    // the fourth check is over the line, long before the 240th attempt.
+    let clock = 0;
+    let checks = 0;
+    const res = await pollUntilImported(
+      "case-1",
+      job(),
+      {
+        store: { upsert: async (_c: string, j: SocratesJob) => j } as unknown as SocratesJobStore,
+        checkStatus: async () => {
+          checks++;
+          clock += 6 * 60_000;
+          return { status: "processing", phase: "network" };
+        },
+        fetchVerdicts: async () => ({ text: "[]", alerts: 0, yara: 0, sigma: 0 }),
+        ingest: async () => ({ addedEvents: 0, addedIocs: 0 }),
+        sleep: noSleep,
+        now: () => clock,
+      },
+      { maxAttempts: 240, intervalMs: 5_000, totalMs: 20 * 60_000 },
+    );
+    expect(res.status).toBe("error");
+    expect(res.error).toMatch(/timed out/i);
+    expect(res.error).toMatch(/20 min/);
+    expect(checks).toBeLessThanOrEqual(4);
+  });
+
+  it("defaults the deadline to maxAttempts × interval, so the attempt ceiling and the clock agree", async () => {
+    let clock = 0;
+    let checks = 0;
+    const res = await pollUntilImported(
+      "case-1",
+      job(),
+      {
+        store: { upsert: async (_c: string, j: SocratesJob) => j } as unknown as SocratesJobStore,
+        checkStatus: async () => {
+          checks++;
+          clock += 1_000; // each check takes a second; with a 100 ms interval × 3 attempts the budget is 300 ms
+          return { status: "processing" };
+        },
+        fetchVerdicts: async () => ({ text: "[]", alerts: 0, yara: 0, sigma: 0 }),
+        ingest: async () => ({ addedEvents: 0, addedIocs: 0 }),
+        sleep: noSleep,
+        now: () => clock,
+      },
+      { maxAttempts: 3, intervalMs: 100 },
+    );
+    expect(res.status).toBe("error");
+    expect(res.error).toMatch(/timed out/i);
+    expect(checks).toBe(1);
+  });
+});

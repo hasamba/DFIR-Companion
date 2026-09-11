@@ -112,3 +112,48 @@ describe("fetchVerdicts", () => {
     expect(seen.filter((u) => u.includes("type=alert") && u.includes("offset=1000"))).toHaveLength(1);
   });
 });
+
+// #927. No SO-CRATES request carried an AbortSignal, so a host that accepted the connection and
+// then never answered — a hung worker, a half-open socket through a NAT — held the poller at
+// attempt 1 forever. The attempt ceiling never fired. Every request now carries its own deadline.
+describe("request deadlines", () => {
+  /** A fetch that only ever settles when its signal aborts — the shape of a hung server. */
+  function hangingFetch(seen: Array<AbortSignal | undefined>) {
+    return ((_input: unknown, init?: RequestInit) => {
+      const signal = init?.signal ?? undefined;
+      seen.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        if (!signal) return; // never settles: exactly the bug
+        signal.addEventListener(
+          "abort",
+          () => reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason))),
+          { once: true },
+        );
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  it("every call passes an AbortSignal to fetch", async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const f = hangingFetch(seen);
+    const base = "http://localhost:8000";
+    const md5 = "a".repeat(32);
+    await Promise.allSettled([
+      probeAnalysis(base, md5, f, 20),
+      checkStatus(base, md5, f, 20),
+      fetchVerdicts(base, md5, f, 20),
+      uploadBuffer(base, Buffer.from("x"), "x.bin", f, 20),
+    ]);
+    expect(seen.length).toBeGreaterThanOrEqual(4);
+    for (const s of seen) expect(s).toBeInstanceOf(AbortSignal);
+  });
+
+  it("a request that never answers rejects at the deadline instead of hanging", async () => {
+    const f = hangingFetch([]);
+    const started = Date.now();
+    await expect(checkStatus("http://localhost:8000", "a".repeat(32), f, 50)).rejects.toThrow(
+      /timed out|TimeoutError|abort/i,
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});

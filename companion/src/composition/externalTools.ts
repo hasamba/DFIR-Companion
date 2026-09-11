@@ -389,7 +389,9 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
               return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
             }),
         },
-        { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)) },
+        // The operator's DFIR_TOOL_SOCRATES_TIMEOUT_MS is a duration: it is the wall-clock deadline,
+        // and the attempt ceiling derived from it is the second bound (#927).
+        { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)), totalMs: cfg.timeoutMs },
       )
         .then(async (final) => {
           // Close the SUBMITTED line in drop-log.txt with what actually happened. Without this the
