@@ -497,6 +497,7 @@
     "timestompDetect.ts": "analysis/detect",
     "toolDetect.ts": "analysis/detect",
     "tradecraftRules.ts": "analysis/detect",
+    "webRequestDecode.ts": "analysis/detect",
     "truncatedRemainder.ts": "analysis/ingest",
     "uncertainty.ts": "analysis/ai",
     "updateCheck.ts": "analysis/case",

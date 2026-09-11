@@ -62,6 +62,7 @@ import {
 } from "./siemImport.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { boundedAggKey } from "./aggKey.js";
+import { inspectRequestFields, MAX_ATTACK_VARIANTS } from "./webRequestDecode.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -79,9 +80,15 @@ const FILENAME_RE = /(?:^|[._-])access[_.-]?log(?:\.\w+)?$/i;
 
 // "IP ident user [date] "METHOD URI[ PROTOCOL]" status bytes "referer" "user-agent"". The protocol
 // token is optional/loose (`[^"]*`) so a bare "CONNECT host:port" with no trailing HTTP/x.x still
-// matches, and bytes may be "-" (no body).
-const LINE_RE =
-  /^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"/;
+// matches, and bytes may be "-" (no body). The Referer and the User-Agent are ESCAPE-AWARE: Apache
+// and nginx write a quote inside either field as `\"`, and a capture that stopped at the first
+// quote silently dropped the tail — where a payload sits (#930 item 3). Not end-anchored on
+// purpose: real formats append fields after the UA (request time, X-Forwarded-For, vhost).
+const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
+const LINE_RE = new RegExp(
+  String.raw`^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+${QUOTED}\s+${QUOTED}`,
+);
+const unquote = (s: string | undefined): string => (s ?? "").replace(/\\(["\\])/g, "$1");
 
 // Is this text an Apache/Nginx/Squid combined access log? True when a meaningful share of the
 // first non-blank lines match the line shape, or the filename says so outright.
@@ -150,12 +157,47 @@ function clientAddress(raw: string | undefined): string {
   return "";
 }
 
+// What the per-path attack-variant bound needs to know about a row (see parseCombinedLog).
+export interface AttackMeta {
+  /** The aggregation key with the attack segment removed — one per method|status|client|host|path. */
+  base: string;
+  families: string[];
+  digest: string;
+  /** The description an overflow row takes, minus the families it will be given. */
+  overflowTail: string;
+}
+
+/** The overflow row's key segment and marker — family-independent, so the bound is one group per path. */
+export const ATTACK_OVERFLOW = "attack:overflow";
+
 // Map one combined-log line to a forensic event (collecting IOCs), or null if it doesn't match.
-export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): MappedEvent | null {
+// `attackMeta`, when given, receives the row's attack identity so the caller can bound variants.
+export function mapCombinedLogLine(
+  line: string,
+  sink: Map<string, SiemIoc>,
+  attackMeta?: Map<MappedEvent, AttackMeta>,
+): MappedEvent | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
-  const [, clientRaw, , userRaw, dateRaw, method, uri, statusRaw, bytesRaw, refererRaw, uaRaw] = m;
+  const [, clientRaw, , userRaw, dateRaw, method, uriRaw, statusRaw, bytesRaw, refererQuoted, uaQuoted] = m;
   const status = Number(statusRaw);
+  // The bound is applied ONCE, here, before host, IOC, description or key construction touches a
+  // field: every later step runs on the CLIPPED text, so a 10 MB referer is neither a 10 MB url IOC
+  // nor a 10 MB interpolation (#930 item 3). A clipped field fires `oversized@<field>` instead of
+  // being scanned in part — a payload after a prefix window would otherwise be free.
+  const {
+    inspection: attack,
+    fields,
+    decodedTarget,
+    decodedReferer,
+  } = inspectRequestFields({
+    target: uriRaw,
+    referer: unquote(refererQuoted),
+    ua: unquote(uaQuoted),
+  });
+  const uri = fields.target;
+  const refererRaw = fields.referer;
+  const uaRaw = fields.ua;
   const timestamp = parseApacheDate(dateRaw);
   const user = userRaw && userRaw !== "-" ? userRaw : "";
   // The client address is the FIRST field of a combined-log line, and it was the one field this
@@ -186,21 +228,41 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
   const bytesTag = bytesRaw && bytesRaw !== "-" ? ` (${bytesRaw}b)` : "";
   const refTag = referer ? ` (ref ${referer})` : "";
   const uaTag = ua ? ` (ua ${ua})` : "";
-  const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(
-    0,
-    600,
-  );
+  // A row with no attack signal keeps today's layout byte-for-byte. A row with one takes a
+  // FIXED-SLOT layout: prefix, then the status in its own slot, then one match slot per firing
+  // field, then the method and the BOUNDED original, then the tail tags each with its own cap — so
+  // no attacker-controlled field can push the evidence or the status past the clip, and the
+  // analyst always sees the text that fired and what the server answered. "web-attack", never
+  // "compromise": a 200 does not prove execution and a 500 does not prove prevention.
+  const description = attack
+    ? oneLine(
+        `[web-attack: ${attack.labels.join(",")}] [status: ${status}]` +
+          `${attack.slots.length ? ` [match: ${attack.slots.join(" | ")}]` : ""} ` +
+          `${method} ${uri.slice(0, 200)}${bytesTag}${userTag.slice(0, 50)}` +
+          `${referer ? ` (ref ${referer.slice(0, 60)})` : ""}${ua ? ` (ua ${ua.slice(0, 60)})` : ""}`,
+      ).slice(0, 600)
+    : oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(0, 600);
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
-  // web logs are otherwise Info-by-default and land in the analyst-only super-timeline.
-  const spill = secretSpillSignal(`${uri} ${referer}`);
+  // web logs are otherwise Info-by-default and land in the analyst-only super-timeline. The
+  // DECODED forms are scanned too, so a `%5F`-encoded token no longer hides from the rules.
+  const spill = secretSpillSignal(`${uri} ${referer} ${decodedTarget} ${decodedReferer}`);
+  const graded: Severity = attack || spill ? worst(severity, "Medium") : severity;
+  const techniques = [...new Set([...mitre, ...(spill?.mitre ?? []), ...(attack ? ["T1190"] : [])])];
 
-  return {
+  // The attack segment of the key: the families AND a digest of the matched evidence, so two
+  // payloads of one family on one path are two rows while the same payload with different padding
+  // is one. Placed with the bounded fields, BEFORE the path (see the field-order note below).
+  const attackSegment = attack ? `|attack:${attack.families.join(",")}:${attack.digest}` : "";
+  const baseKey = `weblog|${method}|${status}|${client}|${host}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
+  const pathKey = `|${uri.split("?")[0]}`;
+
+  const event: MappedEvent = {
     timestamp,
     description,
-    severity: spill ? worst(severity, "Medium") : severity,
-    mitre: spill ? [...new Set([...mitre, ...spill.mitre])] : mitre,
+    severity: graded,
+    mitre: techniques,
     // Aggregate by method+host+path (query string dropped) so pagination/param variants collapse
     // together while a genuinely different path/host stays distinct. A spill-bearing line gets its
     // OWN key: aggregation is first-description-wins, so without this a secret-carrying request
@@ -222,12 +284,63 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
     // it. So: every bounded field first (method, status, client, host, spill), the path LAST, and
     // boundedAggKey rather than a raw slice — it keeps a digest of the FULL key in the tail, so two
     // long paths sharing a 400-character prefix stay two rows. This is the rule aggKey.ts states.
-    aggKey: boundedAggKey(
-      `weblog|${method}|${status}|${client}|${host}${spill ? `|spill:${spill.families.join(",")}` : ""}|${uri.split("?")[0]}`.toLowerCase(),
-    ),
+    aggKey: boundedAggKey(`${baseKey}${attackSegment}${pathKey}`.toLowerCase()),
     sources: [COMBINED_LOG_SOURCE],
     ...(client ? { srcIp: client } : {}),
   };
+  if (attack && attackMeta) {
+    attackMeta.set(event, {
+      base: `${baseKey}${pathKey}`.toLowerCase(),
+      families: attack.families,
+      digest: attack.digest,
+      overflowTail: `${method} ${uri.split("?")[0].slice(0, 200)} -> ${status}`,
+    });
+  }
+  return event;
+}
+
+// Bound the number of attack VARIANTS one path may keep as separate rows (#930 item 3). Each
+// distinct payload is its own aggregation key, so a scanner run with thousands of payloads on one
+// path would otherwise be thousands of groups in the aggregator's map and its pre-cap sort. The
+// first MAX_ATTACK_VARIANTS distinct payloads per base key stay verbatim; every later distinct one
+// is rewritten onto ONE family-independent overflow key per base key (a key that named the
+// families would be one overflow group per family combination — the bound handed back), and a
+// final pass gives every overflow row the same description carrying the finished family union,
+// so the aggregator's first-description-wins rule cannot hide part of it. The bound is per path:
+// different paths are different evidence. Returns old key → overflow key for every rewritten row,
+// so IOC provenance recorded under the old key (mergeRowIocs ran before this) can follow the row.
+function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, AttackMeta>): Map<string, string> {
+  const seen = new Map<string, Set<string>>();
+  const overflowFamilies = new Map<string, Set<string>>();
+  const overflowRows: Array<{ event: MappedEvent; base: string }> = [];
+  for (const event of mapped) {
+    const m = meta.get(event);
+    if (!m) continue;
+    const digests = seen.get(m.base) ?? new Set<string>();
+    seen.set(m.base, digests);
+    if (digests.has(m.digest)) continue;
+    if (digests.size < MAX_ATTACK_VARIANTS) {
+      digests.add(m.digest);
+      continue;
+    }
+    const fam = overflowFamilies.get(m.base) ?? new Set<string>();
+    for (const f of m.families) fam.add(f);
+    overflowFamilies.set(m.base, fam);
+    overflowRows.push({ event, base: m.base });
+  }
+  const rewritten = new Map<string, string>();
+  for (const { event, base } of overflowRows) {
+    const families = [...(overflowFamilies.get(base) ?? [])].sort().join(",");
+    const m = meta.get(event)!;
+    const [prefix, path] = [base.slice(0, base.lastIndexOf("|")), base.slice(base.lastIndexOf("|"))];
+    const overflowKey = boundedAggKey(`${prefix}|${ATTACK_OVERFLOW}${path}`);
+    rewritten.set(event.aggKey, overflowKey);
+    event.aggKey = overflowKey;
+    event.description =
+      `[web-attack: ${families}] [overflow: distinct payloads beyond ${MAX_ATTACK_VARIANTS} on this path folded] ` +
+      m.overflowTail;
+  }
+  return rewritten;
 }
 
 // Parse a combined-format access/proxy log into the shared SIEM result shape (aggregated + capped).
@@ -236,17 +349,31 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   const maxIocs = opts.maxIocs ?? 5000;
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  const attackMeta = new Map<MappedEvent, AttackMeta>();
   let total = 0;
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
     const rowSink = new Map<string, SiemIoc>();
-    const m = mapCombinedLogLine(line, rowSink);
+    const m = mapCombinedLogLine(line, rowSink, attackMeta);
     if (m) {
       total++;
       mergeRowIocs(sink, rowSink, m.aggKey);
       mapped.push(m);
+    }
+  }
+  // With aggregation off nothing is folded, so nothing may be rewritten either: every row keeps its
+  // own payload — the no-aggregation mode exists to preserve exactly that.
+  const rewritten =
+    opts.aggregate === false ? new Map<string, string>() : boundAttackVariants(mapped, attackMeta);
+  if (rewritten.size) {
+    // An IOC extracted from an overflow row was attributed to the row's ORIGINAL key; follow it to
+    // the overflow key or resolveExtractedFrom drops the provenance silently.
+    for (const [key, ioc] of sink) {
+      if (!ioc.sourceAggKeys?.some((k) => rewritten.has(k))) continue;
+      const keys = [...new Set(ioc.sourceAggKeys.map((k) => rewritten.get(k) ?? k))];
+      sink.set(key, { ...ioc, sourceAggKeys: keys });
     }
   }
 
