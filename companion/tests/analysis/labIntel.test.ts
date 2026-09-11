@@ -6,6 +6,7 @@ import {
   labIntelTag,
   isLabProduced,
   selectLabIntelForDisplay,
+  cleanTagText,
 } from "../../src/analysis/labIntel.js";
 import type { ForensicEvent, InvestigationState, LabIntelRecord } from "../../src/analysis/stateTypes.js";
 
@@ -174,5 +175,27 @@ describe("isLabProduced", () => {
     expect(
       isLabProduced(ev({ id: "e", sources: ["KAPE"], description: "note: see CAPE sandbox: report" })),
     ).toBe(false);
+  });
+});
+
+describe("report-derived text inside a prompt tag is bounded and escaped", () => {
+  it("strips tag delimiters and control characters, collapses whitespace, and caps length", () => {
+    expect(cleanTagText("Emo<tet>\n\tfamily", 48)).toBe("Emo tet family");
+    expect(cleanTagText("x".repeat(100), 48)).toHaveLength(48);
+  });
+  it("cleans a record at ingestion so the stored registry is already safe and small", () => {
+    const r = upsertLabIntel(
+      [],
+      [rec({ family: "<b>Emotet</b>", signatures: ["a>b", "c\nd", "e", "f", "g", "h", "i"] })],
+    );
+    expect(r[0].family).toBe("b Emotet /b");
+    expect(r[0].signatures).toEqual(["a b", "c d", "e", "f", "g"]);
+  });
+  it("never lets a '>' into the tag body and caps the whole tag", () => {
+    const tag = labIntelTag([rec({ family: "x>".repeat(200), signatures: ["<".repeat(100)] })]);
+    expect(tag.startsWith(" <sandbox:")).toBe(true);
+    expect(tag.endsWith(">")).toBe(true);
+    expect(tag.slice(10, -1)).not.toMatch(/[<>]/);
+    expect(tag.length).toBeLessThanOrEqual(" <sandbox:".length + 240 + 1);
   });
 });

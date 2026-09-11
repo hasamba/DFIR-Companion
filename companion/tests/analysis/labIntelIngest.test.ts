@@ -10,6 +10,7 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
 import { renderStructuredTags } from "../../src/analysis/synthEvidence.js";
 import { mergeConcurrentAdditions } from "../../src/analysis/ai/synthesisPersist.js";
+import { computeSynthHash } from "../../src/analysis/ai/synthesisInputs.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 // #932 item 5, end to end: a sandbox report is LAB evidence. Its rows go to the super-timeline and
@@ -111,6 +112,34 @@ describe("sandbox import is lab evidence", () => {
       verdict: "malicious",
     });
     expect(state.labIntel?.[0].importedAt).toBe("2026-09-10T11:00:00Z");
+  });
+
+  // Severity here means "how serious for the incident", and a lab row asserts nothing about it. The
+  // sandbox's own score stays in the description. A promoted lab row therefore can never trip the
+  // High-severity backfill into minting an incident finding from capability evidence.
+  it("stores every lab row at Info, whatever the sandbox scored", async () => {
+    await importSandbox();
+    for (const r of await superTimelineStore.all("c1")) expect(r.severity).toBe("Info");
+  });
+
+  // The store dedupes on (timestamp, description, host). Two runs with an identical start time and
+  // identical signatures used to collapse into one set of rows while both registry records stayed.
+  it("keeps two runs with an identical start time as two sets of rows", async () => {
+    await importSandbox();
+    const second = JSON.parse(capeReport()) as { info: { id: number } };
+    second.info.id = 43;
+    await pipeline.importSandbox("c1", JSON.stringify(second), {
+      label: "cape2.json",
+      idPrefix: "sb2",
+      importedAt: "2026-09-11T11:00:00Z",
+    });
+    const verdicts = (await superTimelineStore.all("c1")).filter((r) =>
+      r.description.startsWith("CAPE sandbox:"),
+    );
+    expect(verdicts).toHaveLength(2);
+    expect(verdicts.map((r) => r.description).join("|")).toMatch(
+      /\[run 42\].*\[run 43\]|\[run 43\].*\[run 42\]/,
+    );
   });
 
   it("keeps the hash IOCs — the sample is still an indicator for the case", async () => {
@@ -242,6 +271,49 @@ describe("the registry survives the reducers", () => {
     await importSandbox();
     await importHost(); // an unrelated import goes through mergeDelta
     expect((await stateStore.load("c1")).labIntel).toHaveLength(1);
+  });
+
+  // The synthesis hash decides whether a run is skipped as identical. A sandbox verdict landing on
+  // an otherwise-unchanged sighting must change it, or the verdict never reaches a finding.
+  it("a new detonation changes the synthesis hash of an otherwise-identical input", async () => {
+    await importHost();
+    const before = await stateStore.load("c1");
+    const blocks = {
+      notebookBlock: "",
+      analystHypothesesBlock: "",
+      priorHuntsBlock: "",
+      playbookProgressBlock: "",
+      refutedHypothesesBlock: "",
+      incidentTypeBlock: "",
+    };
+    // Same IOCs on both sides: the hash IOC is minted by the sandbox import, and we want to prove the
+    // ANNOTATION alone changes the hash, not the IOC list.
+    const scoped = (s: InvestigationState) => ({
+      scopedEvents: s.forensicTimeline,
+      iocs: [],
+      scope: {},
+      markers: [],
+      blocks,
+      observationsBlock: "",
+    });
+    await importSandbox();
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id)).toEqual(before.forensicTimeline.map((e) => e.id));
+    expect(computeSynthHash(scoped(after) as never)).not.toBe(computeSynthHash(scoped(before) as never));
+  });
+
+  // A sandbox import that annotated a sighting WHILE synthesis ran: the reducer keeps the sighting
+  // from the pre-import snapshot, so it must re-annotate over the merged state.
+  it("mergeConcurrentAdditions re-annotates a sighting the concurrent import annotated", async () => {
+    await importHost();
+    const loaded = await stateStore.load("c1"); // synthesis snapshot: no registry yet
+    await importSandbox();
+    const latest = await stateStore.load("c1"); // the concurrent import landed and annotated
+    const next = { ...loaded, findings: [] }; // what synthesis is about to write, from the old snapshot
+    const merged = mergeConcurrentAdditions(loaded, next, latest);
+    const e = merged.forensicTimeline.find((x) => (x.sha256 ?? "").toLowerCase() === SHA);
+    expect(merged.labIntel).toHaveLength(1);
+    expect(e?.labIntel).toHaveLength(1);
   });
 
   it("mergeConcurrentAdditions unions the registry from both sides", () => {

@@ -151,7 +151,7 @@ function mapCape(
   out.push({
     timestamp: time,
     description:
-      `${SANDBOX_PREFIX.capeVerdict} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(
+      `${SANDBOX_PREFIX.capeVerdict} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10${runId ? ` [run ${runId}]` : ""}`.slice(
         0,
         600,
       ),
@@ -181,7 +181,7 @@ function mapCape(
     out.push({
       timestamp: time,
       description:
-        `${SANDBOX_PREFIX.capeSignature} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
+        `${SANDBOX_PREFIX.capeSignature} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}${runId ? ` [run ${runId}]` : ""}`.slice(
           0,
           600,
         ),
@@ -261,7 +261,7 @@ function mapFalcon(
   out.push({
     timestamp: time,
     description:
-      `${SANDBOX_PREFIX.falconVerdict} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(
+      `${SANDBOX_PREFIX.falconVerdict} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100${runId ? ` [run ${runId}]` : ""}`.slice(
         0,
         600,
       ),
@@ -283,7 +283,7 @@ function mapFalcon(
     out.push({
       timestamp: time,
       description:
-        `${SANDBOX_PREFIX.falconSignature} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
+        `${SANDBOX_PREFIX.falconSignature} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}${runId ? ` [run ${runId}]` : ""}`.slice(
           0,
           600,
         ),

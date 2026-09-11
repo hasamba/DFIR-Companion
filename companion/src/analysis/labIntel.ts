@@ -34,6 +34,37 @@ export function normalizeSha256(raw: unknown): string {
   return SHA256.test(v) ? v : "";
 }
 
+// Report-derived text that ends up inside a prompt tag. Every other structured tag clips its value;
+// this one must ALSO strip the tag delimiters and control characters, because a family or signature
+// name is attacker-influenced input (the sample chose its own strings and the sandbox echoed them)
+// and a "<" or a newline inside a tag can forge a second tag or instruction-like text. Applied at
+// ingestion, so the stored record is already safe and small, and again at render as belt and braces.
+const MAX_FAMILY = 48;
+const MAX_SIGNATURE = 32;
+const MAX_SIGNATURES = 5;
+const MAX_TAG = 240;
+export function cleanTagText(raw: unknown, max: number): string {
+  const s = String(raw ?? "")
+    .replace(/[<>\x00-\x1f\x7f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+function cleanRecord(raw: LabIntelRecord, sha256: string): LabIntelRecord {
+  return {
+    ...raw,
+    sha256,
+    source: cleanTagText(raw.source, 24),
+    runId: cleanTagText(raw.runId, 32),
+    family: cleanTagText(raw.family, MAX_FAMILY),
+    signatures: raw.signatures
+      .map((x) => cleanTagText(x, MAX_SIGNATURE))
+      .filter(Boolean)
+      .slice(0, MAX_SIGNATURES),
+  };
+}
+
 const keyOf = (r: LabIntelRecord): string => `${r.sha256}|${r.source}|${r.runId}`;
 
 // Union by (sha256, source, runId); a later record for the same key replaces the earlier one. Output
@@ -48,7 +79,7 @@ export function upsertLabIntel(
   for (const raw of incoming) {
     const sha256 = normalizeSha256(raw.sha256);
     if (!sha256) continue;
-    const r = { ...raw, sha256 };
+    const r = cleanRecord(raw, sha256);
     byKey.set(keyOf(r), r);
   }
   return [...byKey.values()].sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
@@ -96,7 +127,7 @@ export function annotateSightingsWithLabIntel(state: InvestigationState): Invest
       if (e.labIntel === undefined) return e;
       changed = true;
       const { labIntel: _dropped, ...rest } = e;
-      return rest as ForensicEvent;
+      return rest;
     }
     changed = true;
     return { ...e, labIntel: matches };
@@ -111,10 +142,16 @@ export function labIntelTag(records: readonly LabIntelRecord[] | undefined): str
   if (!records?.length) return "";
   const { shown, omitted } = selectLabIntelForDisplay(records);
   const parts = shown.map((r) => {
-    const sigs = r.signatures.slice(0, 2).join(",");
-    return [r.source, r.verdict, r.family, String(r.score), sigs].filter(Boolean).join(" ");
+    const sigs = r.signatures
+      .slice(0, 2)
+      .map((x) => cleanTagText(x, MAX_SIGNATURE))
+      .join(",");
+    return [cleanTagText(r.source, 24), r.verdict, cleanTagText(r.family, MAX_FAMILY), String(r.score), sigs]
+      .filter(Boolean)
+      .join(" ");
   });
-  return ` <sandbox:${parts.join("; ")}${omitted ? ` +${omitted} more` : ""}>`;
+  const body = `${parts.join("; ")}${omitted ? ` +${omitted} more` : ""}`;
+  return ` <sandbox:${body.length > MAX_TAG ? body.slice(0, MAX_TAG - 1) + "…" : body}>`;
 }
 
 // Is this row sandbox-produced? The importer now says so with `origin`. Rows persisted before that

@@ -167,6 +167,11 @@ export async function importSandbox(
     ...e,
     id: `${opts.idPrefix}e${i + 1}`,
     origin: "lab",
+    // Info, whatever the sandbox scored: severity here means "how serious for the INCIDENT", and a
+    // lab row asserts nothing about the incident. The sandbox's own score and signature severity
+    // stay in the description. It also means a promoted lab row can never trip the High-severity
+    // backfill into minting an incident finding from capability evidence.
+    severity: "Info",
     relatedFindingIds: [],
     sourceScreenshots: [opts.label],
     sources: e.sources?.length ? e.sources : ["Sandbox"],
