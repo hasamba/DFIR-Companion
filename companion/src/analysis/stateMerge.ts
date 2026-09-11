@@ -335,6 +335,7 @@ export function mergeDelta(
         ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),
         ...(incoming.port !== undefined ? { port: incoming.port } : {}),
+        ...(incoming.origin ? { origin: incoming.origin } : {}),
       };
       forensicTimeline.push(created);
       byId.set(incoming.id, created);

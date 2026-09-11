@@ -259,6 +259,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
       if (!events.length) return res.status(404).json({ error: "no matching super-timeline events" });
       await options.pipeline.promoteSuperTimeline(req.params.id, events, {
         importedAt: new Date().toISOString(),
+        intent: "manual",
       });
       resynthesizeInBackground(req.params.id);
       return res.status(200).json({ promoted: events.length });

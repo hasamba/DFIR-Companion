@@ -122,6 +122,9 @@ export const deltaSchema = z.object({
     .array(
       z.object({
         id: z.string().min(1),
+        // Evidence origin (#932 item 5). Promotion parses through this schema; without the field
+        // a promoted lab row would arrive in the forensic timeline as a host observation.
+        origin: z.enum(["lab"]).optional().catch(undefined),
         // Event's real time as shown in the artifact. A model that returns a NAIVE stamp (no "Z", no
         // offset) is tagged UTC here, at the one boundary every AI event crosses (#757) — otherwise
         // each downstream Date.parse reads it in the server's own zone, and the same delta yields a

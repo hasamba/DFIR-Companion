@@ -142,6 +142,57 @@ describe("second-look loop end-to-end (#11)", () => {
     expect(meta.secondLook?.leads.length).toBeGreaterThan(0);
   });
 
+  // #932 item 5 part B: a pending lab row (sandbox behaviour nobody promoted) is out of the
+  // candidate pool ENTIRELY. It must not be promoted — and it must not satisfy the request either,
+  // or hidden lab evidence would silently close a collection request.
+  it("never promotes a lab row, and a request matching only a lab row still becomes a collection lead", async () => {
+    await superStore.append("c1", [
+      {
+        ...event(
+          "sblab",
+          "2026-05-20T10:00:00.000Z",
+          "CAPE signature: [run 42] rsync_exfil — rsync archive.zip to remote",
+        ),
+        origin: "lab",
+        sources: ["CAPEv2"],
+      },
+    ]);
+
+    const { pipeline, analyze } = makePipeline(deltaWithRequest("rsync"));
+    await pipeline.synthesize("c1");
+
+    const state = await stateStore.load("c1");
+    expect(state.forensicTimeline.some((e) => e.id === "sblab")).toBe(false);
+    expect(analyze).toHaveBeenCalledTimes(1);
+    const meta = await synthMetaStore.load("c1");
+    expect(meta.secondLook?.promoted).toBe(0);
+    expect(meta.secondLook?.leads.length).toBeGreaterThan(0);
+  });
+
+  it("lets a lab row the analyst promoted satisfy a request (it is forensic evidence by their choice)", async () => {
+    const seeded = await stateStore.load("c1");
+    seeded.forensicTimeline.push({
+      ...event(
+        "sbprom",
+        "2026-05-20T10:00:00.000Z",
+        "CAPE signature: [run 42] rsync_exfil — rsync archive.zip to remote",
+      ),
+      origin: "lab",
+      sources: ["CAPEv2"],
+      severity: "Info",
+      provenance: ["[promoted]"],
+    });
+    await stateStore.save(seeded);
+
+    const { pipeline, analyze } = makePipeline(deltaWithRequest("rsync"));
+    await pipeline.synthesize("c1");
+
+    const meta = await synthMetaStore.load("c1");
+    expect(meta.secondLook?.promoted).toBe(0); // already forensic — nothing to promote
+    expect(meta.secondLook?.leads).toHaveLength(0); // the request was satisfied by the promoted row
+    expect(analyze).toHaveBeenCalledTimes(1);
+  });
+
   it("does not sweep when superTimelineStore is not wired", async () => {
     const provider = new MockProvider("mock", deltaWithRequest("rsync"));
     const analyze = vi.spyOn(provider, "analyze");

@@ -11,6 +11,7 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { persistPlasoParsed } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import { isLabProduced, PROMOTED_MARKER } from "../labIntel.js";
 
 /**
  * Whole-timeline sources. Plaso arrives already normalised into timeline rows, and
@@ -78,12 +79,32 @@ export async function importPlasoFile(
 // routed there exclusively) that is never synthesized; this is how the analyst pulls the events that
 // matter into the analyzed timeline. Reuses mergeDelta (dedups forensic events by id) — a stored super
 // event keeps its id, so a double-promote is a no-op. No AI here; the caller re-synthesizes.
+// Who is promoting, and therefore what a lab row is allowed to become (#932 item 5 part B). Four
+// callers share this function; "manually promoted" had no executable meaning until this enum.
+//   manual      — the analyst chose these rows in the super-timeline. A lab row is normalised
+//                 (origin lab, Info) and stamped PROMOTED_MARKER: their decision is respected and
+//                 remembered.
+//   explain     — "explain this event" on a raw row promotes it so it can be explained. Incidental:
+//                 normalised, NOT marked. It stays a pending lab row.
+//   starred-report — a report over the rows the analyst starred promotes them first (§7: the model
+//                 reads the forensic timeline, never the raw record). Same as explain: the analyst
+//                 asked for a report, not for a lab row to become incident evidence.
+//   second-look — the automated loop. A lab row is REFUSED here outright, marker or not: the loop
+//                 must never move sandbox behaviour into the incident chronology on its own.
+export type PromotionIntent = "manual" | "explain" | "starred-report" | "second-look";
+
 export async function promoteSuperTimeline(
   ctx: ImportContext,
   caseId: string,
-  events: ForensicEvent[],
-  opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
+  requested: ForensicEvent[],
+  opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
 ): Promise<InvestigationState> {
+  const events = requested
+    .filter((e) => !(opts.intent === "second-look" && isLabProduced(e)))
+    .map((e) => (isLabProduced(e) ? { ...e, origin: "lab" as const, severity: "Info" as const } : e));
+  const marked: Record<string, string[]> = { ...(opts.tagById ?? {}) };
+  if (opts.intent === "manual")
+    for (const e of events) marked[e.id] = [...new Set([...(marked[e.id] ?? []), PROMOTED_MARKER])];
   return ctx.withStateLock(caseId, async () => {
     let state = await ctx.opts.stateStore.load(caseId);
     if (!events.length) return state;
@@ -105,13 +126,13 @@ export async function promoteSuperTimeline(
     // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
     // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
     // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
-    if (opts.tagById) {
-      const tagged = new Set(Object.keys(opts.tagById));
+    if (Object.keys(marked).length) {
+      const tagged = new Set(Object.keys(marked));
       state = {
         ...state,
         forensicTimeline: state.forensicTimeline.map((e) =>
           tagged.has(e.id)
-            ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...opts.tagById![e.id]])] }
+            ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...marked[e.id]])] }
             : e,
         ),
       };

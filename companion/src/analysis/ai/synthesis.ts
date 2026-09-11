@@ -55,6 +55,8 @@ import {
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
+import { isPendingLabRow } from "../labIntel.js";
+import type { PromotionIntent } from "../ingest/timelineImports.js";
 
 /**
  * Synthesis: the AI call that turns the case's timeline into its conclusions (#418).
@@ -112,7 +114,7 @@ export interface SynthesisContext
   promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
-    opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
+    opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
   ): Promise<InvestigationState>;
   /** Once per process: warn that a configured prompt override is missing shipped capabilities. */
   warnOnPromptDrift(): void;
@@ -721,7 +723,11 @@ async function collectSecondLookCandidates(
   const omitted = input.scopedEvents.filter((e) => !shownIds.has(e.id));
   const superRows = (await superStore.query(caseId, { from: window.from, to: window.to })).events;
   const byId = new Map<string, ForensicEvent>();
-  for (const e of [...omitted, ...superRows]) if (!byId.has(e.id)) byId.set(e.id, e);
+  // A pending lab row (sandbox behaviour nobody promoted) is out of the pool ENTIRELY — not just
+  // out of the promotable subset. It may not be promoted, and it may not satisfy a request either:
+  // a request whose only match is hidden lab evidence still needs a collection lead. A lab row the
+  // analyst promoted is in the forensic timeline by their choice and may match (#932 item 5 part B).
+  for (const e of [...omitted, ...superRows]) if (!byId.has(e.id) && !isPendingLabRow(e)) byId.set(e.id, e);
   return [...byId.values()];
 }
 
@@ -768,6 +774,7 @@ async function runSecondLook(
 
   if (plan.promotions.length) {
     await ctx.promoteSuperTimeline(caseId, plan.promotions, {
+      intent: "second-look",
       importedAt: new Date().toISOString(),
       tagById: plan.tagById,
       note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
