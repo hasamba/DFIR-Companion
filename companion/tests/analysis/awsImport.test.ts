@@ -503,6 +503,33 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
     expect(d).toContain("effective access depends on controls not in this record");
     expect(d).toContain("[AccessDenied]");
   });
+  it("cloud.resource is the untruncated object the call names, or a binding's destination", () => {
+    const longGroup = "g".repeat(120);
+    const r = parseCloudTrail(
+      envelope(
+        iam("AttachGroupPolicy", { groupName: longGroup, policyArn: "arn:aws:iam::aws:policy/X" }),
+        record({
+          eventSource: "ec2.amazonaws.com",
+          eventName: "RunInstances",
+          readOnly: false,
+          recipientAccountId: ACCT,
+          requestParameters: { iamInstanceProfile: { name: "web" } },
+          responseElements: { instancesSet: { items: [{ instanceId: "i-0bbb" }] } },
+        }),
+        record({
+          eventSource: "lambda.amazonaws.com",
+          eventName: "CreateFunction20150331",
+          readOnly: false,
+          recipientAccountId: ACCT,
+          requestParameters: { functionName: "fn-x", role: `arn:aws:iam::${ACCT}:role/lr` },
+        }),
+      ),
+    );
+    const by = (name: string) => r.events.find((e) => e.description.startsWith(`AWS ${name}`))!;
+    expect(by("AttachGroupPolicy").canonical?.cloud?.resource).toBe(longGroup);
+    expect(by("RunInstances").canonical?.cloud?.resource).toBe("i-0bbb");
+    expect(by("CreateFunction20150331").canonical?.cloud?.resource).toBe("fn-x");
+  });
   it("the existing table grades are unchanged for IAM calls the decoder does not raise", () => {
     const r = parseCloudTrail(
       envelope(iam("CreateUser", { userName: "new" }, { user: { userId: "AIDAEXAMPLE" } })),

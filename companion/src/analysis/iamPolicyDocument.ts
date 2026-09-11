@@ -55,6 +55,7 @@ export interface PolicyReading {
 
 export interface PolicyUnreadable {
   readable: false;
+  /** Empty when the input had no text to digest (an object that could not be serialised). */
   rawDigest: string;
   reason: string;
 }
@@ -124,19 +125,23 @@ function canonical(v: unknown, depth = 0, budget = { nodes: 0 }): string {
       .join(",")}}`;
   return JSON.stringify(v) ?? "null";
 }
+// Null for ANY failure — the bound, a throwing getter, a BigInt JSON.stringify refuses: this reader
+// is total over unknown input, and an adapter's in-memory object is unknown input.
 function canonicalOrNull(v: unknown): string | null {
   try {
     return canonical(v);
-  } catch (e) {
-    if (e instanceof DocumentTooLarge) return null;
-    throw e;
+  } catch {
+    return null;
   }
 }
 
 /**
- * AWS action glob: `*` any run, `?` one character, case-insensitive, whole string. A linear
- * two-pointer matcher, never a RegExp — a document under the size bound can still hold tens of
- * thousands of `*`, and V8 refuses to compile that pattern, which would abort the whole import.
+ * AWS action glob: `*` any run, `?` one character, case-insensitive, whole string. A two-pointer
+ * matcher, never a RegExp — a document under the size bound can still hold tens of thousands of
+ * `*`, and V8 refuses to compile that pattern, which would abort the whole import. The cost is
+ * O(pattern × action) in the worst case, and the ACTION side is always one of this module's own
+ * constants (a primitive, an assumption action — under 50 characters); only the pattern is the
+ * document's, so a hostile document costs linear time in its own length.
  */
 export function actionMatches(pattern: string, action: string): boolean {
   const p = pattern.toLowerCase().replace(/\*{2,}/g, "*");
@@ -283,14 +288,25 @@ function boundReading(text: string): string {
 
 /**
  * Read one policy or trust document as CloudTrail carried it: the escaped-JSON string, its
- * percent-encoded variant, or an object an exporter parsed already. Never throws.
+ * percent-encoded variant, or an object an exporter parsed already. Never throws — whatever the
+ * input does (a getter that throws, a BigInt, a Proxy), the result is an unreadable reading. An
+ * object that cannot be serialised has NO digest (`rawDigest` is ""): the caller must key such a
+ * row on a per-record identity, never on the reason text, or every over-limit document would fold.
  */
 export function readPolicyDocument(raw: unknown): PolicyReading | PolicyUnreadable {
-  if (isObj(raw)) {
+  try {
+    return readDocument(raw);
+  } catch {
+    return { readable: false, rawDigest: "", reason: "not readable" };
+  }
+}
+
+function readDocument(raw: unknown): PolicyReading | PolicyUnreadable {
+  if (isObj(raw) || Array.isArray(raw)) {
     const text = canonicalOrNull(raw);
     if (text === null)
-      return { readable: false, rawDigest: digest("[too deep]"), reason: "too deep or too many nodes" };
-    return readPolicyDocument(text);
+      return { readable: false, rawDigest: "", reason: "too deep, too wide or not serialisable" };
+    return readDocument(text);
   }
   const text = typeof raw === "string" ? raw : "";
   const rawDigest = digest(text);
@@ -302,7 +318,7 @@ export function readPolicyDocument(raw: unknown): PolicyReading | PolicyUnreadab
   if (!isObj(doc) || doc.Statement === undefined)
     return { readable: false, rawDigest, reason: "no Statement" };
   const canon = canonicalOrNull(doc);
-  if (canon === null) return { readable: false, rawDigest, reason: "too deep or too many nodes" };
+  if (canon === null) return { readable: false, rawDigest, reason: "too deep, too wide or not serialisable" };
   const rawStatements = Array.isArray(doc.Statement) ? doc.Statement : [doc.Statement];
   const statements = rawStatements.map(readStatement).filter((s): s is PolicyStatement => s !== null);
   const allows = statements.filter((s) => s.effect === "Allow");

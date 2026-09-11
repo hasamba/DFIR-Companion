@@ -489,6 +489,26 @@ describe("decodeIamChange — the key carries every identity", () => {
       put('{"Statement":[{"Resource":"*","Action":"s3:*","Effect":"Allow"}]}'),
     );
   });
+  it("two documents that cannot be serialised key on their own records, never on the reason", () => {
+    const deep = (leaf: string) => {
+      let d: unknown = { Effect: "Allow", Action: "*", Resource: leaf };
+      for (let i = 0; i < 5000; i++) d = { x: d };
+      return { Statement: [d] };
+    };
+    const put = (leaf: string, eventId: string) =>
+      decodeIamChange(
+        IAM,
+        "PutRolePolicy",
+        { roleName: "r", policyName: "p", policyDocument: deep(leaf) },
+        {},
+        "",
+        "",
+        ACCT,
+        eventId,
+      )!;
+    expect(put("a", "evt-1").keySegment).not.toBe(put("b", "evt-2").keySegment);
+    expect(put("a", "evt-1").reading).toContain("unreadable");
+  });
   it("two PassRole denials for two roles on a call the decoder does not otherwise bind are two keys", () => {
     const denied = (role: string) =>
       decodeIamChange(

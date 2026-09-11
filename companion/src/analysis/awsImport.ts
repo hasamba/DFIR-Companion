@@ -163,13 +163,6 @@ function principal(ui: unknown): {
   };
 }
 
-// The primary name of the object an IAM call changes — the role, user, group or policy — for
-// cloud.resource when the generic resource fields are empty.
-function iamResource(object: string | undefined): string {
-  const m = /\b(?:role|user|group|policy|policyName)=([^\s]+)/.exec(object ?? "");
-  return m ? m[1] : "";
-}
-
 function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
@@ -209,6 +202,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     str(getCI(rec, "errorCode")),
     str(getCI(rec, "errorMessage")),
     str(getCI(rec, "recipientAccountId")).trim(),
+    str(getCI(rec, "eventID")).trim(),
   );
   if (iam) {
     if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
@@ -308,8 +302,11 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
             "roleArn",
             "bucketName",
             "key",
-          ])
-        : "";
+          ]) ||
+          // The IAM decoder's UNTRUNCATED primary resource: the group or policy a call names that
+          // the list above does not, or a binding's destination (the function, the instances).
+          (iam?.resource ?? "")
+        : (iam?.resource ?? "");
   const canonical = createCanonicalEvent({
     event: {
       category: "cloud",
@@ -338,13 +335,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       ...(identity.type ? { principalType: identity.type } : {}),
       ...(identity.accountId ? { accountId: identity.accountId } : {}),
       ...(region ? { region } : {}),
-      ...(ssm?.target
-        ? { resource: ssm.target }
-        : resource
-          ? { resource }
-          : iamResource(iam?.object)
-            ? { resource: iamResource(iam?.object) }
-            : {}),
+      ...(ssm?.target ? { resource: ssm.target } : resource ? { resource } : {}),
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {

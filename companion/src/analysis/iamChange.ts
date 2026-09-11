@@ -43,6 +43,8 @@ export interface IamChange {
   outcome: string;
   /** The labeled object tuple, display-bounded; the key digests the complete tuple. */
   object: string;
+  /** The primary resource, UNTRUNCATED — the role/user/group/policy changed, or a binding's destination. */
+  resource: string;
   /** What the record lacks for this posture — `— its document and version are not in this record`. */
   note: string;
   /** The document's words (prefixed `requested document:` when attempted); "" when none. */
@@ -107,7 +109,7 @@ function objectTuple(
   nameLower: string,
   req: Obj,
   res: unknown,
-): { display: string; key: string } {
+): { display: string; key: string; primary: string } {
   const pairs: Array<[string, string]> = [];
   for (const f of p.fields) {
     const v = raw(getCI(req, f));
@@ -121,7 +123,11 @@ function objectTuple(
     .map(([l, v]) => `${l}=${(l === "policy" || l === "boundary" ? arnName(v) : v).slice(0, VALUE_MAX)}`)
     .join(" ")
     .slice(0, OBJECT_MAX);
-  return { display, key: digest(pairs.map(([l, v]) => `${l}=${v.toLowerCase()}`).join("|")) };
+  return {
+    display,
+    key: digest(pairs.map(([l, v]) => `${l}=${v.toLowerCase()}`).join("|")),
+    primary: pairs[0]?.[1] ?? "",
+  };
 }
 
 // ───────────────────────────── trust ─────────────────────────────
@@ -231,7 +237,7 @@ const worstOf = (a: Severity | null, b: Severity | null): Severity | null =>
 /**
  * Decode one CloudTrail record as an IAM change or a role binding, or null when it is neither.
  * `recipientAccountId` is the account the changed resource lives in; without it a trust policy's
- * accounts are named but not compared.
+ * accounts are named but not compared. `eventId` keys a document that has no digest of its own.
  */
 export function decodeIamChange(
   source: string,
@@ -241,6 +247,7 @@ export function decodeIamChange(
   errorCode: string,
   errorMessage: string,
   recipientAccountId: string,
+  eventId = "",
 ): IamChange | null {
   const req: Obj = isObj(request) ? request : {};
   const nameLower = name.toLowerCase();
@@ -256,7 +263,7 @@ export function decodeIamChange(
   const add = (t: string | undefined) => t && !mitre.includes(t) && mitre.push(t);
 
   let verb = "";
-  let object = { display: "", key: "" };
+  let object = { display: "", key: "", primary: "" };
   let reading = "";
   let trust = "";
   let docDigest = "";
@@ -274,8 +281,9 @@ export function decodeIamChange(
     if (posture.docField) {
       const read = readPolicyDocument(getCI(req, posture.docField));
       // The canonical digest folds a reordered copy; an unreadable document keeps its raw digest,
-      // so two different malformed documents never share a key.
-      docDigest = read.readable ? read.digest : read.rawDigest;
+      // so two different malformed documents never share a key; a document with no digest at all
+      // (an object that could not be serialised) keys on the record, so two of them never fold.
+      docDigest = read.readable ? read.digest : read.rawDigest || `record:${eventId || "?"}`;
       const prefix = attempted ? READING_PREFIX_ATTEMPT : "";
       if (!read.readable) reading = `${prefix}document: unreadable (${read.reason})`;
       else {
@@ -339,6 +347,7 @@ export function decodeIamChange(
     attempted,
     outcome,
     object: object.display,
+    resource: object.primary || bindings[0]?.destination || bindings[0]?.role || deniedRole,
     note,
     reading,
     trust,

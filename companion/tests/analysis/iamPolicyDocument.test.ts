@@ -175,6 +175,12 @@ describe("readPolicyDocument — hostile shapes never escape", () => {
     );
     expect(r.broad).toBe(true);
   });
+  it("a backtracking-shaped pattern against a primitive is linear in the pattern", () => {
+    const hostile = `${"*a".repeat(30000)}*b`;
+    const started = Date.now();
+    for (const primitive of ESCALATION_PRIMITIVES) actionMatches(hostile, primitive);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
   it("a small but very deep parsed object is unreadable, not a stack overflow", () => {
     let deep: unknown = { Effect: "Allow", Action: "*", Resource: "*" };
     for (let i = 0; i < 5000; i++) deep = { x: deep };
@@ -189,6 +195,31 @@ describe("readPolicyDocument — hostile shapes never escape", () => {
       })),
     };
     expect(readPolicyDocument(wide).readable).toBe(false);
+  });
+  it("is total: a throwing getter, a BigInt, a throwing Proxy, symbol keys and an array all come back unreadable", () => {
+    const thrower = {
+      get Statement(): unknown {
+        throw new Error("boom");
+      },
+    };
+    const proxy = new Proxy(
+      { Statement: [] },
+      {
+        ownKeys: () => {
+          throw new Error("boom");
+        },
+      },
+    );
+    const sym = { [Symbol("s")]: 1, Statement: { Effect: "Allow", Action: "*", Resource: "*" } };
+    for (const input of [thrower, { Statement: 1n }, proxy, [1, 2], new Date(), () => 1]) {
+      expect(() => readPolicyDocument(input)).not.toThrow();
+    }
+    expect(readPolicyDocument(thrower).readable).toBe(false);
+    expect(readPolicyDocument({ Statement: 1n }).readable).toBe(false);
+    expect(readPolicyDocument(proxy).readable).toBe(false);
+    expect(readable(sym).effect).toBe("grants"); // symbol keys are not JSON and are skipped
+    const noDigest = readPolicyDocument({ Statement: 1n });
+    if (!noDigest.readable) expect(noDigest.rawDigest).toBe("");
   });
   it("an exclusion or an all-actions grant scoped to named resources is summarised, not promoted", () => {
     const ex = readable(doc([{ Effect: "Allow", NotAction: "iam:*", Resource: "arn:aws:s3:::b" }]));
