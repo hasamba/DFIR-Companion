@@ -220,7 +220,9 @@ function deriveMitreRows(findings, forensicTimeline, table, names) {
   const surviving = new Set((findings || []).map((f) => f.id));
   const carried = new Set(ft.flatMap((e) => e.mitreTechniques || []));
   // Copied, not aliased — the server's unionEventTechniques() hands back copies, and a caller that
-  // edited a row in place would otherwise be editing the persisted state object.
+  // edited a row in place would otherwise be editing the persisted state object. The links are
+  // pruned to the surviving findings as the server prunes them (#938): a row that stays for another
+  // reason must not cite a finding the analyst confirmed benign. A fresh array, never the state's.
   const rows = (table || [])
     .filter(
       (m) =>
@@ -228,7 +230,7 @@ function deriveMitreRows(findings, forensicTimeline, table, names) {
         (m.findingIds || []).some((id) => surviving.has(id)) ||
         carried.has(m.id),
     )
-    .map((m) => ({ ...m }));
+    .map((m) => ({ ...m, findingIds: (m.findingIds || []).filter((id) => surviving.has(id)) }));
   const seen = new Set(rows.map((m) => m.id));
   for (const e of ft)
     for (const id of e.mitreTechniques || [])
