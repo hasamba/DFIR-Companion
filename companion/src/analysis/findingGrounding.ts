@@ -28,6 +28,7 @@ import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { deriveSemanticKey } from "./semanticKey.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { outcomeLabel } from "./findingOutcome.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -463,4 +464,16 @@ export function corroborationLabel(f: Finding): string {
   const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked || !!c.kevLinked;
   const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked ? " — unconfirmed lead" : "";
   return `${parts.join(" / ")}${corroborated ? "" : " — uncorroborated"}${huntCaution}`;
+}
+
+// Everything a report heading appends after the severity: the confidence tag the report has always
+// shown, then the attack-outcome label (#930 item 8) when there is one. Lives beside
+// corroborationLabel because markdown.ts already imports from here and sits at its size ledger —
+// one call, one existing import line, and the heading stays one line.
+export function findingHeadingSuffix(
+  f: Pick<Finding, "confidence" | "execution" | "control" | "executionSource" | "controlSource">,
+): string {
+  const conf = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
+  const label = outcomeLabel(f);
+  return label ? `${conf} ${label}` : conf;
 }

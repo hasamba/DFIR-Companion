@@ -233,6 +233,11 @@
     "findingWorkflowControls",
     "setFindingWorkflowStatus",
     "assignFinding",
+    // Finding attack outcome (#930 item 8) — same shape as workflow: no initializer, all work functions.
+    "loadFindingOutcome",
+    "findingOutcomeControls",
+    "setFindingExecution",
+    "setFindingControl",
     "renderPinned",
     "loadPins",
     "pinBtn",

@@ -241,6 +241,14 @@ h2 .add-toggle:hover, h2 .add-toggle.active { color: var(--sev-medium); border-c
 .fwf-status-btn.fwf-in_review { color: #c79bff; border-color: #5a3f7a; }
 .fwf-status-btn.fwf-resolved { color: #6bcb77; border-color: #2f6a3a; }
 .fwf-assignee.assigned { color: #6aa9ff; border-color: #35507a; }
+/* Finding attack outcome (#930 item 8): execution and control dropdowns reuse the workflow-status
+   shape. Colour says what was stated: green = a control worked / nothing ran, red = it ran or a
+   control failed, grey = unknown. */
+.finding-outcome { display: inline-flex; align-items: center; gap: 2px; }
+.fwf-status-wrap .fout-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; }
+.fout-btn.fout-exec-observed, .fout-btn.fout-ctl-remediation-failed, .fout-btn.fout-ctl-allowed { color: #ff7b7b; border-color: #7a3535; }
+.fout-btn.fout-exec-not-observed, .fout-btn.fout-ctl-blocked, .fout-btn.fout-ctl-remediated { color: #6bcb77; border-color: #2f6a3a; }
+.fout-btn.fout-exec-unknown, .fout-btn.fout-ctl-unknown, .fout-btn.fout-ctl-none-observed { color: #e0b84a; border-color: #6a5a2a; }
 .fwf-assignee .fwf-initials { font-size: 10px; font-weight: 700; letter-spacing: .02em; }
 .finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
 .finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--border-color); overflow: hidden; }

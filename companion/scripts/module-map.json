@@ -249,6 +249,7 @@
     "findingGrounding.ts": "analysis/findings",
     "findingRelevance.ts": "analysis/findings",
     "findingWorkflow.ts": "analysis/findings",
+    "findingOutcome.ts": "analysis/findings",
     "findingsDiff.ts": "analysis/findings",
     "forensicGate.ts": "analysis/timeline",
     "forensicGateControl.ts": "analysis/timeline",

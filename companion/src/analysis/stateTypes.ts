@@ -15,6 +15,44 @@ export function worstSeverity(a: Severity, b: Severity): Severity {
 }
 export type FindingStatus = "open" | "confirmed" | "dismissed";
 
+// Attack outcome as TWO orthogonal axes, never one verdict (#930 item 8). A blocked attack used to
+// have nowhere to go: either dismissed (wrong — the detection was right) or left open at High
+// (wrong — it did not succeed). #935 fixed four shipped instances of that conflation.
+//
+// Why two fields and not one "outcome": a finding aggregates several events, and a real chain can
+// contain BOTH an execution and a later control action — a payload that ran and was then
+// quarantined. One scalar forces a choice between "prevented" (false containment: it ran) and
+// "observed" (loses the fact that a control acted). The IR-200 material this comes from treats
+// the sequence detected → blocked/allowed/removed → retry → execution as the whole point.
+//
+//   execution — was the malicious action ITSELF observed? A process start supports execution, not
+//               that the payload achieved its objective. `not-observed` is a claim of absence and
+//               needs the coverage to back it; `unknown` is the honest default.
+//   control   — what did a security control do, if anything? The five named values are the
+//               source's own taxonomy for a Defender action event: detected only (none-observed),
+//               blocked, allowed, removed (remediated), or unsuccessfully remediated.
+//
+// Authorization (was this sanctioned?) and detection correctness (did the rule misfire?) are NOT
+// here — they are already the false-positive reasons `authorized-test` / `known-good-tool` and
+// `detection-misfire`. Confidence stays `confidence`. Status stays `status`.
+//
+// The fields on Finding are MACHINE-set (a deterministic producer, recomputed every run) and are
+// therefore wiped and rebuilt by synthesis like every other conclusion. The analyst's own
+// statement lives in the finding-outcome side store (findingOutcome.ts) and is applied over these
+// at read time — analyst wins — so a re-synthesis never erases what a human decided.
+export const EXECUTION_OUTCOMES = ["observed", "not-observed", "unknown"] as const;
+export type ExecutionOutcome = (typeof EXECUTION_OUTCOMES)[number];
+export const CONTROL_DISPOSITIONS = [
+  "blocked",
+  "remediated",
+  "remediation-failed",
+  "allowed",
+  "none-observed",
+  "unknown",
+] as const;
+export type ControlDisposition = (typeof CONTROL_DISPOSITIONS)[number];
+export type OutcomeSource = "analyst" | "machine";
+
 // A dismissed finding (e.g. a confirmed false positive) keeps its ORIGINAL `severity` as an audit
 // trail of what the AI/backfill pass first claimed — see the comment on Finding.severity's sibling
 // grounding fields. But every severity-sorted or severity-filtered surface (dashboard panel, Markdown
@@ -138,6 +176,14 @@ export interface Finding {
   firstSeen: string;
   lastUpdated: string;
   status: FindingStatus;
+  // Attack outcome axes — see the EXECUTION_OUTCOMES comment. Absent = nothing has said. Machine-set
+  // here; the analyst's statement is applied over these from the side store. Provenance is PER AXIS:
+  // an analyst who overrides only execution has said nothing about control, and a report that
+  // attributed both to them would corrupt provenance in a forensic deliverable.
+  execution?: ExecutionOutcome;
+  control?: ControlDisposition;
+  executionSource?: OutcomeSource;
+  controlSource?: OutcomeSource;
 }
 
 export interface Thread {
