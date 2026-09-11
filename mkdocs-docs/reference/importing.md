@@ -225,6 +225,33 @@ time cell was empty was dropped. Now:
   generic import path. The dedicated LEAPP button now runs the same import spine as the generic
   button: the import lock, the super-timeline copy, the tagger, the import record and undo.
 
+### Defender detections: what the action means
+
+Microsoft Defender's Operational log records a detection (event 1116) and, separately, the action
+it took on it (1117) or failed to take (1118, 1119). Those events used to import as plain
+informational rows — the threat, the file and the result unread, and invisible to the AI. Each
+now imports as a Medium row whose description starts with what Defender did:
+
+| First token | Meaning |
+|---|---|
+| `[control: unknown]` | Detected; the action is a later event |
+| `[control: remediated]` | Quarantine / Remove / Clean reported success |
+| `[control: blocked]` | Block reported success |
+| `[control: allowed]` | Defender was told to **allow** it — an explicit decision, not a cleanup |
+| `[control: none-observed]` | The action was "no action" |
+| `[control: remediation-failed]` | The action failed (the error code and text follow) |
+
+Then the threat name and its severity, the flagged file, its container when it sat inside an
+archive, and any further flagged members (listed; the first member is the row's path). Two actions
+on one file are two rows, whatever order they were logged in.
+
+What these rows do **not** say: a detection is the scanner's claim, not a verdict; `allowed` is not
+a compromise and `remediated` is not proof the payload never ran; no second alert is not evidence
+that it did; the scanner runs as SYSTEM, so its identity is never the person who launched the file;
+a drive letter alone is not removable media. Linking a detection to a later start of the same file
+is tracked separately (#964). Hayabusa's own Defender rows keep their Sigma grading and do not yet
+carry this token.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

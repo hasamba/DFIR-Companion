@@ -32,6 +32,7 @@ import {
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tradecraftRules.js";
+import { decodeDefenderEvent } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
@@ -898,9 +899,12 @@ export function mapWindows(
   if (!Number.isFinite(eid) || !channel) return null;
 
   const edRaw = getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
-  const ed: Row = isObject(edRaw) ? edRaw : {};
-  const isSysmon = /sysmon/i.test(channel);
-  const isPwsh = /powershell/i.test(channel);
+  const defender = decodeDefenderEvent(channel, eid, isObject(edRaw) ? edRaw : {}); // #930 item 1
+  const ed: Row = {
+    ...(isObject(edRaw) ? edRaw : {}),
+    ...(defender?.image ? { Image: defender.image } : {}),
+  };
+  const [isSysmon, isPwsh] = [/sysmon/i.test(channel), /powershell/i.test(channel)];
   // The rendered event message, verbatim. It was read for the unknown-event LABEL and then dropped,
   // so a Windows event reached the case with `message` UNSET while every other importer populated
   // it — and the content tagger's default ruleset matches `message`. Twelve of its rules, the ones
@@ -910,14 +914,11 @@ export function mapWindows(
   // `Logon Type:\t\t3` is a real condition — and because the field's contract is the FULL detail
   // behind the 600-char description.
   const rawMessage = firstStr(rec, ["message", "Message"]).trim();
-  const def: WinEventDef = (isSysmon
-    ? SYSMON_EVENTS[eid]
-    : isPwsh
-      ? POWERSHELL_EVENTS[eid]
-      : WIN_EVENTS[eid]) ?? {
-    label: oneLine(rawMessage.split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
-    severity: "Info",
-  };
+  const def: WinEventDef = defender?.def ??
+    (isSysmon ? SYSMON_EVENTS[eid] : isPwsh ? POWERSHELL_EVENTS[eid] : WIN_EVENTS[eid]) ?? {
+      label: oneLine(rawMessage.split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
+      severity: "Info",
+    };
 
   const tool = channelLabel(channel);
   // The PowerShell payload this record carries, under either of its two spellings — 4104's script
@@ -931,7 +932,9 @@ export function mapWindows(
   const psText = isPwsh ? firstStr(ed, ["ScriptBlockText", "Payload"]) : str(getCI(ed, "ScriptBlockText"));
   const accts = winAccounts(ed);
   const subject = renderFields(ed, SUBJECT_KEYS);
-  let description = `${tool} ${def.label} (EID ${eid})`;
+  let description = defender
+    ? `${def.label} (EID ${eid}, Microsoft Defender)`
+    : `${tool} ${def.label} (EID ${eid})`;
   if (accts.length) description += ` - ${accts.join(", ")}`;
   if (subject) description += ` - ${subject}`;
   if (host) description += ` @ ${host}`;
@@ -1064,12 +1067,8 @@ export function mapWindows(
   const parentName = baseName(str(getCI(ed, "ParentImage"))) || undefined;
   // Subject (created-process) pid on process-CREATION events only — Security 4688 renders it as
   // NewProcessId (hex), Sysmon EID 1 as ProcessId (decimal). Used for cross-tool correlation.
-  const pid =
-    !isSysmon && eid === 4688
-      ? parsePid(str(getCI(ed, "NewProcessId")))
-      : isSysmon && eid === 1
-        ? parsePid(str(getCI(ed, "ProcessId")))
-        : undefined;
+  const pidKey = !isSysmon && eid === 4688 ? "NewProcessId" : isSysmon && eid === 1 ? "ProcessId" : "";
+  const pid = parsePid(str(getCI(ed, pidKey)));
   const commandLine = def.kind === "process" ? str(getCI(ed, "CommandLine")) : "";
   const observedTimestamp = str(getCI(ed, "UtcTime")).trim() || firstStr(rec, TIME_KEYS);
   const normalizedTimestamp = pickTimestamp(rec, ed);
@@ -1108,11 +1107,12 @@ export function mapWindows(
               ? "connection"
               : def.kind === "dns"
                 ? "query"
-                : (def.kind ?? "event"),
-      ...(isLogon ? { outcome: eid === 4624 ? "success" : "failed" } : {}),
+                : (defender?.eventType ?? def.kind ?? "event"),
+      ...(isLogon ? { outcome: eid === 4624 ? "success" : "failed" } : defender ? defender.event : {}),
     },
     ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
     ...(host ? { target: { kind: "host" as const, name: host } } : {}),
+    ...(defender ? { object: defender.object } : {}),
     ...(accountName
       ? {
           account: {
@@ -1290,7 +1290,7 @@ export function mapWindows(
     // pid (on process-creation events) is in the key so distinct creations stay distinct rows rather
     // than aggregating into one — preserving per-process granularity and enabling pid correlation.
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),
