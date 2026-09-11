@@ -4,7 +4,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
-import { withEventTechniques } from "../analysis/eventTechniques.js";
+import { loadFilteredState } from "./filteredState.js";
 import {
   applyFalsePositive,
   filterFalsePositiveEvents,
@@ -26,7 +26,6 @@ import {
   type EvidenceGraph,
   type LateralPath,
 } from "../analysis/evidenceGraph.js";
-import { projectAlignment } from "../analysis/clockSkew.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
@@ -262,20 +261,18 @@ export class ReportWriter {
   // out-of-scope events (and the findings/IOCs/MITRE supported only by them) and exclude
   // client-confirmed false-positive items — so every export is scope/false-positive-consistent
   // even if AI re-synthesis hasn't run. Shared by the full report and single-section exports.
-  private async loadFilteredState(caseId: string): Promise<InvestigationState> {
-    const loaded = await this.state.load(caseId);
-    // Clock-skew alignment (#228) applies FIRST, so every consumer of this method — the report, the
-    // evidence graph, the lateral-movement paths, the CSV/Timesketch exports — reasons over one time
-    // axis. It is a projection: each shifted event keeps its recorded time in `originalTimestamp`,
-    // and nothing here is ever written back to the case. Scope filtering follows, so an alignment
-    // that moves an event across the investigation window is honoured by the window too.
-    const skew = this.clockSkew ? await this.clockSkew.load(caseId) : undefined;
-    const aligned = { ...loaded, forensicTimeline: projectAlignment(skew, loaded.forensicTimeline) };
-    const scoped = projectScope(aligned, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
-    const markers = this.falsePositives ? await this.falsePositives.load(caseId) : [];
-    const kept = filterFalsePositiveEvents(scoped.forensicTimeline, markers);
-    // MITRE completed LAST, from the events that survived both filters — see eventTechniques.ts (#893).
-    return withEventTechniques(applyFalsePositive({ ...scoped, forensicTimeline: kept }, markers));
+  private loadFilteredState(caseId: string): Promise<InvestigationState> {
+    // The projection every report surface reads — see reports/filteredState.ts.
+    return loadFilteredState(
+      {
+        state: this.state,
+        cases: this.cases,
+        clockSkew: this.clockSkew,
+        scope: this.scope,
+        falsePositives: this.falsePositives,
+      },
+      caseId,
+    );
   }
 
   private async loadNotebook(caseId: string): Promise<NotebookEntry[] | undefined> {

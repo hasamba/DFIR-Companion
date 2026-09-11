@@ -192,6 +192,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-presentation-mode.js": "application/javascript; charset=utf-8",
   // Finding assignment + workflow status (#87) — per-finding owner and triage state.
   "/js/dashboard-finding-workflow.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-finding-outcome.js": "application/javascript; charset=utf-8",
   // Pinned findings (#220) — the reorderable strip of pinned findings.
   "/js/dashboard-pinned-findings.js": "application/javascript; charset=utf-8",
   // Command palette registry (#238) — the actions the palette offers.

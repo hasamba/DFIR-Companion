@@ -21,7 +21,7 @@ import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
-import { corroborationLabel } from "../analysis/findingGrounding.js";
+import { corroborationLabel, findingHeadingSuffix } from "../analysis/findingGrounding.js";
 import {
   coverageLabel,
   modelPerfLabel,
@@ -767,7 +767,7 @@ function investigation(
     }
     const eventById = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
     for (const f of sorted) {
-      const confLabel = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
+      const confLabel = findingHeadingSuffix(f);
       lines.push(`#### [${f.severity}]${confLabel} ${oneLineMd(f.title)} (${f.id})`);
       // Corroboration/grounding badge (investigation-guidance #6): "2 tools / 3 hosts / intel ✓" or a
       // prominent "⚠️ no cited evidence" for an ungrounded finding, so a hypothesis never reads as fact.

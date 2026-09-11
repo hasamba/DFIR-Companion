@@ -65,6 +65,7 @@ import { CommentsStore } from "../analysis/comments.js";
 import { TagsStore } from "../analysis/tags.js";
 import { PinnedFindingsStore } from "../analysis/pinnedFindings.js";
 import { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
+import { FindingOutcomeStore } from "../analysis/findingOutcome.js";
 import { NotebookStore } from "../analysis/notebookStore.js";
 import { HypothesisStore } from "../analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
@@ -286,6 +287,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined,
   );
   const findingWorkflowStore = new FindingWorkflowStore(store);
+  const findingOutcomeStore = new FindingOutcomeStore(store);
   const notebookStore = new NotebookStore(store);
   const hypothesisStore = new HypothesisStore(store);
   const learnedPatternStore = new LearnedPatternStore(store);
@@ -418,6 +420,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     tagsStore,
     pinnedFindingsStore,
     findingWorkflowStore,
+    findingOutcomeStore,
     notebookStore,
     hypothesisStore,
     learnedPatternStore,
