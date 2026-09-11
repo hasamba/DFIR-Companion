@@ -133,7 +133,10 @@ export function decodeRequestTarget(text: string): DecodedTarget {
   let malformed = false;
   for (let n = 0; n < MAX_PASSES; n++) {
     const p = decodeOnce(path, false);
-    const s = query === null ? null : decodeOnce(query, true);
+    // A literal `+` in the query means a space only as the client SENT it — on the first pass. A
+    // `+` produced by decoding `%2B` is a plus sign, and turning it into a space on the next pass
+    // corrupted `${7%2B7}` into `${7 7}` and hid it from the expression rule.
+    const s = query === null ? null : decodeOnce(query, n === 0);
     malformed = malformed || p.malformed || (s?.malformed ?? false);
     if (!p.changed && !(s?.changed ?? false)) break;
     path = p.out;
@@ -147,48 +150,103 @@ export function decodeRequestTarget(text: string): DecodedTarget {
 // Every regex is linear: no nested quantifiers over one class, no unbounded `.*` between anchors.
 
 const BT = "`";
-const SEP = String.raw`(?:;|\|\||&&|\||` + BT + String.raw`|\$\()`; // shell separators
-const STRICT_SEP = String.raw`(?:;|\|\||&&|` + BT + String.raw`|\$\()`; // every separator but a bare pipe
+// Shell separators — including a decoded newline: `foo%0Aid` is `foo` then `id` on its own line.
+const SEP = String.raw`(?:;|\|\||&&|\||\r?\n|` + BT + String.raw`|\$\()`;
+const STRICT_SEP = String.raw`(?:\|\||&&|\r?\n|` + BT + String.raw`|\$\()`; // every separator but `;` and a bare pipe
 const ARG = String.raw`[^\s;|&"'<>` + BT + String.raw`]{1,200}`; // one argument token, bounded
+const PATH_ARG =
+  String.raw`(?:[\/\\~]|[A-Za-z]:\\|\.{1,2}[\/\\]|\.\w)[^\s;|&"'<>` + BT + String.raw`]{0,200}`; // a path-shaped argument
 const TAIL = String.raw`(?=$|[\s;|&"'` + BT + String.raw`)\x00-\x1f])`; // what may follow a direct command — never `=`
 
-const TOOLS = String.raw`(?:sh|bash|dash|zsh|cmd(?:\.exe)?|powershell|pwsh|nc|ncat|curl|wget|python\d?|perl|ruby|php|cat|type)`;
+// Interpreters and transfer tools fire with ANY argument; file readers (`cat`, `type`) only with a
+// path-shaped one — `{"expr":"x|type string"}` is a filter expression, `|type C:\boot.ini` is not.
+const TOOLS = String.raw`(?:sh|bash|dash|zsh|cmd(?:\.exe)?|powershell|pwsh|nc|ncat|curl|wget|python\d?|perl|ruby|php)`;
+const READERS = String.raw`(?:cat|type|more|head|tail)`;
 const FREE_TIER = String.raw`(?:whoami|ifconfig|ipconfig|netstat|tasklist|systeminfo|printenv)`;
 const STRICT_TIER = String.raw`(?:hostname|uname|id|ls|dir|pwd|ps|env|set|net|reg)`;
+// Query parameters whose NAME says "run this": `/shell.php?cmd=whoami` needs no separator.
+const EXEC_PARAM = String.raw`[?&](?:cmd|exec|execute|command|shell|run|system)=`;
+
+// Sensitive targets a traversal must reach; searched with indexOf, never a regex over the whole
+// field (see traversalMatch).
+const SENSITIVE_TARGETS = [
+  "etc/passwd",
+  "etc/shadow",
+  "win.ini",
+  "boot.ini",
+  "web.config",
+  ".env",
+  ".ssh/",
+  "proc/self",
+  "id_rsa",
+  ".git/",
+];
+const TRAVERSAL_WINDOW = 160; // how far before the target a `../` may sit
+const SEGMENT = /\.\.[\\/]/;
 
 interface AttackRule {
   family: string;
   re: RegExp;
 }
 
+// SQL rules run on a copy where bounded inline comments are spaces: `UNION/**/SELECT` is the
+// oldest whitespace bypass there is.
+const SQL_COMMENT = /\/\*[^*]{0,64}\*\//g;
+
 const ATTACK_RULES: AttackRule[] = [
-  // traversal: one or more `../` (or `..\`) segments FOLLOWED BY a sensitive target.
-  {
-    family: "traversal",
-    re: /(?:\.\.[\\/])+(?:[^\s"'<>]{0,120}?)(?:etc\/passwd|etc\/shadow|win\.ini|boot\.ini|web\.config|\.env\b|\.ssh\/|proc\/self|id_rsa|\.git\/)/i,
-  },
-  // cmd (a): a separator + an interpreter or transfer tool WITH an argument.
+  // cmd (a): a separator + an interpreter or transfer tool WITH an argument, or a reader with a path.
   { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${TOOLS}\s+${ARG}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${READERS}\s+${PATH_ARG}`, "i") },
   // cmd (b), free tier: a recon command that is not a plausible field name, after any separator.
   { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${FREE_TIER}${TAIL}`, "i") },
-  // cmd (b), strict tier: bare after every separator but a bare pipe …
+  // cmd (b), strict tier: bare after `&&`, `||`, a newline, a backtick or `$(` …
   { family: "cmd", re: new RegExp(String.raw`${STRICT_SEP}\s*${STRICT_TIER}${TAIL}`, "i") },
+  // … after `;` only inside a `key=value` (a `;` in a path is matrix syntax: `/resource;id`) …
+  { family: "cmd", re: new RegExp(String.raw`(?<==[^&;\s"']{0,200});\s*${STRICT_TIER}${TAIL}`, "i") },
   // … and after a bare pipe only with a flag or an absolute path (`fields=name|id` is filter syntax).
   { family: "cmd", re: new RegExp(String.raw`\|\s*${STRICT_TIER}\s+(?:-|\/)\S`, "i") },
+  // cmd (c): an exec-named parameter whose value opens with a command, no separator needed.
+  {
+    family: "cmd",
+    re: new RegExp(
+      String.raw`${EXEC_PARAM}(?:${TOOLS}|${READERS}|${FREE_TIER}|${STRICT_TIER})(?:$|[\s+;|&"'%])`,
+      "i",
+    ),
+  },
   // expression: jndi (the match runs to the closing brace so two lookups are two identities), a
-  // nested lookup, or a template expression carrying an operator or a call.
+  // nested lookup, or a template expression carrying an operator or a call. Every run is bounded.
   {
     family: "expression",
-    re: /\$\{jndi:[^}\s"'<>]{0,200}\}?|\$\{[^}]{0,40}\$\{[^}]{0,200}\}?|(?:\{\{|#\{|\$\{)[^}]{0,80}?(?:[*+\/%-]\s*\d|\w+\s*\(|T\()[^}]{0,120}\}?/i,
+    re: /\$\{jndi:[^}\s"'<>]{0,200}\}?|\$\{[^}]{0,40}\$\{[^}]{0,200}\}?|(?:\{\{|#\{|\$\{)[^}]{0,80}?(?:[*+\/%-]\s*\d|\w{1,40}\s*\(|T\()[^}]{0,120}\}?/i,
   },
-  // sqli: structure, never a lone token.
+  // sqli: structure, never a lone token. Every repeat is bounded so a long run of word characters
+  // cannot make the engine retry O(n) times per start.
   // The select list is part of the match, so two different union payloads are two identities.
   { family: "sqli", re: /\bunion\s+(?:all\s+)?select\b[^;"'<>]{0,200}/i },
-  { family: "sqli", re: /(?:'|\d)\s*(?:or|and)\s+(?:'?[\w]+'?\s*=\s*'?[\w]+'?|\d+\s*=\s*\d+)/i },
-  { family: "sqli", re: /\b(?:or|and)\s+(?:sleep|benchmark|pg_sleep)\s*\(\s*\d/i },
-  { family: "sqli", re: /;\s*waitfor\s+delay\s+'/i },
-  { family: "sqli", re: /;\s*(?:drop|insert|update|delete|exec|xp_cmdshell)\s+\w/i },
+  { family: "sqli", re: /(?:'|\d)\s{0,8}(?:or|and)\s{1,8}(?:'?\w{1,64}'?\s{0,8}=\s{0,8}'?\w{1,64}'?)/i },
+  { family: "sqli", re: /\b(?:or|and)\s{1,8}(?:sleep|benchmark|pg_sleep)\s{0,8}\(\s{0,8}\d/i },
+  { family: "sqli", re: /;\s{0,8}waitfor\s{1,8}delay\s{1,8}'/i },
+  { family: "sqli", re: /;\s{0,8}(?:drop|insert|update|delete|exec|xp_cmdshell)\s{1,8}\w/i },
 ];
+
+// traversal: a `../` (or `..\`) segment within TRAVERSAL_WINDOW characters BEFORE a sensitive
+// target. A linear scan — indexOf for each target, one bounded window test per hit — because the
+// regex form (`(?:\.\.[\\/])+` then a lazy window then the alternation) backtracked for seconds on
+// `../` repeated to the field bound.
+function traversalMatch(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const target of SENSITIVE_TARGETS) {
+    let at = lower.indexOf(target);
+    while (at >= 0) {
+      const from = Math.max(0, at - TRAVERSAL_WINDOW);
+      const window = text.slice(from, at);
+      const seg = SEGMENT.exec(window);
+      if (seg) return text.slice(from + seg.index, at + target.length);
+      at = lower.indexOf(target, at + 1);
+    }
+  }
+  return null;
+}
 
 /**
  * The attack families a decoded request field carries, with each match's identity form and display
@@ -198,15 +256,22 @@ export function webAttackSignal(text: string): WebAttackSignal | null {
   if (!text) return null;
   const matches: AttackMatch[] = [];
   const seen = new Set<string>();
+  const push = (family: string, raw: string): void => {
+    seen.add(family);
+    const match = raw.slice(0, MATCH_MAX);
+    matches.push({ family, match, excerpt: escapeControlChars(match).slice(0, EXCERPT_MAX) });
+  };
+  const traversal = traversalMatch(text);
+  if (traversal) push("traversal", traversal);
+  const sql = text.replace(SQL_COMMENT, " ");
   for (const rule of ATTACK_RULES) {
     if (seen.has(rule.family)) continue;
-    const m = rule.re.exec(text);
-    if (!m) continue;
-    seen.add(rule.family);
-    const match = m[0].slice(0, MATCH_MAX);
-    matches.push({ family: rule.family, match, excerpt: escapeControlChars(match).slice(0, EXCERPT_MAX) });
+    const m = rule.re.exec(rule.family === "sqli" ? sql : text);
+    if (m) push(rule.family, m[0]);
   }
-  return matches.length ? { families: matches.map((x) => x.family), matches } : null;
+  if (!matches.length) return null;
+  matches.sort((a, b) => (a.family < b.family ? -1 : a.family > b.family ? 1 : 0));
+  return { families: matches.map((x) => x.family), matches };
 }
 
 // ───────────── Whole-request inspection (what the importer calls) ─────────────

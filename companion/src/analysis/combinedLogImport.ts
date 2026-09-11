@@ -307,8 +307,9 @@ export function mapCombinedLogLine(
 // families would be one overflow group per family combination — the bound handed back), and a
 // final pass gives every overflow row the same description carrying the finished family union,
 // so the aggregator's first-description-wins rule cannot hide part of it. The bound is per path:
-// different paths are different evidence.
-function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, AttackMeta>): void {
+// different paths are different evidence. Returns old key → overflow key for every rewritten row,
+// so IOC provenance recorded under the old key (mergeRowIocs ran before this) can follow the row.
+function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, AttackMeta>): Map<string, string> {
   const seen = new Map<string, Set<string>>();
   const overflowFamilies = new Map<string, Set<string>>();
   const overflowRows: Array<{ event: MappedEvent; base: string }> = [];
@@ -327,15 +328,19 @@ function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
     overflowFamilies.set(m.base, fam);
     overflowRows.push({ event, base: m.base });
   }
+  const rewritten = new Map<string, string>();
   for (const { event, base } of overflowRows) {
     const families = [...(overflowFamilies.get(base) ?? [])].sort().join(",");
     const m = meta.get(event)!;
     const [prefix, path] = [base.slice(0, base.lastIndexOf("|")), base.slice(base.lastIndexOf("|"))];
-    event.aggKey = boundedAggKey(`${prefix}|${ATTACK_OVERFLOW}${path}`);
+    const overflowKey = boundedAggKey(`${prefix}|${ATTACK_OVERFLOW}${path}`);
+    rewritten.set(event.aggKey, overflowKey);
+    event.aggKey = overflowKey;
     event.description =
       `[web-attack: ${families}] [overflow: distinct payloads beyond ${MAX_ATTACK_VARIANTS} on this path folded] ` +
       m.overflowTail;
   }
+  return rewritten;
 }
 
 // Parse a combined-format access/proxy log into the shared SIEM result shape (aggregated + capped).
@@ -358,7 +363,19 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
       mapped.push(m);
     }
   }
-  boundAttackVariants(mapped, attackMeta);
+  // With aggregation off nothing is folded, so nothing may be rewritten either: every row keeps its
+  // own payload — the no-aggregation mode exists to preserve exactly that.
+  const rewritten =
+    opts.aggregate === false ? new Map<string, string>() : boundAttackVariants(mapped, attackMeta);
+  if (rewritten.size) {
+    // An IOC extracted from an overflow row was attributed to the row's ORIGINAL key; follow it to
+    // the overflow key or resolveExtractedFrom drops the provenance silently.
+    for (const [key, ioc] of sink) {
+      if (!ioc.sourceAggKeys?.some((k) => rewritten.has(k))) continue;
+      const keys = [...new Set(ioc.sourceAggKeys.map((k) => rewritten.get(k) ?? k))];
+      sink.set(key, { ...ioc, sourceAggKeys: keys });
+    }
+  }
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
