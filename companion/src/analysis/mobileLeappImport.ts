@@ -150,11 +150,22 @@ interface RowClock {
   timestamp: string;
 }
 
-// Date.parse rolls an impossible calendar date over ("2026-02-30" becomes 2 March), so a canonical
-// ISO string must round-trip through Date unchanged to count as a clock; anything else that
-// parses at all (a shape the normaliser passed through) is accepted as before.
+// Date.parse rolls an impossible calendar date over ("2026-02-30" becomes 2 March) in every ISO
+// shape — date-only, with a time, with an offset — so the RAW cell's calendar part is checked
+// before anything is normalised, and a canonical result must also round-trip through Date
+// unchanged (a rolled-over time part). Anything else that parses at all (a shape the normaliser
+// passed through) is accepted as before.
+const ISO_DATE_PREFIX = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/;
 const CANONICAL_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-function isRealInstant(timestamp: string): boolean {
+function hasRealCalendarDate(raw: string): boolean {
+  const m = ISO_DATE_PREFIX.exec(raw);
+  if (!m) return true; // not an ISO shape — nothing to check here
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate(); // day 0 of the next month = last day
+}
+function isRealInstant(raw: string, timestamp: string): boolean {
+  if (!hasRealCalendarDate(raw)) return false;
   const ms = Date.parse(timestamp);
   if (!Number.isFinite(ms)) return false;
   return !CANONICAL_ISO.test(timestamp) || new Date(ms).toISOString().slice(0, 19) === timestamp.slice(0, 19);
@@ -175,7 +186,7 @@ function rowClock(
     if (!raw) continue;
     const name = (headers[index] ?? "").trim().slice(0, CLOCK_NAME_MAX);
     const timestamp = normalizeTime(raw.replace(" ", "T"));
-    if (isRealInstant(timestamp)) return { index, name, raw, timestamp };
+    if (isRealInstant(raw, timestamp)) return { index, name, raw, timestamp };
     unparsed ??= { index, name, raw, timestamp: "" };
   }
   return unparsed;

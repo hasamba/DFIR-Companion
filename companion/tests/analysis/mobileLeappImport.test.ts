@@ -135,11 +135,21 @@ describe("parseLeappTsv — the row's clock keeps its meaning", () => {
   });
 
   it("treats an impossible calendar date as no clock rather than rolling it over", () => {
-    const tsv = ["Timestamp\tLast Modified\tPath", "2026-02-30 10:00:00\t2026-05-03 09:00:00\t/a"].join("\n");
-    const r = parseLeappTsv(tsv, "Files.tsv");
-    expect(r.events[0].timestamp).toMatch(/^2026-05-03T09:00:00/);
-    expect(r.events[0].description).toContain("[Last Modified: 2026-05-03 09:00:00]");
-    expect(r.events[0].description).toContain("Timestamp: 2026-02-30 10:00:00"); // still visible, as prose
+    for (const bad of [
+      "2026-02-30 10:00:00",
+      "2026-02-30",
+      "2026-02-30T10:00:00+02:00",
+      "2026-13-01 00:00:00",
+    ]) {
+      const tsv = ["Timestamp\tLast Modified\tPath", `${bad}\t2026-05-03 09:00:00\t/a`].join("\n");
+      const r = parseLeappTsv(tsv, "Files.tsv");
+      expect(r.events[0].timestamp, bad).toMatch(/^2026-05-03T09:00:00/);
+      expect(r.events[0].description, bad).toContain("[Last Modified: 2026-05-03 09:00:00]");
+      expect(r.events[0].description, bad).toContain(`Timestamp: ${bad}`); // still visible, as prose
+    }
+    // A real leap day is a clock.
+    const leap = parseLeappTsv(["Timestamp\tPath", "2028-02-29 10:00:00\t/a"].join("\n"), "Files.tsv");
+    expect(leap.events[0].timestamp).toMatch(/^2028-02-29T10:00:00/);
   });
 
   it("does not fold two rows that differ only by letter case", () => {
