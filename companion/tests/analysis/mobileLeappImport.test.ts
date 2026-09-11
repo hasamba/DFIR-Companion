@@ -134,6 +134,14 @@ describe("parseLeappTsv — the row's clock keeps its meaning", () => {
     expect(r.undated).toBe(1);
   });
 
+  it("treats an impossible calendar date as no clock rather than rolling it over", () => {
+    const tsv = ["Timestamp\tLast Modified\tPath", "2026-02-30 10:00:00\t2026-05-03 09:00:00\t/a"].join("\n");
+    const r = parseLeappTsv(tsv, "Files.tsv");
+    expect(r.events[0].timestamp).toMatch(/^2026-05-03T09:00:00/);
+    expect(r.events[0].description).toContain("[Last Modified: 2026-05-03 09:00:00]");
+    expect(r.events[0].description).toContain("Timestamp: 2026-02-30 10:00:00"); // still visible, as prose
+  });
+
   it("does not fold two rows that differ only by letter case", () => {
     const tsv = ["Name\tPath", "a\t/sdcard/Download/x", "a\t/sdcard/download/x"].join("\n");
     const r = parseLeappTsv(tsv, "Files.tsv");

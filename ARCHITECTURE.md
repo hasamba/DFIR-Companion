@@ -148,9 +148,9 @@ run moves nothing.
 ### The seam is one function, and not every import route ran it
 
 The dual-write → tag → demote sequence is `routes/importSettle.ts: settleForensicImport`. It used
-to be four inline copies (the generic import route twice, both Velociraptor external-ingest paths)
-and **zero** copies on the dedicated `import-*` routes, which called their importer and
-resynthesized. The consequence was the exact thing the rule forbids: an Info row imported through
+to be six inline copies (the generic import route twice, the streamed ingest, the hunt collector,
+both Velociraptor external-ingest paths) and **zero** copies on the dedicated `import-*` routes,
+which called their importer and resynthesized. The consequence was the exact thing the rule forbids: an Info row imported through
 a dedicated route stayed in the forensic timeline where the model reads it, and never reached the
 super-timeline at all — with no import lock and no import record either. `/import-leapp` is on the
 seam now (#932 item 12, `tests/server/importLeappRoute.test.ts` pins both entry points landing the
@@ -231,7 +231,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,063 of the 2,102 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,062 of the 2,101 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long

@@ -189,6 +189,44 @@ describe("POST /cases/:id/import-leapp", () => {
     expect(meta.lastImportFile ?? "").not.toBe(res.body.file);
   });
 
+  it("dual-writes both of two rows that differ only by letter case", async () => {
+    // The import diff is case-folded; the seam selects added rows by id, so the second row is
+    // dual-written and offered to the tagger rather than folded into the first.
+    const { app } = await makeApp();
+    const tsv = ["Name\tPath", "a\t/sdcard/Download/x", "a\t/sdcard/download/x"].join("\n");
+    const res = await request(app).post("/cases/c1/import-leapp").send({ text: tsv, filename: "Files.tsv" });
+    expect(res.status).toBe(202);
+    const meta = (await waitForImportRecord(app, res.body.file as string)) as {
+      superTimelineAddedCount: number;
+    };
+    expect(meta.superTimelineAddedCount).toBe(2);
+    const st = (await request(app).get("/cases/c1/super-timeline")).body as {
+      events: Array<{ description: string }>;
+    };
+    expect(st.events).toHaveLength(2);
+  });
+
+  it("never leaves a row in neither record when the super-timeline rejects the write", async () => {
+    // The seam's own append is best-effort; demote captures what it removes and keeps the row in
+    // the forensic timeline when that capture fails too. So a broken super-timeline store costs the
+    // count, never the evidence.
+    const { app, stateStore, superTimelineStore } = await makeApp();
+    superTimelineStore.append = async () => {
+      throw new Error("super-timeline offline");
+    };
+    const res = await request(app)
+      .post("/cases/c1/import-leapp")
+      .send({ text: CALL_HISTORY, filename: "Call History.tsv", platform: "ios" });
+    expect(res.status).toBe(202);
+    const meta = (await waitForImportRecord(app, res.body.file as string)) as {
+      superTimelineAddedCount: number;
+    };
+    expect(meta.superTimelineAddedCount).toBe(0);
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    expect(forensic).toHaveLength(2); // still there — not demoted into nothing
+    expect((await superTimelineStore.query("c1", {})).total).toBe(0);
+  });
+
   it("refuses an export with no rows at all", async () => {
     const { app } = await makeApp();
     const res = await request(app)

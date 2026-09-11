@@ -1,5 +1,5 @@
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
-import { diffTimeline, addedForensicEvents, type TimelineDiff } from "../analysis/timelineDiff.js";
+import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 
 /**
@@ -12,8 +12,9 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
  * which is the only record the model reads. The diffs come from the POST-demote state, so "+N
  * events" counts graded signal, not telemetry.
  *
- * This used to be four inline copies (the generic import route twice, the two Velociraptor
- * external-ingest paths) and ZERO copies on the dedicated `import-*` routes, which called their
+ * This used to be six inline copies (the generic import route twice, the streamed ingest, the hunt
+ * collector, the two Velociraptor external-ingest paths) and ZERO copies on the dedicated
+ * `import-*` routes, which called their
  * importer and resynthesized: an Info row from a dedicated route stayed in the forensic timeline
  * and reached the model, and never entered the super-timeline at all (#932 item 12 found it on
  * `/import-leapp`; #956 tracks the rest). One function, so a route cannot half-run the seam.
@@ -45,18 +46,25 @@ export async function settleForensicImport(
   stateBefore: InvestigationState,
 ): Promise<SettledImport> {
   const imported = await deps.stateStore.load(caseId);
-  // Dual-write FIRST, from the pre-demote state: the diff is lossy (time + description), so the
-  // full events are resolved from the state that still holds every row this import merged.
+  // Dual-write FIRST, from the pre-demote state, and select the added rows BY ID — exact. The
+  // time+description diff below is case-folded, so two rows that differ only by case (two paths on
+  // a case-sensitive filesystem) counted as one there, and the second was neither dual-written nor
+  // offered to the tagger. Ids are exact: a re-import of the same evidence is absorbed by
+  // correlation's exact-duplicate pass into the existing row's id before this runs, so a new id is
+  // a genuinely new row.
   let superTimelineAddedCount = 0;
   if (deps.superTimelineStore) {
-    const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-    const added = addedForensicEvents(imported.forensicTimeline, superDiff);
+    const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
+    const added = imported.forensicTimeline.filter((e) => !beforeIds.has(e.id));
     if (added.length) {
       try {
         superTimelineAddedCount = await deps.superTimelineStore.append(caseId, added);
         deps.onSuperTimeline?.(caseId);
       } catch {
-        /* non-fatal — the forensic record is intact; the analyst-only copy lags */
+        // Non-fatal by design: demote captures every row it removes into the super-timeline in
+        // its own critical section and KEEPS the row in the forensic timeline when that capture
+        // fails (composition/importIngest.ts demoteForensicForCase) — a row is never in neither
+        // record. What this failure costs is the count above, which stays 0.
       }
       await deps.autoTagImported(caseId, added);
     }

@@ -150,6 +150,16 @@ interface RowClock {
   timestamp: string;
 }
 
+// Date.parse rolls an impossible calendar date over ("2026-02-30" becomes 2 March), so a canonical
+// ISO string must round-trip through Date unchanged to count as a clock; anything else that
+// parses at all (a shape the normaliser passed through) is accepted as before.
+const CANONICAL_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+function isRealInstant(timestamp: string): boolean {
+  const ms = Date.parse(timestamp);
+  if (!Number.isFinite(ms)) return false;
+  return !CANONICAL_ISO.test(timestamp) || new Date(ms).toISOString().slice(0, 19) === timestamp.slice(0, 19);
+}
+
 // The first candidate whose cell is populated AND parses. A populated cell that does not parse
 // ("N/A", "-", an epoch the normaliser does not read) must not mask a later valid clock; when no
 // candidate parses, the first populated one is still returned so its raw text stays visible in
@@ -165,7 +175,7 @@ function rowClock(
     if (!raw) continue;
     const name = (headers[index] ?? "").trim().slice(0, CLOCK_NAME_MAX);
     const timestamp = normalizeTime(raw.replace(" ", "T"));
-    if (Number.isFinite(Date.parse(timestamp))) return { index, name, raw, timestamp };
+    if (isRealInstant(timestamp)) return { index, name, raw, timestamp };
     unparsed ??= { index, name, raw, timestamp: "" };
   }
   return unparsed;
