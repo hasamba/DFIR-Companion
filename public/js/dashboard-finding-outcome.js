@@ -40,6 +40,7 @@
     unknown: "Control unknown",
   };
   function loadFindingOutcome(caseId) {
+    bindOnce();
     activeCase = String(caseId);
     outcomeByFinding = new Map();
     fetch(`/cases/${caseId}/finding-outcome`)
@@ -69,10 +70,11 @@
       `</span>`
     );
   }
-  // Delegated 'change' (a select does not emit 'click'), bound ONCE from the first render rather
-  // than at load: this module has no initializer and the page contract forbids touching the DOM
-  // outside a function. Its own select class, so the workflow handler in dashboard.html never
-  // sees these controls and this file owns its whole behaviour.
+  // Delegated 'change' (a select does not emit 'click'), bound ONCE from the case load rather than
+  // at script load: this module has no initializer and the page contract forbids touching the DOM
+  // outside a function. Not from the card renderer either — that runs in a loop, and a function a
+  // loop reaches must not be able to commit (dashboardSelection contract). Its own select class, so
+  // the workflow handler in dashboard.html never sees these controls.
   let bound = false;
   function bindOnce() {
     if (bound) return;
@@ -85,7 +87,6 @@
     });
   }
   function findingOutcomeControls(fid) {
-    bindOnce();
     const rec = outcomeByFinding.get(String(fid)) || {};
     return (
       `<span class="finding-outcome">` +
@@ -109,7 +110,7 @@
     // Stale = the analyst has since switched case, or edited this finding again. Either way this
     // response describes a world the page no longer shows.
     const stale = () => caseId !== activeCase || patchSeq.get(key) !== seq;
-    const revert = (why) => {
+    const revertOutcomeSave = (why) => {
       if (stale()) return;
       if (DfirState.lastState()) render(DfirState.lastState());
       if (typeof showToast === "function") showToast(`Attack outcome not saved: ${why}`, "error");
@@ -122,7 +123,7 @@
       .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
       .then(({ ok, status, data }) => {
         if (!ok || !data || !("record" in data)) {
-          revert((data && data.error) || `server returned ${status}`);
+          revertOutcomeSave((data && data.error) || `server returned ${status}`);
           return;
         }
         if (stale()) return;
@@ -130,7 +131,7 @@
         else outcomeByFinding.delete(key);
         if (DfirState.lastState()) render(DfirState.lastState());
       })
-      .catch((err) => revert((err && err.message) || "network error"));
+      .catch((err) => revertOutcomeSave((err && err.message) || "network error"));
   }
   function setFindingExecution(fid, value) {
     patchFindingOutcome(fid, { execution: value || null });
