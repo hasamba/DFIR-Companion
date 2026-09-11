@@ -164,6 +164,9 @@ const TAIL = String.raw`(?=$|[\s;|&"'` + BT + String.raw`)\x00-\x1f])`; // what 
 // A shell runs a QUOTED command name too (`;'id'`, `cmd="cat" /etc/passwd`), so every command
 // token may be wrapped in one optional quote on each side.
 const Q = String.raw`['"]?`;
+// A tool may be named by path — `/bin/bash -c`, `C:\Windows\System32\cmd.exe /c` — and the
+// canonical User-Agent injection (Shellshock: `() { :; }; /bin/bash -c …`) does exactly that.
+const TOOL_PATH = String.raw`(?:[A-Za-z]:)?(?:[\/\\][^\s;|&"'<>` + BT + String.raw`]{0,80})?[\/\\]?`;
 
 // Interpreters and transfer tools fire with ANY argument; file readers (`cat`, `type`) only with a
 // path-shaped one — `{"expr":"x|type string"}` is a filter expression, `|type C:\boot.ini` is not.
@@ -219,7 +222,7 @@ const TEXT_RULES: AttackRule[] = [
 // Rules that run over the query string of a URL (or the whole User-Agent).
 const VALUE_RULES: AttackRule[] = [
   // cmd (a): a separator + an interpreter or transfer tool WITH an argument, or a reader with a path.
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${TOOLS}${Q}\s+${ARG}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${TOOL_PATH}${TOOLS}${Q}\s+${ARG}`, "i") },
   { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${READERS}${Q}\s+${PATH_ARG}`, "i") },
   // cmd (b), free tier: a recon command that is not a plausible field name, after any separator.
   { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${FREE_TIER}${Q}${TAIL}`, "i") },
@@ -231,7 +234,7 @@ const VALUE_RULES: AttackRule[] = [
 
 // cmd (c): the value of an exec-named parameter, with execution evidence (see EXEC_PARAM).
 const EXEC_VALUE = new RegExp(
-  String.raw`^\s*(?:${Q}${TOOLS}${Q}\s+${ARG}|${Q}${READERS}${Q}\s+${PATH_ARG}|${Q}${FREE_TIER}${Q}${TAIL}|${Q}${STRICT_TIER}${Q}\s+(?:-|\/)\S|${Q}(?:${TOOLS}|${READERS}|${STRICT_TIER})${Q}\s*${SEP})`,
+  String.raw`^\s*(?:${Q}${TOOL_PATH}${TOOLS}${Q}\s+${ARG}|${Q}${READERS}${Q}\s+${PATH_ARG}|${Q}${FREE_TIER}${Q}${TAIL}|${Q}${STRICT_TIER}${Q}\s+(?:-|\/)\S|${Q}(?:${TOOLS}|${READERS}|${STRICT_TIER})${Q}\s*${SEP})`,
   "i",
 );
 

