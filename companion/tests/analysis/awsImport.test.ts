@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
+import { canonicalConformanceIssues } from "../../src/analysis/canonicalEvent.js";
 
 function record(over: object): object {
   return {
@@ -900,6 +901,15 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     for (const e of [a, b]) {
       expect(e.canonical?.cloud).toMatchObject({ accountId: ACCT, recipientAccountId: OTHER });
       expect(e.description).toContain("IdentityCenterUser key cred-4 (temporary)");
+      // The merged envelope conforms, and the supplemented caller account traces to the replica
+      // that carried it.
+      expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+      const ownerPointer = e.canonical?.evidence.rawRecords.find((p) => p.recordId === "owner")!.locator;
+      expect(e.canonical?.fieldProvenance["cloud.accountId"]).toMatchObject({
+        origin: "raw",
+        rawFields: ["userIdentity.accountId"],
+        recordLocators: [ownerPointer],
+      });
     }
   });
   it("the cross-account notice survives a kept description that fills 600 characters", () => {

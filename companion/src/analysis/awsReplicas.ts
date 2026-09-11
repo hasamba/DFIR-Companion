@@ -56,7 +56,9 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     // The caller's account comes from ANY replica that carries it (an Identity Center record may
     // omit it), and the owner is the unique recipient that is not the caller. With the caller
     // unknown no owner is chosen — input order must never decide attribution.
-    const caller = group.map((c) => c.event.canonical?.cloud?.accountId ?? "").find(Boolean) ?? "";
+    const callerCandidate = group.find((c) => c.event.canonical?.cloud?.accountId);
+    const caller = callerCandidate?.event.canonical?.cloud?.accountId ?? "";
+    const callerLocator = callerCandidate?.event.canonical?.evidence.rawRecords[0]?.locator ?? "";
     const recipients = [...new Set(group.map((c) => c.recipientAccountId).filter(Boolean))];
     const ownerCandidate = caller
       ? group.find((c) => c.recipientAccountId && c.recipientAccountId !== caller)
@@ -68,6 +70,18 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     // the kept caller record whose own recipientAccountId is a different account.
     const ownerLocator = ownerCandidate?.event.canonical?.evidence.rawRecords[0]?.locator ?? "";
     const provenance = kept.event.canonical?.fieldProvenance ?? {};
+    // A caller account supplemented from another replica carries THAT replica's provenance.
+    const callerProvenance: Record<string, CanonicalFieldProvenance> =
+      caller && callerLocator && !kept.event.canonical?.cloud?.accountId
+        ? {
+            "cloud.accountId": {
+              origin: "raw",
+              confidence: "high",
+              rawFields: ["userIdentity.accountId"],
+              recordLocators: [callerLocator],
+            },
+          }
+        : {};
     const recipientProvenance: Record<string, CanonicalFieldProvenance> =
       owner && ownerLocator
         ? {
@@ -91,7 +105,7 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
                 ...(caller && !kept.event.canonical.cloud?.accountId ? { accountId: caller } : {}),
                 ...(owner ? { recipientAccountId: owner } : {}),
               },
-              fieldProvenance: { ...provenance, ...recipientProvenance },
+              fieldProvenance: { ...provenance, ...callerProvenance, ...recipientProvenance },
               evidence: {
                 ...kept.event.canonical.evidence,
                 rawRecords: [...kept.event.canonical.evidence.rawRecords, ...pointers],
