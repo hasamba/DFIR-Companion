@@ -60,6 +60,18 @@ describe("Entra directory audit key", () => {
     expect(rows(a, b)).toHaveLength(2);
   });
 
+  // Graph's result is four-valued; a timeout is not a failure and unknownFutureValue is not either.
+  it("keeps failure, timeout and unknownFutureValue as three outcomes, and absent as a fourth", () => {
+    expect(
+      rows(
+        audit({ result: "failure" }),
+        audit({ result: "timeout" }),
+        audit({ result: "unknownFutureValue" }),
+        audit({ result: "" }),
+      ),
+    ).toHaveLength(4);
+  });
+
   it("keeps two changes whose keys share a 400-character prefix as two rows", () => {
     const long = (n: number) => ({
       id: `t-${n}`,
@@ -118,6 +130,17 @@ describe("Google Workspace key", () => {
     expect(rows(a, b)).toHaveLength(1);
   });
 
+  // Drive emits one access-change event per sharee: same doc_id, different target_user.
+  it("keeps one document shared with three people as three rows", () => {
+    const share = (who: string) =>
+      gws([
+        { name: "doc_id", value: "1AAA" },
+        { name: "doc_title", value: "Q3 Plan" },
+        { name: "target_user", value: who },
+      ]);
+    expect(rows(share("bob@x"), share("carol@x"), share("dave@x"))).toHaveLength(3);
+  });
+
   it("keys an event with no identity parameter exactly as before (one row per actor/ip/event)", () => {
     const login = {
       id: { time: "2023-05-02T08:00:00Z", applicationName: "login" },
@@ -165,6 +188,19 @@ describe("AWS CloudTrail key", () => {
       },
     });
     expect(rows(rec({}), other)).toHaveLength(2);
+  });
+
+  // IAM Identity Center users carry no principalId or userName at the root.
+  it("keeps two Identity Center users in one account as two principals", () => {
+    const icu = (userId: string) =>
+      rec({
+        userIdentity: {
+          type: "IdentityCenterUser",
+          accountId: "111111111111",
+          onBehalfOf: { userId, identityStoreArn: "arn:aws:identitystore::111111111111:identitystore/d-1" },
+        },
+      });
+    expect(rows(icu("u-aaaa"), icu("u-bbbb"))).toHaveLength(2);
   });
 
   it("keeps a same-named API from two services as two rows", () => {

@@ -135,7 +135,15 @@ function principal(ui: unknown): {
   if (!isObject(ui)) return { name: str(ui), isRoot: false };
   const type = str(getCI(ui, "type"));
   const arn = str(getCI(ui, "arn"));
-  const id = str(getCI(ui, "principalId")) || str(getCI(ui, "userId"));
+  // IAM Identity Center users carry NO principalId/userName at the root: the immutable identity is
+  // onBehalfOf.userId inside identityStoreArn. Without it every Identity Center user in an account
+  // keyed as the literal type string and merged into one principal.
+  const id =
+    str(getCI(ui, "principalId")) ||
+    str(getCI(ui, "userId")) ||
+    (str(getPath(ui, "onBehalfOf.userId"))
+      ? `${str(getPath(ui, "onBehalfOf.identityStoreArn"))}#${str(getPath(ui, "onBehalfOf.userId"))}`
+      : "");
   const accountId = str(getCI(ui, "accountId"));
   const name =
     str(getCI(ui, "userName")) ||

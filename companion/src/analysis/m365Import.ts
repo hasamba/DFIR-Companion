@@ -333,12 +333,16 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   };
 }
 
-// "success" arrives as success / Success / succeeded / OK depending on the export; failure and
-// unknown are the other two outcomes. One enum for the key and the description.
-function auditOutcome(result: string): "success" | "failure" | "unknown" {
+// Graph's directoryAudit.result is one of success | failure | timeout | unknownFutureValue, and a
+// non-Graph export may spell success as succeeded/OK. Each Graph value is its own outcome — a
+// timeout is not a failure — and only an absent or unrecognised value is "unknown".
+function auditOutcome(result: string): "success" | "failure" | "timeout" | "unknownFutureValue" | "unknown" {
   const r = result.trim().toLowerCase();
-  if (!r) return "unknown";
-  return /^(success|succeeded|successful|ok)$/.test(r) ? "success" : "failure";
+  if (/^(success|succeeded|successful|ok)$/.test(r)) return "success";
+  if (r === "failure" || r === "failed") return "failure";
+  if (r === "timeout") return "timeout";
+  if (r === "unknownfuturevalue") return "unknownFutureValue";
+  return "unknown";
 }
 
 function mapAudit(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {

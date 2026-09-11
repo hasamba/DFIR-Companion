@@ -161,6 +161,7 @@ const TARGET_PARAMS = [
 // event cap starts dropping groups. Order is preference: the first present wins for the key.
 const IDENTITY_PARAMS = [
   "doc_id",
+  "target_user", // Drive emits one access-change event PER SHAREE, same doc_id, different target_user
   "USER_EMAIL",
   "user_email",
   "GROUP_EMAIL",
@@ -186,15 +187,15 @@ function paramsByName(event: Row): Map<string, string> {
   return byName;
 }
 
-// The stable identity of the event's target for the aggregation key, or "" when the event names
-// none (a login) — then the key is exactly what it was before.
+// The stable identity of the event's target for the aggregation key: EVERY identity parameter the
+// event carries, in a fixed order — not the first one. A Drive access change names both the
+// document and the sharee, and one document shared with three people is three events. "" when the
+// event names none (a login) — then the key is exactly what it was before.
 function targetIdentity(event: Row): string {
   const byName = paramsByName(event);
-  for (const key of IDENTITY_PARAMS) {
-    const hit = byName.get(key);
-    if (hit) return `${key}=${hit}`;
-  }
-  return "";
+  return IDENTITY_PARAMS.filter((k) => byName.get(k))
+    .map((k) => `${k}=${byName.get(k)}`)
+    .join(";");
 }
 
 function targetLabel(event: Row): string {
