@@ -224,12 +224,13 @@ export function renderSsmDescription(
   const summary = ` ${ssm.summary.slice(0, 260)}`;
   const payload = ssm.payloadExcerpt ? ` cmd: "${ssm.payloadExcerpt.slice(0, 150)}"` : "";
   const note = ` — ${ssm.note}`;
-  // The caller's identity words (#931 item 5) take only what the SSM evidence leaves — up to 150
-  // characters, down to nothing when the evidence fills the row — so the document, id, status,
-  // target, payload, error detail and note are never displaced.
+  // The caller's identity words (#931 item 5) take only what the SSM evidence AND a bounded note
+  // leave — up to 150 characters, down to nothing — so the document, id, status, target, payload,
+  // error detail and the execution caveat ("the result is not in CloudTrail") are never displaced.
+  const NOTE_RESERVE = 120;
   const evidence = `${head}${summary}${payload}${tail}`;
   const identityRaw = (parts.identity ?? "").trim();
-  const budget = Math.min(150, 600 - evidence.length - 1);
+  const budget = Math.min(150, 600 - evidence.length - Math.min(note.length, NOTE_RESERVE) - 1);
   const identity =
     identityRaw && budget >= 12
       ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`

@@ -656,6 +656,55 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     });
     expect(e.severity).toBe("Info");
   });
+  it("an issuance without response evidence has outcome unknown in the envelope, and a delegate provider survives the identity slot", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "AssumeRoot",
+          eventSource: "sts.amazonaws.com",
+          readOnly: false,
+          requestParameters: { targetPrincipal: OTHER, taskPolicyArn: { arn: "x" } },
+          eventID: "no-response",
+        }),
+        record({
+          eventName: "AssumeRole",
+          eventSource: "sts.amazonaws.com",
+          readOnly: true,
+          requestParameters: { roleArn: ROLE_ARN, roleSessionName: "s" },
+          eventID: "no-response-2",
+        }),
+        record({
+          eventName: "DescribeInstances",
+          eventSource: "ec2.amazonaws.com",
+          readOnly: true,
+          userIdentity: assumedRole({
+            invokedByDelegate: { accountId: OTHER },
+            sessionContext: {
+              sessionIssuer: {
+                type: "Role",
+                principalId: "AROAEXAMPLEID",
+                arn: ROLE_ARN,
+                accountId: ACCT,
+                userName: "admin-role",
+              },
+              attributes: { creationDate: "2024-05-01T09:00:00Z", mfaAuthenticated: "false" },
+              sourceIdentity: "x".repeat(60),
+            },
+          }),
+          eventID: "delegate",
+        }),
+      ),
+      { aggregate: false },
+    );
+    const by = (id: string) => r.events.find((e) => e.canonical?.evidence.rawRecords[0]?.recordId === id)!;
+    expect(by("no-response").canonical?.event.outcome).toBe("unknown");
+    expect(by("no-response").severity).toBe("Medium");
+    expect(by("no-response").description).toContain("requested to issue ROOT session credentials");
+    expect(by("no-response-2").canonical?.event.outcome).toBe("unknown");
+    expect(by("delegate").description).toContain(
+      `invoked by delegate provider account ${OTHER} (delegated permissions)`,
+    );
+  });
   it("AssumeRoot is High on success and Medium when denied", () => {
     const root = (over: object) =>
       record({

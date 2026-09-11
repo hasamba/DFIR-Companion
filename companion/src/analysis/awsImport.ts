@@ -337,7 +337,17 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       category: "cloud",
       type: "api",
       action: name,
-      outcome: failed ? "failed" : "success",
+      // An STS issuance whose response is unavailable establishes only a request: its outcome is
+      // unknown in the envelope too, not a success by absence of an error.
+      outcome: issuance
+        ? issuance.result === "issued"
+          ? "success"
+          : issuance.result === "denied"
+            ? "failed"
+            : "unknown"
+        : failed
+          ? "failed"
+          : "success",
     },
     ...(who
       ? {

@@ -188,6 +188,9 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
           ? ""
           : `(${cls})`,
     assumedRoot ? "assumed-root session" : "",
+    delegateAccountId
+      ? `invoked by delegate provider account ${bounded(delegateAccountId, 20)} (delegated permissions)`
+      : "",
     caller && recipient && caller !== recipient
       ? `cross-account: caller ${caller}, recipient ${recipient}`
       : "",
@@ -206,9 +209,6 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
     federatedProvider ? `federated via ${bounded(federatedProvider)}` : "",
     identityProvider ? `provider ${bounded(identityProvider)}` : "",
     invokedBy ? `request made by AWS service ${bounded(invokedBy, 60)}` : "",
-    delegateAccountId
-      ? `invoked by delegate provider account ${bounded(delegateAccountId, 20)} (delegated permissions)`
-      : "",
     issuer && issuer.arn ? `issuer ${issuer.type || "unknown"} ${bounded(issuer.arn)}` : "",
   ];
   return {

@@ -300,8 +300,22 @@ describe("renderSsmDescription — the identity slot yields to the evidence", ()
     expect(s.length).toBeLessThanOrEqual(600);
     expect(s).toContain('cmd: "curl');
     expect(s).toContain("Pending: requested");
-    // The identity is what yields: whatever is left of it, the payload and the status stand.
+    // The identity is what yields: whatever is left of it, the payload, the status and the
+    // execution caveat stand.
     expect(s.indexOf('cmd: "curl')).toBeGreaterThan(0);
+    // With the evidence filling the row, the identity takes nothing: the rendering is exactly the
+    // identity-less one, caveat included.
+    const withoutIdentity = renderSsmDescription(d, {
+      name: "SendCommand",
+      source: "ssm",
+      who: "w".repeat(60),
+      from: "203.0.113.9",
+      region: "us-east-1",
+      client: "c".repeat(40),
+      root: false,
+      errorCode: "",
+    });
+    expect(s).toBe(withoutIdentity);
   });
 });
 
