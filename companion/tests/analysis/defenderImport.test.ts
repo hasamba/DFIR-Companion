@@ -93,16 +93,35 @@ describe("Defender Operational events through the Windows mapper", () => {
     expect(e.description).not.toContain("[control:");
   });
 
-  it("keeps the EID, tool and host tail even when the label is at its bound", () => {
+  it("keeps the EID, tool and host tail even when the label, the subject and the account are all at their bounds", () => {
     const many = Array.from(
       { length: 8 },
       (_, i) => `file:_C:\\Users\\a.mehta\\Downloads\\${"n".repeat(40)}${i}.exe`,
     ).join("; ");
-    const e = parseSiemExport(JSON.stringify([record(1116, { Path: many, "Threat Name": "T".repeat(120) })]))
-      .events[0];
+    const e = parseSiemExport(
+      JSON.stringify([
+        record(1116, {
+          Path: many,
+          "Threat Name": "T".repeat(120),
+          Image: `C:\\${"i".repeat(280)}.exe`, // a long rendered subject
+          TargetUserName: "u".repeat(60),
+          TargetDomainName: "CORP",
+        }),
+      ]),
+    ).events[0];
     expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.description.startsWith("[control: unknown] detected ")).toBe(true);
     expect(e.description).toContain("(EID 1116, Microsoft Defender)");
     expect(e.description).toContain("@ WS-042.corp.example.invalid");
+  });
+
+  it("a registry-only detection is a registry object with no file path", () => {
+    const e = parseSiemExport(JSON.stringify([record(1116, { Path: "regkey:_HKLM\\SOFTWARE\\Bad" })]))
+      .events[0];
+    expect(e.path).toBeUndefined();
+    expect(e.canonical?.object?.kind).toBe("registry");
+    expect(e.canonical?.file).toBeUndefined();
+    expect(e.canonical?.event.category).not.toBe("file");
   });
 
   it("does not overwrite an Image the record already carries", () => {

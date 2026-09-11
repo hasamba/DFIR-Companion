@@ -127,6 +127,21 @@ describe("decodeDefenderEvent", () => {
     })!;
     expect(malformed.def.label).toMatch(/^\[control: unknown\]/);
     expect(malformed.event.outcome).toBe("unknown");
+    // an unknown action stays unknown whatever the result says — even a failure code, even a 1118
+    for (const [eid, action, code] of [
+      [1117, "UserDefined", "0x80508023"],
+      [1117, "Frobnicate", "0x80508023"],
+      [1118, "Frobnicate", "N/A"],
+      [1119, "UserDefined", "0x80508023"],
+    ] as const) {
+      const d = decodeDefenderEvent(CHANNEL, eid, { ...base, "Action Name": action, "Error Code": code })!;
+      expect(d.def.label, `${eid} ${action} ${code}`).toMatch(/^\[control: unknown\]/);
+    }
+    // a known action on a failed-action event id is a failure even with an unreadable code
+    expect(
+      decodeDefenderEvent(CHANNEL, 1118, { ...base, "Action Name": "Quarantine", "Error Code": "N/A" })!.def
+        .label,
+    ).toMatch(/^\[control: remediation-failed\]/);
     const decimal = decodeDefenderEvent(CHANNEL, 1117, {
       ...base,
       "Action Name": "Quarantine",
@@ -139,6 +154,11 @@ describe("decodeDefenderEvent", () => {
     const d = decodeDefenderEvent(CHANNEL, 1116, { ...base, Path: "regkey:_HKLM\\SOFTWARE\\Bad" })!;
     expect(d.def.kind).toBeUndefined();
     expect(d.image).toBeUndefined();
+    expect(d.object.kind).toBe("registry");
+    expect(decodeDefenderEvent(CHANNEL, 1116, { ...base, Path: "service:_evilsvc" })!.object.kind).toBe(
+      "service",
+    );
+    expect(decodeDefenderEvent(CHANNEL, 1116, { ...base, Path: "behavior:_x" })!.object.kind).toBe("other");
     expect(d.def.label).toContain("regkey:HKLM\\SOFTWARE\\Bad");
     const other = decodeDefenderEvent(CHANNEL, 1116, { ...base, Path: "regkey:_HKLM\\SOFTWARE\\Other" })!;
     expect(other.identity).not.toBe(d.identity);

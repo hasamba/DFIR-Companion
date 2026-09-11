@@ -45,7 +45,8 @@ export interface DecodedDefenderEvent {
   /** For the canonical envelope: `event.outcome` keeps the success/failed/unknown hunt contract. */
   event: { action: string; outcome: "success" | "failed" | "unknown" };
   eventType: "detection" | "action";
-  object: { kind: "file"; id?: string; name: string };
+  /** The detection as a canonical entity — a file when one was flagged, else the first other resource's kind. */
+  object: { kind: "file" | "registry" | "service" | "other"; id?: string; name: string };
   disposition: DefenderControl;
 }
 
@@ -76,7 +77,7 @@ const LABEL_MAX = 460;
 const REMEDIATING_ACTIONS = new Set(["clean", "quarantine", "remove"]);
 const ALLOW_ACTIONS = new Set(["allow", "allowandclean", "allowed"]);
 const NO_ACTIONS = new Set(["noaction", "none", "no action"]);
-const USER_DEFINED = new Set(["userdefined", "user defined"]);
+// UserDefined (8) is deliberately absent: the user decides, and the log does not say what.
 
 // Field lookup that survives the renderer's spelling: the EVTX renderer keeps the spaces ("Threat
 // Name"), some exporters drop them ("ThreatName") or underscore them ("threat_name").
@@ -144,18 +145,53 @@ function disposition(
   action: string,
   errorCode: string,
 ): { control: DefenderControl; outcome: "success" | "failed" | "unknown" } {
-  if (DETECTED.has(eid)) return { control: "unknown", outcome: "unknown" };
+  const unknown = { control: "unknown" as const, outcome: "unknown" as const };
+  if (DETECTED.has(eid)) return unknown;
+  // The ACTION is validated first: a result can only qualify an action Defender itself names.
+  // UserDefined means the user decides and the log does not say what; an action outside the
+  // table is not guessed at — with any result, even a failure code or a failed-action event id.
+  const a = action.toLowerCase();
+  const known = REMEDIATING_ACTIONS.has(a) || ALLOW_ACTIONS.has(a) || NO_ACTIONS.has(a) || a === "block";
+  if (!known) return unknown;
   const result = errorOutcome(errorCode);
   if (ACTION_FAILED.has(eid)) return { control: "remediation-failed", outcome: "failed" };
   if (result === "failed") return { control: "remediation-failed", outcome: "failed" };
-  if (result === "unknown") return { control: "unknown", outcome: "unknown" };
-  const a = action.toLowerCase();
+  if (result === "unknown") return unknown;
   if (ALLOW_ACTIONS.has(a)) return { control: "allowed", outcome: "success" };
-  if (NO_ACTIONS.has(a) || a === "") return { control: "none-observed", outcome: "unknown" };
+  if (NO_ACTIONS.has(a)) return { control: "none-observed", outcome: "unknown" };
   if (a === "block") return { control: "blocked", outcome: "success" };
-  if (REMEDIATING_ACTIONS.has(a)) return { control: "remediated", outcome: "success" };
-  if (USER_DEFINED.has(a)) return { control: "unknown", outcome: "unknown" }; // the user decides; the log does not say what
-  return { control: "unknown", outcome: "unknown" };
+  return { control: "remediated", outcome: "success" };
+}
+
+// Where a Defender detection lives as a canonical entity: the flagged file, else the kind of the
+// first non-file resource — a registry-only detection is a registry object, never a file.
+function objectKind(path: DefenderPath): "file" | "registry" | "service" | "other" {
+  if (path.primary) return "file";
+  const first = path.others[0]?.split(":")[0] ?? "";
+  if (first === "regkey" || first === "regkeyvalue") return "registry";
+  if (first === "service") return "service";
+  return "other";
+}
+
+/**
+ * The full description of a Defender event, composed so the invariant tail — the event id and
+ * tool, the account, the subject, the host — always survives the 600-character clip: every part is
+ * bounded on its own and the attacker-shaped label yields first. mapWindows calls this instead of
+ * its generic label-then-append-then-clip composition.
+ */
+export function defenderDescription(
+  label: string,
+  eid: number,
+  accounts: readonly string[],
+  subject: string,
+  host: string,
+): string {
+  const tail =
+    ` (EID ${eid}, Microsoft Defender)` +
+    (accounts.length ? ` - ${accounts.join(", ").slice(0, 80)}` : "") +
+    (subject ? ` - ${subject.slice(0, 150)}` : "") +
+    (host ? ` @ ${host.slice(0, 80)}` : "");
+  return `${label.slice(0, Math.max(120, 600 - tail.length))}${tail}`.slice(0, 600);
 }
 
 /**
@@ -205,7 +241,7 @@ export function decodeDefenderEvent(
     image: path.primary,
     eventType: DETECTED.has(eid) ? "detection" : "action",
     event: { action: DETECTED.has(eid) ? "detected" : action || "action", outcome },
-    object: { kind: "file", ...(detectionId ? { id: detectionId } : {}), name: threat },
+    object: { kind: objectKind(path), ...(detectionId ? { id: detectionId } : {}), name: threat },
     disposition: control,
   };
 }

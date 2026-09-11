@@ -32,7 +32,7 @@ import {
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tradecraftRules.js";
-import { decodeDefenderEvent } from "./defenderEvents.js";
+import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
@@ -930,11 +930,11 @@ export function mapWindows(
   const accts = winAccounts(ed);
   const subject = renderFields(ed, SUBJECT_KEYS);
   let description = defender
-    ? `${def.label} (EID ${eid}, Microsoft Defender)`
+    ? defenderDescription(def.label, eid, accts, subject, host)
     : `${tool} ${def.label} (EID ${eid})`;
-  if (accts.length) description += ` - ${accts.join(", ")}`;
-  if (subject) description += ` - ${subject}`;
-  if (host) description += ` @ ${host}`;
+  if (accts.length && !defender) description += ` - ${accts.join(", ")}`;
+  if (subject && !defender) description += ` - ${subject}`;
+  if (host && !defender) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
   // The service binary, under either channel's spelling (4697 says ServiceFileName, 7045 says
