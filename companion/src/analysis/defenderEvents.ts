@@ -55,6 +55,8 @@ export interface DefenderPath {
   /** Every file resource, in order, bounded. */
   resources: string[];
   processes: string[];
+  /** Registry keys, services, behaviours, AMSI content — `kind:value`, bounded. Never silently dropped. */
+  others: string[];
 }
 
 const DEFENDER_CHANNEL = /windows defender/i;
@@ -65,7 +67,16 @@ const MAX_RESOURCES = 8;
 const THREAT_MAX = 120;
 const PATH_MAX = 300;
 const ERROR_MAX = 160;
-const LABEL_MAX = 600;
+// mapWindows appends `(EID …, Microsoft Defender)`, the account, the subject and the host after this
+// label and clips the whole description at 600; the label leaves that room so the tail survives.
+const LABEL_MAX = 460;
+
+// Defender's action vocabulary (Action ID → name): 1 Clean, 2 Quarantine, 3 Remove, 6 Allow,
+// 8 UserDefined, 9 NoAction, 10 Block. A name outside this table is NOT guessed at.
+const REMEDIATING_ACTIONS = new Set(["clean", "quarantine", "remove"]);
+const ALLOW_ACTIONS = new Set(["allow", "allowandclean", "allowed"]);
+const NO_ACTIONS = new Set(["noaction", "none", "no action"]);
+const USER_DEFINED = new Set(["userdefined", "user defined"]);
 
 // Field lookup that survives the renderer's spelling: the EVTX renderer keeps the spaces ("Threat
 // Name"), some exporters drop them ("ThreatName") or underscore them ("threat_name").
@@ -85,6 +96,7 @@ function field(ed: Record<string, unknown>, name: string): string {
 export function parseDefenderPath(raw: string): DefenderPath {
   const resources: string[] = [];
   const processes: string[] = [];
+  const others: string[] = [];
   let container: string | undefined;
   let firstMember: string | undefined;
   for (const part of raw.split(";")) {
@@ -101,7 +113,7 @@ export function parseDefenderPath(raw: string): DefenderPath {
     else if (kind === "file" || kind === "webfile") {
       if (resources.length < MAX_RESOURCES) resources.push(value);
       if (value.includes("->")) firstMember ??= value;
-    }
+    } else if (others.length < MAX_RESOURCES) others.push(`${kind}:${value}`);
   }
   // A container named with no member listed is itself the file that was flagged.
   if (!resources.length && container) resources.push(container);
@@ -111,23 +123,39 @@ export function parseDefenderPath(raw: string): DefenderPath {
     container: container && container !== primary ? container : undefined,
     resources,
     processes,
+    others,
   };
 }
 
+// A Defender Error Code is an HRESULT, written `0x80508023` or as a decimal; anything else is not a
+// result at all and must not be read as one.
+function errorOutcome(errorCode: string): "success" | "failed" | "unknown" {
+  if (errorCode === "") return "success";
+  if (/^(?:0x)?0+$/i.test(errorCode)) return "success";
+  if (/^0x[0-9a-f]{1,8}$/i.test(errorCode) || /^\d{1,10}$/.test(errorCode)) return "failed";
+  return "unknown";
+}
+
+// The disposition from the ACTION and its RESULT, never the event id. Only a known action with a
+// parseable result earns a definite word; an action outside Defender's table, a user-defined
+// action, or a malformed error code is `unknown` — a confident wrong outcome is worse than none.
 function disposition(
   eid: number,
   action: string,
   errorCode: string,
 ): { control: DefenderControl; outcome: "success" | "failed" | "unknown" } {
   if (DETECTED.has(eid)) return { control: "unknown", outcome: "unknown" };
-  const failedCode = errorCode !== "" && !/^(?:0x)?0+$/i.test(errorCode);
-  if (ACTION_FAILED.has(eid) || failedCode) return { control: "remediation-failed", outcome: "failed" };
+  const result = errorOutcome(errorCode);
+  if (ACTION_FAILED.has(eid)) return { control: "remediation-failed", outcome: "failed" };
+  if (result === "failed") return { control: "remediation-failed", outcome: "failed" };
+  if (result === "unknown") return { control: "unknown", outcome: "unknown" };
   const a = action.toLowerCase();
-  if (/^(?:allow|allowandclean|allowed)$/.test(a)) return { control: "allowed", outcome: "success" };
-  if (/^(?:noaction|none|no action)$/.test(a) || a === "")
-    return { control: "none-observed", outcome: "unknown" };
+  if (ALLOW_ACTIONS.has(a)) return { control: "allowed", outcome: "success" };
+  if (NO_ACTIONS.has(a) || a === "") return { control: "none-observed", outcome: "unknown" };
   if (a === "block") return { control: "blocked", outcome: "success" };
-  return { control: "remediated", outcome: "success" }; // Quarantine, Remove, Clean, and the rest
+  if (REMEDIATING_ACTIONS.has(a)) return { control: "remediated", outcome: "success" };
+  if (USER_DEFINED.has(a)) return { control: "unknown", outcome: "unknown" }; // the user decides; the log does not say what
+  return { control: "unknown", outcome: "unknown" };
 }
 
 /**
@@ -163,6 +191,7 @@ export function decodeDefenderEvent(
     path.container ? `(in ${path.container})` : "",
     extras.length ? `(+${extras.length} more: ${extras.join(", ")})` : "",
     path.processes.length ? `process ${path.processes.join(", ")}` : "",
+    path.others.length ? path.others.join(", ") : "",
     control === "remediation-failed" && (errorCode || errorText)
       ? `error ${errorCode} ${errorText}`.trim()
       : "",
@@ -170,8 +199,9 @@ export function decodeDefenderEvent(
   const label = parts.join(" ").slice(0, LABEL_MAX);
 
   return {
-    def: { label, severity: "Medium", kind: "file" },
-    identity: `defender|${detectionId || threat}|${control}|${action}|${errorCode}|${(path.primary ?? "").toLowerCase()}`,
+    // `kind: "file"` only when a file was flagged: a registry- or service-only detection is not a file event.
+    def: { label, severity: "Medium", ...(path.primary ? { kind: "file" as const } : {}) },
+    identity: `defender|${detectionId || threat}|${control}|${action}|${errorCode}|${(path.primary ?? "").toLowerCase()}|${path.others.join(",").toLowerCase()}`,
     image: path.primary,
     eventType: DETECTED.has(eid) ? "detection" : "action",
     event: { action: DETECTED.has(eid) ? "detected" : action || "action", outcome },

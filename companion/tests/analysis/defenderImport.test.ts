@@ -93,6 +93,25 @@ describe("Defender Operational events through the Windows mapper", () => {
     expect(e.description).not.toContain("[control:");
   });
 
+  it("keeps the EID, tool and host tail even when the label is at its bound", () => {
+    const many = Array.from(
+      { length: 8 },
+      (_, i) => `file:_C:\\Users\\a.mehta\\Downloads\\${"n".repeat(40)}${i}.exe`,
+    ).join("; ");
+    const e = parseSiemExport(JSON.stringify([record(1116, { Path: many, "Threat Name": "T".repeat(120) })]))
+      .events[0];
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.description).toContain("(EID 1116, Microsoft Defender)");
+    expect(e.description).toContain("@ WS-042.corp.example.invalid");
+  });
+
+  it("does not overwrite an Image the record already carries", () => {
+    const e = parseSiemExport(JSON.stringify([record(1116, { Image: "C:\\Windows\\explorer.exe" })]))
+      .events[0];
+    expect(e.path).toBe("C:\\Windows\\explorer.exe"); // the record's own evidence stays
+    expect(e.description).toContain("— C:\\Users\\a.mehta\\Downloads\\invoice.exe"); // the flagged file is still named
+  });
+
   it("does not claim a Defender event id on another channel", () => {
     const sec = { ...record(1116), log_name: "Security" };
     const e = parseSiemExport(JSON.stringify([sec])).events[0];

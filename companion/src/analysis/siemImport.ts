@@ -900,10 +900,7 @@ export function mapWindows(
 
   const edRaw = getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
   const defender = decodeDefenderEvent(channel, eid, isObject(edRaw) ? edRaw : {}); // #930 item 1
-  const ed: Row = {
-    ...(isObject(edRaw) ? edRaw : {}),
-    ...(defender?.image ? { Image: defender.image } : {}),
-  };
+  const ed: Row = isObject(edRaw) ? edRaw : {};
   const [isSysmon, isPwsh] = [/sysmon/i.test(channel), /powershell/i.test(channel)];
   // The rendered event message, verbatim. It was read for the unknown-event LABEL and then dropped,
   // so a Windows event reached the case with `message` UNSET while every other importer populated
@@ -1057,7 +1054,7 @@ export function mapWindows(
 
   // Structured correlation/IOC fields.
   const { sha256, md5 } = parseHashes(rec, ed);
-  const imagePath = firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]);
+  const imagePath = firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]) || (defender?.image ?? ""); // the flagged file, when the record names no image of its own
   const processName =
     def.kind === "process" || def.kind === "procaccess"
       ? baseName(

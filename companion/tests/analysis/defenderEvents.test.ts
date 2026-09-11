@@ -27,6 +27,7 @@ describe("parseDefenderPath", () => {
       container: undefined,
       resources: ["C:\\x\\a.exe"],
       processes: [],
+      others: [],
     });
   });
   it("prefers the archive member as primary and names the container", () => {
@@ -40,6 +41,11 @@ describe("parseDefenderPath", () => {
     expect(r.resources).toHaveLength(8);
     expect(r.primary).toBe("C:\\x\\f0.exe");
     expect(r.processes).toEqual(["pid:4321,ProcessStart:133700000000000000"]);
+  });
+  it("keeps registry, service and behaviour resources instead of dropping them", () => {
+    const r = parseDefenderPath("regkey:_HKLM\\SOFTWARE\\Bad; service:_evilsvc; behavior:_x");
+    expect(r.primary).toBeUndefined();
+    expect(r.others).toEqual(["regkey:HKLM\\SOFTWARE\\Bad", "service:evilsvc", "behavior:x"]);
   });
   it("is safe on malformed input", () => {
     for (const bad of ["", "file:", "junk", ";;;", "containerfile:_C:\\a.zip"]) {
@@ -99,6 +105,43 @@ describe("decodeDefenderEvent", () => {
     );
     expect(failed.def.severity).toBe("Medium");
     expect(failed.event).toEqual({ action: "Quarantine", outcome: "failed" });
+  });
+
+  it("does not guess at actions or results outside Defender's own vocabulary", () => {
+    const userDefined = decodeDefenderEvent(CHANNEL, 1117, {
+      ...base,
+      "Action Name": "UserDefined",
+      "Error Code": "0",
+    })!;
+    expect(userDefined.def.label).toMatch(/^\[control: unknown\] UserDefined /);
+    const odd = decodeDefenderEvent(CHANNEL, 1117, {
+      ...base,
+      "Action Name": "Frobnicate",
+      "Error Code": "0",
+    })!;
+    expect(odd.def.label).toMatch(/^\[control: unknown\]/);
+    const malformed = decodeDefenderEvent(CHANNEL, 1117, {
+      ...base,
+      "Action Name": "Quarantine",
+      "Error Code": "N/A",
+    })!;
+    expect(malformed.def.label).toMatch(/^\[control: unknown\]/);
+    expect(malformed.event.outcome).toBe("unknown");
+    const decimal = decodeDefenderEvent(CHANNEL, 1117, {
+      ...base,
+      "Action Name": "Quarantine",
+      "Error Code": "2147500037",
+    })!;
+    expect(decimal.def.label).toMatch(/^\[control: remediation-failed\]/);
+  });
+
+  it("a registry-only detection is not a file event and keeps the key in the label and identity", () => {
+    const d = decodeDefenderEvent(CHANNEL, 1116, { ...base, Path: "regkey:_HKLM\\SOFTWARE\\Bad" })!;
+    expect(d.def.kind).toBeUndefined();
+    expect(d.image).toBeUndefined();
+    expect(d.def.label).toContain("regkey:HKLM\\SOFTWARE\\Bad");
+    const other = decodeDefenderEvent(CHANNEL, 1116, { ...base, Path: "regkey:_HKLM\\SOFTWARE\\Other" })!;
+    expect(other.identity).not.toBe(d.identity);
   });
 
   it("1118 and 1119: a failed action, whatever the action said", () => {
@@ -202,7 +245,7 @@ describe("decodeDefenderEvent", () => {
       "Threat Name": "T".repeat(500),
       Path: `file:_C:\\${"p".repeat(2000)}.exe`,
     })!;
-    expect(d.def.label.length).toBeLessThanOrEqual(600);
+    expect(d.def.label.length).toBeLessThanOrEqual(460);
     expect(d.def.label.startsWith("[control: unknown] detected ")).toBe(true);
   });
 });
