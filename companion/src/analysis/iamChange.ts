@@ -221,6 +221,12 @@ function bindingsFor(source: string, nameLower: string, req: Obj, res: unknown):
     if (exec) out.push({ label: "execution role", role: exec, destination: dest });
     return out;
   }
+  // Glue: a dev endpoint runs code under the role it is created with — the documented PassRole
+  // escalation path this module lists as a primitive, so the call that binds the role is decoded.
+  if (svc === "glue" && (nameLower === "createdevendpoint" || nameLower === "updatedevendpoint")) {
+    const role = raw(getCI(req, "roleArn"));
+    return role ? [{ label: "role", role, destination: raw(getCI(req, "endpointName")) }] : [];
+  }
   if (svc === "cloudformation" && (nameLower === "createstack" || nameLower === "updatestack")) {
     const role = raw(getCI(req, "roleARN"));
     return role

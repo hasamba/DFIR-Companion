@@ -343,7 +343,8 @@ more:
 - **Role passing** — `iam:PassRole` is a permission, not an event. The row for the call that uses
   it names the binding: `passing instance profile … → i-0abc` on `RunInstances` (a profile, not a
   role — the two can differ), `passing role … → my-function` on Lambda, both roles on an ECS task
-  definition, the role on a CloudFormation stack. Medium on success. A `PassRole` denial reads
+  definition, the role on a CloudFormation stack, the role on a Glue dev endpoint. Medium on
+  success. A `PassRole` denial reads
   `role passing denied: <role>` — an attempt, Medium, never "passed".
 - **A failed call is an attempt** — `attempted to replace inline policy — denied (AccessDenied)`,
   the requested document shown, no High floor: the change did not happen. Only an authorisation

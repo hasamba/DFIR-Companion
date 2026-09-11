@@ -420,6 +420,32 @@ describe("decodeIamChange — role bindings in the call that passes them", () =>
       destination: "arn:aws:cloudformation:us-east-1:111122223333:stack/s/uuid",
     });
   });
+  it("Glue CreateDevEndpoint binds the role to the endpoint — the documented escalation path (Medium)", () => {
+    const d = decodeIamChange(
+      "glue.amazonaws.com",
+      "CreateDevEndpoint",
+      { endpointName: "ep", roleArn: "arn:aws:iam::111122223333:role/glue" },
+      {},
+      "",
+      "",
+      ACCT,
+    )!;
+    expect(d.bindings).toEqual([
+      { label: "role", role: "arn:aws:iam::111122223333:role/glue", destination: "ep" },
+    ]);
+    expect(d.severityFloor).toBe("Medium");
+    expect(d.mitre).toContain("T1078.004");
+    const other = decodeIamChange(
+      "glue.amazonaws.com",
+      "CreateDevEndpoint",
+      { endpointName: "ep2", roleArn: "arn:aws:iam::111122223333:role/admin" },
+      {},
+      "",
+      "",
+      ACCT,
+    )!;
+    expect(other.keySegment).not.toBe(d.keySegment);
+  });
   it("a RunInstances without a profile, and CreateInstanceProfile, are not IAM changes", () => {
     expect(
       decodeIamChange("ec2.amazonaws.com", "RunInstances", { instanceType: "t3.micro" }, {}, "", "", ACCT),

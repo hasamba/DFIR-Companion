@@ -416,6 +416,23 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
     );
     expect(e.description).not.toMatch(/passing role/);
   });
+  it("two Glue dev endpoints created with two roles by one actor are two Medium rows", () => {
+    const ep = (name: string, role: string) =>
+      record({
+        eventSource: "glue.amazonaws.com",
+        eventName: "CreateDevEndpoint",
+        readOnly: false,
+        recipientAccountId: ACCT,
+        requestParameters: { endpointName: name, roleArn: `arn:aws:iam::${ACCT}:role/${role}` },
+      });
+    const r = parseCloudTrail(envelope(ep("a", "glue-a"), ep("b", "glue-admin")));
+    expect(r.events).toHaveLength(2);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(2);
+    for (const e of r.events) {
+      expect(e.severity).toBe("Medium");
+      expect(e.description).toMatch(/passing role arn:aws:iam::111122223333:role\/glue-\w+ → [ab]/);
+    }
+  });
   it("a PassRole denial is Medium and says denied — the role was not passed", () => {
     const r = parseCloudTrail(
       envelope(
