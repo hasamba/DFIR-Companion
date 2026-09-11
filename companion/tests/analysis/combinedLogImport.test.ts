@@ -201,6 +201,17 @@ describe("parseCombinedLog", () => {
     ).toBe(true);
   });
 
+  // The same secret with a redaction marker elsewhere on the line. The spill table used to judge
+  // masking per LINE — one `REDACTED` anywhere silenced every rule — so a real token beside a
+  // masked one graded Info and left the forensic timeline. Masking is per occurrence now.
+  it("still grades the spill when another value on the line is redacted", () => {
+    const line = REFERER_SPILL.replace("/dashboard", "/dashboard?session=REDACTED");
+    const r = parseCombinedLog(line);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].mitreTechniques).toContain("T1552.001");
+  });
+
   it("preserves an injection User-Agent as an `other` IOC even when its GET / request aggregates away", () => {
     // A benign GET / 200 (normal UA) lands first and wins the aggregated event; the injection-UA
     // GET / 200 collapses into it. The anomalous UA must still survive as an `other` IOC.
