@@ -172,6 +172,15 @@ function trustReading(reading: PolicyReading, recipient: string): { text: string
     if (!assumed.length) continue;
     const { words, external, any } = principalClasses(st, recipient);
     if (!words.length) continue;
+    // `Allow` + `NotPrincipal` means EVERY principal except the listed — near-public; the listed
+    // ones are the exclusions and are worded as such, never as the trusted party.
+    if (st.principalExcluded) {
+      parts.push(
+        `allows ${assumed.join("/")} to every principal except ${words.join(", ")}${st.hasCondition ? " (conditional)" : ""}`,
+      );
+      floor = worstOf(floor, "High");
+      continue;
+    }
     // A Condition is shown, not evaluated — it may restrict the principal or be vacuous, and an
     // unevaluated condition never lowers the grade. Only the WORD "unrestricted" needs its absence.
     const unrestricted = any && !st.hasCondition;
@@ -343,6 +352,8 @@ export function decodeIamChange(
   const code = errorCode.trim().slice(0, 30);
   const outcome = attempted ? `${DENIAL_CODES.test(code) ? "denied" : "failed"} (${code})` : "";
   const note = posture && !attempted ? (posture.note ?? "") : "";
+  // A binding-only row has no IAM posture; a failed one still needs a verb before its outcome.
+  if (!posture && attempted) verb = deniedRole ? "attempted to pass a role" : "attempted a role binding";
   const summary = [verb, object.display, outcome ? `— ${outcome}` : "", note, reading, trust, bindingsText]
     .filter(Boolean)
     .join(" ");
@@ -353,7 +364,9 @@ export function decodeIamChange(
     attempted,
     outcome,
     object: object.display,
-    resource: object.primary || bindings[0]?.destination || bindings[0]?.role || deniedRole,
+    // The resource is what the call ACTED ON — a binding's destination, never the role or profile
+    // passed (a failed launch with no instance has no resource).
+    resource: object.primary || bindings[0]?.destination || "",
     note,
     reading,
     trust,

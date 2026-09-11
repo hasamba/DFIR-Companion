@@ -330,6 +330,17 @@ describe("decodeIamChange — trust is literal", () => {
     expect(d.trust).not.toContain("any principal");
     expect(d.severityFloor).toBeNull();
   });
+  it("Allow + NotPrincipal is worded as the exclusion it is — every principal except — and is High", () => {
+    const d = iam("CreateRole", {
+      roleName: "r",
+      assumeRolePolicyDocument: doc([
+        { Effect: "Allow", NotPrincipal: { AWS: `arn:aws:iam::${OTHER}:root` }, Action: "sts:AssumeRole" },
+      ]),
+    });
+    expect(d.trust).toContain(`allows sts:AssumeRole to every principal except external account ${OTHER}`);
+    expect(d.trust).not.toMatch(/to external account/);
+    expect(d.severityFloor).toBe("High");
+  });
   it("a Deny statement's principal is not a trust", () => {
     const d = iam("CreateRole", {
       roleName: "r",
@@ -445,6 +456,20 @@ describe("decodeIamChange — role bindings in the call that passes them", () =>
       ACCT,
     )!;
     expect(other.keySegment).not.toBe(d.keySegment);
+  });
+  it("a failed binding-only call has a verb before its outcome and no resource it did not reach", () => {
+    const d = decodeIamChange(
+      "ec2.amazonaws.com",
+      "RunInstances",
+      { iamInstanceProfile: { name: "web" } },
+      {},
+      "AccessDenied",
+      "",
+      ACCT,
+    )!;
+    expect(d.posture).toBe("attempted a role binding");
+    expect(d.summary).toMatch(/^attempted a role binding — denied \(AccessDenied\)/);
+    expect(d.resource).toBe("");
   });
   it("a RunInstances without a profile, and CreateInstanceProfile, are not IAM changes", () => {
     expect(

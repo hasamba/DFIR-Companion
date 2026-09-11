@@ -33,6 +33,8 @@ export interface PolicyStatement {
   actions: { op: ActionOp; values: string[] };
   resources: { op: ResourceOp; values: string[] };
   principal: PolicyPrincipal | null;
+  /** `NotPrincipal` — the statement applies to EVERY principal except those listed. */
+  principalExcluded: boolean;
   hasCondition: boolean;
 }
 
@@ -207,6 +209,7 @@ function readStatement(v: unknown): PolicyStatement | null {
     actions,
     resources,
     principal: readPrincipal(v.Principal ?? v.NotPrincipal),
+    principalExcluded: v.Principal === undefined && v.NotPrincipal !== undefined,
     hasCondition: isObj(v.Condition) && Object.keys(v.Condition).length > 0,
   };
 }
