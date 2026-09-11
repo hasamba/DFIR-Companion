@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { projectAlignment } from "../analysis/clockSkew.js";
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
+import { searchForensicTimeline } from "../analysis/forensicSearch.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -28,10 +29,17 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
       }
       const rawCursor = Number(req.query.timelineCursor);
       const rawLimit = Number(req.query.timelineLimit);
-      const timeline = await options.stateStore.queryForensicTimeline(req.params.id, {
+      // `q` full-text searches the WHOLE stored timeline (#928). The dashboard used to filter the
+      // page it had fetched, which quietly meant "search the first 10,000 events" — on a bigger
+      // case the analyst was shown no results for evidence that had never been sent to the browser.
+      const search = typeof req.query.q === "string" && req.query.q.trim() ? req.query.q.trim() : undefined;
+      const timelineQuery = {
         cursor: Number.isFinite(rawCursor) && rawCursor >= 0 ? Math.floor(rawCursor) : undefined,
         limit: Number.isFinite(rawLimit) && rawLimit >= 0 ? Math.min(10_000, Math.floor(rawLimit)) : 10_000,
-      });
+      };
+      const timeline = search
+        ? await searchForensicTimeline(options.stateStore, req.params.id, search, timelineQuery)
+        : await options.stateStore.queryForensicTimeline(req.params.id, timelineQuery);
       const state = await options.stateStore.loadOverview(req.params.id);
       // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
       // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
@@ -42,6 +50,9 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         ...state,
         forensicTimeline,
         forensicTimelineTotal: timeline.total,
+        // Set only when the match count gave up at its ceiling (#928) — the total is then a floor,
+        // and the client must not print it as if it were the number of matches.
+        ...(timeline.totalIsLowerBound ? { forensicTimelineTotalIsLowerBound: true } : {}),
         forensicTimelineNextCursor: timeline.nextCursor,
         // ATT&CK names for every technique this payload mentions. The dashboard's MITRE
         // panel completes the stored table from the techniques the events carry, exactly as
