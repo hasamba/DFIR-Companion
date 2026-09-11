@@ -448,7 +448,8 @@ function forwardingCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     } else {
       clauses.push(`sets forwarding to in-organization recipient ${addr.slice(0, 80)}`);
       infinitives.push(`set forwarding to in-organization recipient ${addr.slice(0, 80)}`);
-      target = target || addr;
+      // ForwardingAddress takes precedence over ForwardingSmtpAddress: it is the effective target.
+      target = addr;
       if (severity !== "High") severity = "Medium";
     }
   }

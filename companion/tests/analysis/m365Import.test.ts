@@ -835,6 +835,24 @@ describe("parseM365Audit — Exchange mailbox records (#931 item 2)", () => {
       "benign@victim.com, drop@attacker.invalid, second@attacker.invalid",
     );
   });
+  it("Set-Mailbox with both addresses targets ForwardingAddress — the one that takes precedence", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "Set-Mailbox",
+          ObjectId: OWNER,
+          Parameters: [
+            { Name: "Identity", Value: OWNER },
+            { Name: "ForwardingSmtpAddress", Value: "smtp:inactive@attacker.invalid" },
+            { Name: "ForwardingAddress", Value: "SharedMailbox" },
+          ],
+        }),
+      ]),
+    );
+    expect(r.events[0].canonical?.target?.name).toBe("SharedMailbox");
+    expect(r.events[0].description).toContain("ForwardingAddress takes precedence");
+  });
   it("an Outlook-created forwarding rule's envelope targets the recipient", () => {
     const r = parseM365Audit(
       JSON.stringify([
