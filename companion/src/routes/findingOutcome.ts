@@ -53,6 +53,15 @@ export function registerFindingOutcomeRoutes(app: Express, ctx: RouteContext): v
     if (patch.execution === undefined && patch.control === undefined && patch.note === undefined) {
       return res.status(400).json({ error: "provide execution, control and/or note to update" });
     }
+    // Validation is the caller's problem (400); everything past this line is ours (500). The store
+    // throws on a blank id, so that check runs here first — a disk-full on save must not come back
+    // as a 400 the dashboard reads as "you sent something wrong".
+    if (!String(req.params.findingId ?? "").trim())
+      return res.status(400).json({ error: "findingId is required" });
+    // The finding's semanticKey, so the record can refuse to attach to a different claim later. A
+    // finding not in the current state (or no state store) leaves it empty — the id is then all
+    // there is, as for every sibling side store.
+    patch.semanticKey = await semanticKeyOf(options.stateStore, req.params.id, req.params.findingId);
     try {
       const record = await options.findingOutcomeStore.patch(req.params.id, req.params.findingId, patch);
       options.onFindingOutcome?.(req.params.id);
@@ -68,9 +77,23 @@ export function registerFindingOutcomeRoutes(app: Express, ctx: RouteContext): v
       });
       return res.status(200).json({ record });
     } catch (err) {
-      return res.status(400).json({ error: (err as Error).message });
+      return res.status(500).json({ error: (err as Error).message });
     }
   });
+}
+
+async function semanticKeyOf(
+  stateStore: RouteContext["options"]["stateStore"],
+  caseId: string,
+  findingId: string,
+): Promise<string> {
+  if (!stateStore) return "";
+  try {
+    const state = await stateStore.load(caseId);
+    return state.findings.find((f) => f.id === findingId)?.semanticKey ?? "";
+  } catch {
+    return "";
+  }
 }
 
 // One axis from a request body: absent → "absent"; null or "" → null (clear); a vocabulary value →

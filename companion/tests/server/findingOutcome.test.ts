@@ -87,4 +87,47 @@ describe("finding-outcome routes", () => {
       (await request(app).patch("/cases/c1/findings/f-1/outcome").send({ control: "blocked" })).status,
     ).toBe(501);
   });
+
+  it("stores the finding's semanticKey when the finding is in the case state", async () => {
+    const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-fout-key-")));
+    const { StateStore } = await import("../../src/analysis/stateStore.js");
+    const { emptyState } = await import("../../src/analysis/stateTypes.js");
+    const stateStore = new StateStore(store);
+    const findingOutcomeStore = new FindingOutcomeStore(store);
+    const app = createApp(store, { findingOutcomeStore, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f-1",
+      severity: "High",
+      title: "t",
+      description: "d",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "2026-01-01T00:00:00Z",
+      lastUpdated: "2026-01-01T00:00:00Z",
+      status: "open",
+      semanticKey: "T1059:powershell dropper",
+    });
+    await stateStore.save(state);
+    const res = await request(app).patch("/cases/c1/findings/f-1/outcome").send({ control: "blocked" });
+    expect(res.status).toBe(200);
+    expect(res.body.record.semanticKey).toBe("T1059:powershell dropper");
+  });
+
+  // A save that fails is the server's fault, not the caller's — the dashboard reverts and says so
+  // on a non-2xx, and must not read a storage failure as "you sent something wrong".
+  it("returns 500, not 400, when the store itself fails", async () => {
+    const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-fout-500-")));
+    const findingOutcomeStore = new FindingOutcomeStore(store);
+    findingOutcomeStore.patch = async () => {
+      throw new Error("ENOSPC: no space left on device");
+    };
+    const app = createApp(store, { findingOutcomeStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).patch("/cases/c1/findings/f-1/outcome").send({ control: "blocked" });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/ENOSPC/);
+  });
 });

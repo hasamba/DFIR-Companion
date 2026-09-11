@@ -471,7 +471,7 @@ export function corroborationLabel(f: Finding): string {
 // corroborationLabel because markdown.ts already imports from here and sits at its size ledger —
 // one call, one existing import line, and the heading stays one line.
 export function findingHeadingSuffix(
-  f: Pick<Finding, "confidence" | "execution" | "control" | "outcomeSource">,
+  f: Pick<Finding, "confidence" | "execution" | "control" | "executionSource" | "controlSource">,
 ): string {
   const conf = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
   const label = outcomeLabel(f);

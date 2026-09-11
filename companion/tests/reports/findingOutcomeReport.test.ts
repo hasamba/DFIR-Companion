@@ -56,7 +56,7 @@ describe("finding outcome in the written report", () => {
     const paths = await new ReportWriter(caseStore, stateStore).writeAll("c1");
     const md = await readFile(paths.markdown, "utf8");
     expect(md).toContain(
-      "[70% confidence] [execution observed · control remediated (analyst)] Payload dropped",
+      "[70% confidence] [execution observed (analyst) · control remediated (analyst)] Payload dropped",
     );
     expect(md).not.toMatch(/\bprevented\b/);
   });
@@ -85,6 +85,6 @@ describe("finding outcome in the written report", () => {
       (await new ReportWriter(caseStore, stateStore).writeAll("c1")).markdown,
       "utf8",
     );
-    expect(md).toContain("[execution observed · control allowed (analyst)]");
+    expect(md).toContain("[execution observed (analyst) · control allowed]"); // machine axis unattributed
   });
 });

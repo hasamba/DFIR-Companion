@@ -16,6 +16,10 @@
 // rendered, which is where they have to be.
 (function () {
   let outcomeByFinding = new Map();
+  // The case whose records the map holds. Cleared SYNCHRONOUSLY on a case switch and checked when
+  // the fetch returns, so a slow or failed load can never leave the previous case's outcomes on
+  // the new case's cards — ids like "f1" recur across cases.
+  let activeCase = "";
   // The vocabularies mirror EXECUTION_OUTCOMES / CONTROL_DISPOSITIONS in stateTypes.ts. The server
   // rejects anything else with a 400, so a drift here shows up as a visible failure, not a silent one.
   const EXECUTION_LABELS = {
@@ -32,9 +36,12 @@
     unknown: "Control unknown",
   };
   function loadFindingOutcome(caseId) {
+    activeCase = String(caseId);
+    outcomeByFinding = new Map();
     fetch(`/cases/${caseId}/finding-outcome`)
       .then((r) => r.json())
       .then((list) => {
+        if (String(caseId) !== activeCase) return; // a later switch already owns the map
         outcomeByFinding = new Map();
         (Array.isArray(list) ? list : []).forEach((r) => {
           if (r && r.findingId) outcomeByFinding.set(String(r.findingId), r);
@@ -84,23 +91,34 @@
     );
   }
   // PATCH one axis; the server drops the record when both axes and the note are empty.
+  //
+  // A native <select> shows the new value the instant it is chosen, before the server has said
+  // anything. If the save then fails — disk full, permissions, a timeout — the card would go on
+  // looking saved while the report and the next session omit it. So a failure re-renders (which
+  // rebuilds the controls from the LAST SAVED map, reverting the select) and says so on screen.
   function patchFindingOutcome(fid, patch) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId || !fid) return;
+    const revert = (why) => {
+      if (DfirState.lastState()) render(DfirState.lastState());
+      if (typeof showToast === "function") showToast(`Attack outcome not saved: ${why}`, "error");
+    };
     fetch(`/cases/${caseId}/findings/${encodeURIComponent(String(fid))}/outcome`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...patch, updatedBy: investigatorName() }),
     })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && "record" in data) {
-          if (data.record) outcomeByFinding.set(String(fid), data.record);
-          else outcomeByFinding.delete(String(fid));
-          if (DfirState.lastState()) render(DfirState.lastState());
+      .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
+      .then(({ ok, status, data }) => {
+        if (!ok || !data || !("record" in data)) {
+          revert((data && data.error) || `server returned ${status}`);
+          return;
         }
+        if (data.record) outcomeByFinding.set(String(fid), data.record);
+        else outcomeByFinding.delete(String(fid));
+        if (DfirState.lastState()) render(DfirState.lastState());
       })
-      .catch(() => {});
+      .catch((err) => revert((err && err.message) || "network error"));
   }
   function setFindingExecution(fid, value) {
     patchFindingOutcome(fid, { execution: value || null });

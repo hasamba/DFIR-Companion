@@ -51,6 +51,7 @@ export const CONTROL_DISPOSITIONS = [
   "unknown",
 ] as const;
 export type ControlDisposition = (typeof CONTROL_DISPOSITIONS)[number];
+export type OutcomeSource = "analyst" | "machine";
 
 // A dismissed finding (e.g. a confirmed false positive) keeps its ORIGINAL `severity` as an audit
 // trail of what the AI/backfill pass first claimed — see the comment on Finding.severity's sibling
@@ -176,11 +177,13 @@ export interface Finding {
   lastUpdated: string;
   status: FindingStatus;
   // Attack outcome axes — see the EXECUTION_OUTCOMES comment. Absent = nothing has said. Machine-set
-  // here; the analyst's statement is applied over these from the side store, and `outcomeSource`
-  // then records which won so a report can say "(analyst)".
+  // here; the analyst's statement is applied over these from the side store. Provenance is PER AXIS:
+  // an analyst who overrides only execution has said nothing about control, and a report that
+  // attributed both to them would corrupt provenance in a forensic deliverable.
   execution?: ExecutionOutcome;
   control?: ControlDisposition;
-  outcomeSource?: "analyst" | "machine";
+  executionSource?: OutcomeSource;
+  controlSource?: OutcomeSource;
 }
 
 export interface Thread {

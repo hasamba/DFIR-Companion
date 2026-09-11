@@ -11,6 +11,7 @@ import {
   type ExecutionOutcome,
   type Finding,
   type InvestigationState,
+  type OutcomeSource,
 } from "./stateTypes.js";
 
 // The analyst's statement of a finding's attack outcome (#930 item 8), kept in a per-case side
@@ -33,6 +34,12 @@ export const findingOutcomeSchema = z.object({
   execution: z.enum(EXECUTION_OUTCOMES).nullable().default(null).catch(null),
   control: z.enum(CONTROL_DISPOSITIONS).nullable().default(null).catch(null),
   note: z.string().default("").catch(""),
+  // The finding's semanticKey at the time the analyst spoke, when it had one. Finding ids are kept
+  // stable by the merge for a claim the model re-emits, but a known id could in principle be reused
+  // for a DIFFERENT claim — and an analyst-certified outcome attached to the wrong claim is the one
+  // failure this file must never produce. So a record applies only while the keys still agree.
+  // Empty when the finding had no key: then the id is all there is, as for every sibling side store.
+  semanticKey: z.string().default("").catch(""),
   updatedAt: z.string(),
   updatedBy: z.string().default("").catch(""),
 });
@@ -46,6 +53,7 @@ export interface FindingOutcomePatch {
   control?: ControlDisposition | null;
   note?: string;
   updatedBy?: string;
+  semanticKey?: string; // the finding's key as the route saw it; refreshed on every patch
 }
 
 // Serializes load→modify→save per case, as findingWorkflow.ts does: the file is rewritten whole
@@ -107,6 +115,8 @@ export class FindingOutcomeStore {
       execution,
       control,
       note,
+      semanticKey:
+        patch.semanticKey !== undefined ? String(patch.semanticKey).trim() : (existing?.semanticKey ?? ""),
       updatedAt: new Date().toISOString(),
       updatedBy: String(patch.updatedBy ?? "").trim(),
     };
@@ -128,8 +138,9 @@ function pickAxis<T extends string>(
 
 // Apply the analyst's records over the machine-set axes. Pure: returns a new state with new
 // Finding objects; the input is untouched. Per axis, the analyst wins where they said something and
-// the machine value survives where they did not. `outcomeSource` records which won so a report can
-// attribute the statement. A finding nobody has said anything about gets no source at all.
+// the machine value survives where they did not — and each axis carries its OWN source, so a
+// one-axis override never relabels the machine's value on the other. A record whose semanticKey
+// disagrees with the finding's is not applied at all: same id, different claim.
 export function withAnalystOutcomes(
   state: InvestigationState,
   records: readonly FindingOutcome[],
@@ -139,30 +150,39 @@ export function withAnalystOutcomes(
   return {
     ...state,
     findings: state.findings.map((f) => {
-      const r = byId.get(f.id);
+      const candidate = byId.get(f.id);
+      const r = candidate && sameClaim(candidate, f) ? candidate : undefined;
       const execution = r?.execution ?? f.execution;
       const control = r?.control ?? f.control;
-      const analyst = Boolean(r?.execution ?? r?.control);
       if (execution === undefined && control === undefined) return f;
       return {
         ...f,
-        ...(execution !== undefined ? { execution } : {}),
-        ...(control !== undefined ? { control } : {}),
-        outcomeSource: analyst ? ("analyst" as const) : ("machine" as const),
+        ...(execution !== undefined
+          ? { execution, executionSource: (r?.execution ? "analyst" : "machine") as OutcomeSource }
+          : {}),
+        ...(control !== undefined
+          ? { control, controlSource: (r?.control ? "analyst" : "machine") as OutcomeSource }
+          : {}),
       };
     }),
   };
 }
 
+function sameClaim(r: FindingOutcome, f: Pick<Finding, "semanticKey">): boolean {
+  return !r.semanticKey || !f.semanticKey || r.semanticKey === f.semanticKey;
+}
+
 // The bracketed label a report puts next to a finding's severity. Both axes always render when
-// known — "execution observed · control remediated" — and there is deliberately no single-word
-// summary like "prevented" to collapse into: that collapse is the bug this whole field exists to
-// end. Empty when nothing is known, so a legacy finding renders exactly as before.
-export function outcomeLabel(f: Pick<Finding, "execution" | "control" | "outcomeSource">): string {
+// known, each with its own attribution — "execution observed (analyst) · control allowed" — and
+// there is deliberately no single-word summary like "prevented" to collapse into: that collapse is
+// the bug this whole field exists to end. Empty when nothing is known, so a legacy finding renders
+// exactly as before.
+export function outcomeLabel(
+  f: Pick<Finding, "execution" | "control" | "executionSource" | "controlSource">,
+): string {
   const parts: string[] = [];
-  if (f.execution) parts.push(`execution ${f.execution}`);
-  if (f.control) parts.push(`control ${f.control}`);
-  if (parts.length === 0) return "";
-  const who = f.outcomeSource === "analyst" ? " (analyst)" : "";
-  return `[${parts.join(" · ")}${who}]`;
+  if (f.execution)
+    parts.push(`execution ${f.execution}${f.executionSource === "analyst" ? " (analyst)" : ""}`);
+  if (f.control) parts.push(`control ${f.control}${f.controlSource === "analyst" ? " (analyst)" : ""}`);
+  return parts.length ? `[${parts.join(" · ")}]` : "";
 }

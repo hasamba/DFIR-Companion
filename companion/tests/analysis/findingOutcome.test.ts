@@ -107,27 +107,80 @@ describe("withAnalystOutcomes", () => {
   it("applies the analyst's axes over the machine's and marks the source", () => {
     const s = state([finding({ id: "f-1", execution: "unknown", control: "allowed" })]);
     const out = withAnalystOutcomes(s, [
-      { findingId: "f-1", execution: "observed", control: null, note: "", updatedAt: "", updatedBy: "" },
+      {
+        findingId: "f-1",
+        execution: "observed",
+        control: null,
+        note: "",
+        semanticKey: "",
+        updatedAt: "",
+        updatedBy: "",
+      },
     ]);
     const f = out.findings[0]!;
     expect(f.execution).toBe("observed"); // analyst wins on the axis they set
     expect(f.control).toBe("allowed"); // machine value survives on the axis they did not
-    expect(f.outcomeSource).toBe("analyst");
+    expect(f.executionSource).toBe("analyst");
+    expect(f.controlSource).toBe("machine"); // a one-axis override never relabels the other axis
   });
 
   it("leaves a finding with no analyst record untouched, and marks a machine-only one", () => {
     const s = state([finding({ id: "f-1", execution: "observed" }), finding({ id: "f-2" })]);
     const out = withAnalystOutcomes(s, []);
-    expect(out.findings[0]!.outcomeSource).toBe("machine");
-    expect(out.findings[1]!.outcomeSource).toBeUndefined();
+    expect(out.findings[0]!.executionSource).toBe("machine");
+    expect(out.findings[0]!.controlSource).toBeUndefined();
+    expect(out.findings[1]!.executionSource).toBeUndefined();
     expect(out.findings[1]!.execution).toBeUndefined();
+  });
+
+  // Same id, different claim: synthesis keeps ids stable for a claim the model re-emits, but an
+  // analyst-certified outcome attached to a DIFFERENT claim is the one failure this store must
+  // never produce. The record's semanticKey is the guard.
+  it("refuses to attach a record whose semanticKey disagrees with the finding's", () => {
+    const s = state([finding({ id: "f-1", semanticKey: "T1021:rdp lateral movement" })]);
+    const out = withAnalystOutcomes(s, [
+      {
+        findingId: "f-1",
+        execution: "observed",
+        control: null,
+        note: "",
+        semanticKey: "T1059:powershell dropper",
+        updatedAt: "",
+        updatedBy: "",
+      },
+    ]);
+    expect(out.findings[0]!.execution).toBeUndefined();
+  });
+
+  it("applies a record when either side has no semanticKey (the id is then all there is)", () => {
+    const s = state([finding({ id: "f-1" })]);
+    const out = withAnalystOutcomes(s, [
+      {
+        findingId: "f-1",
+        execution: "observed",
+        control: null,
+        note: "",
+        semanticKey: "T1059:x",
+        updatedAt: "",
+        updatedBy: "",
+      },
+    ]);
+    expect(out.findings[0]!.execution).toBe("observed");
   });
 
   it("does not mutate its input", () => {
     const f = finding({ id: "f-1" });
     const s = state([f]);
     withAnalystOutcomes(s, [
-      { findingId: "f-1", execution: "observed", control: null, note: "", updatedAt: "", updatedBy: "" },
+      {
+        findingId: "f-1",
+        execution: "observed",
+        control: null,
+        note: "",
+        semanticKey: "",
+        updatedAt: "",
+        updatedBy: "",
+      },
     ]);
     expect(f.execution).toBeUndefined();
   });
@@ -140,16 +193,34 @@ describe("outcomeLabel", () => {
 
   it("renders both axes and never collapses them into one word", () => {
     const l = outcomeLabel(
-      finding({ id: "f", execution: "observed", control: "remediated", outcomeSource: "analyst" }),
+      finding({
+        id: "f",
+        execution: "observed",
+        control: "remediated",
+        executionSource: "analyst",
+        controlSource: "analyst",
+      }),
     );
-    expect(l).toContain("execution observed");
-    expect(l).toContain("control remediated");
-    expect(l).toContain("analyst");
+    expect(l).toBe("[execution observed (analyst) · control remediated (analyst)]");
     expect(l).not.toMatch(/prevented/);
   });
 
+  it("attributes each axis on its own — the machine's axis is never labelled analyst", () => {
+    expect(
+      outcomeLabel(
+        finding({
+          id: "f",
+          execution: "observed",
+          control: "allowed",
+          executionSource: "analyst",
+          controlSource: "machine",
+        }),
+      ),
+    ).toBe("[execution observed (analyst) · control allowed]");
+  });
+
   it("renders one axis alone", () => {
-    expect(outcomeLabel(finding({ id: "f", control: "blocked", outcomeSource: "machine" }))).toBe(
+    expect(outcomeLabel(finding({ id: "f", control: "blocked", controlSource: "machine" }))).toBe(
       "[control blocked]",
     );
   });
@@ -162,7 +233,7 @@ describe("outcomeLabel", () => {
   it("heading suffix appends the outcome after the confidence tag", () => {
     expect(
       findingHeadingSuffix(
-        finding({ id: "f", confidence: 72, control: "blocked", outcomeSource: "analyst" }),
+        finding({ id: "f", confidence: 72, control: "blocked", controlSource: "analyst" }),
       ),
     ).toBe(" [72% confidence] [control blocked (analyst)]");
   });
