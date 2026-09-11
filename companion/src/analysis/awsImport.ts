@@ -14,6 +14,7 @@
 import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { boundedAggKey } from "./aggKey.js";
+import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -174,6 +175,22 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
   const def = AWS_ACTIONS[name.toLowerCase()];
   let severity: Severity = def?.severity ?? (readOnly ? "Info" : "Low");
   const mitre = [...(def?.mitre ?? [])];
+  // Systems Manager remote execution (#931 item 7): the phase, target, document, id, status and
+  // payload are the evidence; see ssmExecution.ts for what is and is not claimed.
+  const ssm = decodeSsmCall(
+    source,
+    name,
+    getCI(rec, "requestParameters"),
+    getCI(rec, "responseElements"),
+    str(getCI(rec, "errorCode")),
+    str(getCI(rec, "eventID")).trim(),
+  );
+  if (ssm) {
+    // The decoder's phase grade IS the baseline for a recognised SSM call (a TerminateSession is
+    // Info, not the generic mutating-call Low); the denied and root rules below still raise it.
+    severity = ssm.severity;
+    for (const t of ssm.mitre) if (!mitre.includes(t)) mitre.push(t);
+  }
 
   const identity = principal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
@@ -202,6 +219,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
 
   let description = `AWS ${name} (${shortSource(source)})`;
   if (who) description += ` by ${oneLine(who).slice(0, 120)}`;
+  // (an SSM row replaces this composition below with a fixed-slot one — renderSsmDescription)
   if (ip) description += ` from ${ip}`;
   else if (rawIp && rawIp !== "AWS Internal") description += ` from ${rawIp}`;
   if (region) description += ` in ${region}`;
@@ -214,6 +232,20 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
   if (client) description += ` [ua: ${oneLine(client).slice(0, 80)}]`;
   if (isRoot) description += " [root]";
   if (errorCode) description += ` [${errorCode}]`;
+  // An SSM row is composed with fixed, individually bounded slots so the document, id, status and
+  // target always survive the clip — a long principal, user agent or tag selector cannot push them out.
+  if (ssm) {
+    description = renderSsmDescription(ssm, {
+      name,
+      source: shortSource(source),
+      who: oneLine(who),
+      from: ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : ""),
+      region,
+      client: oneLine(client),
+      root: isRoot,
+      errorCode,
+    });
+  }
   description = description.slice(0, 600);
   const observedTimestamp = str(getCI(rec, "eventTime"));
   const normalizedTimestamp = normalizeTime(observedTimestamp);
@@ -259,13 +291,17 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       : {}),
     ...(resource ? { target: { kind: "other", name: resource } } : {}),
     ...(ip ? { network: { source: { address: ip } } } : {}),
+    // The SSM command payload is a command line: the process-lifetime and tradecraft passes read
+    // it there. No canonical host target for the instance — host identity for cloud instances is
+    // #931 item 5's lineage work; the instance is in the description, the key and cloud.resource.
+    ...(ssm?.commandLine ? { process: { commandLine: ssm.commandLine } } : {}),
     cloud: {
       provider: "aws",
       ...(identity.id ? { principalId: identity.id } : {}),
       ...(identity.type ? { principalType: identity.type } : {}),
       ...(identity.accountId ? { accountId: identity.accountId } : {}),
       ...(region ? { region } : {}),
-      ...(resource ? { resource } : {}),
+      ...(ssm?.target ? { resource: ssm.target } : resource ? { resource } : {}),
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {
@@ -313,7 +349,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // responseElements with no errorCode at all), the region (RunInstances in a new region is the
     // rogue-compute signal). Bounded fields first, the object key last, bounded with a digest.
     aggKey: boundedAggKey(
-      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };

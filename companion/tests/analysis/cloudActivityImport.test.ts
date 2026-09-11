@@ -144,3 +144,57 @@ describe("parseCloudActivity — inputs, floor & edges", () => {
     expect(r.events).toHaveLength(0);
   });
 });
+
+// #931 item 7 — Azure remote execution as a family: the action form, the managed form, scale sets.
+describe("parseCloudActivity — Azure remote execution", () => {
+  const VM = "/subscriptions/abc/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1";
+  it("names the target VM, grades High with T1651, and says the script body is not in the log", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([azure("Microsoft.Compute/virtualMachines/runCommand/action")]),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toEqual(expect.arrayContaining(["T1651", "T1059"]));
+    expect(e.description).toContain("→ vm1 — the script body is not in the Activity Log");
+  });
+  it("the managed form targets the parent VM, not the runCommands child, and shares the target with the action form", () => {
+    const managed = azure("Microsoft.Compute/virtualMachines/runCommands/write", {
+      resourceId: `${VM}/runCommands/RunPowerShellScript`,
+    });
+    const action = azure("Microsoft.Compute/virtualMachines/runCommand/action", { resourceId: VM });
+    const r = parseCloudActivity(JSON.stringify([managed, action]));
+    for (const e of r.events) expect(e.description).toContain("→ vm1 —");
+    expect(r.events.every((e) => e.severity === "High")).toBe(true);
+  });
+  it("a scale-set instance is identified by set and instance; two VMs by one caller are two rows", () => {
+    const vmss = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/runCommand/action", {
+      resourceId:
+        "/subscriptions/abc/resourceGroups/rg/providers/Microsoft.Compute/virtualMachineScaleSets/web/virtualMachines/0",
+    });
+    const other = azure("Microsoft.Compute/virtualMachines/runCommand/action", {
+      resourceId: VM.replace("vm1", "vm2"),
+    });
+    const r = parseCloudActivity(
+      JSON.stringify([vmss, other, azure("Microsoft.Compute/virtualMachines/runCommand/action")]),
+    );
+    expect(r.events).toHaveLength(3);
+    expect(r.events.some((e) => e.description.includes("→ web/0 —"))).toBe(true);
+  });
+  it("two executions with no resource id stay two rows, keyed on their record ids", () => {
+    const a = azure("Microsoft.Compute/virtualMachines/runCommand/action", {
+      resourceId: "",
+      eventDataId: "ev-1",
+    });
+    const b = azure("Microsoft.Compute/virtualMachines/runCommand/action", {
+      resourceId: "",
+      eventDataId: "ev-2",
+    });
+    expect(parseCloudActivity(JSON.stringify([a, b])).events).toHaveLength(2);
+  });
+
+  it("leaves an unrelated write ungraded as remote execution", () => {
+    const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Compute/virtualMachines/write")]));
+    expect(r.events[0].mitreTechniques).not.toContain("T1651");
+    expect(r.events[0].description).not.toContain("→");
+  });
+});

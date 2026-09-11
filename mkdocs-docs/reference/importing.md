@@ -281,6 +281,37 @@ a drive letter alone is not removable media. Linking a detection to a later star
 is tracked separately (#964). Hayabusa's own Defender rows keep their Sigma grading and do not yet
 carry this token.
 
+### Cloud remote execution (AWS Systems Manager, Azure Run Command)
+
+A cloud identity can run commands on a machine without ever logging on to it. Those calls now
+import with the evidence they carry and with the phases kept apart:
+
+- **Discovery** — `ListDocuments`, `DescribeInstanceInformation`, `GetCommandInvocation` and the
+  like are Info: listing what could be run is not running it.
+- **Request** — `SendCommand` is **High** and reads `[AWS-RunShellScript@1] cmd-… Pending: requested
+  → i-0abc…`, with the commands themselves (`cmd: "…"`) when the document is a shell or PowerShell
+  script. The whole payload is graded by the same tables a shell history is (tradecraft, spilled
+  secrets, recon), so a `curl … | sh` sent through SSM grades like one typed at a prompt. The
+  status at the call is *Pending*: **the result is not in CloudTrail** — the row says "requested",
+  never "ran". A fleet-management document (`AWS-RunPatchBaseline`, `AWS-UpdateSSMAgent`,
+  `AWS-GatherSoftwareInventory`, `AWS-InstallWindowsUpdates`) is Low **only** with routine
+  parameters; an agent downgrade, a patch override list, or a parameter the document does not
+  normally take is High with the reason. Any other document, custom ones included, is High.
+- **Connection** — `StartSession` is High and names the target, the document and the session id.
+  A port-forwarding session names the remote host and port it reaches through the node and is
+  tagged as a tunnel. The session's commands are not in CloudTrail (Session Manager logging to
+  S3/CloudWatch holds them, when enabled). `ResumeSession` is a connection too — often the only
+  evidence when the start lies outside the collected logs.
+- **Lifecycle** — `TerminateSession` is Info.
+
+Every request and session is its own row (the command or session id is part of the identity);
+a denied call is Medium and says the request did not execute. Nothing says which user the command
+ran as — the SSM agent's configured user does, and guest evidence decides.
+
+Azure `runCommand/action` and the managed `runCommands/write` (on a VM or a scale-set instance)
+grade the same way: High, the target machine named, and the note that the script body is not in
+the Activity Log. Two machines by one caller are two rows.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.
