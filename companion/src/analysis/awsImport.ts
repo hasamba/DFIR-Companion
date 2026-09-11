@@ -15,6 +15,7 @@ import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { boundedAggKey } from "./aggKey.js";
 import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
+import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -59,7 +60,7 @@ interface ActionDef {
 }
 
 // Curated high-risk CloudTrail actions → derived severity + MITRE (keys = lowercased eventName).
-const AWS_ACTIONS: Record<string, ActionDef> = {
+export const AWS_ACTIONS: Record<string, ActionDef> = {
   consolelogin: { severity: "Info", mitre: ["T1078.004"] },
   // IAM persistence / privilege escalation
   createuser: { severity: "Medium", mitre: ["T1136.003"] },
@@ -162,6 +163,13 @@ function principal(ui: unknown): {
   };
 }
 
+// The primary name of the object an IAM call changes — the role, user, group or policy — for
+// cloud.resource when the generic resource fields are empty.
+function iamResource(object: string | undefined): string {
+  const m = /\b(?:role|user|group|policy|policyName)=([^\s]+)/.exec(object ?? "");
+  return m ? m[1] : "";
+}
+
 function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
@@ -190,6 +198,21 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // Info, not the generic mutating-call Low); the denied and root rules below still raise it.
     severity = ssm.severity;
     for (const t of ssm.mitre) if (!mitre.includes(t)) mitre.push(t);
+  }
+  // IAM changes and role bindings (#931 item 6): the posture, the object, the document's own words,
+  // the role a service call passes. The table grade stands; the decoder only supplies floors.
+  const iam = decodeIamChange(
+    source,
+    name,
+    getCI(rec, "requestParameters"),
+    getCI(rec, "responseElements"),
+    str(getCI(rec, "errorCode")),
+    str(getCI(rec, "errorMessage")),
+    str(getCI(rec, "recipientAccountId")).trim(),
+  );
+  if (iam) {
+    if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
+    for (const t of iam.mitre) if (!mitre.includes(t)) mitre.push(t);
   }
 
   const identity = principal(getCI(rec, "userIdentity"));
@@ -244,6 +267,20 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       client: oneLine(client),
       root: isRoot,
       errorCode,
+    });
+  }
+  // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last but
+  // never clipped away (awsDescription.ts).
+  if (iam) {
+    const from = ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : "");
+    description = renderAwsDescription({
+      head: `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`,
+      posture: iam.posture,
+      outcome: iam.outcome,
+      object: iam.object,
+      optional: [iam.reading || iam.note, iam.trust, iam.bindingsText],
+      tail: `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+      qualifiers: iam.qualifiers,
     });
   }
   description = description.slice(0, 600);
@@ -301,7 +338,13 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       ...(identity.type ? { principalType: identity.type } : {}),
       ...(identity.accountId ? { accountId: identity.accountId } : {}),
       ...(region ? { region } : {}),
-      ...(ssm?.target ? { resource: ssm.target } : resource ? { resource } : {}),
+      ...(ssm?.target
+        ? { resource: ssm.target }
+        : resource
+          ? { resource }
+          : iamResource(iam?.object)
+            ? { resource: iamResource(iam?.object) }
+            : {}),
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
     evidence: {
@@ -349,7 +392,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // responseElements with no errorCode at all), the region (RunInstances in a new region is the
     // rogue-compute signal). Bounded fields first, the object key last, bounded with a digest.
     aggKey: boundedAggKey(
-      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };
