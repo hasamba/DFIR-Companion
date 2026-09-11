@@ -419,6 +419,84 @@ chain finding (credential → grant → use, joined on ids with matched credenti
 A familiar application name or a verified publisher is neither proof of safety nor of compromise;
 read the initiator, the capability and the consent reach.
 
+### Mailbox access and forwarding: what one record says
+
+A mailbox compromise leaves Unified Audit Log records of the Exchange workload: an inbox rule
+created, a mailbox forwarding address set, a permission granted, a delegate binding to messages,
+mail sent as the owner, items deleted. Each used to import as `M365 Exchange: New-InboxRule by
+bob@… → bob@…` — High for every rule whatever it did, the rule's actions never read, and a
+delegate binding to ten mailboxes folded into one row. Each record now reads for what it holds:
+
+- **Inbox rules** — `creates inbox rule ".." forwards to drop@… (outside the mailbox's domain),
+  deletes the message on every message`. The actions and conditions are the cmdlet's own
+  parameters. A rule that forwards or redirects outside the mailbox's domain is High; one that
+  forwards inside, or only hides (deletes, moves, marks read), is Medium; other actions Low.
+  `Set-InboxRule` carries only what changed: the row reports those deltas (`now forwards to …`,
+  `renamed to …`, `now enabled`) and says `effective conditions and actions not in this record` —
+  an absent parameter is unchanged, never absent, so a rename never reads as a harmless rule.
+  `Disable-` and `Remove-InboxRule` are posture only and Low: removing a rule is not creating
+  persistence. Outlook-created rules (`UpdateInboxRules`) read the same way from the rule's JSON
+  actions.
+- **"Outside the mailbox's domain"** compares the address with the domain of the mailbox owner —
+  the only tenant fact the record holds. The row never says "external to the tenant": the
+  tenant's verified domains are not in the record. A recipient that is not an SMTP address gets
+  no class.
+- **Mailbox forwarding** (`Set-Mailbox`) — `sets SMTP forwarding to x@… (outside the mailbox's
+  domain)` (High); `sets forwarding to in-organization recipient …` (`ForwardingAddress` — an
+  alias, name or DN, no domain class; Medium); `a copy stays` / `no copy stays` only when
+  `DeliverToMailboxAndForward` is in the same record; `clears SMTP forwarding` (Low). When both
+  addresses are set the row says `ForwardingAddress takes precedence`. Every partial change says
+  `effective forwarding state not in this record`.
+- **Permissions** — `grants FullAccess on alice@… to helper@… (outside the mailbox's domain)`,
+  Medium; `Add-RecipientPermission` names its `Trustee`; removals Low. A `-Deny` entry reads in its
+  own direction: `adds a Deny entry …` restricts (Low), `removes a Deny entry … (effective access
+  may widen)` is Medium. A `-WhatIf` or `-ValidateOnly` cmdlet reads `simulates …` — no change
+  was made.
+- **Access** (`MailItemsAccessed`) — `binds 5 items in 2 folders (7 operations) on alice@… as
+  delegate via REST session sess-…`. The item count is the items the record LISTS;
+  `OperationCount` counts operations and is shown separately, never as messages. `Sync` is folder
+  scope (`syncs folder "\Inbox"`, with `possible offline copy after sync`). Every access row says
+  `item access; whether a person read the content is not established`. Grade is
+  privilege-based priority, not suspicion: Admin logon (eDiscovery, MAPI Editor, impersonation —
+  Microsoft records a FullAccess administrator as Delegate) Medium, Delegate Low, the owner's own
+  access Info. `AppId`/`ClientAppId` is shown as `client app …` — the client, not the actor,
+  unless the record's `UserType` says the actor is an application. A throttled record says the
+  item list is incomplete.
+- **Send, move and delete** — `sends as ceo@… to cfo@… (inside the mailbox's domain), x@…
+  (outside the mailbox's domain)` (the identity the record's own `SendAsUserSmtp` names, the
+  recipients it lists; a non-owner: Low, the subject bounded), `copies 2 items from "\Inbox" to
+  mailbox drop@… to "\Archive"` (a cross-mailbox destination is named), `hard-deletes 3 items
+  from "\Inbox"` (the items the record lists; one `Item` on a single-item record).
+- **A failed or unknown result is an attempt** — `attempted to create inbox rule "r" — failed`,
+  Medium, no technique. A `PartiallySucceeded` result reads `partly creates …` with `which
+  actions completed is not in this record`.
+- **A condition the reader does not decode is still a condition** — `conditions supplied, not
+  decoded: senderdomainis, except from`; `on every message` is said only for a successful
+  `New-InboxRule` that supplied no condition or exception parameter at all.
+
+Every Exchange row keys on the tenant, record type, operation, outcome, mailbox, actor, address,
+client application, client string, logon and access type, session, and a digest of the complete
+scope (every folder and item id, the operation count and throttling state, the cmdlet's complete
+parameter values), so ten mailboxes bound by one delegate are ten rows and two addresses are two
+rows; when a record's scope identity is incomplete, the record id joins so it never folds.
+
+**Coverage — read before treating an absent row as absence of access.** Whether a
+`MailItemsAccessed` record could exist for a period depends on licence, audit configuration and
+retention at the time. From Microsoft's pages: mailbox auditing has been on by default since
+January 2019; `MailItemsAccessed` shipped with Advanced Audit (E5) on 20 February 2020; broader
+logging was announced on 19 July 2023 with the rollout from September 2023, and `MailItemsAccessed`
+for Audit Standard entered public preview on 20 May 2024 — Microsoft's current page says E3 and
+E5 are enabled by default and publishes no general-availability date. Retention: Audit Standard
+keeps records generated before 17 October 2023 for 90 days and records from that date for 180
+days; Audit Premium keeps Exchange records for one year. The 1,000-record / 24-hour throttling
+behaviour (once a mailbox exceeded 1,000 `MailItemsAccessed` records in 24 hours, further access
+went unlogged for the rest of the day) has no Microsoft-published retirement date; a throttled
+row therefore says the gap depends on the service behaviour at the time of the event. An absent
+`MailItemsAccessed` row never proves absence of access without verified coverage for the period.
+
+The chain across records — a suspicious sign-in, then access, then a rule, then sending or
+deletion — is a join by session and time, not a per-record fact; it is #975.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

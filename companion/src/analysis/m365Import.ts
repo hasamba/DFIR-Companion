@@ -20,6 +20,7 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
+import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import {
   isServicePrincipalSignIn,
   learnApiResolver,
@@ -390,7 +391,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       mapped.push(...mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity));
       sawUal = true;
     } else if (kind === "ual") {
-      mapped.push(mapUal(rec, iocSink));
+      // An Exchange record the decoder narrates (rules, forwarding, permissions, access, items)
+      // replaces the plain row; any other Exchange operation keeps it.
+      const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, index) : null;
+      mapped.push(exchange ?? mapUal(rec, iocSink));
       sawUal = true;
     } else if (kind === "signin") {
       mapped.push(mapSignIn(rec, iocSink));

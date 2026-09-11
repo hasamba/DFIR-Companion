@@ -688,3 +688,247 @@ describe("parseM365Audit — service-principal sign-ins (#931 item 1)", () => {
     expect(byIp.events).toHaveLength(2);
   });
 });
+
+describe("parseM365Audit — Exchange mailbox records (#931 item 2)", () => {
+  const OWNER = "alice@victim.com";
+  const exchange = (auditData: Record<string, unknown>, recordType = 1) =>
+    ualRow(
+      {
+        CreationTime: "2024-05-01T10:00:00Z",
+        Workload: "Exchange",
+        OrganizationId: "tenant-1",
+        UserId: "helpdesk@victim.com",
+        ResultStatus: "True",
+        ClientIP: "203.0.113.9",
+        ...auditData,
+      },
+      { RecordType: recordType },
+    );
+  it("a forwarding rule reads with its actions, the domain class and the envelope", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "New-InboxRule",
+          ObjectId: `${OWNER}\\..`,
+          Parameters: [
+            { Name: "Name", Value: ".." },
+            { Name: "ForwardTo", Value: "drop@attacker.invalid" },
+            { Name: "DeleteMessage", Value: "True" },
+          ],
+        }),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toBe(
+      'M365 Exchange: New-InboxRule by helpdesk@victim.com from 203.0.113.9 creates inbox rule ".." on alice@victim.com forwards to drop@attacker.invalid (outside the mailbox\'s domain), deletes the message on every message',
+    );
+    expect(e.mitreTechniques).toEqual(expect.arrayContaining(["T1114.003", "T1564.008"]));
+    expect(e.canonical?.event).toMatchObject({
+      category: "email",
+      type: "rule",
+      action: "New-InboxRule",
+      outcome: "success",
+    });
+    expect(e.canonical?.object).toMatchObject({ kind: "mailbox", name: OWNER });
+    expect(e.canonical?.target).toMatchObject({ kind: "other", name: "drop@attacker.invalid" });
+    expect(e.canonical?.cloud).toMatchObject({ provider: "m365", tenant: "tenant-1" });
+    expect(e.canonical?.evidence.rawRecords[0]).toMatchObject({ source: "m365-ual", locator: "record:0" });
+  });
+  it("a failed rule is an attempt with the outcome next to the posture; a plain Exchange operation keeps its row", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "New-InboxRule",
+          ObjectId: OWNER,
+          ResultStatus: "False",
+          Parameters: [
+            { Name: "Name", Value: "r" },
+            { Name: "ForwardTo", Value: "x@attacker.invalid" },
+          ],
+        }),
+        exchange({
+          RecordType: 1,
+          Operation: "Get-Mailbox",
+          ObjectId: OWNER,
+          Parameters: [{ Name: "Identity", Value: OWNER }],
+        }),
+      ]),
+      { aggregate: false },
+    );
+    const failed = r.events.find((e) => e.description.includes("New-InboxRule"))!;
+    expect(failed.severity).toBe("Medium");
+    expect(failed.description).toContain('attempted to create inbox rule "r" — failed');
+    const plain = r.events.find((e) => e.description.includes("Get-Mailbox"))!;
+    expect(plain.description).toBe(
+      "M365 Exchange: Get-Mailbox by helpdesk@victim.com from 203.0.113.9 → alice@victim.com",
+    );
+  });
+  it("a MailItemsAccessed bind by a delegate counts the items listed and keeps every context in the key", () => {
+    const access = (over: Record<string, unknown>) =>
+      exchange(
+        {
+          RecordType: 50,
+          Operation: "MailItemsAccessed",
+          ResultStatus: "Succeeded",
+          LogonType: 2,
+          MailboxOwnerUPN: OWNER,
+          MailboxGuid: "aaaaaaaa-0000-0000-0000-000000000001",
+          ClientInfoString: "Client=REST;;",
+          ClientIPAddress: "203.0.113.9",
+          SessionId: "sess-1",
+          OperationCount: 3,
+          OperationProperties: [
+            { Name: "MailAccessType", Value: "Bind" },
+            { Name: "IsThrottled", Value: "False" },
+          ],
+          Folders: [
+            {
+              Id: "f1",
+              Path: "\\Inbox",
+              FolderItems: [{ InternetMessageId: "<a@x>" }, { InternetMessageId: "<b@x>" }],
+            },
+          ],
+          ...over,
+        },
+        50,
+      );
+    const r = parseM365Audit(
+      JSON.stringify([
+        access({}),
+        access({}),
+        access({ ClientIPAddress: "203.0.113.10" }),
+        access({ MailboxOwnerUPN: "carol@victim.com", MailboxGuid: "bbbbbbbb-0000-0000-0000-000000000002" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(3);
+    const first = r.events.find((e) => e.count === 2)!;
+    expect(first.description).toBe(
+      "M365 Exchange: MailItemsAccessed by helpdesk@victim.com from 203.0.113.9 binds 2 items in 1 folder (3 operations) on alice@victim.com as delegate via REST session sess-1 — item access; whether a person read the content is not established",
+    );
+    expect(first.severity).toBe("Low");
+    expect(first.canonical?.actor).toMatchObject({ kind: "account", name: "helpdesk@victim.com" });
+    expect(first.canonical?.object).toMatchObject({
+      kind: "mailbox",
+      id: "aaaaaaaa-0000-0000-0000-000000000001",
+      name: OWNER,
+    });
+  });
+  it("a cmdlet rule's envelope targets every forwarding and redirect destination", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "New-InboxRule",
+          ObjectId: `${OWNER}\\r`,
+          Parameters: [
+            { Name: "Name", Value: "r" },
+            { Name: "ForwardTo", Value: "benign@victim.com;drop@attacker.invalid" },
+            { Name: "RedirectTo", Value: "second@attacker.invalid" },
+          ],
+        }),
+      ]),
+    );
+    expect(r.events[0].canonical?.target?.name).toBe(
+      "benign@victim.com, drop@attacker.invalid, second@attacker.invalid",
+    );
+  });
+  it("Set-Mailbox with both addresses targets ForwardingAddress — the one that takes precedence", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "Set-Mailbox",
+          ObjectId: OWNER,
+          Parameters: [
+            { Name: "Identity", Value: OWNER },
+            { Name: "ForwardingSmtpAddress", Value: "smtp:inactive@attacker.invalid" },
+            { Name: "ForwardingAddress", Value: "SharedMailbox" },
+          ],
+        }),
+      ]),
+    );
+    expect(r.events[0].canonical?.target?.name).toBe("SharedMailbox");
+    expect(r.events[0].description).toContain("ForwardingAddress takes precedence");
+  });
+  it("an Outlook-created forwarding rule's envelope targets the recipient", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange(
+          {
+            RecordType: 2,
+            Operation: "UpdateInboxRules",
+            ResultStatus: "Succeeded",
+            LogonType: 0,
+            UserId: OWNER,
+            MailboxOwnerUPN: OWNER,
+            OperationProperties: [
+              { Name: "RuleOperation", Value: "AddMailboxRule" },
+              { Name: "RuleName", Value: "." },
+              {
+                Name: "RuleActions",
+                Value: JSON.stringify([
+                  { ActionType: "ForwardToRecipients", Recipients: ["drop@attacker.invalid"] },
+                ]),
+              },
+            ],
+          },
+          2,
+        ),
+      ]),
+    );
+    expect(r.events[0].canonical?.target).toMatchObject({ kind: "other", name: "drop@attacker.invalid" });
+    expect(r.events[0].severity).toBe("High");
+  });
+  it("a send's envelope targets the recipients and names the sent-as identity as the subject", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange(
+          {
+            RecordType: 2,
+            Operation: "SendAs",
+            ResultStatus: "Succeeded",
+            LogonType: 2,
+            MailboxOwnerUPN: OWNER,
+            SendAsUserSmtp: OWNER,
+            Item: { Id: "i1", Subject: "wire" },
+            recipientList: [{ Address: "cfo@victim.com" }],
+          },
+          2,
+        ),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.canonical?.target).toMatchObject({ kind: "other", name: "cfo@victim.com" });
+    expect(e.canonical?.subject).toMatchObject({ kind: "mailbox", name: OWNER });
+    expect(e.canonical?.actor).toMatchObject({ kind: "account", name: "helpdesk@victim.com" });
+  });
+  it("the description of a maximal row keeps the head, the posture, the mailbox and the qualifiers inside 600", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "Set-InboxRule",
+          UserId: `${"h".repeat(300)}@victim.com`,
+          ObjectId: `${"a".repeat(200)}@victim.com`,
+          Parameters: [
+            { Name: "Identity", Value: "r".repeat(300) },
+            {
+              Name: "ForwardTo",
+              Value: Array.from({ length: 40 }, (_, i) => `x${i}@attacker.invalid`).join(";"),
+            },
+            { Name: "SubjectContainsWords", Value: "w".repeat(500) },
+          ],
+        }),
+      ]),
+    );
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toMatch(/^M365 Exchange: Set-InboxRule by h+/);
+    expect(d).toContain("changes inbox rule");
+    expect(d).toContain("on aaaa");
+    expect(d).toContain("effective conditions and actions not in this record");
+  });
+});
