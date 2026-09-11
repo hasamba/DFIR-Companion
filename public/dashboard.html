@@ -187,6 +187,7 @@
   <script src="/js/dashboard-selection.js"></script>
   <script src="/js/dashboard-facets.js"></script>
   <script src="/js/dashboard-timeline-view.js"></script>
+  <script src="/js/dashboard-timeline-search.js"></script>
   <!-- Tier 3 (#415): whole features, each owning its own state behind a closure. Classic scripts,
        so the inline script keeps calling their published names by bare name. -->
   <script src="/js/dashboard-anomalies.js"></script>
@@ -4044,6 +4045,7 @@
       timeline: () => renderTimelineEvents(DfirState.lastFt() || []),
       all: () => { if (DfirState.lastState()) typeof render === "function" && render(DfirState.lastState()); },
       superTimeline: () => { if (DfirState.lastSuperData()) loadSuperTimeline(); },
+      serverSearch: () => { if (typeof loadSearchedTimeline === "function") loadSearchedTimeline(); }, // #928
       falsePositives: () => renderFalsePositives(fpMarkers, false),   // panel only — the action asks for `all` itself
       iocs: () => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); },
       derivedViews: () => refreshFilteredViews(),
@@ -4745,16 +4747,10 @@
 
       renderEvIdFilterChip(visible.length, ft.length);
 
-      const countEl = document.getElementById('timelineCount');
-      if (countEl) {
-        const total = ft.length;
-        const baseText = (filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter())
-          ? `${totalFiltered} of ${total} events`
-          : `${total} event${total !== 1 ? 's' : ''}`;
-        countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
-          ? `(${baseText} — page ${tlPage + 1} of ${totalPages})`
-          : `(${baseText})`;
-      }
+      renderTimelineCount(document.getElementById('timelineCount'), {
+        total: ft.length, totalFiltered, pageSize: tlPageSize, page: tlPage, totalPages,
+        filtering: filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter(),
+      });
       _updateSearchCount(totalFiltered, ft.length);
 
       const caseId = DfirState.lastState() && DfirState.lastState().caseId;
@@ -4775,6 +4771,7 @@
       const pageSizeOpts = pageSizes.map(n =>
         `<option value="${n}"${tlPageSize === n ? " selected" : ""}>${pageSizeLabel(n)}</option>`
       ).join("");
+      const moreBar = typeof timelineMoreMatchesBar === "function" ? timelineMoreMatchesBar() : "";
       const paginationBar = (tlPageSize > 0 && totalFiltered > tlPageSize) ? `<div class="tl-page-bar">`
         + `<button class="tl-page-btn" data-act="tlPagePrev" ${tlPage === 0 ? "disabled" : ""}>‹ Prev</button>`
         + `<span class="tl-page-info">${pStart + 1}–${pEnd} of ${totalFiltered}</span>`
@@ -4862,7 +4859,7 @@
       }).join("");
 
       const tlEl = document.getElementById("forensicTimeline");
-      tlEl.innerHTML = headerRow + paginationBar + rows;
+      tlEl.innerHTML = headerRow + moreBar + paginationBar + rows;
       // When action icons are hidden, narrow the control column so its empty space is reclaimed.
       tlEl.classList.toggle("tl-no-icons", !tlShow("icons", tld));
 

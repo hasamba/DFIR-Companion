@@ -27,7 +27,54 @@ function realSourceCount(sources, hidden) {
 }
 
 // --- Search/filter helpers (mirror companion/src/analysis/searchFilter.ts) ---------
+// Parts of the canonical envelope that describe the MAPPING, not the event. rawFieldMap's VALUES
+// are field names ({ "process.commandLine": ["commandLine"] }), so flattening them would make
+// "commandLine" or "timestamp" match every event that merely has such a field. Mirrors
+// CANONICAL_METADATA_KEYS in companion/src/analysis/searchFilter.ts.
+var _CANON_META = ["rawFieldMap", "derivationMap", "confidenceMap", "producer", "fieldProvenance",
+  "evidence", "schemaVersion", "precision", "clockConfidence", "timezone"];
+
+// Every scalar VALUE inside the canonical envelope. Values only, never keys.
+function _canonValues(v, out, depth) {
+  depth = depth || 0;
+  if (v == null || depth > 8) return;
+  if (typeof v === "string" || typeof v === "number") { out.push(String(v)); return; }
+  if (Array.isArray(v)) { for (var i = 0; i < v.length; i++) _canonValues(v[i], out, depth + 1); return; }
+  if (typeof v === "object") {
+    for (var k in v) {
+      if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      if (_CANON_META.indexOf(k) !== -1) continue;
+      _canonValues(v[k], out, depth + 1);
+    }
+  }
+}
+
+// Every searchable VALUE on an event (#928). MUST stay in step with eventSearchParts() in
+// companion/src/analysis/searchFilter.ts: the server answers the search and this filter runs over
+// its reply, so a value the server matches on and this one does not would make rows arrive and
+// then vanish. A LIST, not one joined string — joining let a term straddle two values, which no
+// server-side query can reproduce.
+function _evSearchParts(e) {
+  var parts = [e.description, e.message, e.asset, e.path, e.processName, e.parentName,
+    e.artifactName, e.commandLine, e.sha256, e.md5,
+    // Recovered plaintext of an obfuscated command (#97) — shown in the event details, so it is
+    // read and then searched for. Kept in step with eventSearchParts() on the server.
+    e.deobfuscated && e.deobfuscated.decoded]
+    .concat(e.sources || []).concat(e.mitreTechniques || [])
+    .filter(function (v) { return typeof v === "string" && v.length; });
+  _canonValues(e.canonical, parts);
+  return parts.map(function (v) { return v.toLowerCase(); });
+}
+
 function _evMatchesSearch(e, q) {
+  if (!q) return true;
+  return _evSearchParts(e).some(function (p) { return p.indexOf(q) !== -1; });
+}
+
+// The pre-#928 four-field match, kept as the EXCLUDE predicate only. Widening search is the point
+// of #928; widening exclude would silently make every SAVED exclude chip hide more evidence than
+// the analyst asked it to, which is the failure that matters in DFIR. See searchFilter.ts.
+function _evMatchesNarrow(e, q) {
   return (e.description || "").toLowerCase().includes(q) ||
     (e.asset || "").toLowerCase().includes(q) ||
     (e.mitreTechniques || []).some(t => t.toLowerCase().includes(q)) ||
@@ -35,6 +82,13 @@ function _evMatchesSearch(e, q) {
 }
 
 function _iocMatchesSearch(i, q) {
+  return (i.value || "").toLowerCase().includes(q) || (i.type || "").toLowerCase().includes(q) ||
+    (i.note || "").toLowerCase().includes(q) ||
+    (i.aliasValues || []).some(v => (v || "").toLowerCase().includes(q));
+}
+
+// Narrow value+type match, the IOC EXCLUDE predicate only (see _evMatchesNarrow).
+function _iocMatchesNarrow(i, q) {
   return (i.value || "").toLowerCase().includes(q) || (i.type || "").toLowerCase().includes(q);
 }
 
@@ -46,9 +100,9 @@ function _findingMatchesSearch(f, q) {
 
 // Exclude filter (#216): true when the item matches ANY exclude term (mirrors
 // companion/src/analysis/searchFilter.ts eventMatchesExclude/findingMatchesExclude/iocMatchesExclude).
-function _evMatchesExclude(e, terms) { return terms.some(t => t && _evMatchesSearch(e, t.toLowerCase())); }
+function _evMatchesExclude(e, terms) { return terms.some(t => t && _evMatchesNarrow(e, t.toLowerCase())); }
 
-function _iocMatchesExclude(i, terms) { return terms.some(t => t && _iocMatchesSearch(i, t.toLowerCase())); }
+function _iocMatchesExclude(i, terms) { return terms.some(t => t && _iocMatchesNarrow(i, t.toLowerCase())); }
 
 function _findingMatchesExclude(f, terms) { return terms.some(t => t && _findingMatchesSearch(f, t.toLowerCase())); }
 
@@ -248,8 +302,12 @@ function deriveMitreRows(findings, forensicTimeline, table, names) {
 window.DfirFilters = {
   realSourceCount,
   yearClampChip,
+  _canonValues,
+  _evSearchParts,
   _evMatchesSearch,
+  _evMatchesNarrow,
   _iocMatchesSearch,
+  _iocMatchesNarrow,
   _findingMatchesSearch,
   _evMatchesExclude,
   _iocMatchesExclude,

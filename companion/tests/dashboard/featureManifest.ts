@@ -552,8 +552,20 @@ export const FEATURES: Feature[] = [
     // Timeline row display toggles.
     file: "dashboard-timeline-display.js",
     initializer: "initTimelineDisplay",
-    publish: ["initTimelineDisplay", "loadTlDisplay", "renderTlChecks", "applyTlDisplayFromChecks", "tlShow"],
-    private: [],
+    // The count label and the truncated-search bar (#928) live here rather than in the inline
+    // script: public/dashboard.html#inline-js is frozen at its length by check-file-size.mjs, and
+    // "what the timeline row area shows" is already this module's subject.
+    publish: [
+      "initTimelineDisplay",
+      "loadTlDisplay",
+      "renderTlChecks",
+      "applyTlDisplayFromChecks",
+      "tlShow",
+      "timelineCountLabel",
+      "renderTimelineCount",
+      "timelineMoreMatchesBar",
+    ],
+    private: ["timelineTotalIsFloor"],
   },
   {
     // Setup wizard AI step (#181). Its wiring was a self-calling IIFE — the fourth in this PR.
@@ -1663,6 +1675,7 @@ export const NON_FEATURES = new Set([
   "dashboard-selection.js",
   "dashboard-facets.js",
   "dashboard-timeline-view.js",
+  "dashboard-timeline-search.js", // pure loader: re-asks /state for the search term (#928), owns no panel
   "dashboard-tagger.js",
   "dashboard-kev.js",
   "dashboard-facade.js",

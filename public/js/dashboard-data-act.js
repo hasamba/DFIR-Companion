@@ -114,6 +114,11 @@
         renderTimelineEvents(DfirState.lastFt());
       }
     },
+    // #928: fetch the next batch of a search the server truncated, and append it. Guarded inside
+    // the loader — a click that arrives after the term moved on is dropped there, not here.
+    tlLoadMoreMatches: () => {
+      if (typeof loadMoreMatches === "function") loadMoreMatches();
+    },
     tlSetPageSize: (el) => {
       tlPageSize = +el.value;
       renderTimelineEvents(DfirState.lastFt());
