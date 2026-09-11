@@ -66,15 +66,21 @@ describe("parseCloudTrail — action-derived severity", () => {
     expect(r.events[0].description).toContain("[Client.UnauthorizedOperation]");
   });
 
-  it("grades iam:PassRole and Lambda CreateFunction (priv-esc primitives) as Medium", () => {
-    const pass = parseCloudTrail(envelope(record({ eventName: "PassRole", readOnly: false })));
-    expect(pass.events[0].severity).toBe("Medium");
-    expect(pass.events[0].mitreTechniques).toContain("T1098");
+  it("grades Lambda CreateFunction (priv-esc primitive) as Medium", () => {
     const fn = parseCloudTrail(
       envelope(record({ eventName: "CreateFunction", eventSource: "lambda.amazonaws.com", readOnly: false })),
     );
     expect(fn.events[0].severity).toBe("Medium");
     expect(fn.events[0].mitreTechniques).toContain("T1648");
+  });
+
+  // The removed `passrole` rule was tested with a record AWS cannot emit: `iam:PassRole` is a
+  // permission checked during another call, never an `eventName` of its own. The fixture proved
+  // the table entry worked and proved nothing about any real CloudTrail log, so the suite stayed
+  // green while the rule was dead. Pin the absence so it is not re-added by the same reasoning.
+  it("does not grade a fabricated PassRole eventName (no such CloudTrail API)", () => {
+    const r = parseCloudTrail(envelope(record({ eventName: "PassRole", readOnly: false })));
+    expect(r.events[0].mitreTechniques).not.toContain("T1098");
   });
 
   it("grades STS GetSessionToken as Low with T1078.004", () => {
