@@ -254,6 +254,7 @@ const definitions: HuntFieldDefinition[] = [
   canonical("cloud.provider", "keyword", "cloud.provider", "Cloud provider"),
   canonical("cloud.principal_id", "keyword", "cloud.principalId", "Cloud principal identifier"),
   canonical("cloud.tenant", "keyword", "cloud.tenant", "Cloud tenant"),
+  canonical("cloud.account_id", "keyword", "cloud.accountId", "Caller's cloud account"),
   canonical(
     "cloud.recipient_account_id",
     "keyword",

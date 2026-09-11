@@ -759,6 +759,9 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     expect(e.description).toContain("AssumedRole key ASIAEXAMPLEKEY000001");
     expect(e.description).toContain(`[also recorded in account ${OTHER}]`);
     expect(e.canonical?.evidence.rawRecords.map((p) => p.recordId)).toEqual(["e-caller", "e-owner"]);
+    // Both accounts are typed: the caller's in cloud.accountId, the resource owner's in
+    // cloud.recipientAccountId — a Hunt on either finds the action.
+    expect(e.canonical?.cloud).toMatchObject({ accountId: ACCT, recipientAccountId: OTHER });
   });
   it("two distinct cross-account actions that share every other dimension stay two rows with all four pointers", () => {
     const pair = (shared: string, suffix: string) => [

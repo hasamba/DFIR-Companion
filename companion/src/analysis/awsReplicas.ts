@@ -45,6 +45,12 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     ];
     const note = alsoIn.length ? ` [also recorded in account ${alsoIn.join(", ")}]` : "";
     const description = `${kept.event.description}${note}`.slice(0, 600);
+    // The two accounts of a cross-account action are the caller's (`cloud.accountId`) and the
+    // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
+    // caller's, so a Hunt on either account id finds the action.
+    const caller = kept.event.canonical?.cloud?.accountId ?? "";
+    const recipients = [...new Set(group.map((c) => c.recipientAccountId).filter(Boolean))];
+    const owner = recipients.find((a) => a !== caller) ?? recipients[0] ?? "";
     return {
       ...kept.event,
       description,
@@ -52,6 +58,7 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
         ? {
             canonical: {
               ...kept.event.canonical,
+              cloud: { ...kept.event.canonical.cloud, ...(owner ? { recipientAccountId: owner } : {}) },
               evidence: {
                 ...kept.event.canonical.evidence,
                 rawRecords: [...kept.event.canonical.evidence.rawRecords, ...pointers],
