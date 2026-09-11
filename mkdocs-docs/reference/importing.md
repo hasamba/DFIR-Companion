@@ -196,6 +196,10 @@ happened on any host, so its rows are handled differently from every other impor
 - **A sandbox row is never merged with a host row**, even when they share a hash. Before this rule,
   a KAPE "file created invoice.exe" could come out of correlation described as the sandbox's
   "injects into explorer.exe" — a real host event narrated with lab behaviour.
+- **The AI is not yet told what the tag means.** The synthesis prompt's tag glossary is a governed
+  built-in (#378): changing it requires a real-model no-regression run against an accepted baseline.
+  Until that lands, the model reads the tag by its own words — `sandbox`, the source, the verdict.
+
 - **Only a real SHA-256 joins.** A report whose sample hash is missing or malformed still produces
   super-timeline rows and IOCs, but no verdict can attach to a sighting.
 
