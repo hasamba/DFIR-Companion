@@ -12,6 +12,15 @@ import { createHash } from "node:crypto";
 import type { FetchFn } from "../../enrichment/provider.js";
 import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 
+// Every request carries its own deadline (#927). The poller's attempt ceiling bounds completed
+// status checks; it says nothing about a request that never completes, and SO-CRATES has no
+// authentication and often sits behind a NAT or a load balancer that will hold a socket open. A
+// hung status check was attempt 1 forever, and the ceiling never fired.
+/** Status, probe and verdict calls: a JSON answer from a local service. */
+export const SOCRATES_REQUEST_TIMEOUT_MS = 30_000;
+/** The upload: up to DFIR_DROP_MAX_BYTES over whatever link reaches the analysis host. */
+export const SOCRATES_UPLOAD_TIMEOUT_MS = 5 * 60_000;
+
 export interface SocratesStatus {
   status: "ready" | "processing" | "error";
   phase?: string;
@@ -47,17 +56,18 @@ export function md5Buffer(data: Buffer): string {
   return createHash("md5").update(data).digest("hex");
 }
 
-async function getJson(url: string, fetchFn: FetchFn): Promise<unknown> {
-  const res = await fetchFn(url, { method: "GET" });
+async function getJson(url: string, fetchFn: FetchFn, timeoutMs: number): Promise<unknown> {
+  const res = await fetchFn(url, { method: "GET", signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`SO-CRATES GET ${new URL(url).pathname} failed: HTTP ${res.status}`);
   return readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "SO-CRATES" });
 }
 
-async function postJson(url: string, body: unknown, fetchFn: FetchFn): Promise<unknown> {
+async function postJson(url: string, body: unknown, fetchFn: FetchFn, timeoutMs: number): Promise<unknown> {
   const res = await fetchFn(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`SO-CRATES POST ${new URL(url).pathname} failed: HTTP ${res.status}`);
   return readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "SO-CRATES" });
@@ -73,10 +83,12 @@ export async function probeAnalysis(
   baseUrl: string,
   md5: string,
   fetchFn: FetchFn = fetch,
+  timeoutMs = SOCRATES_REQUEST_TIMEOUT_MS,
 ): Promise<SocratesStatus> {
   return (await getJson(
     `${trimBase(baseUrl)}/api/status?md5=${encodeURIComponent(md5)}`,
     fetchFn,
+    timeoutMs,
   )) as SocratesStatus;
 }
 
@@ -86,13 +98,18 @@ export async function uploadBuffer(
   data: Buffer,
   filename: string,
   fetchFn: FetchFn = fetch,
+  timeoutMs = SOCRATES_UPLOAD_TIMEOUT_MS,
 ): Promise<SocratesUploadResult> {
   const form = new FormData();
   // Copy into a plain Uint8Array: a Buffer's underlying store is ArrayBufferLike, which may be a
   // SharedArrayBuffer as far as the type system is concerned, and BlobPart does not accept that.
   // Blob copies its parts anyway, so this costs nothing extra in practice.
   form.append("file", new Blob([new Uint8Array(data)]), filename);
-  const res = await fetchFn(`${trimBase(baseUrl)}/api/upload`, { method: "POST", body: form });
+  const res = await fetchFn(`${trimBase(baseUrl)}/api/upload`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!res.ok) {
     const detail = await readBoundedJson(res, {
       maxBytes: RESPONSE_SIZE_LIMITS.json,
@@ -112,16 +129,30 @@ export async function checkStatus(
   baseUrl: string,
   md5: string,
   fetchFn: FetchFn = fetch,
+  timeoutMs = SOCRATES_REQUEST_TIMEOUT_MS,
 ): Promise<SocratesStatus> {
-  return (await postJson(`${trimBase(baseUrl)}/api/check-status`, { md5 }, fetchFn)) as SocratesStatus;
+  return (await postJson(
+    `${trimBase(baseUrl)}/api/check-status`,
+    { md5 },
+    fetchFn,
+    timeoutMs,
+  )) as SocratesStatus;
 }
 
 // Page one feed until a short page comes back (or MAX_PAGES trips).
-async function fetchAllPages(url: string, fetchFn: FetchFn): Promise<Record<string, unknown>[]> {
+async function fetchAllPages(
+  url: string,
+  fetchFn: FetchFn,
+  timeoutMs: number,
+): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const sep = url.includes("?") ? "&" : "?";
-    const body = await getJson(`${url}${sep}offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`, fetchFn);
+    const body = await getJson(
+      `${url}${sep}offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`,
+      fetchFn,
+      timeoutMs,
+    );
     if (!Array.isArray(body)) break;
     for (const row of body) if (row && typeof row === "object") out.push(row as Record<string, unknown>);
     if (body.length < PAGE_SIZE) break;
@@ -140,13 +171,14 @@ export async function fetchVerdicts(
   baseUrl: string,
   md5: string,
   fetchFn: FetchFn = fetch,
+  timeoutMs = SOCRATES_REQUEST_TIMEOUT_MS,
 ): Promise<SocratesVerdicts> {
   const base = trimBase(baseUrl);
   const q = encodeURIComponent(md5);
   const [alerts, yara, sigma] = await Promise.all([
-    fetchAllPages(`${base}/api/events?md5=${q}&type=alert`, fetchFn),
-    fetchAllPages(`${base}/api/events?md5=${q}&type=filealerts`, fetchFn),
-    fetchAllPages(`${base}/api/sigma-alerts?md5=${q}`, fetchFn),
+    fetchAllPages(`${base}/api/events?md5=${q}&type=alert`, fetchFn, timeoutMs),
+    fetchAllPages(`${base}/api/events?md5=${q}&type=filealerts`, fetchFn, timeoutMs),
+    fetchAllPages(`${base}/api/sigma-alerts?md5=${q}`, fetchFn, timeoutMs),
   ]);
 
   const rows = [...alerts, ...yara, ...sigma].map((r) => ({ ...r, _Source: "SO-CRATES" }));

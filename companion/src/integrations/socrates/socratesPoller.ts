@@ -10,11 +10,20 @@ export interface PollerDeps {
   fetchVerdicts(md5: string): Promise<SocratesVerdicts>;
   ingest(caseId: string, text: string, name: string): Promise<{ addedEvents: number; addedIocs: number }>;
   sleep?(ms: number): Promise<void>;
+  /** The clock the deadline is read from. Injected so the loop is testable without real time. */
+  now?(): number;
 }
 
 // 5s × 240 = 20 minutes, enough for Suricata over a large PCAP. The ceiling is NOT optional:
 // SO-CRATES never 404s a well-formed but unknown MD5 — it answers "processing" forever — so
 // without this a typo'd or deleted analysis polls until the process dies.
+//
+// The ceiling counts COMPLETED checks, so it is a bound on time only when every check completes
+// promptly (#927). Two things make that true: every request in socratesApi.ts carries its own
+// AbortSignal deadline, so a hung check rejects instead of holding attempt 1 forever; and the
+// loop also watches a wall-clock deadline, so a run of slow-but-completing checks cannot stretch
+// "20 minutes" into hours. DFIR_TOOL_SOCRATES_TIMEOUT_MS is a duration the operator set; the loop
+// honours it as one.
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_MAX_ATTEMPTS = 240;
 
@@ -24,11 +33,14 @@ export async function pollUntilImported(
   caseId: string,
   job: SocratesJob,
   deps: PollerDeps,
-  opts: { maxAttempts?: number; intervalMs?: number } = {},
+  opts: { maxAttempts?: number; intervalMs?: number; totalMs?: number } = {},
 ): Promise<SocratesJob> {
   const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const totalMs = opts.totalMs ?? maxAttempts * intervalMs;
   const sleep = deps.sleep ?? defaultSleep;
+  const now = deps.now ?? Date.now;
+  const deadline = now() + totalMs;
 
   const fail = async (message: string): Promise<SocratesJob> => {
     const failed: SocratesJob = {
@@ -43,6 +55,7 @@ export async function pollUntilImported(
 
   let current = job;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (now() > deadline) break;
     let status: SocratesStatus;
     try {
       status = await deps.checkStatus(current.md5);
@@ -83,7 +96,8 @@ export async function pollUntilImported(
   }
 
   return await fail(
-    `SO-CRATES analysis timed out after ${maxAttempts} checks. The server never reported this ` +
-      `analysis ready — note that it returns "processing" for an unknown MD5 rather than a 404.`,
+    `SO-CRATES analysis timed out (${Math.round(totalMs / 60_000)} min, at most ${maxAttempts} checks). ` +
+      `The server never reported this analysis ready — note that it returns "processing" for an ` +
+      `unknown MD5 rather than a 404. Raise DFIR_TOOL_SOCRATES_TIMEOUT_MS for a slow analysis host.`,
   );
 }
